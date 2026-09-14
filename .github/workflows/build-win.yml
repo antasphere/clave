@@ -1,9 +1,28 @@
 name: Build Windows Installer
 
+# Two ways in. The release workflow calls this job after the macOS release has
+# published the GitHub Release, passing the tag: the installer and its updater
+# feed (latest.yml) are attached to that release. Run by hand with a tag, it does
+# the same against an existing release; run by hand without one, it builds the
+# selected ref and only keeps the artifact — the way to try a branch on Windows.
+#
+# Never trigger this on `release: published`: our releases are created with
+# GITHUB_TOKEN, and events raised by that token start no workflows. A trigger on
+# the release event ran for nothing from v1.65 on and nobody noticed.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to attach the installer to (e.g. v1.89.0)
+        type: string
+        required: true
   workflow_dispatch:
-  release:
-    types: [published]
+    inputs:
+      tag:
+        description: Release tag to attach to (leave empty to only keep the artifact)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -14,20 +33,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
+          cache: npm
 
+      # postinstall skips the native rebuild on Windows (see scripts/postinstall.cjs).
       - name: Install dependencies
         run: npm ci
 
-      - name: Build app
-        run: npm run build
-
-      - name: Package Windows installer
-        run: npx electron-builder --win --publish never
+      - name: Build and package (unsigned NSIS installer, x64)
+        run: npm run build:win -- --publish never
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -35,12 +54,16 @@ jobs:
           name: clave-windows-installer
           path: |
             dist/*setup.exe
-            dist/*.exe.blockmap
+            dist/*setup.exe.blockmap
+            dist/latest.yml
           if-no-files-found: error
           retention-days: 30
 
+      # latest.yml is the electron-updater feed for Windows, the counterpart of
+      # latest-mac.yml. Without it a Windows install never sees an update.
       - name: Attach to release
-        if: github.event_name == 'release'
-        run: gh release upload ${{ github.event.release.tag_name }} dist/*setup.exe
+        if: inputs.tag != ''
+        shell: bash
+        run: gh release upload "${{ inputs.tag }}" dist/*setup.exe dist/*setup.exe.blockmap dist/latest.yml --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

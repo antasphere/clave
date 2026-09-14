@@ -28,6 +28,12 @@ Download the `.dmg`, drag to Applications, done.
 
 Auto-updates are built in — once installed, new versions download silently in the background.
 
+### Windows (early)
+
+Every release also carries `clave-<version>-setup.exe`, a 64-bit installer. It is **not code-signed**, so SmartScreen stops it once: click *More info* → *Run anyway*. Auto-updates work the same way as on macOS.
+
+Windows is behind macOS today: the agent state dots (working / idle / needs you) and tmux-backed session persistence are macOS-only, and Pi sessions are not available. Sessions run through ConPTY on `cmd.exe`; a POSIX shell (Git Bash, WSL) is not required.
+
 ### Uninstall
 
 Quit Clave and drag it from `/Applications` to the Trash. To also remove local settings and cached session data, delete `~/Library/Application Support/clave`.
@@ -76,7 +82,7 @@ npx plugins add antasphere/clave   # re-run to pull latest
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS (Apple Silicon or Intel), or Windows 10+ (x64, [early](#windows-early))
 - At least one supported agent CLI installed and authenticated: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Antigravity CLI](https://github.com/google-antigravity/antigravity-cli), [Codex CLI](https://github.com/openai/codex), or [Pi](https://pi.dev).
 
 ## Privacy & network
@@ -109,6 +115,7 @@ cd clave
 npm install
 npm run dev          # development with hot reload
 npm run build:mac    # build macOS .dmg (requires signing credentials)
+npm run build:win    # on Windows: build the unsigned NSIS installer into dist/
 ```
 
 ### macOS signing: why we build the keychain ourselves

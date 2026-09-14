@@ -1,10 +1,13 @@
-name: Release macOS
+name: Release
 
 # Every push to prod cuts a release. The bump level comes from the head commit
 # message — "[major]" or "[minor]" anywhere in it, defaulting to patch — or
-# from the explicit input when triggered manually (Actions → Release macOS →
+# from the explicit input when triggered manually (Actions → Release →
 # Run workflow). The version-bump commit CI pushes back carries [skip ci], and
 # GITHUB_TOKEN pushes never retrigger workflows, so there is no recursion.
+#
+# The macOS job owns the version, the tag and the GitHub Release; the Windows
+# job (build-win.yml) then attaches its installer to that same release.
 on:
   push:
     branches: [prod]
@@ -27,8 +30,11 @@ concurrency:
 
 jobs:
   release:
+    name: macOS
     runs-on: macos-latest
     timeout-minutes: 90
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,3 +89,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Published tag
+        id: tag
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows
+    needs: release
+    uses: ./.github/workflows/build-win.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}

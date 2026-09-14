@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+### Added
+- **Windows installer, back on every release** — each release now carries `clave-<version>-setup.exe` (x64, unsigned) with its `latest.yml` updater feed, so a Windows install updates itself like a Mac one. The last Windows build was v1.51.2 (June): the install step tried to rebuild node-pty from source on a runner with no Visual Studio, even though node-pty ships prebuilt binaries for Windows, and the workflow that would have shown the failure was waiting on a release event that CI-made releases never raise. The rebuild is skipped on Windows and the installer is a job of the release itself. Windows is early: agent state dots, tmux persistence and Pi sessions remain macOS-only for now.
+
 ## [1.86.0] — 2026-09-08
 
 ### Fixed
