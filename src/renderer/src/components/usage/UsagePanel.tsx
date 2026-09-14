@@ -3,11 +3,18 @@ import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import type { PiUsageTotals, UsageWindow } from '../../../../preload/index.d'
 import {
   quotaUsageStores,
+  claudeUsageStore,
   piUsageStores,
   useUsageNavigation,
   formatReset
 } from '../../store/usage-store'
+import {
+  useClaudeProfileStore,
+  describeClaudeProfileAuth,
+  type ClaudeProfile
+} from '../../store/claude-profile-store'
 import { ClaudeLogo, CodexLogo, AntigravityLogo, PiLogo } from '../icons/cli-logos'
+import { ClaudeAccountsSection } from '../settings/ClaudeAccountsSection'
 
 type Tool = 'claude' | 'codex' | 'antigravity' | 'pi'
 
@@ -79,8 +86,15 @@ function ToolToggle({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => voi
   )
 }
 
-function AccountUsage({ provider }: { provider: 'claude' | 'codex' }): ReactElement {
-  const { status, data, error, load, refreshing } = quotaUsageStores[provider]()
+/** The windows of one quota read: loading, an error with a retry, or the bars. */
+function QuotaWindows({
+  resource,
+  title
+}: {
+  resource: ReturnType<typeof claudeUsageStore>
+  title?: ReactElement
+}): ReactElement {
+  const { status, data, error, load, refreshing } = resource()
   const windows = data?.windows ?? []
 
   useEffect(() => {
@@ -91,7 +105,8 @@ function AccountUsage({ provider }: { provider: 'claude' | 'codex' }): ReactElem
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-3 min-w-0">
+        <div className="min-w-0 flex-1">{title}</div>
         <button
           onClick={() => load({ force: true })}
           disabled={loading}
@@ -136,6 +151,54 @@ function AccountUsage({ provider }: { provider: 'claude' | 'codex' }): ReactElem
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function CodexUsage(): ReactElement {
+  return <QuotaWindows resource={quotaUsageStores.codex} />
+}
+
+/** One account's card: its name and how it signs in, then its windows. */
+function ClaudeAccountUsage({
+  account,
+  named
+}: {
+  account: ClaudeProfile
+  named: boolean
+}): ReactElement {
+  return (
+    <div className="px-3.5 py-3" data-claude-account-usage={account.id}>
+      <QuotaWindows
+        resource={claudeUsageStore(account.id)}
+        title={
+          named ? (
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-medium text-text-primary truncate">
+                {account.label}
+              </span>
+              <span className="badge flex-shrink-0">{describeClaudeProfileAuth(account)}</span>
+            </div>
+          ) : undefined
+        }
+      />
+    </div>
+  )
+}
+
+/** Every Claude account, each with its own windows, the accounts section
+ *  under them. One account: the bars alone, as before. */
+function ClaudeUsage(): ReactElement {
+  const profiles = useClaudeProfileStore((s) => s.profiles)
+  const named = profiles.length > 1
+  return (
+    <div className="space-y-7">
+      <div className="settings-card">
+        {profiles.map((account) => (
+          <ClaudeAccountUsage key={account.id} account={account} named={named} />
+        ))}
+      </div>
+      <ClaudeAccountsSection />
     </div>
   )
 }
@@ -236,14 +299,17 @@ export function UsagePanel(): ReactElement {
   return (
     <div className="space-y-4" data-usage-provider={tool}>
       <ToolToggle tool={tool} onChange={setTool} />
-      <div className="settings-card">
-        <div className="px-3.5 py-3">
-          {tool === 'claude' && <AccountUsage provider="claude" />}
-          {tool === 'codex' && <AccountUsage provider="codex" />}
-          {tool === 'antigravity' && <ComingSoon label="Antigravity" />}
-          {tool === 'pi' && <PiUsage />}
+      {tool === 'claude' ? (
+        <ClaudeUsage />
+      ) : (
+        <div className="settings-card">
+          <div className="px-3.5 py-3">
+            {tool === 'codex' && <CodexUsage />}
+            {tool === 'antigravity' && <ComingSoon label="Antigravity" />}
+            {tool === 'pi' && <PiUsage />}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

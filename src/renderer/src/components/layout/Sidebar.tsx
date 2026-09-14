@@ -35,6 +35,8 @@ import { GroupPickerDialog } from '../session/GroupPickerDialog'
 import { useHistoryStore } from '../../store/history-store'
 import { useSidebarDnd } from '../../hooks/use-sidebar-dnd'
 import { SidebarFooter, UpdateBanner } from './SidebarFooter'
+import { ClaudeAccountMenuHeader } from './ClaudeAccountMenuHeader'
+import { primeClaudeAccountsUsage } from '../../store/usage-store'
 import { WordmarkStrip } from './Wordmark'
 import { ScrollArea } from '../ui/scroll-area'
 import { shortcutLabel } from '../../store/keymap-store'
@@ -268,7 +270,12 @@ export function Sidebar() {
   // Load Claude account profiles. (Workspace boot + .clave file watchers moved
   // to AppShell's sequential boot effect — adoption needs the registry first.)
   useEffect(() => {
-    import('../../store/claude-profile-store').then(({ loadClaudeProfiles }) => loadClaudeProfiles())
+    import('../../store/claude-profile-store').then(async ({ loadClaudeProfiles, useClaudeProfileStore }) => {
+      await loadClaudeProfiles()
+      // Every account's read, so the launcher's rows and the session menus
+      // have a number the first time they open.
+      primeClaudeAccountsUsage(useClaudeProfileStore.getState().profiles.map((p) => p.id))
+    })
   }, [])
 
   // Detect file drag over window (for showing pinned section as drop target).
@@ -1045,6 +1052,13 @@ export function Sidebar() {
           onClick: () => handleDuplicateSession(sessionId)
         }
       ]
+      // A Claude session says which account it runs on, and how much of that
+      // account is left, at the top of its menu: the one place to look when a
+      // window runs out and the question is "which subscription is this on".
+      const header =
+        session && (session.claudeMode || session.claudeAgentsMode) ? (
+          <ClaudeAccountMenuHeader accountId={session.claudeProfileId} />
+        ) : undefined
       if (session && !session.alive && ((session.claudeMode && session.claudeSessionId) || (session.piMode && session.piSessionId))) {
         items.push(
           {
@@ -1077,7 +1091,7 @@ export function Sidebar() {
         onClick: () => handleDeleteSession(sessionId)
       })
       const { clientX: x, clientY: y } = e
-      setContextMenu({ x, y, items })
+      setContextMenu({ x, y, items, header })
       // The window entries arrive a beat later (main is asked which windows
       // exist); the menu re-renders in place with them appended.
       if (session?.alive) {

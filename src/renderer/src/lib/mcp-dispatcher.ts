@@ -18,6 +18,13 @@ import { usePinnedStore, getPinnedState, togglePinnedGroup } from '../store/pinn
 import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor } from '../store/launch-profile-store'
+import {
+  useClaudeProfileStore,
+  getClaudeProfile,
+  resolveClaudeProfile,
+  claudeProfileSpawnFields,
+  type ClaudeProfile
+} from '../store/claude-profile-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
@@ -140,6 +147,15 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       mode: sessionMode(s),
       alive: s.alive,
       agentState: s.agentState ?? null,
+      // The Claude account the tab runs on; the Default when the tab predates
+      // accounts or was launched without naming one.
+      account:
+        s.claudeMode || s.claudeAgentsMode
+          ? (() => {
+              const account = getClaudeProfile(s.claudeProfileId)
+              return { id: account.id, label: account.label }
+            })()
+          : null,
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,
@@ -326,6 +342,20 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
   }
 }
 
+/** The Claude account an agent's spawn runs on: the one it named (an id or a
+ *  label), else the one selected in settings. An unknown name errors with the
+ *  names that exist, never a silent fall-through to the wrong subscription. */
+export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
+  const { profiles, selectedProfileId } = useClaudeProfileStore.getState()
+  if (!ref) return getClaudeProfile(selectedProfileId)
+  const account = resolveClaudeProfile(profiles, ref)
+  if (!account) {
+    const names = profiles.map((p) => `"${p.label}" (${p.id})`).join(', ')
+    throw new Error(`Unknown Claude account "${ref}". Available: ${names}`)
+  }
+  return account
+}
+
 export async function openSessionProgrammatically(payload: {
   cwd: string
   mode?: 'claude' | 'antigravity' | 'gemini' | 'codex' | 'pi' | 'terminal'
@@ -334,6 +364,8 @@ export async function openSessionProgrammatically(payload: {
   dangerous?: boolean
   model?: string
   profile?: string
+  /** The Claude account (id or label) the tab runs on; claude mode only. */
+  account?: string
   provider?: string
   thinking?: PiThinkingLevel
   command?: string
@@ -375,6 +407,14 @@ export async function openSessionProgrammatically(payload: {
       : undefined
   if (payload.profile && family && !launchProfileId)
     throw new Error(`Unknown ${family} launch profile "${payload.profile}"`)
+  // The Claude account: the one named, else the one selected in settings —
+  // the same rule the launcher applies, so an agent-opened tab lands on the
+  // account the user would have got from the button. Never for another agent.
+  const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account) : null
+  if (payload.account && !claudeMode) {
+    throw new Error(`The account argument applies to claude mode only (got mode "${mode}")`)
+  }
+  const accountFields = claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
     antigravityMode,
@@ -383,6 +423,7 @@ export async function openSessionProgrammatically(payload: {
     dangerousMode,
     model,
     launchProfileId,
+    ...accountFields,
     piProvider: piMode ? payload.provider : undefined,
     piThinking: piMode ? payload.thinking : undefined,
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
@@ -414,6 +455,9 @@ export async function openSessionProgrammatically(payload: {
     launchProfileId: info.launchProfileId,
     piProvider: info.piProvider,
     piThinking: info.piThinking,
+    claudeProfileId: claudeProfile?.id,
+    claudeProfileLabel: claudeProfile?.label,
+    claudeConfigDir: claudeProfile?.configDir || undefined,
     // Persist so Duplicate re-primes the clone with the same prompt.
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     sessionType: 'local',

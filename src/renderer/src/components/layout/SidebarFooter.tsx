@@ -14,6 +14,7 @@ import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { useFeedbackStore } from '../../store/feedback-store'
 import {
   quotaUsageStores,
+  claudeUsageStore,
   piUsageStores,
   tightestWindow,
   shortLabel,
@@ -24,6 +25,7 @@ import {
   piTodaySummary,
   type UsageProvider
 } from '../../store/usage-store'
+import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import { PiLogo } from '../icons/cli-logos'
 import { formatDuration } from '../work-tracker/utils'
 import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
@@ -133,10 +135,13 @@ export function UpdateBanner(): React.ReactElement {
  */
 function UsageLine({
   window: w,
-  provider
+  provider,
+  account
 }: {
   window: UsageWindow
   provider: 'claude' | 'codex'
+  /** The Claude account's label, shown only once there is more than one. */
+  account: string | null
 }): React.ReactElement {
   const openSettings = useSessionStore((s) => s.openSettings)
 
@@ -163,7 +168,8 @@ function UsageLine({
       }}
       className="sidebar-footer-line"
       data-usage-provider={provider}
-      title={[USAGE_PROVIDER_LABELS[provider], w.label, `${left}% left`, reset]
+      data-usage-account={account ?? undefined}
+      title={[USAGE_PROVIDER_LABELS[provider], account, w.label, `${left}% left`, reset]
         .filter(Boolean)
         .join(' · ')}
     >
@@ -177,7 +183,7 @@ function UsageLine({
         {left}% left
       </span>
       <span className="text-[11px] text-text-tertiary truncate">
-        · {provider === 'codex' ? 'Codex' : 'Claude'} · {shortLabel(w)}
+        · {provider === 'codex' ? 'Codex' : account ?? 'Claude'} · {shortLabel(w)}
       </span>
     </button>
   )
@@ -253,7 +259,21 @@ export function SidebarFooter(): React.ReactElement {
       ? 'claude'
       : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
   )
-  const quota = quotaUsageStores[provider === 'codex' ? 'codex' : 'claude']()
+  // The foot follows the focused tab's ACCOUNT, not just its provider: a tab
+  // on the second subscription reads that subscription's headroom. With no
+  // tab focused, the account the launcher would use next.
+  const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
+  const profiles = useClaudeProfileStore((s) => s.profiles)
+  const focusedAccountId = useSessionStore((s) =>
+    s.focusedSessionId === null
+      ? null
+      : (s.sessions.find((session) => session.id === s.focusedSessionId)?.claudeProfileId ?? null)
+  )
+  const accountId = focusedAccountId ?? selectedProfileId
+  const account = profiles.find((p) => p.id === accountId)
+  const accountLabel = profiles.length > 1 && account ? account.label : null
+  const quota =
+    provider === 'codex' ? quotaUsageStores.codex() : claudeUsageStore(accountId)()
   const pi = piUsageStores.today()
   const loadUsage =
     provider === 'pi' ? pi.load : provider === 'claude' || provider === 'codex' ? quota.load : null
@@ -356,7 +376,11 @@ export function SidebarFooter(): React.ReactElement {
           <div className="sidebar-footer-sep" />
           <div className="sidebar-footer-row sidebar-footer-row--meta">
             {usage && quotaProvider ? (
-              <UsageLine window={usage} provider={quotaProvider} />
+              <UsageLine
+                window={usage}
+                provider={quotaProvider}
+                account={quotaProvider === 'claude' ? accountLabel : null}
+              />
             ) : piTotals ? (
               <button
                 className="sidebar-footer-line"

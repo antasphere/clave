@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { tightestWindow, shortLabel, formatReset, usageProviderForSession } from './usage-store'
+import {
+  tightestWindow,
+  shortLabel,
+  formatReset,
+  usageProviderForSession,
+  headroomLabel
+} from './usage-store'
 import type { UsageWindow } from '../../../preload/index.d'
 
 describe('focused session usage provider', () => {
@@ -97,6 +103,29 @@ describe('shortLabel', () => {
   it('falls back to the full label for a kind we have never seen', () => {
     // The service invents kinds; an unknown one must still read as words.
     expect(shortLabel(w({ kind: 'monthly_burst', label: 'Monthly burst' }))).toBe('Monthly burst')
+  })
+})
+
+describe('headroomLabel', () => {
+  it('says what is left of the tightest window, in the menu row’s words', () => {
+    expect(
+      headroomLabel({
+        status: 'ready',
+        tightest: w({ kind: 'session', usedPercentage: 28 }),
+        error: null
+      })
+    ).toBe('72% left · session')
+    expect(
+      headroomLabel({
+        status: 'ready',
+        tightest: w({ kind: 'weekly_scoped', scope: 'Opus', usedPercentage: 91 }),
+        error: null
+      })
+    ).toBe('9% left · Opus')
+  })
+  it('says nothing before a read, or after a failed one', () => {
+    expect(headroomLabel(undefined)).toBeNull()
+    expect(headroomLabel({ status: 'error', tightest: null, error: 'x' })).toBeNull()
   })
 })
 

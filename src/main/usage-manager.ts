@@ -1,17 +1,45 @@
 import { execFile } from 'child_process'
+import fs from 'fs'
+import path from 'path'
 import { promisify } from 'util'
+import {
+  claudeAccountsManager,
+  DEFAULT_CLAUDE_ACCOUNT_ID,
+  type ClaudeAccount
+} from './claude-accounts'
 
 const execFileAsync = promisify(execFile)
 
-// Single source of truth for rate-limit usage — the same OAuth endpoint Claude Code
-// itself queries to populate the `rate_limits` block of its statusline JSON. The
-// statusline script is only a passive consumer of that data; we go straight to the source.
+// The usage endpoint Claude Code itself queries to populate the `rate_limits`
+// block of its statusline JSON. It needs the `user:profile` scope, which a
+// login credential has and a `claude setup-token` token does NOT (that one is
+// inference-only): a token account reads its quota from the probe below instead.
 const USAGE_ENDPOINT = 'https://api.anthropic.com/api/oauth/usage'
+const MESSAGES_ENDPOINT = 'https://api.anthropic.com/v1/messages'
 const KEYCHAIN_SERVICE = 'Claude Code-credentials'
 const OAUTH_BETA = 'oauth-2025-04-20'
+const API_VERSION = '2023-06-01'
 // A keychain read that has not answered in this long is a prompt nobody is
 // looking at. Give up and report it rather than hang the caller forever.
 const KEYCHAIN_TIMEOUT_MS = 10_000
+const FETCH_TIMEOUT_MS = 15_000
+
+/** The probe: the smallest request the API answers with the account's unified
+ *  rate-limit headers (the 5-hour and weekly windows, their utilization, their
+ *  reset times, the service's own verdict on each). One output token on the
+ *  cheapest model, a two-word prompt: about twenty tokens per read, twelve
+ *  reads an hour under the poll below. A token count (free) answers with no
+ *  such headers, so it cannot replace this. */
+export const PROBE_MODEL = 'claude-haiku-4-5-20251001'
+const PROBE_BODY = JSON.stringify({
+  model: PROBE_MODEL,
+  max_tokens: 1,
+  messages: [{ role: 'user', content: 'hi' }]
+})
+
+/** How long a read stays good for every window that asks; the poll in
+ *  `startPolling` refreshes every account on this same clock. */
+export const USAGE_CACHE_MS = 5 * 60_000
 
 // One usage window (5-hour block or a weekly cap), normalized for the UI.
 export interface UsageWindow {
@@ -86,25 +114,50 @@ interface RawUsageBody {
   limits?: RawLimit[] | null
 }
 
+/** Where an account's credential comes from, in the order a read tries them. */
+export type ClaudeCredential =
+  | { kind: 'token'; token: string }
+  | { kind: 'config-dir'; dir: string }
+  | { kind: 'keychain' }
+  /** An account with nothing to read with yet: never the machine login. */
+  | { kind: 'none' }
+
 // ASYNC, and it must stay async. `security` can block: macOS puts up an access
 // prompt when the keychain item's ACL does not already cover this binary, and it
 // answers at whatever speed a human does. execFileSync would hold the ENTIRE
 // main process for that — every window, every PTY, every IPC reply — behind a
 // dialog that may be sitting behind the app. `security` lives at a fixed system
 // path, so execFile (not exec) still avoids the login-shell dance.
-async function readAccessToken(): Promise<string | null> {
+async function readKeychainAccessToken(): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       '/usr/bin/security',
       ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
       { timeout: KEYCHAIN_TIMEOUT_MS }
     )
-    const parsed = JSON.parse(stdout.trim())
-    const oauth = parsed.claudeAiOauth ?? parsed
-    return typeof oauth.accessToken === 'string' ? oauth.accessToken : null
+    return accessTokenOf(JSON.parse(stdout.trim()))
   } catch {
     return null
   }
+}
+
+/** A custom `CLAUDE_CONFIG_DIR` keeps its login in `<dir>/.credentials.json`,
+ *  the same JSON the keychain item holds. Claude Code refreshes it whenever a
+ *  session on that account runs; an expired one reads as 401 below. */
+function readConfigDirAccessToken(dir: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(dir, '.credentials.json'), 'utf-8')
+    return accessTokenOf(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+function accessTokenOf(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object') return null
+  const record = parsed as Record<string, unknown>
+  const oauth = (record.claudeAiOauth ?? record) as Record<string, unknown>
+  return typeof oauth.accessToken === 'string' ? oauth.accessToken : null
 }
 
 function parseResetsAt(value: string | null | undefined): number | null {
@@ -119,7 +172,7 @@ function parseSeverity(value: string | null | undefined): UsageWindow['severity'
 
 // "weekly_scoped" → "Weekly scoped", so an unrecognized kind still reads as words.
 function humanizeKind(kind: string): string {
-  const spaced = kind.replace(/_/g, ' ').trim()
+  const spaced = kind.replace(/[_-]/g, ' ').trim()
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 
@@ -193,7 +246,7 @@ function normalizeLegacyWindows(raw: Record<string, RawWindow | null>): UsageWin
   return windows
 }
 
-function normalize(body: RawUsageBody): UsageWindow[] {
+export function normalize(body: RawUsageBody): UsageWindow[] {
   if (Array.isArray(body.limits)) {
     const windows = normalizeLimits(body.limits)
     if (windows.length > 0) return windows
@@ -201,40 +254,312 @@ function normalize(body: RawUsageBody): UsageWindow[] {
   return normalizeLegacyWindows(body as unknown as Record<string, RawWindow | null>)
 }
 
+// ── The probe's headers ──────────────────────────────────────────────────────
+
+const UNIFIED_PREFIX = 'anthropic-ratelimit-unified-'
+
+/** The service's verdict on a window, as the header spells it. */
+function severityOfStatus(status: string | null): UsageWindow['severity'] {
+  if (status === 'allowed') return 'normal'
+  if (status === 'allowed_warning') return 'warning'
+  if (status === 'rejected') return 'critical'
+  return null
+}
+
+/** `5h` → the session window, `7d` → the weekly all-models cap, `7d-<model>`
+ *  → a weekly cap scoped to that model, anything else → its own words. */
+function windowShapeOf(name: string): { kind: string; scope: string | null; label: string } {
+  if (name === '5h') return { kind: 'session', scope: null, label: 'Current session (5h)' }
+  if (name === '7d') return { kind: 'weekly_all', scope: null, label: 'Weekly · all models' }
+  const scoped = /^7d-(.+)$/.exec(name)
+  if (scoped) {
+    const scope = humanizeKind(scoped[1])
+    return { kind: 'weekly_scoped', scope, label: `Weekly · ${scope}` }
+  }
+  const label = humanizeKind(name)
+  return { kind: name, scope: null, label }
+}
+
+/**
+ * The unified rate-limit headers of a Messages response, read into the same
+ * windows the usage endpoint yields, so every consumer downstream is blind to
+ * which read produced them. Self-describing like the endpoint's `limits`: every
+ * `<name>-utilization` header is a window, its `<name>-reset` (epoch seconds)
+ * and `<name>-status` beside it. Utilization arrives as a fraction of the cap
+ * (0.21 = 21%); a value above 1 is taken as a percentage already.
+ */
+export function parseUnifiedRateLimitHeaders(get: (name: string) => string | null): UsageWindow[] {
+  return parseUnifiedRateLimitEntries(collectUnifiedHeaders(get))
+}
+
+/** The same, from the list a `Headers.forEach` hands over. */
+export function parseUnifiedRateLimitEntries(entries: [string, string][]): UsageWindow[] {
+  const byName = new Map<string, Record<string, string>>()
+  for (const [rawKey, value] of entries) {
+    const key = rawKey.toLowerCase()
+    if (!key.startsWith(UNIFIED_PREFIX)) continue
+    const rest = key.slice(UNIFIED_PREFIX.length)
+    const match = /^(.+)-(utilization|reset|status)$/.exec(rest)
+    if (!match) continue
+    const [, name, field] = match
+    const bucket = byName.get(name) ?? {}
+    bucket[field] = value
+    byName.set(name, bucket)
+  }
+  const ranked: { window: UsageWindow; rank: number; index: number }[] = []
+  let index = 0
+  for (const [name, fields] of byName) {
+    if (fields.utilization === undefined) continue
+    const utilization = Number(fields.utilization)
+    if (!Number.isFinite(utilization)) continue
+    const percent = utilization <= 1 ? utilization * 100 : utilization
+    const reset = fields.reset !== undefined ? Number(fields.reset) : NaN
+    const shape = windowShapeOf(name)
+    ranked.push({
+      window: {
+        key: `${shape.kind}:${shape.label}`,
+        label: shape.label,
+        kind: shape.kind,
+        scope: shape.scope,
+        usedPercentage: Math.max(0, Math.min(100, Math.round(percent * 10) / 10)),
+        resetsAt: Number.isFinite(reset) && reset > 0 ? reset * 1000 : null,
+        severity: severityOfStatus(fields.status ?? null)
+      },
+      rank: KIND_RANK[shape.kind] ?? Number.MAX_SAFE_INTEGER,
+      index: index++
+    })
+  }
+  return ranked.sort((a, b) => a.rank - b.rank || a.index - b.index).map((entry) => entry.window)
+}
+
+// The names the probe's headers are known to carry, so a `get`-shaped source
+// (a Headers object, a test) can be walked without enumeration.
+const KNOWN_UNIFIED_WINDOWS = ['5h', '7d']
+function collectUnifiedHeaders(get: (name: string) => string | null): [string, string][] {
+  const entries: [string, string][] = []
+  for (const name of KNOWN_UNIFIED_WINDOWS) {
+    for (const field of ['utilization', 'reset', 'status']) {
+      const value = get(`${UNIFIED_PREFIX}${name}-${field}`)
+      if (value !== null) entries.push([`${UNIFIED_PREFIX}${name}-${field}`, value])
+    }
+  }
+  return entries
+}
+
+function headerEntries(headers: Headers): [string, string][] {
+  const entries: [string, string][] = []
+  headers.forEach((value, key) => entries.push([key, value]))
+  return entries
+}
+
+// ── The reads ────────────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** The usage endpoint, with a login credential (keychain or config dir). */
+async function readFromEndpoint(token: string): Promise<UsageLimits | UsageError> {
+  let res: Response
+  try {
+    res = await fetchWithTimeout(USAGE_ENDPOINT, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': OAUTH_BETA
+      }
+    })
+  } catch {
+    return { error: 'Could not reach the usage service. Check your connection.' }
+  }
+
+  if (res.status === 401) {
+    return { error: 'Your Claude Code session expired. Run a session to refresh it.' }
+  }
+  if (!res.ok) {
+    return { error: `Usage service returned ${res.status}.` }
+  }
+
+  let body: RawUsageBody
+  try {
+    body = (await res.json()) as RawUsageBody
+  } catch {
+    return { error: 'Got an unexpected response from the usage service.' }
+  }
+
+  return { windows: normalize(body), fetchedAt: Date.now() }
+}
+
+/** The probe, with a pasted token: the quota is read off the response headers.
+ *  A 429 still carries them (that is the window being exhausted, not an error
+ *  in the read), so the headers win over the status whenever they are there. */
+async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
+  let res: Response
+  try {
+    res = await fetchWithTimeout(MESSAGES_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': OAUTH_BETA,
+        'anthropic-version': API_VERSION,
+        'content-type': 'application/json'
+      },
+      body: PROBE_BODY
+    })
+  } catch {
+    return { error: 'Could not reach Anthropic. Check your connection.' }
+  }
+  // Drain the body so the connection is released; its content is not the point.
+  void res.text().catch(() => undefined)
+
+  const windows = parseUnifiedRateLimitEntries(headerEntries(res.headers))
+  if (windows.length > 0) return { windows, fetchedAt: Date.now() }
+
+  if (res.status === 401 || res.status === 403) {
+    return { error: 'This token was refused. Generate a new one with `claude setup-token`.' }
+  }
+  if (!res.ok) {
+    return { error: `Anthropic returned ${res.status}.` }
+  }
+  return { error: 'Anthropic answered without any usage windows.' }
+}
+
+/** Which credential an account reads with. Exported for the tests. */
+export function credentialFor(
+  account: ClaudeAccount | undefined,
+  token: string | undefined
+): ClaudeCredential {
+  if (token) return { kind: 'token', token }
+  if (account?.configDir) return { kind: 'config-dir', dir: account.configDir }
+  // Only the Default account is the machine login. Another account with no
+  // token and no directory has nothing to read with: reading the keychain
+  // for it would show the wrong subscription's quota under its name (and
+  // put up the keychain prompt for nothing).
+  if (account && account.id !== DEFAULT_CLAUDE_ACCOUNT_ID) return { kind: 'none' }
+  return { kind: 'keychain' }
+}
+
+export async function readLimitsWith(
+  credential: ClaudeCredential
+): Promise<UsageLimits | UsageError> {
+  if (credential.kind === 'token') return readFromProbe(credential.token)
+  if (credential.kind === 'none') {
+    return { error: 'No token for this account yet. Paste one in Settings → Usage.' }
+  }
+  const token =
+    credential.kind === 'config-dir'
+      ? readConfigDirAccessToken(credential.dir)
+      : await readKeychainAccessToken()
+  if (!token) {
+    return {
+      error:
+        credential.kind === 'config-dir'
+          ? 'Sign in to Claude Code in this account to see its usage limits.'
+          : 'Sign in to Claude Code to see usage limits.'
+    }
+  }
+  return readFromEndpoint(token)
+}
+
+type CacheEntry = { result: UsageLimits | UsageError; at: number }
+type UpdateListener = (accountId: string, result: UsageLimits | UsageError) => void
+
+/**
+ * One cache per account, refreshed on a five-minute clock for EVERY account
+ * whether or not a window is looking, so the readout in settings and the
+ * launcher's account rows are current the moment they open. Reads for
+ * different accounts run in parallel: the keychain's ten-second stall (a
+ * prompt behind the app) costs one account's read, never N in a row.
+ */
 class UsageManager {
-  async getLimits(): Promise<UsageLimits | UsageError> {
-    const token = await readAccessToken()
-    if (!token) {
-      return { error: 'Sign in to Claude Code to see usage limits.' }
-    }
+  private cache = new Map<string, CacheEntry>()
+  private inFlight = new Map<string, Promise<UsageLimits | UsageError>>()
+  // The number of the latest read started per account: a read that finishes
+  // after a newer one started says nothing (see getLimits).
+  private latest = new Map<string, number>()
+  private listeners = new Set<UpdateListener>()
+  private timer: ReturnType<typeof setInterval> | null = null
 
-    let res: Response
+  onUpdate(listener: UpdateListener): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** The cached read for every account, for a window that just opened. */
+  snapshot(): Record<string, UsageLimits | UsageError> {
+    const out: Record<string, UsageLimits | UsageError> = {}
+    for (const [id, entry] of this.cache) out[id] = entry.result
+    return out
+  }
+
+  /** The account's limits: the cache while it is fresh, else a live read.
+   *  `force` reads live whatever the cache says (the Refresh button, a token
+   *  just pasted). The Default account is the machine's own login.
+   *
+   *  A forced read never joins a read already in flight: the one in flight
+   *  may have started BEFORE the token landed (the settings page asks for a
+   *  new account's usage the instant the account exists, the token arrives a
+   *  call later) and would answer with the machine login's verdict. It
+   *  starts its own, and the older read, finishing later, is discarded
+   *  rather than allowed to overwrite the newer answer. */
+  async getLimits(
+    accountId: string = DEFAULT_CLAUDE_ACCOUNT_ID,
+    options: { force?: boolean } = {}
+  ): Promise<UsageLimits | UsageError> {
+    const cached = this.cache.get(accountId)
+    if (!options.force && cached && Date.now() - cached.at < USAGE_CACHE_MS) return cached.result
+    const pending = this.inFlight.get(accountId)
+    if (pending && !options.force) return pending
+    const number = (this.latest.get(accountId) ?? 0) + 1
+    this.latest.set(accountId, number)
+    const read = (async () => {
+      const account = claudeAccountsManager.get(accountId)
+      if (accountId !== DEFAULT_CLAUDE_ACCOUNT_ID && !account) {
+        return { error: 'This Claude account no longer exists.' } as UsageError
+      }
+      const result = await readLimitsWith(
+        credentialFor(account, claudeAccountsManager.getToken(accountId))
+      )
+      if (this.latest.get(accountId) === number) {
+        this.cache.set(accountId, { result, at: Date.now() })
+        for (const listener of this.listeners) listener(accountId, result)
+      }
+      return result
+    })()
+    this.inFlight.set(accountId, read)
     try {
-      res = await fetch(USAGE_ENDPOINT, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'anthropic-beta': OAUTH_BETA
-        }
-      })
-    } catch {
-      return { error: 'Could not reach the usage service. Check your connection.' }
+      return await read
+    } finally {
+      if (this.inFlight.get(accountId) === read) this.inFlight.delete(accountId)
     }
+  }
 
-    if (res.status === 401) {
-      return { error: 'Your Claude Code session expired. Run a session to refresh it.' }
-    }
-    if (!res.ok) {
-      return { error: `Usage service returned ${res.status}.` }
-    }
+  /** Every account, live, in parallel. */
+  async refreshAll(): Promise<void> {
+    const ids = claudeAccountsManager.list().map((a) => a.id)
+    await Promise.all(ids.map((id) => this.getLimits(id, { force: true })))
+  }
 
-    let body: RawUsageBody
-    try {
-      body = (await res.json()) as RawUsageBody
-    } catch {
-      return { error: 'Got an unexpected response from the usage service.' }
-    }
+  forget(accountId: string): void {
+    this.cache.delete(accountId)
+  }
 
-    return { windows: normalize(body), fetchedAt: Date.now() }
+  /** The five-minute clock. Idempotent; `stopPolling` for tests and quit. */
+  startPolling(intervalMs: number = USAGE_CACHE_MS): void {
+    if (this.timer) return
+    this.timer = setInterval(() => void this.refreshAll(), intervalMs)
+    // Off the boot path: the first read waits for the windows to settle.
+    setTimeout(() => void this.refreshAll(), 5_000)
+  }
+
+  stopPolling(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
   }
 }
 

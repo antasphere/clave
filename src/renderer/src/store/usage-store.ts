@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import type { PiUsageTotals, UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
 import type { Session } from './session-types'
-import { createUsageResource } from './usage-resource'
+import { createUsageResource, type UsageResource } from './usage-resource'
+import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 
 export type UsageProvider = 'claude' | 'codex' | 'pi' | 'antigravity'
 export const USAGE_PROVIDER_LABELS = {
@@ -42,7 +43,31 @@ async function limits(result: Promise<UsageLimits | UsageError>): Promise<UsageL
 
 // One cache per provider and Pi range, shared by the pane and sidebar. Switching
 // tabs cannot let an outstanding request overwrite another provider's data.
-export const useUsageStore = createUsageResource(() => limits(window.electronAPI.getUsageLimits()))
+//
+// Claude is one cache PER ACCOUNT: the foot follows the focused tab's account,
+// the settings page shows every account, the launcher's rows show each
+// account's headroom. Main polls every account on its own clock and pushes
+// each read (`usage:claude-account`); a resource created here for an account
+// main has already read takes that read from the snapshot.
+type ClaudeUsageResource = ReturnType<typeof createUsageResource<UsageLimits>>
+const claudeStores = new Map<string, ClaudeUsageResource>()
+
+export function claudeUsageStore(
+  accountId: string = DEFAULT_CLAUDE_PROFILE_ID
+): ClaudeUsageResource {
+  let store = claudeStores.get(accountId)
+  if (!store) {
+    store = createUsageResource(({ force }) =>
+      limits(window.electronAPI.getUsageLimits(accountId, { force }))
+    )
+    claudeStores.set(accountId, store)
+    store.subscribe((state) => mirrorAccount(accountId, state))
+  }
+  return store
+}
+
+/** The machine login's cache, the one every pre-account caller reads. */
+export const useUsageStore = claudeUsageStore(DEFAULT_CLAUDE_PROFILE_ID)
 export const useCodexUsageStore = createUsageResource(() =>
   limits(window.electronAPI.getCodexUsageLimits())
 )
@@ -53,6 +78,50 @@ export const piUsageStores = {
   all: createUsageResource(() => window.electronAPI.getPiUsage('all'))
 }
 export const quotaUsageStores = { claude: useUsageStore, codex: useCodexUsageStore }
+
+/** What one account's read says, for a row that cannot subscribe to each
+ *  account's resource (the launcher's menu rows, the session's context menu). */
+export interface AccountUsageSummary {
+  status: UsageResource<UsageLimits>['status']
+  /** The window about to stop this account, or null when none is known. */
+  tightest: UsageWindow | null
+  error: string | null
+}
+
+/** One subscription for every account's read, mirrored from the resources. */
+export const useClaudeAccountsUsage = create<{ byAccount: Record<string, AccountUsageSummary> }>(
+  () => ({ byAccount: {} })
+)
+
+function mirrorAccount(accountId: string, state: UsageResource<UsageLimits>): void {
+  useClaudeAccountsUsage.setState((current) => ({
+    byAccount: {
+      ...current.byAccount,
+      [accountId]: {
+        status: state.status,
+        tightest: state.status === 'error' ? null : tightestWindow(state.data?.windows ?? []),
+        error: state.error
+      }
+    }
+  }))
+}
+
+/** Take main's read for an account, creating the resource when the account is
+ *  new to this window. */
+export function publishClaudeAccountUsage(
+  accountId: string,
+  result: UsageLimits | UsageError
+): void {
+  const store = claudeUsageStore(accountId)
+  if ('error' in result) store.getState().publishError(result.error)
+  else store.getState().publish(result)
+}
+
+/** Ask for every account's read once: what main already has arrives at once,
+ *  the rest is read live. Called when the account list is known. */
+export function primeClaudeAccountsUsage(accountIds: string[]): void {
+  for (const id of accountIds) void claudeUsageStore(id).getState().load()
+}
 
 // The footer and pane share the selected provider, including when settings is open.
 export const useUsageNavigation = create<{
@@ -118,11 +187,24 @@ export function formatReset(resetsAt: number | null): string | null {
   return 'resets shortly'
 }
 
+/** "72% left · session", the one line a menu row has room for. */
+export function headroomLabel(summary: AccountUsageSummary | undefined): string | null {
+  if (!summary || !summary.tightest) return null
+  const left = Math.max(0, Math.round(100 - summary.tightest.usedPercentage))
+  return `${left}% left · ${shortLabel(summary.tightest)}`
+}
+
 // Poll only providers/ranges that have been viewed. Codex is never started just
 // because a Claude-only user opened Clave. Focus/wake refreshes stale data too.
+// The Claude accounts are on main's clock: every push lands in its account's
+// resource here, whichever window it reaches.
 if (typeof window !== 'undefined') {
   const refresh = (): void => {
-    for (const store of [useUsageStore, useCodexUsageStore, ...Object.values(piUsageStores)]) {
+    for (const store of [
+      ...claudeStores.values(),
+      useCodexUsageStore,
+      ...Object.values(piUsageStores)
+    ]) {
       if (store.getState().status !== 'idle') void store.getState().load()
     }
   }
@@ -131,4 +213,7 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refresh()
   })
+  window.electronAPI?.onClaudeAccountUsage?.(({ accountId, result }) =>
+    publishClaudeAccountUsage(accountId, result)
+  )
 }

@@ -25,9 +25,11 @@ import { registerPreviewHandlers } from './preview-handlers'
 import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
+import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
+  registerClaudeAccountHandlers()
   registerUsageHandlers()
   registerGitHandlers()
   registerUpdaterHandlers()

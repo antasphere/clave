@@ -348,6 +348,15 @@ export interface UsageLimits {
   message?: string
 }
 
+/** A Claude account as the renderer sees it: never the token itself. */
+export interface ClaudeAccount {
+  id: string
+  label: string
+  /** Absolute `CLAUDE_CONFIG_DIR`, or '' for the shared `~/.claude`. */
+  configDir: string
+  hasToken: boolean
+}
+
 export interface PiUsageTotals {
   input: number
   output: number
@@ -688,7 +697,25 @@ export interface ElectronAPI {
   windowOpen: (workspaceId?: string) => Promise<{ windowId: number }>
   windowMoveSessions: (sessionIds: string[], targetWindowId: number) => Promise<MoveResult>
   windowMoveGroup: (group: unknown, targetWindowId: number) => Promise<MoveResult & { ok: boolean }>
-  getUsageLimits: () => Promise<UsageLimits | UsageError>
+  getUsageLimits: (
+    accountId?: string,
+    options?: { force?: boolean }
+  ) => Promise<UsageLimits | UsageError>
+  getClaudeUsageSnapshot: () => Promise<Record<string, UsageLimits | UsageError>>
+  onClaudeAccountUsage: (
+    callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void
+  ) => () => void
+  claudeAccountsList: () => Promise<ClaudeAccount[]>
+  claudeAccountAdd: (input: { label: string; configDir?: string }) => Promise<ClaudeAccount>
+  claudeAccountUpdate: (
+    id: string,
+    updates: { label?: string; configDir?: string }
+  ) => Promise<ClaudeAccount | undefined>
+  claudeAccountRemove: (id: string) => Promise<boolean>
+  /** Stores the token and reads the account's limits with it in one call. */
+  claudeAccountSetToken: (id: string, token: string) => Promise<UsageLimits | UsageError>
+  claudeAccountClearToken: (id: string) => Promise<void>
+  onClaudeAccountsChanged: (callback: (accounts: ClaudeAccount[]) => void) => () => void
   getCodexUsageLimits: () => Promise<UsageLimits | UsageError>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>

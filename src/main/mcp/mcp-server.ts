@@ -399,7 +399,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_list',
     {
       description:
-        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in.',
+        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude session also carries its account ({ id, label }, the subscription it runs on).',
       inputSchema: {
         workspace: z
           .string()
@@ -473,6 +473,14 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .max(128)
           .optional()
           .describe('Named local launch profile id or name. Omit to use the workspace default.'),
+        account: z
+          .string()
+          .min(1)
+          .max(128)
+          .optional()
+          .describe(
+            'Claude account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Usage → Claude accounts ("default" is the machine login). claude mode only. Omit to use the account selected in settings. Unknown names error with the list. clave_list reports each session\'s account.'
+          ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
           .enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])

@@ -396,8 +396,27 @@ const electronAPI = {
   windowMoveGroup: (group: unknown, targetWindowId: number) =>
     ipcRenderer.invoke('window:move-group', group, targetWindowId),
 
-  // Usage
-  getUsageLimits: () => ipcRenderer.invoke('usage:get-limits'),
+  // Usage. The Claude read is per account (the machine login when omitted);
+  // main polls every account on its own clock and pushes each result.
+  getUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
+    ipcRenderer.invoke('usage:get-limits', accountId, options),
+  getClaudeUsageSnapshot: () => ipcRenderer.invoke('usage:claude-snapshot'),
+  onClaudeAccountUsage: (
+    callback: (update: { accountId: string; result: unknown }) => void
+  ) => createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
+
+  // Claude accounts: the list crosses; a token goes in and never comes back.
+  claudeAccountsList: () => ipcRenderer.invoke('claude-accounts:list'),
+  claudeAccountAdd: (input: { label: string; configDir?: string }) =>
+    ipcRenderer.invoke('claude-accounts:add', input),
+  claudeAccountUpdate: (id: string, updates: { label?: string; configDir?: string }) =>
+    ipcRenderer.invoke('claude-accounts:update', id, updates),
+  claudeAccountRemove: (id: string) => ipcRenderer.invoke('claude-accounts:remove', id),
+  claudeAccountSetToken: (id: string, token: string) =>
+    ipcRenderer.invoke('claude-accounts:set-token', id, token),
+  claudeAccountClearToken: (id: string) => ipcRenderer.invoke('claude-accounts:clear-token', id),
+  onClaudeAccountsChanged: (callback: (accounts: unknown[]) => void) =>
+    createIpcListener<[unknown[]]>('claude-accounts:changed', callback),
   getCodexUsageLimits: () => ipcRenderer.invoke('usage:get-codex-limits'),
   getPiUsage: (range: 'today' | '7d' | '30d' | 'all') => ipcRenderer.invoke('usage:get-pi', range),
 

@@ -10,6 +10,7 @@ import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from './
 import { workspaceManager } from './workspace-manager'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { launchProfileManager } from './launch-profile-manager'
+import { claudeAccountsManager } from './claude-accounts'
 import { resolvePosixShellLaunch } from './shell-launch'
 import { CODEX_TITLE_CONFIG } from '../shared/codex-state'
 import { tmuxKillSessionArgs } from './tmux-args'
@@ -264,6 +265,34 @@ export function scrollTmuxSessionToText(tmuxName: string, needle: string, fromBo
  *  so the user's ~/.tmux.conf can't change behaviour (no surprise keybindings,
  *  no `destroy-unattached on` killing our sessions, no status bar stealing a
  *  row). Truecolor is forwarded and ESC latency dropped for snappy TUIs. */
+/**
+ * The per-session account variables a tmux-backed session must carry.
+ *
+ * A tmux server copies its OWN global environment into every new session,
+ * not the creating client's: only the variables named in `update-environment`
+ * cross from the client (and are removed from the session when the client
+ * lacks them, which is what a Default-account session wants). Clave's server
+ * is shared by every session and outlives the app, so a per-session account
+ * would otherwise reach only the very first session the server ever ran.
+ * Passing them as shell assignments or `new-session -e` would put the token
+ * in the process list for the session's whole life; this keeps it in the
+ * environment alone.
+ */
+export const TMUX_SESSION_ENV_VARS = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN'] as const
+
+/** The `set-option` calls that bring a live server's `update-environment` up
+ *  to TMUX_SESSION_ENV_VARS; none when it already lists them. Pure, for the
+ *  test: the config file only reaches a server at its first start. */
+export function tmuxEnvironmentReconcileArgs(current: readonly string[]): string[][] {
+  const present = new Set(current.map((v) => v.trim()))
+  return TMUX_SESSION_ENV_VARS.filter((name) => !present.has(name)).map((name) => [
+    'set-option',
+    '-ga',
+    'update-environment',
+    name
+  ])
+}
+
 function getTmuxConfigPath(): string {
   if (tmuxConfigPathCache) return tmuxConfigPathCache
   const conf = [
@@ -294,6 +323,10 @@ function getTmuxConfigPath(): string {
     // If a second client (e.g. an external `tmux attach`) joins, follow the
     // most-recently-active client's size instead of shrinking to the smallest.
     'set -g window-size latest',
+    // The account variables travel from the creating client into the new
+    // session (see TMUX_SESSION_ENV_VARS); without this a session on a
+    // running server gets the server's environment, never the account's.
+    ...TMUX_SESSION_ENV_VARS.map((name) => `set -ga update-environment ${name}`),
     ''
   ].join('\n')
   const p = path.join(app.getPath('userData'), 'clave.tmux.conf')
@@ -550,6 +583,33 @@ function reconcileTmuxBindings(tmuxPath: string): void {
   }
 }
 
+/** A server started before the account variables were in the config keeps
+ *  its old `update-environment`; add what is missing so the NEXT session on
+ *  it carries its account. No-op with no live server (the config does it). */
+function reconcileTmuxEnvironment(tmuxPath: string): void {
+  if (liveTmuxSessions(tmuxPath).size === 0) return
+  let current: string[] = []
+  try {
+    current = execFileSync(
+      tmuxPath,
+      ['-L', TMUX_SOCKET, 'show-options', '-gv', 'update-environment'],
+      { encoding: 'utf-8' }
+    )
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  } catch {
+    // Unreadable: try the appends anyway, a duplicate entry is harmless.
+  }
+  for (const args of tmuxEnvironmentReconcileArgs(current)) {
+    try {
+      execFileSync(tmuxPath, ['-L', TMUX_SOCKET, ...args], { stdio: 'ignore' })
+    } catch {
+      // Best effort: the session still starts, on the server's environment.
+    }
+  }
+}
+
 /** List live tmux sessions on the clave socket (empty if tmux/socket absent). */
 function liveTmuxSessions(tmuxPath: string): Set<string> {
   try {
@@ -647,6 +707,35 @@ interface PendingSpawn {
   autoExecute?: boolean
   /** CLAUDE_CONFIG_DIR to set on the spawn env (account/profile selection). */
   configDir?: string
+  /** CLAUDE_CODE_OAUTH_TOKEN for a token account: read from the encrypted
+   *  store at spawn, held here until the PTY starts, never on the record. */
+  oauthToken?: string
+}
+
+/**
+ * The environment a session's process starts with. Pure, so a test can prove
+ * an account actually reaches the process: nothing here fails loudly, and a
+ * dropped field spawns a session that looks right and runs on the wrong
+ * account.
+ *
+ * `CLAUDECODE` is stripped so a session started from inside another Claude
+ * session does not think it is nested. The account fields are only set when
+ * the account carries them: the Default account keeps whatever the user's own
+ * shell exports.
+ */
+export function buildSpawnEnv(
+  base: Record<string, string>,
+  account: { configDir?: string; oauthToken?: string }
+): Record<string, string> {
+  const env: Record<string, string> = {
+    ...base,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor'
+  }
+  delete env.CLAUDECODE
+  if (account.configDir) env.CLAUDE_CONFIG_DIR = account.configDir
+  if (account.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = account.oauthToken
+  return env
 }
 
 export interface PtySession {
@@ -893,6 +982,7 @@ class PtyManager {
         // binding; strip it from the live server so the fix applies without a
         // server restart (the -f config below only takes effect on a new one).
         reconcileTmuxBindings(tmuxPath)
+        reconcileTmuxEnvironment(tmuxPath)
         // `-u` forces UTF-8 client output. Electron apps are launched without a
         // UTF-8 locale (no LANG/LC_* in the GUI environment), so tmux would
         // otherwise run the client in non-UTF-8 mode and downsample every
@@ -938,7 +1028,14 @@ class PtyManager {
         cwd,
         initialCommand: options?.initialCommand,
         autoExecute: options?.autoExecute,
-        configDir: options?.configDir
+        configDir: options?.configDir,
+        // The token is looked up here, by account id, and only for a Claude
+        // session: the renderer never holds it, and a terminal or another
+        // agent never inherits it.
+        oauthToken:
+          kind === 'claude' || kind === 'claude-agents'
+            ? claudeAccountsManager.getToken(options?.claudeProfileId)
+            : undefined
       }
     }
     if (claudeSessionId) session.claudeSessionId = claudeSessionId
@@ -999,29 +1096,21 @@ class PtyManager {
       return
     }
     if (!session.pending) return
-    const { file, args, cwd, initialCommand, autoExecute, configDir } = session.pending
+    const { file, args, cwd, initialCommand, autoExecute, configDir, oauthToken } = session.pending
     session.pending = undefined
 
     const ptyName = isWindows ? undefined : 'xterm-256color'
 
+    // Per-session Claude account: a config dir and/or a pasted token, set only
+    // when the account carries them (see buildSpawnEnv). A tmux-backed session
+    // gets the same environment: tmux seeds a new session from the creating
+    // client's, which is this one.
     const ptyProcess = pty.spawn(file, args, {
       name: ptyName,
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
       cwd,
-      env: (() => {
-        const env: Record<string, string> = {
-          ...getLoginShellEnv(),
-          TERM: 'xterm-256color',
-          COLORTERM: 'truecolor'
-        }
-        delete env.CLAUDECODE
-        // Per-session Claude account: point this session at an alternate config
-        // dir. Only set when a non-default profile was chosen, so default
-        // sessions keep honouring whatever the shell already exports.
-        if (configDir) env.CLAUDE_CONFIG_DIR = configDir
-        return env
-      })()
+      env: buildSpawnEnv(getLoginShellEnv(), { configDir, oauthToken })
     })
 
     session.ptyProcess = ptyProcess

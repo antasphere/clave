@@ -8,15 +8,21 @@ export interface UsageResource<T> {
   fetchedAt: number | null
   refreshing: boolean
   load: (opts?: { force?: boolean }) => Promise<void>
+  /** A result that arrived on its own (main's poll pushed it): taken as the
+   *  current read, no request made. An in-flight load still lands after it. */
+  publish: (result: T) => void
+  publishError: (message: string) => void
 }
 
 const FRESH_MS = 60_000
 const RETRY_MS = [3_000, 8_000, 20_000, 45_000]
 
 /** A request shared by all consumers, with independent caches and retries for
- * each provider. Failed reads never masquerade as a zero or a current quota. */
+ * each provider. Failed reads never masquerade as a zero or a current quota.
+ * The fetcher is told whether the load was forced (the Refresh button), so a
+ * source with its own cache can read live only then. */
 export function createUsageResource<T>(
-  fetcher: () => Promise<T>
+  fetcher: (opts: { force: boolean }) => Promise<T>
 ): UseBoundStore<StoreApi<UsageResource<T>>> {
   let inFlight: Promise<void> | null = null
   let failures = 0
@@ -38,7 +44,7 @@ export function createUsageResource<T>(
       set({ status: data === null ? 'loading' : 'ready', refreshing: true, error: null })
       inFlight = (async () => {
         try {
-          const result = await Promise.resolve().then(fetcher)
+          const result = await Promise.resolve().then(() => fetcher({ force }))
           failures = 0
           set({ status: 'ready', data: result, fetchedAt: Date.now(), error: null })
         } catch (error) {
@@ -61,6 +67,17 @@ export function createUsageResource<T>(
         }
       })()
       return inFlight
+    },
+    publish: (result) => {
+      failures = 0
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+      set({ status: 'ready', data: result, fetchedAt: Date.now(), error: null })
+    },
+    publishError: (message) => {
+      set({ status: 'error', data: null, fetchedAt: Date.now(), error: message })
     }
   }))
   return store

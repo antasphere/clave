@@ -1,7 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
-import { useClaudeProfileStore, type ClaudeProfile } from '../../store/claude-profile-store'
+import {
+  useClaudeProfileStore,
+  describeClaudeProfileAuth,
+  type ClaudeProfile
+} from '../../store/claude-profile-store'
+import { useClaudeAccountsUsage, headroomLabel } from '../../store/usage-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import {
   useLaunchPrefsStore,
@@ -21,6 +26,7 @@ import {
   CommandLineIcon,
   FolderIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   BoltIcon,
   CheckIcon
 } from '@heroicons/react/24/outline'
@@ -71,13 +77,16 @@ const AGENT_LABELS: Record<AgentKind, string> = {
 }
 
 /** The caret's menu drops straight DOWN from the panel — the chevron says so —
- *  and its rows line up with the panel's own controls rather than with the
- *  caret. A .menu-item's icon sits 13px inside the menu (1px border + 4px
- *  padding + 8px item padding) against 11px for a .launcher-btn's icon inside
- *  the panel (1px border + 2px row padding + 8px button padding), so the menu's
- *  left edge lands 2px left of the panel's. Measured at open time, because the
- *  caret's own x moves with the agent label's width. */
-const MENU_ICON_INSET = 2
+ *  and its rows line up with the AGENT BUTTON, the control the caret belongs
+ *  to, so the logo of the remembered agent and the logos of the rows sit on
+ *  one vertical. (It used to hang off the panel's edge, which is the Terminal
+ *  button's: every row's logo then sat a button to the left of the one it
+ *  echoed.) A .menu-item's icon sits 13px inside the menu (1px border + 4px
+ *  padding + 8px item padding) against 8px for a .launcher-btn's icon inside
+ *  the button (its own padding), so the menu's left edge lands 5px left of
+ *  the button's. Measured at open time, because the caret's own x moves with
+ *  the agent label's width. */
+const MENU_ICON_INSET = 5
 
 /** Caret bottom → panel bottom is 3px (a 28px control centred in a 34px panel);
  *  the other 6px is the gap the menu leaves under the panel. */
@@ -114,12 +123,13 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const [busy, setBusy] = useState(false)
   const [menuAlignOffset, setMenuAlignOffset] = useState(0)
   const caretRef = useRef<HTMLButtonElement | null>(null)
-  const panelRef = useRef<HTMLDivElement | null>(null)
+  const agentButtonRef = useRef<HTMLButtonElement | null>(null)
 
   const agents = useAgentStore((s) => s.agents)
   const locations = useLocationStore((s) => s.locations)
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
+  const accountsUsage = useClaudeAccountsUsage((s) => s.byAccount)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const launchProfilePreferences = useLaunchProfileStore((s) => s.preferences)
   void launchProfilePreferences
@@ -152,13 +162,13 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
       ? profiles.find((p) => p.id === (setup.claudeProfileId ?? selectedProfileId))?.label
       : undefined
 
-  /** Opening measures the panel so the menu hangs off its left edge, not the
-   *  caret's — see MENU_ICON_INSET. */
+  /** Opening measures the agent button so the menu hangs off its left edge,
+   *  not the caret's — see MENU_ICON_INSET. */
   const openMenu = useCallback((open: boolean) => {
-    if (open && panelRef.current && caretRef.current) {
-      const panel = panelRef.current.getBoundingClientRect()
+    if (open && agentButtonRef.current && caretRef.current) {
+      const button = agentButtonRef.current.getBoundingClientRect()
       const caret = caretRef.current.getBoundingClientRect()
-      setMenuAlignOffset(Math.round(panel.left - caret.left - MENU_ICON_INSET))
+      setMenuAlignOffset(Math.round(button.left - caret.left - MENU_ICON_INSET))
     }
     setMenuOpen(open)
   }, [])
@@ -189,11 +199,14 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     [activeWorkspaceId, run]
   )
 
-  /** A Claude entry in the caret menu. With >1 profile it becomes a submenu
-   *  whose entries each launch under a specific account. */
+  /** A Claude entry in the caret menu. With more than one account it becomes
+   *  a submenu, opened on hover, one row per account with that account's
+   *  headroom beside it; with more than one launch profile too, the rows are
+   *  grouped under each launch profile's name. */
   const renderClaudeEntry = useCallback(
     (kind: AgentKind, label: string, shortcut: string | undefined, dangerousMode: boolean) => {
       const binaryProfiles = profilesFor('claude')
+      const selectedBinaryId = selectedLaunchProfile('claude', activeWorkspaceId).id
       const launch = (launchProfileId: string, claudeProfileId?: string): void =>
         launchAgent(
           { kind, dangerousMode, claudeProfileId, launchProfileId },
@@ -208,45 +221,60 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           </DropdownMenuItem>
         )
       }
+      const accountRow = (binary: { id: string }, account: ClaudeProfile): React.JSX.Element => {
+        const headroom = headroomLabel(accountsUsage[account.id])
+        return (
+          <DropdownMenuItem
+            key={`${binary.id}:${account.id}`}
+            data-claude-account={account.id}
+            onSelect={() => launch(binary.id, account.id)}
+            title={`${account.label} · ${describeClaudeProfileAuth(account)}`}
+          >
+            <span className="flex-1 truncate">{account.label}</span>
+            {headroom && (
+              <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
+                {headroom}
+              </span>
+            )}
+            {binary.id === selectedBinaryId && account.id === selectedProfileId && (
+              <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            )}
+          </DropdownMenuItem>
+        )
+      }
       return (
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
+          <DropdownMenuSubTrigger data-claude-entry={label}>
             <ClaudeLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
             <span className="flex-1">{label}</span>
-            <span className="ml-auto text-text-tertiary">{'›'}</span>
+            <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
-            {binaryProfiles.flatMap((binary) =>
-              multiProfile
-                ? profiles.map((account: ClaudeProfile) => (
-                    <DropdownMenuItem
-                      key={`${binary.id}:${account.id}`}
-                      onSelect={() => launch(binary.id, account.id)}
-                    >
-                      <span className="flex-1 truncate">
-                        {binary.name} · {account.label}
-                      </span>
-                      {binary.id === selectedLaunchProfile('claude', activeWorkspaceId).id &&
-                        account.id === selectedProfileId && (
-                          <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                        )}
-                    </DropdownMenuItem>
-                  ))
-                : [
+            {multiProfile
+              ? binaryProfiles.map((binary) => (
+                  <div key={binary.id}>
+                    <DropdownMenuLabel>
+                      {binaryProfiles.length > 1 ? `${binary.name} · account` : 'Account'}
+                    </DropdownMenuLabel>
+                    {profiles.map((account) => accountRow(binary, account))}
+                  </div>
+                ))
+              : [
+                  <DropdownMenuLabel key="label">Launch profile</DropdownMenuLabel>,
+                  ...binaryProfiles.map((binary) => (
                     <DropdownMenuItem key={binary.id} onSelect={() => launch(binary.id)}>
                       <span className="flex-1 truncate">{binary.name}</span>
-                      {binary.id === selectedLaunchProfile('claude', activeWorkspaceId).id && (
+                      {binary.id === selectedBinaryId && (
                         <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
                       )}
                     </DropdownMenuItem>
-                  ]
-            )}
+                  ))
+                ]}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
       )
     },
-    [activeWorkspaceId, launchAgent, multiProfile, profiles, selectedProfileId]
+    [accountsUsage, activeWorkspaceId, launchAgent, multiProfile, profiles, selectedProfileId]
   )
 
   const renderAgentEntry = useCallback(
@@ -275,6 +303,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
           <DropdownMenuSubTrigger>
             <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
             <span className="flex-1">{label}</span>
+            <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
@@ -295,7 +324,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
   return (
     <div className="relative">
-      <div className="launcher-panel" ref={panelRef}>
+      <div className="launcher-panel">
         <div className="launcher-row">
           <button
             disabled={busy}
@@ -311,8 +340,10 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
           <div className="launcher-split">
             <button
+              ref={agentButtonRef}
               disabled={busy}
               className="launcher-btn"
+              data-launcher-agent
               title={`${describeSetup(setup, [binaryProfile.name, profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
               onClick={(e) => void run({ setup, cwd: cwdFor(e), remember: true })}
             >
