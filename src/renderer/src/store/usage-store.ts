@@ -128,7 +128,8 @@ export async function primeClaudeAccountsUsage(accountIds: string[]): Promise<vo
   for (const id of accountIds) {
     const known = snapshot[id]
     if (known && !('error' in known)) publishClaudeAccountUsage(id, known)
-    else void claudeUsageStore(id).getState().load()
+    // Forced, or main would answer with the very error it cached.
+    else void claudeUsageStore(id).getState().load({ force: true })
   }
 }
 

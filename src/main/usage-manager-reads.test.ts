@@ -168,6 +168,39 @@ describe('a forced read after a token paste', () => {
     off()
   })
 
+  it('polls every account on its clock, only while a window is open, until stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      // The token account's probes alone: the Default's endpoint read (its
+      // mocked keychain answers) is on the same tick and is not the subject.
+      let reads = 0
+      globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') reads++
+        return response(200, {
+          'anthropic-ratelimit-unified-5h-utilization': '0.2',
+          'anthropic-ratelimit-unified-5h-status': 'allowed'
+        })
+      }) as typeof fetch
+      const polled = claudeAccountsManager.add({ label: 'Polled' })
+      claudeAccountsManager.setToken(polled.id, TOKEN)
+      let open = false
+      usageManager.startPolling(1_000, () => open)
+      await vi.advanceTimersByTimeAsync(6_000)
+      const whileClosed = reads
+      open = true
+      await vi.advanceTimersByTimeAsync(3_000)
+      const whileOpen = reads
+      usageManager.stopPolling()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(whileClosed).toBe(0)
+      expect(whileOpen).toBe(3)
+      expect(reads).toBe(whileOpen)
+    } finally {
+      usageManager.stopPolling()
+      vi.useRealTimers()
+    }
+  })
+
   it('reports an account that no longer exists', async () => {
     const gone = claudeAccountsManager.add({ label: 'Gone' })
     claudeAccountsManager.remove(gone.id)

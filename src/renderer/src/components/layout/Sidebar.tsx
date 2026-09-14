@@ -837,6 +837,10 @@ export function Sidebar() {
         // Local session
         try {
           const dupOtherProvider = session.antigravityMode || session.codexMode || session.piMode || session.claudeAgentsMode
+          // A Claude account belongs to a Claude session of either kind:
+          // `claude agents` takes the token like `claude` does (round 2 of
+          // verification found the clone of an agents tab on the machine login).
+          const dupClaudeKind = !(session.antigravityMode || session.codexMode || session.piMode)
           // Re-prime the clone with the same one-shot prompt (agent modes only;
           // `claude agents` rejects a positional prompt). Undefined for a normal
           // (un-primed) session → same as today.
@@ -856,7 +860,7 @@ export function Sidebar() {
             // The clone runs on its source's account: main reads the token by
             // this id at spawn, so leaving it out would put the clone on the
             // machine login while every readout still named the account.
-            ...(dupOtherProvider ? {} : accountSpawnFields(session)),
+            ...(dupClaudeKind ? accountSpawnFields(session) : {}),
             // A duplicate belongs where its source lives, not to the active view.
             workspaceId: session.workspaceId
           })
@@ -881,7 +885,7 @@ export function Sidebar() {
             launchProfileId: sessionInfo.launchProfileId,
             piProvider: sessionInfo.piProvider,
             piThinking: sessionInfo.piThinking,
-            ...(dupOtherProvider ? {} : accountSessionFields(session)),
+            ...(dupClaudeKind ? accountSessionFields(session) : {}),
             // Persist so re-duplicating the clone also re-primes.
             initialPrompt,
             sessionType: 'local',

@@ -10,7 +10,7 @@
 // The machine's own login is never read: the Default account's channel is
 // stubbed, and the probe a token account reads with is a stubbed fetch in the
 // main process answering the unified rate-limit headers per token.
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, rmSync } from 'node:fs'
 import {
   launchApp,
   seedWorkspaces,
@@ -27,6 +27,9 @@ const WORK_TOKEN = 'sk-ant-oat01-work-token-for-the-e2e-run-0123456789'
 const PLAY_TOKEN = 'sk-ant-oat01-play-token-for-the-e2e-run-0123456789'
 
 export async function run(t) {
+  // The launch profiles this spec makes persist in its user-data dir: start
+  // from nothing, or a previous run's profiles multiply the menu's rows.
+  rmSync(DIR, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
@@ -105,6 +108,20 @@ export async function run(t) {
       },
       { WORK_TOKEN, PLAY_TOKEN }
     )
+    // The workspace default for claude, resolved in main at the spawn and,
+    // after the reload below, known to the renderer's launcher too: a "claude"
+    // that prints the token the session started with, the one check a badge
+    // cannot fake.
+    await win.evaluate(async (workspaceId) => {
+      await window.electronAPI.launchProfileUpsert({
+        id: 'e2e-printenv',
+        name: 'printenv',
+        family: 'claude',
+        command: ['sh', '-c', 'printf "TOKEN=%s\\n" "$CLAUDE_CODE_OAUTH_TOKEN"; sleep 60'],
+        additionalArgs: []
+      })
+      await window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'e2e-printenv')
+    }, WS.id)
     await win.reload()
     await win.waitForSelector('.sidebar-footer-line[data-usage-provider="claude"]')
     await until(async () => {
@@ -191,18 +208,6 @@ export async function run(t) {
     // ── An agent opens a tab on the account, and the process gets the token ─
     // A launch profile whose "claude" prints the token the session started
     // with: the one check a badge cannot fake.
-    // The workspace default for claude, resolved in main at the spawn: the
-    // renderer's copy of the launch profiles is not what runs.
-    await win.evaluate(async (workspaceId) => {
-      await window.electronAPI.launchProfileUpsert({
-        id: 'e2e-printenv',
-        name: 'printenv',
-        family: 'claude',
-        command: ['sh', '-c', 'printf "TOKEN=%s\\n" "$CLAUDE_CODE_OAUTH_TOKEN"; sleep 60'],
-        additionalArgs: []
-      })
-      await window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'e2e-printenv')
-    }, WS.id)
     let rejected = null
     try {
       await callMcp(app, 'openSession', { cwd: ROOT, mode: 'claude', account: 'Nobody' })
@@ -273,7 +278,28 @@ export async function run(t) {
     await win.keyboard.press('Escape')
 
     // ── The launcher: aligned on the agent button, accounts on hover ─────
-    await win.click('.launcher-caret')
+    // A launch just made leaves the caret disabled for a beat; open it once
+    // it is back, and retry the click until the menu is there.
+    const openCaret = async () => {
+      for (let i = 0; i < 10; i++) {
+        // Never toggle a menu that is still open or still fading: the click
+        // would close it and the entries would be read off the exit animation.
+        await win.keyboard.press('Escape')
+        await until(async () => (await win.locator('[role="menu"]').count()) === 0, {
+          tries: 30,
+          gapMs: 100
+        })
+        await win.locator('.launcher-caret:not([disabled])').waitFor()
+        await win.click('.launcher-caret')
+        const shown = await win
+          .locator('[data-claude-entry="Claude Code"]')
+          .waitFor({ timeout: 1_500 })
+          .then(() => true, () => false)
+        if (shown && (await win.locator('.launcher-caret').getAttribute('data-state')) === 'open') return
+      }
+      throw new Error('the caret menu never opened')
+    }
+    await openCaret()
     const menu = win.locator('[role="menu"]').first()
     await menu.waitFor()
     const [menuBox, buttonBox] = await Promise.all([
@@ -286,18 +312,78 @@ export async function run(t) {
     t.check('the menu hangs off the agent button, logos on one vertical', drift <= 1.5, { menu: menuBox.x, button: buttonBox.x })
     const claudeEntry = win.locator('[data-claude-entry="Claude Code"]')
     await claudeEntry.hover()
-    const rows = win.locator('[data-claude-account]')
+    // Two launch profiles (the built-in claude and printenv), so the submenu
+    // groups the accounts under each; the rows read are printenv's.
+    const accountGroup = (menu) =>
+      menu.locator('div').filter({ has: win.locator('.menu-label', { hasText: 'printenv' }) })
+    const rows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
     await until(async () => (await rows.count()) === 2)
     t.equal('hovering Claude Code offers both accounts', await rows.count(), 2)
-    const workRowText = await win.locator(`[data-claude-account="${work.id}"]`).textContent()
+    const workRowText = await rows.filter({ hasText: 'Work' }).first().textContent()
     t.check("the account row shows the account's headroom", workRowText.includes('Work') && workRowText.includes('90% left'), workRowText)
-    await win.locator(`[data-claude-account="${work.id}"]`).click()
+    await rows.filter({ hasText: 'Work' }).first().click()
     const spawned = await until(async () => {
       const list = await callMcp(app, 'list', {})
       const fresh = list.sessions.filter((s) => s.account?.label === 'Work')
       return fresh.length >= 2 ? fresh : null
     })
     t.check('picking the row starts a session on that account', !!spawned)
+
+    // ── A claude agents tab, and its duplicate, run on the account too ──
+    // Round 2 of verification: the clone of an agents tab was on the machine
+    // login. Started from the launcher's own submenu, as a user would.
+    await win.keyboard.press('Escape')
+    const idsBeforeAgents = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
+    await openCaret()
+    try {
+      await win.locator('[data-claude-entry="Claude Agents"]').hover({ timeout: 8_000 })
+    } catch (e) {
+      const menus = await win.locator('[role="menu"]').evaluateAll((els) =>
+        els.map((el) => ({ open: el.getAttribute('data-state'), text: el.textContent?.slice(0, 200) }))
+      )
+      const entries = await win.locator('[data-claude-entry]').evaluateAll((els) => els.map((el) => el.getAttribute('data-claude-entry')))
+      t.check('the caret menu offers the Claude Agents entry', false, { menus, entries, error: e.message.split('\n')[0] })
+      throw e
+    }
+    // The Claude Code submenu the pointer crossed is still fading out: the
+    // Agents submenu is the newest menu in the document.
+    const agentsRows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
+    await until(async () => (await agentsRows.count()) === 2)
+    await agentsRows.filter({ hasText: 'Work' }).first().click()
+    const agents = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      return list.sessions.find((s) => !idsBeforeAgents.has(s.id)) ?? null
+    })
+    t.check('the submenu started a claude agents tab on the account', agents?.mode === 'claude-agents' && agents.account?.label === 'Work', agents)
+    await callMcp(app, 'rename', { target: 'session', id: agents.id, name: 'Agents on Work' })
+    await callMcp(app, 'focus', { sessionId: agents.id })
+    const agentsPrinted = await until(
+      async () => {
+        const read = await callMcp(app, 'readSession', { sessionId: agents.id, lines: 40, callerSessionId: agents.id })
+        const text = (read?.text ?? '').replace(/\n/g, '')
+        return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
+      },
+      { tries: 60, gapMs: 500 }
+    )
+    t.check('the agents process got the account’s token', !!agentsPrinted)
+    const idsBeforeAgentsDup = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
+    await win.locator('.sidebar-item', { hasText: 'Agents on Work' }).first().click({ button: 'right' })
+    await win.locator('[role="menuitem"]:has-text("Duplicate")').click()
+    const agentsDup = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      return list.sessions.find((s) => !idsBeforeAgentsDup.has(s.id)) ?? null
+    })
+    t.check('the agents duplicate is listed on the account', agentsDup?.account?.label === 'Work', agentsDup?.account)
+    await callMcp(app, 'focus', { sessionId: agentsDup.id })
+    const agentsDupPrinted = await until(
+      async () => {
+        const read = await callMcp(app, 'readSession', { sessionId: agentsDup.id, lines: 40, callerSessionId: agentsDup.id })
+        const text = (read?.text ?? '').replace(/\n/g, '')
+        return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
+      },
+      { tries: 60, gapMs: 500 }
+    )
+    t.check('the agents duplicate’s process got the account’s token', !!agentsDupPrinted)
 
     // ── Duplicate and Resume keep the account ───────────────────────────
     // Round 1 of verification found both spawning on the machine login with
