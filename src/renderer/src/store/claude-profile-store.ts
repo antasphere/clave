@@ -186,6 +186,54 @@ export function resolveClaudeProfile(
   return loose.length === 1 ? loose[0] : undefined
 }
 
+/** What a session says about its own account: the account as it is today, or
+ *  the label the session was started with when the account has since been
+ *  removed (the process keeps running on it; the readouts must not say
+ *  Default). A session with no account field is the Default. */
+export function sessionAccount(session: {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+}): { id: string; label: string; removed: boolean } {
+  const { profiles } = useClaudeProfileStore.getState()
+  const live = profiles.find((p) => p.id === (session.claudeProfileId ?? DEFAULT_CLAUDE_PROFILE_ID))
+  if (live) return { id: live.id, label: live.label, removed: false }
+  return {
+    id: session.claudeProfileId ?? DEFAULT_CLAUDE_PROFILE_ID,
+    label: session.claudeProfileLabel ?? 'Removed account',
+    removed: true
+  }
+}
+
+/** The spawn fields a clone or a resume carries from its source session, so
+ *  the new process runs on the same account: main reads the token by
+ *  `claudeProfileId` at spawn. Empty for a session on the Default. */
+export function accountSpawnFields(session: {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  claudeConfigDir?: string
+}): { configDir?: string; claudeProfileId?: string; claudeProfileLabel?: string } {
+  if (!session.claudeProfileId) return {}
+  return {
+    configDir: session.claudeConfigDir || undefined,
+    claudeProfileId: session.claudeProfileId,
+    claudeProfileLabel: session.claudeProfileLabel
+  }
+}
+
+/** The same account, as the new session's own record. */
+export function accountSessionFields(session: {
+  claudeProfileId?: string
+  claudeProfileLabel?: string
+  claudeConfigDir?: string
+}): { claudeProfileId?: string; claudeProfileLabel?: string; claudeConfigDir?: string } {
+  if (!session.claudeProfileId) return {}
+  return {
+    claudeProfileId: session.claudeProfileId,
+    claudeProfileLabel: session.claudeProfileLabel,
+    claudeConfigDir: session.claudeConfigDir || undefined
+  }
+}
+
 /** The spawn fields a profile contributes. `configDir` is undefined for the
  *  Default profile so we never set CLAUDE_CONFIG_DIR on a passthrough session.
  *  The token is not among them: main reads it by `claudeProfileId` at spawn. */

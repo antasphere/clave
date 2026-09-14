@@ -23,6 +23,7 @@ import {
   getClaudeProfile,
   resolveClaudeProfile,
   claudeProfileSpawnFields,
+  sessionAccount,
   type ClaudeProfile
 } from '../store/claude-profile-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
@@ -149,13 +150,7 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       agentState: s.agentState ?? null,
       // The Claude account the tab runs on; the Default when the tab predates
       // accounts or was launched without naming one.
-      account:
-        s.claudeMode || s.claudeAgentsMode
-          ? (() => {
-              const account = getClaudeProfile(s.claudeProfileId)
-              return { id: account.id, label: account.label }
-            })()
-          : null,
+      account: s.claudeMode || s.claudeAgentsMode ? sessionAccount(s) : null,
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,

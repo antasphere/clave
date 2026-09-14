@@ -24,7 +24,8 @@ vi.mock('child_process', () => ({
     cb: (err: null, out: { stdout: string }) => void
   ) => {
     setTimeout(
-      () => cb(null, { stdout: JSON.stringify({ claudeAiOauth: { accessToken: 'machine-login' } }) }),
+      () =>
+        cb(null, { stdout: JSON.stringify({ claudeAiOauth: { accessToken: 'machine-login' } }) }),
       30
     )
   }
@@ -137,6 +138,34 @@ describe('a forced read after a token paste', () => {
     expect(result).toEqual({
       error: 'This token was refused. Generate a new one with `claude setup-token`.'
     })
+  })
+
+  it('forgets a read in flight, so a cleared token’s answer never lands', async () => {
+    let release: (() => void) | null = null
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = () =>
+            resolve(
+              response(200, {
+                'anthropic-ratelimit-unified-5h-utilization': '0.42',
+                'anthropic-ratelimit-unified-5h-status': 'allowed'
+              })
+            )
+        })
+    ) as typeof fetch
+    const gone = claudeAccountsManager.add({ label: 'Forgotten' })
+    claudeAccountsManager.setToken(gone.id, TOKEN)
+    const updates: string[] = []
+    const off = usageManager.onUpdate((id) => updates.push(id))
+    const pending = usageManager.getLimits(gone.id, { force: true })
+    claudeAccountsManager.clearToken(gone.id)
+    usageManager.forget(gone.id)
+    release!()
+    await pending
+    expect(usageManager.snapshot()[gone.id]).toBeUndefined()
+    expect(updates).toEqual([])
+    off()
   })
 
   it('reports an account that no longer exists', async () => {

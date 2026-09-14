@@ -43,5 +43,9 @@ export function registerUsageHandlers(): void {
   // The five-minute clock, for every account. Not under the E2E flag: a test
   // instance stubs the channel above and must never reach the keychain or the
   // network on its own.
-  if (!TEST_NO_ACTIVATE) usageManager.startPolling()
+  if (!TEST_NO_ACTIVATE) {
+    usageManager.startPolling(undefined, () =>
+      BrowserWindow.getAllWindows().some((win) => !win.isDestroyed())
+    )
+  }
 }

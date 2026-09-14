@@ -36,6 +36,7 @@ import {
 } from './mission-control-manager'
 import { cleanupClaveWatchers } from './ipc-handlers/clave-file-handlers'
 import { startMcpServer, stopMcpServer, registerMcpWindowOpener } from './mcp/mcp-server'
+import { usageManager } from './usage-manager'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
@@ -348,6 +349,7 @@ app.on('before-quit', () => {
   cleanupAutoUpdater()
   cleanupTelemetry()
   cleanupMissionControl()
+  usageManager.stopPolling()
   stopMcpServer()
 })
 

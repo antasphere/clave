@@ -545,16 +545,26 @@ class UsageManager {
     await Promise.all(ids.map((id) => this.getLimits(id, { force: true })))
   }
 
+  /** Drop what is known about an account (its token was cleared, or it was
+   *  removed): the cache, and any read still in flight, which must not land
+   *  the forgotten credential's answer once it returns. */
   forget(accountId: string): void {
     this.cache.delete(accountId)
+    this.inFlight.delete(accountId)
+    this.latest.set(accountId, (this.latest.get(accountId) ?? 0) + 1)
   }
 
-  /** The five-minute clock. Idempotent; `stopPolling` for tests and quit. */
-  startPolling(intervalMs: number = USAGE_CACHE_MS): void {
+  /** The five-minute clock. Idempotent; `stopPolling` at quit. `shouldRun`
+   *  is asked at every tick: a probe spends a little of the quota it reads,
+   *  so the clock stands still while nobody has a window open. */
+  startPolling(intervalMs: number = USAGE_CACHE_MS, shouldRun: () => boolean = () => true): void {
     if (this.timer) return
-    this.timer = setInterval(() => void this.refreshAll(), intervalMs)
+    const tick = (): void => {
+      if (shouldRun()) void this.refreshAll()
+    }
+    this.timer = setInterval(tick, intervalMs)
     // Off the boot path: the first read waits for the windows to settle.
-    setTimeout(() => void this.refreshAll(), 5_000)
+    setTimeout(tick, 5_000)
   }
 
   stopPolling(): void {

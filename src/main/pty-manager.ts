@@ -713,6 +713,23 @@ interface PendingSpawn {
 }
 
 /**
+ * The token a session starts with: the account's, and ONLY for a Claude
+ * session. A plain terminal, Codex, Antigravity or Pi handed an account id
+ * (a duplicate of a Claude tab switched to another agent, a caller's
+ * mistake) must never inherit a subscription token into its environment.
+ * Pure over the account store, so the boundary has a test of its own.
+ */
+export function accountTokenForSpawn(
+  kind: AgentKind | null,
+  accountId: string | undefined,
+  getToken: (id: string | undefined) => string | undefined = (id) =>
+    claudeAccountsManager.getToken(id)
+): string | undefined {
+  if (kind !== 'claude' && kind !== 'claude-agents') return undefined
+  return getToken(accountId)
+}
+
+/**
  * The environment a session's process starts with. Pure, so a test can prove
  * an account actually reaches the process: nothing here fails loudly, and a
  * dropped field spawns a session that looks right and runs on the wrong
@@ -1032,10 +1049,7 @@ class PtyManager {
         // The token is looked up here, by account id, and only for a Claude
         // session: the renderer never holds it, and a terminal or another
         // agent never inherits it.
-        oauthToken:
-          kind === 'claude' || kind === 'claude-agents'
-            ? claudeAccountsManager.getToken(options?.claudeProfileId)
-            : undefined
+        oauthToken: accountTokenForSpawn(kind, options?.claudeProfileId)
       }
     }
     if (claudeSessionId) session.claudeSessionId = claudeSessionId

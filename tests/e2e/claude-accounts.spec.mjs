@@ -61,6 +61,15 @@ export async function run(t) {
           }
           return original(event, accountId, options)
         })
+        // The first boot, before this fixture, read the machine login for
+        // real; a window primes from main's snapshot, so that read must not
+        // reach the renderer under test either.
+        const snapshot = handlers.get('usage:claude-snapshot')
+        handlers.set('usage:claude-snapshot', async (event) => {
+          const all = await snapshot(event)
+          delete all.default
+          return all
+        })
         // The probe: a one-token message whose headers carry the quota. Which
         // account answered is decided by the bearer token, as the API does.
         const byToken = {
@@ -236,7 +245,12 @@ export async function run(t) {
     // The Default account: the machine login, never probed.
     const onDefault = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'claude', account: 'default', name: 'On Default' })
     await callMcp(app, 'focus', { sessionId: onDefault.sessionId })
-    t.check('back on the machine login, the foot reads its own window', await textIs('70% left'))
+    t.check('back on the machine login, the foot reads its own window', await textIs('70% left'), {
+      foot: await footer().textContent(),
+      snapshot: await win.evaluate(() => window.electronAPI.getClaudeUsageSnapshot()),
+      defaultReads: (await fixture()).defaultReads,
+      probes: (await fixture()).probes.map((p) => `${p.method} ${p.url} ${p.masked}`)
+    })
     const defaultPrinted = await until(
       async () => {
         const read = await callMcp(app, 'readSession', { sessionId: onDefault.sessionId, lines: 40, callerSessionId: onDefault.sessionId })
@@ -284,6 +298,79 @@ export async function run(t) {
       return fresh.length >= 2 ? fresh : null
     })
     t.check('picking the row starts a session on that account', !!spawned)
+
+    // ── Duplicate and Resume keep the account ───────────────────────────
+    // Round 1 of verification found both spawning on the machine login with
+    // an empty token while every readout still said the account.
+    const idsBefore = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
+    await win.locator('.sidebar-item', { hasText: 'On Work' }).first().click({ button: 'right' })
+    await win.locator('[role="menuitem"]:has-text("Duplicate")').click()
+    const duplicate = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      return list.sessions.find((s) => !idsBefore.has(s.id)) ?? null
+    })
+    t.check('Duplicate made a tab', !!duplicate)
+    t.check('the duplicate is listed on the source’s account', duplicate?.account?.label === 'Work', duplicate?.account)
+    await callMcp(app, 'focus', { sessionId: duplicate.id })
+    const dupPrinted = await until(
+      async () => {
+        const read = await callMcp(app, 'readSession', { sessionId: duplicate.id, lines: 40, callerSessionId: duplicate.id })
+        const text = (read?.text ?? '').replace(/\n/g, '')
+        return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
+      },
+      { tries: 60, gapMs: 500 }
+    )
+    t.check('the duplicate’s process got the account’s token', !!dupPrinted)
+
+    // A profile that prints and exits, so the tab dies and Resume appears.
+    await win.evaluate(async (workspaceId) => {
+      await window.electronAPI.launchProfileUpsert({
+        id: 'e2e-printexit',
+        name: 'printexit',
+        family: 'claude',
+        // A short life, long enough for the terminal to attach and read it.
+        command: ['sh', '-c', 'printf "TOKEN=%s\\n" "$CLAUDE_CODE_OAUTH_TOKEN"; sleep 4'],
+        additionalArgs: []
+      })
+      await window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'e2e-printexit')
+    }, WS.id)
+    const mortal = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'claude', account: 'Work', name: 'On Work, dead' })
+    await callMcp(app, 'focus', { sessionId: mortal.sessionId })
+    const dead = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      const s = list.sessions.find((x) => x.id === mortal.sessionId)
+      return s && !s.alive ? s : null
+    }, { tries: 60, gapMs: 500 })
+    t.check('the print-and-exit tab died', !!dead)
+    const idsBeforeResume = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
+    await win.locator('.sidebar-item', { hasText: 'On Work, dead' }).first().click({ button: 'right' })
+    await win.locator('[role="menuitem"]:has-text("Resume")').first().click()
+    const resumed = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      return list.sessions.find((s) => !idsBeforeResume.has(s.id)) ?? null
+    })
+    t.check('Resume made a tab', !!resumed)
+    t.check('the resumed tab is listed on the account', resumed?.account?.label === 'Work', resumed?.account)
+    const resumedPrinted = await until(
+      async () => {
+        const read = await callMcp(app, 'readSession', { sessionId: resumed.id, lines: 40, callerSessionId: resumed.id })
+        const text = (read?.text ?? '').replace(/\n/g, '')
+        return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
+      },
+      { tries: 60, gapMs: 500 }
+    )
+    t.check('the resumed process got the account’s token', !!resumedPrinted, resumedPrinted ?? (await callMcp(app, 'readSession', { sessionId: resumed.id, lines: 40, callerSessionId: resumed.id }).catch((e) => e.message)))
+
+    // ── A removed account keeps its name on the sessions still running on it ─
+    await win.evaluate((id) => window.electronAPI.claudeAccountRemove(id), work.id)
+    const afterRemoval = await until(async () => {
+      const list = await callMcp(app, 'list', {})
+      const s = list.sessions.find((x) => x.id === opened.sessionId)
+      return s?.account?.removed ? s : null
+    })
+    t.check('a session on a removed account still names it, flagged removed', afterRemoval?.account?.label === 'Work' && afterRemoval.account.removed === true, afterRemoval?.account)
+    await callMcp(app, 'focus', { sessionId: opened.sessionId })
+    t.check('the foot still names the removed account', await textIs('Work'))
 
     // ── Nothing but a token account is ever probed ──────────────────────
     probes = (await fixture()).probes

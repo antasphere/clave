@@ -3,6 +3,8 @@ import {
   resolveClaudeProfile,
   describeClaudeProfileAuth,
   claudeProfileSpawnFields,
+  accountSpawnFields,
+  accountSessionFields,
   type ClaudeProfile
 } from './claude-profile-store'
 
@@ -41,6 +43,29 @@ describe('describeClaudeProfileAuth', () => {
     expect(describeClaudeProfileAuth(profiles[1])).toBe('Token')
     expect(describeClaudeProfileAuth(profiles[2])).toBe('Config directory')
     expect(describeClaudeProfileAuth(profiles[3])).toBe('No credential yet')
+  })
+  it('names the token first when an account has both a token and a directory', () => {
+    // The spawn takes the token ahead of the directory; the badge says the same.
+    expect(
+      describeClaudeProfileAuth({ id: 'b', label: 'Both', configDir: '/x', hasToken: true })
+    ).toBe('Token')
+  })
+})
+
+describe('accountSpawnFields', () => {
+  it('carries a clone or a resume onto its source’s account, and nothing for the Default', () => {
+    expect(
+      accountSpawnFields({ claudeProfileId: 'w1', claudeProfileLabel: 'Work', claudeConfigDir: '' })
+    ).toEqual({ configDir: undefined, claudeProfileId: 'w1', claudeProfileLabel: 'Work' })
+    expect(accountSpawnFields({ claudeProfileId: 'p1', claudeConfigDir: '/d' }).configDir).toBe(
+      '/d'
+    )
+    expect(accountSpawnFields({})).toEqual({})
+    expect(accountSessionFields({ claudeProfileId: 'w1', claudeProfileLabel: 'Work' })).toEqual({
+      claudeProfileId: 'w1',
+      claudeProfileLabel: 'Work',
+      claudeConfigDir: undefined
+    })
   })
 })
 

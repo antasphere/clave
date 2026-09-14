@@ -36,6 +36,7 @@ import { useHistoryStore } from '../../store/history-store'
 import { useSidebarDnd } from '../../hooks/use-sidebar-dnd'
 import { SidebarFooter, UpdateBanner } from './SidebarFooter'
 import { ClaudeAccountMenuHeader } from './ClaudeAccountMenuHeader'
+import { accountSpawnFields, accountSessionFields } from '../../store/claude-profile-store'
 import { primeClaudeAccountsUsage } from '../../store/usage-store'
 import { WordmarkStrip } from './Wordmark'
 import { ScrollArea } from '../ui/scroll-area'
@@ -274,7 +275,7 @@ export function Sidebar() {
       await loadClaudeProfiles()
       // Every account's read, so the launcher's rows and the session menus
       // have a number the first time they open.
-      primeClaudeAccountsUsage(useClaudeProfileStore.getState().profiles.map((p) => p.id))
+      void primeClaudeAccountsUsage(useClaudeProfileStore.getState().profiles.map((p) => p.id))
     })
   }, [])
 
@@ -852,6 +853,10 @@ export function Sidebar() {
             piProvider: session.piProvider,
             piThinking: session.piThinking,
             initialPrompt,
+            // The clone runs on its source's account: main reads the token by
+            // this id at spawn, so leaving it out would put the clone on the
+            // machine login while every readout still named the account.
+            ...(dupOtherProvider ? {} : accountSpawnFields(session)),
             // A duplicate belongs where its source lives, not to the active view.
             workspaceId: session.workspaceId
           })
@@ -876,6 +881,7 @@ export function Sidebar() {
             launchProfileId: sessionInfo.launchProfileId,
             piProvider: sessionInfo.piProvider,
             piThinking: sessionInfo.piThinking,
+            ...(dupOtherProvider ? {} : accountSessionFields(session)),
             // Persist so re-duplicating the clone also re-primes.
             initialPrompt,
             sessionType: 'local',
@@ -921,6 +927,8 @@ export function Sidebar() {
           piProvider: session.piProvider,
           piThinking: session.piThinking,
           resumeSessionId: conversationId,
+          // The conversation resumes on the account it ran on.
+          ...(isPi ? {} : accountSpawnFields(session)),
           // The resumed conversation stays in its session's workspace.
           workspaceId: session.workspaceId
         })
@@ -943,6 +951,7 @@ export function Sidebar() {
           launchProfileId: sessionInfo.launchProfileId,
           piProvider: sessionInfo.piProvider,
           piThinking: sessionInfo.piThinking,
+          ...(isPi ? {} : accountSessionFields(session)),
           sessionType: 'local'
         })
         useSessionStore.getState().selectSession(sessionInfo.id, false)
@@ -1057,7 +1066,7 @@ export function Sidebar() {
       // window runs out and the question is "which subscription is this on".
       const header =
         session && (session.claudeMode || session.claudeAgentsMode) ? (
-          <ClaudeAccountMenuHeader accountId={session.claudeProfileId} />
+          <ClaudeAccountMenuHeader session={session} />
         ) : undefined
       if (session && !session.alive && ((session.claudeMode && session.claudeSessionId) || (session.piMode && session.piSessionId))) {
         items.push(

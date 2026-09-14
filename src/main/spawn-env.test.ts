@@ -3,14 +3,47 @@ import { describe, it, expect, vi } from 'vitest'
 // pty-manager pulls node-pty and electron at import; neither is needed for the
 // pure environment builder under test.
 vi.mock('node-pty', () => ({ spawn: vi.fn() }))
-vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp' },
+  safeStorage: { isEncryptionAvailable: () => false }
+}))
 vi.mock('./mcp/mcp-runtime', () => ({
   getMcpRuntime: () => null,
   writeSessionMcpConfig: () => null,
   deleteSessionMcpConfig: () => undefined
 }))
 
-import { buildSpawnEnv, tmuxEnvironmentReconcileArgs, TMUX_SESSION_ENV_VARS } from './pty-manager'
+import {
+  buildSpawnEnv,
+  accountTokenForSpawn,
+  tmuxEnvironmentReconcileArgs,
+  TMUX_SESSION_ENV_VARS
+} from './pty-manager'
+
+/**
+ * The boundary: a subscription token reaches a Claude session and nothing
+ * else. Found untested by the first verifier round: with the guard deleted a
+ * plain terminal handed an account id printed the token, and every suite
+ * stayed green.
+ */
+describe('accountTokenForSpawn', () => {
+  const getToken = (id: string | undefined): string | undefined =>
+    id === 'work' ? 'sk-ant-work' : undefined
+  it('hands the account token to a Claude session', () => {
+    expect(accountTokenForSpawn('claude', 'work', getToken)).toBe('sk-ant-work')
+    expect(accountTokenForSpawn('claude-agents', 'work', getToken)).toBe('sk-ant-work')
+  })
+  it('never to a terminal or another agent, whatever account id they carry', () => {
+    expect(accountTokenForSpawn(null, 'work', getToken)).toBeUndefined()
+    expect(accountTokenForSpawn('codex', 'work', getToken)).toBeUndefined()
+    expect(accountTokenForSpawn('antigravity', 'work', getToken)).toBeUndefined()
+    expect(accountTokenForSpawn('pi', 'work', getToken)).toBeUndefined()
+  })
+  it('nothing for the Default or an unknown account', () => {
+    expect(accountTokenForSpawn('claude', 'default', getToken)).toBeUndefined()
+    expect(accountTokenForSpawn('claude', undefined, getToken)).toBeUndefined()
+  })
+})
 
 /**
  * A tmux server copies its own environment into a new session; the account

@@ -117,10 +117,19 @@ export function publishClaudeAccountUsage(
   else store.getState().publish(result)
 }
 
-/** Ask for every account's read once: what main already has arrives at once,
- *  the rest is read live. Called when the account list is known. */
-export function primeClaudeAccountsUsage(accountIds: string[]): void {
-  for (const id of accountIds) void claudeUsageStore(id).getState().load()
+/** Every account's read, once the account list is known: what main already
+ *  holds lands at once from its snapshot (a second window opens with the
+ *  numbers the first one has), and the rest is read live. */
+export async function primeClaudeAccountsUsage(accountIds: string[]): Promise<void> {
+  const snapshot = await window.electronAPI.getClaudeUsageSnapshot().catch(() => ({}))
+  // A read that succeeded is worth taking as it is; a failed one is not: a
+  // window taking main's error would sit on it for the freshness window
+  // instead of asking again, so a failed or missing read is read live.
+  for (const id of accountIds) {
+    const known = snapshot[id]
+    if (known && !('error' in known)) publishClaudeAccountUsage(id, known)
+    else void claudeUsageStore(id).getState().load()
+  }
 }
 
 // The footer and pane share the selected provider, including when settings is open.

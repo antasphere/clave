@@ -264,14 +264,20 @@ export function SidebarFooter(): React.ReactElement {
   // tab focused, the account the launcher would use next.
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
   const profiles = useClaudeProfileStore((s) => s.profiles)
-  const focusedAccountId = useSessionStore((s) =>
+  const focusedSession = useSessionStore((s) =>
     s.focusedSessionId === null
       ? null
-      : (s.sessions.find((session) => session.id === s.focusedSessionId)?.claudeProfileId ?? null)
+      : (s.sessions.find((session) => session.id === s.focusedSessionId) ?? null)
   )
-  const accountId = focusedAccountId ?? selectedProfileId
+  const accountId = focusedSession?.claudeProfileId ?? selectedProfileId
   const account = profiles.find((p) => p.id === accountId)
-  const accountLabel = profiles.length > 1 && account ? account.label : null
+  // A session whose account was removed keeps the label it started with.
+  const accountLabel =
+    profiles.length > 1 && account
+      ? account.label
+      : !account && focusedSession?.claudeProfileId
+        ? (focusedSession.claudeProfileLabel ?? 'Removed account')
+        : null
   const quota =
     provider === 'codex' ? quotaUsageStores.codex() : claudeUsageStore(accountId)()
   const pi = piUsageStores.today()
