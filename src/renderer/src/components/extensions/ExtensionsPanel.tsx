@@ -632,7 +632,7 @@ export function ExtensionsPanel() {
   const showAddMarketplace = section === 'marketplaces' && drill.level === 'list'
 
   return (
-    <div className="flex-1 overflow-y-auto p-8">
+    <div className="settings-scroller">
       <div className="max-w-4xl mx-auto w-full">
         {/* Header: title/breadcrumb + profile picker + actions */}
         <div className="flex items-center justify-between mb-5 gap-3">

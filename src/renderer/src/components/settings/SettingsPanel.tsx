@@ -201,7 +201,7 @@ export function SettingsPanel(): React.JSX.Element {
   const settingsSection = useSessionStore((s) => s.settingsSection)
 
   return (
-    <div className="flex-1 overflow-y-auto p-8">
+    <div className="settings-scroller">
       <div className="max-w-3xl mx-auto w-full">
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}

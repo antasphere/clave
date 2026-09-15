@@ -2864,6 +2864,22 @@ body,
    radius, 28px controls at --radius-lg (a settings control has no panel
    corner to answer to, BRAND.md), one width and one header shape per page. */
 
+/* The pane every settings page scrolls in. The gutter is RESERVED rather than
+   taken when a page happens to overflow: the 6px scrollbar is carved out of the
+   content box, and the page inside is centred with `mx-auto`, so a page that
+   scrolls used to centre on 3px less width than one that does not. The six
+   pages then landed on two different left edges — General, Agents and Keymaps
+   at one, Appearance, Software Update and Usage 3px to their right — and
+   clicking down the sidebar shifted the whole page under the pointer. Holding
+   the gutter costs 6px on a short page and makes every page land on the same
+   column. The Extensions pane is the same shape and takes the same class. */
+.settings-scroller {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 2rem;
+}
+
 /* The page's head: a title, a one-line description, the page's own actions on
    the right where it has some (Keymaps' import and export). */
 .settings-page-header {
