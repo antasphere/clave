@@ -147,22 +147,60 @@ describe('withDirToggled', () => {
     // the path open.
     const open = withDirToggled(new Set<string>(), 'labs/products', true)
     expect(open).toEqual(new Set(['labs', 'labs/products']))
-    expect(withDirToggled(open, 'labs/products', false)).toEqual(new Set<string>())
+    // The row says how many folders it stands for; "labs/products" is two.
+    expect(withDirToggled(open, 'labs/products', false, 2)).toEqual(new Set<string>())
   })
 
   it('folding a deep compacted chain clears every segment of it', () => {
     const open = withDirToggled(new Set<string>(), 'deep/one/two', true)
     expect(open).toEqual(new Set(['deep', 'deep/one', 'deep/one/two']))
-    expect(withDirToggled(open, 'deep/one/two', false)).toEqual(new Set<string>())
+    expect(withDirToggled(open, 'deep/one/two', false, 3)).toEqual(new Set<string>())
   })
 
   it('folding a chain leaves an unrelated branch alone', () => {
     // Folding must clear the chain it was clicked on and nothing else — a
     // sibling under a shared ancestor keeps whatever the user did to it.
     const start = new Set(['labs', 'labs/products', 'company', 'company/brand'])
-    expect(withDirToggled(start, 'labs/products', false)).toEqual(
+    expect(withDirToggled(start, 'labs/products', false, 2)).toEqual(
       new Set(['company', 'company/brand'])
     )
+  })
+
+  it('the Files tab keeps the parents it opened by their own clicks', () => {
+    // The collapse loop, reported on 15 September 2026: "I open folder >
+    // subfolder > subfolder and then I close the last subfolder, it closes the
+    // folder. So the entire loop."
+    //
+    // The Files tree draws every folder as its OWN row, so the three below were
+    // opened by three separate clicks. Folding the deepest is a statement about
+    // that folder alone; the parents stay as the user left them. Fold used to
+    // clear every ancestor unconditionally — correct for a compacted Git row,
+    // and the whole branch snapping shut here.
+    let open = new Set<string>()
+    open = withDirToggled(open, 'folder', true)
+    open = withDirToggled(open, 'folder/sub', true)
+    open = withDirToggled(open, 'folder/sub/deep', true)
+    expect(open).toEqual(new Set(['folder', 'folder/sub', 'folder/sub/deep']))
+
+    expect(withDirToggled(open, 'folder/sub/deep', false)).toEqual(
+      new Set(['folder', 'folder/sub'])
+    )
+    // And one level up behaves the same way: shut the middle, keep the root.
+    expect(withDirToggled(open, 'folder/sub', false)).toEqual(new Set(['folder']))
+  })
+
+  it('a compacted row folds its chain because it says how long the chain is', () => {
+    // The Git tab's side of the same argument. Its row is labelled
+    // "deep/one/two" and stands for three folders, so it passes 3 and all
+    // three go — the pass-through ancestors no row there will ever name again.
+    const open = withDirToggled(new Set<string>(), 'deep/one/two', true)
+    expect(open).toEqual(new Set(['deep', 'deep/one', 'deep/one/two']))
+    expect(withDirToggled(open, 'deep/one/two', false, 3)).toEqual(new Set<string>())
+
+    // A two-segment row under a folder the user opened separately clears only
+    // its own two, which is the mixed case the loop got wrong in both tabs.
+    const mixed = new Set(['top', 'top/mid', 'top/mid/leaf'])
+    expect(withDirToggled(mixed, 'top/mid/leaf', false, 2)).toEqual(new Set(['top']))
   })
 
   it('expanding writes every ancestor, not just the path', () => {

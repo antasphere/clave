@@ -1547,11 +1547,18 @@ export function MultiRepoGitPanel({
     [repoTree, base, expandedDirs]
   )
 
+  // `segments` is what the row stands for. This tree compacts single-child
+  // chains into one row whose label carries every folder it swallowed
+  // ("deep/one/two") while its path is only the deepest, so folding it must
+  // clear all three — those ancestors are pass-through folders no row here
+  // will ever name again. A row that compacted nothing counts 1 and clears
+  // only itself, which is also what the Files tab does with its own rows.
   const toggleDir = useCallback(
-    (dirPath: string) => {
+    (dirPath: string, label: string) => {
       const rel = toRelative(base, dirPath)
       if (rel === null || rel === '') return
-      setPanelDirExpanded(cacheKey, rel, collapsedDirs.has(dirPath))
+      const segments = label.split('/').filter(Boolean).length || 1
+      setPanelDirExpanded(cacheKey, rel, collapsedDirs.has(dirPath), segments)
     },
     [base, cacheKey, collapsedDirs, setPanelDirExpanded]
   )
@@ -1575,7 +1582,7 @@ export function MultiRepoGitPanel({
           node={row.node}
           depth={row.depth}
           collapsed={row.collapsed}
-          onToggle={() => toggleDir(row.node.path)}
+          onToggle={() => toggleDir(row.node.path, row.node.name)}
           statusByPath={statusByPath}
           rule={rule}
         />

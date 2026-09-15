@@ -318,7 +318,16 @@ interface SessionState {
    *  folder. Expanding opens every folder on the way in and collapsing takes
    *  the subtree with it — both tabs draw compacted rows that stand for several
    *  segments at once (see withDirToggled). */
-  setPanelDirExpanded: (basePath: string, relPath: string, expanded: boolean) => void
+  setPanelDirExpanded: (
+    basePath: string,
+    relPath: string,
+    expanded: boolean,
+    /** How many folders the clicked row stood for: a Git row's compacted label
+     *  counts its segments, a plain one-folder row counts 1. Folding clears
+     *  that many from the leaf upwards, never the parents a user opened on
+     *  their own. */
+    segments?: number
+  ) => void
   /** Replace the whole set for one panel folder — the Files tree's bulk paths
    *  (its own restore and refresh) come through here. */
   setPanelExpandedDirs: (basePath: string, dirs: Set<string>) => void
@@ -1467,14 +1476,15 @@ export const useSessionStore = create<SessionState>((set) => ({
       panelExpandedDirs: {}
     })),
 
-  setPanelDirExpanded: (basePath, relPath, expanded) =>
+  setPanelDirExpanded: (basePath, relPath, expanded, segments = 1) =>
     set((state) => ({
       panelExpandedDirs: {
         ...state.panelExpandedDirs,
         [basePath]: withDirToggled(
           state.panelExpandedDirs[basePath] ?? new Set<string>(),
           relPath,
-          expanded
+          expanded,
+          segments
         )
       }
     })),

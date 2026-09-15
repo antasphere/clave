@@ -117,22 +117,39 @@ export function collapsedFromExpanded(
  * disagreement this module exists to prevent, in the direction it advertises.
  *
  * Clicking one row therefore shuts the whole chain it stands for: the path,
- * everything under it, and every folder above it. A row that reads as one
- * thing acts as one thing, and expand-then-fold returns the set to where it
- * started.
+ * everything under it, and the folders above it THAT THE ROW ITSELF COMPACTED.
+ * A row that reads as one thing acts as one thing, and expand-then-fold
+ * returns the set to where it started.
+ *
+ * `segments` is where that stops, and it is the whole reason this takes a
+ * fourth argument. It is how many folders the clicked row stands for — the
+ * segment count of a Git row's compacted label (`deep/one/two` is 3), and 1
+ * for a row that is one folder. Folding clears that many segments from the
+ * leaf upwards and no more.
+ *
+ * Clearing EVERY ancestor unconditionally was the bug behind the Files tab's
+ * collapse loop: its rows are never compacted, one folder each, opened by
+ * their own separate clicks. Closing `folder/sub/sub` cleared `folder/sub` and
+ * `folder` along with it and the whole branch folded shut, so a click that
+ * should have shut one level shut the path back to the root. The Git tab's own
+ * chains are unaffected: they pass their real segment count and still fold
+ * whole.
  */
 export function withDirToggled(
   expanded: Set<string>,
   relPath: string,
-  expand: boolean
+  expand: boolean,
+  segments = 1
 ): Set<string> {
   const next = new Set(expanded)
   if (expand) {
     for (const a of ancestorsOf(relPath)) next.add(a)
     return next
   }
-  // The path itself, and every folder above it — the chain the row stands for.
-  for (const a of ancestorsOf(relPath)) next.delete(a)
+  // The path itself, and the folders above it this row compacted — never the
+  // ones the user opened by their own clicks.
+  const chain = ancestorsOf(relPath)
+  for (const a of chain.slice(Math.max(0, chain.length - segments))) next.delete(a)
   // And everything under it, or reopening the parent would spring the subtree
   // back open beneath a row the user had just folded away.
   const prefix = relPath + '/'
