@@ -8,7 +8,7 @@ import {
   ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
-import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
+import { SettingsPage, SettingsSection, SettingsCard, SettingsRow } from './primitives'
 import { ClaveMark } from '../ui/ClaveMark'
 
 function formatBytes(bytes: number): string {
@@ -44,7 +44,7 @@ function formatChecked(at: number | null): string {
  * have the check fail quietly, and there was no surface left that even
  * admitted an update existed.
  */
-export function UpdatesTab() {
+export function UpdatesTab(): React.JSX.Element {
   const {
     supported,
     phase,
@@ -80,8 +80,11 @@ export function UpdatesTab() {
   const upToDate = supported && !availableVersion && phase !== 'error'
 
   return (
-    <div className="space-y-5">
-      <SettingsSection title="Software Update">
+    <SettingsPage
+      title="Software Update"
+      description="Clave updates itself from its GitHub releases. Check, download and install from here."
+    >
+      <SettingsSection title="Installed version">
         <SettingsCard>
           <div className="settings-row">
             <div className="flex items-center gap-3 min-w-0">
@@ -106,21 +109,15 @@ export function UpdatesTab() {
 
             <div className="flex items-center gap-2 flex-shrink-0">
               {phase === 'downloading' ? (
-                <button onClick={cancelDownload} className="btn-secondary btn-compact">
+                <button onClick={cancelDownload} className="btn-secondary">
                   Cancel
                 </button>
               ) : phase === 'downloaded' ? (
-                <button
-                  onClick={() => window.electronAPI?.installUpdate()}
-                  className="btn-primary btn-compact"
-                >
+                <button onClick={() => window.electronAPI?.installUpdate()} className="btn-primary">
                   Restart & Install
                 </button>
               ) : availableVersion ? (
-                <button
-                  onClick={() => startDownload()}
-                  className="btn-primary btn-compact flex items-center gap-1.5"
-                >
+                <button onClick={() => startDownload()} className="btn-primary">
                   <ArrowDownTrayIcon className="w-3.5 h-3.5" />
                   Download & Install
                 </button>
@@ -128,7 +125,7 @@ export function UpdatesTab() {
                 <button
                   onClick={handleCheck}
                   disabled={!supported || busy}
-                  className="btn-secondary btn-compact flex items-center gap-1.5 disabled:opacity-50"
+                  className="btn-secondary"
                 >
                   <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
                   {busy ? 'Checking…' : 'Check for Updates'}
@@ -140,9 +137,9 @@ export function UpdatesTab() {
           {/* Live progress, so a 220 MB download is not a frozen dialog. */}
           {phase === 'downloading' && (
             <div className="settings-row flex-col items-stretch gap-2">
-              <div className="h-1.5 rounded-full bg-surface-200 overflow-hidden">
+              <div className="usage-bar">
                 <div
-                  className="h-full rounded-full bg-accent transition-[width] duration-300"
+                  className="usage-meter-fill usage-meter-fill--normal"
                   style={{ width: `${progress.percent}%` }}
                 />
               </div>
@@ -158,11 +155,7 @@ export function UpdatesTab() {
 
           <SettingsRow label="Last checked" description={formatChecked(lastCheckedAt)}>
             {supported && availableVersion && (
-              <button
-                onClick={handleCheck}
-                disabled={busy}
-                className="btn-secondary btn-compact flex items-center gap-1.5 disabled:opacity-50"
-              >
+              <button onClick={handleCheck} disabled={busy} className="btn-secondary">
                 <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
                 Check Again
               </button>
@@ -190,7 +183,7 @@ export function UpdatesTab() {
           <SettingsCard>
             <div className="settings-row">
               <div className="flex items-start gap-2 min-w-0">
-                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-warning" />
                 <div className="min-w-0">
                   <p className="settings-row-title">Could not check for updates</p>
                   <p className="settings-row-description break-words">{checkErrorMessage}</p>
@@ -206,7 +199,7 @@ export function UpdatesTab() {
           <SettingsCard>
             <div className="settings-row">
               <div className="flex items-start gap-2 min-w-0">
-                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" />
+                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-destructive" />
                 <div className="min-w-0">
                   <p className="settings-row-title">The download did not complete</p>
                   <p className="settings-row-description break-words">
@@ -214,7 +207,7 @@ export function UpdatesTab() {
                   </p>
                 </div>
               </div>
-              <button onClick={() => startDownload('retry')} className="btn-primary btn-compact">
+              <button onClick={() => startDownload('retry')} className="btn-primary">
                 Try Again
               </button>
             </div>
@@ -233,7 +226,7 @@ export function UpdatesTab() {
           >
             <button
               onClick={() => window.electronAPI?.openReleasesPage()}
-              className="btn-secondary btn-compact flex items-center gap-1.5"
+              className="btn-secondary"
             >
               <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
               Open Releases
@@ -243,16 +236,13 @@ export function UpdatesTab() {
             label="Updater log"
             description="Every check and download, with the reason a failure failed"
           >
-            <button
-              onClick={() => window.electronAPI?.openUpdaterLog()}
-              className="btn-secondary btn-compact flex items-center gap-1.5"
-            >
+            <button onClick={() => window.electronAPI?.openUpdaterLog()} className="btn-secondary">
               <DocumentTextIcon className="w-3.5 h-3.5" />
               Open Log
             </button>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
-    </div>
+    </SettingsPage>
   )
 }

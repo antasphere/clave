@@ -15,15 +15,31 @@ import type {
   LauncherFamily,
   PiThinkingLevel
 } from '../../../../shared/agent-launch'
-import { SettingsCard, SettingsRow, SettingsSection } from './primitives'
+import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
+import {
+  SettingsCard,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect
+} from './primitives'
 
-const FAMILIES: { id: LauncherFamily; label: string }[] = [
-  { id: 'claude', label: 'Claude' },
-  { id: 'antigravity', label: 'Antigravity' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'pi', label: 'Pi' }
+const FAMILIES: {
+  id: LauncherFamily
+  label: string
+  Logo: (p: { className?: string }) => React.JSX.Element
+}[] = [
+  { id: 'claude', label: 'Claude', Logo: ClaudeLogo },
+  { id: 'antigravity', label: 'Antigravity', Logo: AntigravityLogo },
+  { id: 'codex', label: 'Codex', Logo: CodexLogo },
+  { id: 'pi', label: 'Pi', Logo: PiLogo }
 ]
 const THINKING: PiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+/** The select's value for "the Pi default": a select's value is a string, and
+ *  the profile carries no thinking level when Pi decides. */
+const PI_DEFAULT = '__default__'
+/** The select's value for "no override" on a workspace. */
+const USE_GLOBAL = '__global__'
 
 function TokenEditor({
   label,
@@ -48,12 +64,12 @@ function TokenEditor({
   }
   return (
     <div className="settings-row items-start">
-      <div className="settings-label pt-2">{label}</div>
-      <div className="flex-1 space-y-1.5">
+      <div className="settings-row-title pt-1.5 w-40 flex-shrink-0">{label}</div>
+      <div className="flex-1 space-y-1.5 min-w-0">
         {tokens.map((token, index) => (
-          <div key={index} className="flex gap-1.5">
+          <div key={index} className="flex gap-1">
             <input
-              className="input-field flex-1 font-mono"
+              className="input-compact flex-1 font-mono"
               value={token}
               onChange={(event) => replace(index, event.target.value)}
               aria-label={`${label} token ${index + 1}`}
@@ -63,6 +79,7 @@ function TokenEditor({
               onClick={() => move(index, -1)}
               disabled={index === 0}
               title="Move up"
+              aria-label="Move up"
             >
               <ArrowUpIcon className="w-4 h-4" />
             </button>
@@ -71,22 +88,21 @@ function TokenEditor({
               onClick={() => move(index, 1)}
               disabled={index === tokens.length - 1}
               title="Move down"
+              aria-label="Move down"
             >
               <ArrowDownIcon className="w-4 h-4" />
             </button>
             <button
-              className="btn-icon btn-icon-md"
+              className="btn-icon btn-icon-md btn-icon--danger"
               onClick={() => onChange(tokens.filter((_, i) => i !== index))}
               title="Remove token"
+              aria-label="Remove token"
             >
               <TrashIcon className="w-4 h-4" />
             </button>
           </div>
         ))}
-        <button
-          className="btn-secondary inline-flex items-center gap-1.5"
-          onClick={() => onChange([...tokens, ''])}
-        >
+        <button className="btn-secondary" onClick={() => onChange([...tokens, ''])}>
           <PlusIcon className="w-3.5 h-3.5" /> Add token
         </button>
       </div>
@@ -117,12 +133,13 @@ function ProfileEditor({
     }
   }
   return (
-    <SettingsCard>
+    <SettingsCard className="mt-2" data-launch-profile-editor>
       <SettingsRow label="Name">
         <input
-          className="input-field w-full"
+          className="input-compact w-56"
           value={draft.name}
           onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          aria-label="Profile name"
         />
       </SettingsRow>
       <TokenEditor
@@ -139,7 +156,7 @@ function ProfileEditor({
         <>
           <SettingsRow label="Provider" description="Optional Pi provider id">
             <input
-              className="input-field w-full"
+              className="input-compact w-56"
               value={draft.pi?.provider ?? ''}
               onChange={(event) =>
                 setDraft({
@@ -147,42 +164,42 @@ function ProfileEditor({
                   pi: { ...draft.pi, provider: event.target.value || undefined }
                 })
               }
+              aria-label="Pi provider id"
             />
           </SettingsRow>
           <SettingsRow label="Model" description="Optional Pi model id">
             <input
-              className="input-field w-full"
+              className="input-compact w-56"
               value={draft.pi?.model ?? ''}
               onChange={(event) =>
                 setDraft({ ...draft, pi: { ...draft.pi, model: event.target.value || undefined } })
               }
+              aria-label="Pi model id"
             />
           </SettingsRow>
           <SettingsRow label="Thinking">
-            <select
-              className="input-field"
-              value={draft.pi?.thinking ?? ''}
-              onChange={(event) =>
+            <SettingsSelect
+              value={draft.pi?.thinking ?? PI_DEFAULT}
+              options={[
+                { value: PI_DEFAULT, label: 'Pi default' },
+                ...THINKING.map((level) => ({ value: level, label: level }))
+              ]}
+              onChange={(value) =>
                 setDraft({
                   ...draft,
                   pi: {
                     ...draft.pi,
-                    thinking: (event.target.value || undefined) as PiThinkingLevel | undefined
+                    thinking: value === PI_DEFAULT ? undefined : (value as PiThinkingLevel)
                   }
                 })
               }
-            >
-              <option value="">Pi default</option>
-              {THINKING.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
+              ariaLabel="Pi thinking level"
+              testId="pi-thinking"
+            />
           </SettingsRow>
         </>
       )}
-      {error && <div className="px-4 pb-2 text-xs text-danger">{error}</div>}
+      {error && <div className="px-3.5 py-2 text-xs text-destructive">{error}</div>}
       <div className="settings-row justify-end gap-2">
         <button className="btn-secondary" onClick={onDone}>
           Cancel
@@ -214,112 +231,111 @@ export function AgentsSettings(): React.JSX.Element {
     })
   }
   return (
-    <>
-      <h2 className="text-lg font-semibold text-text-primary mb-2">Agents</h2>
-      <p className="text-xs text-text-secondary mb-6">
-        Commands are stored locally as argument tokens. Do not put passwords or API keys in them.
-      </p>
-      <div className="space-y-7">
-        {FAMILIES.map(({ id: family, label }) => {
-          const profiles = profilesFor(family)
-          const globalId =
-            preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
-          const workspaceId = activeWorkspaceId
-            ? (preferences.workspaceOverrides[activeWorkspaceId]?.[family] ?? '')
-            : ''
-          return (
-            <SettingsSection key={family} title={label}>
-              <SettingsCard>
-                <SettingsRow label="Global default">
-                  <select
-                    className="input-field"
-                    value={globalId}
-                    onChange={(event) => void setGlobalLaunchProfile(family, event.target.value)}
-                  >
-                    {profiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </option>
-                    ))}
-                  </select>
+    <SettingsPage
+      title="Agents"
+      description="One launch profile per agent family: the command Clave runs and its arguments. Commands are stored locally as argument tokens; never put a password or an API key in them."
+    >
+      {FAMILIES.map(({ id: family, label, Logo }) => {
+        const profiles = profilesFor(family)
+        const globalId =
+          preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
+        const workspaceId = activeWorkspaceId
+          ? (preferences.workspaceOverrides[activeWorkspaceId]?.[family] ?? '')
+          : ''
+        const profileOptions = profiles.map((profile) => ({
+          value: profile.id,
+          label: profile.name
+        }))
+        return (
+          <SettingsSection
+            key={family}
+            title={
+              <>
+                <Logo />
+                {label}
+              </>
+            }
+          >
+            <SettingsCard>
+              <SettingsRow label="Global default">
+                <SettingsSelect
+                  value={globalId ?? ''}
+                  options={profileOptions}
+                  onChange={(value) => void setGlobalLaunchProfile(family, value)}
+                  ariaLabel={`Global default profile for ${label}`}
+                  testId={`global-${family}`}
+                />
+              </SettingsRow>
+              {activeWorkspaceId && (
+                <SettingsRow label="Workspace override" description="Empty uses the global default">
+                  <SettingsSelect
+                    value={workspaceId || USE_GLOBAL}
+                    options={[
+                      { value: USE_GLOBAL, label: 'Use global default' },
+                      ...profileOptions
+                    ]}
+                    onChange={(value) =>
+                      void setWorkspaceDefault(
+                        activeWorkspaceId,
+                        family,
+                        value === USE_GLOBAL ? null : value
+                      )
+                    }
+                    ariaLabel={`Workspace override for ${label}`}
+                    testId={`workspace-${family}`}
+                  />
                 </SettingsRow>
-                {activeWorkspaceId && (
-                  <SettingsRow
-                    label="Workspace override"
-                    description="Empty uses the global default"
-                  >
-                    <select
-                      className="input-field"
-                      value={workspaceId}
-                      onChange={(event) =>
-                        void setWorkspaceDefault(
-                          activeWorkspaceId,
-                          family,
-                          event.target.value || null
-                        )
-                      }
-                    >
-                      <option value="">Use global default</option>
-                      {profiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name}
-                        </option>
-                      ))}
-                    </select>
-                  </SettingsRow>
-                )}
-                {profiles.map((profile) => (
-                  <div key={profile.id} className="settings-row">
-                    <div className="min-w-0">
-                      <div className="text-sm text-text-primary truncate">{profile.name}</div>
-                      <div className="text-xs text-text-tertiary font-mono truncate">
-                        {profile.command.join(' ')}
-                      </div>
-                    </div>
-                    <div className="ml-auto flex gap-1.5">
-                      {profile.builtIn ? (
-                        <span className="text-xs text-text-tertiary">Built in</span>
-                      ) : (
-                        <>
-                          <button className="btn-secondary" onClick={() => setEditing(profile)}>
-                            Edit
-                          </button>
-                          <button
-                            className="btn-icon btn-icon-md"
-                            onClick={() => void deleteLaunchProfile(profile.id)}
-                            title="Delete profile"
-                          >
-                            <TrashIcon className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
+              )}
+              {profiles.map((profile) => (
+                <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
+                  <div className="min-w-0">
+                    <div className="settings-row-title truncate">{profile.name}</div>
+                    <div className="settings-row-description font-mono truncate">
+                      {profile.command.join(' ')}
                     </div>
                   </div>
-                ))}
-                <div className="settings-row">
-                  <button
-                    className="btn-secondary inline-flex items-center gap-1.5"
-                    onClick={() =>
-                      setEditing({
-                        id: crypto.randomUUID(),
-                        name: `Custom ${label}`,
-                        family,
-                        command: [family === 'antigravity' ? 'agy' : family],
-                        additionalArgs: []
-                      })
-                    }
-                  >
-                    <PlusIcon className="w-3.5 h-3.5" /> Add profile
-                  </button>
+                  <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+                    {profile.builtIn ? (
+                      <span className="badge bg-surface-200 text-text-tertiary">Built in</span>
+                    ) : (
+                      <>
+                        <button className="btn-secondary" onClick={() => setEditing(profile)}>
+                          Edit
+                        </button>
+                        <button
+                          className="btn-icon btn-icon-md btn-icon--danger"
+                          onClick={() => void deleteLaunchProfile(profile.id)}
+                          title="Delete profile"
+                          aria-label={`Delete profile ${profile.name}`}
+                        >
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </SettingsCard>
-              {editing?.family === family && (
-                <ProfileEditor profile={editing} onDone={() => setEditing(null)} />
-              )}
-            </SettingsSection>
-          )
-        })}
-      </div>
-    </>
+              ))}
+              <button
+                className="settings-row-action"
+                onClick={() =>
+                  setEditing({
+                    id: crypto.randomUUID(),
+                    name: `Custom ${label}`,
+                    family,
+                    command: [family === 'antigravity' ? 'agy' : family],
+                    additionalArgs: []
+                  })
+                }
+              >
+                <PlusIcon className="w-4 h-4" /> Add profile
+              </button>
+            </SettingsCard>
+            {editing?.family === family && (
+              <ProfileEditor profile={editing} onDone={() => setEditing(null)} />
+            )}
+          </SettingsSection>
+        )
+      })}
+    </SettingsPage>
   )
 }

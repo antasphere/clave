@@ -1,7 +1,12 @@
 import { useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocationStore } from '../../store/location-store'
-import { XMarkIcon, CheckCircleIcon, ExclamationCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import {
+  XMarkIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline'
 
 type Step = 'credentials' | 'test' | 'summary'
 
@@ -9,7 +14,7 @@ interface AddLocationDialogProps {
   onClose: () => void
 }
 
-export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
+export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JSX.Element {
   const addLocation = useLocationStore((s) => s.addLocation)
 
   const [step, setStep] = useState<Step>('credentials')
@@ -23,7 +28,13 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
   const [autoConnect, setAutoConnect] = useState(true)
 
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; error?: string; openclawVersion?: string; openclawPort?: number; openclawToken?: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    success: boolean
+    error?: string
+    openclawVersion?: string
+    openclawPort?: number
+    openclawToken?: string
+  } | null>(null)
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState<string | null>(null)
 
@@ -90,9 +101,13 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
             try {
               await window.electronAPI.agentConnect(createdLocationId)
               await window.electronAPI.agentList(createdLocationId)
-            } catch { /* ok */ }
+            } catch {
+              /* ok */
+            }
           }
-        } catch { /* will show as error in locations list */ }
+        } catch {
+          /* will show as error in locations list */
+        }
         // Reload locations to reflect connected status
         useLocationStore.getState().loadLocations()
       }
@@ -114,7 +129,10 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
   // Portal to body so the overlay escapes the main content's z-10 stacking
   // context. Otherwise it cannot cover the z-[45] git side panel.
   return createPortal(
-    <div className="modal-scrim scrim-mount z-50 flex items-center justify-center" onClick={handleRemoveOnCancel}>
+    <div
+      className="modal-scrim scrim-mount z-50 flex items-center justify-center"
+      onClick={handleRemoveOnCancel}
+    >
       <div
         className="modal-card menu-pop-mount w-full max-w-md mx-4"
         onClick={(e) => e.stopPropagation()}
@@ -122,10 +140,7 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <h3 className="text-base font-semibold text-text-primary">Add Remote Location</h3>
-          <button
-            onClick={handleRemoveOnCancel}
-            className="btn-icon btn-icon-sm"
-          >
+          <button onClick={handleRemoveOnCancel} className="btn-icon btn-icon-sm">
             <XMarkIcon className="w-4 h-4" />
           </button>
         </div>
@@ -134,9 +149,15 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
         <div className="flex items-center gap-2 px-6 py-3 bg-surface-100/50">
           {(['credentials', 'test', 'summary'] as Step[]).map((s, i) => (
             <div key={s} className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
-                step === s ? 'bg-accent text-white' : i < ['credentials', 'test', 'summary'].indexOf(step) ? 'bg-green-500 text-white' : 'bg-surface-200 text-text-tertiary'
-              }`}>
+              <div
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                  step === s
+                    ? 'bg-accent text-white'
+                    : i < ['credentials', 'test', 'summary'].indexOf(step)
+                      ? 'bg-success text-white'
+                      : 'bg-surface-200 text-text-tertiary'
+                }`}
+              >
                 {i + 1}
               </div>
               {i < 2 && <div className="w-8 h-px bg-border-subtle" />}
@@ -159,7 +180,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Host</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Host
+                  </label>
                   <input
                     value={host}
                     onChange={(e) => setHost(e.target.value)}
@@ -168,7 +191,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Port</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Port
+                  </label>
                   <input
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
@@ -177,7 +202,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Username</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Username
+                </label>
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -186,7 +213,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Auth Method</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Auth Method
+                </label>
                 <div className="flex gap-2">
                   {(['key', 'password', 'agent'] as const).map((m) => (
                     <button
@@ -205,7 +234,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
               </div>
               {authMethod === 'key' && (
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Private Key Path</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Private Key Path
+                  </label>
                   <input
                     value={privateKeyPath}
                     onChange={(e) => setPrivateKeyPath(e.target.value)}
@@ -215,7 +246,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
               )}
               {authMethod === 'password' && (
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Password</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Password
+                  </label>
                   <input
                     type="password"
                     value={password}
@@ -239,7 +272,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                   {testResult.success ? (
                     <>
                       <CheckCircleIcon className="w-10 h-10 text-green-500" />
-                      <p className="text-sm font-medium text-text-primary">Connection successful!</p>
+                      <p className="text-sm font-medium text-text-primary">
+                        Connection successful!
+                      </p>
                       {testResult.openclawVersion ? (
                         <p className="text-xs text-text-secondary">
                           {testResult.openclawVersion} detected (port {testResult.openclawPort})
@@ -255,14 +290,14 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                             {installing ? 'Installing...' : 'Install Clave Channel Plugin'}
                           </button>
                           {installError && (
-                            <p className="text-xs text-red-400 mt-1">{installError}</p>
+                            <p className="text-xs text-destructive mt-1">{installError}</p>
                           )}
                         </div>
                       )}
                     </>
                   ) : (
                     <>
-                      <ExclamationCircleIcon className="w-10 h-10 text-red-500" />
+                      <ExclamationCircleIcon className="w-10 h-10 text-destructive" />
                       <p className="text-sm font-medium text-text-primary">Connection failed</p>
                       <p className="text-xs text-text-tertiary">{testResult.error}</p>
                     </>
@@ -280,7 +315,9 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
                 <CheckCircleIcon className="w-6 h-6 text-green-500 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-text-primary">{name || host}</p>
-                  <p className="text-xs text-text-tertiary">{username}@{host}:{port}</p>
+                  <p className="text-xs text-text-tertiary">
+                    {username}@{host}:{port}
+                  </p>
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -299,14 +336,21 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-border-subtle bg-surface-100/30">
           <button
-            onClick={step === 'credentials' ? handleRemoveOnCancel : () => setStep(step === 'test' ? 'credentials' : 'test')}
+            onClick={
+              step === 'credentials'
+                ? handleRemoveOnCancel
+                : () => setStep(step === 'test' ? 'credentials' : 'test')
+            }
             className="text-sm text-text-secondary hover:text-text-primary transition-colors"
           >
             {step === 'credentials' ? 'Cancel' : 'Back'}
           </button>
           {step === 'credentials' && (
             <button
-              onClick={() => { handleTest(); setStep('test') }}
+              onClick={() => {
+                handleTest()
+                setStep('test')
+              }}
               disabled={!credentialsValid}
               className="btn-primary h-auto py-2 px-4 text-sm"
             >
@@ -323,10 +367,7 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps) {
             </button>
           )}
           {step === 'summary' && (
-            <button
-              onClick={handleFinish}
-              className="btn-primary h-auto py-2 px-4 text-sm"
-            >
+            <button onClick={handleFinish} className="btn-primary h-auto py-2 px-4 text-sm">
               Done
             </button>
           )}

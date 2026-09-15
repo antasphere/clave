@@ -62,7 +62,7 @@ function TokenForm({
         <p className="settings-row-title">{title}</p>
         <button
           onClick={onCancel}
-          className="btn-icon btn-icon-xs"
+          className="btn-icon btn-icon-sm"
           title="Close the form"
           aria-label="Close the form"
         >
@@ -101,7 +101,7 @@ function TokenForm({
       />
       {note && (
         <p
-          className={cn('text-xs', note.ok ? 'text-text-secondary' : 'text-wellbeing-strong')}
+          className={cn('text-xs', note.ok ? 'text-text-secondary' : 'text-destructive')}
           data-claude-token-note={note.ok ? 'ok' : 'error'}
         >
           {note.text}
@@ -165,7 +165,7 @@ function AccountRow({
             <p className="settings-row-title">{account.label}</p>
           ) : (
             <input
-              className="input-xs w-full"
+              className="input-compact w-full max-w-56"
               value={account.label}
               onChange={(e) => updateProfile(account.id, { label: e.target.value })}
               placeholder="Account name"
@@ -188,7 +188,7 @@ function AccountRow({
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={onReplaceToken}
-            className="btn-icon btn-icon-xs"
+            className="btn-icon btn-icon-sm"
             title={account.hasToken ? 'Replace token' : 'Paste a token'}
             aria-label={
               account.hasToken
@@ -201,7 +201,7 @@ function AccountRow({
           {account.hasToken ? (
             <button
               onClick={() => void clearToken(account.id)}
-              className="btn-icon btn-icon-xs"
+              className="btn-icon btn-icon-sm"
               title="Forget token"
               aria-label={`Forget token for ${account.label}`}
             >
@@ -210,7 +210,7 @@ function AccountRow({
           ) : (
             <button
               onClick={() => void pickDir()}
-              className="btn-icon btn-icon-xs"
+              className="btn-icon btn-icon-sm"
               title={account.configDir ? 'Change directory' : 'Use a config directory instead'}
               aria-label={account.configDir ? 'Change directory' : 'Use a config directory instead'}
             >
@@ -219,7 +219,7 @@ function AccountRow({
           )}
           <button
             onClick={() => removeProfile(account.id)}
-            className="btn-icon btn-icon-xs text-red-400 hover:text-red-300"
+            className="btn-icon btn-icon-sm btn-icon--danger"
             title="Remove account"
             aria-label={`Remove account ${account.label}`}
           >

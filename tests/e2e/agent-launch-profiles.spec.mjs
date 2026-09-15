@@ -97,7 +97,9 @@ export async function run(t) {
     await inputs.nth(0).fill('Pi production')
     await inputs.nth(2).fill('anthropic')
     await inputs.nth(3).fill('claude-sonnet-4')
-    await editor.locator('select').selectOption('high')
+    // The select is the app's own (a menu on a trigger), not a native <select>.
+    await editor.locator('[data-settings-select="pi-thinking"]').click()
+    await win.getByRole('menuitem', { name: 'high', exact: true }).click()
     await editor.getByRole('button', { name: 'Save profile' }).click()
 
     const preferences = await win.evaluate(() => window.electronAPI.launchProfilesList())
@@ -114,7 +116,8 @@ export async function run(t) {
     t.equal('the thinking level is stored as a Pi profile default', profile?.pi?.thinking, 'high')
 
     if (profile) {
-      await piSection.locator('select').nth(1).selectOption(profile.id)
+      await piSection.locator('[data-settings-select="workspace-pi"]').click()
+      await win.getByRole('menuitem', { name: 'Pi production', exact: true }).click()
       const updated = await win.evaluate(() => window.electronAPI.launchProfilesList())
       t.equal(
         'the workspace override is persisted independently from the global default',

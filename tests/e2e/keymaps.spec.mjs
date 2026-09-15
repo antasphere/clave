@@ -42,7 +42,7 @@ export async function run(t) {
 
   try {
     await win.keyboard.press('Meta+,')
-    await win.getByRole('button', { name: 'Keymaps' }).click()
+    await win.getByRole('button', { name: 'Keymaps', exact: true }).click()
     await win.waitForTimeout(300)
 
     const initial = await win.locator('body').innerText()

@@ -1,28 +1,37 @@
 import { useEffect, useState } from 'react'
 import { useLocationStore } from '../../store/location-store'
 import { AddLocationDialog } from './AddLocationDialog'
-import { PlusIcon, TrashIcon, ArrowPathIcon, SignalIcon, SignalSlashIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import {
+  PlusIcon,
+  TrashIcon,
+  ArrowPathIcon,
+  SignalIcon,
+  SignalSlashIcon
+} from '@heroicons/react/24/outline'
 import { SettingsSection, SettingsCard } from './primitives'
 import type { Location } from '../../../../shared/remote-types'
 
-const statusLabels: Record<string, { label: string; color: string }> = {
-  connected: { label: 'Connected', color: 'text-green-500' },
-  disconnected: { label: 'Disconnected', color: 'text-text-tertiary' },
-  connecting: { label: 'Connecting...', color: 'text-amber-500' },
-  error: { label: 'Error', color: 'text-red-500' }
+const statusLabels: Record<string, string> = {
+  connected: 'Connected',
+  disconnected: 'Disconnected',
+  connecting: 'Connecting…',
+  error: 'Error'
 }
 
-function LocationCard({ location }: { location: Location }) {
+function LocationCard({ location }: { location: Location }): React.JSX.Element {
   const removeLocation = useLocationStore((s) => s.removeLocation)
   const setLocationStatus = useLocationStore((s) => s.setLocationStatus)
   const isLocal = location.type === 'local'
-  const statusInfo = statusLabels[location.status] || statusLabels.disconnected
+  const status = statusLabels[location.status] ? location.status : 'disconnected'
 
-  const handleConnect = async () => {
+  const handleConnect = async (): Promise<void> => {
     if (location.status === 'connected') {
       // Disconnect OpenClaw + SSH
-      try { await window.electronAPI.agentDisconnect(location.id) } catch { /* ok */ }
+      try {
+        await window.electronAPI.agentDisconnect(location.id)
+      } catch {
+        /* ok */
+      }
       await window.electronAPI.sshDisconnect(location.id)
       setLocationStatus(location.id, 'disconnected')
     } else {
@@ -35,7 +44,9 @@ function LocationCard({ location }: { location: Location }) {
           try {
             await window.electronAPI.agentConnect(location.id)
             await window.electronAPI.agentList(location.id)
-          } catch { /* OpenClaw not available — SSH still works */ }
+          } catch {
+            /* OpenClaw not available — SSH still works */
+          }
         }
       } catch {
         setLocationStatus(location.id, 'error')
@@ -49,23 +60,26 @@ function LocationCard({ location }: { location: Location }) {
         <div className="flex items-center gap-2">
           <span className="settings-row-title truncate">{location.name}</span>
           {isLocal && (
-            <span className="text-[10px] font-medium text-text-tertiary bg-surface-200 rounded px-1.5 py-0.5">
-              LOCAL
-            </span>
+            <span className="badge badge-uppercase bg-surface-200 text-text-tertiary">Local</span>
           )}
         </div>
         {location.host && (
-          <span className="settings-row-description">{location.username}@{location.host}:{location.port || 22}</span>
+          <span className="settings-row-description">
+            {location.username}@{location.host}:{location.port || 22}
+          </span>
         )}
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className={cn('text-xs font-medium', statusInfo.color)}>{statusInfo.label}</span>
+        <span className="status-text" data-status={status}>
+          {statusLabels[status]}
+        </span>
         {!isLocal && (
           <>
             <button
               onClick={handleConnect}
-              className="btn-icon btn-icon-xs"
+              className="btn-icon btn-icon-sm"
               title={location.status === 'connected' ? 'Disconnect' : 'Connect'}
+              aria-label={location.status === 'connected' ? 'Disconnect' : 'Connect'}
             >
               {location.status === 'connected' ? (
                 <SignalSlashIcon className="w-4 h-4" />
@@ -77,8 +91,9 @@ function LocationCard({ location }: { location: Location }) {
             </button>
             <button
               onClick={() => removeLocation(location.id)}
-              className="btn-icon btn-icon-xs hover:text-red-400"
+              className="btn-icon btn-icon-sm btn-icon--danger"
               title="Remove location"
+              aria-label="Remove location"
             >
               <TrashIcon className="w-4 h-4" />
             </button>
@@ -89,7 +104,7 @@ function LocationCard({ location }: { location: Location }) {
   )
 }
 
-export function LocationsTab() {
+export function LocationsTab(): React.JSX.Element {
   const locations = useLocationStore((s) => s.locations)
   const loaded = useLocationStore((s) => s.loaded)
   const loadLocations = useLocationStore((s) => s.loadLocations)
@@ -102,7 +117,7 @@ export function LocationsTab() {
   return (
     <SettingsSection
       title="Locations"
-      description="Manage local and remote machines for terminal sessions and agents."
+      description="The machines a terminal or an agent can run on: this Mac, and any remote reached over SSH."
     >
       <SettingsCard>
         {locations.map((loc) => (

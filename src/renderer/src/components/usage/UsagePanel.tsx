@@ -28,15 +28,12 @@ const TOOLS: { key: Tool; label: string; Logo: (p: { className?: string }) => Re
 // Fill color tracks urgency, so a near-full cap reads at a glance. The service sends
 // its own plan-aware severity; we take whichever of the two reads more urgent so a
 // scoped cap the percentage alone would understate still shows red.
-function barColor(window: UsageWindow): string {
+function barLevel(window: UsageWindow): 'normal' | 'warning' | 'critical' {
   const fromPct =
     window.usedPercentage >= 90 ? 'critical' : window.usedPercentage >= 70 ? 'warning' : 'normal'
   const rank = { normal: 0, warning: 1, critical: 2 }
-  const level = rank[window.severity ?? 'normal'] >= rank[fromPct] ? window.severity : fromPct
-
-  if (level === 'critical') return 'bg-red-500'
-  if (level === 'warning') return 'bg-amber-500'
-  return 'bg-accent'
+  const own = window.severity ?? 'normal'
+  return rank[own] >= rank[fromPct] ? own : fromPct
 }
 
 function UsageBar({ window }: { window: UsageWindow }): ReactElement {
@@ -45,17 +42,17 @@ function UsageBar({ window }: { window: UsageWindow }): ReactElement {
   return (
     <div className="space-y-1.5" data-usage-window={window.key}>
       <div className="flex items-baseline justify-between">
-        <span className="text-sm font-medium text-text-primary">{window.label}</span>
+        <span className="text-[13px] font-medium text-text-primary">{window.label}</span>
         <span
-          className="text-sm tabular-nums font-semibold text-text-primary"
+          className="text-[13px] tabular-nums font-semibold text-text-primary"
           aria-label={`${pct}% used`}
         >
           {pct}%
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-surface-200">
-        <div
-          className={`h-full rounded-full transition-all ${barColor(window)}`}
+      <div className="usage-bar">
+        <span
+          className={`usage-meter-fill usage-meter-fill--${barLevel(window)}`}
           style={{ width: `${Math.min(100, Math.max(window.usedPercentage, pct === 0 ? 0 : 2))}%` }}
         />
       </div>
@@ -64,24 +61,29 @@ function UsageBar({ window }: { window: UsageWindow }): ReactElement {
   )
 }
 
+/** The provider switch: the side panel's tab bar, at page width. */
 function ToolToggle({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => void }): ReactElement {
   return (
-    <div className="inline-flex w-full rounded-lg bg-surface-100 p-0.5">
-      {TOOLS.map(({ key, label, Logo }) => {
-        const active = key === tool
-        return (
-          <button
-            key={key}
-            onClick={() => onChange(key)}
-            className="panel-tab flex flex-1 items-center justify-center gap-1.5"
-            data-selected={active ? 'true' : undefined}
-            aria-pressed={active}
-          >
-            <Logo className="w-3.5 h-3.5 flex-shrink-0" />
-            {label}
-          </button>
-        )
-      })}
+    <div className="launcher-panel">
+      <div className="launcher-row">
+        {TOOLS.map(({ key, label, Logo }, index) => {
+          const active = key === tool
+          return (
+            <div key={key} className="contents">
+              {index > 0 && <span className="launcher-sep" />}
+              <button
+                onClick={() => onChange(key)}
+                className="panel-tab flex-1 justify-center"
+                data-selected={active ? 'true' : undefined}
+                aria-pressed={active}
+              >
+                <Logo className="w-3.5 h-3.5 flex-shrink-0" />
+                {label}
+              </button>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -110,7 +112,7 @@ function QuotaWindows({
         <button
           onClick={() => load({ force: true })}
           disabled={loading}
-          className="panel-icon-btn"
+          className="btn-icon btn-icon-md"
           title="Refresh usage"
           aria-label="Refresh usage"
         >
@@ -123,15 +125,15 @@ function QuotaWindows({
           {[0, 1, 2].map((i) => (
             <div key={i} className="space-y-1.5">
               <div className="h-4 w-40 animate-pulse rounded bg-surface-200" />
-              <div className="h-2 w-full animate-pulse rounded-full bg-surface-200" />
+              <div className="h-1.5 w-full animate-pulse rounded-full bg-surface-200" />
             </div>
           ))}
         </div>
       )}
 
       {status === 'error' && (
-        <div className="flex flex-col items-start gap-3 py-4">
-          <span className="text-sm text-text-tertiary">{error}</span>
+        <div className="flex flex-col items-start gap-3 py-2">
+          <span className="text-[13px] text-text-tertiary">{error}</span>
           <button onClick={() => load({ force: true })} className="btn-secondary">
             Retry
           </button>
@@ -139,7 +141,7 @@ function QuotaWindows({
       )}
 
       {status === 'ready' && windows.length === 0 && (
-        <span className="text-sm text-text-tertiary">
+        <span className="text-[13px] text-text-tertiary">
           {data?.message ?? 'No usage limits to show yet.'}
         </span>
       )}
@@ -160,53 +162,46 @@ function CodexUsage(): ReactElement {
 }
 
 /** One account's card: its name and how it signs in, then its windows. */
-function ClaudeAccountUsage({
-  account,
-  named
-}: {
-  account: ClaudeProfile
-  named: boolean
-}): ReactElement {
+function ClaudeAccountUsage({ account }: { account: ClaudeProfile }): ReactElement {
   return (
     <div className="px-3.5 py-3" data-claude-account-usage={account.id}>
       <QuotaWindows
         resource={claudeUsageStore(account.id)}
         title={
-          named ? (
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-medium text-text-primary truncate">
-                {account.label}
-              </span>
-              <span className="badge flex-shrink-0">{describeClaudeProfileAuth(account)}</span>
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[13px] font-medium text-text-primary truncate">
+              {account.label}
+            </span>
+            <span className="badge bg-surface-200 text-text-tertiary flex-shrink-0">
+              {describeClaudeProfileAuth(account)}
+            </span>
+          </div>
         }
       />
     </div>
   )
 }
 
-/** Every Claude account, each with its own windows, the accounts section
- *  under them. One account: the bars alone, as before. */
+/** Every Claude account, each with its own windows and its name over them,
+ *  the accounts section under them. */
 function ClaudeUsage(): ReactElement {
   const profiles = useClaudeProfileStore((s) => s.profiles)
-  const named = profiles.length > 1
   return (
-    <div className="space-y-7">
+    <>
       <div className="settings-card">
         {profiles.map((account) => (
-          <ClaudeAccountUsage key={account.id} account={account} named={named} />
+          <ClaudeAccountUsage key={account.id} account={account} />
         ))}
       </div>
       <ClaudeAccountsSection />
-    </div>
+    </>
   )
 }
 
 function ComingSoon({ label }: { label: string }): ReactElement {
   return (
     <div className="flex flex-col items-center gap-1.5 py-12 text-center">
-      <span className="text-sm font-medium text-text-primary">
+      <span className="text-[13px] font-medium text-text-primary">
         {label} usage isn’t available yet
       </span>
       <span className="text-xs text-text-tertiary">
@@ -225,28 +220,28 @@ function PiUsage(): ReactElement {
   const number = (value: number): string => new Intl.NumberFormat().format(value)
   return (
     <div className="space-y-4">
-      <div className="flex gap-1.5">
-        {(
-          [
-            ['today', 'Today'],
-            ['7d', '7d'],
-            ['30d', '30d'],
-            ['all', 'All']
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            className="group-switcher-chip"
-            data-selected={range === id ? 'true' : undefined}
-            onClick={() => setRange(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <div className="segmented">
+          {(
+            [
+              ['today', 'Today'],
+              ['7d', '7d'],
+              ['30d', '30d'],
+              ['all', 'All']
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              className="segmented-item"
+              data-active={range === id ? 'true' : undefined}
+              onClick={() => setRange(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
-          className="panel-icon-btn"
+          className="btn-icon btn-icon-md"
           title="Refresh usage"
           aria-label="Refresh usage"
           disabled={refreshing}
@@ -257,20 +252,20 @@ function PiUsage(): ReactElement {
       </div>
       {status === 'error' ? (
         <div className="space-y-3">
-          <p className="text-sm text-text-tertiary">{error}</p>
+          <p className="text-[13px] text-text-tertiary">{error}</p>
           <button className="btn-secondary" onClick={() => load({ force: true })}>
             Retry
           </button>
         </div>
       ) : !totals ? (
-        <span className="text-sm text-text-tertiary">Reading local Pi sessions…</span>
+        <span className="text-[13px] text-text-tertiary">Reading local Pi sessions…</span>
       ) : (
         <>
           <p className="text-xs text-text-tertiary">
             Local session totals, not account quota. {totals.sessions} session
             {totals.sessions === 1 ? '' : 's'}.
           </p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             {[
               ['Input', number(totals.input)],
               ['Output', number(totals.output)],
@@ -279,9 +274,9 @@ function PiUsage(): ReactElement {
               ['Total tokens', number(totals.totalTokens)],
               ['Recorded cost', `$${totals.cost.toFixed(4)}`]
             ].map(([label, value]) => (
-              <div key={label} className="rounded-lg bg-surface-100 p-3">
+              <div key={label} className="rounded-lg bg-surface-100 px-3 py-2.5">
                 <div className="text-xs text-text-tertiary">{label}</div>
-                <div className="text-sm tabular-nums text-text-primary">{value}</div>
+                <div className="text-[13px] tabular-nums text-text-primary">{value}</div>
               </div>
             ))}
           </div>
@@ -297,7 +292,7 @@ export function UsagePanel(): ReactElement {
   const setTool = useUsageNavigation((s) => s.select)
 
   return (
-    <div className="space-y-4" data-usage-provider={tool}>
+    <div className="space-y-5" data-usage-provider={tool}>
       <ToolToggle tool={tool} onChange={setTool} />
       {tool === 'claude' ? (
         <ClaudeUsage />

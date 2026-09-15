@@ -1,5 +1,10 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react'
-import { type Theme, TREE_RULE_INTENSITIES, PANEL_ROOTS, useSessionStore } from '../../store/session-store'
+import {
+  type Theme,
+  TREE_RULE_INTENSITIES,
+  PANEL_ROOTS,
+  useSessionStore
+} from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
@@ -15,43 +20,50 @@ import {
 } from '../../lib/workspace-actions'
 import { UserIconDisplay, ICON_MAP } from '../ui/UserIconDisplay'
 import { CheckIcon } from '@heroicons/react/24/solid'
-import { TrashIcon, PlusIcon, PencilIcon, FolderIcon, ShieldCheckIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import {
+  TrashIcon,
+  PlusIcon,
+  PencilIcon,
+  FolderIcon,
+  ShieldCheckIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline'
 import { LocationsTab } from './LocationsTab'
 import { UpdatesTab } from './UpdatesTab'
 import { UsagePanel } from '../usage/UsagePanel'
-import { SettingsSection, SettingsCard, SettingsRow, ToggleRow } from './primitives'
+import {
+  SettingsPage,
+  SettingsSection,
+  SettingsCard,
+  SettingsRow,
+  SettingsSelect,
+  SettingsCallout,
+  ToggleRow
+} from './primitives'
 import { cn } from '../../lib/utils'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 
-const themes: { id: Theme; label: string; colors: { bg: string; surface: string; text: string; border: string } }[] = [
-  {
-    id: 'dark',
-    label: 'Dark',
-    colors: { bg: '#0a0a0a', surface: '#1a1a1a', text: 'rgba(255,255,255,0.9)', border: 'rgba(255,255,255,0.1)' }
-  },
-  {
-    id: 'charcoal',
-    label: 'Charcoal',
-    colors: { bg: '#34302c', surface: '#4c4743', text: '#efece9', border: 'rgba(255,243,232,0.1)' }
-  },
-  {
-    id: 'light',
-    label: 'Light',
-    colors: { bg: '#f9f9f9', surface: '#e6e6e6', text: 'rgba(0,0,0,0.85)', border: 'rgba(0,0,0,0.12)' }
-  },
-  {
-    id: 'coffee',
-    label: 'Coffee',
-    colors: { bg: '#eeebe5', surface: '#ddd9d1', text: '#1b1610', border: 'rgba(120,100,80,0.15)' }
-  }
+/** The themes, by id and label only: each swatch is painted with the theme's
+ *  own tokens (`.theme-swatch-preview` carries `data-theme`), so there is no
+ *  copy of any palette here to drift from `main.css`. */
+const themes: { id: Theme; label: string }[] = [
+  { id: 'dark', label: 'Dark' },
+  { id: 'charcoal', label: 'Charcoal' },
+  { id: 'light', label: 'Light' },
+  { id: 'coffee', label: 'Coffee' }
 ]
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
 const PREVIEW_SEED = 976086463
 
-function ProfileSection() {
+/** The sentinel a select needs for "no profile": a select's value is a string,
+ *  and the workspace's profile is null when it has none. */
+const NO_PROFILE = '__none__'
+
+function ProfileSection(): React.JSX.Element {
   const name = useUserStore((s) => s.name)
   const avatarIcon = useUserStore((s) => s.avatarIcon)
   const avatarField = useUserStore((s) => s.avatarField)
@@ -64,47 +76,44 @@ function ProfileSection() {
   const [editName, setEditName] = useState(name)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const handleStartEdit = () => {
+  const handleStartEdit = (): void => {
     setEditName(name)
     setEditing(true)
     setTimeout(() => inputRef.current?.focus(), 0)
   }
 
-  const handleSave = () => {
+  const handleSave = (): void => {
     if (editName.trim()) setName(editName.trim())
     setEditing(false)
   }
 
   return (
-    <SettingsSection title="Profile">
+    <SettingsSection
+      title="Profile"
+      description="Your name and the avatar at the foot of the sidebar."
+    >
       <SettingsCard>
-        {/* Identity row: avatar + editable name */}
-        <div className="settings-row">
-          <div className="flex items-center gap-3 min-w-0">
-            <UserIconDisplay icon={avatarIcon} field={avatarField} seed={avatarSeed} size="md" />
-            {editing ? (
-              <input
-                ref={inputRef}
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onBlur={handleSave}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSave()
-                  if (e.key === 'Escape') setEditing(false)
-                }}
-                className="input-xs max-w-[220px]"
-              />
-            ) : (
-              <button
-                onClick={handleStartEdit}
-                className="text-sm font-semibold text-text-primary hover:text-accent transition-colors flex items-center gap-1.5"
-              >
-                {name}
-                <PencilIcon className="w-3 h-3 text-text-tertiary" />
-              </button>
-            )}
-          </div>
-        </div>
+        <SettingsRow label="Name" description="Shown at the foot of the sidebar and to the agents.">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={handleSave}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+                if (e.key === 'Escape') setEditing(false)
+              }}
+              className="input-compact w-48"
+              aria-label="Your name"
+            />
+          ) : (
+            <button onClick={handleStartEdit} className="btn-secondary" title="Edit your name">
+              {name}
+              <PencilIcon className="w-3.5 h-3.5 text-text-tertiary" />
+            </button>
+          )}
+        </SettingsRow>
 
         {/* Twelve of each, laid out as two rows of six rather than left to
             wrap where the panel happens to end: the icons and the fields are
@@ -118,17 +127,12 @@ function ProfileSection() {
                 <button
                   key={iconName}
                   onClick={() => setAvatarIcon(iconName)}
-                  className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${
-                    isSelected
-                      ? 'bg-accent/15 ring-1 ring-accent'
-                      : 'bg-surface-200 hover:bg-surface-300'
-                  }`}
+                  className="avatar-cell"
+                  data-selected={isSelected ? 'true' : undefined}
                   title={iconName}
+                  aria-label={iconName}
                 >
-                  <Icon
-                    className="w-3 h-3"
-                    style={{ color: isSelected ? 'var(--color-accent)' : 'var(--text-secondary)' }}
-                  />
+                  <Icon className="w-3 h-3" />
                 </button>
               )
             })}
@@ -148,13 +152,10 @@ function ProfileSection() {
                 <button
                   key={key}
                   onClick={() => setAvatarField(key)}
-                  className="relative w-6 h-6 rounded-md overflow-hidden hover:scale-110 transition-transform flex items-center justify-center"
-                  style={{
-                    boxShadow: isSelected
-                      ? '0 0 0 1.5px var(--color-accent)'
-                      : 'inset 0 0 0 1px rgba(0,0,0,0.2)'
-                  }}
+                  className="avatar-cell"
+                  data-selected={isSelected ? 'true' : undefined}
                   title={PALETTE_LABELS[key]}
+                  aria-label={PALETTE_LABELS[key]}
                 >
                   <BrandField
                     palette={key}
@@ -165,6 +166,8 @@ function ProfileSection() {
                     <CheckIcon
                       className="relative w-3 h-3"
                       style={{
+                        // The ink the field itself asks for, so the check
+                        // reads on a pale field and on a dark one alike.
                         color: fieldInk(key),
                         filter:
                           fieldInk(key) === '#1C1915'
@@ -179,12 +182,12 @@ function ProfileSection() {
           </div>
         </SettingsRow>
 
-        <SettingsRow label="Draw">
-          <button
-            onClick={reseedAvatar}
-            className="btn-secondary inline-flex items-center gap-1.5"
-            title="Draw the field again"
-          >
+        <SettingsRow
+          label="Avatar"
+          description="The field is drawn from a seed. Draw it again for another picture of the same palette."
+        >
+          <UserIconDisplay icon={avatarIcon} field={avatarField} seed={avatarSeed} size="md" />
+          <button onClick={reseedAvatar} className="btn-secondary" title="Draw the field again">
             <ArrowPathIcon className="w-3.5 h-3.5" />
             Redraw
           </button>
@@ -194,12 +197,12 @@ function ProfileSection() {
   )
 }
 
-export function SettingsPanel() {
+export function SettingsPanel(): React.JSX.Element {
   const settingsSection = useSessionStore((s) => s.settingsSection)
 
   return (
     <div className="flex-1 overflow-y-auto p-8">
-      <div className={cn(settingsSection === 'keymaps' ? 'max-w-3xl' : 'max-w-xl', 'mx-auto w-full')}>
+      <div className="max-w-3xl mx-auto w-full">
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}
         {settingsSection === 'appearance' && <AppearanceSettings />}
@@ -211,86 +214,70 @@ export function SettingsPanel() {
   )
 }
 
-function GeneralSettings() {
+function GeneralSettings(): React.JSX.Element {
   return (
-    <>
-      <h2 className="text-lg font-semibold text-text-primary mb-6">General</h2>
-      <div className="space-y-7">
-        <ProfileSection />
-        <WorkspacesSection />
-        <LocationsTab />
-        <SidePanelSection />
-        <GitSection />
-        <SessionsSection />
-        <PrivacySection />
-      </div>
-    </>
+    <SettingsPage
+      title="General"
+      description="Your profile, the workspaces Clave opens, the machines it reaches, and how sessions run."
+    >
+      <ProfileSection />
+      <WorkspacesSection />
+      <LocationsTab />
+      <SidePanelSection />
+      <GitSection />
+      <SessionsSection />
+      <PrivacySection />
+    </SettingsPage>
   )
 }
 
-function AppearanceSettings() {
+function AppearanceSettings(): React.JSX.Element {
   const theme = useSessionStore((s) => s.theme)
   const setTheme = useSessionStore((s) => s.setTheme)
 
   return (
-    <>
-      <h2 className="text-lg font-semibold text-text-primary mb-6">Appearance</h2>
-      <div className="space-y-7">
-        <SettingsSection title="Theme">
-          <SettingsCard>
-            <div className="settings-row">
-              <div className="flex gap-3 flex-1">
-                {themes.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setTheme(t.id)}
-                    className="flex-1 rounded-xl p-1 transition-all duration-200"
-                    style={{
-                      boxShadow: theme === t.id
-                        ? '0 0 0 2px var(--color-accent)'
-                        : '0 0 0 1px var(--border-color)',
-                      background: 'var(--surface-100)'
-                    }}
-                  >
-                    {/* Mini preview */}
-                    <div
-                      className="rounded-lg p-3 mb-2"
-                      style={{ background: t.colors.bg, border: `1px solid ${t.colors.border}` }}
-                    >
-                      <div
-                        className="h-1.5 w-10 rounded-full mb-2"
-                        style={{ background: t.colors.text, opacity: 0.7 }}
-                      />
-                      <div className="flex gap-1.5">
-                        <div
-                          className="h-6 flex-1 rounded"
-                          style={{ background: t.colors.surface }}
-                        />
-                        <div
-                          className="h-6 flex-1 rounded"
-                          style={{ background: t.colors.surface }}
-                        />
-                      </div>
-                      <div
-                        className="h-1.5 w-14 rounded-full mt-2"
-                        style={{ background: t.colors.text, opacity: 0.4 }}
-                      />
+    <SettingsPage
+      title="Appearance"
+      description="The theme, the hairlines every tree is ruled with, and what the sidebar shows."
+    >
+      <SettingsSection
+        title="Theme"
+        description="Four skins on the same tokens; the terminals follow."
+      >
+        <SettingsCard>
+          <div className="settings-row">
+            <div className="flex gap-3 flex-1">
+              {themes.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTheme(t.id)}
+                  className="theme-swatch"
+                  data-selected={theme === t.id ? 'true' : undefined}
+                  data-theme-option={t.id}
+                  aria-pressed={theme === t.id}
+                >
+                  {/* The preview carries the theme, so it is painted with
+                      that theme's own surfaces and ink. */}
+                  <div className="theme-swatch-preview" data-theme={t.id}>
+                    <div className="theme-swatch-line w-10 mb-2" style={{ opacity: 0.7 }} />
+                    <div className="flex gap-1.5">
+                      <div className="theme-swatch-tile" />
+                      <div className="theme-swatch-tile" />
                     </div>
-                    <div className="text-xs font-medium text-text-primary text-center pb-1">
-                      {t.label}
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    <div className="theme-swatch-line w-14 mt-2" style={{ opacity: 0.4 }} />
+                  </div>
+                  <div className="theme-swatch-label">{t.label}</div>
+                </button>
+              ))}
             </div>
-          </SettingsCard>
-        </SettingsSection>
+          </div>
+        </SettingsCard>
+      </SettingsSection>
 
-        <TreeSeparatorsSection />
-        <SidebarWidgetsSection />
-        <MissionControlSection />
-      </div>
-    </>
+      <TreeSeparatorsSection />
+      <SidebarWidgetsSection />
+      <MissionControlSection />
+    </SettingsPage>
   )
 }
 
@@ -311,7 +298,7 @@ function TreeSeparatorsSection(): React.JSX.Element {
   return (
     <SettingsSection
       title="Tree separators"
-      description="The hairlines between rows in the Files tab and in the git panel — the repo tree and the changed files inside it. Off draws none of them."
+      description="The hairlines between rows in the Files tab and in the git panel, the repo tree and the changed files inside it. Off draws none of them."
     >
       <SettingsCard>
         <SettingsRow label="Weight" description="Applies to every tree in the app at once.">
@@ -350,16 +337,18 @@ function TreeSeparatorsSection(): React.JSX.Element {
   )
 }
 
-function UsageSettings() {
+function UsageSettings(): React.JSX.Element {
   return (
-    <>
-      <h2 className="text-lg font-semibold text-text-primary mb-6">Usage</h2>
+    <SettingsPage
+      title="Usage"
+      description="Each provider's rate-limit windows, and for Claude every account you handed Clave, read every five minutes."
+    >
       <UsagePanel />
-    </>
+    </SettingsPage>
   )
 }
 
-function SessionsSection() {
+function SessionsSection(): React.JSX.Element {
   const tmuxMode = useSessionStore((s) => s.tmuxMode)
   const setTmuxMode = useSessionStore((s) => s.setTmuxMode)
   const [tmuxAvailable, setTmuxAvailable] = useState<boolean | null>(null)
@@ -470,7 +459,7 @@ function SidePanelSection(): ReactNode {
       <SettingsCard>
         <SettingsRow
           label="Default root"
-          description="Which folder the Files and Git panels open a tab on. A tab with nothing on the chosen root falls to the next one down — a tab outside any group opens on its own folder — and the panel's root chip still overrides it per tab."
+          description="Which folder the Files and Git panels open a tab on. A tab with nothing on the chosen root falls to the next one down, a tab outside any group opens on its own folder, and the panel's root chip still overrides it per tab."
         >
           <div className="segmented">
             {PANEL_ROOTS.map(({ id, label }) => (
@@ -491,7 +480,7 @@ function SidePanelSection(): ReactNode {
   )
 }
 
-function GitSection() {
+function GitSection(): React.JSX.Element {
   const livePollLimit = useSessionStore((s) => s.gitLivePollLimit)
   const livePollAlways = useSessionStore((s) => s.gitLivePollAlways)
   const setLivePollLimit = useSessionStore((s) => s.setGitLivePollLimit)
@@ -503,7 +492,7 @@ function GitSection() {
     setDraft(String(livePollLimit))
   }, [livePollLimit])
 
-  const commitLimit = () => {
+  const commitLimit = (): void => {
     const n = Number(draft)
     if (Number.isFinite(n) && n > 0) setLivePollLimit(n)
     else setDraft(String(livePollLimit))
@@ -533,7 +522,8 @@ function GitSection() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
             }}
-            className="input-xs w-16 text-right"
+            className="input-compact w-16 text-right"
+            aria-label="Repositories above which live updates pause"
           />
           <span className="text-xs text-text-tertiary">repos</span>
         </SettingsRow>
@@ -542,12 +532,12 @@ function GitSection() {
   )
 }
 
-function SidebarWidgetsSection() {
+function SidebarWidgetsSection(): React.JSX.Element {
   const workTrackerEnabled = useWorkTrackerStore((s) => s.enabled)
   const setWorkTrackerEnabled = useWorkTrackerStore((s) => s.setEnabled)
 
   return (
-    <SettingsSection title="Sidebar Widgets">
+    <SettingsSection title="Sidebar widgets">
       <SettingsCard>
         <ToggleRow
           label="Work Tracker"
@@ -560,7 +550,7 @@ function SidebarWidgetsSection() {
   )
 }
 
-function WorkspacesSection() {
+function WorkspacesSection(): React.JSX.Element {
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
 
@@ -572,13 +562,15 @@ function WorkspacesSection() {
     candidates: { name: string; path: string }[]
     selected: string | null
   } | null>(null)
-  const [profileCandidates, setProfileCandidates] = useState<Record<string, { name: string; path: string }[]>>({})
+  const [profileCandidates, setProfileCandidates] = useState<
+    Record<string, { name: string; path: string }[]>
+  >({})
   const [profileMissing, setProfileMissing] = useState<Record<string, boolean>>({})
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
 
-  const refreshTrustedRoots = () => {
+  const refreshTrustedRoots = (): void => {
     window.electronAPI?.listTrustedRoots().then((r) => setTrustedRoots(r ?? []))
   }
   useEffect(() => {
@@ -607,12 +599,12 @@ function WorkspacesSection() {
     }
   }, [workspaces])
 
-  const flashError = (msg: string) => {
+  const flashError = (msg: string): void => {
     setError(msg)
     setTimeout(() => setError(null), 4000)
   }
 
-  const handleAddWorkspace = async () => {
+  const handleAddWorkspace = async (): Promise<void> => {
     setError(null)
     setPendingAdd(null)
     const folder = await window.electronAPI?.openFolderDialog()
@@ -635,7 +627,7 @@ function WorkspacesSection() {
     })
   }
 
-  const handleConfirmAdd = async () => {
+  const handleConfirmAdd = async (): Promise<void> => {
     if (!pendingAdd) return
     const added = await addWorkspace(pendingAdd.rootDir, pendingAdd.selected)
     if (!added) flashError('This folder overlaps an already-registered workspace.')
@@ -643,11 +635,11 @@ function WorkspacesSection() {
     refreshTrustedRoots()
   }
 
-  const startRename = (id: string, current: string) => {
+  const startRename = (id: string, current: string): void => {
     setRenamingId(id)
     setRenameValue(current)
   }
-  const commitRename = () => {
+  const commitRename = (): void => {
     if (renamingId && renameValue.trim()) void renameWorkspace(renamingId, renameValue)
     setRenamingId(null)
   }
@@ -662,7 +654,7 @@ function WorkspacesSection() {
         <>
           A workspace is a root folder: its sessions, groups, pinned templates, and toolbar are
           scoped together, and the switcher at the top of the sidebar flips between them. Each
-          workspace reads one <code className="text-text-secondary">.clave</code> profile file.
+          workspace reads one <code className="text-text-primary">.clave</code> profile file.
         </>
       }
     >
@@ -671,8 +663,19 @@ function WorkspacesSection() {
           const isActive = ws.id === activeWorkspaceId
           const candidates = profileCandidates[ws.id] ?? []
           const missing = profileMissing[ws.id] === true
-          const orphanProfile =
-            ws.profileFile && !candidates.some((c) => c.path === ws.profileFile)
+          const orphanProfile = ws.profileFile && !candidates.some((c) => c.path === ws.profileFile)
+          const profileOptions = [
+            ...(orphanProfile
+              ? [
+                  {
+                    value: ws.profileFile!,
+                    label: `${ws.profileFile!.split('/').pop()?.replace('.clave', '')} (missing)`
+                  }
+                ]
+              : []),
+            ...candidates.map((c) => ({ value: c.path, label: c.name })),
+            { value: NO_PROFILE, label: 'No profile' }
+          ]
           return (
             <div
               key={ws.id}
@@ -680,6 +683,7 @@ function WorkspacesSection() {
                 'settings-row transition-colors',
                 isActive ? 'bg-accent/5' : 'hover:bg-surface-100/60'
               )}
+              data-workspace-row={ws.id}
             >
               <div
                 className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
@@ -702,6 +706,7 @@ function WorkspacesSection() {
                         if (e.key === 'Escape') setRenamingId(null)
                       }}
                       className="input-compact w-40"
+                      aria-label="Workspace name"
                     />
                   ) : (
                     <p className="settings-row-title truncate">{ws.name}</p>
@@ -714,35 +719,26 @@ function WorkspacesSection() {
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 {missing && (
                   <span title="The selected profile file no longer exists — pins are frozen at their last state.">
-                    <ExclamationTriangleIcon className="w-3.5 h-3.5 text-amber-400" />
+                    <ExclamationTriangleIcon className="w-3.5 h-3.5 text-warning" />
                   </span>
                 )}
-                <select
-                  value={ws.profileFile ?? ''}
-                  onChange={(e) => void setWorkspaceProfile(ws.id, e.target.value || null)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="input-compact text-xs max-w-28"
-                  title="Profile file defining this workspace's groups and toolbar"
-                >
-                  {orphanProfile && (
-                    <option value={ws.profileFile!}>
-                      {ws.profileFile!.split('/').pop()?.replace('.clave', '')} (missing)
-                    </option>
-                  )}
-                  {candidates.map((c) => (
-                    <option key={c.path} value={c.path}>
-                      {c.name}
-                    </option>
-                  ))}
-                  <option value="">No profile</option>
-                </select>
+                <SettingsSelect
+                  value={ws.profileFile ?? NO_PROFILE}
+                  options={profileOptions}
+                  onChange={(value) =>
+                    void setWorkspaceProfile(ws.id, value === NO_PROFILE ? null : value)
+                  }
+                  ariaLabel={`Profile file for ${ws.name}`}
+                  className="max-w-36"
+                  testId="workspace-profile"
+                />
                 {isActive && <div className="w-2 h-2 rounded-full bg-accent" />}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     startRename(ws.id, ws.name)
                   }}
-                  className="btn-icon btn-icon-xs"
+                  className="btn-icon btn-icon-sm"
                   title="Rename workspace"
                   aria-label="Rename workspace"
                 >
@@ -753,7 +749,7 @@ function WorkspacesSection() {
                     e.stopPropagation()
                     setConfirmRemoveId(ws.id)
                   }}
-                  className="btn-icon btn-icon-xs hover:text-red-400"
+                  className="btn-icon btn-icon-sm btn-icon--danger"
                   title="Remove workspace"
                   aria-label="Remove workspace"
                 >
@@ -772,106 +768,107 @@ function WorkspacesSection() {
 
       {/* Removal confirmation — spells out the cascade before anything happens */}
       {removal && removalWs && (
-        <div className="mt-2 p-3 rounded-lg border border-red-400/30 bg-red-400/5">
-          <p className="text-xs text-text-primary font-medium mb-1">
-            Remove workspace “{removalWs.name}”?
-          </p>
-          <p className="text-xs text-text-secondary">
-            {removal.pinCount > 0
-              ? `${removal.pinCount} pinned template${removal.pinCount === 1 ? '' : 's'} will be removed (recoverable from their .clave files). `
-              : ''}
-            {removal.sessionCount > 0
-              ? `${removal.sessionCount} running session${removal.sessionCount === 1 ? '' : 's'} will be kept and moved to ${removal.target ? `“${removal.target.name}”` : 'the unscoped view'}.`
-              : 'No running sessions are affected.'}
-          </p>
-          <div className="flex gap-2 mt-2.5">
+        <SettingsCallout
+          tone="danger"
+          className="mt-2"
+          title={<>Remove workspace “{removalWs.name}”?</>}
+          text={
+            <>
+              {removal.pinCount > 0
+                ? `${removal.pinCount} pinned template${removal.pinCount === 1 ? '' : 's'} will be removed (recoverable from their .clave files). `
+                : ''}
+              {removal.sessionCount > 0
+                ? `${removal.sessionCount} running session${removal.sessionCount === 1 ? '' : 's'} will be kept and moved to ${removal.target ? `“${removal.target.name}”` : 'the unscoped view'}.`
+                : 'No running sessions are affected.'}
+            </>
+          }
+        >
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => setConfirmRemoveId(null)} className="btn-secondary">
+              Cancel
+            </button>
             <button
               onClick={() => {
                 void removeWorkspace(confirmRemoveId!)
                 setConfirmRemoveId(null)
               }}
-              className="btn-primary btn-compact flex-1"
+              className="btn-primary"
             >
               Remove
             </button>
-            <button
-              onClick={() => setConfirmRemoveId(null)}
-              className="btn-secondary btn-compact border border-border-subtle"
-            >
-              Cancel
-            </button>
           </div>
-        </div>
+        </SettingsCallout>
       )}
 
       {/* Profile picker for a freshly added folder with several candidates */}
       {pendingAdd && (
-        <div className="mt-2 p-3 rounded-lg border border-accent/30 bg-accent/5">
-          <p className="text-xs text-text-secondary mb-2 font-medium">
-            Pick the profile for this workspace ({pendingAdd.candidates.length} found):
-          </p>
-          <div className="space-y-1">
+        <SettingsCallout
+          tone="accent"
+          className="mt-2"
+          title={`Pick the profile for this workspace (${pendingAdd.candidates.length} found)`}
+        >
+          <div className="mt-2 space-y-0.5">
             {pendingAdd.candidates.map((file) => {
               const isSelected = pendingAdd.selected === file.path
               return (
                 <label
                   key={file.path}
-                  className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                    isSelected ? 'bg-accent/10' : 'hover:bg-surface-200'
-                  }`}
+                  className="menu-item"
+                  data-selected={isSelected ? 'true' : undefined}
                 >
                   <input
                     type="radio"
                     name="workspace-profile"
                     checked={isSelected}
                     onChange={() => setPendingAdd({ ...pendingAdd, selected: file.path })}
-                    className="border-border text-accent focus:ring-accent/30 w-3.5 h-3.5"
+                    className="accent-accent w-3.5 h-3.5"
                   />
-                  <span className="text-xs text-text-primary font-medium">{file.name}</span>
+                  <span className="text-xs">{file.name}</span>
                 </label>
               )
             })}
           </div>
-          <div className="flex gap-2 mt-2.5">
-            <button onClick={handleConfirmAdd} className="btn-primary btn-compact flex-1">
-              Add Workspace
-            </button>
-            <button
-              onClick={() => setPendingAdd(null)}
-              className="btn-secondary btn-compact border border-border-subtle"
-            >
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => setPendingAdd(null)} className="btn-secondary">
               Cancel
             </button>
+            <button onClick={handleConfirmAdd} className="btn-primary">
+              Add Workspace
+            </button>
           </div>
-        </div>
+        </SettingsCallout>
       )}
 
       {/* Error message */}
-      {error && <p className="mt-2 text-xs text-red-400 px-1">{error}</p>}
+      {error && <p className="mt-2 text-xs text-destructive px-1">{error}</p>}
 
       {/* Trusted workspace folders */}
       {trustedRoots.length > 0 && (
-        <>
-          <div className="settings-row-title px-1 pt-4 pb-1 flex items-center gap-2">
-            <ShieldCheckIcon className="w-4 h-4 text-text-tertiary" />
-            Trusted workspace folders
+        <div className="mt-6">
+          <div className="settings-section-head">
+            <h3 className="settings-section-title">
+              <ShieldCheckIcon />
+              Trusted workspace folders
+            </h3>
+            <p className="settings-section-description">
+              Workspace files inside these folders run their auto commands without prompting.
+            </p>
           </div>
-          <p className="settings-row-description px-1 pb-2">
-            Workspace files inside these folders run their auto commands without prompting.
-          </p>
           <SettingsCard>
             {trustedRoots.map((root) => (
               <div key={root} className="settings-row">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <FolderIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-                  <p className="settings-row-description truncate" title={root}>{root}</p>
+                  <p className="settings-row-description truncate" title={root}>
+                    {root}
+                  </p>
                 </div>
                 <button
                   onClick={async () => {
                     await window.electronAPI?.untrustWorkspaceRoot(root)
                     setTrustedRoots((r) => r.filter((x) => x !== root))
                   }}
-                  className="btn-icon btn-icon-xs hover:text-red-400 flex-shrink-0"
+                  className="btn-icon btn-icon-sm btn-icon--danger flex-shrink-0"
                   title="Revoke trust"
                   aria-label="Revoke trust"
                 >
@@ -880,7 +877,7 @@ function WorkspacesSection() {
               </div>
             ))}
           </SettingsCard>
-        </>
+        </div>
       )}
     </SettingsSection>
   )
