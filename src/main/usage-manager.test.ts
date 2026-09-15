@@ -79,6 +79,33 @@ describe('parseUnifiedRateLimitHeaders', () => {
     expect(windows[1]).toMatchObject({ scope: 'Opus', label: 'Weekly · Opus' })
   })
 
+  it("reads the Fable weekly cap under the service's own code for it", () => {
+    // The headers a Fable probe answered with on 2026-09-15: the third window
+    // is spelled 7d_oi, an underscore and a code, where a model name would be
+    // 7d-opus. It is the Fable cap, and it reads as one.
+    const windows = parseUnifiedRateLimitEntries([
+      ['anthropic-ratelimit-unified-7d_oi-utilization', '0.74'],
+      ['anthropic-ratelimit-unified-7d_oi-reset', '1789718400'],
+      ['anthropic-ratelimit-unified-7d_oi-status', 'allowed'],
+      ['anthropic-ratelimit-unified-7d-utilization', '0.43'],
+      ['anthropic-ratelimit-unified-5h-utilization', '0.16']
+    ])
+    expect(windows.map((w) => w.kind)).toEqual(['session', 'weekly_all', 'weekly_scoped'])
+    expect(windows[2]).toMatchObject({
+      key: 'weekly_scoped:Weekly · Fable',
+      scope: 'Fable',
+      label: 'Weekly · Fable',
+      usedPercentage: 74,
+      resetsAt: 1789718400 * 1000,
+      severity: 'normal'
+    })
+    // The get-shaped source walks the known names, this one included.
+    const byName: Record<string, string> = {
+      'anthropic-ratelimit-unified-7d_oi-utilization': '0.5'
+    }
+    expect(parseUnifiedRateLimitHeaders((n) => byName[n] ?? null)[0].scope).toBe('Fable')
+  })
+
   it('ignores a utilization that is not a number, and a reset that is', () => {
     const windows = parseUnifiedRateLimitEntries([
       ['anthropic-ratelimit-unified-5h-utilization', 'n/a'],

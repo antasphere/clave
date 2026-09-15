@@ -112,6 +112,53 @@ describe('a forced read after a token paste', () => {
     expect(probes).toBe(2)
   })
 
+  it('asks Fable first, identified as Claude Code, and reads its weekly cap', async () => {
+    const asked: { model: string; agent: string; system: string }[] = []
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string; system: string }
+      const headers = init?.headers as Record<string, string>
+      asked.push({ model: body.model, agent: headers['user-agent'], system: body.system })
+      return response(200, {
+        'anthropic-ratelimit-unified-5h-utilization': '0.16',
+        'anthropic-ratelimit-unified-7d-utilization': '0.43',
+        'anthropic-ratelimit-unified-7d_oi-utilization': '0.74',
+        'anthropic-ratelimit-unified-7d_oi-status': 'allowed'
+      })
+    }) as typeof fetch
+    const fable = claudeAccountsManager.add({ label: 'Fable' })
+    claudeAccountsManager.setToken(fable.id, TOKEN)
+    const result = await usageManager.getLimits(fable.id, { force: true })
+    expect(asked).toHaveLength(1)
+    expect(asked[0].model).toBe('claude-fable-5-1')
+    expect(asked[0].agent).toMatch(/^claude-cli\/\d+\.\d+\.\d+ /)
+    expect(asked[0].system).toContain('Claude Code')
+    const windows = (result as { windows: { scope: string | null; usedPercentage: number }[] })
+      .windows
+    expect(windows.map((w) => w.scope)).toEqual([null, null, 'Fable'])
+    expect(windows[2].usedPercentage).toBe(74)
+  })
+
+  it('falls back to the cheapest model when Fable is refused for the account', async () => {
+    // A plan without Fable: the service answers the model with a 400 and no
+    // windows; the read then carries what a Haiku probe carries, never an error.
+    const asked: string[] = []
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string }
+      asked.push(body.model)
+      if (body.model.startsWith('claude-fable')) return response(400, {}, '{"type":"error"}')
+      return response(200, {
+        'anthropic-ratelimit-unified-5h-utilization': '0.2',
+        'anthropic-ratelimit-unified-7d-utilization': '0.5'
+      })
+    }) as typeof fetch
+    const plain = claudeAccountsManager.add({ label: 'Plain' })
+    claudeAccountsManager.setToken(plain.id, TOKEN)
+    const result = await usageManager.getLimits(plain.id, { force: true })
+    expect(asked).toEqual(['claude-fable-5-1', 'claude-haiku-4-5-20251001'])
+    expect('error' in result).toBe(false)
+    expect((result as { windows: unknown[] }).windows).toHaveLength(2)
+  })
+
   it('reads a 429 as the window being out, not as a failed read', async () => {
     globalThis.fetch = vi.fn(async () =>
       response(429, {

@@ -26,16 +26,36 @@ const FETCH_TIMEOUT_MS = 15_000
 
 /** The probe: the smallest request the API answers with the account's unified
  *  rate-limit headers (the 5-hour and weekly windows, their utilization, their
- *  reset times, the service's own verdict on each). One output token on the
- *  cheapest model, a two-word prompt: about twenty tokens per read, twelve
- *  reads an hour under the poll below. A token count (free) answers with no
- *  such headers, so it cannot replace this. */
-export const PROBE_MODEL = 'claude-haiku-4-5-20251001'
-const PROBE_BODY = JSON.stringify({
-  model: PROBE_MODEL,
-  max_tokens: 1,
-  messages: [{ role: 'user', content: 'hi' }]
-})
+ *  reset times, the service's own verdict on each). One output token, a
+ *  two-word prompt: about twenty tokens per read, twelve reads an hour under
+ *  the poll below. A token count (free) answers with no such headers, so it
+ *  cannot replace this.
+ *
+ *  The headers describe the windows the REQUESTED model is subject to: a
+ *  Haiku probe carries the session and the weekly all-models windows only,
+ *  while the same probe on Fable also carries the Fable weekly cap (measured
+ *  on 2026-09-15: the machine login's endpoint read said 74% on that cap, and
+ *  the Fable probe's third window said 0.74). So the probe asks Fable first,
+ *  and falls back to the cheapest model for an account whose plan has no
+ *  Fable, where the service refuses the model outright. */
+export const PROBE_MODELS = ['claude-fable-5-1', 'claude-haiku-4-5-20251001'] as const
+export const PROBE_MODEL = PROBE_MODELS[PROBE_MODELS.length - 1]
+/** The service only serves Fable to a request that identifies as a current
+ *  Claude Code: the CLI's own system prompt and a `claude-cli/<version>` user
+ *  agent, 2.1.251 or newer as of 2026-09-15 (an older version is answered with
+ *  a 400 naming the version required; no identification at all is a bare 429
+ *  with no headers). The fallback above covers a version the service stops
+ *  accepting: the read then carries the two windows a Haiku probe carries. */
+export const PROBE_CLI_VERSION = '2.1.272'
+const PROBE_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude."
+export function probeBody(model: string): string {
+  return JSON.stringify({
+    model,
+    max_tokens: 1,
+    system: PROBE_SYSTEM,
+    messages: [{ role: 'user', content: 'hi' }]
+  })
+}
 
 /** How long a read stays good for every window that asks; the poll in
  *  `startPolling` refreshes every account on this same clock. */
@@ -266,14 +286,21 @@ function severityOfStatus(status: string | null): UsageWindow['severity'] {
   return null
 }
 
+/** What the service calls a scoped weekly cap in its headers. The endpoint's
+ *  `limits` array names the model in words; the headers carry a code instead,
+ *  and `oi` is the Fable cap (measured 2026-09-15 against the endpoint's own
+ *  figure). A code not listed here still renders, under its own letters. */
+const SCOPE_NAMES: Record<string, string> = { oi: 'Fable' }
+
 /** `5h` → the session window, `7d` → the weekly all-models cap, `7d-<model>`
- *  → a weekly cap scoped to that model, anything else → its own words. */
+ *  or `7d_<code>` → a weekly cap scoped to that model, anything else → its
+ *  own words. */
 function windowShapeOf(name: string): { kind: string; scope: string | null; label: string } {
   if (name === '5h') return { kind: 'session', scope: null, label: 'Current session (5h)' }
   if (name === '7d') return { kind: 'weekly_all', scope: null, label: 'Weekly · all models' }
-  const scoped = /^7d-(.+)$/.exec(name)
+  const scoped = /^7d[-_](.+)$/.exec(name)
   if (scoped) {
-    const scope = humanizeKind(scoped[1])
+    const scope = SCOPE_NAMES[scoped[1]] ?? humanizeKind(scoped[1])
     return { kind: 'weekly_scoped', scope, label: `Weekly · ${scope}` }
   }
   const label = humanizeKind(name)
@@ -334,7 +361,7 @@ export function parseUnifiedRateLimitEntries(entries: [string, string][]): Usage
 
 // The names the probe's headers are known to carry, so a `get`-shaped source
 // (a Headers object, a test) can be walked without enumeration.
-const KNOWN_UNIFIED_WINDOWS = ['5h', '7d']
+const KNOWN_UNIFIED_WINDOWS = ['5h', '7d', '7d_oi']
 function collectUnifiedHeaders(get: (name: string) => string | null): [string, string][] {
   const entries: [string, string][] = []
   for (const name of KNOWN_UNIFIED_WINDOWS) {
@@ -397,34 +424,43 @@ async function readFromEndpoint(token: string): Promise<UsageLimits | UsageError
 
 /** The probe, with a pasted token: the quota is read off the response headers.
  *  A 429 still carries them (that is the window being exhausted, not an error
- *  in the read), so the headers win over the status whenever they are there. */
+ *  in the read), so the headers win over the status whenever they are there.
+ *  The models are tried in order: an answer with windows ends the read, a
+ *  refused token ends it too (the next model would be refused the same), and
+ *  anything else (the model not served to this account, a version the
+ *  service no longer accepts) moves on to the next model. */
 async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
-  let res: Response
-  try {
-    res = await fetchWithTimeout(MESSAGES_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'anthropic-beta': OAUTH_BETA,
-        'anthropic-version': API_VERSION,
-        'content-type': 'application/json'
-      },
-      body: PROBE_BODY
-    })
-  } catch {
-    return { error: 'Could not reach Anthropic. Check your connection.' }
-  }
-  // Drain the body so the connection is released; its content is not the point.
-  void res.text().catch(() => undefined)
+  let last: Response | null = null
+  for (const model of PROBE_MODELS) {
+    let res: Response
+    try {
+      res = await fetchWithTimeout(MESSAGES_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'anthropic-beta': OAUTH_BETA,
+          'anthropic-version': API_VERSION,
+          'content-type': 'application/json',
+          'user-agent': `claude-cli/${PROBE_CLI_VERSION} (external, cli)`,
+          'x-app': 'cli'
+        },
+        body: probeBody(model)
+      })
+    } catch {
+      return { error: 'Could not reach Anthropic. Check your connection.' }
+    }
+    // Drain the body so the connection is released; its content is not the point.
+    void res.text().catch(() => undefined)
 
-  const windows = parseUnifiedRateLimitEntries(headerEntries(res.headers))
-  if (windows.length > 0) return { windows, fetchedAt: Date.now() }
-
-  if (res.status === 401 || res.status === 403) {
-    return { error: 'This token was refused. Generate a new one with `claude setup-token`.' }
+    const windows = parseUnifiedRateLimitEntries(headerEntries(res.headers))
+    if (windows.length > 0) return { windows, fetchedAt: Date.now() }
+    if (res.status === 401 || res.status === 403) {
+      return { error: 'This token was refused. Generate a new one with `claude setup-token`.' }
+    }
+    last = res
   }
-  if (!res.ok) {
-    return { error: `Anthropic returned ${res.status}.` }
+  if (last && !last.ok) {
+    return { error: `Anthropic returned ${last.status}.` }
   }
   return { error: 'Anthropic answered without any usage windows.' }
 }
