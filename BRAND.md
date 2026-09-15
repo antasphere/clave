@@ -85,6 +85,26 @@ surface-200). Disabled is always `opacity: 0.4` + `cursor: not-allowed`.
 - Side-panel tree rows: `--panel-row-h` (28px); git tree section rows
   `--git-tree-row-h` (30px); hairlines between blocks use `--rule-color` only.
 
+## Settings pages
+
+The settings are built from `components/settings/primitives.tsx` and the `── Settings ──`
+block of `main.css`, and from nothing else: a page never styles a control of its own.
+
+| Piece | Component / class | Look |
+|---|---|---|
+| The page | `SettingsPage` (`.settings-page-header`, `-title`, `-description`, `-actions`) | one width for every page (`max-w-3xl`), an 18px title, a 13px description, the page's actions on the right |
+| A section | `SettingsSection` (`.settings-section-title`, `-description`) | 13px primary title with room for a glyph (the agent families' logos), 12px secondary description |
+| A card | `SettingsCard` (`.settings-card`) | the panel material: radius-xl, `--color-border`, `--surface-50`, rows seamed by `--border-subtle` |
+| A row | `SettingsRow` (`.settings-row`, `-title`, `-description`) | text left, control right; `.settings-row-action` is the full-width add row |
+| A select | `SettingsSelect` (`.select-trigger`, `.select-menu`, `.select-option`) | a 28px trigger cut like `.input-compact` with the caret held off the edge, the options on `.menu-surface` / `.menu-item`; never a native `<select>` |
+| A switch | `Toggle` / `ToggleRow` (`.switch`, `.switch-knob`) | 28×16, `data-checked`, the knob on `--color-switch-knob` |
+| A callout | `SettingsCallout` (`.settings-callout[data-tone]`) | a confirmation or a picker under a card, the tone on the border only |
+| The sidebar's groups | `.settings-nav-label` over `.sidebar-item` rows | regular case, 11px tertiary, like `.menu-label` |
+
+Status in words uses `.status-text[data-status]`; a destructive icon button takes
+`.btn-icon--danger` (the ink turns on hover only); the theme swatches are
+`.theme-swatch` with a `data-theme` preview inside, so they never carry a copied hex.
+
 ## The one surface that is NOT grey: the sidebar's foot
 
 The foot panel is made of the user's Antasphere field, and grey is the one hover
