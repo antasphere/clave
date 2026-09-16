@@ -100,13 +100,16 @@ function readRows(win) {
           last: el.dataset.treeWorktreeLast === 'true',
           collapsed: el.dataset.treeCollapsed === 'true',
           rowW,
-          // The container query measures the content box, not the row.
+          // The container query reads the repo LIST's width, so every row
+          // flips together whatever its depth.
+          panelW: el.closest('.git-repo-list')?.getBoundingClientRect().width ?? null,
           contentW: rowW - parseFloat(rowStyle.paddingLeft) - parseFloat(rowStyle.paddingRight),
           overflows: el.scrollWidth > el.clientWidth,
           rowOverflow: rowStyle.overflowX,
           baseDisplay: badge ? getComputedStyle(badge).display : null,
           badgeCount: el.querySelectorAll('.git-sync-badge').length,
           nameW: name?.getBoundingClientRect().width ?? null,
+          nameX: name?.getBoundingClientRect().left ?? null,
           nameScroll: name?.scrollWidth ?? null,
           stem: !!stem,
           stemX: stem ? stem.getBoundingClientRect().left : null,
@@ -185,16 +188,21 @@ export async function run(t) {
     )
     t.check('the source row draws the stem the guide continues', src?.stem === true, src)
     t.check(
+      'the worktree’s name lines up with its repo’s name',
+      wt && src && Math.abs(wt.nameX - src.nameX) <= 0.01,
+      { wt: wt?.nameX, src: src?.nameX }
+    )
+    t.check(
       'the stem and the guide line sit on one column',
       src && wt && Math.abs(src.stemX - wt.lineX) <= 0.01,
       { stemX: src?.stemX, lineX: wt?.lineX }
     )
-    // The panel opens narrow; the base name folds away when the row's CONTENT
-    // box is under 300px (the container query measures that, not the row) and
-    // the drift stays, the title still naming the base.
-    const narrow = (wt?.contentW ?? 0) < 300
+    // The panel opens narrow; the base name folds away when the repo LIST is
+    // under 300px (the container query reads the list, so a row's depth never
+    // changes the answer) and the drift stays, the title still naming the base.
+    const narrow = (wt?.panelW ?? 0) < 300
     t.check(
-      `the base badge reads ${narrow ? '−2, its title naming main,' : 'main−2'} (row ${wt?.rowW}px, content ${wt?.contentW}px)`,
+      `the base badge reads ${narrow ? '−2, its title naming main,' : 'main−2'} (list ${wt?.panelW}px, row ${wt?.rowW}px)`,
       wt?.baseKind === 'drift' && wt?.base === (narrow ? '−2' : 'main−2') && /main/.test(wt?.baseTitle ?? ''),
       wt
     )

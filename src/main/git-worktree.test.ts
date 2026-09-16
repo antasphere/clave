@@ -43,8 +43,10 @@ let wtLocal: string
 let wtRemote: string
 /** A worktree whose branch has no reflog left, tracking `origin/main`. */
 let wtNoReflog: string
-/** A worktree cut from a detached HEAD, no upstream, no origin/HEAD: no base. */
+/** A branch cut from a detached HEAD with no upstream: the remote's default branch is its base. */
 let wtDetached: string
+/** A detached checkout, no branch at all: no base, whatever the remote's HEAD. */
+let wtPureDetached: string
 
 beforeAll(() => {
   root = realpathSync(mkdtempSync(path.join(tmpdir(), 'clave-git-worktree-')))
@@ -76,11 +78,20 @@ beforeAll(() => {
   git(wtNoReflog, 'branch', '-q', '--set-upstream-to=origin/main', 'lane/noreflog')
   unlinkSync(path.join(repo, '.git', 'logs', 'refs', 'heads', 'lane', 'noreflog'))
 
-  // Cut from a detached position, no upstream, and the clone has no
-  // origin/HEAD symref (a bare origin freshly initialised carries none).
+  // The clone of an empty bare origin carries no origin/HEAD symref; set it,
+  // since it is the third source of a base and both detached fixtures below
+  // turn on it.
+  git(repo, 'remote', 'set-head', 'origin', 'main')
+
+  // A branch cut from a detached position, no upstream: its reflog says
+  // `Created from HEAD`, which names nothing, so the default branch answers.
   wtDetached = path.join(root, 'wt-detached')
   git(repo, 'worktree', 'add', '-q', '--detach', wtDetached, 'main')
   git(wtDetached, 'checkout', '-q', '-b', 'lane/detached')
+
+  // A detached checkout with no branch at all, as a verifier's tree is.
+  wtPureDetached = path.join(root, 'wt-pure-detached')
+  git(repo, 'worktree', 'add', '-q', '--detach', wtPureDetached, 'main')
 
   // Then the base moves on: two commits on main the worktrees lack.
   commit(repo, 'base.txt', 'base two')
@@ -159,9 +170,18 @@ describe('getStatus on a worktree whose branch has no reflog', () => {
   })
 })
 
-describe('getStatus on a worktree with no nameable base', () => {
-  it('still says which checkout it belongs to, with no base and no counts', async () => {
+describe('getStatus on a branch cut from a detached HEAD', () => {
+  it('falls back to the remote’s default branch', async () => {
     const status = await gitManager.getStatus(wtDetached)
+    expect(status.worktree?.base).toBe('origin/main')
+    expect(status.worktree?.baseLabel).toBe('main')
+    expect(status.worktree?.behind).toBe(2)
+  })
+})
+
+describe('getStatus on a detached checkout', () => {
+  it('still says which checkout it belongs to, with no base and no counts, whatever the remote’s HEAD', async () => {
+    const status = await gitManager.getStatus(wtPureDetached)
     expect(status.worktree).toBeDefined()
     expect(realpathSync(status.worktree!.of)).toBe(repo)
     expect(status.worktree!.base).toBeNull()
@@ -170,7 +190,7 @@ describe('getStatus on a worktree with no nameable base', () => {
   })
 
   it('and its worktree ranges are empty rather than guessed', async () => {
-    expect(await gitManager.getRangeFiles(wtDetached, 'worktree')).toEqual([])
-    expect(await gitManager.getRangeFiles(wtDetached, 'base')).toEqual([])
+    expect(await gitManager.getRangeFiles(wtPureDetached, 'worktree')).toEqual([])
+    expect(await gitManager.getRangeFiles(wtPureDetached, 'base')).toEqual([])
   })
 })

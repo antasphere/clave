@@ -2615,21 +2615,27 @@ body,
   position: relative;
   height: var(--git-tree-row-h);
   flex-shrink: 0;
-  /* The row is a container so its badges can adapt to its width (below). */
-  container-type: inline-size;
   /* With a floor under the name (below) a row can, in the edge of a long
      name behind five badges at the panel's narrowest, want more than it has:
      it clips its last badge rather than hand the panel a horizontal
      scrollbar. */
   overflow: hidden;
 }
+/* The repo list is the container the narrow-row rules read (below): the
+   LIST, not the row, so every row flips together at one panel width. On the
+   row, a row's content box shrank by one indent per tree depth and the rows
+   inside a folder crossed the threshold while the rows at the root did not,
+   two spellings of the same badge on one screen. */
+.git-repo-list {
+  container-type: inline-size;
+}
 /* The repo's name is the one thing a row must never lose: a floor, so the
    badges take their room from the branch name first and the name is cut with
    an ellipsis rather than to a letter (verifier round 1, finding 1). Five
    characters (40px at the row's type): with the narrow-row rules below, a
-   worktree row with four badges still fits the panel's 216px of content. The
-   narrow-row rule for the badges sits with the badge family below, after the
-   rules it must beat. */
+   worktree row with four badges still fits the 216px of content a row has at
+   the panel's default width. The narrow-row rule for the badges sits with
+   the badge family below, after the rules it must beat. */
 .git-tree-row-name {
   min-width: 5ch;
 }
@@ -2640,8 +2646,9 @@ body,
    centre, so the row reads as "of this repo" without being a folder of it.
    The stem under the glyph is drawn only while the repo row is folded:
    unfolded, the repo's own file lists sit between the two rows and the line
-   would cut through their labels. The guide column is the glyph column plus
-   one tree indent, which is the bit of padding a nested name gets. The ink is
+   would cut through their labels. The guide takes exactly the glyph's column,
+   so a worktree's name lines up with its repo's: the dot in place of the
+   cube says "under", the indent would only have said it twice. The ink is
    the tree's, not a status tone: this is structure, not news. */
 .git-worktree-stem {
   position: absolute;
@@ -2654,7 +2661,7 @@ body,
 .git-worktree-guide {
   position: relative;
   align-self: stretch;
-  width: 26px;
+  width: 14px;
   flex-shrink: 0;
 }
 /* The line sits on the same column as the stem above it: the guide box starts
@@ -2753,14 +2760,14 @@ body,
   background-color: transparent;
   border-color: color-mix(in srgb, currentColor 30%, transparent);
 }
-/* A narrow row has no room for four badges beside a name: the base badge
+/* A narrow panel has no room for four badges beside a name: the base badge
    keeps its drift and folds its name away, its title still naming the base;
-   a base with no drift has nothing left to show and goes entirely. The row
-   is the container (.git-tree-row) and a container's inline size is its
-   CONTENT box, 24px less than the row with its 12px of padding each side: the
-   300px below is a 324px row, and the panel's default 240px row is 216. A
-   container query adds no specificity, so this block stands AFTER
-   .git-sync-badge, whose display it must beat (verifier round 2, finding 10). */
+   a base with no drift has nothing left to show and goes entirely. The
+   container is the repo list (.git-repo-list), and a container's inline size
+   is its CONTENT box, which for the list is its width: the panel opens at
+   240px, and 300 is the width from which the badges spell out. A container
+   query adds no specificity, so this block stands AFTER .git-sync-badge,
+   whose display it must beat (verifier round 2, finding 10). */
 @container (max-width: 299px) {
   .git-base-badge-name {
     display: none;
@@ -2768,14 +2775,9 @@ body,
   .git-sync-badge-static {
     display: none;
   }
-  /* A worktree row gives up two more things here: the extra indent of its
-     guide (the line and the dot still say "of the repo above"), and its
-     branch name, which the badges had already squeezed to nothing while its
-     gap still cost 6px; the branch stays on the repo rows, which carry fewer
-     badges. */
-  .git-worktree-guide {
-    width: 14px;
-  }
+  /* A worktree row also gives up its branch name here, which the badges had
+     already squeezed to nothing while its gap still cost 6px; the branch
+     stays on the repo rows, which carry fewer badges. */
   [data-tree-kind='worktree'] .git-tree-row-branch {
     display: none;
   }

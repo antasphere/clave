@@ -564,7 +564,7 @@ class GitManager {
       if (!tracking) return null
       return direction === 'incoming' ? `HEAD...${tracking}` : `${tracking}...HEAD`
     }
-    if (!status.current) return null
+    if (!status.current || status.current === 'HEAD') return null
     const base = await this.resolveWorktreeBase(git, status.current)
     if (!base) return null
     return direction === 'worktree' ? `${base}...HEAD` : `HEAD...${base}`
@@ -594,7 +594,11 @@ class GitManager {
       const commonDir = path.resolve(cwd, dirs[1])
       if (gitDir === commonDir) return undefined
       const of = path.dirname(commonDir)
-      const base = branch ? await this.resolveWorktreeBase(git, branch) : null
+      // A detached checkout was cut from nothing: no branch, no reflog to
+      // name a base, and the default-branch fallback would only pin it to
+      // whatever the remote's HEAD is. It hangs under its source and says
+      // no more.
+      const base = branch && branch !== 'HEAD' ? await this.resolveWorktreeBase(git, branch) : null
       if (!base) return { of, base: null, baseLabel: '', ahead: 0, behind: 0 }
       const counts = (await git.raw(['rev-list', '--left-right', '--count', `${base}...HEAD`]))
         .trim()
