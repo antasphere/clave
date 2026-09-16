@@ -64,6 +64,30 @@ export interface FlatRepoRow {
 }
 
 /**
+ * The source a worktree hangs under, spelled the way DISCOVERY spells it.
+ * Git names the main checkout symlink-resolved (`/private/tmp/...`) while
+ * discovery keeps the path as it walked it (`/tmp/...`), so the two never
+ * match by string and every worktree under a symlinked root fell through to
+ * a plain repo row without a word (verifier round 1, finding 2). Each repo's
+ * status carries its own resolved root, which is the join: the resolved
+ * source is looked up among the roots and swapped for the walked path; a
+ * source that is no repo of the list stays as it is, and the split below
+ * treats it as absent.
+ */
+export function worktreeSourcePath(
+  of: string | null | undefined,
+  repos: ReadonlyArray<{ path: string; repoRoot: string }>
+): string | null {
+  if (!of) return null
+  const trim = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, '') : p)
+  const wanted = trim(of)
+  for (const repo of repos) {
+    if (trim(repo.repoRoot) === wanted || trim(repo.path) === wanted) return repo.path
+  }
+  return of
+}
+
+/**
  * Split the list into the repos that get a place of their own and the
  * worktrees that hang under one of them. A worktree hangs only when its
  * source is IN the list; otherwise it is a repo like any other.

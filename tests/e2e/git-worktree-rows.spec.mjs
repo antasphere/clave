@@ -25,8 +25,10 @@ const DIR = userDataDir('git-worktree-rows-data')
 const ROOT = '/private/tmp/clave-e2e-worktree-rows'
 const APP = path.join(ROOT, 'app')
 const WT = path.join(ROOT, 'wt-feature')
-// Alphabetically after the worktree's name, so the order check has a repo
-// that must NOT slip between the source and its worktree.
+// Cut after the base moved: no drift, so its base badge is a label, not a button.
+const WT_STILL = path.join(ROOT, 'wt-still')
+// Alphabetically after the worktrees' names, so the order check has a repo
+// that must NOT slip between the source and its worktrees.
 const OTHER = path.join(ROOT, 'zed')
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000002e',
@@ -59,30 +61,52 @@ function seed() {
 
   commit(APP, 'base.txt', 'base two')
   commit(APP, 'base.txt', 'base three')
+  git(APP, 'worktree', 'add', '-q', WT_STILL, '-b', 'still', 'main')
 
   mkdirSync(OTHER, { recursive: true })
   git(OTHER, 'init', '-q', '-b', 'main')
   commit(OTHER, 'README.md', 'zed')
 }
 
-/** The repo tree's rows in order: kind, name, and the badges each carries. */
+/** The repo tree's rows in order: kind, name, the badges each carries, and
+ *  the geometry the flags are meant to produce — the drawing, not the data
+ *  (verifier round 1, gap 8). */
 function readRows(win) {
   return win.evaluate(() =>
     [...document.querySelectorAll('[data-tree-kind="repo"], [data-tree-kind="worktree"]')].map(
-      (el) => ({
-        kind: el.dataset.treeKind,
-        name: el.dataset.treeName,
-        of: el.dataset.treeWorktreeOf ?? null,
-        last: el.dataset.treeWorktreeLast === 'true',
-        stem: el.dataset.treeHasWorktrees === 'true',
-        guide: !!el.querySelector('.git-worktree-guide'),
-        base: el.querySelector('[data-git-base-badge]')?.textContent.trim() ?? null,
-        baseKind: el.querySelector('[data-git-base-badge]')?.dataset.gitBaseBadge ?? null,
-        worktreeCount:
-          el.querySelector('[data-git-sync-tone="worktree"]')?.textContent.trim() ?? null,
-        incoming: el.querySelector('[data-git-sync-tone="incoming"]')?.textContent.trim() ?? null,
-        outgoing: el.querySelector('[data-git-sync-tone="outgoing"]')?.textContent.trim() ?? null
-      })
+      (el) => {
+        const badge = el.querySelector('[data-git-base-badge]')
+        const name = el.querySelector('.git-tree-row-name')
+        const guide = el.querySelector('.git-worktree-guide')
+        const stem = el.querySelector('.git-worktree-stem')
+        const guideLine = guide ? getComputedStyle(guide, '::before') : null
+        const visible = (node) =>
+          node ? [...node.childNodes].filter((n) => n.nodeType !== 1 || getComputedStyle(n).display !== 'none').map((n) => n.textContent).join('').trim() : null
+        return {
+          kind: el.dataset.treeKind,
+          name: el.dataset.treeName,
+          of: el.dataset.treeWorktreeOf ?? null,
+          last: el.dataset.treeWorktreeLast === 'true',
+          collapsed: el.dataset.treeCollapsed === 'true',
+          rowW: el.getBoundingClientRect().width,
+          nameW: name?.getBoundingClientRect().width ?? null,
+          nameScroll: name?.scrollWidth ?? null,
+          stem: !!stem,
+          stemX: stem ? stem.getBoundingClientRect().left : null,
+          guide: !!guide,
+          guideH: guide?.getBoundingClientRect().height ?? null,
+          lineX: guide ? guide.getBoundingClientRect().left + parseFloat(guideLine.left) : null,
+          lineBottom: guide ? parseFloat(guideLine.bottom) : null,
+          base: visible(badge),
+          baseTitle: badge?.title ?? null,
+          baseKind: badge?.dataset.gitBaseBadge ?? null,
+          baseCursor: badge ? getComputedStyle(badge).cursor : null,
+          worktreeCount:
+            el.querySelector('[data-git-sync-tone="worktree"]')?.textContent.trim() ?? null,
+          incoming: el.querySelector('[data-git-sync-tone="incoming"]')?.textContent.trim() ?? null,
+          outgoing: el.querySelector('[data-git-sync-tone="outgoing"]')?.textContent.trim() ?? null
+        }
+      }
     )
   )
 }
@@ -125,22 +149,61 @@ export async function run(t) {
 
     const rows = await readRows(win)
     t.check(
-      'the worktree sits directly under its repo, the other repo after it',
-      rows.map((r) => `${r.kind}:${r.name}`).join(' ') === 'repo:app worktree:wt-feature repo:zed',
+      'the worktrees sit directly under their repo, alphabetical, the other repo after them',
+      rows.map((r) => `${r.kind}:${r.name}`).join(' ') ===
+        'repo:app worktree:wt-feature worktree:wt-still repo:zed',
       rows
     )
-    const wt = rows.find((r) => r.kind === 'worktree')
+    const wt = rows.find((r) => r.name === 'wt-feature')
+    const still = rows.find((r) => r.name === 'wt-still')
     const src = rows.find((r) => r.name === 'app')
     t.check('the worktree row names its source', wt?.of === APP, wt)
-    t.check('the worktree row carries the guide, no icon, and ends the line', wt?.guide && wt?.last, wt)
+    t.check('both worktree rows carry the guide, no icon', wt?.guide && still?.guide, { wt, still })
+    t.check('the line runs through the first worktree and ends at the last', wt?.lineBottom === 0 && !wt?.last && still?.last, { wt, still })
+    t.check(
+      'the last guide ends at the middle of its row',
+      still && Math.abs(still.lineBottom - still.guideH / 2) <= 0.5,
+      still
+    )
     t.check('the source row draws the stem the guide continues', src?.stem === true, src)
-    t.check('the base badge reads main−2', wt?.base === 'main−2' && wt?.baseKind === 'drift', wt)
+    t.check(
+      'the stem and the guide line sit on one column',
+      src && wt && Math.abs(src.stemX - wt.lineX) <= 0.01,
+      { stemX: src?.stemX, lineX: wt?.lineX }
+    )
+    // The panel opens narrow; the base name folds away under 300px and the
+    // drift stays, the title still naming the base.
+    const narrow = (wt?.rowW ?? 0) < 300
+    t.check(
+      `the base badge reads ${narrow ? '−2, its title naming main,' : 'main−2'} (row ${wt?.rowW}px)`,
+      wt?.baseKind === 'drift' && wt?.base === (narrow ? '−2' : 'main−2') && /main/.test(wt?.baseTitle ?? ''),
+      wt
+    )
     t.check('the purple count reads +3', wt?.worktreeCount === '3', wt)
+    t.check('the name keeps at least six characters of room', (wt?.nameW ?? 0) >= 36, { nameW: wt?.nameW, nameScroll: wt?.nameScroll })
     t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
     // No remote in the fixture, so nothing is incoming; the ↑ carries the
     // existing "unpublished commits" count on every row here and is not this
     // change's to assert.
     t.check('the blue badge stays off a repo with no remote', wt?.incoming === null, wt)
+
+    // A base with no drift: a label, with a label's cursor, whose click
+    // neither opens a section nor unfolds the row (verifier round 1, findings 3 and 4).
+    t.check('a base that has not moved is a label with no count', still?.baseKind === 'label' && still?.worktreeCount === null, still)
+    t.check('the label has a label’s cursor', still?.baseCursor === 'default', still)
+    await clickIn(win, 'wt-still', '[data-git-base-badge="label"]')
+    await win.waitForTimeout(400)
+    const stillAfter = (await readRows(win)).find((r) => r.name === 'wt-still')
+    t.check('clicking the label leaves the row folded', stillAfter?.collapsed === true, stillAfter)
+    if (!narrow) {
+      await win.hover('[data-tree-name="wt-still"] [data-git-base-badge="label"]')
+      await win.waitForTimeout(300)
+      const hovered = await win.evaluate(() => {
+        const el = document.querySelector('[data-tree-name="wt-still"] [data-git-base-badge="label"]')
+        return el ? getComputedStyle(el).backgroundColor : null
+      })
+      t.check('hovering the label fills nothing', hovered === 'rgba(0, 0, 0, 0)', hovered)
+    }
 
     // The +3 opens what the worktree added.
     await clickIn(win, 'wt-feature', '[data-git-sync-tone="worktree"]')

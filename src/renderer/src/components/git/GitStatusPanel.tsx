@@ -12,6 +12,7 @@ import {
   flattenRepoTree,
   collectRepoTreeDirPaths,
   orderWithWorktrees,
+  worktreeSourcePath,
   type FlatRepoRow,
   type RepoTreeDir
 } from '../../lib/git-repo-tree'
@@ -1295,7 +1296,7 @@ function MultiRepoSection({
         {/* Repo name — long hover reveals the full path */}
         <Tooltip delayDuration={2000}>
           <TooltipTrigger asChild>
-            <span className="text-text-primary font-medium truncate">{name}</span>
+            <span className="git-tree-row-name text-text-primary font-medium truncate">{name}</span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="font-mono">
             {shortenPath(repoPath)}
@@ -1659,30 +1660,35 @@ export function MultiRepoGitPanel({
     [repos]
   )
 
+  // Each worktree's source, as discovery spells the source's path (PRDCT-2356):
+  // git names it resolved, the list may hold it through a symlink.
+  const roots = useMemo(
+    () => repos.map((r) => ({ path: r.path, repoRoot: r.status.repoRoot })),
+    [repos]
+  )
+  const withSources = useMemo(
+    () =>
+      nestedRepos.map((r) => ({
+        ...r,
+        worktreeOf: worktreeSourcePath(r.status.worktree?.of, roots)
+      })),
+    [nestedRepos, roots]
+  )
+
   // The spatial tree of the (nested) repos, rooted at the panel's folder.
   const repoTree = useMemo(
     () =>
       basePath
         ? buildRepoTree(
             basePath,
-            nestedRepos.map((r) => ({
-              name: r.name,
-              path: r.path,
-              worktreeOf: r.status.worktree?.of ?? null
-            }))
+            withSources.map((r) => ({ name: r.name, path: r.path, worktreeOf: r.worktreeOf }))
           )
         : null,
-    [basePath, nestedRepos]
+    [basePath, withSources]
   )
 
   // The flat fallback's order, with each repo's worktrees under it (PRDCT-2356).
-  const flatRows = useMemo(
-    () =>
-      orderWithWorktrees(
-        nestedRepos.map((r) => ({ ...r, worktreeOf: r.status.worktree?.of ?? null }))
-      ),
-    [nestedRepos]
-  )
+  const flatRows = useMemo(() => orderWithWorktrees(withSources), [withSources])
 
   // Folded directories, DERIVED from the panel's shared expanded set rather
   // than held here (see panel-expansion.ts). Two things follow from that, and

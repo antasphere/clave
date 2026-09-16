@@ -37,6 +37,10 @@
      and now the only one, so it reads. */
   --color-git-modified: #a78bfa;
   --color-git-incoming: #38bdf8;
+  /* The worktree badges of the git panel (PRDCT-2356): the modified purple's
+     family, restated per theme because one hex fails contrast at 10px on the
+     light grounds (2.6:1 on light, 2.4:1 on coffee). */
+  --color-git-worktree: var(--git-worktree);
 
   --color-wellbeing-gentle: oklch(0.75 0.15 85);
   --color-wellbeing-gentle-bg: oklch(0.25 0.03 85);
@@ -206,6 +210,7 @@
   --text-primary: rgba(255, 255, 255, 0.95);
   --text-secondary: rgba(255, 255, 255, 0.6);
   --text-tertiary: rgba(255, 255, 255, 0.4);
+  --git-worktree: #a78bfa;
   /* Resting text color for sidebar rows — slightly more opaque than --text-secondary */
   --sidebar-item-text: rgba(255, 255, 255, 0.78);
   /* Resting color for sidebar tab icons — more opaque than --text-tertiary */
@@ -278,6 +283,7 @@
   --text-primary: #1b1b18;
   --text-secondary: #6c6c65;
   --text-tertiary: #9b9b94;
+  --git-worktree: #7c3aed;
   --sidebar-item-text: #45453f;
   --sidebar-icon-color: #6c6c65;
   --selected-ring: rgba(0, 0, 0, 0.12);
@@ -336,6 +342,7 @@
   --text-primary: #1b1610;
   --text-secondary: #756e66;
   --text-tertiary: #9b9590;
+  --git-worktree: #7c3aed;
   --sidebar-item-text: #4d4840;
   --sidebar-icon-color: #756e66;
   --selected-ring: rgba(0, 0, 0, 0.12);
@@ -427,6 +434,7 @@
   --text-primary: #efece9;
   --text-secondary: #a39f9b;
   --text-tertiary: #84807b;
+  --git-worktree: #a78bfa;
   --sidebar-item-text: #c7c3c0;
   --sidebar-icon-color: #9f9a96;
   --selected-ring: rgba(255, 243, 232, 0.07);
@@ -2607,6 +2615,25 @@ body,
   position: relative;
   height: var(--git-tree-row-h);
   flex-shrink: 0;
+  /* The row is a container so its badges can adapt to its width (below). */
+  container-type: inline-size;
+}
+/* The repo's name is the one thing a row must never lose: a floor, so the
+   badges take their room from the branch name first and the name is cut with
+   an ellipsis rather than to a letter (verifier round 1, finding 1). */
+.git-tree-row-name {
+  min-width: 6ch;
+}
+/* A narrow row (the panel opens at 240px) has no room for four badges beside
+   a name: the base badge keeps its drift and folds its name away, its title
+   still naming the base; a base with no drift has nothing left to show. */
+@container (max-width: 299px) {
+  .git-base-badge-name {
+    display: none;
+  }
+  .git-sync-badge-static {
+    display: none;
+  }
 }
 
 /* ── Worktree rows in the repo tree (PRDCT-2356) ── */
@@ -2632,10 +2659,13 @@ body,
   width: 26px;
   flex-shrink: 0;
 }
+/* The line sits on the same column as the stem above it: the guide box starts
+   at the glyph column (chevron + gap = 16px in), the stem at its centre
+   (23px in), so the line is 7px into the box and the dot centred on it. */
 .git-worktree-guide::before {
   content: '';
   position: absolute;
-  left: 6.5px;
+  left: 7px;
   top: 0;
   bottom: 0;
   width: 1px;
@@ -2647,22 +2677,13 @@ body,
 .git-worktree-guide::after {
   content: '';
   position: absolute;
-  left: 4.5px;
+  left: 5px;
   top: 50%;
   width: 5px;
   height: 5px;
   margin-top: -2.5px;
   border-radius: 50%;
   background-color: var(--text-tertiary);
-}
-/* The base badge with no drift is a label: the shape of its siblings, none
-   of their hover, since there is nothing to open. */
-.git-sync-badge-static {
-  cursor: default;
-}
-.git-sync-badge-static:hover {
-  background-color: transparent;
-  border-color: color-mix(in srgb, currentColor 30%, transparent);
 }
 
 /* The label above a block of rows inside a repo — STAGED / MODIFIED /
@@ -2723,6 +2744,16 @@ body,
 .git-sync-badge-on {
   background-color: color-mix(in srgb, currentColor 15%, transparent);
   border-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+/* The base badge with no drift (PRDCT-2356) is a label: the shape of its
+   siblings, none of their hover, since there is nothing to open. Declared
+   AFTER the badge's own hover, which it must beat at equal specificity. */
+.git-sync-badge-static {
+  cursor: default;
+}
+.git-sync-badge-static:hover {
+  background-color: transparent;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
 }
 
 /* The sync action inside an Incoming/Outgoing header — Pull / Push. Same

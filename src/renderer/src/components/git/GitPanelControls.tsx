@@ -21,13 +21,15 @@ import { useGitBatch } from './git-batch-context'
 export type GitSyncTone = 'incoming' | 'outgoing' | 'changes' | 'worktree'
 
 /** One text color per tone — the badge derives its border and fill from it.
- *  A worktree's own commits take the modified tone (PRDCT-2356): the same
- *  purple as a file you changed, since both are your work in progress. */
+ *  A worktree's own commits take the purple of the modified tone (PRDCT-2356),
+ *  the same family as a file you changed since both are your work in
+ *  progress, on a token of its own restated per theme so the light grounds
+ *  get a violet that still reads at 10px. */
 const TONE_TEXT_CLASS: Record<GitSyncTone, string> = {
   incoming: 'text-git-incoming',
   outgoing: 'text-green-400',
   changes: 'text-text-secondary',
-  worktree: 'text-git-modified'
+  worktree: 'text-git-worktree'
 }
 
 /**
@@ -95,21 +97,29 @@ export function GitBaseBadge({
   title: string
 }): React.JSX.Element {
   if (behind <= 0) {
+    // A label, not a button: the click must not reach the row beneath, which
+    // would unfold it for nothing (verifier round 1, finding 3).
     return (
       <span
         className={`git-sync-badge git-sync-badge-static ${TONE_TEXT_CLASS.worktree}`}
         title={title}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
         data-git-base-badge="label"
       >
-        {label}
+        <span className="git-base-badge-name">{label}</span>
       </span>
     )
   }
+  // The base's name folds away in a narrow row (the container query in the
+  // stylesheet) and the drift stays; the title and the accessible name keep
+  // the base for the reader who asks.
   return (
     <span
       role="button"
       tabIndex={0}
       title={title}
+      aria-label={`${label} −${behind}`}
       aria-pressed={active}
       onClick={onToggle}
       onDoubleClick={(e) => e.stopPropagation()}
@@ -122,7 +132,7 @@ export function GitBaseBadge({
       className={`git-sync-badge ${TONE_TEXT_CLASS.worktree} ${active ? 'git-sync-badge-on' : ''}`}
       data-git-base-badge="drift"
     >
-      {label}
+      <span className="git-base-badge-name">{label}</span>
       <span aria-hidden>−{behind}</span>
     </span>
   )

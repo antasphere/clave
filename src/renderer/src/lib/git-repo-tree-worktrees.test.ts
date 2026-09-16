@@ -11,6 +11,7 @@ import {
   buildRepoTree,
   flattenRepoTree,
   orderWithWorktrees,
+  worktreeSourcePath,
   type RepoTreeDir,
   type RepoTreeLeaf,
   type RepoTreeNode
@@ -80,6 +81,38 @@ describe('buildRepoTree with worktrees', () => {
   it('ignores a worktree pointing at itself', () => {
     const tree = buildRepoTree(WS, [{ name: 'self', path: `${WS}/self`, worktreeOf: `${WS}/self` }])
     expect(names(tree)).toEqual(['repo:self'])
+  })
+})
+
+describe('worktreeSourcePath', () => {
+  // Discovery walked the root through a symlink; git names the source resolved.
+  const repos = [
+    { path: '/tmp/ws/app', repoRoot: '/private/tmp/ws/app' },
+    { path: '/tmp/ws/wt', repoRoot: '/private/tmp/ws/wt' }
+  ]
+
+  it('swaps the resolved source for the path discovery spelled', () => {
+    expect(worktreeSourcePath('/private/tmp/ws/app', repos)).toBe('/tmp/ws/app')
+  })
+
+  it('accepts the walked path itself, with or without a trailing slash', () => {
+    expect(worktreeSourcePath('/tmp/ws/app', repos)).toBe('/tmp/ws/app')
+    expect(worktreeSourcePath('/private/tmp/ws/app/', repos)).toBe('/tmp/ws/app')
+  })
+
+  it('leaves a source that is no repo of the list as it is, and nothing as null', () => {
+    expect(worktreeSourcePath('/elsewhere/main', repos)).toBe('/elsewhere/main')
+    expect(worktreeSourcePath(null, repos)).toBeNull()
+    expect(worktreeSourcePath(undefined, repos)).toBeNull()
+  })
+
+  it('so a worktree under a symlinked root still hangs under its source', () => {
+    const tree = buildRepoTree('/tmp/ws', [
+      { name: 'app', path: '/tmp/ws/app' },
+      { name: 'wt', path: '/tmp/ws/wt', worktreeOf: worktreeSourcePath('/private/tmp/ws/app', repos) }
+    ])
+    expect(names(tree)).toEqual(['repo:app'])
+    expect((tree[0] as RepoTreeLeaf).worktrees.map((w) => w.name)).toEqual(['wt'])
   })
 })
 
