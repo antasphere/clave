@@ -1300,6 +1300,15 @@ function MultiRepoSection({
           </TooltipTrigger>
           <TooltipContent side="bottom" className="font-mono">
             {shortenPath(repoPath)}
+            {/* The base stays reachable at any width: a narrow row hides the
+                badge that names it (verifier round 3, finding 13). */}
+            {wt?.base && (
+              <div className="text-text-tertiary">
+                {wt.behind > 0
+                  ? `cut from ${wt.base}, ${wt.behind} behind, ${wt.ahead} ahead`
+                  : `cut from ${wt.base}, ${wt.ahead} ahead`}
+              </div>
+            )}
           </TooltipContent>
         </Tooltip>
 

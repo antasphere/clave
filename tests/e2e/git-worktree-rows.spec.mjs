@@ -103,6 +103,7 @@ function readRows(win) {
           // The container query measures the content box, not the row.
           contentW: rowW - parseFloat(rowStyle.paddingLeft) - parseFloat(rowStyle.paddingRight),
           overflows: el.scrollWidth > el.clientWidth,
+          rowOverflow: rowStyle.overflowX,
           baseDisplay: badge ? getComputedStyle(badge).display : null,
           badgeCount: el.querySelectorAll('.git-sync-badge').length,
           nameW: name?.getBoundingClientRect().width ?? null,
@@ -213,6 +214,10 @@ export async function run(t) {
       return el ? { scrollW: el.scrollWidth, clientW: el.clientWidth } : null
     })
     t.check('the panel does not scroll sideways', panel !== null && panel.scrollW <= panel.clientW, panel)
+    // The rule behind that, pinned directly: a five-badge row over budget
+    // (which needs a remote this fixture has not) is contained by the row
+    // clipping, and without the rule the panel would scroll (verifier round 3, gap 15).
+    t.check('a row clips rather than scrolls', long?.rowOverflow === 'hidden', long?.rowOverflow)
     t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
     // No remote in the fixture, so nothing is incoming; the ↑ carries the
     // existing "unpublished commits" count on every row here and is not this
