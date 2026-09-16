@@ -1094,7 +1094,9 @@ function WorktreeGuide({
           data-git-worktree-merged={merged ? 'true' : undefined}
         />
       </TooltipTrigger>
-      <TooltipContent side="bottom" align="start" className="git-worktree-card">
+      {/* The popover's own material, as the toolbar's workspace popover: the
+          menu surface, a label, item-shaped rows. */}
+      <TooltipContent side="bottom" align="start" className="menu-surface git-worktree-card !p-1">
         {card}
       </TooltipContent>
     </Tooltip>
@@ -1115,40 +1117,41 @@ function formatMoment(ms: number): string {
 }
 
 /**
- * What the dot says on hover: the branch, the base with its drift and the
- * count, whether merged, when the branch was created, the last commit, the
- * path. Minimal by Romain's ask; no action.
+ * What the dot says on hover, in the shape of the toolbar's workspace
+ * popover: a label, then two rows of a primary line over a tertiary one.
+ * The branch with where it was cut from and both counts; when it was
+ * created, with whether it is merged. Minimal by Romain's ask; no action.
  */
 function WorktreeCard({
   branch,
-  path: repoPath,
   wt
 }: {
   branch: string
-  path: string
   wt: NonNullable<GitStatusResult['worktree']>
 }): React.JSX.Element {
-  const rows: Array<[string, string]> = []
-  rows.push(['branch', branch === 'HEAD' ? 'detached' : branch])
-  if (wt.base) {
-    const parts = [wt.baseLabel]
-    if (wt.behind > 0) parts.push(`${wt.behind} behind`)
-    parts.push(`${wt.ahead} ahead`)
-    if (wt.merged) parts.push('merged')
-    rows.push(['base', parts.join(' · ')])
-  }
-  if (wt.createdAt) rows.push(['created', formatMoment(wt.createdAt)])
-  if (wt.lastCommit) rows.push(['last commit', `${formatMoment(wt.lastCommit.at)} · ${wt.lastCommit.subject}`])
-  rows.push(['path', shortenPath(repoPath)])
+  const baseLine = wt.base
+    ? [
+        `cut from ${wt.baseLabel}`,
+        ...(wt.behind > 0 ? [`${wt.behind} behind`] : []),
+        `${wt.ahead} ahead`
+      ].join(' · ')
+    : 'cut from no branch'
   return (
-    <dl className="git-worktree-card-grid">
-      {rows.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <dt>{k}</dt>
-          <dd>{v}</dd>
-        </React.Fragment>
-      ))}
-    </dl>
+    <>
+      <div className="menu-label">Worktree</div>
+      <div className="git-worktree-card-row">
+        <span className="git-worktree-card-primary">{branch === 'HEAD' ? 'detached' : branch}</span>
+        <span className="git-worktree-card-secondary">{baseLine}</span>
+      </div>
+      {wt.createdAt && (
+        <div className="git-worktree-card-row">
+          <span className="git-worktree-card-primary">Created {formatMoment(wt.createdAt)}</span>
+          <span className="git-worktree-card-secondary">
+            {wt.merged ? `merged into ${wt.baseLabel}` : wt.base ? 'not merged yet' : ''}
+          </span>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -1374,7 +1377,7 @@ function MultiRepoSection({
         {worktree && wt && (
           <WorktreeGuide
             merged={wt.merged}
-            card={<WorktreeCard branch={status.branch} path={repoPath} wt={wt} />}
+            card={<WorktreeCard branch={status.branch} wt={wt} />}
           />
         )}
 

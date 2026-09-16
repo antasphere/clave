@@ -2700,27 +2700,32 @@ body,
 .git-sync-badge-muted {
   opacity: 0.45;
 }
-/* The dot's popover (PRDCT-2360): the worktree's minimal metadata as a
-   label-and-value grid on the tooltip's own surface, tertiary labels, 11px
-   like the panel's secondary lines, the value left to wrap. */
+/* The dot's popover (PRDCT-2360): the worktree's minimal metadata on the
+   menu surface, in the shape of the toolbar's workspace popover: a menu
+   label, then rows cut like menu items (the same padding and radius, no
+   hover, since nothing here is a choice), each a 13px line over an 11px
+   tertiary one. */
 .git-worktree-card {
-  max-width: 22rem;
+  width: 16rem;
 }
-.git-worktree-card-grid {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 0.75rem;
-  row-gap: 0.125rem;
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
+.git-worktree-card-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-lg);
 }
-.git-worktree-card-grid dt {
-  color: var(--text-tertiary);
-}
-.git-worktree-card-grid dd {
-  margin: 0;
+.git-worktree-card-primary {
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.git-worktree-card-secondary {
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 /* The dot, centred on that column. */

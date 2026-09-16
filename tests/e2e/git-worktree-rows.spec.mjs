@@ -276,21 +276,30 @@ export async function run(t) {
     await win.hover('[data-tree-kind="worktree"][data-tree-name="wt-feature"] .git-worktree-guide')
     await win.waitForTimeout(700)
     const card = await win.evaluate(() => {
-      const el = document.querySelector('[role="tooltip"] .git-worktree-card-grid')
+      // The visible content, not the visually-hidden copy Radix marks role=tooltip.
+      const el = document.querySelector('.git-worktree-card')
       if (!el) return null
-      const rows = {}
-      const dts = [...el.querySelectorAll('dt')]
-      for (const dt of dts) rows[dt.textContent.trim()] = dt.nextElementSibling?.textContent.trim() ?? ''
-      return rows
+      return {
+        surface: el.classList.contains('menu-surface'),
+        label: el.querySelector('.menu-label')?.textContent.trim() ?? null,
+        rows: [...el.querySelectorAll('.git-worktree-card-row')].map((r) => ({
+          primary: r.querySelector('.git-worktree-card-primary')?.textContent.trim() ?? '',
+          secondary: r.querySelector('.git-worktree-card-secondary')?.textContent.trim() ?? ''
+        })),
+        text: el.textContent
+      }
     })
     t.check(
-      'hovering the dot shows the branch, the base line, the creation, the last commit and the path',
+      'hovering the dot shows a popover on the menu surface: the branch with its base line, the creation with its merge state',
       card &&
-        card.branch === 'feature' &&
-        /^main · 2 behind · 3 ahead$/.test(card.base ?? '') &&
-        /\b16\b/.test(card.created ?? '') &&
-        /feature c$/.test(card['last commit'] ?? '') &&
-        (card.path ?? '').endsWith('wt-feature'),
+        card.surface &&
+        card.label === 'Worktree' &&
+        card.rows.length === 2 &&
+        card.rows[0].primary === 'feature' &&
+        card.rows[0].secondary === 'cut from main · 2 behind · 3 ahead' &&
+        /^Created .*\b16\b/.test(card.rows[1].primary) &&
+        card.rows[1].secondary === 'not merged yet' &&
+        !/wt-feature|feature c/.test(card.text),
       card
     )
     await win.mouse.move(0, 0)
