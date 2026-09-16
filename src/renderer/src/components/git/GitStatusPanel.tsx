@@ -1423,6 +1423,9 @@ function MultiRepoSection({
             label={wt.baseLabel}
             behind={wt.behind}
             active={showBase}
+            // Merged, the drift is what the base gained since a landed
+            // squash, still true and no longer news, like the count.
+            muted={wt.merged}
             onToggle={(e) => toggleSection(e, 'base')}
             title={
               wt.behind > 0

@@ -157,6 +157,7 @@ function readRows(win) {
           baseTitle: badge?.title ?? null,
           baseKind: badge?.dataset.gitBaseBadge ?? null,
           baseCursor: badge ? getComputedStyle(badge).cursor : null,
+          baseMuted: badge?.dataset.gitSyncMuted === 'true',
           worktreeCount:
             el.querySelector('[data-git-sync-tone="worktree"]')?.textContent.trim() ?? null,
           incoming: el.querySelector('[data-git-sync-tone="incoming"]')?.textContent.trim() ?? null,
@@ -221,7 +222,9 @@ export async function run(t) {
         done?.dotShown === true &&
         others.every((r) => r.dotColor !== done.dotColor && r.nameColor !== done.nameColor) &&
         done?.worktreeCount === '1' &&
-        done?.countMuted,
+        done?.countMuted &&
+        done?.baseMuted &&
+        others.every((r) => !r.baseMuted),
       { done: { dotColor: done?.dotColor, nameColor: done?.nameColor }, other: { dotColor: others[0]?.dotColor, nameColor: others[0]?.nameColor } }
     )
     t.check(

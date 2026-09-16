@@ -94,10 +94,13 @@ export function GitBaseBadge({
   behind,
   active,
   onToggle,
-  title
+  title,
+  muted = false
 }: {
   label: string
   behind: number
+  /** Still true, no longer news: a merged worktree's base badge, like its count. */
+  muted?: boolean
   active: boolean
   onToggle: (e: React.MouseEvent) => void
   title: string
@@ -107,7 +110,10 @@ export function GitBaseBadge({
     // would unfold it for nothing (verifier round 1, finding 3).
     return (
       <span
-        className={`git-sync-badge git-sync-badge-static ${TONE_TEXT_CLASS.worktree}`}
+        className={`git-sync-badge git-sync-badge-static ${TONE_TEXT_CLASS.worktree} ${
+          muted ? 'git-sync-badge-muted' : ''
+        }`}
+        data-git-sync-muted={muted ? 'true' : undefined}
         title={title}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
@@ -135,8 +141,11 @@ export function GitBaseBadge({
           onToggle(e as unknown as React.MouseEvent)
         }
       }}
-      className={`git-sync-badge ${TONE_TEXT_CLASS.worktree} ${active ? 'git-sync-badge-on' : ''}`}
+      className={`git-sync-badge ${TONE_TEXT_CLASS.worktree} ${active ? 'git-sync-badge-on' : ''} ${
+        muted ? 'git-sync-badge-muted' : ''
+      }`}
       data-git-base-badge="drift"
+      data-git-sync-muted={muted ? 'true' : undefined}
     >
       <span className="git-base-badge-name">{label}</span>
       <span aria-hidden>−{behind}</span>
