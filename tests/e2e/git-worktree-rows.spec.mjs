@@ -273,6 +273,13 @@ export async function run(t) {
     // clipping, and without the rule the panel would scroll (verifier round 3, gap 15).
     t.check('a row clips rather than scrolls', long?.rowOverflow === 'hidden', long?.rowOverflow)
     t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
+    // A short name's box is its text: no floor padding it out, no slack
+    // before the name.
+    t.check(
+      'a short repo name sits in a box exactly its own width',
+      src && Math.abs(src.nameW - src.nameScroll) <= 1,
+      { nameW: src?.nameW, nameScroll: src?.nameScroll }
+    )
     // A squash lands one commit the worktree lacks, so the merged worktree is
     // one behind its base, and that drift is a real click: what the squash
     // changed.

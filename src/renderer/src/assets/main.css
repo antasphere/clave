@@ -2638,6 +2638,10 @@ body,
    the badge family below, after the rules it must beat. */
 .git-tree-row-name {
   min-width: 5ch;
+  /* A button centres its text: were the box ever wider than the name, the
+     slack would split around it. The row keeps a short name at its own width
+     (see the component), and this keeps any slack after the name. */
+  text-align: left;
 }
 
 /* ── Worktree rows in the repo tree (PRDCT-2356) ── */

@@ -1330,7 +1330,16 @@ function MultiRepoSection({
         {/* Repo name — long hover reveals the full path */}
         <Tooltip delayDuration={2000}>
           <TooltipTrigger asChild>
-            <span className="git-tree-row-name text-text-primary font-medium truncate">{name}</span>
+            <span
+              className="git-tree-row-name text-text-primary font-medium truncate"
+              // The floor is five characters. A shorter name keeps exactly its
+              // own width instead: the floor would give it a wider box than
+              // its text, and a button centres its text, so the slack showed
+              // as a gap before the name (Romain, on the app).
+              style={name.length <= 5 ? { minWidth: 'max-content' } : undefined}
+            >
+              {name}
+            </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="font-mono">
             {shortenPath(repoPath)}
