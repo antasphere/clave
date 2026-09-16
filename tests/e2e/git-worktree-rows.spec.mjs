@@ -45,6 +45,20 @@ const WS = {
 
 const git = (cwd, ...args) =>
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' })
+// The reflog's creation moment has one-second resolution, so worktrees cut
+// in one run tie; a fixed committer date per cut sets them apart. Names run
+// one way, dates the other: what the order proves (PRDCT-2360).
+const CUT_AT = {
+  'wt-feature': '2026-09-16T10:00:00Z',
+  'wt-long-feature-name-for-the-floor': '2026-09-16T11:00:00Z',
+  'wt-still': '2026-09-16T12:00:00Z',
+  'wt-done': '2026-09-16T09:00:00Z'
+}
+const cut = (repo, dir, branch, from) =>
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', dir, '-b', branch, from], {
+    stdio: 'ignore',
+    env: { ...process.env, GIT_COMMITTER_DATE: CUT_AT[path.basename(dir)] }
+  })
 const commit = (cwd, file, message) => {
   writeFileSync(path.join(cwd, file), `${message}\n`)
   git(cwd, 'add', file)
@@ -59,25 +73,25 @@ function seed() {
   commit(APP, 'README.md', 'seed')
   commit(APP, 'base.txt', 'base one')
 
-  git(APP, 'worktree', 'add', '-q', WT, '-b', 'feature', 'main')
+  cut(APP, WT, 'feature', 'main')
   commit(WT, 'a.txt', 'feature a')
   commit(WT, 'b.txt', 'feature b')
   commit(WT, 'c.txt', 'feature c')
 
   // Two-digit counts, so its badges are wide enough that the name's floor is
   // what holds the name up (verifier round 2, gap 12).
-  git(APP, 'worktree', 'add', '-q', WT_LONG, '-b', 'long', 'main')
+  cut(APP, WT_LONG, 'long', 'main')
   for (let i = 1; i <= 12; i++) commit(WT_LONG, `l${i}.txt`, `long ${i}`)
   for (let i = 1; i <= 12; i++) writeFileSync(path.join(WT_LONG, `dirty${i}.txt`), 'dirty\n')
 
   commit(APP, 'base.txt', 'base two')
   commit(APP, 'base.txt', 'base three')
-  git(APP, 'worktree', 'add', '-q', WT_STILL, '-b', 'still', 'main')
+  cut(APP, WT_STILL, 'still', 'main')
 
   mkdirSync(OTHER, { recursive: true })
   git(OTHER, 'init', '-q', '-b', 'main')
   commit(OTHER, 'README.md', 'zed')
-  git(OTHER, 'worktree', 'add', '-q', WT_DONE, '-b', 'done', 'main')
+  cut(OTHER, WT_DONE, 'done', 'main')
   commit(WT_DONE, 'done.txt', 'done')
   git(OTHER, 'merge', '-q', '--squash', 'done')
   git(OTHER, '-c', 'user.email=e2e@clave', '-c', 'user.name=e2e', 'commit', '-qm', 'Squash of done')
@@ -164,7 +178,9 @@ function readSections(win) {
 async function clickIn(win, rowName, selector) {
   await win.evaluate(
     ({ rowName, selector }) => {
-      document.querySelector(`[data-tree-name="${rowName}"] ${selector}`)?.click()
+      // Scoped to the git panel's rows: the Files tab's folder rows carry
+      // the same name attribute and come first in the document.
+      document.querySelector(`[data-tree-kind][data-tree-name="${rowName}"] ${selector}`)?.click()
     },
     { rowName, selector }
   )
@@ -187,10 +203,11 @@ export async function run(t) {
     await until(async () => (await readRows(win)).some((r) => r.kind === 'worktree' && r.base))
 
     const rows = await readRows(win)
+    // Newest first: the reverse of the names' order, which is the proof.
     t.check(
-      'the worktrees sit directly under their repo, alphabetical, the other repo after them',
+      'the worktrees sit directly under their repo, newest first, the other repo after them',
       rows.map((r) => `${r.kind}:${r.name}`).join(' ') ===
-        'repo:app worktree:wt-feature worktree:wt-long-feature-name-for-the-floor worktree:wt-still repo:zed worktree:wt-done',
+        'repo:app worktree:wt-still worktree:wt-long-feature-name-for-the-floor worktree:wt-feature repo:zed worktree:wt-done',
       rows
     )
     const done = rows.find((r) => r.name === 'wt-done')
@@ -210,15 +227,16 @@ export async function run(t) {
     const src = rows.find((r) => r.name === 'app')
     t.check('the worktree row names its source', wt?.of === APP, wt)
     t.check('both worktree rows carry the guide, no icon', wt?.guide && still?.guide, { wt, still })
+    // Newest first puts wt-still at the top of the block and wt-feature last.
     t.check(
       'the line runs the whole block of the first worktree and ends at the last',
-      wt?.line && !wt?.last && Math.abs(wt.lineH - wt.blockH) <= 0.5 && still?.last,
+      still?.line && !still?.last && Math.abs(still.lineH - still.blockH) <= 0.5 && wt?.last,
       { wt, still }
     )
     t.check(
       'the last guide ends at the middle of its row',
-      still?.line && Math.abs(still.lineH - (still.guideH / 2 + (still.ruleAbove ? 1 : 0))) <= 0.5,
-      still
+      wt?.line && Math.abs(wt.lineH - (wt.guideH / 2 + (wt.ruleAbove ? 1 : 0))) <= 0.5,
+      wt
     )
     // Hairlines between worktree rows as between repos, starting past the
     // guide so the vertical line runs through them unbroken, and the line
@@ -243,6 +261,29 @@ export async function run(t) {
       src && wt && Math.abs(src.stemX - wt.lineX) <= 0.01,
       { stemX: src?.stemX, lineX: wt?.lineX }
     )
+    // The dot's popover (PRDCT-2360): hover the guide, read the tooltip.
+    await win.hover('[data-tree-kind="worktree"][data-tree-name="wt-feature"] .git-worktree-guide')
+    await win.waitForTimeout(700)
+    const card = await win.evaluate(() => {
+      const el = document.querySelector('[role="tooltip"] .git-worktree-card-grid')
+      if (!el) return null
+      const rows = {}
+      const dts = [...el.querySelectorAll('dt')]
+      for (const dt of dts) rows[dt.textContent.trim()] = dt.nextElementSibling?.textContent.trim() ?? ''
+      return rows
+    })
+    t.check(
+      'hovering the dot shows the branch, the base line, the creation, the last commit and the path',
+      card &&
+        card.branch === 'feature' &&
+        /^main · 2 behind · 3 ahead$/.test(card.base ?? '') &&
+        /\b16\b/.test(card.created ?? '') &&
+        /feature c$/.test(card['last commit'] ?? '') &&
+        (card.path ?? '').endsWith('wt-feature'),
+      card
+    )
+    await win.mouse.move(0, 0)
+    await win.waitForTimeout(300)
     // The panel opens narrow; the base name folds away when the repo LIST is
     // under 300px (the container query reads the list, so a row's depth never
     // changes the answer) and the drift stays, the title still naming the base.
@@ -308,10 +349,10 @@ export async function run(t) {
     const stillAfter = (await readRows(win)).find((r) => r.name === 'wt-still')
     t.check('clicking the label leaves the row folded', stillAfter?.collapsed === true, stillAfter)
     if (!narrow) {
-      await win.hover('[data-tree-name="wt-still"] [data-git-base-badge="label"]')
+      await win.hover('[data-tree-kind][data-tree-name="wt-still"] [data-git-base-badge="label"]')
       await win.waitForTimeout(300)
       const hovered = await win.evaluate(() => {
-        const el = document.querySelector('[data-tree-name="wt-still"] [data-git-base-badge="label"]')
+        const el = document.querySelector('[data-tree-kind][data-tree-name="wt-still"] [data-git-base-badge="label"]')
         return el ? getComputedStyle(el).backgroundColor : null
       })
       t.check('hovering the label fills nothing', hovered === 'rgba(0, 0, 0, 0)', hovered)
@@ -321,10 +362,23 @@ export async function run(t) {
     await clickIn(win, 'wt-feature', '[data-git-sync-tone="worktree"]')
     await until(async () => (await readSections(win)).some((s) => s.kind === 'header'))
     let sections = await readSections(win)
-    // Unfolded, the line runs on beside the content, which sits clear of it.
-    const unfolded = (await readRows(win)).find((r) => r.name === 'wt-feature')
+    // Unfolded, the line runs on beside the content, which sits clear of it:
+    // read on a worktree that is not the last, whose line spans its block.
+    await win.evaluate(() => {
+      document
+        .querySelector('[data-tree-kind="worktree"][data-tree-name="wt-long-feature-name-for-the-floor"]')
+        ?.click()
+    })
+    await until(async () =>
+      (await readRows(win)).some((r) => r.name === 'wt-long-feature-name-for-the-floor' && !r.collapsed)
+    )
+    await win.waitForTimeout(500)
+    const unfolded = (await readRows(win)).find((r) => r.name === 'wt-long-feature-name-for-the-floor')
     const headerX = await win.evaluate(() => {
-      const h = document.querySelector('.git-section-header')
+      const row = document.querySelector(
+        '[data-tree-kind="worktree"][data-tree-name="wt-long-feature-name-for-the-floor"]'
+      )
+      const h = row?.parentElement?.querySelector('.git-section-header')
       return h ? h.getBoundingClientRect().left + parseFloat(getComputedStyle(h).paddingLeft) : null
     })
     t.check(

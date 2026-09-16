@@ -8,7 +8,7 @@ import path from 'node:path'
 // in node-pty — a native module built for Electron's ABI, not this runner's.
 vi.mock('./pty-manager', () => ({ getLoginShellEnv: () => process.env }))
 
-import { gitManager, parseCreatedFrom, parseCreatedAt } from './git-manager'
+import { gitManager, parseCreatedFrom, parseCreatedAt, parseCreation } from './git-manager'
 
 /**
  * The worktree reading of a checkout (PRDCT-2356), over real repositories:
@@ -136,6 +136,18 @@ describe('parseCreatedFrom', () => {
   })
 })
 
+describe('parseCreation', () => {
+  it('reads the sha and the moment of the creation entry, the last line', () => {
+    const reflog =
+      'bbbbbbb\tlane/x@{1758024000}\tcommit: lane a\naaaaaaa\tlane/x@{1758020524}\tbranch: Created from origin/dev\n'
+    expect(parseCreation(reflog)).toEqual({ sha: 'aaaaaaa', at: 1758020524000 })
+  })
+  it('names nothing when the oldest entry is not a creation', () => {
+    expect(parseCreation('bbbbbbb\tlane/x@{1758024000}\tcommit: something\n')).toBeNull()
+    expect(parseCreation('')).toBeNull()
+  })
+})
+
 describe('parseCreatedAt', () => {
   it('reads the sha of the creation entry, the last line', () => {
     const reflog = 'bbbbbbb\tcommit: lane a\naaaaaaa\tbranch: Created from origin/dev\n'
@@ -166,6 +178,16 @@ describe('getStatus on a worktree cut from the local branch', () => {
     // Two base commits, the squash and the merge commit: main has moved on.
     expect(status.worktree!.behind).toBe(5)
     expect(status.worktree!.merged).toBe(false)
+  })
+
+  it('carries when the branch was created and its last commit', async () => {
+    const status = await gitManager.getStatus(wtLocal)
+    const created = status.worktree!.createdAt
+    expect(created).not.toBeNull()
+    // Epoch milliseconds, within the last hour: the fixture was cut just now.
+    expect(Date.now() - created!).toBeLessThan(60 * 60 * 1000)
+    expect(status.worktree!.lastCommit?.subject).toBe('lane c')
+    expect(status.worktree!.lastCommit!.at).toBeGreaterThanOrEqual(created!)
   })
 
   it('the worktree range lists what the worktree added, the base range what the base gained', async () => {
@@ -245,6 +267,9 @@ describe('getStatus on a detached checkout', () => {
     expect(status.worktree!.base).toBeNull()
     expect(status.worktree!.ahead).toBe(0)
     expect(status.worktree!.behind).toBe(0)
+    // No branch, so no creation entry: the directory's birth time stands in.
+    expect(status.worktree!.createdAt).not.toBeNull()
+    expect(Date.now() - status.worktree!.createdAt!).toBeLessThan(60 * 60 * 1000)
   })
 
   it('and its worktree ranges are empty rather than guessed', async () => {

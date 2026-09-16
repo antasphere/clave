@@ -23,6 +23,23 @@ export interface RepoRef {
   path: string
   /** For a linked worktree, the absolute path of its main checkout. */
   worktreeOf?: string | null
+  /** For a linked worktree, when it was created (epoch ms); orders it under its repo. */
+  createdAt?: number | null
+}
+
+/**
+ * A repo's worktrees run newest first (PRDCT-2360): the one cut most
+ * recently sits right under the repo and the old lanes drift down. A
+ * worktree's name is the lane's, not the reader's, so it only breaks ties
+ * and orders the ones with no date, which come last.
+ */
+function byNewest(a: RepoRef, b: RepoRef): number {
+  const ta = a.createdAt ?? null
+  const tb = b.createdAt ?? null
+  if (ta !== null && tb !== null && ta !== tb) return tb - ta
+  if (ta === null && tb !== null) return 1
+  if (ta !== null && tb === null) return -1
+  return a.name.localeCompare(b.name)
 }
 
 export interface RepoTreeDir {
@@ -108,8 +125,7 @@ function splitWorktrees<T extends RepoRef>(repos: T[]): { standalone: T[]; neste
  * Build the directory tree of `repos` relative to `basePath`.
  * A repo not under basePath (defensive — discovery never returns one) becomes
  * a top-level leaf. Each level sorts alphabetically, directories and repos
- * interleaved, matching Finder; a repo's worktrees follow it, alphabetical
- * among themselves.
+ * interleaved, matching Finder; a repo's worktrees follow it, newest first.
  */
 export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[] {
   const base = basePath === '/' ? '/' : basePath.replace(/\/+$/, '')
@@ -124,8 +140,8 @@ export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[
     // shows the worktree under its source.
     const worktrees = nested
       .filter((w) => w.worktreeOf === repo.path)
+      .sort(byNewest)
       .map((w): RepoTreeWorktree => ({ type: 'worktree', name: w.name, path: w.path, of: repo.path }))
-      .sort((a, b) => a.name.localeCompare(b.name))
     const subtreePaths = [repo.path, ...worktrees.map((w) => w.path)]
     const leaf: RepoTreeLeaf = { type: 'repo', name: repo.name, path: repo.path, worktrees }
 
@@ -160,7 +176,7 @@ export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[
 
 /**
  * The flat list's order when the panel has no folder to root a tree on:
- * each repo in the order given, followed by its worktrees, alphabetical.
+ * each repo in the order given, followed by its worktrees, newest first.
  */
 export function orderWithWorktrees<T extends RepoRef>(
   repos: T[]
@@ -169,9 +185,7 @@ export function orderWithWorktrees<T extends RepoRef>(
   const rows: Array<{ repo: T; worktree: boolean; last: boolean }> = []
   for (const repo of standalone) {
     rows.push({ repo, worktree: false, last: false })
-    const mine = nested
-      .filter((w) => w.worktreeOf === repo.path)
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const mine = nested.filter((w) => w.worktreeOf === repo.path).sort(byNewest)
     mine.forEach((w, i) => rows.push({ repo: w, worktree: true, last: i === mine.length - 1 }))
   }
   return rows

@@ -84,6 +84,31 @@ describe('buildRepoTree with worktrees', () => {
   })
 })
 
+describe('worktrees by date (PRDCT-2360)', () => {
+  const app = { name: 'app', path: `${WS}/app` }
+  // Names in one order, dates in the other.
+  const repos = [
+    app,
+    { name: 'wt-a', path: `${WS}/wt-a`, worktreeOf: app.path, createdAt: 1000 },
+    { name: 'wt-b', path: `${WS}/wt-b`, worktreeOf: app.path, createdAt: 3000 },
+    { name: 'wt-c', path: `${WS}/wt-c`, worktreeOf: app.path, createdAt: 2000 },
+    { name: 'wt-undated', path: `${WS}/wt-undated`, worktreeOf: app.path, createdAt: null },
+    { name: 'wt-same-1', path: `${WS}/wt-same-1`, worktreeOf: app.path, createdAt: 3000 }
+  ]
+
+  it('runs newest first, ties by name, the undated last', () => {
+    const tree = buildRepoTree(WS, repos)
+    const leaf = tree[0] as RepoTreeLeaf
+    expect(leaf.worktrees.map((w) => w.name)).toEqual(['wt-b', 'wt-same-1', 'wt-c', 'wt-a', 'wt-undated'])
+  })
+
+  it('the flat order agrees', () => {
+    const rows = orderWithWorktrees(repos)
+    expect(rows.map((r) => r.repo.name)).toEqual(['app', 'wt-b', 'wt-same-1', 'wt-c', 'wt-a', 'wt-undated'])
+    expect(rows[rows.length - 1].last).toBe(true)
+  })
+})
+
 describe('worktreeSourcePath', () => {
   // Discovery walked the root through a symlink; git names the source resolved.
   const repos = [

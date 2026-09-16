@@ -400,6 +400,10 @@ export interface GitWorktreeInfo {
   behind: number
   /** The worktree's work is already in the base, by merge, fast-forward or squash. */
   merged: boolean
+  /** When the branch was created (a detached checkout: the directory's birth), epoch ms, or null. */
+  createdAt: number | null
+  /** The head commit's moment (epoch ms) and subject. */
+  lastCommit: { at: number; subject: string } | null
 }
 
 export interface GitStatusResult {

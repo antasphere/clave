@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { useGitStatus } from '../../hooks/use-git-status'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
@@ -1076,18 +1076,84 @@ const TREE_GLYPH_CENTER_PX = 23
  * a folder's indentation says "inside", without the row being a folder. The
  * last worktree ends the line at its dot.
  */
-function WorktreeGuide({ last, merged }: { last: boolean; merged: boolean }): React.JSX.Element {
+function WorktreeGuide({
+  last,
+  merged,
+  card
+}: {
+  last: boolean
+  merged: boolean
+  /** The dot's popover: the worktree's minimal metadata (PRDCT-2360). */
+  card: React.ReactNode
+}): React.JSX.Element {
   return (
-    <span
-      className={`git-worktree-guide ${last ? 'git-worktree-guide--last' : ''} ${
-        merged ? 'git-worktree-guide--merged' : ''
-      }`}
-      data-git-worktree-merged={merged ? 'true' : undefined}
-      aria-hidden
-    >
-      {/* A merged worktree's dot is a check: its work is in the base. */}
-      {merged && <CheckIcon className="git-worktree-check" strokeWidth={3} />}
-    </span>
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <span
+          className={`git-worktree-guide ${last ? 'git-worktree-guide--last' : ''} ${
+            merged ? 'git-worktree-guide--merged' : ''
+          }`}
+          data-git-worktree-merged={merged ? 'true' : undefined}
+        >
+          {/* A merged worktree's dot is a check: its work is in the base. */}
+          {merged && <CheckIcon className="git-worktree-check" strokeWidth={3} />}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" className="git-worktree-card">
+        {card}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** `16 Sep, 12:02` in the reader's locale; the year only when it is not this one. */
+function formatMoment(ms: number): string {
+  const d = new Date(ms)
+  const sameYear = d.getFullYear() === new Date().getFullYear()
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(d)
+}
+
+/**
+ * What the dot says on hover: the branch, the base with its drift and the
+ * count, whether merged, when the branch was created, the last commit, the
+ * path. Minimal by Romain's ask; no action.
+ */
+function WorktreeCard({
+  branch,
+  path: repoPath,
+  wt
+}: {
+  branch: string
+  path: string
+  wt: NonNullable<GitStatusResult['worktree']>
+}): React.JSX.Element {
+  const rows: Array<[string, string]> = []
+  rows.push(['branch', branch === 'HEAD' ? 'detached' : branch])
+  if (wt.base) {
+    const parts = [wt.baseLabel]
+    if (wt.behind > 0) parts.push(`${wt.behind} behind`)
+    parts.push(`${wt.ahead} ahead`)
+    if (wt.merged) parts.push('merged')
+    rows.push(['base', parts.join(' · ')])
+  }
+  if (wt.createdAt) rows.push(['created', formatMoment(wt.createdAt)])
+  if (wt.lastCommit) rows.push(['last commit', `${formatMoment(wt.lastCommit.at)} · ${wt.lastCommit.subject}`])
+  rows.push(['path', shortenPath(repoPath)])
+  return (
+    <dl className="git-worktree-card-grid">
+      {rows.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
   )
 }
 
@@ -1310,7 +1376,13 @@ function MultiRepoSection({
         {/* A worktree row leads with its guide and folds AFTER it: the dot is
             the row's place under its repo, the chevron its own fold, so the
             name lands one step deeper than the repo's and reads as nested. */}
-        {worktree && <WorktreeGuide last={worktree.last} merged={!!wt?.merged} />}
+        {worktree && wt && (
+          <WorktreeGuide
+            last={worktree.last}
+            merged={wt.merged}
+            card={<WorktreeCard branch={status.branch} path={repoPath} wt={wt} />}
+          />
+        )}
 
         {/* Chevron */}
         <svg
@@ -1738,7 +1810,8 @@ export function MultiRepoGitPanel({
     () =>
       nestedRepos.map((r) => ({
         ...r,
-        worktreeOf: worktreeSourcePath(r.status.worktree?.of, roots)
+        worktreeOf: worktreeSourcePath(r.status.worktree?.of, roots),
+        createdAt: r.status.worktree?.createdAt ?? null
       })),
     [nestedRepos, roots]
   )
@@ -1749,7 +1822,12 @@ export function MultiRepoGitPanel({
       basePath
         ? buildRepoTree(
             basePath,
-            withSources.map((r) => ({ name: r.name, path: r.path, worktreeOf: r.worktreeOf }))
+            withSources.map((r) => ({
+              name: r.name,
+              path: r.path,
+              worktreeOf: r.worktreeOf,
+              createdAt: r.createdAt
+            }))
           )
         : null,
     [basePath, withSources]

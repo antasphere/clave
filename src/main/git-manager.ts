@@ -50,6 +50,22 @@ export function parseCreatedAt(reflog: string): string | null {
 }
 
 /**
+ * The branch's creation, sha and moment, from the same oldest entry given as
+ * `<sha>\t<branch>@{<unix seconds>}\t<subject>` lines (`%H%x09%gd%x09%gs`
+ * under `--date=unix`): the moment orders a repo's worktrees (PRDCT-2360),
+ * the sha tells a fresh worktree from a merged one. The moment is the ENTRY's
+ * (`%gd`), not the commit's (`%ct`, which on a creation is the date of the
+ * commit the branch was cut at, the same for every branch cut there). Null
+ * when the reflog opens with anything but a creation.
+ */
+export function parseCreation(reflog: string): { sha: string; at: number } | null {
+  const lines = reflog.trim().split('\n').filter(Boolean)
+  const oldest = (lines[lines.length - 1] ?? '').trim()
+  const match = /^([0-9a-f]{7,40})\t[^\t]*@\{(\d+)\}\tbranch: Created from /.exec(oldest)
+  return match ? { sha: match[1], at: parseInt(match[2], 10) * 1000 } : null
+}
+
+/**
  * A git instance for a call that talks to a REMOTE, and can therefore hang
  * forever on someone else's server.
  *
@@ -123,6 +139,14 @@ export interface GitWorktreeInfo {
    * row says so. False when the base cannot be named.
    */
   merged: boolean
+  /**
+   * When the worktree's branch was created (its reflog's creation entry), in
+   * epoch milliseconds; a detached checkout takes its directory's birth time.
+   * Null when neither is known. Orders a repo's worktrees (PRDCT-2360).
+   */
+  createdAt: number | null
+  /** The head commit's moment and subject, for the dot's popover. */
+  lastCommit: { at: number; subject: string } | null
 }
 
 export interface GitStatusResult {
@@ -616,19 +640,60 @@ class GitManager {
       const commonDir = path.resolve(cwd, dirs[1])
       if (gitDir === commonDir) return undefined
       const of = path.dirname(commonDir)
+      const onBranch = !!branch && branch !== 'HEAD'
+      // The branch's creation entry: its moment orders the worktrees, its
+      // sha serves the merged reading. A detached checkout has no branch;
+      // its directory's birth time stands in for the moment.
+      let creation: { sha: string; at: number } | null = null
+      if (onBranch) {
+        try {
+          creation = parseCreation(
+            await git.raw(['reflog', 'show', '--date=unix', '--format=%H%x09%gd%x09%gs', branch])
+          )
+        } catch {
+          creation = null
+        }
+      }
+      let createdAt: number | null = creation?.at ?? null
+      if (createdAt === null) {
+        try {
+          createdAt = Math.round((await fs.promises.stat(cwd)).birthtimeMs) || null
+        } catch {
+          createdAt = null
+        }
+      }
+      let lastCommit: GitWorktreeInfo['lastCommit'] = null
+      try {
+        const [at, ...subject] = (await git.raw(['log', '-1', '--format=%ct%x09%s'])).trim().split('\t')
+        const seconds = parseInt(at, 10)
+        if (seconds) lastCommit = { at: seconds * 1000, subject: subject.join('\t') }
+      } catch {
+        lastCommit = null
+      }
       // A detached checkout was cut from nothing: no branch, no reflog to
       // name a base, and the default-branch fallback would only pin it to
       // whatever the remote's HEAD is. It hangs under its source and says
       // no more.
-      const base = branch && branch !== 'HEAD' ? await this.resolveWorktreeBase(git, branch) : null
-      if (!base) return { of, base: null, baseLabel: '', ahead: 0, behind: 0, merged: false }
+      const base = onBranch ? await this.resolveWorktreeBase(git, branch) : null
+      if (!base) {
+        return { of, base: null, baseLabel: '', ahead: 0, behind: 0, merged: false, createdAt, lastCommit }
+      }
       const counts = (await git.raw(['rev-list', '--left-right', '--count', `${base}...HEAD`]))
         .trim()
         .split(/\s+/)
       const behind = parseInt(counts[0] ?? '', 10) || 0
       const ahead = parseInt(counts[1] ?? '', 10) || 0
-      const merged = await this.isMergedInto(git, base, branch, ahead)
-      return { of, base, baseLabel: await this.shortRefLabel(git, base), ahead, behind, merged }
+      const merged = await this.isMergedInto(git, base, creation?.sha ?? null, ahead)
+      return {
+        of,
+        base,
+        baseLabel: await this.shortRefLabel(git, base),
+        ahead,
+        behind,
+        merged,
+        createdAt,
+        lastCommit
+      }
     } catch {
       return undefined
     }
@@ -653,17 +718,14 @@ class GitManager {
   private async isMergedInto(
     git: ReturnType<typeof simpleGit>,
     base: string,
-    branch: string,
+    createdAtSha: string | null,
     ahead: number
   ): Promise<boolean> {
     try {
       if (ahead === 0) {
-        const createdAt = parseCreatedAt(
-          await git.raw(['reflog', 'show', '--format=%H%x09%gs', branch])
-        )
-        if (!createdAt) return false
+        if (!createdAtSha) return false
         const head = (await git.raw(['rev-parse', 'HEAD'])).trim()
-        return head !== createdAt
+        return head !== createdAtSha
       }
       const mergeBase = (await git.raw(['merge-base', base, 'HEAD'])).trim()
       const tree = (await git.raw(['rev-parse', 'HEAD^{tree}'])).trim()
