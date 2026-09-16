@@ -1396,34 +1396,19 @@ function MultiRepoSection({
 
         {!worktree && <RepoGlyph />}
 
-        {/* Repo name — long hover reveals the full path */}
-        <Tooltip delayDuration={2000}>
-          <TooltipTrigger asChild>
-            <span
-              className="git-tree-row-name text-text-primary font-medium truncate"
-              // The floor is five characters. A shorter name keeps exactly its
-              // own width instead: the floor would give it a wider box than
-              // its text, and a button centres its text, so the slack showed
-              // as a gap before the name (Romain, on the app).
-              style={name.length <= 5 ? { minWidth: 'max-content' } : undefined}
-            >
-              {name}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="font-mono">
-            {shortenPath(repoPath)}
-            {/* The base stays reachable at any width: a narrow row hides the
-                badge that names it (verifier round 3, finding 13). */}
-            {wt?.base && (
-              <div className="text-text-tertiary">
-                {wt.behind > 0
-                  ? `cut from ${wt.base}, ${wt.behind} behind, ${wt.ahead} ahead`
-                  : `cut from ${wt.base}, ${wt.ahead} ahead`}
-                {wt.merged ? ` · merged into ${wt.baseLabel}` : ''}
-              </div>
-            )}
-          </TooltipContent>
-        </Tooltip>
+        {/* Repo name. No tooltip on it: the path popover it used to carry on
+            a long hover was noise (Romain, on the app); a worktree's path and
+            base live in the popover on its dot. */}
+        <span
+          className="git-tree-row-name text-text-primary font-medium truncate"
+          // The floor is five characters. A shorter name keeps exactly its
+          // own width instead: the floor would give it a wider box than
+          // its text, and a button centres its text, so the slack showed
+          // as a gap before the name (Romain, on the app).
+          style={name.length <= 5 ? { minWidth: 'max-content' } : undefined}
+        >
+          {name}
+        </span>
 
         {/* Branch badge. It gives way before the name does: in a narrow panel a
             worktree row carries up to four badges, and a name cut to one letter
