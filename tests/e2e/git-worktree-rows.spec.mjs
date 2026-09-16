@@ -282,7 +282,8 @@ export async function run(t) {
       return {
         surface: el.classList.contains('menu-surface'),
         label: el.querySelector('.menu-label')?.textContent.trim() ?? null,
-        rows: [...el.querySelectorAll('.git-worktree-card-row')].map((r) => ({
+        // Direct children only: Radix repeats the content in a hidden copy inside.
+        rows: [...el.querySelectorAll(':scope > .git-worktree-card-row')].map((r) => ({
           primary: r.querySelector('.git-worktree-card-primary')?.textContent.trim() ?? '',
           secondary: r.querySelector('.git-worktree-card-secondary')?.textContent.trim() ?? ''
         })),
