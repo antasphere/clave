@@ -62,11 +62,11 @@ function seed() {
   commit(WT, 'b.txt', 'feature b')
   commit(WT, 'c.txt', 'feature c')
 
+  // Two-digit counts, so its badges are wide enough that the name's floor is
+  // what holds the name up (verifier round 2, gap 12).
   git(APP, 'worktree', 'add', '-q', WT_LONG, '-b', 'long', 'main')
-  commit(WT_LONG, 'l1.txt', 'long one')
-  commit(WT_LONG, 'l2.txt', 'long two')
-  commit(WT_LONG, 'l3.txt', 'long three')
-  writeFileSync(path.join(WT_LONG, 'dirty.txt'), 'dirty\n')
+  for (let i = 1; i <= 12; i++) commit(WT_LONG, `l${i}.txt`, `long ${i}`)
+  for (let i = 1; i <= 12; i++) writeFileSync(path.join(WT_LONG, `dirty${i}.txt`), 'dirty\n')
 
   commit(APP, 'base.txt', 'base two')
   commit(APP, 'base.txt', 'base three')
@@ -199,14 +199,20 @@ export async function run(t) {
     )
     t.check('the purple count reads +3', wt?.worktreeCount === '3', wt)
     // The floor, on the row where it is load-bearing: a long name behind four
-    // badges. Without the floor the name shrinks below five characters; with
-    // it the row must still not overflow its width.
+    // wide badges. Without the floor the name shrinks below five characters;
+    // with it the row may clip its last badge, and the PANEL must never grow
+    // a sideways scrollbar for it. The three-badge row beside it fits whole.
     t.check(
-      'a long name behind four badges keeps at least five characters of room',
+      'a long name behind four wide badges keeps at least five characters of room',
       long?.badgeCount === 4 && (long?.nameW ?? 0) >= 38 && (long?.nameScroll ?? 0) > (long?.nameW ?? 0),
       { badgeCount: long?.badgeCount, nameW: long?.nameW, nameScroll: long?.nameScroll }
     )
-    t.check('and the row does not overflow', long?.overflows === false, long)
+    t.check('the three-badge worktree row fits whole', wt?.overflows === false, wt)
+    const panel = await win.evaluate(() => {
+      const el = document.querySelector('[data-tree-kind="repo"]')?.closest('.overflow-y-auto')
+      return el ? { scrollW: el.scrollWidth, clientW: el.clientWidth } : null
+    })
+    t.check('the panel does not scroll sideways', panel !== null && panel.scrollW <= panel.clientW, panel)
     t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
     // No remote in the fixture, so nothing is incoming; the ↑ carries the
     // existing "unpublished commits" count on every row here and is not this
