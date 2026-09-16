@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { parseDiffLines, type DiffLine } from '../lib/diff-utils'
+import type { GitRangeDirection } from '../../../shared/git-range'
 
 export interface UseDiffArgs {
   cwd: string
   file: string
-  type: 'working' | 'commit' | 'incoming' | 'outgoing'
+  type: 'working' | 'commit' | GitRangeDirection
   staged: boolean
   fileStatus: string
   hash: string | null
@@ -48,7 +49,7 @@ export function useDiff({
     const fetch = async (): Promise<void> => {
       try {
         let result: string
-        if (type === 'incoming' || type === 'outgoing') {
+        if (type !== 'working' && type !== 'commit') {
           result = await window.electronAPI.gitRangeDiff(cwd, type, file)
         } else if (type === 'commit' && hash) {
           result = await window.electronAPI.gitCommitDiff(cwd, hash, file)

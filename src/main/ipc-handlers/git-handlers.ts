@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { gitManager } from '../git-manager'
 import { repoIndexManager } from '../repo-index'
 import type { GitBatchProgress } from '../git-manager'
+import type { GitRangeDirection } from '../../shared/git-range'
 
 export function registerGitHandlers(): void {
   ipcMain.handle('git:check-ignored', (_event, cwd: string, paths: string[]) =>
@@ -49,10 +50,10 @@ export function registerGitHandlers(): void {
   ipcMain.handle('git:incoming-commits', (_event, cwd: string) =>
     gitManager.getIncomingCommits(cwd)
   )
-  ipcMain.handle('git:range-files', (_event, cwd: string, direction: 'incoming' | 'outgoing') =>
+  ipcMain.handle('git:range-files', (_event, cwd: string, direction: GitRangeDirection) =>
     gitManager.getRangeFiles(cwd, direction)
   )
-  ipcMain.handle('git:range-diff', (_event, cwd: string, direction: 'incoming' | 'outgoing', filePath: string) =>
+  ipcMain.handle('git:range-diff', (_event, cwd: string, direction: GitRangeDirection, filePath: string) =>
     gitManager.getRangeDiff(cwd, direction, filePath)
   )
   ipcMain.handle('git:commit-files', (_event, cwd: string, hash: string) =>

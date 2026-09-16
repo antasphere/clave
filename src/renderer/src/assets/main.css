@@ -199,6 +199,10 @@
   --rule-alpha: 0.045;
   --rule-intensity: 1;
   --rule-color: rgb(var(--rule-rgb) / calc(var(--rule-alpha) * var(--rule-intensity)));
+  /* The ink of the worktree guides in the repo tree (PRDCT-2356): the
+     tertiary text at half strength, so the guide reads as structure under
+     the labels rather than as one of them. */
+  --tree-guide-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
   --text-primary: rgba(255, 255, 255, 0.95);
   --text-secondary: rgba(255, 255, 255, 0.6);
   --text-tertiary: rgba(255, 255, 255, 0.4);
@@ -2600,8 +2604,65 @@ body,
    height so the tree never jumps when a trailing badge appears or disappears
    — expanding a folder hides its roll-up, and that used to resize the row. */
 .git-tree-row {
+  position: relative;
   height: var(--git-tree-row-h);
   flex-shrink: 0;
+}
+
+/* ── Worktree rows in the repo tree (PRDCT-2356) ── */
+/* A worktree sits under the repo it was cut from, behind a guide rather than
+   an icon: a hairline dropping from the repo's glyph and a dot at the row's
+   centre, so the row reads as "of this repo" without being a folder of it.
+   The stem under the glyph is drawn only while the repo row is folded:
+   unfolded, the repo's own file lists sit between the two rows and the line
+   would cut through their labels. The guide column is the glyph column plus
+   one tree indent, which is the bit of padding a nested name gets. The ink is
+   the tree's, not a status tone: this is structure, not news. */
+.git-worktree-stem {
+  position: absolute;
+  top: calc(var(--git-tree-row-h) / 2 + 9px);
+  bottom: 0;
+  width: 1px;
+  background-color: var(--tree-guide-color);
+  pointer-events: none;
+}
+.git-worktree-guide {
+  position: relative;
+  align-self: stretch;
+  width: 26px;
+  flex-shrink: 0;
+}
+.git-worktree-guide::before {
+  content: '';
+  position: absolute;
+  left: 6.5px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--tree-guide-color);
+}
+.git-worktree-guide--last::before {
+  bottom: 50%;
+}
+.git-worktree-guide::after {
+  content: '';
+  position: absolute;
+  left: 4.5px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background-color: var(--text-tertiary);
+}
+/* The base badge with no drift is a label: the shape of its siblings, none
+   of their hover, since there is nothing to open. */
+.git-sync-badge-static {
+  cursor: default;
+}
+.git-sync-badge-static:hover {
+  background-color: transparent;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
 }
 
 /* The label above a block of rows inside a repo — STAGED / MODIFIED /

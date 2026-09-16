@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
+import type { GitRangeDirection } from '../shared/git-range'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -443,9 +444,9 @@ const electronAPI = {
   gitLog: (cwd: string, maxCount?: number) => ipcRenderer.invoke('git:log', cwd, maxCount),
   gitOutgoingCommits: (cwd: string) => ipcRenderer.invoke('git:outgoing-commits', cwd),
   gitIncomingCommits: (cwd: string) => ipcRenderer.invoke('git:incoming-commits', cwd),
-  gitRangeFiles: (cwd: string, direction: 'incoming' | 'outgoing') =>
+  gitRangeFiles: (cwd: string, direction: GitRangeDirection) =>
     ipcRenderer.invoke('git:range-files', cwd, direction),
-  gitRangeDiff: (cwd: string, direction: 'incoming' | 'outgoing', filePath: string) =>
+  gitRangeDiff: (cwd: string, direction: GitRangeDirection, filePath: string) =>
     ipcRenderer.invoke('git:range-diff', cwd, direction, filePath),
   gitCommitFiles: (cwd: string, hash: string) => ipcRenderer.invoke('git:commit-files', cwd, hash),
   gitCommitDiff: (cwd: string, hash: string, filePath: string) =>

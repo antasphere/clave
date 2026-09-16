@@ -8,6 +8,12 @@
  * never burn a row — the same idiom compactTree applies to file trees inside
  * a repo (git-file-tree.ts).
  *
+ * A git worktree (PRDCT-2356) is not placed where it sits on disk but under
+ * the repo it was cut from, as that repo's child: the folder is the reader's
+ * accident, the source repo is what the worktree is OF. A worktree whose
+ * source is not in the list (a main checkout outside the panel's folder) is
+ * an ordinary repo row at its real place.
+ *
  * Pure data — no fs, no path module — so it is unit-testable and shared-safe.
  */
 
@@ -15,6 +21,8 @@ export interface RepoRef {
   name: string
   /** Absolute path of the repo root */
   path: string
+  /** For a linked worktree, the absolute path of its main checkout. */
+  worktreeOf?: string | null
 }
 
 export interface RepoTreeDir {
@@ -24,7 +32,7 @@ export interface RepoTreeDir {
   /** Absolute path of the deepest directory in the compacted chain */
   path: string
   children: RepoTreeNode[]
-  /** Absolute paths of every repo in this subtree, for badge roll-ups */
+  /** Absolute paths of every repo in this subtree, worktrees included, for badge roll-ups */
   repoPaths: string[]
 }
 
@@ -32,38 +40,79 @@ export interface RepoTreeLeaf {
   type: 'repo'
   name: string
   path: string
+  /** The worktrees cut from this repo, alphabetical; rendered under it. */
+  worktrees: RepoTreeWorktree[]
+}
+
+export interface RepoTreeWorktree {
+  type: 'worktree'
+  name: string
+  path: string
+  /** The source repo's path — the leaf this row hangs under. */
+  of: string
 }
 
 export type RepoTreeNode = RepoTreeDir | RepoTreeLeaf
 
 export interface FlatRepoRow {
-  node: RepoTreeNode
+  node: RepoTreeNode | RepoTreeWorktree
   depth: number
   /** Directories only — true when the row is folded */
   collapsed: boolean
+  /** Worktree rows only — true on the last worktree under its repo, where the guide ends. */
+  last?: boolean
+}
+
+/**
+ * Split the list into the repos that get a place of their own and the
+ * worktrees that hang under one of them. A worktree hangs only when its
+ * source is IN the list; otherwise it is a repo like any other.
+ */
+function splitWorktrees<T extends RepoRef>(repos: T[]): { standalone: T[]; nested: T[] } {
+  const paths = new Set(repos.map((r) => r.path))
+  const standalone: T[] = []
+  const nested: T[] = []
+  for (const repo of repos) {
+    const of = repo.worktreeOf
+    if (of && of !== repo.path && paths.has(of)) nested.push(repo)
+    else standalone.push(repo)
+  }
+  return { standalone, nested }
 }
 
 /**
  * Build the directory tree of `repos` relative to `basePath`.
  * A repo not under basePath (defensive — discovery never returns one) becomes
  * a top-level leaf. Each level sorts alphabetically, directories and repos
- * interleaved, matching Finder.
+ * interleaved, matching Finder; a repo's worktrees follow it, alphabetical
+ * among themselves.
  */
 export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[] {
   const base = basePath === '/' ? '/' : basePath.replace(/\/+$/, '')
   const prefix = base === '/' ? '/' : base + '/'
+  const { standalone, nested } = splitWorktrees(repos)
 
   const root: RepoTreeDir = { type: 'dir', name: '', path: base, children: [], repoPaths: [] }
 
-  for (const repo of repos) {
+  for (const repo of standalone) {
+    // The worktrees count toward every folder ABOVE THE SOURCE, not the
+    // folder they sit in: a folded folder rolls up what it shows, and it
+    // shows the worktree under its source.
+    const worktrees = nested
+      .filter((w) => w.worktreeOf === repo.path)
+      .map((w): RepoTreeWorktree => ({ type: 'worktree', name: w.name, path: w.path, of: repo.path }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const subtreePaths = [repo.path, ...worktrees.map((w) => w.path)]
+    const leaf: RepoTreeLeaf = { type: 'repo', name: repo.name, path: repo.path, worktrees }
+
     if (!repo.path.startsWith(prefix) || repo.path === base) {
-      root.children.push({ type: 'repo', name: repo.name, path: repo.path })
-      root.repoPaths.push(repo.path)
+      root.children.push(leaf)
+      root.repoPaths.push(...subtreePaths)
       continue
     }
     const segments = repo.path.slice(prefix.length).split('/').filter(Boolean)
     let current = root
-    root.repoPaths.push(repo.path)
+    root.repoPaths.push(...subtreePaths)
     // Intermediate segments are directories; the last one is the repo itself.
     for (let i = 0; i < segments.length - 1; i++) {
       const dirPath = current.path === '/' ? '/' + segments[i] : current.path + '/' + segments[i]
@@ -74,15 +123,34 @@ export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[
         dir = { type: 'dir', name: segments[i], path: dirPath, children: [], repoPaths: [] }
         current.children.push(dir)
       }
-      dir.repoPaths.push(repo.path)
+      dir.repoPaths.push(...subtreePaths)
       current = dir
     }
-    current.children.push({ type: 'repo', name: repo.name, path: repo.path })
+    current.children.push(leaf)
   }
 
   const compacted = compactRepoTree(root.children)
   sortRepoTree(compacted)
   return compacted
+}
+
+/**
+ * The flat list's order when the panel has no folder to root a tree on:
+ * each repo in the order given, followed by its worktrees, alphabetical.
+ */
+export function orderWithWorktrees<T extends RepoRef>(
+  repos: T[]
+): Array<{ repo: T; worktree: boolean; last: boolean }> {
+  const { standalone, nested } = splitWorktrees(repos)
+  const rows: Array<{ repo: T; worktree: boolean; last: boolean }> = []
+  for (const repo of standalone) {
+    rows.push({ repo, worktree: false, last: false })
+    const mine = nested
+      .filter((w) => w.worktreeOf === repo.path)
+      .sort((a, b) => a.name.localeCompare(b.name))
+    mine.forEach((w, i) => rows.push({ repo: w, worktree: true, last: i === mine.length - 1 }))
+  }
+  return rows
 }
 
 /** Merge single-child directory chains into one node ("labs/products"). */
@@ -113,7 +181,9 @@ function sortRepoTree(nodes: RepoTreeNode[]): void {
 
 /**
  * Flatten for rendering. A directory in `collapsedPaths` keeps its row but
- * its subtree is not descended — its badges roll up instead.
+ * its subtree is not descended — its badges roll up instead. A repo's
+ * worktrees follow it at the repo's own depth (the row indents itself behind
+ * its guide), the last one flagged so the guide knows where to stop.
  */
 export function flattenRepoTree(
   nodes: RepoTreeNode[],
@@ -126,6 +196,11 @@ export function flattenRepoTree(
     rows.push({ node, depth, collapsed })
     if (node.type === 'dir' && !collapsed) {
       rows.push(...flattenRepoTree(node.children, collapsedPaths, depth + 1))
+    }
+    if (node.type === 'repo') {
+      node.worktrees.forEach((w, i) =>
+        rows.push({ node: w, depth, collapsed: false, last: i === node.worktrees.length - 1 })
+      )
     }
   }
   return rows

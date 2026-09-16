@@ -1,6 +1,7 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { create } from 'zustand'
+import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
   Theme,
   AppIcon,
@@ -112,7 +113,7 @@ interface SessionState {
   diffPreview: {
     file: string
     cwd: string
-    type: 'working' | 'commit' | 'incoming' | 'outgoing'
+    type: 'working' | 'commit' | GitRangeDirection
     staged: boolean
     fileStatus: string
     hash: string | null

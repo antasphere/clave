@@ -2,6 +2,7 @@ import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { GitRangeDirection } from '../shared/git-range'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -385,6 +386,20 @@ export interface GitFileStatus {
   staged: boolean
 }
 
+/** The worktree reading of a checkout (PRDCT-2356); absent on a repo that is its own checkout. */
+export interface GitWorktreeInfo {
+  /** Absolute path of the main checkout this worktree belongs to. */
+  of: string
+  /** The ref the branch was cut from, or null when it cannot be named. */
+  base: string | null
+  /** `base` as the badge shows it, the remote prefix dropped. */
+  baseLabel: string
+  /** Commits the worktree has that the base does not. */
+  ahead: number
+  /** Commits the base gained that the worktree lacks. */
+  behind: number
+}
+
 export interface GitStatusResult {
   isRepo: boolean
   branch: string
@@ -393,6 +408,7 @@ export interface GitStatusResult {
   hasUpstream: boolean
   files: GitFileStatus[]
   repoRoot: string
+  worktree?: GitWorktreeInfo
 }
 
 export interface GitCommitResult {
@@ -741,10 +757,10 @@ export interface ElectronAPI {
   gitLog: (cwd: string, maxCount?: number) => Promise<GitLogEntry[]>
   gitOutgoingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitIncomingCommits: (cwd: string) => Promise<GitLogEntry[]>
-  gitRangeFiles: (cwd: string, direction: 'incoming' | 'outgoing') => Promise<GitCommitFileStatus[]>
+  gitRangeFiles: (cwd: string, direction: GitRangeDirection) => Promise<GitCommitFileStatus[]>
   gitRangeDiff: (
     cwd: string,
-    direction: 'incoming' | 'outgoing',
+    direction: GitRangeDirection,
     filePath: string
   ) => Promise<string>
   gitCommitFiles: (cwd: string, hash: string) => Promise<GitCommitFileStatus[]>

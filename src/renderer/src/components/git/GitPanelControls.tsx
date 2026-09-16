@@ -18,13 +18,16 @@ import { useGitBatch } from './git-batch-context'
 // Sync badges — the ↓ / ↑ / + counters that toggle a repo's sections open
 // ---------------------------------------------------------------------------
 
-export type GitSyncTone = 'incoming' | 'outgoing' | 'changes'
+export type GitSyncTone = 'incoming' | 'outgoing' | 'changes' | 'worktree'
 
-/** One text color per tone — the badge derives its border and fill from it. */
+/** One text color per tone — the badge derives its border and fill from it.
+ *  A worktree's own commits take the modified tone (PRDCT-2356): the same
+ *  purple as a file you changed, since both are your work in progress. */
 const TONE_TEXT_CLASS: Record<GitSyncTone, string> = {
   incoming: 'text-git-incoming',
   outgoing: 'text-green-400',
-  changes: 'text-text-secondary'
+  changes: 'text-text-secondary',
+  worktree: 'text-git-modified'
 }
 
 /**
@@ -60,13 +63,67 @@ export function GitSyncBadge({
         }
       }}
       className={`git-sync-badge ${TONE_TEXT_CLASS[tone]} ${active ? 'git-sync-badge-on' : ''}`}
+      data-git-sync-tone={tone}
     >
-      {tone === 'changes' ? (
+      {tone === 'changes' || tone === 'worktree' ? (
         <PlusIcon className="w-2.5 h-2.5" strokeWidth={2.5} />
       ) : (
         <span aria-hidden>{tone === 'incoming' ? '↓' : '↑'}</span>
       )}
       {count}
+    </span>
+  )
+}
+
+/**
+ * The base badge of a worktree row (PRDCT-2356): the branch the worktree was
+ * cut from, and how far that branch has moved since as `−N`. With a drift it
+ * is a toggle like the counters, opening the list of what the base gained;
+ * with none it is a label, there being nothing to open.
+ */
+export function GitBaseBadge({
+  label,
+  behind,
+  active,
+  onToggle,
+  title
+}: {
+  label: string
+  behind: number
+  active: boolean
+  onToggle: (e: React.MouseEvent) => void
+  title: string
+}): React.JSX.Element {
+  if (behind <= 0) {
+    return (
+      <span
+        className={`git-sync-badge git-sync-badge-static ${TONE_TEXT_CLASS.worktree}`}
+        title={title}
+        data-git-base-badge="label"
+      >
+        {label}
+      </span>
+    )
+  }
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={title}
+      aria-pressed={active}
+      onClick={onToggle}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onToggle(e as unknown as React.MouseEvent)
+        }
+      }}
+      className={`git-sync-badge ${TONE_TEXT_CLASS.worktree} ${active ? 'git-sync-badge-on' : ''}`}
+      data-git-base-badge="drift"
+    >
+      {label}
+      <span aria-hidden>−{behind}</span>
     </span>
   )
 }

@@ -1,0 +1,176 @@
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+// The manager reaches into pty-manager for the login shell's env, which pulls
+// in node-pty — a native module built for Electron's ABI, not this runner's.
+vi.mock('./pty-manager', () => ({ getLoginShellEnv: () => process.env }))
+
+import { gitManager, parseCreatedFrom } from './git-manager'
+
+/**
+ * The worktree reading of a checkout (PRDCT-2356), over real repositories:
+ * a repo that is its own checkout reports none; a linked worktree reports the
+ * main checkout it belongs to, the branch it was cut from, and the two-sided
+ * count against it; the two worktree ranges list what each side changed.
+ *
+ * The base comes from the branch's reflog first, then from an upstream of
+ * another name, then from the remote's default branch, and never from the
+ * folder's name — each source has its fixture below.
+ */
+
+const git = (cwd: string, ...args: string[]): string =>
+  execFileSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  })
+
+const commit = (cwd: string, file: string, message: string): void => {
+  writeFileSync(path.join(cwd, file), `${message}\n`)
+  git(cwd, 'add', file)
+  git(cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-qm', message)
+}
+
+let root: string
+/** A main checkout on `main`, with a bare origin. */
+let repo: string
+/** A worktree cut from the local `main`. */
+let wtLocal: string
+/** A worktree cut from `origin/main`. */
+let wtRemote: string
+/** A worktree whose branch has no reflog left, tracking `origin/main`. */
+let wtNoReflog: string
+/** A worktree cut from a detached HEAD, no upstream, no origin/HEAD: no base. */
+let wtDetached: string
+
+beforeAll(() => {
+  root = realpathSync(mkdtempSync(path.join(tmpdir(), 'clave-git-worktree-')))
+  const origin = path.join(root, 'origin.git')
+  git(root, 'init', '-q', '--bare', '--initial-branch=main', origin)
+
+  repo = path.join(root, 'app')
+  git(root, 'clone', '-q', origin, repo)
+  git(repo, 'checkout', '-q', '-b', 'main')
+  commit(repo, 'README.md', 'seed')
+  commit(repo, 'base.txt', 'base one')
+  git(repo, 'push', '-q', '-u', 'origin', 'main')
+
+  // Cut from the local branch: the reflog says `Created from main`.
+  wtLocal = path.join(root, 'wt-local')
+  git(repo, 'worktree', 'add', '-q', wtLocal, '-b', 'lane/local', 'main')
+  commit(wtLocal, 'a.txt', 'lane a')
+  commit(wtLocal, 'b.txt', 'lane b')
+  commit(wtLocal, 'c.txt', 'lane c')
+
+  // Cut from the remote ref: the reflog says `Created from origin/main`.
+  wtRemote = path.join(root, 'wt-remote')
+  git(repo, 'worktree', 'add', '-q', wtRemote, '-b', 'lane/remote', 'origin/main')
+
+  // The reflog gone (a branch made elsewhere, or expired): the upstream of
+  // another name is the next source.
+  wtNoReflog = path.join(root, 'wt-noreflog')
+  git(repo, 'worktree', 'add', '-q', wtNoReflog, '-b', 'lane/noreflog', 'main')
+  git(wtNoReflog, 'branch', '-q', '--set-upstream-to=origin/main', 'lane/noreflog')
+  unlinkSync(path.join(repo, '.git', 'logs', 'refs', 'heads', 'lane', 'noreflog'))
+
+  // Cut from a detached position, no upstream, and the clone has no
+  // origin/HEAD symref (a bare origin freshly initialised carries none).
+  wtDetached = path.join(root, 'wt-detached')
+  git(repo, 'worktree', 'add', '-q', '--detach', wtDetached, 'main')
+  git(wtDetached, 'checkout', '-q', '-b', 'lane/detached')
+
+  // Then the base moves on: two commits on main the worktrees lack.
+  commit(repo, 'base.txt', 'base two')
+  commit(repo, 'base.txt', 'base three')
+  git(repo, 'push', '-q', 'origin', 'main')
+})
+
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true })
+})
+
+describe('parseCreatedFrom', () => {
+  it('reads the oldest entry, which is the last line', () => {
+    const reflog = 'commit: lane b\ncommit: lane a\nbranch: Created from origin/dev\n'
+    expect(parseCreatedFrom(reflog)).toBe('origin/dev')
+  })
+  it('names nothing for a branch cut from a detached HEAD', () => {
+    expect(parseCreatedFrom('branch: Created from HEAD\n')).toBeNull()
+  })
+  it('names nothing when the oldest entry is not a creation', () => {
+    expect(parseCreatedFrom('commit: something\n')).toBeNull()
+    expect(parseCreatedFrom('')).toBeNull()
+  })
+})
+
+describe('getStatus on a main checkout', () => {
+  it('carries no worktree reading', async () => {
+    const status = await gitManager.getStatus(repo)
+    expect(status.isRepo).toBe(true)
+    expect(status.worktree).toBeUndefined()
+  })
+})
+
+describe('getStatus on a worktree cut from the local branch', () => {
+  it('names the main checkout, the base, and counts both sides', async () => {
+    const status = await gitManager.getStatus(wtLocal)
+    expect(status.worktree).toBeDefined()
+    expect(realpathSync(status.worktree!.of)).toBe(repo)
+    expect(status.worktree!.base).toBe('main')
+    expect(status.worktree!.baseLabel).toBe('main')
+    expect(status.worktree!.ahead).toBe(3)
+    expect(status.worktree!.behind).toBe(2)
+  })
+
+  it('the worktree range lists what the worktree added, the base range what the base gained', async () => {
+    const added = await gitManager.getRangeFiles(wtLocal, 'worktree')
+    expect(added.map((f) => f.path).sort()).toEqual(['a.txt', 'b.txt', 'c.txt'])
+    expect(added.every((f) => f.status === 'A')).toBe(true)
+
+    const gained = await gitManager.getRangeFiles(wtLocal, 'base')
+    expect(gained.map((f) => f.path)).toEqual(['base.txt'])
+    expect(gained[0].status).toBe('M')
+
+    const diff = await gitManager.getRangeDiff(wtLocal, 'base', 'base.txt')
+    expect(diff).toContain('+base three')
+    expect(diff).not.toContain('lane a')
+  })
+})
+
+describe('getStatus on a worktree cut from the remote ref', () => {
+  it('keeps the remote ref as the base and drops the remote from the label', async () => {
+    const status = await gitManager.getStatus(wtRemote)
+    expect(status.worktree?.base).toBe('origin/main')
+    expect(status.worktree?.baseLabel).toBe('main')
+    expect(status.worktree?.ahead).toBe(0)
+    expect(status.worktree?.behind).toBe(2)
+  })
+})
+
+describe('getStatus on a worktree whose branch has no reflog', () => {
+  it('falls back to the upstream of another name', async () => {
+    const status = await gitManager.getStatus(wtNoReflog)
+    expect(status.worktree?.base).toBe('origin/main')
+    expect(status.worktree?.baseLabel).toBe('main')
+    expect(status.worktree?.behind).toBe(2)
+  })
+})
+
+describe('getStatus on a worktree with no nameable base', () => {
+  it('still says which checkout it belongs to, with no base and no counts', async () => {
+    const status = await gitManager.getStatus(wtDetached)
+    expect(status.worktree).toBeDefined()
+    expect(realpathSync(status.worktree!.of)).toBe(repo)
+    expect(status.worktree!.base).toBeNull()
+    expect(status.worktree!.ahead).toBe(0)
+    expect(status.worktree!.behind).toBe(0)
+  })
+
+  it('and its worktree ranges are empty rather than guessed', async () => {
+    expect(await gitManager.getRangeFiles(wtDetached, 'worktree')).toEqual([])
+    expect(await gitManager.getRangeFiles(wtDetached, 'base')).toEqual([])
+  })
+})
