@@ -8,7 +8,7 @@ import path from 'node:path'
 // in node-pty — a native module built for Electron's ABI, not this runner's.
 vi.mock('./pty-manager', () => ({ getLoginShellEnv: () => process.env }))
 
-import { gitManager, parseCreatedFrom } from './git-manager'
+import { gitManager, parseCreatedFrom, parseCreatedAt } from './git-manager'
 
 /**
  * The worktree reading of a checkout (PRDCT-2356), over real repositories:
@@ -47,6 +47,10 @@ let wtNoReflog: string
 let wtDetached: string
 /** A detached checkout, no branch at all: no base, whatever the remote's HEAD. */
 let wtPureDetached: string
+/** Its two commits squash-merged into main: none of them in main, all of their diff is. */
+let wtSquashed: string
+/** Its commit merged into main with a merge commit. */
+let wtMerged: string
 
 beforeAll(() => {
   root = realpathSync(mkdtempSync(path.join(tmpdir(), 'clave-git-worktree-')))
@@ -97,6 +101,21 @@ beforeAll(() => {
   commit(repo, 'base.txt', 'base two')
   commit(repo, 'base.txt', 'base three')
   git(repo, 'push', '-q', 'origin', 'main')
+
+  // A lane squash-merged the way ours land: two commits on the branch, one
+  // commit on main carrying their net diff, the branch itself untouched.
+  wtSquashed = path.join(root, 'wt-squashed')
+  git(repo, 'worktree', 'add', '-q', wtSquashed, '-b', 'lane/squashed', 'main')
+  commit(wtSquashed, 's1.txt', 'squash one')
+  commit(wtSquashed, 's1.txt', 'squash two')
+  git(repo, 'merge', '-q', '--squash', 'lane/squashed')
+  git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-qm', 'Squash of lane/squashed')
+
+  // A branch merged with a merge commit: its commit is an ancestor of main.
+  wtMerged = path.join(root, 'wt-merged')
+  git(repo, 'worktree', 'add', '-q', wtMerged, '-b', 'lane/merged', 'main')
+  commit(wtMerged, 'm1.txt', 'merge one')
+  git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'merge', '-q', '--no-ff', '--no-edit', 'lane/merged')
 })
 
 afterAll(() => {
@@ -117,6 +136,17 @@ describe('parseCreatedFrom', () => {
   })
 })
 
+describe('parseCreatedAt', () => {
+  it('reads the sha of the creation entry, the last line', () => {
+    const reflog = 'bbbbbbb\tcommit: lane a\naaaaaaa\tbranch: Created from origin/dev\n'
+    expect(parseCreatedAt(reflog)).toBe('aaaaaaa')
+  })
+  it('names nothing when the oldest entry is not a creation', () => {
+    expect(parseCreatedAt('bbbbbbb\tcommit: something\n')).toBeNull()
+    expect(parseCreatedAt('')).toBeNull()
+  })
+})
+
 describe('getStatus on a main checkout', () => {
   it('carries no worktree reading', async () => {
     const status = await gitManager.getStatus(repo)
@@ -133,7 +163,9 @@ describe('getStatus on a worktree cut from the local branch', () => {
     expect(status.worktree!.base).toBe('main')
     expect(status.worktree!.baseLabel).toBe('main')
     expect(status.worktree!.ahead).toBe(3)
-    expect(status.worktree!.behind).toBe(2)
+    // Two base commits, the squash and the merge commit: main has moved on.
+    expect(status.worktree!.behind).toBe(5)
+    expect(status.worktree!.merged).toBe(false)
   })
 
   it('the worktree range lists what the worktree added, the base range what the base gained', async () => {
@@ -142,8 +174,8 @@ describe('getStatus on a worktree cut from the local branch', () => {
     expect(added.every((f) => f.status === 'A')).toBe(true)
 
     const gained = await gitManager.getRangeFiles(wtLocal, 'base')
-    expect(gained.map((f) => f.path)).toEqual(['base.txt'])
-    expect(gained[0].status).toBe('M')
+    expect(gained.map((f) => f.path).sort()).toEqual(['base.txt', 'm1.txt', 's1.txt'])
+    expect(gained.find((f) => f.path === 'base.txt')?.status).toBe('M')
 
     const diff = await gitManager.getRangeDiff(wtLocal, 'base', 'base.txt')
     expect(diff).toContain('+base three')
@@ -176,6 +208,32 @@ describe('getStatus on a branch cut from a detached HEAD', () => {
     expect(status.worktree?.base).toBe('origin/main')
     expect(status.worktree?.baseLabel).toBe('main')
     expect(status.worktree?.behind).toBe(2)
+  })
+})
+
+describe('merged into the base', () => {
+  it('a squash-merged worktree is merged, its commits still counted', async () => {
+    const status = await gitManager.getStatus(wtSquashed)
+    expect(status.worktree?.base).toBe('main')
+    expect(status.worktree?.ahead).toBe(2)
+    expect(status.worktree?.merged).toBe(true)
+  })
+
+  it('a worktree merged with a merge commit is merged, nothing ahead', async () => {
+    const status = await gitManager.getStatus(wtMerged)
+    expect(status.worktree?.ahead).toBe(0)
+    expect(status.worktree?.merged).toBe(true)
+  })
+
+  it('a worktree with work the base does not carry is not', async () => {
+    const status = await gitManager.getStatus(wtLocal)
+    expect(status.worktree?.merged).toBe(false)
+  })
+
+  it('a fresh worktree with nothing done is not merged either', async () => {
+    const status = await gitManager.getStatus(wtRemote)
+    expect(status.worktree?.ahead).toBe(0)
+    expect(status.worktree?.merged).toBe(false)
   })
 })
 

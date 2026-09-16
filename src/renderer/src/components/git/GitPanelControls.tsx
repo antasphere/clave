@@ -42,13 +42,16 @@ export function GitSyncBadge({
   count,
   active,
   onToggle,
-  title
+  title,
+  muted = false
 }: {
   tone: GitSyncTone
   count: number
   active: boolean
   onToggle: (e: React.MouseEvent) => void
   title: string
+  /** Still true, no longer news: a worktree's count once its work is merged (PRDCT-2356). */
+  muted?: boolean
 }): React.JSX.Element {
   return (
     <span
@@ -64,8 +67,11 @@ export function GitSyncBadge({
           onToggle(e as unknown as React.MouseEvent)
         }
       }}
-      className={`git-sync-badge ${TONE_TEXT_CLASS[tone]} ${active ? 'git-sync-badge-on' : ''}`}
+      className={`git-sync-badge ${TONE_TEXT_CLASS[tone]} ${active ? 'git-sync-badge-on' : ''} ${
+        muted ? 'git-sync-badge-muted' : ''
+      }`}
       data-git-sync-tone={tone}
+      data-git-sync-muted={muted ? 'true' : undefined}
     >
       {tone === 'changes' || tone === 'worktree' ? (
         <PlusIcon className="w-2.5 h-2.5" strokeWidth={2.5} />

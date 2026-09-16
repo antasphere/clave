@@ -33,6 +33,8 @@ const WT_STILL = path.join(ROOT, 'wt-still')
 // Alphabetically after the worktrees' names, so the order check has a repo
 // that must NOT slip between the source and its worktrees.
 const OTHER = path.join(ROOT, 'zed')
+// A worktree of that repo whose one commit was squash-merged into it: done.
+const WT_DONE = path.join(ROOT, 'wt-done')
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000002e',
   name: 'Worktrees',
@@ -75,6 +77,10 @@ function seed() {
   mkdirSync(OTHER, { recursive: true })
   git(OTHER, 'init', '-q', '-b', 'main')
   commit(OTHER, 'README.md', 'zed')
+  git(OTHER, 'worktree', 'add', '-q', WT_DONE, '-b', 'done', 'main')
+  commit(WT_DONE, 'done.txt', 'done')
+  git(OTHER, 'merge', '-q', '--squash', 'done')
+  git(OTHER, '-c', 'user.email=e2e@clave', '-c', 'user.name=e2e', 'commit', '-qm', 'Squash of done')
 }
 
 /** The repo tree's rows in order: kind, name, the badges each carries, and
@@ -88,7 +94,9 @@ function readRows(win) {
         const name = el.querySelector('.git-tree-row-name')
         const guide = el.querySelector('.git-worktree-guide')
         const stem = el.querySelector('.git-worktree-stem')
-        const guideLine = guide ? getComputedStyle(guide, '::before') : null
+        // The line belongs to the worktree's block (the row's parent), so it
+        // can run on beside the unfolded content.
+        const line = el.parentElement?.querySelector(':scope > .git-worktree-line') ?? null
         const visible = (node) =>
           node ? [...node.childNodes].filter((n) => n.nodeType !== 1 || getComputedStyle(n).display !== 'none').map((n) => n.textContent).join('').trim() : null
         const rowStyle = getComputedStyle(el)
@@ -115,8 +123,19 @@ function readRows(win) {
           stemX: stem ? stem.getBoundingClientRect().left : null,
           guide: !!guide,
           guideH: guide?.getBoundingClientRect().height ?? null,
-          lineX: guide ? guide.getBoundingClientRect().left + parseFloat(guideLine.left) : null,
-          lineBottom: guide ? parseFloat(guideLine.bottom) : null,
+          merged: guide?.dataset.gitWorktreeMerged === 'true',
+          check: !!guide?.querySelector('.git-worktree-check'),
+          countMuted: el.querySelector('[data-git-sync-tone="worktree"]')?.dataset.gitSyncMuted === 'true',
+          line: !!line,
+          lineX: line?.getBoundingClientRect().left ?? null,
+          lineH: line?.getBoundingClientRect().height ?? null,
+          lineZ: line ? getComputedStyle(line).zIndex : null,
+          blockH: el.parentElement?.getBoundingClientRect().height ?? null,
+          ruleAbove: el.parentElement?.querySelector(':scope > .tree-rule') ?? null
+            ? {
+                left: el.parentElement.querySelector(':scope > .tree-rule').getBoundingClientRect().left
+              }
+            : null,
           base: visible(badge),
           baseTitle: badge?.title ?? null,
           baseKind: badge?.dataset.gitBaseBadge ?? null,
@@ -171,8 +190,19 @@ export async function run(t) {
     t.check(
       'the worktrees sit directly under their repo, alphabetical, the other repo after them',
       rows.map((r) => `${r.kind}:${r.name}`).join(' ') ===
-        'repo:app worktree:wt-feature worktree:wt-long-feature-name-for-the-floor worktree:wt-still repo:zed',
+        'repo:app worktree:wt-feature worktree:wt-long-feature-name-for-the-floor worktree:wt-still repo:zed worktree:wt-done',
       rows
+    )
+    const done = rows.find((r) => r.name === 'wt-done')
+    t.check(
+      'a squash-merged worktree shows the check on its dot and its count muted',
+      done?.merged && done?.check && done?.worktreeCount === '1' && done?.countMuted,
+      done
+    )
+    t.check(
+      'the worktrees with work the base lacks show a dot, not a check',
+      rows.filter((r) => r.kind === 'worktree' && r.name !== 'wt-done').every((r) => !r.merged && !r.check && !r.countMuted),
+      rows.filter((r) => r.kind === 'worktree').map((r) => ({ name: r.name, merged: r.merged }))
     )
     const wt = rows.find((r) => r.name === 'wt-feature')
     const long = rows.find((r) => r.name === 'wt-long-feature-name-for-the-floor')
@@ -180,16 +210,32 @@ export async function run(t) {
     const src = rows.find((r) => r.name === 'app')
     t.check('the worktree row names its source', wt?.of === APP, wt)
     t.check('both worktree rows carry the guide, no icon', wt?.guide && still?.guide, { wt, still })
-    t.check('the line runs through the first worktree and ends at the last', wt?.lineBottom === 0 && !wt?.last && still?.last, { wt, still })
+    t.check(
+      'the line runs the whole block of the first worktree and ends at the last',
+      wt?.line && !wt?.last && Math.abs(wt.lineH - wt.blockH) <= 0.5 && still?.last,
+      { wt, still }
+    )
     t.check(
       'the last guide ends at the middle of its row',
-      still && Math.abs(still.lineBottom - still.guideH / 2) <= 0.5,
+      still?.line && Math.abs(still.lineH - (still.guideH / 2 + (still.ruleAbove ? 1 : 0))) <= 0.5,
       still
     )
-    t.check('the source row draws the stem the guide continues', src?.stem === true, src)
+    // Hairlines between worktree rows as between repos, starting past the
+    // guide so the vertical line runs through them unbroken, and the line
+    // above the row's hover fill.
     t.check(
-      'the worktree’s name lines up with its repo’s name',
-      wt && src && Math.abs(wt.nameX - src.nameX) <= 0.01,
+      'every worktree row is ruled off from the row above, past its guide',
+      [wt, long, still].every((r) => r?.ruleAbove && r.ruleAbove.left > r.lineX),
+      [wt, long, still].map((r) => ({ name: r?.name, rule: r?.ruleAbove, lineX: r?.lineX }))
+    )
+    t.check('the line paints above the row', wt?.lineZ === '1', wt?.lineZ)
+    t.check('the source row draws the stem the guide continues', src?.stem === true, src)
+    // The guide spans the repo row's chevron and glyph (30px), then the
+    // worktree's own chevron and a gap: the name lands 16px deeper than the
+    // repo's.
+    t.check(
+      'the worktree’s name lands one step deeper than its repo’s',
+      wt && src && Math.abs(wt.nameX - src.nameX - 16) <= 0.01,
       { wt: wt?.nameX, src: src?.nameX }
     )
     t.check(
@@ -227,6 +273,14 @@ export async function run(t) {
     // clipping, and without the rule the panel would scroll (verifier round 3, gap 15).
     t.check('a row clips rather than scrolls', long?.rowOverflow === 'hidden', long?.rowOverflow)
     t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
+    // A squash lands one commit the worktree lacks, so the merged worktree is
+    // one behind its base, and that drift is a real click: what the squash
+    // changed.
+    t.check(
+      'a squash-merged worktree is one commit behind its base, the squash',
+      done?.baseKind === 'drift' && /−1$/.test(done?.base ?? ''),
+      { base: done?.base, baseKind: done?.baseKind }
+    )
     // No remote in the fixture, so nothing is incoming; the ↑ carries the
     // existing "unpublished commits" count on every row here and is not this
     // change's to assert.
@@ -260,6 +314,22 @@ export async function run(t) {
     await clickIn(win, 'wt-feature', '[data-git-sync-tone="worktree"]')
     await until(async () => (await readSections(win)).some((s) => s.kind === 'header'))
     let sections = await readSections(win)
+    // Unfolded, the line runs on beside the content, which sits clear of it.
+    const unfolded = (await readRows(win)).find((r) => r.name === 'wt-feature')
+    const headerX = await win.evaluate(() => {
+      const h = document.querySelector('.git-section-header')
+      return h ? h.getBoundingClientRect().left + parseFloat(getComputedStyle(h).paddingLeft) : null
+    })
+    t.check(
+      'the line runs on beside the unfolded content',
+      unfolded && unfolded.blockH > unfolded.guideH && Math.abs(unfolded.lineH - unfolded.blockH) <= 0.5,
+      { lineH: unfolded?.lineH, blockH: unfolded?.blockH }
+    )
+    t.check(
+      'the content sits clear of the line',
+      unfolded && headerX !== null && headerX - unfolded.lineX >= 12,
+      { headerX, lineX: unfolded?.lineX }
+    )
     const since = sections.findIndex((s) => s.kind === 'header' && s.text.startsWith('Since main'))
     t.check('the count opens a "Since main" section', since >= 0, sections)
     const sinceRows = sections.slice(since + 1).filter((s) => s.kind === 'row').map((s) => s.text)

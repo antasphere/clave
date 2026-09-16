@@ -2646,10 +2646,12 @@ body,
    centre, so the row reads as "of this repo" without being a folder of it.
    The stem under the glyph is drawn only while the repo row is folded:
    unfolded, the repo's own file lists sit between the two rows and the line
-   would cut through their labels. The guide takes exactly the glyph's column,
-   so a worktree's name lines up with its repo's: the dot in place of the
-   cube says "under", the indent would only have said it twice. The ink is
-   the tree's, not a status tone: this is structure, not news. */
+   would cut through their labels. The guide spans the repo row's chevron and
+   glyph columns (chevron, gap, glyph: 30px), the line on the glyph's centre,
+   and the worktree's own chevron follows it, so the name lands one step
+   deeper than the repo's and the unfolded content one indent deeper than the
+   repo's content. The ink is the tree's, not a status tone: this is
+   structure, not news. */
 .git-worktree-stem {
   position: absolute;
   top: calc(var(--git-tree-row-h) / 2 + 9px);
@@ -2661,28 +2663,56 @@ body,
 .git-worktree-guide {
   position: relative;
   align-self: stretch;
-  width: 14px;
+  width: 30px;
   flex-shrink: 0;
 }
-/* The line sits on the same column as the stem above it: the guide box starts
-   at the glyph column (chevron + gap = 16px in), the stem at its centre
-   (23px in), so the line is 7px into the box and the dot centred on it. */
-.git-worktree-guide::before {
-  content: '';
+/* The line of a worktree block runs beside the whole block, the row and
+   what it unfolds, on the same column as the stem above it (the glyph's
+   centre, 23px in from the row's chevron); the block's content sits two
+   indents further in, so the line runs clear of its labels. The last
+   worktree's line stops at its dot. */
+.git-worktree-line {
   position: absolute;
-  left: 7px;
   top: 0;
   bottom: 0;
   width: 1px;
   background-color: var(--tree-guide-color);
+  pointer-events: none;
+  /* Above the row it runs beside, whose hover fill would otherwise paint
+     over it: the row is positioned too, and later in the tree. */
+  z-index: 1;
 }
-.git-worktree-guide--last::before {
-  bottom: 50%;
+/* The last worktree's line stops at its dot; the height is set by the row,
+   which knows whether a hairline sits above it. */
+.git-worktree-line--last {
+  bottom: auto;
 }
+/* A merged worktree (its work in the base, by merge or by squash) marks its
+   dot with a check in the success ink: the row's news is that it is done. */
+.git-worktree-guide--merged::after {
+  display: none;
+}
+.git-worktree-check {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin-top: -5.5px;
+  color: var(--color-success);
+  background-color: var(--surface-0);
+  border-radius: 50%;
+  padding: 1px;
+}
+/* The count of a merged worktree: still true, no longer news. */
+.git-sync-badge-muted {
+  opacity: 0.45;
+}
+/* The dot, centred on that column. */
 .git-worktree-guide::after {
   content: '';
   position: absolute;
-  left: 5px;
+  left: 21px;
   top: 50%;
   width: 5px;
   height: 5px;

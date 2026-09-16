@@ -398,6 +398,8 @@ export interface GitWorktreeInfo {
   ahead: number
   /** Commits the base gained that the worktree lacks. */
   behind: number
+  /** The worktree's work is already in the base, by merge, fast-forward or squash. */
+  merged: boolean
 }
 
 export interface GitStatusResult {

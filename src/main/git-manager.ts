@@ -35,6 +35,21 @@ export function parseCreatedFrom(reflog: string): string | null {
 }
 
 /**
+ * The commit a branch was created AT, from the same oldest reflog entry when
+ * it is a creation, given as `<sha>\t<subject>` lines (`%H%x09%gs`). It is
+ * what tells a worktree that has done nothing yet (its head still that
+ * commit) from one whose commits the base took with a merge commit (its head
+ * moved on, yet nothing of it is outside the base). Null when the reflog
+ * opens with anything else.
+ */
+export function parseCreatedAt(reflog: string): string | null {
+  const lines = reflog.trim().split('\n').filter(Boolean)
+  const oldest = (lines[lines.length - 1] ?? '').trim()
+  const match = /^([0-9a-f]{7,40})\tbranch: Created from /.exec(oldest)
+  return match ? match[1] : null
+}
+
+/**
  * A git instance for a call that talks to a REMOTE, and can therefore hang
  * forever on someone else's server.
  *
@@ -101,6 +116,13 @@ export interface GitWorktreeInfo {
   ahead: number
   /** Commits the base gained that the worktree lacks — the `−N` on the base badge. */
   behind: number
+  /**
+   * The worktree's work is already in the base: its head is an ancestor of
+   * the base (a merge or a fast-forward), or the base carries its whole net
+   * diff as one commit (a squash-merge, how a lane lands). The dot on the
+   * row says so. False when the base cannot be named.
+   */
+  merged: boolean
 }
 
 export interface GitStatusResult {
@@ -599,15 +621,63 @@ class GitManager {
       // whatever the remote's HEAD is. It hangs under its source and says
       // no more.
       const base = branch && branch !== 'HEAD' ? await this.resolveWorktreeBase(git, branch) : null
-      if (!base) return { of, base: null, baseLabel: '', ahead: 0, behind: 0 }
+      if (!base) return { of, base: null, baseLabel: '', ahead: 0, behind: 0, merged: false }
       const counts = (await git.raw(['rev-list', '--left-right', '--count', `${base}...HEAD`]))
         .trim()
         .split(/\s+/)
       const behind = parseInt(counts[0] ?? '', 10) || 0
       const ahead = parseInt(counts[1] ?? '', 10) || 0
-      return { of, base, baseLabel: await this.shortRefLabel(git, base), ahead, behind }
+      const merged = await this.isMergedInto(git, base, branch, ahead)
+      return { of, base, baseLabel: await this.shortRefLabel(git, base), ahead, behind, merged }
     } catch {
       return undefined
+    }
+  }
+
+  /**
+   * Whether the checkout's work is in `base`. Two ways it can be, and both are
+   * local and cheap:
+   *
+   * - nothing of the head is outside the base (`ahead` is 0): a merge commit
+   *   or a fast-forward took the commits themselves. A worktree that has done
+   *   NOTHING yet reads the same way, so this counts only when the head has
+   *   moved on from the commit the branch was created at (its reflog says
+   *   which); a branch with no reflog is never claimed merged this way.
+   * - the base carries the branch's whole net diff as ONE commit, which is
+   *   what a squash-merge leaves: none of the commits is in the base, so the
+   *   count says ahead. The branch is squashed onto its merge-base as a
+   *   throwaway commit object (no ref, no working tree touched) and
+   *   `git cherry` says whether the base already holds that patch: a `-` line
+   *   is a patch the base has, a `+` one it lacks.
+   */
+  private async isMergedInto(
+    git: ReturnType<typeof simpleGit>,
+    base: string,
+    branch: string,
+    ahead: number
+  ): Promise<boolean> {
+    try {
+      if (ahead === 0) {
+        const createdAt = parseCreatedAt(
+          await git.raw(['reflog', 'show', '--format=%H%x09%gs', branch])
+        )
+        if (!createdAt) return false
+        const head = (await git.raw(['rev-parse', 'HEAD'])).trim()
+        return head !== createdAt
+      }
+      const mergeBase = (await git.raw(['merge-base', base, 'HEAD'])).trim()
+      const tree = (await git.raw(['rev-parse', 'HEAD^{tree}'])).trim()
+      if (!mergeBase || !tree) return false
+      const squashed = (
+        await git.raw(['commit-tree', tree, '-p', mergeBase, '-m', 'squash (clave, merged check)'])
+      ).trim()
+      const lines = (await git.raw(['cherry', base, squashed, mergeBase]))
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+      return lines.length > 0 && lines.every((l) => l.startsWith('-'))
+    } catch {
+      return false
     }
   }
 

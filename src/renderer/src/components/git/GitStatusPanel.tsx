@@ -5,7 +5,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { ContextMenu } from '../ui/ContextMenu'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { shortenPath } from '../../lib/utils'
-import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
+import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { buildGitTree, compactTree, collectAllDirPaths } from '../../lib/git-file-tree'
 import {
   buildRepoTree,
@@ -1069,18 +1069,25 @@ function RepoGlyph(): React.JSX.Element {
 const TREE_GLYPH_CENTER_PX = 23
 
 /**
- * The worktree row's leading mark (PRDCT-2356): a guide in the glyph column
- * in place of an icon — the line continuing from the source repo above and a
- * dot at this row. The line IS the icon: it says "of the repo above" the way
+ * The worktree row's leading mark (PRDCT-2356): a guide spanning the repo
+ * row's chevron-and-glyph columns, the line continuing from the source repo
+ * above on the glyph's centre and a dot at this row, with the row's own
+ * chevron after it. The line IS the icon: it says "of the repo above" the way
  * a folder's indentation says "inside", without the row being a folder. The
  * last worktree ends the line at its dot.
  */
-function WorktreeGuide({ last }: { last: boolean }): React.JSX.Element {
+function WorktreeGuide({ last, merged }: { last: boolean; merged: boolean }): React.JSX.Element {
   return (
     <span
-      className={`git-worktree-guide ${last ? 'git-worktree-guide--last' : ''}`}
+      className={`git-worktree-guide ${last ? 'git-worktree-guide--last' : ''} ${
+        merged ? 'git-worktree-guide--merged' : ''
+      }`}
+      data-git-worktree-merged={merged ? 'true' : undefined}
       aria-hidden
-    />
+    >
+      {/* A merged worktree's dot is a check: its work is in the base. */}
+      {merged && <CheckIcon className="git-worktree-check" strokeWidth={3} />}
+    </span>
   )
 }
 
@@ -1106,15 +1113,21 @@ type RowSection = 'incoming' | 'outgoing' | 'changes' | 'worktree' | 'base'
  * `data-tree-rule` carries that depth for the E2E spec, which asserts on the
  * boundaries rather than on pixels.
  */
-function TreeRule({ depth }: { depth: number }): React.JSX.Element {
+function TreeRule({ depth, insetPx = 0 }: { depth: number; insetPx?: number }): React.JSX.Element {
   return (
     <div
       className="tree-rule"
       data-tree-rule={depth}
-      style={{ marginLeft: 12 + depth * TREE_INDENT_PX, marginRight: 12 }}
+      // `insetPx` moves the rule's start past a column it must not cross:
+      // a worktree row's rule begins after its guide, so the vertical line
+      // there runs through unbroken.
+      style={{ marginLeft: 12 + depth * TREE_INDENT_PX + insetPx, marginRight: 12 }}
     />
   )
 }
+
+/** Where a worktree row's own chevron starts: past the guide (30px) and a gap. */
+const WORKTREE_RULE_INSET_PX = 36
 
 function MultiRepoSection({
   name,
@@ -1241,8 +1254,24 @@ function MultiRepoSection({
   )
 
   return (
-    <div>
-      {rule && <TreeRule depth={depth} />}
+    <div className={worktree ? 'relative' : undefined}>
+      {rule && <TreeRule depth={depth} insetPx={worktree ? WORKTREE_RULE_INSET_PX : 0} />}
+      {/* The guide line of a worktree block, row AND unfolded content: the
+          content sits far enough in to leave the line clear (see the depth
+          it takes below). The last worktree's line stops at its dot, which
+          sits one hairline lower when a rule opens the block. */}
+      {worktree && (
+        <span
+          className={`git-worktree-line ${worktree.last ? 'git-worktree-line--last' : ''}`}
+          style={{
+            left: 12 + depth * TREE_INDENT_PX + TREE_GLYPH_CENTER_PX,
+            ...(worktree.last
+              ? { height: `calc(var(--git-tree-row-h) / 2 + ${rule ? 1 : 0}px)` }
+              : {})
+          }}
+          aria-hidden
+        />
+      )}
       {/* Collapsible header */}
       <button
         data-tree-row={depth}
@@ -1278,6 +1307,11 @@ function MultiRepoSection({
             aria-hidden
           />
         )}
+        {/* A worktree row leads with its guide and folds AFTER it: the dot is
+            the row's place under its repo, the chevron its own fold, so the
+            name lands one step deeper than the repo's and reads as nested. */}
+        {worktree && <WorktreeGuide last={worktree.last} merged={!!wt?.merged} />}
+
         {/* Chevron */}
         <svg
           width="10"
@@ -1291,7 +1325,7 @@ function MultiRepoSection({
           <path d="M3 1.5l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
 
-        {worktree ? <WorktreeGuide last={worktree.last} /> : <RepoGlyph />}
+        {!worktree && <RepoGlyph />}
 
         {/* Repo name — long hover reveals the full path */}
         <Tooltip delayDuration={2000}>
@@ -1307,6 +1341,7 @@ function MultiRepoSection({
                 {wt.behind > 0
                   ? `cut from ${wt.base}, ${wt.behind} behind, ${wt.ahead} ahead`
                   : `cut from ${wt.base}, ${wt.ahead} ahead`}
+                {wt.merged ? ` · merged into ${wt.baseLabel}` : ''}
               </div>
             )}
           </TooltipContent>
@@ -1335,17 +1370,28 @@ function MultiRepoSection({
           />
         )}
 
+        {/* The worktree's own commits since the cut, beside the base badge:
+            the two purple numbers are one comparison, against the base; the
+            right-hand group is against the remote and the working tree. */}
+        {wt?.base && wt.ahead > 0 && (
+          <GitSyncBadge
+            tone="worktree"
+            count={wt.ahead}
+            active={showWorktree}
+            onToggle={(e) => toggleSection(e, 'worktree')}
+            // Merged, the commits are still not IN the base as commits (a
+            // squash lands one), so the count stays and reads muted.
+            muted={wt.merged}
+            title={
+              wt.merged
+                ? `${wt.ahead} commit${wt.ahead === 1 ? '' : 's'} since ${wt.baseLabel}, already merged into it — show what they changed`
+                : `Show what this worktree changed since ${wt.baseLabel}`
+            }
+          />
+        )}
+
         {/* Badges (right-aligned) — one toggle per section of the repo's content */}
         <span className="ml-auto flex-shrink-0 flex items-center gap-1.5">
-          {wt?.base && wt.ahead > 0 && (
-            <GitSyncBadge
-              tone="worktree"
-              count={wt.ahead}
-              active={showWorktree}
-              onToggle={(e) => toggleSection(e, 'worktree')}
-              title={`Show what this worktree changed since ${wt.baseLabel}`}
-            />
-          )}
           {status.behind > 0 && (
             <GitSyncBadge
               tone="incoming"
@@ -1410,7 +1456,9 @@ function MultiRepoSection({
               status={status}
               refresh={refresh}
               fillHeight={false}
-              depth={depth + 1}
+              // A worktree's content sits two indents deeper than its repo's
+              // would: past the guide line, which runs on beside it.
+              depth={depth + (worktree ? 3 : 1)}
               showIncoming={showIncoming}
               showOutgoing={showOutgoing}
               showWorktree={showWorktree}
@@ -1791,8 +1839,7 @@ export function MultiRepoGitPanel({
         onSelect={handleRepoSelect}
         selectedRepoPaths={selectedRepoPaths}
         depth={row.depth}
-        // A worktree row continues its repo's guide: no rule between them.
-        rule={rule && !isWorktree}
+        rule={rule}
         worktree={isWorktree ? { last: row.last ?? true } : undefined}
         hasWorktrees={row.node.type === 'repo' && row.node.worktrees.length > 0}
       />
@@ -1848,7 +1895,7 @@ export function MultiRepoGitPanel({
                   isSelected={selectedRepoPaths.has(repo.path)}
                   onSelect={handleRepoSelect}
                   selectedRepoPaths={selectedRepoPaths}
-                  rule={i > 0 && !worktree}
+                  rule={i > 0}
                   worktree={worktree ? { last } : undefined}
                   hasWorktrees={!worktree && flatRows[i + 1]?.worktree === true}
                 />
