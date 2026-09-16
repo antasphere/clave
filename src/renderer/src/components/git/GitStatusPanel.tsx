@@ -1306,7 +1306,9 @@ function MultiRepoSection({
         {/* Branch badge. It gives way before the name does: in a narrow panel a
             worktree row carries up to four badges, and a name cut to one letter
             says less than a branch cut short. */}
-        <span className="text-text-tertiary truncate [flex-shrink:4]">{status.branch}</span>
+        <span className="git-tree-row-branch text-text-tertiary truncate [flex-shrink:4]">
+          {status.branch}
+        </span>
 
         {/* The base badge (PRDCT-2356): the branch this worktree was cut from
             and how far it has moved since — its own toggle when it has. */}

@@ -2617,23 +2617,21 @@ body,
   flex-shrink: 0;
   /* The row is a container so its badges can adapt to its width (below). */
   container-type: inline-size;
+  /* With a floor under the name (below) a row can, in the edge of a long
+     name behind five badges at the panel's narrowest, want more than it has:
+     it clips its last badge rather than hand the panel a horizontal
+     scrollbar. */
+  overflow: hidden;
 }
 /* The repo's name is the one thing a row must never lose: a floor, so the
    badges take their room from the branch name first and the name is cut with
-   an ellipsis rather than to a letter (verifier round 1, finding 1). */
+   an ellipsis rather than to a letter (verifier round 1, finding 1). Five
+   characters (40px at the row's type): with the narrow-row rules below, a
+   worktree row with four badges still fits the panel's 216px of content. The
+   narrow-row rule for the badges sits with the badge family below, after the
+   rules it must beat. */
 .git-tree-row-name {
-  min-width: 6ch;
-}
-/* A narrow row (the panel opens at 240px) has no room for four badges beside
-   a name: the base badge keeps its drift and folds its name away, its title
-   still naming the base; a base with no drift has nothing left to show. */
-@container (max-width: 299px) {
-  .git-base-badge-name {
-    display: none;
-  }
-  .git-sync-badge-static {
-    display: none;
-  }
+  min-width: 5ch;
 }
 
 /* ── Worktree rows in the repo tree (PRDCT-2356) ── */
@@ -2754,6 +2752,33 @@ body,
 .git-sync-badge-static:hover {
   background-color: transparent;
   border-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+/* A narrow row has no room for four badges beside a name: the base badge
+   keeps its drift and folds its name away, its title still naming the base;
+   a base with no drift has nothing left to show and goes entirely. The row
+   is the container (.git-tree-row) and a container's inline size is its
+   CONTENT box, 24px less than the row with its 12px of padding each side: the
+   300px below is a 324px row, and the panel's default 240px row is 216. A
+   container query adds no specificity, so this block stands AFTER
+   .git-sync-badge, whose display it must beat (verifier round 2, finding 10). */
+@container (max-width: 299px) {
+  .git-base-badge-name {
+    display: none;
+  }
+  .git-sync-badge-static {
+    display: none;
+  }
+  /* A worktree row gives up two more things here: the extra indent of its
+     guide (the line and the dot still say "of the repo above"), and its
+     branch name, which the badges had already squeezed to nothing while its
+     gap still cost 6px; the branch stays on the repo rows, which carry fewer
+     badges. */
+  .git-worktree-guide {
+    width: 14px;
+  }
+  [data-tree-kind='worktree'] .git-tree-row-branch {
+    display: none;
+  }
 }
 
 /* The sync action inside an Incoming/Outgoing header — Pull / Push. Same
