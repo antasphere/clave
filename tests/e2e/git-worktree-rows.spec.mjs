@@ -139,6 +139,8 @@ function readRows(win) {
           guideH: guide?.getBoundingClientRect().height ?? null,
           merged: guide?.dataset.gitWorktreeMerged === 'true',
           check: !!guide?.querySelector('.git-worktree-check'),
+          // The grey dot is the guide's ::after; a merged row must not draw it under the check.
+          dotShown: guide ? getComputedStyle(guide, '::after').display !== 'none' : null,
           countMuted: el.querySelector('[data-git-sync-tone="worktree"]')?.dataset.gitSyncMuted === 'true',
           line: !!line,
           lineX: line?.getBoundingClientRect().left ?? null,
@@ -212,14 +214,16 @@ export async function run(t) {
     )
     const done = rows.find((r) => r.name === 'wt-done')
     t.check(
-      'a squash-merged worktree shows the check on its dot and its count muted',
-      done?.merged && done?.check && done?.worktreeCount === '1' && done?.countMuted,
+      'a squash-merged worktree shows the check in place of its dot and its count muted',
+      done?.merged && done?.check && done?.dotShown === false && done?.worktreeCount === '1' && done?.countMuted,
       done
     )
     t.check(
       'the worktrees with work the base lacks show a dot, not a check',
-      rows.filter((r) => r.kind === 'worktree' && r.name !== 'wt-done').every((r) => !r.merged && !r.check && !r.countMuted),
-      rows.filter((r) => r.kind === 'worktree').map((r) => ({ name: r.name, merged: r.merged }))
+      rows
+        .filter((r) => r.kind === 'worktree' && r.name !== 'wt-done')
+        .every((r) => !r.merged && !r.check && r.dotShown === true && !r.countMuted),
+      rows.filter((r) => r.kind === 'worktree').map((r) => ({ name: r.name, merged: r.merged, dotShown: r.dotShown }))
     )
     const wt = rows.find((r) => r.name === 'wt-feature')
     const long = rows.find((r) => r.name === 'wt-long-feature-name-for-the-floor')

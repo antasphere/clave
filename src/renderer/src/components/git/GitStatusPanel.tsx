@@ -1077,11 +1077,9 @@ const TREE_GLYPH_CENTER_PX = 23
  * last worktree ends the line at its dot.
  */
 function WorktreeGuide({
-  last,
   merged,
   card
 }: {
-  last: boolean
   merged: boolean
   /** The dot's popover: the worktree's minimal metadata (PRDCT-2360). */
   card: React.ReactNode
@@ -1090,9 +1088,9 @@ function WorktreeGuide({
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <span
-          className={`git-worktree-guide ${last ? 'git-worktree-guide--last' : ''} ${
-            merged ? 'git-worktree-guide--merged' : ''
-          }`}
+          // The last worktree's line ending is the line element's business
+          // (.git-worktree-line--last); the guide carries the dot alone.
+          className={`git-worktree-guide ${merged ? 'git-worktree-guide--merged' : ''}`}
           data-git-worktree-merged={merged ? 'true' : undefined}
         >
           {/* A merged worktree's dot is a check: its work is in the base. */}
@@ -1378,7 +1376,6 @@ function MultiRepoSection({
             name lands one step deeper than the repo's and reads as nested. */}
         {worktree && wt && (
           <WorktreeGuide
-            last={worktree.last}
             merged={wt.merged}
             card={<WorktreeCard branch={status.branch} path={repoPath} wt={wt} />}
           />

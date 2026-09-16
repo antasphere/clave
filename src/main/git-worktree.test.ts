@@ -51,6 +51,12 @@ let wtPureDetached: string
 let wtSquashed: string
 /** Its commit merged into main with a merge commit. */
 let wtMerged: string
+/** Cut from a branch that was deleted afterwards: under its repo, no base. */
+let wtGone: string
+/** Squash-merged into `alt`, then that squash reverted on `alt`: not merged. */
+let wtReverted: string
+/** Squash-merged into `alt`, reverted, then the revert reverted: merged again. */
+let wtReapplied: string
 
 beforeAll(() => {
   root = realpathSync(mkdtempSync(path.join(tmpdir(), 'clave-git-worktree-')))
@@ -116,6 +122,37 @@ beforeAll(() => {
   git(repo, 'worktree', 'add', '-q', wtMerged, '-b', 'lane/merged', 'main')
   commit(wtMerged, 'm1.txt', 'merge one')
   git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'merge', '-q', '--no-ff', '--no-edit', 'lane/merged')
+
+  // Cut from a branch that is deleted afterwards (review of PR #55, finding 16).
+  git(repo, 'branch', 'tempbase', 'main')
+  wtGone = path.join(root, 'wt-gone')
+  git(repo, 'worktree', 'add', '-q', wtGone, '-b', 'lane/gone', 'tempbase')
+  commit(wtGone, 'g.txt', 'gone one')
+  git(repo, 'branch', '-q', '-D', 'tempbase')
+
+  // On a base of its own, `alt`, so main's counts above stay what they are:
+  // a squash reverted afterwards (finding 17), and one reverted then re-applied.
+  git(repo, 'branch', 'alt', 'main')
+  const altCommit = (msg: string): string =>
+    git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-qm', msg)
+  const revertHead = (): string =>
+    git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'revert', '--no-edit', 'HEAD')
+  git(repo, 'checkout', '-q', 'alt')
+  wtReverted = path.join(root, 'wt-reverted')
+  git(repo, 'worktree', 'add', '-q', wtReverted, '-b', 'lane/reverted', 'alt')
+  commit(wtReverted, 'v.txt', 'reverted one')
+  git(repo, 'merge', '-q', '--squash', 'lane/reverted')
+  altCommit('Squash of lane/reverted')
+  revertHead()
+
+  wtReapplied = path.join(root, 'wt-reapplied')
+  git(repo, 'worktree', 'add', '-q', wtReapplied, '-b', 'lane/reapplied', 'alt')
+  commit(wtReapplied, 'w.txt', 'reapplied one')
+  git(repo, 'merge', '-q', '--squash', 'lane/reapplied')
+  altCommit('Squash of lane/reapplied')
+  revertHead()
+  revertHead()
+  git(repo, 'checkout', '-q', 'main')
 })
 
 afterAll(() => {
@@ -256,6 +293,39 @@ describe('merged into the base', () => {
     const status = await gitManager.getStatus(wtRemote)
     expect(status.worktree?.ahead).toBe(0)
     expect(status.worktree?.merged).toBe(false)
+  })
+
+  it('a squash reverted on the base is not merged; reverted then re-applied, it is', async () => {
+    const reverted = await gitManager.getStatus(wtReverted)
+    expect(reverted.worktree?.base).toBe('alt')
+    expect(reverted.worktree?.ahead).toBe(1)
+    expect(reverted.worktree?.merged).toBe(false)
+
+    const reapplied = await gitManager.getStatus(wtReapplied)
+    expect(reapplied.worktree?.base).toBe('alt')
+    expect(reapplied.worktree?.merged).toBe(true)
+  })
+
+  it('reads nothing into the object store', async () => {
+    const loose = (): number => {
+      const out = git(repo, 'count-objects', '-v')
+      return parseInt(/^count: (\d+)/m.exec(out)?.[1] ?? '0', 10)
+    }
+    const before = loose()
+    await gitManager.getStatus(wtSquashed)
+    await gitManager.getStatus(wtLocal)
+    await gitManager.getStatus(wtReverted)
+    expect(loose()).toBe(before)
+  })
+})
+
+describe('getStatus on a worktree whose base branch was deleted', () => {
+  it('still hangs under its repo, with no base rather than a guessed one', async () => {
+    const status = await gitManager.getStatus(wtGone)
+    expect(status.worktree).toBeDefined()
+    expect(realpathSync(status.worktree!.of)).toBe(repo)
+    expect(status.worktree!.base).toBeNull()
+    expect(status.worktree!.ahead).toBe(0)
   })
 })
 
