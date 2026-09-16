@@ -2745,7 +2745,7 @@ body,
    on the app: the dot, no check in it). Declared AFTER the dot rule at the
    same specificity, which it must beat. */
 .git-worktree-guide--merged::after {
-  background-color: color-mix(in srgb, var(--color-success) 60%, black);
+  background-color: color-mix(in srgb, var(--color-success) 85%, black);
 }
 
 /* The label above a block of rows inside a repo — STAGED / MODIFIED /
