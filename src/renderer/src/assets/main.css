@@ -2691,22 +2691,10 @@ body,
 .git-worktree-line--last {
   bottom: auto;
 }
-/* A merged worktree (its work in the base, by merge or by squash) marks its
-   dot with a check in the success ink: the row's news is that it is done. */
-.git-worktree-guide--merged::after {
-  display: none;
-}
-.git-worktree-check {
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  width: 11px;
-  height: 11px;
-  margin-top: -5.5px;
-  color: var(--color-success);
-  background-color: var(--surface-0);
-  border-radius: 50%;
-  padding: 1px;
+/* A merged worktree fades its name (its dot's colour is with the dot rule
+   below, after the rule it must beat). */
+.git-tree-row-name--merged {
+  color: var(--text-tertiary);
 }
 /* The count of a merged worktree: still true, no longer news. */
 .git-sync-badge-muted {
@@ -2746,6 +2734,13 @@ body,
   margin-top: -2.5px;
   border-radius: 50%;
   background-color: var(--text-tertiary);
+}
+/* A merged worktree (its work in the base, by merge or by squash) turns its
+   dot dark green: the row's news is that it is done, said quietly (Romain,
+   on the app: the dot, no check in it). Declared AFTER the dot rule at the
+   same specificity, which it must beat. */
+.git-worktree-guide--merged::after {
+  background-color: color-mix(in srgb, var(--color-success) 60%, black);
 }
 
 /* The label above a block of rows inside a repo — STAGED / MODIFIED /

@@ -5,7 +5,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { ContextMenu } from '../ui/ContextMenu'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { shortenPath } from '../../lib/utils'
-import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
 import { buildGitTree, compactTree, collectAllDirPaths } from '../../lib/git-file-tree'
 import {
   buildRepoTree,
@@ -1092,10 +1092,7 @@ function WorktreeGuide({
           // (.git-worktree-line--last); the guide carries the dot alone.
           className={`git-worktree-guide ${merged ? 'git-worktree-guide--merged' : ''}`}
           data-git-worktree-merged={merged ? 'true' : undefined}
-        >
-          {/* A merged worktree's dot is a check: its work is in the base. */}
-          {merged && <CheckIcon className="git-worktree-check" strokeWidth={3} />}
-        </span>
+        />
       </TooltipTrigger>
       <TooltipContent side="bottom" align="start" className="git-worktree-card">
         {card}
@@ -1400,7 +1397,9 @@ function MultiRepoSection({
             a long hover was noise (Romain, on the app); a worktree's path and
             base live in the popover on its dot. */}
         <span
-          className="git-tree-row-name text-text-primary font-medium truncate"
+          className={`git-tree-row-name font-medium truncate ${
+            wt?.merged ? 'git-tree-row-name--merged' : 'text-text-primary'
+          }`}
           // The floor is five characters. A shorter name keeps exactly its
           // own width instead: the floor would give it a wider box than
           // its text, and a button centres its text, so the slack showed

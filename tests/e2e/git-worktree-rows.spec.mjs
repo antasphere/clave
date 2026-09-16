@@ -138,9 +138,10 @@ function readRows(win) {
           guide: !!guide,
           guideH: guide?.getBoundingClientRect().height ?? null,
           merged: guide?.dataset.gitWorktreeMerged === 'true',
-          check: !!guide?.querySelector('.git-worktree-check'),
-          // The grey dot is the guide's ::after; a merged row must not draw it under the check.
+          // The dot is the guide's ::after: grey, dark green once merged.
           dotShown: guide ? getComputedStyle(guide, '::after').display !== 'none' : null,
+          dotColor: guide ? getComputedStyle(guide, '::after').backgroundColor : null,
+          nameColor: name ? getComputedStyle(name).color : null,
           countMuted: el.querySelector('[data-git-sync-tone="worktree"]')?.dataset.gitSyncMuted === 'true',
           line: !!line,
           lineX: line?.getBoundingClientRect().left ?? null,
@@ -213,16 +214,19 @@ export async function run(t) {
       rows
     )
     const done = rows.find((r) => r.name === 'wt-done')
+    const others = rows.filter((r) => r.kind === 'worktree' && r.name !== 'wt-done')
     t.check(
-      'a squash-merged worktree shows the check in place of its dot and its count muted',
-      done?.merged && done?.check && done?.dotShown === false && done?.worktreeCount === '1' && done?.countMuted,
-      done
+      'a squash-merged worktree shows a dot of another colour, a faded name and a muted count',
+      done?.merged &&
+        done?.dotShown === true &&
+        others.every((r) => r.dotColor !== done.dotColor && r.nameColor !== done.nameColor) &&
+        done?.worktreeCount === '1' &&
+        done?.countMuted,
+      { done: { dotColor: done?.dotColor, nameColor: done?.nameColor }, other: { dotColor: others[0]?.dotColor, nameColor: others[0]?.nameColor } }
     )
     t.check(
-      'the worktrees with work the base lacks show a dot, not a check',
-      rows
-        .filter((r) => r.kind === 'worktree' && r.name !== 'wt-done')
-        .every((r) => !r.merged && !r.check && r.dotShown === true && !r.countMuted),
+      'the worktrees with work the base lacks show the plain dot and the plain name',
+      others.every((r) => !r.merged && r.dotShown === true && !r.countMuted),
       rows.filter((r) => r.kind === 'worktree').map((r) => ({ name: r.name, merged: r.merged, dotShown: r.dotShown }))
     )
     const wt = rows.find((r) => r.name === 'wt-feature')
