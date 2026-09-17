@@ -151,7 +151,7 @@ Terminals are command buttons that appear as colored icons on the group. Clickin
 | `autoLaunchLocalhost` | boolean | Optional. Open the detected `localhost` URL in the browser once the command serves one. Use for dev servers **in sidebar groups** — for toolbar buttons use `serverUrl` instead |
 | `persistent` | boolean | Optional, **toolbar groups only**. Keep the spawned session alive when the toolbar popover closes, and reattach to it next time instead of respawning |
 | `serverUrl` | string | Optional, honored on **toolbar buttons**. Declared server URL (e.g. `"http://localhost:3000"`) — turns the button into a **server button**: click probes the URL and either opens it or starts the command first (see Server buttons below). Implies `persistent` |
-| `groupView` | boolean | Optional, **sidebar groups only**, requires `serverUrl`. Makes this terminal's page the group's **web view**: clicking the group shows the served page in the main pane instead of the tiled sessions, with this terminal as its start action (see Group views below) |
+| `groupView` | boolean | Optional, **sidebar groups only**, requires `serverUrl`. Makes this terminal's page the group's **web view**: clicking the group shows the served page in the main pane instead of the tiled sessions, with this terminal as its start action — run unasked the first time the view finds the server down when `commandMode` is `auto`, offered as a Start button when it is `prefill` (see Group views below) |
 
 **Tips:**
 - Use `"auto"` for dev servers (`npm run dev`) that should start immediately
@@ -240,7 +240,12 @@ A sidebar group normally shows its sessions tiled in the main pane. Give one of 
 terminals `"groupView": true` and the group shows **that terminal's page** instead — a
 dashboard, a docs site, a project board — with the sessions one click away in the view's
 header. The terminal keeps working as a terminal; the flag only says "this is the page
-the group is about."
+the group is about." With `"commandMode": "auto"` the terminal is **started by the view
+itself** the first time it finds the server down (a group clicked open shows its page, not
+a dead page and a button); with `prefill` the view offers a Start button. A start is
+patient: the view stays on "Starting server…" for as long as the command runs, counting
+the seconds, and after a while adds "Show terminal" and an explicit Restart — a board's
+`exos board refresh` alone can take a minute or two before the port answers.
 
 ```json
 {

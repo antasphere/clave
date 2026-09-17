@@ -7,8 +7,9 @@ import { WebViewPane } from './WebViewPane'
  * terminal grid when the row's dashboard icon is clicked; "back" (or clicking
  * the row itself) returns to the terminal. The start action respawns the
  * hidden serving session from the view's stored command, so a view survives
- * its server: after a restart the probe finds the page down and one click
- * brings it back.
+ * its server: after a restart the probe finds the page down and the pane
+ * brings it back unasked (the command was attached to be run). The serving
+ * session is hidden by design, so there is no terminal to show here.
  */
 export function SessionViewPanel({
   session,
@@ -32,8 +33,9 @@ export function SessionViewPanel({
       start={
         view.command
           ? {
-              label: `Start ${view.command}`,
-              run: () => ensureSessionViewServer(session.id)
+              command: view.command,
+              run: () => ensureSessionViewServer(session.id),
+              auto: true
             }
           : null
       }

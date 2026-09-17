@@ -7,7 +7,9 @@ import {
   GlobeAltIcon,
   HomeIcon
 } from '@heroicons/react/24/outline'
+import { AnimatePresence, motion } from 'framer-motion'
 import { PageGuest, type PageGuestHandle, type PageTrail } from './PageGuest'
+import { ViewNotice } from './ViewNotice'
 import { usePreviewUrl } from '../../hooks/use-preview-url'
 import { useFileChanged } from '../../hooks/use-file-changed'
 import { isAtHome, PREVIEW_PROTOCOL } from '../../../../shared/view-navigation'
@@ -15,9 +17,32 @@ import { isAtHome, PREVIEW_PROTOCOL } from '../../../../shared/view-navigation'
 const PROBE_TIMEOUT_MS = 500
 const PROBE_INTERVAL_MS = 10_000
 const STARTING_PROBE_INTERVAL_MS = 2_000
-const STARTING_TIMEOUT_MS = 60_000
+/** How long a start runs before the pane offers a way in (the terminal) and a
+ *  way out (a restart). It never gives up on its own: the serving command is
+ *  still running, and a board's `exos board refresh` alone is forty seconds
+ *  on a good day and two minutes behind the worker's timeout. Giving up at
+ *  60 s used to hand the user the same Start button, whose click sent ^C
+ *  into the refresh in flight — a slow board never came up at all. */
+const STARTING_PATIENCE_MS = 45_000
+const ELAPSED_TICK_MS = 1_000
 
 type ProbeState = 'unknown' | 'up' | 'down' | 'starting'
+
+/** The action that serves a view's page when the probe says nobody does. */
+export interface WebViewPaneStart {
+  /** The serving command, named on the button ("Start <command>"). */
+  command: string
+  run: () => Promise<void>
+  /** Run it unasked the first time the probe finds the server down — the
+   *  declaration said auto-run, and a group opened on its board wants the
+   *  board, not a dead page and a button. Once per page: a server that dies
+   *  later is a click, never a loop. */
+  auto?: boolean
+  /** Bring the serving terminal on screen: the only honest progress report
+   *  for a start that takes its time. Absent when there is no terminal to
+   *  show (nothing spawned yet, or a hidden serving session). */
+  show?: () => void
+}
 
 export interface WebViewPaneProps {
   /** http(s) URL (probed) or an absolute .html path (served from disk, no probe). */
@@ -27,7 +52,7 @@ export interface WebViewPaneProps {
   backLabel: string
   onBack: () => void
   /** The start action shown when the probe says down; null = no way to start. */
-  start: { label: string; run: () => Promise<void> } | null
+  start: WebViewPaneStart | null
   /** False while the pane is mounted but hidden behind whatever the user is
    *  actually looking at. The frame stays alive (that is the whole point of
    *  keeping it mounted), but a pane nobody can see stops polling its server. */
@@ -44,6 +69,13 @@ const homePath = (p: string): string => p.replace(/^\/Users\/[^/]+/, '~')
  * Both render in the same web-view guest (PageGuest). For servers, an HTTP
  * probe keeps the pane honest: a dead server shows a start action wired to
  * whatever serves it, not a broken frame.
+ *
+ * A start is patient. The pane stays "starting" for as long as the command
+ * runs, counting the seconds, polling fast, and mounting the frame the moment
+ * the server answers; past STARTING_PATIENCE_MS it adds the terminal and a
+ * restart to the notice rather than pretending the server died. A start that
+ * fails to spawn says why. An `auto` start runs once, unasked, on the first
+ * probe that finds the server down.
  *
  * The declared url is the view's HOME, and the page is free to link away from
  * it: an exos wave page links its lanes, a board links its cycles, a report on
@@ -68,26 +100,44 @@ export function WebViewPane({
   const isFile = url.startsWith('/')
   const [probe, setProbe] = useState<ProbeState>(isFile ? 'up' : 'unknown')
   const [nonce, setNonce] = useState(0)
+  // The frame whose page has painted: a served page keeps the notice over it
+  // until its first load ends, and a remount (a new nonce) is a new wait.
+  const [loadedNonce, setLoadedNonce] = useState(-1)
+  const loaded = loadedNonce === nonce
   const probeRef = useRef(probe)
   useEffect(() => {
     probeRef.current = probe
   }, [probe])
-  const startingSinceRef = useRef<number | null>(null)
+  // The start in progress: when it began (the notice counts from it), how
+  // many were asked for (the button reads Restart after the first), and why
+  // the last one could not even spawn.
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [attempts, setAttempts] = useState(0)
+  const [startError, setStartError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
+  // The start action and its trigger, reachable from the probe without
+  // re-creating it: the start object is rebuilt by every render of the panel.
+  const startRef = useRef(start)
+  useEffect(() => {
+    startRef.current = start
+  }, [start])
+  const handleStartRef = useRef<() => void>(() => {})
+  // The auto start: once per page, on the first probe that finds it down. A
+  // server that dies later, or a start that fails, is back to a click — the
+  // guard is what keeps a permanently failing command from spawning in a loop.
+  const autoStartedFor = useRef<string | null>(null)
 
   const probeNow = useCallback(async () => {
     if (isFile || !url) return
     const ok = await window.electronAPI.probeServerUrl(url, PROBE_TIMEOUT_MS)
     if (probeRef.current === 'starting') {
+      // A start ends when the server answers — never on a clock. The command
+      // is still running; the notice says for how long.
       if (ok) {
-        startingSinceRef.current = null
+        setStartedAt(null)
         setProbe('up')
         setNonce((n) => n + 1)
-      } else if (
-        startingSinceRef.current !== null &&
-        Date.now() - startingSinceRef.current > STARTING_TIMEOUT_MS
-      ) {
-        startingSinceRef.current = null
-        setProbe('down')
       }
       return
     }
@@ -95,6 +145,10 @@ export function WebViewPane({
       if (ok && prev !== 'up') setNonce((n) => n + 1)
       return ok ? 'up' : 'down'
     })
+    if (!ok && startRef.current?.auto && autoStartedFor.current !== url) {
+      autoStartedFor.current = url
+      handleStartRef.current()
+    }
   }, [isFile, url])
 
   // Probe on mount and keep the dot honest while the app is focused; the
@@ -120,6 +174,14 @@ export function WebViewPane({
       window.removeEventListener('focus', onFocus)
     }
   }, [isFile, active, probeNow])
+
+  // The elapsed on the starting notice, ticking once a second while a start
+  // runs (handleStart sets the first reading, with the start's own moment).
+  useEffect(() => {
+    if (probe !== 'starting') return
+    const tick = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
+    return () => clearInterval(tick)
+  }, [probe])
 
   // A file page is served at a clave-preview url; that url is its home.
   const preview = usePreviewUrl(isFile ? url : null)
@@ -150,13 +212,22 @@ export function WebViewPane({
 
   const handleStart = useCallback(() => {
     if (!start) return
-    startingSinceRef.current = Date.now()
+    const at = Date.now()
+    setStartedAt(at)
+    setNow(at)
+    setStartError(null)
+    setAttempts((n) => n + 1)
     setProbe('starting')
-    start.run().catch(() => {
-      startingSinceRef.current = null
+    start.run().catch((err: unknown) => {
+      // Nothing is running: say why, and hand the button back.
+      setStartedAt(null)
+      setStartError(err instanceof Error ? err.message : String(err))
       setProbe('down')
     })
   }, [start])
+  useEffect(() => {
+    handleStartRef.current = handleStart
+  }, [handleStart])
 
   // Reload reloads the page the reader is ON — the trail survives. A frame the
   // probe has not brought up yet remounts instead.
@@ -194,6 +265,13 @@ export function WebViewPane({
     }
     return current.url
   })()
+
+  // The notice under a page that is not up: what is happening, for how long,
+  // and what the reader can do about it.
+  const elapsedMs = startedAt !== null ? now - startedAt : 0
+  const starting = probe === 'starting'
+  const patient = starting && elapsedMs >= STARTING_PATIENCE_MS
+  const noticeState = probe === 'unknown' ? 'checking' : starting ? 'starting' : 'down'
 
   return (
     <div className="h-full flex flex-col floating-card overflow-hidden">
@@ -285,32 +363,50 @@ export function WebViewPane({
             <div className="mt-1 text-xs">{preview.error}</div>
           </div>
         ) : showFrame && home ? (
-          // Keyed by nonce: a remount is a new history, which is what a server
-          // coming back up wants and a Reload does not.
-          <PageGuest key={nonce} ref={guestRef} src={home} title={title} onTrail={onTrail} />
+          <>
+            {/* Keyed by nonce: a remount is a new history, which is what a
+                server coming back up wants and a Reload does not. */}
+            <PageGuest
+              key={nonce}
+              ref={guestRef}
+              src={home}
+              title={title}
+              onTrail={onTrail}
+              onFirstLoad={() => setLoadedNonce(nonce)}
+            />
+            {/* A served page keeps the notice over the frame until it has
+                painted once, then lets it fade — no white flash, no half-built
+                dashboard. A file page paints at once and never needs it. */}
+            <AnimatePresence>
+              {!isFile && !loaded && (
+                <motion.div
+                  key={`veil-${nonce}`}
+                  className="absolute inset-0 z-10"
+                  initial={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                >
+                  <ViewNotice state="loading" title={title} url={url} command={start?.command} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
         ) : isFile ? (
           <div className="px-4 py-8 text-center text-sm text-text-tertiary">Loading…</div>
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center max-w-sm px-6">
-              <div className="text-sm text-text-secondary mb-1">
-                {probe === 'starting' ? 'Starting server…' : 'Server not responding'}
-              </div>
-              <div className="text-xs text-text-tertiary mb-4 truncate">{url}</div>
-              {probe !== 'starting' && (
-                <div className="flex items-center justify-center gap-2">
-                  {start && (
-                    <button onClick={handleStart} className="btn-primary">
-                      {start.label}
-                    </button>
-                  )}
-                  <button onClick={() => void probeNow()} className="btn-secondary">
-                    Retry
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          <ViewNotice
+            state={noticeState}
+            title={title}
+            url={url}
+            elapsedMs={elapsedMs}
+            patient={patient}
+            command={start?.command}
+            error={startError}
+            startLabel={attempts > 0 ? 'Restart' : 'Start'}
+            onStart={start ? handleStart : undefined}
+            onShowTerminal={start?.show}
+            onRetry={() => void probeNow()}
+          />
         )}
       </div>
     </div>

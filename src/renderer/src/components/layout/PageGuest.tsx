@@ -49,14 +49,37 @@ export const PageGuest = forwardRef<
     src: string
     title?: string
     onTrail?: (trail: PageTrail) => void
+    /** The guest's first load has ended, well or badly: the page is painted
+     *  (or its error is), so whatever was standing in for it can go. Once per
+     *  mount; a later navigation is the page's own business. */
+    onFirstLoad?: () => void
     className?: string
   }
->(function PageGuest({ src, title, onTrail, className }, ref) {
+>(function PageGuest({ src, title, onTrail, onFirstLoad, className }, ref) {
   const webviewRef = useRef<WebviewTag | null>(null)
   const onTrailRef = useRef(onTrail)
   useEffect(() => {
     onTrailRef.current = onTrail
   }, [onTrail])
+  const onFirstLoadRef = useRef(onFirstLoad)
+  useEffect(() => {
+    onFirstLoadRef.current = onFirstLoad
+  }, [onFirstLoad])
+
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+    let loaded = false
+    const firstLoad = (): void => {
+      if (loaded) return
+      loaded = true
+      onFirstLoadRef.current?.()
+    }
+    for (const e of ['did-finish-load', 'did-fail-load']) wv.addEventListener(e, firstLoad)
+    return () => {
+      for (const e of ['did-finish-load', 'did-fail-load']) wv.removeEventListener(e, firstLoad)
+    }
+  }, [src])
 
   useEffect(() => {
     const wv = webviewRef.current

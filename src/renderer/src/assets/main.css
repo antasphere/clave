@@ -3933,3 +3933,139 @@ button.extension-card:hover {
 .release-note-html a:hover {
   text-decoration: underline;
 }
+
+/* ── View notice ──
+   What a web view shows when it has no page to show: the server is being
+   checked, is starting, is down, or the page is still loading. The ground is
+   the user's own Antasphere field (the material of the sidebar's foot), held
+   far off the surface so it reads as a quiet, grained wash rather than a
+   picture, and seeded from the page's address so every board has a field of
+   its own. The card over it is the popover material (.menu-surface), the
+   same box the workspace switcher opens in, entering with the same pop. */
+.view-notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: var(--surface-0);
+}
+.view-notice-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.view-notice-card {
+  position: relative;
+  width: 360px;
+  max-width: calc(100% - 2rem);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The status row: the dot, the page's name, its address. */
+.view-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.view-notice-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: var(--text-tertiary);
+  transition: background-color 150ms;
+}
+.view-notice-dot[data-state='up'] {
+  background-color: var(--color-success);
+}
+.view-notice-dot[data-state='starting'],
+.view-notice-dot[data-state='loading'],
+.view-notice-dot[data-state='checking'] {
+  background-color: var(--color-warning);
+}
+.view-notice-dot[data-state='down'] {
+  background-color: var(--color-destructive);
+}
+/* A dot with somewhere to be: the starting and loading states breathe. */
+.view-notice-dot[data-state='starting'],
+.view-notice-dot[data-state='loading'] {
+  animation: view-notice-breathe 1.6s ease-in-out infinite;
+}
+@keyframes view-notice-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.view-notice-title {
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.view-notice-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* What is happening, and for how long (tabular so the clock does not jitter). */
+.view-notice-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.view-notice-elapsed {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* The serving command, as a chip: what will run, or what is running. */
+.view-notice-command {
+  display: block;
+  padding: 5px 8px;
+  border-radius: var(--radius-control);
+  background-color: var(--surface-100);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view-notice-error {
+  font-size: 11px;
+  color: var(--color-destructive);
+}
+.view-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.view-notice-actions .btn-primary,
+.view-notice-actions .btn-secondary {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
