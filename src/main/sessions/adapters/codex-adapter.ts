@@ -187,7 +187,7 @@ export class CodexTranslator {
       return false
     }
     const id = JSON.stringify(frame.id)
-    this.approvals.set(id, { rpcId: frame.id, turnId: text(p.turnId), responses })
+    this.approvals.set(id, { rpcId: frame.id, turnId: text(p.turnId) || this.turnId, responses })
     this.emit({
       type: 'permission_request',
       id,

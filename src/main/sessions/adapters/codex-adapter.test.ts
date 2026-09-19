@@ -353,3 +353,13 @@ it.each(['execCommandApproval', 'applyPatchApproval'])(
     expect(connection.respond).toHaveBeenCalledWith(4, { decision: 'abort' })
   }
 )
+
+it('expires legacy approvals with the active turn even without a turnId field', () => {
+  const translator = new CodexTranslator(() => {})
+  translator.turnId = 'active'
+  translator.request({ id: 1, method: 'execCommandApproval', params: {} })
+  translator.notification({ method: 'turn/completed', params: { turn: { id: 'active' } } })
+  const connection = { respond: vi.fn() } as unknown as CodexConnection
+  expect(() => translator.answer('1', 'approved', connection)).toThrow('expired')
+  expect(connection.respond).not.toHaveBeenCalled()
+})
