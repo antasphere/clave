@@ -90,7 +90,9 @@ class PtyManager {
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
-                : 'bypassPermissions'
+                : adapter.provider === 'claude'
+                  ? 'bypassPermissions'
+                  : undefined
               : undefined
           }
         })
