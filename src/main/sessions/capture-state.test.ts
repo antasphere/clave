@@ -21,6 +21,7 @@ vi.mock('./adapters/pty-backend', () => ({
 import { writeFileSync } from 'fs'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
+import { CaptureStore } from '../exchange-capture/store'
 import { captureSessionState, captureTabClosed } from '../exchange-capture/service'
 import { startWatching, stateFilePath } from '../agent-state-manager'
 import type { SessionState, EndpointIdentity, CaptureEvent } from '../exchange-capture/types'
@@ -171,4 +172,29 @@ it('matches the codex-glow capture from base 08ccc92, including both exits and a
     expect(events(id).filter((e) => e.state === 'exited')).toHaveLength(1)
   }
   expect(actual.map((e) => e.ts)).toEqual(actual.map((e) => e.ts).sort())
+})
+
+it('deduplicates repeated exits without reading the append-only log', () => {
+  const readAll = vi.spyOn(CaptureStore.prototype, 'readAll')
+  try {
+    for (const managerFirst of [false, true]) {
+      const id = adopt()
+      if (managerFirst) sessionManager.setState(id, 'ended')
+      else report(id, 'exited')
+      const first = events(id)
+      report(id, 'exited')
+      report(id, 'exited')
+      expect(events(id)).toEqual(first)
+      expect(first).toHaveLength(1)
+      sessionManager.forget(id)
+      report(id, 'exited')
+      expect(events(id)).toEqual(first)
+      adopt('claude', id)
+      report(id, 'exited')
+      expect(events(id)).toHaveLength(2)
+    }
+    expect(readAll).not.toHaveBeenCalled()
+  } finally {
+    readAll.mockRestore()
+  }
 })

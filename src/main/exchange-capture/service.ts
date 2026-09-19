@@ -47,15 +47,16 @@ function getStore(): CaptureStore {
 }
 
 /** Validate, then append. The one place a line enters the store. */
-function write(event: CaptureEvent): void {
+function write(event: CaptureEvent): boolean {
   const verdict = validateWorkstreamEvent(event)
   if (!verdict.ok) {
     console.error(
       `[exchange-capture] refusing to write a non-conforming ${event.kind} event: ${verdict.problems.join('; ')}`
     )
-    return
+    return false
   }
   getStore().append(event)
+  return true
 }
 
 function snapshotFor(endpoint: EndpointIdentity): {
@@ -141,26 +142,27 @@ const endpoints = new Map<string, EndpointIdentity>()
 const capturedStates = new Map<string, SessionState>()
 const managerReports = new Map<string, Pick<SessionStateCapturePayload, 'state' | 'previous'>[]>()
 
-// Terminal acknowledgements can arrive after the manager has forgotten a tab.
-// Consult the append-only record for this rare path instead of retaining dead
-// session ids or timers forever. No event is rewritten or buffered.
+// Only registered tabs need a terminal marker. Once removed, late non-Codex
+// acknowledgements are ignored without rereading the install-wide event log.
+const terminalEvents = new Set<string>()
+
 function terminalEventRecorded(id: string): boolean {
-  const createdAt = sessionManager.get(id)?.createdAt ?? 0
-  const events = getStore().readAll().events
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index]
-    if (event.kind !== 'session_state' && event.kind !== 'tab_closed') continue
-    const session = event.session as EndpointIdentity | undefined
-    if (session?.sessionId !== id || Date.parse(event.ts) < createdAt) continue
-    return event.kind === 'tab_closed' || event.state === 'exited'
-  }
-  return false
+  return terminalEvents.has(id) || !sessionManager.get(id)
+}
+
+function finishCaptureSession(id: string): void {
+  const recorded = terminalEvents.has(id)
+  forgetCaptureSession(id)
+  // Prune the transition caches at exit/close, retaining only the dedup marker
+  // until removal. Deleting it here would let the next exit write a duplicate.
+  if (recorded && sessionManager.get(id)) terminalEvents.add(id)
 }
 
 export function forgetCaptureSession(id: string): void {
   endpoints.delete(id)
   capturedStates.delete(id)
   managerReports.delete(id)
+  terminalEvents.delete(id)
 }
 
 sessionManager.subscribeRemoved(forgetCaptureSession)
@@ -180,9 +182,10 @@ sessionManager.subscribeAll((id, stream) => {
   // A close is already captured as tab_closed. An adapter's synthetic exit
   // during kill must not invent an additional lifecycle event after it.
   if (state === 'exited' && terminalEventRecorded(id)) {
-    forgetCaptureSession(id)
+    finishCaptureSession(id)
     return
   }
+  if (state !== 'exited') terminalEvents.delete(id)
   const previous = capturedStates.get(id) ?? null
   if (state === previous) return
   const pty = ptyBackend.getSession(id)
@@ -207,7 +210,7 @@ sessionManager.subscribeAll((id, stream) => {
   recordSessionState(payload)
   capturedStates.set(id, state)
   if (state === 'exited') {
-    forgetCaptureSession(id)
+    finishCaptureSession(id)
     return
   }
   const reports = managerReports.get(id) ?? []
@@ -218,7 +221,7 @@ sessionManager.subscribeAll((id, stream) => {
 function recordSessionState(payload: SessionStateCapturePayload): void {
   try {
     const event: SessionStateEvent = { v: 2, kind: 'session_state', ...payload }
-    write(event)
+    if (write(event) && payload.state === 'exited') terminalEvents.add(payload.session.sessionId)
   } catch (err) {
     console.error('[exchange-capture] failed to record session state', err)
   }
@@ -227,9 +230,10 @@ function recordSessionState(payload: SessionStateCapturePayload): void {
 export function captureSessionState(payload: SessionStateCapturePayload): void {
   const id = payload.session.sessionId
   if (payload.session.mode !== 'codex' && payload.state === 'exited' && terminalEventRecorded(id)) {
-    forgetCaptureSession(id)
+    finishCaptureSession(id)
     return
   }
+  if (payload.state !== 'exited') terminalEvents.delete(id)
   endpoints.set(id, payload.session)
   const reports = managerReports.get(id)
   const match =
@@ -241,14 +245,14 @@ export function captureSessionState(payload: SessionStateCapturePayload): void {
     recordSessionState(payload)
     capturedStates.set(id, payload.state)
   }
-  if (payload.state === 'exited') forgetCaptureSession(id)
+  if (payload.state === 'exited') finishCaptureSession(id)
 }
 
 export function captureTabClosed(payload: TabClosedCapturePayload): void {
   try {
     const event: TabClosedEvent = { v: 2, kind: 'tab_closed', ...payload }
-    write(event)
-    forgetCaptureSession(payload.session.sessionId)
+    if (write(event)) terminalEvents.add(payload.session.sessionId)
+    finishCaptureSession(payload.session.sessionId)
   } catch (err) {
     console.error('[exchange-capture] failed to record tab close', err)
   }

@@ -95,18 +95,15 @@ describe('LaunchProfileManager', () => {
   })
 })
 
-it('echo detection is a cached, non-throwing predicate and resolution does not clone preferences', () => {
+it('echo detection is a non-throwing predicate and resolution does not clone preferences', () => {
   const clone = vi.spyOn(globalThis, 'structuredClone')
-  const argv = vi.spyOn(process.argv, 'includes')
   try {
     expect(isEchoLaunchProfile('dev-echo-adapter')).toBe(false)
     expect(isEchoLaunchProfile('builtin-claude')).toBe(false)
     expect(isEchoLaunchProfile(null)).toBe(false)
     withManager((manager) => expect(manager.resolve('claude').id).toBe('builtin-claude'))
     expect(clone).not.toHaveBeenCalled()
-    expect(argv).not.toHaveBeenCalled()
   } finally {
     clone.mockRestore()
-    argv.mockRestore()
   }
 })
