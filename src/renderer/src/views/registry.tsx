@@ -7,6 +7,7 @@ import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { emitTabClosed } from '../lib/exchange-capture'
+import { ConfirmDialog } from '@clave/ui/components'
 
 const nativeViews: Record<string, ComponentType<ChatViewProps>> = { 'clave.chat-view': ChatView }
 function resolveView(session: Session | undefined, plugins: PluginRecord[]): string | undefined {
@@ -53,6 +54,7 @@ export function RegisteredSessionView({
   const viewId = resolveView(session, registry.plugins)
   const View = viewId ? nativeViews[viewId] : undefined
   const focused = useViewSessionStore((s) => s.focusedSessionId === sessionId)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [meta, setMeta] = useState<{ state: string; model: string | null }>({
     state: 'idle',
     model: null
@@ -76,6 +78,7 @@ export function RegisteredSessionView({
       // The provider may already have exited, as in the terminal header.
     }
     useViewSessionStore.getState().removeSession(sessionId)
+    setShowConfirm(false)
   }
   // v1 describes exactly one transport. A future dual-transport record can pass
   // its PTY session id here without changing the view plugin's bridge.
@@ -126,7 +129,11 @@ export function RegisteredSessionView({
             <CommandLineIcon />
           </button>
         </span>
-        <button className="panel-icon-btn" aria-label="Close session" onClick={() => void close()}>
+        <button
+          className="panel-icon-btn"
+          aria-label="Close session"
+          onClick={() => setShowConfirm(true)}
+        >
           <XMarkIcon />
         </button>
       </header>
@@ -134,6 +141,13 @@ export function RegisteredSessionView({
         <View session={session} onState={onState} />
       </div>
       {terminal && terminalSessionId && <TerminalPanel sessionId={terminalSessionId} />}
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title="Delete session"
+        message="Are you sure you want to delete this session? This will terminate the process. The conversation is not saved."
+        onConfirm={() => void close()}
+        onCancel={() => setShowConfirm(false)}
+      />
     </section>
   )
 }

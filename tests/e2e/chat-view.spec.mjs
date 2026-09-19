@@ -197,6 +197,25 @@ export async function run(t) {
     await win.locator('[data-testid="chat-view"] textarea:not(:disabled)').waitFor()
     const beforeClose = await unsubscribeCount(app, record.id)
     await win.getByRole('button', { name: 'Close session', exact: true }).click()
+    const confirmation = win.getByRole('dialog', { name: 'Delete session', exact: true })
+    await confirmation.waitFor()
+    assert.match(
+      await confirmation.innerText(),
+      /terminate the process\. The conversation is not saved\./
+    )
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await confirmation.waitFor({ state: 'hidden' })
+    assert.equal(await unsubscribeCount(app, record.id), beforeClose)
+    assert.equal(await win.locator('[data-testid="chat-view"]').count(), 1)
+    assert.ok(
+      await win.evaluate(
+        async (id) =>
+          (await window.electronAPI.sessionsList()).some((session) => session.id === id),
+        record.id
+      )
+    )
+    await win.getByRole('button', { name: 'Close session', exact: true }).click()
+    await confirmation.getByRole('button', { name: 'Delete', exact: true }).click()
     await win.locator('[data-testid="chat-view"]').waitFor({ state: 'detached' })
     assert.equal(await win.locator(`[data-sidebar-item-id="${record.id}"]`).count(), 0)
     assert.ok(await until(async () => (await unsubscribeCount(app, record.id)) > beforeClose))
@@ -208,7 +227,7 @@ export async function run(t) {
       ),
       false
     )
-    t.check('header Close removes the session and releases its new subscription', true)
+    t.check('header Close cancels safely or confirms termination and subscription cleanup', true)
   } finally {
     await fixture.close()
   }
