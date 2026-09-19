@@ -1,0 +1,17 @@
+{
+  "id": "clave.hello",
+  "name": "Hello Clave",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <2.0.0" },
+  "ui": "surface",
+  "main": "main.mjs",
+  "uiEntry": "ui/index.html",
+  "contributes": {
+    "panels": [
+      { "id": "hello", "title": "Hello panel", "icon": "HandRaisedIcon", "placement": "side" }
+    ],
+    "commands": [{ "id": "say-hello", "title": "Say hello" }]
+  },
+  "permissions": []
+}
