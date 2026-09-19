@@ -11,4 +11,5 @@ A plugin's code uses the public session preload bridge, installs listeners befor
 subscribing, awaits subscription before writes and releases both on unmount.
 The v1 model has one transport per session, so events sessions have no terminal;
 the host's terminal switch remains disabled with an explanation until a dual
-transport contract can supply a PTY session id.
+transport contract can supply a PTY session id through the host component's optional
+`terminalSessionId` prop. Switching keeps the conversation subscribed and mounted.

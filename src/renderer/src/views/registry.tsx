@@ -40,7 +40,13 @@ export function SessionViewBadge({ sessionId }: { sessionId: string }): React.JS
     </span>
   )
 }
-export function RegisteredSessionView({ sessionId }: { sessionId: string }): React.JSX.Element {
+export function RegisteredSessionView({
+  sessionId,
+  terminalSessionId
+}: {
+  sessionId: string
+  terminalSessionId?: string
+}): React.JSX.Element {
   const registry = useRegistry()
   const session = registry.sessions.find((s) => s.id === sessionId)
   const viewId = resolveView(session, registry.plugins)
@@ -61,7 +67,6 @@ export function RegisteredSessionView({ sessionId }: { sessionId: string }): Rea
   )
   // v1 describes exactly one transport. A future dual-transport record can pass
   // its PTY session id here without changing the view plugin's bridge.
-  const terminalSessionId = session?.transport === 'pty' ? session.id : undefined
   const terminal = registry.terminal.has(sessionId)
   if (!session || session.transport === 'pty' || !View)
     return <TerminalPanel sessionId={sessionId} />
@@ -83,11 +88,17 @@ export function RegisteredSessionView({ sessionId }: { sessionId: string }): Rea
           {meta.state}
         </span>
         <span
-          title={terminalSessionId ? 'Show terminal' : 'This events session has no PTY terminal'}
+          title={
+            terminalSessionId
+              ? terminal
+                ? 'Show chat'
+                : 'Show terminal'
+              : 'This events session has no PTY terminal'
+          }
         >
           <button
             className="panel-icon-btn"
-            aria-label="Show terminal"
+            aria-label={terminal ? 'Show chat' : 'Show terminal'}
             disabled={!terminalSessionId}
             data-active={terminal}
             onClick={() =>
@@ -111,11 +122,10 @@ export function RegisteredSessionView({ sessionId }: { sessionId: string }): Rea
           <XMarkIcon />
         </button>
       </header>
-      {terminal && terminalSessionId ? (
-        <TerminalPanel sessionId={terminalSessionId} />
-      ) : (
+      <div className="chat-content-slot" hidden={terminal && !!terminalSessionId}>
         <View session={session} onState={onState} />
-      )}
+      </div>
+      {terminal && terminalSessionId && <TerminalPanel sessionId={terminalSessionId} />}
     </section>
   )
 }

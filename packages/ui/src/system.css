@@ -1869,3 +1869,5 @@ button.extension-card:hover {
 .chat-view-badge { position: absolute; right: var(--spacing); top: var(--spacing); pointer-events: none; width: var(--control-h-xs); height: var(--control-h-xs); display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); }
 .chat-view-badge svg { width: calc(var(--spacing) * 3); height: calc(var(--spacing) * 3); }
 .chat-host[data-focused="true"] { outline: thin solid var(--color-accent); border-radius: var(--radius-xl); }
+.chat-content-slot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-content-slot[hidden] { display: none; }
