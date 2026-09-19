@@ -3,6 +3,7 @@ import { MicrophoneIcon } from '@heroicons/react/24/outline'
 import { cn } from '../../lib/utils'
 import type { MicAccessState } from '../../../../shared/mic'
 import { resolveMicBanner, type MeterPhase, type MicBanner } from './mic-banner'
+import { SilenceWatchdog, shouldReopenStream, rmsToSegments } from './mic-meter'
 import {
   SettingsPage,
   SettingsSection,
@@ -32,23 +33,12 @@ import {
  */
 
 const METER_SEGMENTS = 24
-/** The meter's log floor: -60 dBFS reads empty, 0 dBFS reads full. */
-const METER_FLOOR_DB = -60
-/** Exact digital silence for this long means the OS is withholding the signal. */
-const SILENCE_WATCHDOG_MS = 3000
 
 interface MeterReading {
   /** Lit segments, smoothed. */
   level: number
   /** Peak-hold segment index; 0 = none. */
   peak: number
-}
-
-function rmsToSegments(rms: number): number {
-  if (rms <= 0) return 0
-  const db = 20 * Math.log10(rms)
-  const norm = Math.min(1, Math.max(0, (db - METER_FLOOR_DB) / -METER_FLOOR_DB))
-  return Math.round(norm * METER_SEGMENTS)
 }
 
 /**
@@ -92,17 +82,7 @@ function useMicMeter(): {
     } catch {
       // Main unreachable (never in normal life) — the stream's truth only.
     }
-    const blocked =
-      next !== null &&
-      (next.status === 'denied' || next.status === 'restricted' || next.status === 'not-determined')
-    const current = phaseRef.current
-    // `unavailable` is deliberately not retried here: it means there is no
-    // microphone to open, which coming back to the window does not change, and
-    // retrying asked the system for a device on every focus. A device arriving
-    // fires `devicechange`, which is what re-opens the stream.
-    if (!blocked && (current === 'denied' || current === 'silent')) {
-      setAttempt((n) => n + 1)
-    }
+    if (shouldReopenStream(phaseRef.current, next)) setAttempt((n) => n + 1)
   }, [])
 
   // The status on mount, and again on every window refocus: the banner needs
@@ -183,9 +163,7 @@ function useMicMeter(): {
       const samples = new Float32Array(analyser.fftSize)
       let smoothed = 0
       let peakNorm = 0
-      let silentSince: number | null = null
-      /** Has the watchdog already reported this stretch of silence? */
-      let withheld = false
+      const watchdog = new SilenceWatchdog()
       setPhase('live')
 
       const tick = (): void => {
@@ -195,25 +173,19 @@ function useMicMeter(): {
         // Exact digital silence is not a quiet room — a quiet room still has
         // dither noise. Zero means the OS is withholding the signal, which in
         // dev is the launching terminal lacking the permission.
-        if (sum === 0) {
-          if (silentSince === null) silentSince = performance.now()
-          else if (!withheld && performance.now() - silentSince > SILENCE_WATCHDOG_MS) {
-            // Latched: without this the branch re-enters on every frame, which
-            // measured 419 calls over ten seconds of silence where one is
-            // right.
-            withheld = true
-            setPhase('silent')
-          }
-        } else if (silentSince !== null) {
-          silentSince = null
-          withheld = false
-          setPhase('live')
-        }
+        // Latched and re-arming, in `mic-meter.ts` with its own tests: this
+        // branch used to fire on every frame, 419 times over ten seconds of
+        // silence where one is right.
+        const nextPhase = watchdog.frame(sum, performance.now())
+        if (nextPhase) setPhase(nextPhase)
         const rms = Math.sqrt(sum / samples.length)
         // Fast attack, slow decay — a meter has to feel like a meter.
         smoothed = rms > smoothed ? rms : smoothed * 0.92
         peakNorm = Math.max(peakNorm * 0.995, smoothed)
-        const next: MeterReading = { level: rmsToSegments(smoothed), peak: rmsToSegments(peakNorm) }
+        const next: MeterReading = {
+          level: rmsToSegments(smoothed, METER_SEGMENTS),
+          peak: rmsToSegments(peakNorm, METER_SEGMENTS)
+        }
         const prev = readingRef.current
         if (next.level !== prev.level || next.peak !== prev.peak) {
           readingRef.current = next

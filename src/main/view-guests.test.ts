@@ -41,17 +41,30 @@ vi.mock('electron', () => ({
 
 const { installViewGuestPolicy, VIEW_PARTITION } = await import('./view-guests')
 
-/** Invoke the request handler the way Chromium does, and read the answer. */
+/**
+ * Invoke the request handler the way Chromium does, and read the answer.
+ *
+ * Electron honours the FIRST call and throws on a second ("One-time callback
+ * was called more than once"), so the first is the answer and a second call is
+ * a defect in its own right — a stray early `callback(true)` would grant
+ * everything while a later correct `callback(false)` changed nothing. Keeping
+ * only the last value made both invisible.
+ */
 function request(permission: string, details: Record<string, unknown>): boolean {
   let answer: boolean | undefined
+  let calls = 0
   handlers.request?.(
     {},
     permission,
     (ok) => {
-      answer = ok
+      calls += 1
+      if (answer === undefined) answer = ok
     },
     details
   )
+  if (calls !== 1) {
+    throw new Error(`the request handler answered ${calls} times; Electron allows exactly one`)
+  }
   return answer ?? false
 }
 

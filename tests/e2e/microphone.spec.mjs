@@ -39,6 +39,7 @@ import {
 } from './harness.mjs'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
+import os from 'node:os'
 import path from 'node:path'
 
 const DIR = userDataDir('microphone')
@@ -51,20 +52,41 @@ const WS = {
   createdAt: 1
 }
 
-/** A page on this machine, exactly what Clave shows in a view. */
-function serve() {
+/**
+ * Serve pages on `host`. Two are used: `/` is the page Clave shows, and
+ * `/frame?src=…` is an embedder — a page that puts another page in an iframe,
+ * which is how an outside page would try to ask through a local one.
+ */
+function serve(host) {
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' })
-    // `/framed` is the page an outside page would embed to ask through it.
-    if (req.url.startsWith('/framed')) {
-      res.end('<html><head><title>Framed</title></head><body>inner</body></html>')
+    const [route, query] = req.url.split('?')
+    if (route === '/frame') {
+      const src = new URLSearchParams(query).get('src') ?? ''
+      res.end(
+        `<html><head><title>Embedder</title></head><body><iframe src="${src}"></iframe></body></html>`
+      )
       return
     }
     res.end('<html><head><title>Voice</title></head><body>dock</body></html>')
   })
   return new Promise((resolve) =>
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }))
+    server.listen(0, host, () => resolve({ server, port: server.address().port }))
   )
+}
+
+/**
+ * A non-loopback address of this machine, so a test can serve a page with a
+ * REAL http origin that the rule must nonetheless refuse. `example.com` needs
+ * DNS the machine may not have; an interface address always resolves.
+ */
+function outsideHost() {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === 'IPv4' && !a.internal) return a.address
+    }
+  }
+  return null
 }
 
 /**
@@ -139,10 +161,15 @@ async function askForMedia(app, url) {
 export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { server, port } = await serve()
+  const { server, port } = await serve('127.0.0.1')
+  // A second server on a non-loopback interface: a page with a real http
+  // origin that the rule must refuse, and an embedder that is not local.
+  const outside = outsideHost()
+  const away = outside ? await serve(outside) : null
   const { app, win } = await launchApp(DIR)
   try {
     const LOCAL = `http://127.0.0.1:${port}/`
+    const AWAY = away ? `http://${outside}:${away.port}/` : null
 
     // ── 1. A page from this machine is told it has the microphone ────────
     const local = await askAsPage(app, LOCAL, [
@@ -188,49 +215,86 @@ export async function run(t) {
       `getUserMedia({video:true}) succeeded on a local page: ${JSON.stringify(media.video)}`
     )
 
-    // ── 1c. A loopback IFRAME inside a page is refused ───────────────────
+    // ── 1c. An IFRAME is refused, even inside the granted page itself ───
     //
-    // The hole a naive origin check leaves: a page from the internet shown in
-    // a view embeds a loopback iframe and asks through it, so the asking
-    // origin is loopback while the page driving it is not. An iframe is a
-    // subresource load, not a navigation, so the link policy never sees it.
-    // Only the page Clave itself shows is granted.
-    const framed = await app.evaluate(async ({ BrowserWindow }, local) => {
-      const w = new BrowserWindow({
-        show: false,
-        webPreferences: { partition: 'persist:view', sandbox: true, contextIsolation: true }
-      })
-      try {
-        // A page that is NOT local, embedding a local iframe.
-        await w.loadURL(
-          `data:text/html,${encodeURIComponent(`<iframe src="${local}framed"></iframe>`)}`
-        )
-        await new Promise((r) => setTimeout(r, 1000))
-        const frames = w.webContents.mainFrame.frames.length
-        // Ask from inside the iframe, which is where the attack would ask.
-        const inner = w.webContents.mainFrame.frames[0]
-        if (!inner) return { frames, state: 'no-subframe' }
-        const state = await inner.executeJavaScript(
-          `navigator.permissions.query({ name: 'microphone' }).then((s) => s.state, (e) => 'threw:' + e.name)`
-        )
-        return { frames, state }
-      } finally {
-        w.destroy()
-      }
-    }, LOCAL)
+    // The rule grants the page Clave shows, never something it embeds. Two
+    // layers stand between an embedded page and the microphone, and it is
+    // worth being precise about which one this proves, because the obvious
+    // test proves the wrong one:
+    //
+    //  - A CROSS-ORIGIN iframe never reaches the rule at all: Chromium leaves
+    //    `navigator.mediaDevices` undefined in it unless the embedder
+    //    delegates with `allow="microphone"`, and an embedder that was itself
+    //    refused has nothing to delegate. Measured here: an outside page
+    //    embedding a loopback one gives the child no `mediaDevices` whatever
+    //    the rule says, so asserting on it would pass with the frame check
+    //    deleted — the right outcome through the wrong mechanism.
+    //  - A SAME-ORIGIN iframe inside the GRANTED local page does reach the
+    //    rule: the embedder holds the grant and delegates it, `mediaDevices`
+    //    exists, and the request arrives with `isMainFrame: false`. That is
+    //    the case this asserts, and deleting the frame check turns it red.
+    const framed = await app.evaluate(
+      async ({ BrowserWindow }, { embedder, inner }) => {
+        const w = new BrowserWindow({
+          show: false,
+          webPreferences: { partition: 'persist:view', sandbox: true, contextIsolation: true }
+        })
+        try {
+          await w.loadURL(`${embedder}frame?src=${encodeURIComponent(inner)}`)
+          await new Promise((r) => setTimeout(r, 1000))
+          const sub = w.webContents.mainFrame.frames[0]
+          if (!sub) return { state: 'no-subframe', origin: null, gum: null }
+          const origin = await sub.executeJavaScript('location.origin')
+          const state = await sub.executeJavaScript(
+            `navigator.permissions.query({ name: 'microphone' }).then((s) => s.state, (e) => 'threw:' + e.name)`
+          )
+          // The stream is the assertion that matters: it is the one the rule
+          // actually decides. `mediaDevices` missing would mean Chromium
+          // stopped it earlier and the rule was never asked.
+          const gum = await sub.executeJavaScript(
+            `(navigator.mediaDevices
+               ? navigator.mediaDevices.getUserMedia({ audio: true }).then(
+                   (s) => { s.getTracks().forEach((t) => t.stop()); return 'granted' },
+                   (e) => 'refused:' + e.name)
+               : Promise.resolve('no-mediadevices'))`
+          )
+          return { state, origin, gum }
+        } finally {
+          w.destroy()
+        }
+      },
+      { embedder: LOCAL, inner: LOCAL }
+    )
     t.check(
-      'a loopback iframe inside an outside page is refused the microphone',
-      framed.state !== 'granted',
-      `the subframe answered ${JSON.stringify(framed)} — an outside page can embed a local iframe and listen through it`
+      'the embedded frame reached the rule at all',
+      framed.gum !== 'no-mediadevices' && framed.state !== 'no-subframe',
+      `the subframe never got as far as asking (${JSON.stringify(framed)}) — Chromium refused it earlier, so this proves nothing about the frame check`
+    )
+    t.check(
+      'an iframe inside the granted page is still refused the microphone',
+      framed.gum !== 'granted' && framed.state !== 'granted',
+      `the subframe answered ${JSON.stringify(framed)} — a page can embed a frame and listen through it`
     )
 
-    // ── 2. The internet, and a host that only looks local ────────────────
-    const web = await askAsPage(app, 'https://example.com/', ['microphone'])
-    t.check(
-      'a page from the internet is refused the microphone',
-      web.microphone !== 'granted',
-      `microphone answered ${web.microphone} for https://example.com`
-    )
+    // ── 2. A page that is not local is refused ──────────────────────────
+    //
+    // Served from a non-loopback interface of this machine rather than from
+    // the internet: a real http origin, no DNS needed, so the check does not
+    // go dark on a machine without a network.
+    if (AWAY) {
+      const web = await askAsPage(app, AWAY, ['microphone'])
+      t.check(
+        'a page that is not served from this machine is refused the microphone',
+        web.microphone !== 'granted',
+        `microphone answered ${web.microphone} for ${AWAY}`
+      )
+      const webMedia = await askForMedia(app, AWAY)
+      t.check(
+        'and cannot open a microphone stream either',
+        webMedia.audio.ok === false,
+        `getUserMedia({audio:true}) succeeded on ${AWAY}: ${JSON.stringify(webMedia.audio)}`
+      )
+    }
 
     // ── 5. The Audio page ────────────────────────────────────────────────
     const micState = await win.evaluate(() => window.electronAPI.getMicAccess())
@@ -297,5 +361,6 @@ export async function run(t) {
   } finally {
     await app.close()
     server.close()
+    away?.server.close()
   }
 }

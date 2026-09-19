@@ -173,6 +173,25 @@ describe('allowsViewPermission', () => {
     ).toBe(false)
   })
 
+  it('refuses a frame it cannot place, rather than assuming it is the page', () => {
+    // What makes `!ask.isMainFrame` the safe spelling and `=== false` the
+    // dangerous one: anything that is not plainly true must refuse. Chromium
+    // always passes a boolean today, so this pins the reason rather than a
+    // bug — the wrong spelling flips every one of these to a grant.
+    for (const isMainFrame of [undefined, null, 0, '', NaN] as unknown[]) {
+      expect(
+        allowsViewPermission(
+          {
+            origin: 'http://127.0.0.1:4796',
+            mediaTypes: AUDIO,
+            isMainFrame: isMainFrame as boolean
+          },
+          'media'
+        )
+      ).toBe(false)
+    }
+  })
+
   it('refuses every permission that is not media, local page or not', () => {
     // The partition refused everything before the microphone was let through,
     // and everything else must still be refused.
