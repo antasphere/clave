@@ -50,6 +50,11 @@ export class CodexTranslator {
     const id = text(item.id)
     const fallback = (): void =>
       this.emit({ type: 'provider_event', provider: 'codex', payload: frame })
+    const threadId = text(p.threadId) || text(object(p.thread).id)
+    if (this.threadId && threadId && threadId !== this.threadId) {
+      fallback()
+      return
+    }
     switch (frame.method) {
       case 'thread/started':
         this.metadata(p)
@@ -153,6 +158,9 @@ export class CodexTranslator {
         const id = typeof decision === 'string' ? decision : JSON.stringify(decision)
         responses.set(id, { decision })
       }
+    } else if (frame.method === 'execCommandApproval' || frame.method === 'applyPatchApproval') {
+      for (const decision of ['approved', 'approved_for_session', 'abort'])
+        responses.set(decision, { decision })
     } else if (frame.method === 'item/permissions/requestApproval') {
       // Option ids serialize the protocol's real response, not invented decisions.
       for (const response of [

@@ -321,3 +321,35 @@ describe('Codex races and failure boundaries', () => {
     })
   })
 })
+
+it('keeps another thread notification visible without changing this session interrupt target', () => {
+  const events: SessionEvent[] = []
+  const translator = new CodexTranslator((e) => events.push(e))
+  translator.metadata({ thread: { id: 'parent' }, model: 'model' })
+  translator.notification({
+    method: 'turn/started',
+    params: { threadId: 'parent', turn: { id: 'parent-turn' } }
+  })
+  const other = {
+    method: 'turn/started',
+    params: { threadId: 'child', turn: { id: 'child-turn' } }
+  }
+  translator.notification(other)
+  expect(translator.threadId).toBe('parent')
+  expect(translator.turnId).toBe('parent-turn')
+  expect(events.at(-1)).toEqual({ type: 'provider_event', provider: 'codex', payload: other })
+})
+
+it.each(['execCommandApproval', 'applyPatchApproval'])(
+  'answers legacy %s with its generated decision values',
+  (method) => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.request({ id: 4, method })
+    const event = events[0]
+    if (event.type !== 'permission_request') throw new Error('missing approval')
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    translator.answer(event.id, 'abort', connection)
+    expect(connection.respond).toHaveBeenCalledWith(4, { decision: 'abort' })
+  }
+)

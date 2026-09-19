@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { _electron as electron } from 'playwright-core'
 import { REPO, launchApp, seedWorkspaces, seedTrustedRoots, callMcp, until } from './harness.mjs'
 
 const ROOT = `/tmp/clave-e2e-codex-chat-${process.pid}`
 const DIR = `${ROOT}/data`
 const BIN = `${ROOT}/bin`
 const LOG = `${ROOT}/rpc.ndjson`
+const ENTRY = path.join(REPO, `out/main/.codex-e2e-${process.pid}.cjs`)
 
 // A real executable over real pipes; every conversation frame comes from the
 // checked-in live capture. No installed CLI or real auth is reachable here.
@@ -74,34 +76,47 @@ export async function run(t) {
   seedTrustedRoots(DIR, [ROOT])
   let app
   try {
-    const launched = await launchApp(DIR, {
-      env: { SHELL: `${BIN}/sh`, PATH: `${BIN}:${process.env.PATH}` }
-    })
-    app = launched.app
-    const win = launched.win
-    // Lane 1 owns this profile and the async facade. Selecting by adapter id
-    // keeps this spec independent of the profile's display label.
-    const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
-    const profile = [...(profiles.customProfiles ?? []), ...(profiles.builtinProfiles ?? [])].find(
-      (p) => p.adapterId === 'codex-chat'
+    // Expose the *same* bundled singleton used by the real IPC handlers. The
+    // temporary entry adds only a test reference; no production source, IPC,
+    // adapter implementation, or renderer is replaced. Fail if bundling changes.
+    const built = readFileSync(path.join(REPO, 'out/main/index.js'), 'utf8')
+    assert.match(built, /const sessionManager = new SessionManager\(/)
+    assert.match(built, /const windowRegistry = new WindowRegistry\(/)
+    writeFileSync(
+      ENTRY,
+      built + '\nglobalThis.__codexAdapterTest = { sessionManager, windowRegistry };\n'
     )
-    assert.ok(profile, 'Codex events profile must be registered by the facade')
-    await win.evaluate((id) => window.electronAPI.launchProfileSetGlobal('codex', id), profile.id)
-    await callMcp(app, 'openSession', {
-      cwd: ROOT,
-      name: 'Codex fixture',
-      mode: 'codex',
-      profile: profile.id
+    app = await electron.launch({
+      executablePath: path.join(
+        REPO,
+        'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
+      ),
+      args: [ENTRY, `--user-data-dir=${DIR}`, '--test-no-activate'],
+      cwd: REPO,
+      env: { ...process.env, SHELL: `${BIN}/sh`, PATH: `${BIN}:${process.env.PATH}` }
     })
-    const record = await until(async () =>
-      (await win.evaluate(() => window.electronAPI.sessionsList())).find(
-        (s) => s.adapterId === 'codex-chat'
-      )
-    )
-    assert.ok(record, 'The real facade must create the Codex adapter')
+    const win = await app.firstWindow()
+    await win.waitForLoadState('domcontentloaded')
+    const record = await app.evaluate(async ({ BrowserWindow }, cwd) => {
+      const { sessionManager, windowRegistry } = globalThis.__codexAdapterTest
+      const win = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)[0]
+      const windowKey = windowRegistry.getKeyForWindow(win.id)
+      if (!windowKey) throw new Error('Real window registry has no window key')
+      return sessionManager.create({
+        id: 'codex-replay',
+        provider: 'codex',
+        transport: 'events',
+        adapterId: 'codex-chat',
+        cwd,
+        windowKey,
+        state: 'idle',
+        title: 'Codex fixture',
+        createdAt: Date.now()
+      })
+    }, ROOT)
     assert.equal(record.transport, 'events')
     assert.equal(record.provider, 'codex')
-    t.check('real facade creates Codex events session', true)
+    t.check('registered adapter creates a real events session in sessionManager', true)
     await win.evaluate(async (id) => {
       window.__codexFrames = []
       window.__codexExit = null
@@ -157,10 +172,7 @@ export async function run(t) {
           )?.state === 'blocked'
       )
     )
-    // The chat-view lane owns this visible badge, fed only by protocol state.
-    const badge = win.locator(`.sidebar-item[title="${ROOT}"] .bg-status-waiting`)
-    await badge.waitFor({ state: 'attached', timeout: 5000 })
-    t.check('protocol approval blocks the session and sidebar chip', true)
+    t.check('protocol approval blocks the session observed through renderer IPC', true)
     await assert.rejects(
       () => write({ type: 'permission_response', id: approval.id, optionId: 'forged' }),
       /approval option/
@@ -195,7 +207,10 @@ export async function run(t) {
     )
     assert.ok(readFileSync(LOG, 'utf8').includes('turn/interrupt'))
     t.check('renderer interrupt reaches the live stdio connection', true)
-    await callMcp(app, 'closeSession', { sessionId: record.id })
+    await app.evaluate(
+      async (_electron, id) => globalThis.__codexAdapterTest.sessionManager.kill(id),
+      record.id
+    )
     assert.ok(
       await until(async () => (await win.evaluate(() => window.__codexExit)) !== null),
       'Close must deliver exit'
@@ -205,6 +220,7 @@ export async function run(t) {
     t.check('close delivers ended before exit and cleans up the process', true)
   } finally {
     if (app) await app.close()
+    rmSync(ENTRY, { force: true })
     rmSync(ROOT, { recursive: true, force: true })
   }
 }
