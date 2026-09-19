@@ -201,14 +201,19 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
       request: { subtype: 'can_use_tool', tool_name: 'Write', input: { x: 1 } }
     }) + '\n'
   )
+  adapter.write(handle, { type: 'user_message', text: 'queued while blocked' })
+  expect(events.filter((event) => event.type === 'state_change').at(-1)).toEqual({
+    type: 'state_change',
+    state: 'blocked'
+  })
   adapter.write(handle, { type: 'permission_response', id: 'p', optionId: 'allow-once' })
   adapter.write(handle, { type: 'interrupt' })
   const inputs = child.stdin.read().toString().trim().split('\n').map(JSON.parse)
   expect(inputs[0]).toEqual({ type: 'user', message: { role: 'user', content: 'Hello' } })
-  expect(inputs[1]).toMatchObject({
+  expect(inputs[2]).toMatchObject({
     response: { request_id: 'p', response: { behavior: 'allow', updatedInput: { x: 1 } } }
   })
-  expect(inputs[2]).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
+  expect(inputs[3]).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
   child.emit('close', 7)
   expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
   expect(exits).toEqual([7])

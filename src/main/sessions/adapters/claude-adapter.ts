@@ -334,10 +334,12 @@ export class ClaudeAdapter implements SessionAdapter {
     if (input.type === 'user_message') {
       live.process ??= live.start()
       live.emitter.emit('stream', { kind: 'event', event: input })
-      live.emitter.emit('stream', {
-        kind: 'event',
-        event: { type: 'state_change', state: 'working' }
-      })
+      // A queued prompt must not hide a permission that still needs an answer.
+      if (!live.translator.permissions.size)
+        live.emitter.emit('stream', {
+          kind: 'event',
+          event: { type: 'state_change', state: 'working' }
+        })
       send({ type: 'user', message: { role: 'user', content: input.text } })
     } else if (input.type === 'permission_response') {
       send(live.translator.response(input.id, input.optionId))
