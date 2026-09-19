@@ -1,0 +1,323 @@
+import { readFileSync } from 'node:fs'
+import { describe, it, expect, vi } from 'vitest'
+import { CodexAdapter, CodexTranslator } from './codex-adapter'
+import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+import type { SpawnSpec } from '../adapter'
+import type { CodexCallbacks, CodexConnection } from './codex-app-server'
+const rows = readFileSync(
+  new URL('../fixtures/codex-app-server/live.ndjson', import.meta.url),
+  'utf8'
+)
+  .trim()
+  .split('\n')
+  .map((line) => JSON.parse(line))
+const spec: SpawnSpec = {
+  id: 'test',
+  provider: 'codex',
+  transport: 'events',
+  cwd: '/tmp',
+  windowKey: 'w',
+  state: 'idle',
+  adapterId: 'codex-chat',
+  title: 'Test',
+  createdAt: 1
+}
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+describe('Codex translation', () => {
+  it('translates every recorded notification in order without silently dropping any', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(SessionEventSchema.parse(e)))
+    for (const { direction, frame } of rows) {
+      if (direction !== 'server' || !frame.method) continue
+      const before = events.length
+      if (frame.id !== undefined) translator.request(frame)
+      else translator.notification(frame)
+      expect(events.length, frame.method).toBeGreaterThan(before)
+      const added = events.slice(before)
+      if (frame.method === 'item/agentMessage/delta')
+        expect(added).toEqual([{ type: 'assistant_text', delta: frame.params.delta, final: false }])
+      if (frame.method === 'item/completed' && frame.params.item.type === 'agentMessage')
+        expect(added).toEqual([{ type: 'assistant_text', delta: '', final: true }])
+      if (frame.method === 'turn/completed')
+        expect(added.at(-1)).toEqual({ type: 'state_change', state: 'done' })
+      if (frame.method === 'turn/started')
+        expect(added).toEqual([{ type: 'state_change', state: 'working' }])
+    }
+    const text = events
+      .filter((e) => e.type === 'assistant_text')
+      .map((e) => e.delta)
+      .join('')
+    expect(text).toContain('Clave protocol ready.')
+    expect(events.filter((e) => e.type === 'assistant_text' && e.final)).toHaveLength(3)
+    const call = events.find((e) => e.type === 'tool_call')!
+    const result = events.find((e) => e.type === 'tool_result')!
+    expect('id' in call && 'id' in result && call.id === result.id).toBe(true)
+    expect(events.filter((e) => e.type === 'provider_event').length).toBeGreaterThan(0)
+  })
+  it('preserves offered structured approval decisions and rejects forged/repeated answers', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.turnId = 'turn-approval'
+    const approval = rows.find(
+      (r) => r.frame.method === 'item/commandExecution/requestApproval'
+    ).frame
+    translator.request(approval)
+    const event = events[0]
+    expect(event.type).toBe('permission_request')
+    if (event.type !== 'permission_request') throw new Error('missing approval')
+    expect(event.options.map((o) => o.id)).toEqual(
+      approval.params.availableDecisions.map((d: unknown) =>
+        typeof d === 'string' ? d : JSON.stringify(d)
+      )
+    )
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    expect(() => translator.answer(event.id, 'forged', connection)).toThrow()
+    translator.answer(event.id, event.options[1].id, connection)
+    expect(connection.respond).toHaveBeenCalledWith(0, {
+      decision: approval.params.availableDecisions[1]
+    })
+    expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+    expect(() => translator.answer(event.id, 'accept', connection)).toThrow()
+  })
+  it('handles completed-only text and schema-derived file changes/MCP results', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.notification({
+      method: 'item/completed',
+      params: { item: { type: 'agentMessage', id: 'msg', text: 'whole' } }
+    })
+    expect(events.shift()).toEqual({ type: 'assistant_text', delta: 'whole', final: true })
+    for (const item of [
+      {
+        type: 'fileChange',
+        id: 'patch',
+        changes: [{ path: 'a', diff: '+ok', kind: { type: 'add' } }]
+      },
+      {
+        type: 'mcpToolCall',
+        id: 'mcp',
+        server: 's',
+        tool: 't',
+        arguments: { a: 1 },
+        result: { content: [{ type: 'text', text: 'ok' }] }
+      }
+    ]) {
+      translator.notification({ method: 'item/started', params: { item } })
+      translator.notification({ method: 'item/completed', params: { item } })
+      expect(events.shift()).toEqual({
+        type: 'tool_call',
+        id: item.id,
+        name: item.type === 'fileChange' ? 'fileChange' : 's/t',
+        input: item
+      })
+      expect(events.shift()).toEqual({
+        type: 'tool_result',
+        id: item.id,
+        output: item.changes ?? item.result
+      })
+    }
+  })
+  it('forwards unknowns and reports errors instead of silently swallowing requests', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    const frame = { method: 'future/event', params: { a: true } }
+    translator.notification(frame)
+    expect(events[0]).toEqual({ type: 'provider_event', provider: 'codex', payload: frame })
+    expect(translator.request({ id: 8, method: 'unknown' })).toBe(false)
+    translator.notification({
+      method: 'error',
+      params: { error: { message: 'failed' }, willRetry: false }
+    })
+    expect(events.at(-1)).toEqual({ type: 'error', message: 'failed', fatal: true })
+  })
+})
+
+function fake(): {
+  adapter: CodexAdapter
+  connection: CodexConnection
+  connect: ReturnType<typeof vi.fn>
+  callback(): CodexCallbacks
+} {
+  let callbacks!: CodexCallbacks
+  const connection: CodexConnection = {
+    request: vi.fn(async (method: string) => {
+      if (method === 'thread/start' || method === 'thread/resume')
+        return { thread: { id: 'thread' }, model: 'model' }
+      if (method === 'turn/start') {
+        callbacks.notification({ method: 'turn/started', params: { turn: { id: 'turn' } } })
+        return { turn: { id: 'turn', status: 'inProgress' } }
+      }
+      return {}
+    }),
+    notify: vi.fn(),
+    respond: vi.fn(),
+    reject: vi.fn(),
+    close: vi.fn(async () => callbacks.exit(0))
+  }
+  const connect = vi.fn((_cwd: string, cb: CodexCallbacks) => {
+    callbacks = cb
+    return connection
+  })
+  return { adapter: new CodexAdapter(connect), connection, connect, callback: () => callbacks }
+}
+describe('Codex adapter lifecycle', () => {
+  it('defers startup for subscribers, sends model/resume safely, interrupts, and exits in order', async () => {
+    const { adapter, connection, connect } = fake()
+    const handle = await adapter.spawn({
+      ...spec,
+      options: { resume: 'saved', model: 'model; no shell', permissionMode: 'on-request' }
+    })
+    expect(connect).not.toHaveBeenCalled()
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (e) => events.push(e))
+    adapter.on(handle, 'exit', (e) => events.push(e))
+    expect(() => adapter.write(handle, new Uint8Array())).toThrow('structured')
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    adapter.write(handle, { type: 'interrupt' })
+    await tick()
+    expect(connection.request).toHaveBeenCalledWith('thread/resume', {
+      threadId: 'saved',
+      cwd: '/tmp',
+      model: 'model; no shell',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
+      sandbox: 'workspace-write'
+    })
+    expect(connection.request).toHaveBeenCalledWith('turn/start', {
+      threadId: 'thread',
+      input: [{ type: 'text', text: 'hello', text_elements: [] }]
+    })
+    expect(connection.request).toHaveBeenCalledWith('turn/interrupt', {
+      threadId: 'thread',
+      turnId: 'turn'
+    })
+    expect(events[0]).toEqual({ kind: 'event', event: { type: 'user_message', text: 'hello' } })
+    await adapter.kill(handle)
+    expect(events.slice(-2)).toEqual([
+      { kind: 'event', event: { type: 'state_change', state: 'ended' } },
+      0
+    ])
+  })
+  it('does not spawn after a prepared session is killed', async () => {
+    const { adapter, connect } = fake()
+    const handle = await adapter.spawn(spec)
+    await adapter.kill(handle)
+    expect(connect).not.toHaveBeenCalled()
+    expect(() => adapter.write(handle, { type: 'user_message', text: 'hello' })).toThrow('Unknown')
+  })
+  it('routes permission replies and rejects concurrent turns and unsupported requests', async () => {
+    const { adapter, connection, callback } = fake()
+    const handle = await adapter.spawn(spec)
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    expect(() => adapter.write(handle, { type: 'user_message', text: 'second' })).toThrow(
+      'active turn'
+    )
+    callback().request({
+      id: 'approval',
+      method: 'item/fileChange/requestApproval',
+      params: { turnId: 'turn' }
+    })
+    adapter.write(handle, { type: 'permission_response', id: '"approval"', optionId: 'decline' })
+    expect(connection.respond).toHaveBeenCalledWith('approval', { decision: 'decline' })
+    callback().request({ id: 9, method: 'future' })
+    expect(connection.reject).toHaveBeenCalledWith(9, 'Unsupported request: future')
+    await adapter.kill(handle)
+  })
+})
+
+describe('Codex races and failure boundaries', () => {
+  it('does not resurrect a turn completed before the turn/start reply', async () => {
+    let cb!: CodexCallbacks
+    const request = vi.fn(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'thread' } }
+      if (method === 'turn/start') {
+        cb.notification({ method: 'turn/started', params: { turn: { id: 'fast' } } })
+        cb.notification({
+          method: 'turn/completed',
+          params: { turn: { id: 'fast', status: 'completed' } }
+        })
+        return { turn: { id: 'fast', status: 'inProgress' } }
+      }
+      return {}
+    })
+    const adapter = new CodexAdapter((_cwd, callbacks) => {
+      cb = callbacks
+      return {
+        request,
+        notify: vi.fn(),
+        respond: vi.fn(),
+        reject: vi.fn(),
+        close: async () => cb.exit(0)
+      }
+    })
+    const handle = await adapter.spawn(spec)
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await tick()
+    expect(() => adapter.write(handle, { type: 'user_message', text: 'two' })).not.toThrow()
+    await tick()
+    await adapter.kill(handle)
+  })
+  it('fails unsupported permission modes without spawning and emits fatal error before exit', async () => {
+    const { adapter, connect } = fake()
+    const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'untrusted' } })
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (stream) => events.push(stream))
+    adapter.on(handle, 'exit', (code) => events.push(code))
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    expect(connect).not.toHaveBeenCalled()
+    expect(events.slice(-3)).toEqual([
+      {
+        kind: 'event',
+        event: {
+          type: 'error',
+          message: 'Unsupported Codex permissionMode: untrusted',
+          fatal: true
+        }
+      },
+      { kind: 'event', event: { type: 'state_change', state: 'ended' } },
+      1
+    ])
+    await adapter.kill(handle)
+  })
+  it('expires approvals on external resolution and preserves blocked with another pending request', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.turnId = 'turn'
+    translator.request({
+      id: 1,
+      method: 'item/fileChange/requestApproval',
+      params: { turnId: 'turn' }
+    })
+    translator.request({
+      id: '1',
+      method: 'item/fileChange/requestApproval',
+      params: { turnId: 'turn' }
+    })
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    translator.answer('1', 'cancel', connection)
+    expect(events.at(-1)).toEqual({ type: 'state_change', state: 'blocked' })
+    translator.notification({ method: 'serverRequest/resolved', params: { requestId: '1' } })
+    expect(() => translator.answer('"1"', 'accept', connection)).toThrow()
+    expect(events.at(-1)).toEqual({ type: 'state_change', state: 'working' })
+  })
+  it('offers schema-valid scoped permission grants without granting null fields', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.request({
+      id: 3,
+      method: 'item/permissions/requestApproval',
+      params: { permissions: { network: { enabled: true }, fileSystem: null } }
+    })
+    const event = events[0]
+    if (event.type !== 'permission_request') throw new Error('missing approval')
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    translator.answer(event.id, event.options[1].id, connection)
+    expect(connection.respond).toHaveBeenCalledWith(3, {
+      permissions: { network: { enabled: true } },
+      scope: 'turn'
+    })
+  })
+})

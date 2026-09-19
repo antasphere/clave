@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ptyBackend, type PtySession, type PtySpawnOptions } from './sessions/adapters/pty-backend'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter } from './sessions/adapters/claude-adapter'
+import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
 import { eventsProfile, isEchoLaunchProfile, launchProfileManager } from './launch-profile-manager'
@@ -15,6 +16,7 @@ const claudeAdapter = new ClaudeAdapter()
 sessionManager.registerAdapter(ptyAdapter)
 sessionManager.registerAdapter(echoAdapter)
 sessionManager.registerAdapter(claudeAdapter)
+sessionManager.registerAdapter(new CodexAdapter())
 
 class PtyManager {
   private eventSessions = new Map<string, PtySession>()
