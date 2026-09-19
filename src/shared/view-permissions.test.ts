@@ -20,8 +20,19 @@ describe('isLocalPageOrigin', () => {
     expect(isLocalPageOrigin('http://localhost')).toBe(true)
   })
 
-  it('accepts IPv6 loopback in both spellings', () => {
+  it('accepts IPv6 loopback, which keeps its brackets', () => {
+    // `new URL('http://[::1]:4796').hostname` is '[::1]', brackets included,
+    // and a bare `http://::1` does not parse at all — so the bracketed
+    // spelling is the only one that can ever be matched.
+    expect(new URL('http://[::1]:4796').hostname).toBe('[::1]')
     expect(isLocalPageOrigin('http://[::1]:4796')).toBe(true)
+  })
+
+  it('refuses 0.0.0.0, which is not a page only this machine can reach', () => {
+    // A server bound to 0.0.0.0 answers the whole network, so a page served
+    // from it is not the person's own local page in the sense that matters.
+    expect(isLocalPageOrigin('http://0.0.0.0:4796')).toBe(false)
+    expect(isLocalPageOrigin('http://[::]:4796')).toBe(false)
   })
 
   it('accepts https on loopback', () => {
@@ -75,26 +86,91 @@ describe('isLocalPageOrigin', () => {
 
 describe('allowsViewPermission', () => {
   it('grants the microphone to a page served from this machine', () => {
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', AUDIO)).toBe(true)
-    expect(allowsViewPermission('http://localhost:4802', 'media', AUDIO)).toBe(true)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: AUDIO, isMainFrame: true },
+        'media'
+      )
+    ).toBe(true)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://localhost:4802', mediaTypes: AUDIO, isMainFrame: true },
+        'media'
+      )
+    ).toBe(true)
   })
 
   it('refuses the microphone to every other page', () => {
-    expect(allowsViewPermission('https://example.com', 'media', AUDIO)).toBe(false)
-    expect(allowsViewPermission('http://localhost.evil.com', 'media', AUDIO)).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'https://example.com', mediaTypes: AUDIO, isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://localhost.evil.com', mediaTypes: AUDIO, isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
   })
 
   it('refuses the camera, on a local page too', () => {
     // `media` is one permission name covering microphone and camera; the grant
     // is the microphone's alone.
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', ['video'])).toBe(false)
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', ['audio', 'video'])).toBe(false)
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', ['unknown'])).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: ['video'], isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: ['audio', 'video'], isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: ['unknown'], isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
   })
 
   it('refuses a media request that names no type', () => {
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', undefined)).toBe(false)
-    expect(allowsViewPermission('http://127.0.0.1:4796', 'media', [])).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: undefined, isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: [], isMainFrame: true },
+        'media'
+      )
+    ).toBe(false)
+  })
+
+  it('refuses a subframe, even a loopback one', () => {
+    // The hole this closes: a page from the internet shown in a view embeds
+    // <iframe src="http://127.0.0.1:1234"> and asks through it. The asking
+    // origin is the iframe's — loopback — while the page driving it is not,
+    // and an iframe is a subresource load that the link policy never sees.
+    // Only the page Clave itself shows is granted.
+    expect(
+      allowsViewPermission(
+        { origin: 'http://127.0.0.1:4796', mediaTypes: AUDIO, isMainFrame: false },
+        'media'
+      )
+    ).toBe(false)
+    expect(
+      allowsViewPermission(
+        { origin: 'http://localhost:4802', mediaTypes: AUDIO, isMainFrame: false },
+        'media'
+      )
+    ).toBe(false)
   })
 
   it('refuses every permission that is not media, local page or not', () => {
@@ -121,8 +197,18 @@ describe('allowsViewPermission', () => {
       'mediaKeySystem',
       'unknown'
     ]) {
-      expect(allowsViewPermission('http://127.0.0.1:4796', permission, AUDIO)).toBe(false)
-      expect(allowsViewPermission('https://example.com', permission, AUDIO)).toBe(false)
+      expect(
+        allowsViewPermission(
+          { origin: 'http://127.0.0.1:4796', mediaTypes: AUDIO, isMainFrame: true },
+          permission
+        )
+      ).toBe(false)
+      expect(
+        allowsViewPermission(
+          { origin: 'https://example.com', mediaTypes: AUDIO, isMainFrame: true },
+          permission
+        )
+      ).toBe(false)
     }
   })
 })

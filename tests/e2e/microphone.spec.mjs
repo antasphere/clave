@@ -53,8 +53,13 @@ const WS = {
 
 /** A page on this machine, exactly what Clave shows in a view. */
 function serve() {
-  const server = http.createServer((_req, res) => {
+  const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' })
+    // `/framed` is the page an outside page would embed to ask through it.
+    if (req.url.startsWith('/framed')) {
+      res.end('<html><head><title>Framed</title></head><body>inner</body></html>')
+      return
+    }
     res.end('<html><head><title>Voice</title></head><body>dock</body></html>')
   })
   return new Promise((resolve) =>
@@ -181,6 +186,42 @@ export async function run(t) {
       'and cannot open a camera stream',
       media.video.ok === false,
       `getUserMedia({video:true}) succeeded on a local page: ${JSON.stringify(media.video)}`
+    )
+
+    // ── 1c. A loopback IFRAME inside a page is refused ───────────────────
+    //
+    // The hole a naive origin check leaves: a page from the internet shown in
+    // a view embeds a loopback iframe and asks through it, so the asking
+    // origin is loopback while the page driving it is not. An iframe is a
+    // subresource load, not a navigation, so the link policy never sees it.
+    // Only the page Clave itself shows is granted.
+    const framed = await app.evaluate(async ({ BrowserWindow }, local) => {
+      const w = new BrowserWindow({
+        show: false,
+        webPreferences: { partition: 'persist:view', sandbox: true, contextIsolation: true }
+      })
+      try {
+        // A page that is NOT local, embedding a local iframe.
+        await w.loadURL(
+          `data:text/html,${encodeURIComponent(`<iframe src="${local}framed"></iframe>`)}`
+        )
+        await new Promise((r) => setTimeout(r, 1000))
+        const frames = w.webContents.mainFrame.frames.length
+        // Ask from inside the iframe, which is where the attack would ask.
+        const inner = w.webContents.mainFrame.frames[0]
+        if (!inner) return { frames, state: 'no-subframe' }
+        const state = await inner.executeJavaScript(
+          `navigator.permissions.query({ name: 'microphone' }).then((s) => s.state, (e) => 'threw:' + e.name)`
+        )
+        return { frames, state }
+      } finally {
+        w.destroy()
+      }
+    }, LOCAL)
+    t.check(
+      'a loopback iframe inside an outside page is refused the microphone',
+      framed.state !== 'granted',
+      `the subframe answered ${JSON.stringify(framed)} — an outside page can embed a local iframe and listen through it`
     )
 
     // ── 2. The internet, and a host that only looks local ────────────────

@@ -96,7 +96,11 @@ function useMicMeter(): {
       next !== null &&
       (next.status === 'denied' || next.status === 'restricted' || next.status === 'not-determined')
     const current = phaseRef.current
-    if (!blocked && (current === 'denied' || current === 'unavailable' || current === 'silent')) {
+    // `unavailable` is deliberately not retried here: it means there is no
+    // microphone to open, which coming back to the window does not change, and
+    // retrying asked the system for a device on every focus. A device arriving
+    // fires `devicechange`, which is what re-opens the stream.
+    if (!blocked && (current === 'denied' || current === 'silent')) {
       setAttempt((n) => n + 1)
     }
   }, [])
@@ -180,6 +184,8 @@ function useMicMeter(): {
       let smoothed = 0
       let peakNorm = 0
       let silentSince: number | null = null
+      /** Has the watchdog already reported this stretch of silence? */
+      let withheld = false
       setPhase('live')
 
       const tick = (): void => {
@@ -191,9 +197,16 @@ function useMicMeter(): {
         // dev is the launching terminal lacking the permission.
         if (sum === 0) {
           if (silentSince === null) silentSince = performance.now()
-          else if (performance.now() - silentSince > SILENCE_WATCHDOG_MS) setPhase('silent')
+          else if (!withheld && performance.now() - silentSince > SILENCE_WATCHDOG_MS) {
+            // Latched: without this the branch re-enters on every frame, which
+            // measured 419 calls over ten seconds of silence where one is
+            // right.
+            withheld = true
+            setPhase('silent')
+          }
         } else if (silentSince !== null) {
           silentSince = null
+          withheld = false
           setPhase('live')
         }
         const rms = Math.sqrt(sum / samples.length)

@@ -79,11 +79,23 @@ export function installViewGuestPolicy(): void {
   viewSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
     const origin = 'securityOrigin' in details ? details.securityOrigin : undefined
     const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined
-    callback(allowsViewPermission(origin ?? '', permission, mediaTypes))
+    callback(
+      allowsViewPermission(
+        { origin: origin ?? '', mediaTypes, isMainFrame: details.isMainFrame },
+        permission
+      )
+    )
   })
   viewSession.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
     const mediaType = details.mediaType
-    return allowsViewPermission(requestingOrigin, permission, mediaType ? [mediaType] : undefined)
+    return allowsViewPermission(
+      {
+        origin: requestingOrigin,
+        mediaTypes: mediaType ? [mediaType] : undefined,
+        isMainFrame: details.isMainFrame
+      },
+      permission
+    )
   })
 
   app.on('web-contents-created', (_event, contents) => {
