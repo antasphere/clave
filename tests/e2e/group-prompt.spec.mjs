@@ -34,6 +34,15 @@ const WS = {
   createdAt: 1
 }
 
+// A family becomes a submenu when chat/custom profiles are registered.
+// Follow the built-in leaf so the assertions still exercise the terminal CLI.
+async function selectBuiltIn(win, label, profileName) {
+  const entry = win.locator(`[role="menuitem"]:has-text("${label}")`)
+  const submenu = (await entry.getAttribute('aria-haspopup')) === 'menu'
+  await entry.click()
+  if (submenu) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
+}
+
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   writeFileSync(
@@ -78,7 +87,7 @@ export async function run(t) {
     // AND puts it on a command line this spec can read.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Codex CLI")')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex')
     await win.waitForTimeout(4000)
 
     // Add the group through the picker.
@@ -154,7 +163,7 @@ export async function run(t) {
     // arrived.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Claude Agents")')
+    await selectBuiltIn(win, 'Claude Agents', 'Claude')
     await win.waitForTimeout(4000)
 
     const agentsTooltip = await win.evaluate(
