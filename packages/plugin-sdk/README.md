@@ -70,3 +70,8 @@ Skins may additionally declare `skin: { tokens: "skin.json", css?: "skin.css", b
 For `kind: "skin"`, omitted `ui` normalizes to `none`; executable entries,
 privileged permissions and contributions are refused. The skin loader owns token/CSS
 validation and activation; the plugin runtime does not execute skins.
+
+The content seal covers the plugin's own files (including root `package-lock.json`,
+`pnpm-lock.yaml`, and `yarn.lock` files), file modes, and internal symlink targets.
+It excludes `node_modules` and `.git`; dependency contents are not sealed by a
+lockfile alone. Bundle your dependencies into `main` for a sealed plugin.

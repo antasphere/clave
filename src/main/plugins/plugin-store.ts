@@ -27,6 +27,7 @@ const installedSchema = z.array(
     version: z.string(),
     source: z.enum(['bundled', 'git', 'link']),
     enabled: z.boolean(),
+    enabledBeforeEngineRefusal: z.boolean().optional(),
     permissionsGranted: z.array(
       z.enum(['sessions.read', 'sessions.write', 'fs.read', 'fs.write', 'net', 'secrets', 'shell'])
     ),
@@ -99,7 +100,7 @@ export class PluginStore {
           const saved = this.installed.find((r) => r.id === id)
           const contentHash = createHash('sha256')
           const reviewHash = createHash('sha256')
-          // Seal every regular file, including imported modules and surface assets.
+          // Seal file contents, modes and internal link targets, including surface assets.
           // Only version and permission changes are excluded from consent comparison.
           const reviewManifest = { ...rawManifest }
           delete reviewManifest.version
@@ -113,6 +114,9 @@ export class PluginStore {
                 const target = relative(realpathSync(directory), realpathSync(file))
                 if (target === '..' || target.startsWith(`..${sep}`) || isAbsolute(target))
                   throw new Error('Path leaves plugin directory')
+                const link = JSON.stringify(['@link', relative(directory, file), target])
+                contentHash.update(link)
+                reviewHash.update(link)
                 continue
               }
               if (name === 'node_modules' || name === '.git') continue
@@ -122,11 +126,12 @@ export class PluginStore {
           }
           walk(directory)
           for (const entry of files.sort()) {
+            const mode = lstatSync(join(directory, entry)).mode & 0o777
             const bytes = readFileSync(join(directory, entry))
             const reviewBytes =
               entry === 'clave-plugin.json' ? Buffer.from(JSON.stringify(reviewManifest)) : bytes
-            contentHash.update(JSON.stringify([entry, bytes.length])).update(bytes)
-            reviewHash.update(JSON.stringify([entry, reviewBytes.length])).update(reviewBytes)
+            contentHash.update(JSON.stringify([entry, mode, bytes.length])).update(bytes)
+            reviewHash.update(JSON.stringify([entry, mode, reviewBytes.length])).update(reviewBytes)
           }
           const contentDigest = contentHash.digest('hex')
           const reviewDigest = reviewHash.digest('hex')
@@ -145,7 +150,11 @@ export class PluginStore {
             id,
             version: manifest.version,
             source: actualSource,
-            enabled: saved ? saved.enabled : firstBundledInstall,
+            enabled: saved
+              ? saved.needsReview === 'engine-refusal'
+                ? (saved.enabledBeforeEngineRefusal ?? saved.enabled)
+                : saved.enabled
+              : firstBundledInstall,
             permissionsGranted: [
               ...(saved
                 ? saved.permissionsGranted.filter((p) => manifest.permissions.includes(p))
@@ -173,7 +182,10 @@ export class PluginStore {
           if (saved && saved.source !== actualSource) record.needsReview = 'source-change'
           if (!isEngineCompatible(manifest, this.version)) {
             record.error = `Requires Clave ${manifest.engines.clave}; running ${this.version}`
-            record.needsReview ??= 'engine-refusal'
+            if (!record.needsReview) {
+              record.enabledBeforeEngineRefusal = record.enabled
+              record.needsReview = 'engine-refusal'
+            }
           }
           if (
             record.needsReview ||
@@ -236,7 +248,9 @@ export class PluginStore {
     this.save()
   }
   disable(id: string): void {
-    this.get(id).enabled = false
+    const record = this.get(id)
+    record.enabled = false
+    if (record.needsReview === 'engine-refusal') record.enabledBeforeEngineRefusal = false
     this.save()
   }
   link(directory: string): string {
@@ -281,7 +295,8 @@ export class PluginStore {
         contentDigest,
         reviewDigest,
         declaredPermissions,
-        needsReview
+        needsReview,
+        enabledBeforeEngineRefusal
       } = record
       return [
         {
@@ -295,7 +310,8 @@ export class PluginStore {
           contentDigest,
           reviewDigest,
           declaredPermissions,
-          needsReview
+          needsReview,
+          enabledBeforeEngineRefusal
         }
       ]
     })
