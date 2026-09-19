@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  chmodSync,
+  unlinkSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -328,16 +330,84 @@ describe('consent across content and declaration changes', () => {
     expect(restarted.get(value.id)).toMatchObject({ status: 'error' })
     expect(restarted.get(value.id).manifest).toBeUndefined()
   })
-  it('excludes dependency trees, git metadata and internal symlinks', () => {
+  it('excludes dependency trees and git metadata', () => {
     const { instance, directory, value } = fixture('git')
     for (const name of ['node_modules', '.git']) {
       mkdirSync(join(directory, name))
       writeFileSync(join(directory, name, 'file'), 'unsealed')
     }
-    symlinkSync(directory, join(directory, 'self'))
     instance.discover()
     expect(instance.get(value.id)).toMatchObject({ enabled: true })
   })
+  it('seals an internal link target even when both targets are already hashed', () => {
+    const { instance, directory, value } = fixture('git')
+    writeFileSync(join(directory, 'other.mjs'), 'export default {}')
+    const link = join(directory, 'alias.mjs')
+    symlinkSync('main.mjs', link)
+    instance.discover()
+    instance.enable(value.id, value.permissions!)
+    const before = instance.get(value.id)
+    unlinkSync(link)
+    symlinkSync('other.mjs', link)
+    instance.discover()
+    const after = instance.get(value.id)
+    expect(after.contentDigest).not.toBe(before.contentDigest)
+    expect(after.reviewDigest).not.toBe(before.reviewDigest)
+    expect(after).toMatchObject({ enabled: false, needsReview: 'digest-change' })
+  })
+  it('seals executable mode changes', () => {
+    const { instance, directory, value } = fixture('git')
+    const helper = join(directory, 'helper.sh')
+    writeFileSync(helper, '#!/bin/sh\necho helper\n', { mode: 0o644 })
+    instance.discover()
+    instance.enable(value.id, value.permissions!)
+    const before = instance.get(value.id)
+    chmodSync(helper, 0o755)
+    instance.discover()
+    const after = instance.get(value.id)
+    expect(after.contentDigest).not.toBe(before.contentDigest)
+    expect(after.reviewDigest).not.toBe(before.reviewDigest)
+    expect(after).toMatchObject({ enabled: false, needsReview: 'digest-change' })
+  })
+  it.each(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'])('seals root %s', (name) => {
+    const { instance, directory, value } = fixture('git')
+    writeFileSync(join(directory, name), 'original lock')
+    instance.discover()
+    instance.enable(value.id, value.permissions!)
+    const before = instance.get(value.id)
+    writeFileSync(join(directory, name), 'changed lock')
+    instance.discover()
+    const after = instance.get(value.id)
+    expect(after.contentDigest).not.toBe(before.contentDigest)
+    expect(after.reviewDigest).not.toBe(before.reviewDigest)
+    expect(after).toMatchObject({ enabled: false, needsReview: 'digest-change' })
+  })
+  it.each([true, false])(
+    'restores pre-refusal enabled=%s after repeated refusals and upgrade',
+    (enabled) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { instance, value } = fixture('git')
+      if (!enabled) instance.disable(value.id)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const refused = new PluginStore(root, bundled, '0.0.1')
+        refused.discover()
+        expect(refused.get(value.id)).toMatchObject({
+          enabled: false,
+          needsReview: 'engine-refusal',
+          enabledBeforeEngineRefusal: enabled
+        })
+        expect(
+          JSON.parse(readFileSync(join(root, 'installed.json'), 'utf8'))[0]
+            .enabledBeforeEngineRefusal
+        ).toBe(enabled)
+      }
+      const upgraded = store()
+      upgraded.discover()
+      expect(upgraded.get(value.id).enabled).toBe(enabled)
+      expect(upgraded.get(value.id).needsReview).toBeUndefined()
+      expect(upgraded.get(value.id).enabledBeforeEngineRefusal).toBeUndefined()
+    }
+  )
   it('keeps digest review through engine refusal and recovery', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const { instance, directory, value } = fixture('git')
@@ -360,6 +430,7 @@ describe('consent across content and declaration changes', () => {
     upgraded.discover()
     expect(upgraded.get(value.id).needsReview).toBeUndefined()
     expect(upgraded.get(value.id).error).toBeUndefined()
+    expect(upgraded.get(value.id).enabled).toBe(true)
   })
   it('distinguishes a deliberate disable from engine refusal', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
