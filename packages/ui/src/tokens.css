@@ -239,7 +239,6 @@
   --heatmap-2: rgba(94, 106, 210, 0.5);
   --heatmap-3: rgba(94, 106, 210, 0.7);
   --heatmap-4: rgba(94, 106, 210, 0.95);
-  /* CodeMirror syntax tokens — driven by CSS vars so the editor recolors on theme switch */
 }
 
 /* Light theme — Linear-inspired warm grays */
@@ -287,7 +286,6 @@
   --color-wellbeing-strong: oklch(0.5 0.15 50);
   --color-wellbeing-strong-bg: oklch(0.95 0.03 50);
   --color-wellbeing-strong-border: oklch(0.8 0.08 50);
-  /* CodeMirror syntax tokens — GitHub-light-inspired, tuned for the warm light surface */
 }
 
 /* Coffee theme — warm light, matching Claude's cream/beige aesthetic */
@@ -332,7 +330,6 @@
   --color-wellbeing-strong: oklch(0.45 0.15 50);
   --color-wellbeing-strong-bg: oklch(0.85 0.04 50);
   --color-wellbeing-strong-border: oklch(0.7 0.08 50);
-  /* CodeMirror syntax tokens — warm palette tuned for the cream surface */
 }
 
 /* Charcoal theme — the soft dark. The default dark theme is off-black, which
@@ -415,8 +412,5 @@
   --color-wellbeing-strong: oklch(0.73 0.15 50);
   --color-wellbeing-strong-bg: oklch(0.36 0.035 50);
   --color-wellbeing-strong-border: oklch(0.5 0.07 50);
-  /* CodeMirror syntax tokens — dark's github-dark family, desaturated a notch
-     for the lifted ground and with the two greys (comment, punctuation) taken
-     off their cool #8b949e onto the theme's own warm axis. */
 }
 

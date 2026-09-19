@@ -4,13 +4,18 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { launchApp, seedWorkspaces, seedTrustedRoots, callMcp } from '../e2e/harness.mjs'
 const mode = process.argv[2]
-const baseline = process.argv[3]
+const baseline = process.argv[3] ? path.resolve(process.argv[3]) : null
 assert(
   ['baseline', 'compare'].includes(mode) && baseline,
   'usage: ui-parity.mjs baseline|compare <temporary-directory>'
+)
+assert(
+  [path.resolve(tmpdir()), '/tmp'].some((root) => baseline.startsWith(root + path.sep)),
+  'Screenshots must live in a dedicated OS temporary directory, outside the project'
 )
 const dir = mkdtempSync(`${tmpdir()}/clave-ui-parity-`)
 const root = `${dir}/fixture`
@@ -25,8 +30,12 @@ seedWorkspaces(dir, {
 })
 seedTrustedRoots(dir, [root])
 mkdirSync(baseline, { recursive: true })
-const { app, win } = await launchApp(dir)
+let app
+let complete = false
 try {
+  const launched = await launchApp(dir)
+  app = launched.app
+  const win = launched.win
   await app.evaluate(({ BrowserWindow, ipcMain }) => {
     BrowserWindow.getAllWindows()[0].setSize(1200, 800)
     ipcMain.removeHandler('usage:get-limits')
@@ -108,8 +117,12 @@ try {
       .click()
     await capture(`appearance-${theme}`, '.settings-scroller')
   }
+  complete = true
 } finally {
-  await app.close()
-  rmSync(dir, { recursive: true, force: true })
-  if (mode === 'compare') rmSync(baseline, { recursive: true, force: true })
+  try {
+    await app?.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    if (mode === 'compare' || !complete) rmSync(baseline, { recursive: true, force: true })
+  }
 }

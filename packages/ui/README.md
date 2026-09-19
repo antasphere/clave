@@ -4,7 +4,8 @@ Read this before writing any UI. It exists because a whole feature's buttons wer
 rebuilt three times against the wrong references: first improvised sizes, then the
 toolbar's, before landing on the panel family that was the actual standard. Every
 value here is a class or token that already exists in
-`packages/ui/src/system.css` — this file tells you which one to reach for.
+`packages/ui/src/tokens.css` or `packages/ui/src/system.css` — this guide tells you
+which one to reach for.
 When something you need is missing there, extend `packages/ui/src/system.css` with a new semantic
 class next to its family; never inline the styling at the call site.
 
