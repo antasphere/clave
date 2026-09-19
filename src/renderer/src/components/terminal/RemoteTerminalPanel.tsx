@@ -3,7 +3,7 @@ import { useRemoteTerminal } from '../../hooks/use-remote-terminal'
 import { useSessionStore } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
 import { TerminalHeader } from './TerminalHeader'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { GlobeAltIcon } from '@heroicons/react/24/outline'
 
 interface RemoteTerminalPanelProps {

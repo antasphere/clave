@@ -43,7 +43,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent
-} from '../ui/dropdown-menu'
+} from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the

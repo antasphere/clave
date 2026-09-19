@@ -32,7 +32,7 @@ import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
 import { fieldAccent } from '../../lib/brand-field'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
 /**

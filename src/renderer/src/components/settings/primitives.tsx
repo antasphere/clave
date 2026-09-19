@@ -1,6 +1,6 @@
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { CheckIcon, ChevronUpDownIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 /**
  * The settings primitives. Every settings page is built from these and from

@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
 import { CommandLineIcon, BoltIcon, RectangleGroupIcon } from '@heroicons/react/24/outline'

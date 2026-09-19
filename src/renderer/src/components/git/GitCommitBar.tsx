@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 import { useSessionStore } from '../../store/session-store'
 import type { PullStrategy } from './git-status-utils'
 

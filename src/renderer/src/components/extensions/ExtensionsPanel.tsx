@@ -28,10 +28,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel
-} from '../ui/dropdown-menu'
-import { ConfirmDialog } from '../ui/ConfirmDialog'
+} from '@clave/ui/components'
+import { ConfirmDialog } from '@clave/ui/components'
 import { AddMarketplaceDialog } from './AddMarketplaceDialog'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import type {
   ExtensionsInventory,
   PluginInfo,

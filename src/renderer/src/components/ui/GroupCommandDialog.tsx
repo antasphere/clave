@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { type GroupTerminalColor, type GroupTerminalIcon, GROUP_TERMINAL_ICONS } from '../../store/session-store'
 import ColorPicker from './ColorPicker'
 import {
@@ -25,7 +25,7 @@ import {
   SparklesIcon,
   CloudIcon
 } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 const ICON_COMPONENTS: Record<GroupTerminalIcon, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
   terminal: CommandLineIcon,

@@ -11,10 +11,10 @@ import type { LinkedDocument, LinkedEmail, LinkedUpdate } from '../../../../shar
 import { MarkdownPageEditor } from './MarkdownPageEditor'
 import { HtmlPreviewFrame } from './HtmlPreviewFrame'
 import { ViewModeToggle } from './ViewModeToggle'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 import { CodeEditor } from './CodeEditor'
 import { FileIcon } from './file-icons'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@clave/ui/components'
 
 const FIELD_LABELS = {
   from: 'From',

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from '../ui/dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 interface AddMarketplaceDialogProps {

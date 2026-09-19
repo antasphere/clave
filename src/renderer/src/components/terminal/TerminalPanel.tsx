@@ -3,7 +3,7 @@ import { useTerminal } from '../../hooks/use-terminal'
 import { useSessionStore } from '../../store/session-store'
 import { TerminalHeader } from './TerminalHeader'
 import { MessageTrail } from './MessageTrail'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 interface TerminalPanelProps {
   sessionId: string

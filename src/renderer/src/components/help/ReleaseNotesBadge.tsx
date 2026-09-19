@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { InformationCircleIcon } from '@heroicons/react/24/solid'
-import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
+import { Popover, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { ReleaseNotes } from './ReleaseNotes'
 import type { ReleaseNote } from '../../store/updater-store'
 

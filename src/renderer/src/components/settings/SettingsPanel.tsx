@@ -41,7 +41,7 @@ import {
   SettingsCallout,
   ToggleRow
 } from './primitives'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 

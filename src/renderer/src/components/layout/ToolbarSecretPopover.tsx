@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { KeyIcon, XMarkIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { useSecretStore } from '../../store/secret-store'
 import { useSessionStore } from '../../store/session-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import type { SecretRequestView } from '../../../../preload/index.d'
 
 /**

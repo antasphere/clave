@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { XMarkIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import { useToolbarTerminal, type ToolbarTerminalStatus } from '../../hooks/use-toolbar-terminal'
 import { useServerButton, type ServerButtonApi } from '../../hooks/use-server-button'
@@ -8,7 +8,7 @@ import {
   getPersistentToolbarSession,
   takeToolbarSurvivor
 } from '../../lib/toolbar-terminal-registry'
-import { cn, safePort } from '../../lib/utils'
+import { cn, safePort } from '@clave/ui/components'
 
 interface ToolbarTerminalPopoverProps {
   cwd: string

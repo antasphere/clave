@@ -21,7 +21,7 @@ import { getXtermTheme } from './terminal-theme'
  * one.
  */
 
-const CSS = readFileSync(fileURLToPath(new URL('../assets/main.css', import.meta.url)), 'utf-8')
+const CSS = readFileSync(fileURLToPath(new URL('../../../../packages/ui/src/tokens.css', import.meta.url)), 'utf-8')
 
 /** Tokens that are deliberately CROSS-theme: user-setting knobs written as an
  *  inline style on the root element (which beats every stylesheet block), so

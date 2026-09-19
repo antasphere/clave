@@ -27,7 +27,7 @@
     "build:mac:test": "bash scripts/build-mac-local-test.sh",
     "build:linux": "electron-vite build && electron-builder --linux",
     "release": "bash scripts/release.sh",
-    "test": "vitest run",
+    "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs"
   },
   "dependencies": {
@@ -103,5 +103,8 @@
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vitest": "^3.2.7"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

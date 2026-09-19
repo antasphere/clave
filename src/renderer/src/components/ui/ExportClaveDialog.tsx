@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { FolderIcon } from '@heroicons/react/24/outline'
 
 interface ExportClaveDialogProps {

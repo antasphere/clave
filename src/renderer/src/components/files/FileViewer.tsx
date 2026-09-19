@@ -7,7 +7,7 @@ import { HTML_MODES } from './file-types'
 import { useFileEditor } from '../../hooks/use-file-editor'
 import { useFileViewMode } from '../../hooks/use-file-view-mode'
 import { useCopyFeedback } from '../../hooks/use-copy-feedback'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { DocumentTextIcon, CheckIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import {
   CopyIcon,

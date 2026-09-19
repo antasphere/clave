@@ -9,7 +9,7 @@ import {
 import { resolveColorHex } from '../../store/session-types'
 import { inActiveWorkspace } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import {
   MagnifyingGlassIcon,
   DocumentIcon,

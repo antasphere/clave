@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, memo } from 'react'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import {
   useSessionStore,
   type SessionGroup,
@@ -11,7 +11,7 @@ import {
   CommandLineIcon,
   PlusIcon
 } from '@heroicons/react/24/outline'
-import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
+import { Popover, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { GroupTerminalsPanel } from './GroupTerminalsPanel'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 

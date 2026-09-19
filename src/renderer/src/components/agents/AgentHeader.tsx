@@ -1,6 +1,6 @@
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 const statusColors: Record<string, string> = {
   online: 'bg-green-500',

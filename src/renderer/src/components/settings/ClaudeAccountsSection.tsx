@@ -8,7 +8,7 @@ import {
 } from '../../store/claude-profile-store'
 import { tightestWindow, shortLabel, formatReset } from '../../store/usage-store'
 import { SettingsSection, SettingsCard } from './primitives'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 /** What a paste came back with, in one line under the form. */
 function describeUsageResult(result: UsageLimits | UsageError): string {

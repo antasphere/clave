@@ -1,5 +1,5 @@
 import { PlusIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import {
   type GroupTerminalConfig,
   TERMINAL_COLOR_VALUES,

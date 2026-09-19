@@ -5,9 +5,9 @@ import {
   XMarkIcon,
   LockClosedIcon
 } from '@heroicons/react/24/outline'
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { useCopyOfferStore } from '../../store/copy-offer-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import type { CopyOfferView } from '../../../../preload/index.d'
 
 /**

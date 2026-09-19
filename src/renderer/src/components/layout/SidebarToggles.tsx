@@ -1,6 +1,6 @@
 import { useSessionStore } from '../../store/session-store'
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 
 export function ClaudeToggle({ compact }: { compact?: boolean }) {
   const claudeMode = useSessionStore((s) => s.claudeMode)

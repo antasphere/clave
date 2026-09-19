@@ -1,5 +1,5 @@
 // src/renderer/src/components/work-tracker/WeeklyChart.tsx
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { formatDuration } from './utils'
 
 const DAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']

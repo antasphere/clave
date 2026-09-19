@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
 import { useSessionStore } from '../../store/session-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { CheckIcon } from '@heroicons/react/24/outline'
 
 const statusColors: Record<string, string> = {

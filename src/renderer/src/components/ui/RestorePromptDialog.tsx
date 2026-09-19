@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { useRestorePromptStore } from '../../store/restore-prompt-store'
 
 /** Launch restore prompt — shown when the previous run left sessions that can

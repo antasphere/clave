@@ -7,11 +7,11 @@ import {
   FolderOpenIcon,
   ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline'
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { useSessionStore } from '../../store/session-store'
 import { setActiveWorkspace, addWorkspace } from '../../lib/workspace-actions'
-import { shortenPath } from '../../lib/utils'
+import { shortenPath } from '@clave/ui/components'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
  *  has to be chosen before the workspace exists. */

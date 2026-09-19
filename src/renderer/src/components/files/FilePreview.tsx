@@ -7,7 +7,7 @@ import { FileInfoTooltip } from './FileInfoTooltip'
 import { useFileEditor } from '../../hooks/use-file-editor'
 import { useFileViewMode } from '../../hooks/use-file-view-mode'
 import { useCopyFeedback } from '../../hooks/use-copy-feedback'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { canOpenExternally as canOpenExternallyExt, formatSize, HTML_MODES } from './file-types'
 import {
   DocumentDuplicateIcon,

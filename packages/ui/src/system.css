@@ -1,0 +1,1841 @@
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+[role="button"],
+a,
+label,
+select,
+summary,
+[onclick] {
+  cursor: pointer;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s, color 0.2s;
+  /* Disable Chromium's CJK punctuation compression and auto-spacing.
+     These features cause text selection offsets when the primary font
+     (Geist Sans) falls back to a system CJK font — the compressed
+     glyph positions drift from the selection rectangles, making the
+     first character after CJK punctuation invisible when selected. */
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ────────────────────────────────────────────────────────
+   Design System — Component Tokens
+   ──────────────────────────────────────────────────────── */
+
+/* Reusable floating card style for inset UI boxes */
+/* The app's panel surface — the toolbar, the main view, each terminal pane.
+   Flat on purpose: the 1px border and the gap to the background already
+   separate a panel from what is behind it, and a drop shadow on top of that
+   reads as chrome rather than depth. */
+.floating-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface-0);
+  overflow: hidden;
+}
+
+/* ── Sidebar items ── */
+
+.sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;             /* gap-2 */
+  height: var(--sidebar-row-h);
+  padding: 0 var(--sidebar-row-px);
+  border-radius: var(--radius-lg);
+  font-size: 13.5px;
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+  transition: color 150ms, background-color 150ms, opacity 150ms;
+  outline: none;
+  color: var(--sidebar-item-text);
+}
+.sidebar-item:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+
+/* The row an emptied group shows in place of its sessions ("No sessions").
+   Cut to .sidebar-item's exact height and side padding so a group of none is
+   as tall as a group of one and nothing below it moves when the last tab
+   closes; centred, italic and tertiary so it reads as a note about the card,
+   not as a row to click. No hover state on purpose — it is not a control. */
+.sidebar-empty-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--sidebar-row-h);
+  padding: 0 var(--sidebar-row-px);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text-tertiary);
+  user-select: none;
+  cursor: default;
+}
+.sidebar-item[data-selected="true"] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+  box-shadow: 0 0 0.5px var(--selected-ring);
+}
+
+/* Leading icon on sidebar tabs (session/file/group). Sizes both the wrapper
+   and the inner SVG from --sidebar-tab-icon-size so all tab icons stay uniform. */
+.sidebar-tab-icon {
+  color: var(--sidebar-icon-color);
+}
+.sidebar-tab-icon,
+.sidebar-tab-icon > svg {
+  width: var(--sidebar-tab-icon-size);
+  height: var(--sidebar-tab-icon-size);
+}
+
+/* ── Session launcher ── */
+
+/* The pinned launch row at the top of the sidebar: a plain-terminal button, an
+   agent button that relaunches the workspace's remembered setup, a caret for a
+   different setup, and a folder button for a directory other than the workspace
+   root. Every control is a real sibling <button> — the caret only LOOKS welded
+   to the agent button (they sit in one segment between hairlines), so there is
+   no nested button and each target keeps its own hit area and tab stop.
+
+   The four live inside a panel cut from the same cloth as the toolbar and the
+   terminal panes: same border, same surface, same height as the toolbar, and a
+   top edge at --content-top-offset so it lands on the terminal cards' top edge
+   across the sidebar divide. That containment is what lets the controls
+   themselves go quiet — inside a panel they no longer need a fill of their own
+   to read as buttons, so the row is hairlines and hover states rather than
+   three pills afloat on the sidebar. */
+.launcher-panel {
+  height: var(--toolbar-h);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  overflow: hidden;
+}
+
+.launcher-row {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 2px;
+}
+
+/* Hairline between a panel row's segments — terminal | agent+caret | folder in
+   the launcher, tabs | folder | help in the side panel's bar. Sized short of the
+   row so it reads as a separator inside the panel rather than as a second border
+   cutting it in three. Two names, one rule: `.panel-sep` is what a bar outside
+   the sidebar's launcher calls it. */
+.launcher-sep,
+.panel-sep {
+  flex-shrink: 0;
+  width: 1px;
+  height: 1rem;
+  margin: 0 2px;
+  background-color: var(--color-border);
+}
+
+.launcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;           /* gap-1.5 */
+  min-width: 0;
+  height: var(--control-h-md);
+  padding: 0 0.5rem;       /* px-2 — the panels stay on their own padding: they
+                              are chrome, not list, and a sidebar dragged narrow
+                              squeezes this row first */
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  color: var(--sidebar-item-text);
+  background-color: transparent;
+  transition: color 150ms, background-color 150ms, opacity 150ms, scale 120ms var(--ease-out-expo);
+}
+.launcher-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.launcher-btn:disabled {
+  opacity: 0.5;
+}
+
+/* The segment holding the agent button and its caret. It owns the row's
+   leftover width because the agent label is the variable-length one. */
+.launcher-split {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.launcher-split .launcher-btn {
+  flex: 1 1 auto;
+}
+/* Square on the row's height, like the folder picker it shares the row with: a
+   caret sized by its padding came out 20×28 and read as a narrow sliver of
+   hover fill between two proper buttons. */
+.launcher-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.launcher-caret:hover,
+.launcher-caret[data-state="open"] {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+
+/* The row's trailing icon button (the folder picker). Carries the row's own
+   height rather than btn-icon's padding-derived one, so its hover fill matches
+   the buttons beside it instead of reading as a smaller control on the line. */
+.launcher-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, opacity 150ms, scale 120ms var(--ease-out-expo);
+}
+.launcher-icon-btn:hover,
+.launcher-icon-btn[data-active="true"] {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.launcher-icon-btn:disabled {
+  opacity: 0.5;
+}
+
+/* ── Group switcher ── */
+
+/* The second panel under the launcher: All, a chip per group, and the `+` that
+   opens the group picker. Same panel and same row as the launcher — the two
+   read as one stack of chrome above the list — so it borrows .launcher-panel,
+   .launcher-row, .launcher-sep and .launcher-icon-btn and only adds the chips.
+
+   "switcher", not "rail": .group-rail below is the coloured bar down a group's
+   sessions, and two different things called rail in one sidebar is one too. */
+
+/* The switcher's own panel rather than .launcher-panel: same material, but this
+   one GROWS. The chips wrap onto as many rows as they need — a sidebar this
+   narrow would hide most of the groups behind a horizontal drag, and a switcher
+   you have to scroll to see is not a switcher. Only the launcher above is
+   height-locked to the toolbar; nothing below it is measured against anything. */
+.group-switcher-panel {
+  position: relative;
+  min-height: var(--toolbar-h);
+  padding: 2px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
+}
+
+/* The fixed top row. None of its three is part of the wrapping set: All is the
+   filter's off position, the field is never "selected" the way a chip is, and
+   the `+` is the panel's action. Keeping them on their own row is also what
+   stops them moving as groups come and go. */
+.group-switcher-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The chips, wrapping under the head row across as many lines as they need —
+   and gone altogether when there are none. A workspace with nothing running,
+   or a search that matched no group, used to hold this row open around a line
+   of placeholder text; an empty strip under every sidebar is clutter that says
+   what the empty panel already said. Collapsed, the panel sits at exactly its
+   min-height (the head row), so nothing below it moves until a chip arrives.
+
+   A grid track rather than a height is what makes the arrival animatable:
+   0fr → 1fr transitions, height: auto does not. The inner .group-switcher-chips
+   is the flex box that used to be here, and the thing the track clips. */
+.group-switcher-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 220ms var(--ease-out-expo),
+    margin-top 220ms var(--ease-out-expo),
+    opacity 150ms var(--ease-out-expo);
+}
+.group-switcher-wrap[data-empty="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.group-switcher-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Only when there is a head row above them — the margin would otherwise open a
+   gap at the top of the panel — and it goes with the row on the way out, so the
+   collapse lands on nothing rather than on a 2px seam. */
+.group-switcher-head + .group-switcher-wrap {
+  margin-top: 2px;
+}
+.group-switcher-head + .group-switcher-wrap[data-empty="true"] {
+  margin-top: 0;
+}
+
+.group-switcher-add {
+  flex-shrink: 0;
+}
+
+/* The search field. It reads as a field rather than a chip — recessed instead
+   of raised, and it never takes the selected fill — because it is the one thing
+   in this panel you type into rather than toggle. */
+.group-switcher-search,
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h-md);
+  padding: 0 0.375rem;
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  background-color: color-mix(in srgb, var(--surface-100) 60%, transparent);
+  transition: background-color 150ms, box-shadow 150ms, color 150ms;
+}
+.group-switcher-search:hover,
+.search-field:hover {
+  background-color: var(--surface-100);
+}
+.group-switcher-search:focus-within,
+.search-field:focus-within {
+  color: var(--text-secondary);
+  background-color: var(--surface-100);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.group-switcher-search input,
+.search-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.group-switcher-search input::placeholder,
+.search-field input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.group-switcher-search-clear,
+.search-field-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms;
+}
+.group-switcher-search-clear:hover,
+.search-field-clear:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-300);
+}
+
+.group-switcher-chip,
+.panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;           /* gap-1.5 */
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;         /* a long group name wraps the row, never the panel */
+  height: var(--control-h-md);
+  padding: 0 0.5rem;       /* px-2 — see .launcher-btn */
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  background-color: transparent;
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.group-switcher-chip:hover,
+.panel-tab:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+/* The chip Enter would act on while a search is running: the hover state,
+   without the pointer. Typing already narrows and reorders the chips, and Enter
+   already takes the first one — but nothing said WHICH, so the key was a guess
+   you confirmed by pressing it. Deliberately the hover fill rather than a state
+   of its own: hovering a chip is how you say "this one", and Enter is saying the
+   same thing about the same object. It sits above the selected rule so a chip
+   that is both stays filled — selected is a fact about the list, the Enter
+   target only a preview of the next click. */
+.group-switcher-chip[data-enter-target="true"] {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.group-switcher-chip[data-idle="true"][data-enter-target="true"] {
+  opacity: 1;
+}
+/* Selected reads as filled rather than merely brighter: this chip is the reason
+   the list below is short, so it has to be obvious at a glance which one is on.
+   A group with a colour overrides the fill inline with its own tint. */
+.group-switcher-chip[data-selected="true"],
+.panel-tab[data-selected="true"] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+
+/* The seam between the sidebar's pinned chrome and the list that scrolls under
+   it. The launcher and the switcher are held apart by 4px of the sidebar's own
+   surface; the list below got none, so a card scrolling up died flush against
+   the switcher's bottom border and the panel read as the top of the list rather
+   than as the thing the list passes behind. The same 4px, then a hairline: the
+   edge the list disappears at. Inset to the gutter the panels and the cards
+   share, so all three line up down the sidebar instead of the rule running out
+   past both. Quieter than the panel frames above it (--border-subtle rather
+   than --color-border) — a second full-strength line 4px under the switcher's
+   own border reads as a double border, not as a seam. */
+.sidebar-list-seam {
+  height: 1px;
+  margin: 4px 0.5rem 0;
+  background-color: var(--border-subtle-color);
+}
+
+/* The same seam at the FOOT, mirrored. At the top the air is above the line and
+   the list starts right under it; at the bottom the list ends right on the line
+   and the air is below, holding the banners and the foot panel off it. Same
+   hairline, same 4px, same gutter — one seam drawn twice, so the list reads as
+   passing behind chrome at both ends rather than as running out at one of them.
+   Only rendered when the list overflows: see the caller. */
+.sidebar-list-seam--foot {
+  margin: 0 0.5rem 4px;
+}
+
+/* A group's identity in one 6px dot — the folder icon the list uses is too
+   wide to repeat once several chips share a row. Colourless groups get a
+   muted dot rather than none, so every chip keeps the same shape. */
+/* A group that is declared but not running: the chip is a doorway rather than a
+   filter, so it reads quieter and its dot is hollow (drawn inline from the
+   group's colour). Clicking it starts the group. */
+.group-switcher-chip[data-idle="true"] {
+  opacity: 0.7;
+}
+.group-switcher-chip[data-idle="true"]:hover {
+  opacity: 1;
+}
+
+.group-switcher-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background-color: var(--text-tertiary);
+}
+.group-switcher-chip[data-selected="true"] .group-switcher-dot {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* ── The sidebar's foot ── */
+
+/* The card material at the foot of the sidebar, cut from the same cloth as the
+   launcher and the switcher panels at the top of it, so the list is bracketed
+   by chrome instead of trailing off into loose rows of different shapes. Two
+   things wear it: the foot panel itself (who you are, how long you have worked,
+   the doors) and the announcement cards that stack above it.
+
+   `isolation` because a field canvas inside sits at z-index 0 and everything
+   else stacks over it; `overflow: hidden` because that field is painted
+   full-bleed and the panel's own radius is what crops it. */
+.sidebar-panel {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  overflow: hidden;
+}
+
+/* The user's own field, the panel's actual ground.
+   No CSS opacity on it and no mask across it: it is quietened in the paint
+   itself — the gradient veiled back toward --surface-0, the film grain then
+   laid over that at full strength — which is why it reads as weather on the
+   panel rather than as a grey wash behind it. The dials live on the component
+   (BrandField's veil / grainAlpha in SidebarFooter), not here, because both
+   are canvas operations and neither has a CSS equivalent that keeps the grain.
+
+   Nothing here to scope per theme either: the veil is made of the app's own
+   ground, so it follows light, dark and coffee by construction. */
+.sidebar-footer-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* The foot panel proper — .sidebar-panel plus the two things only this one
+   needs.
+
+   It INSETS its contents by the system's 3px, which the plain panel does not.
+   Without it the second row was exactly one control tall, so the chat button
+   sat ON the panel's bottom border and ON the fold above it: a rounded block
+   with two of its corners cut off by the card it lives in. Nothing else in the
+   app does that, because nothing else puts a control in a box with no padding.
+
+   And it carries `--field-fill`, the fill every control in it highlights in:
+   the user's own field colour, not the app's grey. Grey is the one hover that
+   cannot go over a coloured ground — it reads as dirt on the picture rather
+   than as a control waking up. `--field-accent` is set from the palette by
+   SidebarFooter; the fallback keeps the panel alive if it ever arrives
+   without one. */
+.sidebar-footer {
+  padding: 3px;
+  --field-fill: color-mix(in srgb, var(--field-accent, var(--color-accent)) 30%, transparent);
+  --field-fill-strong: color-mix(in srgb, var(--field-accent, var(--color-accent)) 42%, transparent);
+}
+
+/* One line of the panel. The rows are the panel's own padding rather than
+   .sidebar-item's: this is chrome, like the launcher, not list. The 4px here
+   plus the panel's own 3px is the 7px keyline every control in the foot lines
+   up on, both edges. */
+.sidebar-footer-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0 4px;
+  min-width: 0;
+}
+
+/* The identity row, tall enough to carry the avatar with air around it. */
+.sidebar-footer-row--user {
+  height: 2.5rem; /* 40px = 32px avatar + 4px above and below (+3px panel = 7) */
+}
+
+/* The second line: headroom on the left, the doors on the right. Shorter than
+   the row above it, because it is a footnote to it — but taller than the
+   control it holds, which is the whole point: a 28px button in a 28px row has
+   nowhere to be. */
+.sidebar-footer-row--meta {
+  height: 2.125rem; /* 34px = 28px control + 3px above and below (+3px panel = 6) */
+}
+
+/* The hairline between them. Inset from the panel's edges so it reads as a
+   fold inside the card rather than as the card being cut in two. */
+.sidebar-footer-sep {
+  position: relative;
+  z-index: 1;
+  height: 1px;
+  margin: 0 4px;
+  background-color: var(--color-border);
+}
+
+/* The headroom meter on the foot panel's second line. A track and a fill, and
+   the fill is what is LEFT rather than what is spent: the line answers "can I
+   keep going", so the bar has to drain, not fill. Narrow on purpose — it is the
+   glanceable half of a readout whose exact number is right beside it, and the
+   row still has a name and a chat icon to seat. */
+.usage-meter {
+  position: relative;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+
+.usage-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 300ms var(--ease-out-expo), background-color 200ms;
+}
+.usage-meter-fill--normal {
+  background-color: var(--color-accent);
+}
+.usage-meter-fill--warning {
+  background-color: var(--color-wellbeing-gentle);
+}
+.usage-meter-fill--critical {
+  background-color: var(--color-wellbeing-strong);
+}
+
+/* An icon target inside the panel — the settings gear, the feedback door.
+   Same size and the same hover fill as the launcher's trailing buttons, so the
+   two panels answer to the same touch. */
+/* The panel's icon buttons — the settings gear, the chat door. The same box,
+   radius, press dip and disabled state as .panel-icon-btn, because that is
+   exactly what they are: an icon button inside a --radius-xl panel. Only the
+   hover fill differs, and it differs on purpose (see .sidebar-footer). */
+.sidebar-footer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, opacity 150ms, scale 120ms var(--ease-out-expo);
+}
+.sidebar-footer-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--field-fill);
+}
+.sidebar-footer-btn:active:not(:disabled) {
+  background-color: var(--field-fill-strong);
+}
+.sidebar-footer-btn:disabled {
+  opacity: 0.4;
+}
+
+/* The whole left half of the second line — the headroom meter and its reading,
+   or the hours worked — as one target that opens the Usage pane. A row rather
+   than a square: it stretches sideways where the buttons are fixed squares.
+   Its HEIGHT is the button's, not the row's: `height: 100%` filled the row
+   edge to edge, so the fill ran into the fold above it and read as a slab
+   rather than as the control beside the chat door. */
+.sidebar-footer-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h-md);
+  padding: 0 0.375rem;
+  border-radius: var(--radius-control);
+  transition: background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.sidebar-footer-line:hover {
+  background-color: var(--field-fill);
+}
+.sidebar-footer-line:active {
+  background-color: var(--field-fill-strong);
+}
+
+/* The avatar's own target. No fill of its own — the tile IS the picture, and a
+   wash over it would be a second field — so it says "live" with the press dip
+   the rest of the family uses. */
+.sidebar-footer-avatar {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  transition: scale 120ms var(--ease-out-expo);
+}
+
+/* The name. Its own hover target — clicking it opens settings — but no fill of
+   its own: inside a panel the pointer and the gear already say it is live. */
+.sidebar-footer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 150ms;
+}
+.sidebar-footer-name:hover {
+  color: var(--color-accent);
+}
+
+/* ── Side panel bars ── */
+
+/* The right panel's chrome: the tab bar (Files | Git, plus the controls both
+   tabs share) and, under it, whichever bar the active tab brings — the file
+   filter or the git controls. Same material as the sidebar's launcher and
+   group switcher, so the two edges of the window read as one system rather
+   than as two apps sharing a title bar.
+
+   It GROWS like the switcher instead of being height-locked like the launcher:
+   at the default 240px the git bar's branch, badges and six controls do not fit
+   on one line, and a second line INSIDE the panel reads as intended where the
+   old loose row of icons dropping toward the edge did not. */
+.panel-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-height: var(--toolbar-h);
+  padding: 2px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: color-mix(in srgb, var(--surface-0) 70%, transparent);
+}
+
+/* The icon buttons inside a .panel-bar — the same square as the launcher's
+   .launcher-icon-btn and the panel's own tabs, because they are the same kind of
+   thing sitting in the same kind of box. They used to be a size down, to keep
+   the git bar's six controls on one line at 240px; they did not, the bar ran off
+   the panel's edge anyway, and the price was a path bar whose buttons floated
+   5px inside a box whose tabs sat 3px in. The bar's width is the bar's problem
+   to solve (it wraps) — it was never worth two button sizes in one panel. */
+.panel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, opacity 150ms, scale 120ms var(--ease-out-expo);
+}
+.panel-icon-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+/* `data-active` is "this button's panel is open" (the help tab, the commit
+   bar): the control is a toggle, so its on state takes the accent rather than
+   the hover fill, which says nothing about state once the pointer leaves. */
+.panel-icon-btn[data-active="true"] {
+  color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+.panel-icon-btn:disabled {
+  opacity: 0.4;
+}
+
+/* The root chip at the head of the path bar: one letter for which root the
+   panel hangs from — W, G, S — and a chevron for "this opens". It is a
+   panel-icon-btn that grew a second glyph, so it keeps the button's height,
+   radius and states and only loses the fixed width. */
+.panel-scope-btn {
+  width: auto;
+  padding: 0 3px 0 5px;
+  gap: 1px;
+  color: var(--text-secondary);
+}
+.panel-scope-glyph {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+/* A fixed-width leading cell in a menu row, so a letter and an icon line the
+   labels beside them up the same way. */
+.menu-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+/* The trailing note on a menu row — the folder a root resolves to, or why the
+   row is greyed. */
+.menu-hint {
+  max-width: 45%;
+  font-size: 11px;
+  font-weight: var(--font-weight-normal, 400);
+  color: var(--text-tertiary);
+}
+
+/* The tab bar holds one control and nothing else — Files | Git — so the BAR
+   hugs it and centres itself, rather than running the panel's full width with
+   its contents floated into the middle. A full-width box around two buttons
+   reads as a row whose other half went missing; a box the width of the choice
+   reads as the choice. Only bars holding a single cluster take this: the moment
+   a bar has a trailing group, the label group is what places it. */
+.panel-bar--hug {
+  align-self: center;
+  flex-wrap: nowrap;
+}
+
+/* Opting a bar out of wrapping, for the path bar: it is a line of text with a
+   control at each end, and a path is a thing that truncates. The git bar used
+   to take this too, on the theory that wrapping drops one orphan icon onto a
+   second line — but its controls are a single flex-shrink-0 cluster, so they
+   wrap as one block or not at all, and holding them on one line only meant
+   running them off the panel's edge at the default 240px. It wraps again. */
+.panel-bar--nowrap {
+  flex-wrap: nowrap;
+}
+
+/* A panel bar's LABEL half — everything that says what the bar is about, as one
+   flex item: the git bar's branch glyph, its branch name, its sync badges, its
+   parent-repo notice. Being one item is what lets the bar wrap into two lines
+   rather than three: `flex: 1 1 0` makes it lay out at nothing and grow into
+   whatever its line has left, so it truncates inside itself instead of claiming
+   a line for the name and leaving the badges to find their own. Growing is also
+   how it does the old spacer's job — the controls sit at the far end of the bar
+   because the label pushed them there, not because a strut did. */
+/* A panel bar's CONTROL half. It prefers to stay whole, and the flex algorithm
+   is what gives it that preference for free: a wrapping container places items
+   on a line before it shrinks any of them, so the cluster moves to the next line
+   INTACT rather than squeezing on the current one. Only when a whole line is
+   still not enough — the side panel can be dragged to 180px, where six controls
+   do not fit end to end — does it shrink, and then it wraps inside itself. That
+   is the last resort on purpose: an icon on a second row is awkward, an icon
+   outside the panel cannot be clicked at all, and that is what used to happen.
+   Right-aligned so a partial row reads as the end of a block, not the start. */
+.panel-bar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The batch progress row — Pull all and Magic sync both draw here.
+   `flex: 0 0 100%` is what puts it UNDER the bar's controls rather than beside
+   them: the bar already wraps, so a full-width item takes the next line whole
+   and nothing above it moves. It exists only while a batch runs (plus the few
+   seconds its summary is held), so the bar is one line the rest of the time. */
+.panel-bar-progress {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 5px 3px;
+  min-width: 0;
+}
+
+/* The track is deliberately thin — this is chrome reporting on itself, not a
+   control. It carries the fill and nothing else. */
+.panel-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 3px;
+  border-radius: 999px;
+  background-color: var(--surface-100);
+  overflow: hidden;
+}
+
+.panel-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent);
+  transition: width 220ms var(--ease-out-expo);
+}
+
+/* Before the first progress event there is no denominator yet. A fill of zero
+   would read as stuck, so the track sweeps instead — the one honest thing to
+   say at that moment is "started, count unknown". */
+.panel-progress-track.is-indeterminate .panel-progress-fill {
+  width: 35%;
+  transition: none;
+  animation: panel-progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes panel-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+/* The count at the end of the track — `12/38` while running, the summary once
+   it is over. Tabular figures so the digits do not jitter as it counts up. */
+.panel-progress-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.panel-bar-label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1 1 auto;
+  min-width: 5.5rem;
+  overflow: hidden;
+}
+
+/* ── Overlays: menus, popovers, modals ──
+   One language for every surface that floats above the panels, cut from the
+   same cloth as the launcher/toolbar panels: --radius-xl corners, a 1px
+   --color-border, the panels' own --surface-0 ground, and — because these
+   float rather than sit in the layout — an --overlay-shadow. Rows inside are
+   inset and rounded like .sidebar-item, never full-bleed: the surface holds
+   the rows, the rows do not become the surface.
+
+   The ground is the same token the toolbar, the terminal cards and the
+   sidebar's boxes are painted with, so a popover reads as one of those boxes
+   lifted off the page rather than as a different material. It used to sit on
+   --surface-100, which is the hover fill of the rows inside it: a whole menu
+   the colour of a hovered row, and a shade off every box it opened from.
+
+   Motion: enter/exit run off Radix's data-state with the app's own curve.
+   These replaced tailwindcss-animate classes (animate-in/fade-in-0/…) that
+   were never installed — every CSS-mode menu and tooltip used to teleport. */
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+/* For surfaces that are centered by flex (the group picker), not by transform. */
+@keyframes surface-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(6px);
+  }
+}
+/* The floating surface for menus, popovers, dropdowns. Look only — pair with
+   .menu-pop for the data-state animation (kept separate because the framer-
+   driven popovers reuse the look but bring their own motion). */
+.menu-surface {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+  overflow: hidden;
+  /* Grow from the trigger's edge: Radix's popper publishes the origin. */
+  transform-origin: var(--radix-popper-transform-origin, 50% 0%);
+}
+/* The sheet tier: the file preview, the diff and journey panels, the file
+   palette — surfaces the size of a document that float over the terminals
+   without a scrim. Same material, the modal's heavier shadow: at that size the
+   menu shadow reads as a card lying on the page rather than held above it. */
+.menu-surface--sheet {
+  box-shadow: var(--overlay-shadow-lg);
+}
+.menu-pop[data-state='open'] {
+  animation: overlay-in 140ms var(--ease-out-expo);
+}
+.menu-pop[data-state='closed'] {
+  animation: overlay-out 100ms var(--ease-out-expo) forwards;
+}
+/* For hand-rolled (non-Radix) surfaces that mount conditionally: enter only. */
+.menu-pop-mount {
+  animation: overlay-in 140ms var(--ease-out-expo);
+}
+.scrim-mount {
+  animation: scrim-in 140ms ease-out;
+}
+
+/* A row inside a menu surface. Radix menu items highlight via
+   data-highlighted; plain buttons (popovers) get the same fill from :hover.
+   Color variants are modifier classes, NOT utilities — the design system is
+   unlayered, so a text-* utility cannot override the color set here. */
+.menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: var(--control-h-md);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  text-align: left;
+  outline: none;
+  user-select: none;
+  cursor: pointer;
+  transition: color 150ms, background-color 150ms;
+}
+.menu-item:hover,
+.menu-item[data-highlighted] {
+  background-color: var(--surface-100);
+}
+/* The current row — the active workspace, the folder you are in, a submenu
+   held open — takes the sidebar's selected fill, one step past hover. Same
+   two steps as .sidebar-item, on the same ground. */
+.menu-item[data-selected="true"],
+.menu-item[data-state="open"] {
+  background-color: var(--surface-200);
+}
+.menu-item[data-disabled],
+.menu-item:disabled {
+  pointer-events: none;
+  opacity: 0.4;
+}
+/* Secondary rows (the "Add…" / "Manage…" actions under a separator). */
+.menu-item--muted {
+  color: var(--text-secondary);
+}
+.menu-item--muted:hover,
+.menu-item--muted[data-highlighted] {
+  color: var(--text-primary);
+}
+.menu-item--danger {
+  color: #f87171;
+}
+.menu-item--danger:hover,
+.menu-item--danger[data-highlighted] {
+  color: #fca5a5;
+}
+
+/* Section label inside a menu — regular case, like the sidebar's labels; the
+   uppercase-tracked strip read as a title bar from another era. */
+.menu-label {
+  padding: 0.375rem 0.5rem 0.25rem;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+}
+
+/* Hairline between menu sections, inset so it reads as a break in the list
+   rather than a border cutting the surface. */
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background-color: var(--border-subtle-color);
+}
+
+/* Tooltip enter — near-imperceptible on purpose: tooltips fire tens of times a
+   day. Close stays instant. */
+.tooltip-pop {
+  transform-origin: var(--radix-popper-transform-origin, 50% 100%);
+}
+.tooltip-pop[data-state='delayed-open'],
+.tooltip-pop[data-state='instant-open'] {
+  animation: overlay-in 120ms var(--ease-out-expo);
+}
+
+/* The one modal scrim. Data-state animations apply when Radix drives the
+   overlay directly; the framer-driven dialogs fade it themselves. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background-color: var(--scrim-color);
+  backdrop-filter: blur(4px);
+}
+.modal-scrim[data-state='open'] {
+  animation: scrim-in 140ms ease-out;
+}
+.modal-scrim[data-state='closed'] {
+  animation: scrim-out 100ms ease-out forwards;
+}
+
+/* The modal card surface — same corners and border as the panels, lifted by
+   the large overlay shadow. */
+.modal-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-0);
+  box-shadow: var(--overlay-shadow-lg);
+  overflow: hidden;
+}
+/* Safe under the translate-utility centering: Tailwind v4 centers via the
+   independent `translate` property, which stays applied while `transform`
+   animates the scale. */
+.modal-pop[data-state='open'] {
+  animation: overlay-in 160ms var(--ease-out-expo);
+}
+.modal-pop[data-state='closed'] {
+  animation: overlay-out 100ms var(--ease-out-expo) forwards;
+}
+
+/* A main-pane view (Settings, Agents, Extensions) coming back on screen. The
+   animation restarts when the panel's `hidden` class is removed — display:none
+   kills it, re-display re-runs it — so this is a zero-JS entrance. Terminals
+   deliberately have NO equivalent: the core loop appears instantly, always. */
+.view-fade-in {
+  animation: scrim-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop[data-state='open'],
+  .menu-pop-mount,
+  .tooltip-pop[data-state='delayed-open'],
+  .tooltip-pop[data-state='instant-open'],
+  .modal-pop[data-state='open'] {
+    animation: scrim-in 100ms ease-out;
+  }
+  .menu-pop[data-state='closed'],
+  .modal-pop[data-state='closed'] {
+    animation: scrim-out 80ms ease-out forwards;
+  }
+  .group-picker-backdrop,
+  .group-picker-panel {
+    animation: none;
+  }
+  /* The switcher's chip row still appears and disappears, it just stops
+     sliding: the collapse is layout, not decoration. */
+  .group-switcher-wrap {
+    transition: none;
+  }
+}
+
+/* ── Buttons ── */
+
+/* Primary: filled accent background */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;           /* gap-1.5 */
+  height: var(--control-h-md);
+  padding: 0 1rem;         /* px-4 */
+  border-radius: var(--radius-lg);
+  font-size: 0.75rem;      /* text-xs */
+  font-weight: var(--font-weight-medium);
+  color: white;
+  background-color: var(--color-accent);
+  transition: background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.btn-primary:hover {
+  background-color: color-mix(in oklch, var(--color-accent), transparent 10%);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Secondary: ghost with optional border */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: var(--control-h-md);
+  padding: 0 0.75rem;      /* px-3 */
+  border-radius: var(--radius-lg);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  background-color: transparent;
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.btn-secondary:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Compact modifier for .btn-primary / .btn-secondary in dense contexts
+   (settings cards, inline pickers): thinner height, smaller type. */
+.btn-compact {
+  height: var(--control-h-sm);
+  padding: 0 0.625rem;     /* px-2.5 */
+  font-size: 11px;
+}
+
+/* Dialog footer buttons (Cancel / Confirm pattern) */
+.btn-dialog {
+  flex: 1;
+  padding: 0.625rem 0;     /* py-2.5 */
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  transition: color 150ms, background-color 150ms;
+}
+.btn-dialog:hover {
+  background-color: var(--surface-100);
+}
+
+/* Icon button: three sizes sharing the same base.
+ *
+ * The sizes are BOXES, not paddings. They were paddings, and that is why no two
+ * icon buttons in the app were the same size: the box came out as whatever the
+ * glyph inside it happened to be plus the padding, so one `.btn-icon-sm` was
+ * 24px next to a 16px icon, 22px next to a 14px one and 20px next to a 12px
+ * one — three different buttons wearing one class name, sitting on the same row
+ * of the same header. A fixed square makes the class mean a size again and lets
+ * a glyph be chosen for how it reads rather than for the box it will produce.
+ *
+ * Consequence worth knowing: this design system is unlayered while Tailwind's
+ * utilities live in @layer utilities, so these dimensions beat a `w-5 h-5` on
+ * the element. A call site that wants a different box picks another size class.
+ */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border-radius: var(--radius-control);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.btn-icon:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.btn-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background-color: transparent;
+  color: var(--text-tertiary);
+}
+.btn-icon-xs {
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+}
+.btn-icon-sm {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+}
+.btn-icon-md {
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+}
+
+/* Press feedback for the button family — a 3% dip the frame the pointer goes
+   down, released on the shared curve. Buttons only, never list rows: a row of
+   text shrinking under the cursor is noise, a button acknowledging the press
+   is feedback. */
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-icon:active,
+.btn-add:active,
+.launcher-btn:active:not(:disabled),
+.launcher-caret:active,
+.launcher-icon-btn:active:not(:disabled),
+.group-switcher-chip:active,
+.panel-tab:active,
+.panel-icon-btn:active:not(:disabled),
+.sidebar-footer-btn:active:not(:disabled),
+.sidebar-footer-line:active,
+.sidebar-footer-avatar:active,
+.segmented-item:active,
+.idle-group-start:active {
+  scale: 0.97;
+}
+
+/* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
+   in file headers). Items mark their active state via data-active="true". */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+}
+.segmented-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.segmented-item:hover {
+  color: var(--text-secondary);
+}
+.segmented-item[data-active="true"] {
+  background-color: var(--surface-200);
+  color: var(--text-primary);
+}
+
+/* Dashed "add" button — full-width row for adding workspaces, locations, etc. */
+.btn-add {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;             /* gap-2 */
+  height: var(--control-h-lg);
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-subtle-color);
+  font-size: 0.75rem;      /* text-xs */
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  background-color: transparent;
+  transition: color 150ms, border-color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.btn-add:hover {
+  color: var(--text-secondary);
+  border-color: var(--color-border);
+  background-color: var(--surface-100);
+}
+
+/* ── Form inputs ── */
+
+.input-field {
+  width: 100%;
+  height: var(--control-h-lg);
+  padding: 0 0.75rem;      /* px-3 */
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+  border: 1px solid var(--border-subtle-color);
+  font-size: 0.875rem;     /* text-sm */
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 150ms;
+}
+.input-field::placeholder {
+  color: var(--text-tertiary);
+}
+.input-field:focus {
+  border-color: var(--color-accent);
+}
+
+/* Multi-line variant of .input-field — height follows the `rows` attribute */
+.textarea-field {
+  width: 100%;
+  padding: 0.5rem 0.75rem;  /* py-2 px-3 */
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+  border: 1px solid var(--border-subtle-color);
+  font-size: 0.875rem;      /* text-sm */
+  line-height: 1.625;
+  color: var(--text-primary);
+  outline: none;
+  resize: none;
+  transition: border-color 150ms;
+}
+.textarea-field::placeholder {
+  color: var(--text-tertiary);
+}
+.textarea-field:focus {
+  border-color: var(--color-accent);
+}
+
+/* Compact input (inline rename, search) */
+.input-compact {
+  width: 100%;
+  height: var(--control-h-md);
+  padding: 0 0.75rem;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+  border: 1px solid var(--border-subtle-color);
+  font-size: 0.75rem;      /* text-xs */
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.input-compact::placeholder {
+  color: var(--text-tertiary);
+}
+.input-compact:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+/* A compact input carrying an affordance on its trailing edge — a search
+   glass, a reveal toggle. The inset has to live here: the design system is
+   unlayered while Tailwind's utilities sit in @layer utilities, so the
+   shorthand `padding` above always beats a `pr-*` utility on the element. */
+.input-compact-icon-right {
+  padding-right: 1.75rem;  /* pr-7 */
+}
+
+/* Extra-thin input for dense settings rows */
+.input-xs {
+  height: var(--control-h-sm);
+  padding: 0 0.5rem;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-100);
+  border: 1px solid var(--border-subtle-color);
+  font-size: 11px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.input-xs::placeholder {
+  color: var(--text-tertiary);
+}
+.input-xs:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* ── Badges ── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;            /* gap-1 */
+  border-radius: 9999px;   /* rounded-full */
+  padding: 2px 6px;        /* py-0.5 px-1.5 */
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+}
+
+.badge-uppercase {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+
+/* ── Settings ──
+   The settings pages, on the same material as the sidebars and the side
+   panel: the panel border (--color-border, not the subtle one), the 10px
+   radius, 28px controls at --radius-lg (a settings control has no panel
+   corner to answer to, BRAND.md), one width and one header shape per page. */
+
+/* The pane every settings page scrolls in. The gutter is RESERVED rather than
+   taken when a page happens to overflow: the 6px scrollbar is carved out of the
+   content box, and the page inside is centred with `mx-auto`, so a page that
+   scrolls used to centre on 3px less width than one that does not. The six
+   pages then landed on two different left edges — General, Agents and Keymaps
+   at one, Appearance, Software Update and Usage 3px to their right — and
+   clicking down the sidebar shifted the whole page under the pointer. Holding
+   the gutter costs 6px on a short page and makes every page land on the same
+   column. The Extensions pane is the same shape and takes the same class. */
+.settings-scroller {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 2rem;
+}
+
+/* The page's head: a title, a one-line description, the page's own actions on
+   the right where it has some (Keymaps' import and export). */
+.settings-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+.settings-page-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.settings-page-description {
+  margin-top: 0.25rem;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.settings-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding-top: 0.125rem;
+}
+
+/* The settings sidebar's section labels — regular case like .menu-label, the
+   sidebar's gutter, a breath above each group. */
+.settings-nav-label {
+  padding: 0.875rem var(--sidebar-row-px) 0.25rem;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  user-select: none;
+}
+.settings-nav-label:first-child {
+  padding-top: 0.25rem;
+}
+
+/* Section title above each settings card, with room for a glyph (the agent
+   families' logos), and its one-line description under it. */
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.settings-section-title > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.settings-section-description {
+  margin-top: 0.125rem;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.settings-section-head {
+  margin-bottom: 0.625rem;
+}
+
+/* Grouped card holding settings rows: the panel material (a step up from the
+   pane it sits on, the panel border), rows separated by hairline seams. */
+.settings-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-50);
+  overflow: hidden;
+}
+.settings-card > * + * {
+  border-top: 1px solid var(--border-subtle-color);
+}
+
+/* Single row inside a settings card: text block left, control right */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 0.875rem;  /* py-2.5 px-3.5 */
+}
+.settings-row-title {
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.settings-row-description {
+  font-size: 0.75rem;          /* text-xs */
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+/* Full-width action row at the bottom of a card (e.g. "Add Workspace") */
+.settings-row-action {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;               /* gap-1.5 */
+  min-height: var(--control-h-lg);
+  padding: 0.375rem 0.875rem;
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  transition: color 150ms, background-color 150ms;
+}
+.settings-row-action:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+
+/* A callout under a card: a confirmation, a picker, an error. Same material,
+   the tone on the border only. */
+.settings-callout {
+  padding: 0.75rem 0.875rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-50);
+}
+.settings-callout[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--color-destructive) 45%, transparent);
+}
+.settings-callout[data-tone="accent"] {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.settings-callout-title {
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.settings-callout-text {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* A status said in words at the end of a row (a location's connection). */
+.status-text {
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+}
+.status-text[data-status="connected"] {
+  color: var(--color-success);
+}
+.status-text[data-status="connecting"] {
+  color: var(--color-warning);
+}
+.status-text[data-status="error"] {
+  color: var(--color-destructive);
+}
+
+/* The select: a trigger cut like .input-compact with the caret held off the
+   edge, and the app's own menu surface for the options (the native popover
+   drew the browser's chevron against the border and its own list). */
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--control-h-md);
+  max-width: 100%;
+  padding: 0 0.375rem 0 0.625rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle-color);
+  background-color: var(--surface-100);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  transition: color 150ms, border-color 150ms, background-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.select-trigger:hover {
+  border-color: var(--color-border);
+  background-color: var(--surface-200);
+}
+.select-trigger[data-state="open"] {
+  border-color: var(--color-accent);
+}
+.select-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.select-trigger:active:not(:disabled) {
+  scale: 0.97;
+}
+.select-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.select-trigger-caret {
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--text-tertiary);
+}
+.select-menu {
+  min-width: var(--radix-dropdown-menu-trigger-width);
+  max-height: min(20rem, var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+}
+.select-option {
+  font-size: 12px;
+  min-height: var(--control-h-md);
+}
+.select-option-check {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--color-accent);
+}
+
+/* The switch: a 28×16 pill, the knob on the token above. State is
+   data-checked, like every toggle in the system. */
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1rem;
+  border-radius: 999px;
+  background-color: var(--surface-300);
+  transition: background-color 150ms;
+}
+.switch[data-checked="true"] {
+  background-color: var(--color-accent);
+}
+.switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background-color: var(--color-switch-knob);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: translate 150ms var(--ease-out-expo);
+}
+.switch[data-checked="true"] .switch-knob {
+  translate: 0.75rem 0;
+}
+
+/* A theme's swatch on the Appearance page. The preview inside carries
+   data-theme, so it is painted with that theme's own tokens. */
+.theme-swatch {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  background-color: var(--surface-100);
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.theme-swatch:hover {
+  border-color: var(--text-tertiary);
+}
+.theme-swatch[data-selected="true"] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.theme-swatch-preview {
+  padding: 0.75rem;
+  margin-bottom: 0.375rem;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-color);
+  background-color: var(--surface-0);
+}
+.theme-swatch-line {
+  height: 0.375rem;
+  border-radius: 999px;
+  background-color: var(--text-primary);
+}
+.theme-swatch-tile {
+  flex: 1;
+  height: 1.5rem;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-200);
+}
+.theme-swatch-label {
+  padding-bottom: 0.25rem;
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+  color: var(--text-primary);
+}
+
+/* An icon button whose action is destructive: the ink only turns on hover,
+   so a row of quiet glyphs does not carry a red one at rest. */
+.btn-icon--danger:hover {
+  color: var(--color-destructive);
+}
+
+/* ── Extension cards ── */
+/* Grid of clickable cards used in the Extensions browser (marketplaces, plugins,
+   MCP servers). Cards share the recessed look of .settings-card but stand as
+   independent tiles with a hover affordance when interactive. */
+.extension-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.625rem; /* gap-2.5 */
+}
+.extension-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  text-align: left;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-subtle-color);
+  background-color: color-mix(in oklab, var(--surface-100) 55%, transparent);
+  padding: 0.875rem; /* p-3.5 */
+  transition:
+    border-color 150ms,
+    background-color 150ms;
+}
+button.extension-card {
+  cursor: pointer;
+}
+button.extension-card:hover {
+  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  background-color: var(--surface-100);
+}
+.extension-card-muted {
+  opacity: 0.55;
+}
+
+/* ── Pills ── */
+/* Small non-interactive chips used in session headers to surface live config
+   (model, reasoning effort, context window). Share shape with .badge but with
+   richer color tokens and an icon slot. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;              /* gap-1 */
+  height: 20px;
+  padding: 0 6px;        /* px-1.5 */
+  border-radius: 9999px; /* rounded-full */
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  transition: color 150ms, background-color 150ms;
+}
+.pill svg {
+  flex-shrink: 0;
+}
+.pill-muted {
+  color: var(--text-tertiary);
+}
+

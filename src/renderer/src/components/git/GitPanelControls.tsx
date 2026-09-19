@@ -11,7 +11,7 @@ import {
   ClockIcon,
   QueueListIcon
 } from '@heroicons/react/24/outline'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 import { useGitBatch } from './git-batch-context'
 
 // ---------------------------------------------------------------------------

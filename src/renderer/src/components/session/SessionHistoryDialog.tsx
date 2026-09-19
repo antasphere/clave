@@ -13,7 +13,7 @@ import { useSessionStore, inActiveWorkspace } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { resumeHistoryEntry } from '../../lib/session-history'
 import { dotStateOf, visibleInWorkspace } from '../../lib/session-history-diff'
-import { cn, shortenPath } from '../../lib/utils'
+import { cn, shortenPath } from '@clave/ui/components'
 import { ContextMenu } from '../ui/ContextMenu'
 import { entryInGroup } from '../../../../shared/history-group-match'
 import type {
