@@ -1,3 +1,17 @@
+import type { Session, SessionStream, UserMessage } from '../shared/session-model'
+
+/** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface SessionIPC {
+  'sessions:list': { args: []; result: Session[] }
+  'sessions:subscribe': { args: [sessionId: string]; result: Session }
+  'sessions:unsubscribe': { args: [sessionId: string]; result: void }
+  'sessions:write': { args: [sessionId: string, input: Uint8Array | UserMessage]; result: void }
+}
+export interface SessionIPCEvents {
+  [channel: `sessions:stream:${string}`]: SessionStream
+  [channel: `sessions:exit:${string}`]: number
+}
+
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
@@ -477,6 +491,15 @@ export interface MagicPullResult {
 }
 
 export interface ElectronAPI {
+  sessionsList: () => Promise<Session[]>
+  /** Register stream/exit listeners first, then await this before writing. */
+  sessionsSubscribe: (id: string) => Promise<Session>
+  /** Release this view's subscription, then remove its stream/exit listeners. */
+  sessionsUnsubscribe: (id: string) => Promise<void>
+  sessionsWrite: (id: string, input: Uint8Array | UserMessage) => Promise<void>
+  onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
+  onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
+
   /** `process.platform` of the main process. The renderer reads it only to
    *  decide whether to hold room for window buttons drawn inside our own
    *  chrome — macOS does, Windows and Linux do not. */

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { LaunchProfileManager } from './launch-profile-manager'
+import { LaunchProfileManager, isEchoLaunchProfile } from './launch-profile-manager'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
 
@@ -93,4 +93,17 @@ describe('LaunchProfileManager', () => {
       )
     })
   })
+})
+
+it('echo detection is a non-throwing predicate and resolution does not clone preferences', () => {
+  const clone = vi.spyOn(globalThis, 'structuredClone')
+  try {
+    expect(isEchoLaunchProfile('dev-echo-adapter')).toBe(false)
+    expect(isEchoLaunchProfile('builtin-claude')).toBe(false)
+    expect(isEchoLaunchProfile(null)).toBe(false)
+    withManager((manager) => expect(manager.resolve('claude').id).toBe('builtin-claude'))
+    expect(clone).not.toHaveBeenCalled()
+  } finally {
+    clone.mockRestore()
+  }
 })

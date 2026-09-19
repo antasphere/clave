@@ -1,3 +1,5 @@
+import { registerSessionIpc } from './sessions/ipc'
+import { sessionManager } from './sessions/session-manager'
 import { app } from 'electron'
 import { mkdirSync, readFileSync, existsSync, rmSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
@@ -13,9 +15,16 @@ import { join } from 'path'
  * Pi's bundled extension writes the same state words. Codex uses its TUI's OSC
  * runtime titles instead, consumed by use-terminal.ts. Antigravity stays neutral.
  */
-export type AgentState = 'idle' | 'working' | 'blocked' | 'done' | 'ended'
+import type { AgentState } from '../shared/session-model'
+export type { AgentState } from '../shared/session-model'
 
-const VALID: ReadonlySet<string> = new Set<AgentState>(['idle', 'working', 'blocked', 'done', 'ended'])
+const VALID: ReadonlySet<string> = new Set<AgentState>([
+  'idle',
+  'working',
+  'blocked',
+  'done',
+  'ended'
+])
 const SUFFIX = '.state'
 
 let stateDir: string | null = null
@@ -44,6 +53,7 @@ export function stateFilePath(claveSessionId: string): string {
  * state. Safe to call multiple times — only the first call installs the watcher.
  */
 export function startWatching(onState: (claveSessionId: string, state: AgentState) => void): void {
+  registerSessionIpc()
   if (watcher) return
   const dir = getStateDir()
   try {
@@ -59,7 +69,10 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
         // A truncate-then-write can momentarily yield an empty/partial read;
         // we simply ignore anything that isn't a known state word and wait for
         // the follow-up change event carrying the full word.
-        if (VALID.has(raw)) onState(claveSessionId, raw as AgentState)
+        if (VALID.has(raw)) {
+          sessionManager.setState(claveSessionId, raw as AgentState)
+          onState(claveSessionId, raw as AgentState)
+        }
       } catch {
         // transient read error — ignore
       }

@@ -1,3 +1,4 @@
+import type { Session, SessionStream, UserMessage } from '../shared/session-model'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
@@ -16,7 +17,38 @@ function createIpcListener<T extends unknown[]>(
   }
 }
 
+// One main-process subscription per renderer/session; each view owns a ref.
+const sessionSubscriptionRefs = new Map<string, number>()
+
 const electronAPI = {
+  sessionsList: (): Promise<Session[]> => ipcRenderer.invoke('sessions:list'),
+  sessionsSubscribe: async (id: string): Promise<Session> => {
+    sessionSubscriptionRefs.set(id, (sessionSubscriptionRefs.get(id) ?? 0) + 1)
+    try {
+      return await ipcRenderer.invoke('sessions:subscribe', id)
+    } catch (error) {
+      const refs = (sessionSubscriptionRefs.get(id) ?? 1) - 1
+      if (refs > 0) sessionSubscriptionRefs.set(id, refs)
+      else sessionSubscriptionRefs.delete(id)
+      throw error
+    }
+  },
+  sessionsUnsubscribe: (id: string): Promise<void> => {
+    const refs = sessionSubscriptionRefs.get(id) ?? 0
+    if (refs > 1) {
+      sessionSubscriptionRefs.set(id, refs - 1)
+      return Promise.resolve()
+    }
+    sessionSubscriptionRefs.delete(id)
+    return ipcRenderer.invoke('sessions:unsubscribe', id)
+  },
+  sessionsWrite: (id: string, input: Uint8Array | UserMessage): Promise<void> =>
+    ipcRenderer.invoke('sessions:write', id, input),
+  onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
+    createIpcListener(`sessions:stream:${id}`, callback),
+  onSessionStreamExit: (id: string, callback: (code: number) => void) =>
+    createIpcListener(`sessions:exit:${id}`, callback),
+
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
