@@ -216,7 +216,7 @@ export async function run(t) {
     await footer().click()
     for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
       await win.evaluate(
-        (value) => document.documentElement.setAttribute('data-theme', value),
+        (value) => window.electronAPI.skinsActivate(value),
         theme
       )
       const geometry = await panel('codex').evaluate((el) => ({

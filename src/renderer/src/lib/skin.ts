@@ -1,3 +1,4 @@
+import { setTerminalSkin } from './terminal-theme'
 import { create } from 'zustand'
 import { bundledSkins } from '../../../../packages/skins/bundled'
 import type { Skin, SkinState } from '../../../../packages/skins/types'
@@ -19,6 +20,8 @@ export function applySkin(tokens: Record<string, string>): void {
   // This preference remains owned by the tree-separator control.
   appliedKeys = Object.keys(tokens).filter((key) => key !== '--rule-intensity')
   for (const key of appliedKeys) root.style.setProperty(key, tokens[key])
+  setTerminalSkin(tokens)
+  useSkinStore.setState((s) => ({ revision: s.revision + 1 }))
 }
 
 function receive(state: SkinState): void {
@@ -39,7 +42,7 @@ function receive(state: SkinState): void {
     useSessionStore.setState({ theme })
     localStorage.setItem('clave-theme', theme)
   }
-  useSkinStore.setState((s) => ({ ...state, revision: s.revision + 1 }))
+  useSkinStore.setState(state)
 }
 
 export async function skinAction(action: () => Promise<SkinState>): Promise<void> {
@@ -47,7 +50,10 @@ export async function skinAction(action: () => Promise<SkinState>): Promise<void
     receive(await action())
     useSkinStore.setState({ error: null })
   } catch (error) {
-    useSkinStore.setState({ error: String(error) })
+    const message = error instanceof Error ? error.message : String(error)
+    useSkinStore.setState({
+      error: message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
+    })
   }
 }
 
@@ -55,7 +61,12 @@ export function initializeSkins(): () => void {
   const unsubscribe = window.electronAPI.onSkinsChanged(receive)
   void skinAction(async () => {
     const state = await window.electronAPI.skinsList()
-    if (!state.activeId) return window.electronAPI.skinsActivate(useSessionStore.getState().theme)
+    if (!state.activeId) {
+      const legacyTheme = useSessionStore.getState().theme
+      return window.electronAPI.skinsActivate(
+        state.skins.some((skin) => skin.id === legacyTheme) ? legacyTheme : 'light'
+      )
+    }
     return state
   })
   return unsubscribe

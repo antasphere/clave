@@ -67,3 +67,19 @@ cascade for nested swatches. Extraction must produce no diff on a second run.
 `tests/visual/skins-parity.mjs` compares the original CSS cascade with the applied
 skin in real Electron at a 0.1% changed-pixel threshold. Screenshots stay in memory.
 `CLAVE_SKIN_PARITY_MUTATE=1` must make this check fail.
+
+## Terminals
+
+`--terminal-*` tokens in `@clave/ui` preserve the original four terminal palettes.
+`skin-to-xterm.ts` is the only mapping for local, remote and toolbar terminals;
+background and cursor accent use `--surface-0`, while ANSI, foreground, selection
+and cursor colors use their named terminal tokens. `none` leaves selection
+foreground unset, retaining xterm's original behavior. Token references resolve
+before reaching xterm; the renderer converts modern CSS colors to RGBA.
+
+For installed skins, an explicit `--color-accent` override also supplies the
+terminal cursor accent unless `--terminal-accent` or `--terminal-cursor` is
+provided. Thus a single accent edit updates panels and already-running terminals.
+Bundled cursor colors remain exactly as before. `tests/visual/fixtures/legacy-xterm.json`
+is a test-only snapshot of the palettes before conversion; unit and Electron
+checks compare every original property against it.

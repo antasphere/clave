@@ -1,3 +1,4 @@
+import { inheritSkinTokens, skinToXterm } from '../../../packages/skins/skin-to-xterm'
 import {
   mkdirSync,
   existsSync,
@@ -42,7 +43,9 @@ export class SkinStore {
     const tokens = validateTokens(JSON.parse(read('skin.json')))
     if (manifest.skin.css) Object.assign(tokens, parseSkinCss(read(manifest.skin.css)))
     const base = bundledSkins.find((s) => s.id === manifest.skin.base)!
-    return { ...manifest, tokens: { ...base.tokens, ...tokens }, bundled: false }
+    const resolved = inheritSkinTokens(base.tokens, tokens)
+    skinToXterm(resolved)
+    return { ...manifest, tokens: resolved, bundled: false }
   }
 
   list(): SkinState {
@@ -98,6 +101,9 @@ export class SkinStore {
     } else {
       skin = this.read(source)
     }
+    skinToXterm(
+      inheritSkinTokens(bundledSkins.find((s) => s.id === skin.skin.base)!.tokens, skin.tokens)
+    )
     if (this.list().skins.some((s) => s.id === skin.id))
       throw new Error('A skin with this id is already installed')
     const target = join(this.root, skin.id)
