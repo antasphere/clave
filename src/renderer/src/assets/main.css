@@ -455,6 +455,13 @@
   overflow: hidden;
   animation: surface-in 160ms var(--ease-out-expo);
 }
+@media (prefers-reduced-motion: reduce) {
+  .group-picker-backdrop,
+  .group-picker-panel {
+    animation: none;
+  }
+}
+
 .group-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));

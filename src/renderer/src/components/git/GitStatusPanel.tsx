@@ -4,7 +4,7 @@ import { useGitStatus } from '../../hooks/use-git-status'
 import { ConfirmDialog } from '@clave/ui/components'
 import { ContextMenu } from '../ui/ContextMenu'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
-import { shortenPath } from '@clave/ui/components'
+import { shortenPath } from '../../lib/utils'
 import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
 import { buildGitTree, compactTree, collectAllDirPaths } from '../../lib/git-file-tree'
 import {

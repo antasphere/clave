@@ -11,7 +11,7 @@ import { MagicPullButton, MagicSyncButton, ViewModeToggle, PanelModeToggle, Coll
 import { GitBatchProvider, GitBatchProgressBar } from './GitBatchProgress'
 import { useMultiRepoStatus } from '../../hooks/use-multi-repo-status'
 import { useGitStatus } from '../../hooks/use-git-status'
-import { shortenPath } from '@clave/ui/components'
+import { shortenPath } from '../../lib/utils'
 import { HelpPanel } from '../help/HelpPanel'
 import { Tooltip, TooltipTrigger, TooltipContent, IconButton } from '@clave/ui/components'
 import {

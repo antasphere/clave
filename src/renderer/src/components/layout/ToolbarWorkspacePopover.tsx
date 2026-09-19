@@ -11,7 +11,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { useSessionStore } from '../../store/session-store'
 import { setActiveWorkspace, addWorkspace } from '../../lib/workspace-actions'
-import { shortenPath } from '@clave/ui/components'
+import { shortenPath } from '../../lib/utils'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
  *  has to be chosen before the workspace exists. */

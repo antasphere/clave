@@ -265,6 +265,7 @@ function HueSlider({
 // --- Main ColorPicker component ---
 
 export interface ColorPickerProps {
+  presetOrder: readonly string[]
   presets: Record<string, string>
   value: string | null | undefined
   onChange: (color: string | null) => void
@@ -275,7 +276,8 @@ export function ColorPicker({
   value,
   onChange,
   showNoColor = true,
-  presets
+  presets,
+  presetOrder
 }: ColorPickerProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [hexInput, setHexInput] = useState('')
@@ -373,7 +375,7 @@ export function ColorPicker({
             ) : null}
           </button>
         )}
-        {Object.keys(presets).map((color) => (
+        {presetOrder.map((color) => (
           <button
             key={color}
             onClick={(ev) => {

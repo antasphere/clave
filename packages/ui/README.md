@@ -186,7 +186,7 @@ import { ConfirmDialog, ColorPicker, cn } from '@clave/ui/components'
 that order. Skins can import `@clave/ui/tokens.css` independently. Shared controls
 must never import the app's stores, Electron bridge, or feature components.
 
-`ColorPicker` accepts a `presets` map; `ThemeToggle` accepts `theme` and `setTheme`;
+`ColorPicker` accepts a `presets` map and an explicit `presetOrder` array; `ThemeToggle` accepts `theme` and `setTheme`;
 `EmptyState` accepts an `action` node. The app keeps thin adapters at the old paths
 for its terminal palette, persisted theme, and new-session action. All other old
 primitive paths are compatibility re-exports for one release.

@@ -8,7 +8,8 @@ import {
   getPersistentToolbarSession,
   takeToolbarSurvivor
 } from '../../lib/toolbar-terminal-registry'
-import { cn, safePort } from '@clave/ui/components'
+import { cn } from '@clave/ui/components'
+import { safePort } from '../../lib/utils'
 
 interface ToolbarTerminalPopoverProps {
   cwd: string

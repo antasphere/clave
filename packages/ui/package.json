@@ -1,7 +1,7 @@
 {
   "name": "@clave/ui",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "type": "module",
   "license": "MIT",
   "files": [

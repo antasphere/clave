@@ -1141,10 +1141,6 @@ body,
   .modal-pop[data-state='closed'] {
     animation: scrim-out 80ms ease-out forwards;
   }
-  .group-picker-backdrop,
-  .group-picker-panel {
-    animation: none;
-  }
   /* The switcher's chip row still appears and disappears, it just stops
      sliding: the collapse is layout, not decoration. */
   .group-switcher-wrap {
