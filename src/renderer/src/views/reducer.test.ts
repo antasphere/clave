@@ -46,6 +46,7 @@ describe('conversation stream', () => {
     expect(state.entries[1]).toMatchObject({ name: 'Read', output: { ok: true }, complete: true })
     state = reduceConversation(state, { answer: 'p', optionId: 'yes' })
     expect(state.entries[2]).toMatchObject({ answer: 'yes' })
+    expect(state.state).toBe('working')
     expect(state.entries.map((e) => e.kind)).toEqual([
       'assistant',
       'tool',

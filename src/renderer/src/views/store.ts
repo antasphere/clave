@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import type { Session } from '../../../shared/session-model'
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
-import { useSessionStore } from '../store/session-store'
+import { useViewSessionStore } from './session-store'
 interface Registry {
   sessions: Session[]
   plugins: PluginRecord[]
@@ -14,7 +14,7 @@ export const useRegistry = create<Registry>(() => ({
   terminal: new Set()
 }))
 export function useViewRegistry(): void {
-  const sessions = useSessionStore((s) => s.sessions)
+  const sessions = useViewSessionStore((s) => s.sessions)
   useEffect(() => {
     let active = true
     const refresh = async (): Promise<void> => {

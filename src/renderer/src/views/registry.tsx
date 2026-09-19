@@ -5,7 +5,8 @@ import type { Session, AgentState } from '../../../shared/session-model'
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
 import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
-import { useSessionStore } from '../store/session-store'
+import { useViewSessionStore } from './session-store'
+import { emitTabClosed } from '../lib/exchange-capture'
 
 const nativeViews: Record<string, ComponentType<ChatViewProps>> = { 'clave.chat-view': ChatView }
 function resolveView(session: Session | undefined, plugins: PluginRecord[]): string | undefined {
@@ -51,7 +52,7 @@ export function RegisteredSessionView({
   const session = registry.sessions.find((s) => s.id === sessionId)
   const viewId = resolveView(session, registry.plugins)
   const View = viewId ? nativeViews[viewId] : undefined
-  const focused = useSessionStore((s) => s.focusedSessionId === sessionId)
+  const focused = useViewSessionStore((s) => s.focusedSessionId === sessionId)
   const [meta, setMeta] = useState<{ state: string; model: string | null }>({
     state: 'idle',
     model: null
@@ -59,12 +60,23 @@ export function RegisteredSessionView({
   const onState = useCallback(
     (state: AgentState, model: string | null): void => {
       setMeta({ state, model })
-      const store = useSessionStore.getState()
+      const store = useViewSessionStore.getState()
       if (state === 'ended') store.updateSessionAlive(sessionId, false)
       else store.setAgentState(sessionId, state)
     },
     [sessionId]
   )
+  const close = async (): Promise<void> => {
+    const current = useViewSessionStore.getState()
+    const closing = current.sessions.find((s) => s.id === sessionId)
+    if (closing) emitTabClosed(closing, current.groups, 'user', null)
+    try {
+      await window.electronAPI.killSession(sessionId)
+    } catch {
+      // The provider may already have exited, as in the terminal header.
+    }
+    useViewSessionStore.getState().removeSession(sessionId)
+  }
   // v1 describes exactly one transport. A future dual-transport record can pass
   // its PTY session id here without changing the view plugin's bridge.
   const terminal = registry.terminal.has(sessionId)
@@ -74,7 +86,7 @@ export function RegisteredSessionView({
     <section
       className="chat-host"
       data-focused={focused}
-      onPointerDown={() => useSessionStore.getState().setFocusedSession(sessionId)}
+      onPointerDown={() => useViewSessionStore.getState().setFocusedSession(sessionId)}
     >
       <header className="chat-header">
         <span className="chat-header-title">
@@ -114,11 +126,7 @@ export function RegisteredSessionView({
             <CommandLineIcon />
           </button>
         </span>
-        <button
-          className="panel-icon-btn"
-          aria-label="Close session"
-          onClick={() => useSessionStore.getState().closeSession(sessionId)}
-        >
+        <button className="panel-icon-btn" aria-label="Close session" onClick={() => void close()}>
           <XMarkIcon />
         </button>
       </header>

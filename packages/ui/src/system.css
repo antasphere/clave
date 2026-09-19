@@ -1838,7 +1838,7 @@ button.extension-card:hover {
 
 /* ── Conversation views ──────────────────────────────────────────────── */
 .chat-host, .chat-view { display: flex; flex-direction: column; height: 100%; min-height: 0; font-family: var(--font-sans); color: var(--text-primary); }
-.chat-header { display: flex; align-items: center; gap: calc(var(--spacing) * 2); padding: var(--spacing); border-bottom: thin solid var(--border-subtle); }
+.chat-header { display: flex; align-items: center; gap: calc(var(--spacing) * 2); padding: var(--spacing); border-bottom: thin solid var(--border-subtle-color); }
 .chat-header-title { flex-shrink: 0; }
 .chat-cwd { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .chat-state, .chat-turn-label, .chat-composer-footer { font-size: var(--text-xs); color: var(--text-tertiary); }
@@ -1852,11 +1852,11 @@ button.extension-card:hover {
 .chat-turn pre, .chat-card-body pre, .chat-permission-card pre { overflow: auto; padding: calc(var(--spacing) * 3); background: var(--surface-50); border-radius: var(--radius-control); white-space: pre-wrap; }
 .chat-view pre, .chat-view code { font-family: var(--font-sans); font-size: var(--text-sm); }
 .chat-code-emphasis { font-style: italic; }
-.chat-tool-card, .chat-permission-card { border: thin solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-50); }
+.chat-tool-card, .chat-permission-card { border: thin solid var(--border-subtle-color); border-radius: var(--radius-control); background: var(--surface-50); }
 .chat-tool-card summary, .chat-permission-card { padding: calc(var(--spacing) * 3); }
 .chat-tool-card summary { cursor: pointer; }
 .chat-tool-card summary span { color: var(--text-secondary); margin-left: calc(var(--spacing) * 2); }
-.chat-card-body { padding: calc(var(--spacing) * 3); border-top: thin solid var(--border-subtle); }
+.chat-card-body { padding: calc(var(--spacing) * 3); border-top: thin solid var(--border-subtle-color); }
 .chat-actions { display: flex; flex-wrap: wrap; gap: calc(var(--spacing) * 2); margin-top: calc(var(--spacing) * 3); }
 .chat-notice { padding: calc(var(--spacing) * 3); border-left: thin solid var(--color-accent); color: var(--text-secondary); }
 .chat-empty { margin: auto; padding: calc(var(--spacing) * 4); text-align: center; color: var(--text-secondary); }

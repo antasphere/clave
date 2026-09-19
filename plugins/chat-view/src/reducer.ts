@@ -29,15 +29,19 @@ export type Action =
   | { exit: number }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
-  if ('answer' in action)
+  if ('answer' in action) {
+    const entries = state.entries.map((e) =>
+      e.kind === 'permission' && e.request.id === action.answer
+        ? { ...e, answer: action.optionId }
+        : e
+    )
+    const waiting = entries.some((e) => e.kind === 'permission' && !e.answer)
     return {
       ...state,
-      entries: state.entries.map((e) =>
-        e.kind === 'permission' && e.request.id === action.answer
-          ? { ...e, answer: action.optionId }
-          : e
-      )
+      entries,
+      state: state.state === 'blocked' && !waiting ? 'working' : state.state
     }
+  }
   const { event } = action
   const at = action.at ?? Date.now()
   const entries = [...state.entries]

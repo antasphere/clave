@@ -99,7 +99,26 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
                 <div className="chat-turn-label">
                   {entry.kind === 'user' ? 'You' : session.provider}
                 </div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: ChatCode }}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code: ChatCode,
+                    a: ({ href, children }) =>
+                      href && /^(https?:|mailto:)/i.test(href) ? (
+                        <a
+                          href={href}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            void window.electronAPI.openExternal(href).catch(report)
+                          }}
+                        >
+                          {children}
+                        </a>
+                      ) : (
+                        <span>{children}</span>
+                      )
+                  }}
+                >
                   {entry.text}
                 </ReactMarkdown>
               </article>

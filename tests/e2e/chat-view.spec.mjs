@@ -4,6 +4,8 @@ import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
 import { REPO, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
 
+export const TOOL_RESULT = 'chat-result: verified payload 2537'
+
 export async function openChat(suffix = 'chat-view') {
   const dir = `/tmp/clave-e2e-${suffix}`
   const root = `${dir}-root`
@@ -87,8 +89,35 @@ export async function run(t) {
     assert.match(await win.locator('.chat-turn[data-role="assistant"]').innerText(), /\/help/)
     assert.match(await win.locator('.chat-tool-card').innerText(), /Complete/)
     await win.locator('.chat-tool-card summary').click()
-    assert.match(await win.locator('.chat-tool-card').innerText(), /Result/)
+    assert.equal(await win.locator('.chat-tool-card pre').last().innerText(), '/help\n')
+    await inject(app, record.id, [
+      { type: 'tool_call', id: 'distinct-result', name: 'Read fixture', input: {} },
+      { type: 'tool_result', id: 'distinct-result', output: TOOL_RESULT }
+    ])
+    const resultCard = win.locator('.chat-tool-card').filter({ hasText: 'Read fixture' })
+    await resultCard.locator('summary').filter({ hasText: 'Complete' }).click()
+    assert.equal(await resultCard.locator('pre').last().innerText(), TOOL_RESULT)
     t.check('Enter sends slash text through echo; Shift+Enter only inserts a newline', true)
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('shell:openExternal')
+      ipcMain.handle('shell:openExternal', (_event, url) => {
+        globalThis.__chatExternal = url
+      })
+    })
+    await inject(app, record.id, [
+      {
+        type: 'assistant_text',
+        delta: '[Reference](https://example.com/chat-reference)',
+        final: true
+      }
+    ])
+    await win.getByRole('link', { name: 'Reference', exact: true }).click()
+    assert.ok(
+      await until(() =>
+        app.evaluate(() => globalThis.__chatExternal === 'https://example.com/chat-reference')
+      )
+    )
+    t.check('markdown links use the host external-link handler', true)
     await app.evaluate(({ ipcMain }) => {
       const original = ipcMain._invokeHandlers.get('sessions:write')
       globalThis.__chatWrites = []
@@ -132,7 +161,8 @@ export async function run(t) {
     })
     assert.ok(await win.getByRole('button', { name: 'Deny', exact: true }).isDisabled())
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
-    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await win.locator('.chat-state[data-state="working"]').waitFor()
+    assert.equal(await win.locator('.chat-state').innerText(), 'working')
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
     assert.match(
       await win
@@ -155,23 +185,41 @@ export async function run(t) {
     await win.getByText('Session ended (exit 0)', { exact: true }).waitFor()
     assert.ok(await input.isDisabled())
     t.check('interrupt, inline errors and exit state reach the conversation', true)
+    const beforeDisable = await unsubscribeCount(app, record.id)
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
     await win.locator('.xterm').waitFor()
     assert.equal(await win.locator('[data-testid="chat-view"]').count(), 0)
-    assert.ok(
-      await until(() =>
-        app.evaluate(
-          (_electron, id) =>
-            globalThis.__chatSubscriptions.some(
-              (call) => call.channel === 'sessions:unsubscribe' && call.id === id
-            ),
-          record.id
-        )
-      ),
-      JSON.stringify(await app.evaluate(() => globalThis.__chatSubscriptions))
+    assert.ok(await until(async () => (await unsubscribeCount(app, record.id)) > beforeDisable))
+    t.check('disabling plugin restores terminal fallback and releases its subscription', true)
+    await win.evaluate(() =>
+      window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
     )
-    t.check('disabling plugin restores terminal fallback', true)
+    await win.locator('[data-testid="chat-view"] textarea:not(:disabled)').waitFor()
+    const beforeClose = await unsubscribeCount(app, record.id)
+    await win.getByRole('button', { name: 'Close session', exact: true }).click()
+    await win.locator('[data-testid="chat-view"]').waitFor({ state: 'detached' })
+    assert.equal(await win.locator(`[data-sidebar-item-id="${record.id}"]`).count(), 0)
+    assert.ok(await until(async () => (await unsubscribeCount(app, record.id)) > beforeClose))
+    assert.equal(
+      await win.evaluate(
+        async (id) =>
+          (await window.electronAPI.sessionsList()).some((session) => session.id === id),
+        record.id
+      ),
+      false
+    )
+    t.check('header Close removes the session and releases its new subscription', true)
   } finally {
     await fixture.close()
   }
+}
+
+async function unsubscribeCount(app, id) {
+  return app.evaluate(
+    (_electron, id) =>
+      globalThis.__chatSubscriptions.filter(
+        (call) => call.channel === 'sessions:unsubscribe' && call.id === id
+      ).length,
+    id
+  )
 }

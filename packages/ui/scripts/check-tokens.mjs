@@ -13,6 +13,19 @@ const block = (source, selector) => {
   const open = source.indexOf('{', start)
   return declarations(source.slice(open + 1, source.indexOf('}', open)))
 }
+const system = read('../src/system.css').replace(/\/\*[\s\S]*?\*\//g, '')
+const tailwind = read('../../../node_modules/tailwindcss/theme.css')
+const declared = declarations([css, app, system, tailwind].join('\n'))
+// The field's accent is supplied by BrandField at runtime, not by a skin.
+declared.add('--field-accent')
+// Radix Popper measures these and declares them inline on the menu content.
+declared.add('--radix-dropdown-menu-trigger-width')
+declared.add('--radix-dropdown-menu-content-available-height')
+for (const source of [css, app, system]) {
+  for (const match of source.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)) {
+    assert(declared.has(match[1]), `Undefined CSS variable without fallback: ${match[1]}`)
+  }
+}
 const shared = block(css, '@theme')
 const root = block(css, ':root')
 for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
