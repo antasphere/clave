@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { sessionManager } from './session-manager'
-import { UserMessageSchema } from '../../shared/session-model'
+import { SessionInputSchema } from '../../shared/session-model'
 import { windowRegistry } from '../window-registry'
 
 let registered = false
@@ -68,6 +68,6 @@ export function registerSessionIpc(): void {
     const key = win && windowRegistry.getKeyForWindow(win.id)
     if (!key || sessionManager.get(id)?.windowKey !== key)
       throw new Error('Session belongs to another window')
-    sessionManager.write(id, input instanceof Uint8Array ? input : UserMessageSchema.parse(input))
+    sessionManager.write(id, input instanceof Uint8Array ? input : SessionInputSchema.parse(input))
   })
 }

@@ -3,7 +3,7 @@ import type {
   Session,
   SessionStream,
   Transport,
-  UserMessage
+  SessionInput
 } from '../../shared/session-model'
 
 export type SpawnSpec = Session & { options?: unknown }
@@ -24,7 +24,7 @@ export interface SessionAdapter {
   readonly transports: readonly Transport[]
   spawn(spec: SpawnSpec): Promise<SessionHandle>
   attach(sessionId: string): Promise<SessionHandle>
-  write(handle: SessionHandle, input: Uint8Array | UserMessage): void
+  write(handle: SessionHandle, input: Uint8Array | SessionInput): void
   resize?(handle: SessionHandle, cols: number, rows: number): void
   kill(handle: SessionHandle): void | Promise<void>
   on<K extends keyof SessionAdapterEvents>(

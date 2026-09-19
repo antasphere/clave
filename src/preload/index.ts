@@ -1,4 +1,4 @@
-import type { Session, SessionStream, UserMessage } from '../shared/session-model'
+import type { Session, SessionStream, SessionInput } from '../shared/session-model'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
@@ -42,7 +42,7 @@ const electronAPI = {
     sessionSubscriptionRefs.delete(id)
     return ipcRenderer.invoke('sessions:unsubscribe', id)
   },
-  sessionsWrite: (id: string, input: Uint8Array | UserMessage): Promise<void> =>
+  sessionsWrite: (id: string, input: Uint8Array | SessionInput): Promise<void> =>
     ipcRenderer.invoke('sessions:write', id, input),
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
     createIpcListener(`sessions:stream:${id}`, callback),

@@ -21,6 +21,14 @@ export type Session = z.infer<typeof SessionSchema>
 
 export const UserMessageSchema = z.object({ type: z.literal('user_message'), text: z.string() })
 export type UserMessage = z.infer<typeof UserMessageSchema>
+export const PermissionResponseSchema = z.object({
+  type: z.literal('permission_response'), id: z.string(), optionId: z.string()
+})
+export const InterruptSchema = z.object({ type: z.literal('interrupt') })
+export const SessionInputSchema = z.discriminatedUnion('type', [
+  UserMessageSchema, PermissionResponseSchema, InterruptSchema
+])
+export type SessionInput = z.infer<typeof SessionInputSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
@@ -30,9 +38,13 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     type: z.literal('permission_request'),
     id: z.string(),
     description: z.string(),
-    options: z.array(z.object({ id: z.string(), label: z.string() }))
+    options: z.array(z.object({ id: z.string(), label: z.string() })),
+    toolName: z.string().optional(),
+    input: z.unknown().optional()
   }),
   z.object({ type: z.literal('state_change'), state: AgentStateSchema }),
+  z.object({ type: z.literal('session_meta'), model: z.string().nullable(), providerSessionId: z.string().nullable() }),
+  z.object({ type: z.literal('error'), message: z.string(), fatal: z.boolean() }),
   z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() })
 ])
 export type SessionEvent = z.infer<typeof SessionEventSchema>

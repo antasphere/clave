@@ -3,7 +3,7 @@ import {
   type AgentState,
   type Session,
   type SessionStream,
-  type UserMessage
+  type SessionInput
 } from '../../shared/session-model'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
 
@@ -114,7 +114,7 @@ export class SessionManager {
     return handle
   }
 
-  write(id: string, input: Uint8Array | UserMessage): void {
+  write(id: string, input: Uint8Array | SessionInput): void {
     const entry = this.require(id)
     entry.adapter.write(entry.handle, input)
   }
