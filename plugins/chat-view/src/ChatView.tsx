@@ -81,7 +81,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   return (
     <div className="chat-view" data-testid="chat-view">
       <div className="chat-turn-list" role="log" aria-label="Conversation">
-        {conversation.entries.length === 0 && (
+        {conversation.entries.length === 0 && state !== 'ended' && (
           <div className="chat-empty">
             <h2>Start a conversation</h2>
             <p>Ask a question or describe what you want to build.</p>
