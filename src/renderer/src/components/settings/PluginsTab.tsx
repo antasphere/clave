@@ -162,7 +162,7 @@ export function PluginsTab(): React.JSX.Element {
       {error && <SettingsCallout tone="danger" title="Plugin error" text={error} />}
       <SettingsSection
         title="Installed plugins"
-        description="Enable a plugin to grant its listed permissions. Host code runs on your machine; link folders you trust."
+        description="Review host API permissions before enabling a plugin. Host code runs on your machine; link folders you trust."
       >
         <SettingsCard>
           {plugins.length === 0 && <SettingsRow label="No plugins installed" />}
@@ -170,7 +170,7 @@ export function PluginsTab(): React.JSX.Element {
             <div key={plugin.id} data-plugin-id={plugin.id}>
               <SettingsRow
                 label={plugin.manifest?.name ?? plugin.id}
-                description={`${plugin.manifest?.kind ?? 'Invalid manifest'} · ${plugin.version} · ${plugin.source} · ${plugin.status}`}
+                description={`${plugin.manifest?.kind ?? 'Invalid manifest'} · ${plugin.version} · ${plugin.source} · ${plugin.status}${!plugin.enabled && plugin.manifest && !plugin.error ? ' · Needs review before enabling' : ''}`}
               >
                 <Toggle
                   checked={plugin.enabled}
@@ -203,7 +203,7 @@ export function PluginsTab(): React.JSX.Element {
               {review === plugin.id && (
                 <SettingsCallout
                   title={`Enable ${plugin.manifest?.name}?`}
-                  text={`Grant: ${plugin.manifest?.permissions.join(', ') || 'no privileged host API permissions'}.`}
+                  text={`Host API permissions: ${plugin.manifest?.permissions.join(', ') || 'none'}. The plugin runs as a separate process with a trimmed environment. These permissions govern Clave host APIs, not OS access.`}
                 >
                   <button className="btn-dialog" onClick={() => setReview(null)}>
                     Cancel

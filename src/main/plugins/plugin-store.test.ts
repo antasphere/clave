@@ -147,3 +147,32 @@ it('removes copied installations from the managed folder', () => {
   expect(existsSync(join(root, 'plugins', 'example'))).toBe(false)
   expect(JSON.parse(readFileSync(join(root, 'installed.json'), 'utf8'))).toEqual([])
 })
+
+it.each([false, true])(
+  'revokes grants when a folder is replaced under the same id (missing discovery: %s)',
+  (discoverMissing) => {
+    const initial = store()
+    const directory = join(root, 'plugins', 'original')
+    writePlugin(directory)
+    initial.discover()
+    initial.enable('example.plugin', ['sessions.read'])
+    rmSync(directory, { recursive: true })
+    if (discoverMissing) {
+      initial.discover()
+      expect(JSON.parse(readFileSync(join(root, 'installed.json'), 'utf8'))).toEqual([])
+    }
+    writePlugin(join(root, 'plugins', 'replacement'), {
+      ...manifest(),
+      name: 'Replacement',
+      version: '2.0.0'
+    })
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get('example.plugin')).toMatchObject({
+      manifest: { name: 'Replacement' },
+      version: '2.0.0',
+      enabled: false,
+      permissionsGranted: []
+    })
+  }
+)

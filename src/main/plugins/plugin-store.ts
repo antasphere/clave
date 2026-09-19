@@ -89,13 +89,19 @@ export class PluginStore {
           if (this.records.has(id))
             throw new Error(`Duplicate plugin id ${id}; bundled plugins cannot be overridden`)
           const saved = this.installed.find((r) => r.id === id)
+          const sameVersion = saved?.version === manifest.version
+          const firstBundledInstall = !saved && source === 'bundled'
           const record: PluginRecord = {
             id,
             version: manifest.version,
             source: actualSource,
-            enabled: saved?.enabled ?? source === 'bundled',
+            enabled: sameVersion ? saved.enabled : firstBundledInstall,
             permissionsGranted: [
-              ...(saved?.permissionsGranted ?? (source === 'bundled' ? manifest.permissions : []))
+              ...(sameVersion
+                ? saved.permissionsGranted
+                : firstBundledInstall
+                  ? manifest.permissions
+                  : [])
             ],
             installedAt: saved?.installedAt ?? new Date().toISOString(),
             manifest,
@@ -196,11 +202,8 @@ export class PluginStore {
         permissionsGranted,
         installedAt
       }))
-    // Retain preferences for temporarily missing plugins.
-    this.installed = [
-      ...this.installed.filter((r) => !current.some((c) => c.id === r.id)),
-      ...current
-    ]
+    // Absence revokes trust: a replacement must be reviewed on discovery.
+    this.installed = current
     const file = join(this.root, 'installed.json')
     writeFileSync(`${file}.tmp`, JSON.stringify(this.installed, null, 2), { mode: 0o600 })
     renameSync(`${file}.tmp`, file)

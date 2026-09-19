@@ -133,6 +133,37 @@ describe('plugin utility-process host', () => {
     expect(children).toHaveLength(6)
     expect(store.get('example.host').error).toContain('restart limit reached')
   })
+  it('resets the backoff budget after each successful activation', () => {
+    host.startAll()
+    for (let run = 0; run < 8; run++) {
+      ready()
+      children.at(-1)!.emit('exit', 1)
+      vi.advanceTimersByTime(999)
+      expect(children).toHaveLength(run + 1)
+      vi.advanceTimersByTime(1)
+      expect(children).toHaveLength(run + 2)
+    }
+  })
+  it('preserves activation failure through exit and the restart ceiling, but not into a new run', () => {
+    host.startAll()
+    for (let attempt = 0; attempt < 6; attempt++) {
+      port().emit('message', {
+        data: {
+          jsonrpc: '2.0',
+          method: 'plugin.failed',
+          params: { message: `Activation failure ${attempt}` }
+        }
+      })
+      expect(store.get('example.host').error).toBe(`Activation failure ${attempt}`)
+      vi.advanceTimersByTime(1000 * 2 ** attempt)
+    }
+    expect(children).toHaveLength(6)
+    host.stop('example.host')
+    host.start('example.host')
+    ready()
+    children.at(-1)!.emit('exit', 2)
+    expect(store.get('example.host').error).toContain('Plugin exited (2)')
+  })
   it('cancels scheduled restart when disabled', () => {
     host.startAll()
     children[0].emit('exit', 1)
