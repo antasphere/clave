@@ -7,20 +7,6 @@ import { REPO, seedWorkspaces, seedTrustedRoots, callMcp, until, userDataDir } f
 const DIR = userDataDir('session-adapters')
 const ROOT = '/tmp/clave-e2e-session-adapters-root'
 
-// Call the registered production handlers with a real window's sender. This
-// exercises the IPC boundary before a chat view owns a preload subscription API.
-async function invoke(app, channel, ...args) {
-  return app.evaluate(
-    async ({ ipcMain, BrowserWindow }, { channel, args }) => {
-      const handler = ipcMain._invokeHandlers?.get(channel)
-      if (!handler) throw new Error(`Missing production IPC handler: ${channel}`)
-      const win = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)[0]
-      return handler({ sender: win.webContents }, ...args)
-    },
-    { channel, args }
-  )
-}
-
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   const workspace = {
@@ -52,34 +38,44 @@ export async function run(t) {
     await win.locator('.launcher-split .launcher-btn').waitFor()
     await win.click('.launcher-split .launcher-btn')
     const record = await until(async () =>
-      (await invoke(app, 'sessions:list')).find((s) => s.adapterId === 'echo')
+      (await win.evaluate(() => window.electronAPI.sessionsList())).find(
+        (s) => s.adapterId === 'echo'
+      )
     )
     assert.ok(record, 'Normal launcher must create the development echo session')
     t.equal('normal launcher creates events transport', record.transport, 'events')
     t.equal('normal launcher retains workspace root', record.cwd, ROOT)
     t.equal('session provider is echo', record.provider, 'echo')
 
-    await app.evaluate(({ BrowserWindow }, id) => {
-      const sender = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)[0].webContents
-      const send = sender.send.bind(sender)
-      globalThis.__adapterMessages = []
-      sender.send = (channel, ...args) => {
-        if (channel === `sessions:stream:${id}` || channel === `sessions:exit:${id}`) {
-          globalThis.__adapterMessages.push({ channel, value: args[0] })
-        }
-        return send(channel, ...args)
-      }
+    const subscribed = await win.evaluate(async (id) => {
+      window.__adapterMessages = []
+      window.__adapterMirror = []
+      window.__stopAdapterStream = window.electronAPI.onSessionStream(id, (value) => {
+        window.__adapterMessages.push({ value })
+      })
+      window.electronAPI.onSessionStream(id, (value) => window.__adapterMirror.push({ value }))
+      window.electronAPI.onSessionStreamExit(id, (code) => {
+        window.__adapterExit = code
+      })
+      const session = await window.electronAPI.sessionsSubscribe(id)
+      await window.electronAPI.sessionsSubscribe(id)
+      return session
     }, record.id)
-    const subscribed = await invoke(app, 'sessions:subscribe', record.id)
     t.equal('subscription returns the same session', subscribed.id, record.id)
-    await invoke(app, 'sessions:write', record.id, {
-      type: 'user_message',
-      text: 'echo round trip'
+    await win.evaluate(
+      (id) =>
+        window.electronAPI.sessionsWrite(id, {
+          type: 'user_message',
+          text: 'echo round trip'
+        }),
+      record.id
+    )
+    const messages = await until(async () => {
+      const received = await win.evaluate(() => window.__adapterMessages)
+      return received.length >= 6 ? received : null
     })
-    const messages = await app.evaluate(() => globalThis.__adapterMessages)
-    const events = messages
-      .filter((m) => m.channel.startsWith('sessions:stream:'))
-      .map((m) => m.value.event)
+    assert.ok(messages, 'Renderer must receive typed events through the preload bridge')
+    const events = messages.map((m) => m.value.event)
     assert.deepEqual(
       events.map((event) => event.type),
       [
@@ -100,18 +96,33 @@ export async function run(t) {
     assert.equal(events[5].state, 'done')
     t.check('assistant text, tool correlation and state are preserved', true)
 
+    const mirrored = await win.evaluate(() => window.__adapterMirror)
+    assert.deepEqual(mirrored, messages, 'Both renderer consumers receive the same event stream')
+    await win.evaluate(async (id) => {
+      window.__stopAdapterStream()
+      await window.electronAPI.sessionsUnsubscribe(id)
+      await window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'second consumer' })
+    }, record.id)
+    assert.ok(
+      await until(async () => (await win.evaluate(() => window.__adapterMirror.length)) >= 12)
+    )
+    assert.equal(await win.evaluate(() => window.__adapterMessages.length), 6)
+    t.check('unsubscribing one renderer consumer leaves the second streaming', true)
+
     await callMcp(app, 'closeSession', { sessionId: record.id })
-    const exit = await until(async () => {
-      const sent = await app.evaluate(() => globalThis.__adapterMessages)
-      return sent.find((message) => message.channel === `sessions:exit:${record.id}`)
-    })
-    assert.ok(exit, 'Closing the real tab must deliver exit to a second stream consumer')
-    t.equal('closing the tab emits successful exit', exit.value, 0)
-    const remaining = await invoke(app, 'sessions:list')
+    assert.ok(
+      await until(async () => (await win.evaluate(() => window.__adapterExit)) === 0),
+      'Closing the real tab must deliver exit through the preload bridge'
+    )
+    t.equal(
+      'closing the tab emits successful exit',
+      await win.evaluate(() => window.__adapterExit),
+      0
+    )
+    await win.evaluate((id) => window.electronAPI.sessionsUnsubscribe(id), record.id)
+    const remaining = await win.evaluate(() => window.electronAPI.sessionsList())
     t.check('closed session leaves the live registry', !remaining.some((s) => s.id === record.id))
 
-    // Reuse the persisted development preference, but launch in ordinary mode.
-    // A stale preference must not expose or start the fixture for normal users.
     await app.close()
     app = null
     app = await electron.launch({
@@ -146,7 +157,7 @@ export async function run(t) {
       'Explicit echo launches must reject without the development flag'
     )
     t.check('explicit echo spawn rejects without its development flag', true)
-    const ordinarySessions = await invoke(app, 'sessions:list')
+    const ordinarySessions = await normalWindow.evaluate(() => window.electronAPI.sessionsList())
     t.check('rejected echo spawn creates no live process record', ordinarySessions.length === 0)
   } finally {
     if (app) await app.close()

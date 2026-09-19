@@ -22,8 +22,12 @@ options so the same tmux session is reattached at the terminal's measured size.
 - `sessions:unsubscribe(id)` removes that consumer's notifications.
 - `sessions:write(id, input)` accepts `Uint8Array` or a `user_message` event.
 
+The preload exposes `sessionsList`, `sessionsSubscribe`, `sessionsUnsubscribe`,
+`sessionsWrite`, `onSessionStream`, and `onSessionStreamExit` on `window.electronAPI`.
 Install notification listeners before invoking subscribe, and await subscription
-before writing. One IPC subscription per session per WebContents is retained;
+before writing. Each renderer view pairs its subscribe with unsubscribe and
+removes its own listeners; the preload reference-counts the underlying subscription
+so closing one view does not silence another. One IPC subscription per session per WebContents is retained;
 multiple in-process consumers can each subscribe independently. Window teardown
 removes its consumers without killing providers. `SessionIPC` and
 `SessionIPCEvents` in the preload declarations describe the additive wire API.

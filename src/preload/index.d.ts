@@ -491,6 +491,15 @@ export interface MagicPullResult {
 }
 
 export interface ElectronAPI {
+  sessionsList: () => Promise<Session[]>
+  /** Register stream/exit listeners first, then await this before writing. */
+  sessionsSubscribe: (id: string) => Promise<Session>
+  /** Release this view's subscription, then remove its stream/exit listeners. */
+  sessionsUnsubscribe: (id: string) => Promise<void>
+  sessionsWrite: (id: string, input: Uint8Array | UserMessage) => Promise<void>
+  onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
+  onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
+
   /** `process.platform` of the main process. The renderer reads it only to
    *  decide whether to hold room for window buttons drawn inside our own
    *  chrome — macOS does, Windows and Linux do not. */
