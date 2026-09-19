@@ -37,7 +37,9 @@ const WS = {
 // A family becomes a submenu when chat/custom profiles are registered.
 // Follow the built-in leaf so the assertions still exercise the terminal CLI.
 async function selectBuiltIn(win, label, profileName) {
-  const entry = win.locator(`[role="menuitem"]:has-text("${label}")`)
+  const entry = win
+    .locator('[role="menuitem"]')
+    .filter({ has: win.getByText(label, { exact: true }) })
   const submenu = (await entry.getAttribute('aria-haspopup')) === 'menu'
   await entry.click()
   if (submenu) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
