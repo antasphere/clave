@@ -285,11 +285,11 @@ setInterval(()=>{},1000);
         try {
           process.kill(JSON.parse(line).pid, 'SIGKILL')
         } catch (error) {
-          if (error.code !== 'ESRCH') throw error
+          if (error.code !== 'ESRCH') console.error('Fixture descendant cleanup failed', error)
         }
       }
     } catch (error) {
-      if (error.code !== 'ENOENT') throw error
+      if (error.code !== 'ENOENT') console.error('Fixture descendant inventory unreadable', error)
     }
     if (!closed) await app.close()
     rmSync(DIR, { recursive: true, force: true })

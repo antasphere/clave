@@ -499,3 +499,89 @@ it('retains the configured prompt when starting it throws and reports divergent 
   child.emit('close', 0)
   await adapter.kill(handle)
 })
+
+it('ends naturally with code 3 and flushes the last frame despite a setsid stdout holder', async () => {
+  const { spawn: realSpawn } =
+    await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  let child: import('node:child_process').ChildProcessWithoutNullStreams | undefined
+  let grandchildPid: number | undefined
+  mock.spawn.mockImplementation(() => {
+    child = realSpawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {spawn} = require('node:child_process');
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true, stdio: ['ignore', process.stdout, process.stderr]
+      });
+      grandchild.unref();
+      console.log(JSON.stringify({type: 'fixture', pid: grandchild.pid}));
+      process.stdout.write(JSON.stringify({type: 'last-frame', text: 'unterminated'}), () => process.exit(3));
+    `
+      ],
+      { detached: true, stdio: 'pipe' }
+    )
+    return child
+  })
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  const order: unknown[] = []
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    adapter.on(handle, 'stream', (stream) => {
+      if (stream.kind !== 'event') return
+      order.push(stream.event)
+      if (stream.event.type === 'provider_event') {
+        const payload = stream.event.payload as { type: string; pid: number }
+        if (payload.type === 'fixture') grandchildPid = payload.pid
+      }
+    })
+    const exited = new Promise<number>((resolve) =>
+      adapter.on(handle, 'exit', (code) => {
+        order.push(code)
+        resolve(code)
+      })
+    )
+    adapter.write(handle, { type: 'user_message', text: 'start' })
+    expect(
+      await Promise.race([
+        exited,
+        new Promise((_, reject) => {
+          deadline = setTimeout(
+            () => reject(new Error('natural exit hung on inherited stdout')),
+            3000
+          )
+        })
+      ])
+    ).toBe(3)
+    expect(order.slice(-3)).toEqual([
+      {
+        type: 'provider_event',
+        provider: 'claude',
+        payload: { type: 'last-frame', text: 'unterminated' }
+      },
+      { type: 'state_change', state: 'ended' },
+      3
+    ])
+    expect(child!.stdout.destroyed).toBe(true)
+    expect(process.kill(grandchildPid!, 0)).toBe(true)
+    const { deleteSessionMcpConfig } = await import('../../mcp/mcp-runtime')
+    expect(deleteSessionMcpConfig).toHaveBeenCalledExactlyOnceWith(spec.id)
+    expect(() => adapter.write(handle, { type: 'user_message', text: 'late' })).toThrow(/ended/)
+  } finally {
+    clearTimeout(deadline)
+    if (grandchildPid) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL')
+      } catch {
+        /* already exited */
+      }
+    }
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    child?.stdin.destroy()
+    child?.stdout.destroy()
+    child?.stderr.destroy()
+    await adapter.kill(handle)
+  }
+})

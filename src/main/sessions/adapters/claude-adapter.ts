@@ -336,7 +336,8 @@ export class ClaudeAdapter implements SessionAdapter {
           detached: process.platform !== 'win32'
         })
         const lines = new NdjsonLines((line) => live.translator.line(line))
-        child.stdout.on('data', (chunk: Buffer) => lines.push(chunk))
+        const onStdout = (chunk: Buffer): void => lines.push(chunk)
+        child.stdout.on('data', onStdout)
         child.stderr.on('data', (chunk: Buffer) =>
           emit({
             type: 'provider_event',
@@ -351,10 +352,25 @@ export class ClaudeAdapter implements SessionAdapter {
           emit({ type: 'error', message: error.message, fatal: true })
           live.finish(1)
         })
-        child.on('close', (code) => {
+        let finished = false
+        const finishProcess = (code: number | null): void => {
+          if (finished) return
+          finished = true
+          // A detached descendant may keep stdout open after our process exits.
+          // Drain buffered bytes once, including the last unterminated frame,
+          // then release only our local pipe ends rather than waiting for EOF.
+          child.stdout.off('data', onStdout)
+          let chunk: Buffer | null
+          while ((chunk = child.stdout.read()) !== null) lines.push(chunk)
           lines.end()
+          child.stdin.destroy()
+          child.stdout.destroy()
+          child.stderr.destroy()
           live.finish(code ?? 1)
-        })
+        }
+        child.on('exit', finishProcess)
+        // Failed spawns may close without an exit event.
+        child.on('close', finishProcess)
         return child
       }
     }
