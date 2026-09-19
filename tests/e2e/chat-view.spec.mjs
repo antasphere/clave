@@ -23,6 +23,16 @@ export async function openChat(suffix = 'chat-view') {
     cwd: REPO,
     env: { ...process.env }
   })
+  await app.evaluate(({ ipcMain }) => {
+    globalThis.__chatSubscriptions = []
+    for (const channel of ['sessions:subscribe', 'sessions:unsubscribe']) {
+      const original = ipcMain._invokeHandlers.get(channel)
+      ipcMain._invokeHandlers.set(channel, (event, id) => {
+        globalThis.__chatSubscriptions.push({ channel, id })
+        return original(event, id)
+      })
+    }
+  })
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')
   await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'dev-echo-adapter'))
@@ -104,6 +114,10 @@ export async function run(t) {
     ])
     await win.getByRole('button', { name: 'Allow once', exact: true }).waitFor()
     assert.equal(await win.locator('.chat-state').innerText(), 'blocked')
+    assert.equal(
+      await win.locator(`[data-sidebar-item-id="${record.id}"] .bg-status-waiting`).count(),
+      1
+    )
     assert.match(await win.locator('.chat-header').innerText(), /fixture-model/)
     await win.getByRole('button', { name: 'Allow once', exact: true }).click()
     assert.ok(
@@ -120,6 +134,12 @@ export async function run(t) {
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
     await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
+    assert.match(
+      await win
+        .locator(`[data-sidebar-item-id="${record.id}"] .sidebar-tab-icon`)
+        .getAttribute('style'),
+      /pulse-dot/
+    )
     assert.ok(
       await until(() =>
         app.evaluate(() => globalThis.__chatWrites.some((x) => x.type === 'interrupt'))
@@ -138,6 +158,18 @@ export async function run(t) {
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
     await win.locator('.xterm').waitFor()
     assert.equal(await win.locator('[data-testid="chat-view"]').count(), 0)
+    assert.ok(
+      await until(() =>
+        app.evaluate(
+          (_electron, id) =>
+            globalThis.__chatSubscriptions.some(
+              (call) => call.channel === 'sessions:unsubscribe' && call.id === id
+            ),
+          record.id
+        )
+      ),
+      JSON.stringify(await app.evaluate(() => globalThis.__chatSubscriptions))
+    )
     t.check('disabling plugin restores terminal fallback', true)
   } finally {
     await fixture.close()
