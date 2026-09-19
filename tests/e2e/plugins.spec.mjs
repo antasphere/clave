@@ -1,14 +1,40 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { launchApp, seedWorkspaces, until, stubFolderDialog } from './harness.mjs'
+import { launchApp, seedWorkspaces, until, stubFolderDialog, callMcp } from './harness.mjs'
 
 export async function run(t) {
-  const root = mkdtempSync(path.join(tmpdir(), 'clave-e2e-plugins-'))
+  const root = mkdtempSync(path.join(tmpdir(), 'clave-lane2-plugins-'))
   const dir = path.join(root, 'profile')
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
-  const { app, win } = await launchApp(dir)
+  const tmuxDir = path.join(root, 'tmux')
+  mkdirSync(tmuxDir)
+  // Unique profile gives MCP an ephemeral port; tmux gets its own socket directory.
+  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  let targetId
   try {
+    const terminal = await callMcp(app, 'openSession', {
+      cwd: root,
+      mode: 'terminal',
+      name: 'Plugin permission target'
+    })
+    targetId = terminal.sessionId
+    const terminalText = async () =>
+      (
+        await callMcp(app, 'readSession', {
+          sessionId: targetId,
+          callerSessionId: targetId,
+          lines: 200
+        })
+      ).text ?? ''
+    await win.evaluate(
+      (id) => window.electronAPI.writeSession(id, "printf 'PLUGIN_TARGET_%s\\n' READY\r"),
+      targetId
+    )
+    if (!(await until(async () => (await terminalText()).includes('PLUGIN_TARGET_READY')))) {
+      throw new Error('Permission target terminal did not become ready')
+    }
+    const marker = 'PLUGIN_FORBIDDEN_INPUT'
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
     await win.click('[data-settings-nav-row="plugins"]')
     const hello = await until(async () =>
@@ -128,7 +154,7 @@ export async function run(t) {
     writeFileSync(path.join(linked, 'clave-plugin.json'), JSON.stringify(manifest))
     writeFileSync(
       path.join(linked, 'main.mjs'),
-      `export default { async activate(api) { await api.ui.registerCommand('probe', async () => { try { await api.sessions.send('missing', 'forbidden'); await api.notify({title:'PERMISSION BYPASS'}) } catch (error) { await api.notify({title:'Permission denied',body:String(error.code)}) } }); await api.ui.registerCommand('secret', async () => { const value = await api.secrets.request({title: 'Fixture secret'}); await api.notify({title: value === 'fixture-only-secret' ? 'Secret received' : 'Secret missing'}) }) } }`
+      `export default { async activate(api) { await api.ui.registerCommand('probe', async () => { try { await api.sessions.send(${JSON.stringify(targetId)}, ${JSON.stringify(marker)}); await api.notify({title:'PERMISSION BYPASS'}) } catch (error) { await api.notify({title:'Bridge error',body:JSON.stringify({code:error.code,permission:error.data?.permission})}) } }); await api.ui.registerCommand('secret', async () => { const value = await api.secrets.request({title: 'Fixture secret'}); await api.notify({title: value === 'fixture-only-secret' ? 'Secret received' : 'Secret missing'}) }) } }`
     )
     await stubFolderDialog(app, { returns: linked })
     await win.getByRole('button', { name: 'Link folder…', exact: true }).click()
@@ -144,7 +170,22 @@ export async function run(t) {
       'false'
     )
     await win.getByRole('switch', { name: 'Enable Bridge fixture' }).click()
+    t.check(
+      'enable review explains host API permissions and process isolation',
+      await win
+        .getByText(
+          'Host API permissions: secrets. The plugin runs as a separate process with a trimmed environment. These permissions govern Clave host APIs, not OS access.',
+          { exact: true }
+        )
+        .isVisible()
+    )
     await win.getByRole('button', { name: 'Enable plugin', exact: true }).click()
+    await win.evaluate((id) => {
+      window.__pluginProbeOutput = ''
+      window.__stopPluginProbe = window.electronAPI.onSessionData(id, (data) => {
+        window.__pluginProbeOutput += data
+      })
+    }, targetId)
     await win.getByRole('button', { name: 'Run Permission probe' }).click()
     const denial = await until(
       async () =>
@@ -152,12 +193,31 @@ export async function run(t) {
           (p) => p.id === 'test.bridge'
         )?.lastNotification
     )
-    t.equal(
-      'real utility bridge rejects missing sessions.write',
-      denial?.title,
-      'Permission denied'
+    // A subsequent shell round-trip drains any earlier plugin input before checking.
+    // Ctrl-U clears unsubmitted text; an illicit write still appears in captured output.
+    await win.evaluate(
+      (id) => window.electronAPI.writeSession(id, "\u0015printf 'PLUGIN_PROBE_%s\\n' DRAINED\r"),
+      targetId
     )
-    t.equal('permission error crosses bridge with typed code', denial?.body, '-32001')
+    const drained = await until(async () => {
+      const text = await terminalText()
+      return text.includes('PLUGIN_PROBE_DRAINED') ? text : null
+    })
+    const received = await win.evaluate(() => {
+      window.__stopPluginProbe()
+      return window.__pluginProbeOutput
+    })
+    const refusal = denial?.body ? JSON.parse(denial.body) : null
+    t.check(
+      'real utility bridge rejects missing sessions.write',
+      denial?.title === 'Bridge error' &&
+        refusal?.code === -32001 &&
+        refusal?.permission === 'sessions.write' &&
+        !!drained &&
+        !drained.includes(marker) &&
+        !received.includes(marker),
+      { denial, terminal: drained, received }
+    )
     await win.getByRole('button', { name: 'Run Secret probe', exact: true }).click()
     await win.getByLabel('Fixture secret', { exact: true }).fill('fixture-only-secret')
     await win.getByRole('button', { name: 'Share with plugin', exact: true }).click()
@@ -236,7 +296,11 @@ export async function run(t) {
       readFileSync(path.join(linked, 'main.mjs'), 'utf8').includes('Hot reload works')
     )
   } finally {
-    await app.close()
+    try {
+      if (targetId) await win.evaluate((id) => window.electronAPI.killSession(id), targetId)
+    } finally {
+      await app.close()
+    }
     rmSync(root, { recursive: true, force: true })
   }
 }

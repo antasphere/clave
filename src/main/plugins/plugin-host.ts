@@ -117,7 +117,8 @@ export class PluginHost {
         this.services.stopped(id)
         if (!running.stopping && !this.closing && record.enabled) {
           record.status = 'error'
-          record.error = `Plugin exited (${code}); restarting with backoff`
+          const runError = record.error
+          record.error = runError ?? `Plugin exited (${code}); restarting with backoff`
           console.error(`[plugins] ${id}: ${record.error}`)
           const attempt = (this.retries.get(id) ?? 0) + 1
           this.retries.set(id, attempt)
@@ -134,7 +135,9 @@ export class PluginHost {
               )
             )
           else
-            record.error = `Plugin exited (${code}); restart limit reached. Disable and enable to retry.`
+            record.error =
+              runError ??
+              `Plugin exited (${code}); restart limit reached. Disable and enable to retry.`
         }
         this.services.changed()
       })
@@ -175,6 +178,7 @@ export class PluginHost {
     }
     if (!('id' in message)) {
       if (message.method === 'plugin.ready') {
+        this.retries.delete(record.id)
         record.status = 'active'
         record.error = undefined
         this.services.changed()
@@ -329,12 +333,16 @@ export class PluginHost {
   stop(id: string): void {
     clearTimeout(this.timers.get(id))
     this.timers.delete(id)
+    const hadRuntimeFailure = this.retries.has(id)
     this.retries.delete(id)
     const record = this.store.get(id)
     record.panels = []
     record.commands = []
     record.status = 'disabled'
-    record.error = record.manifest && record.error?.startsWith('Plugin ') ? undefined : record.error
+    record.error =
+      record.manifest && (hadRuntimeFailure || record.error?.startsWith('Plugin '))
+        ? undefined
+        : record.error
     this.services.stopped(id)
     const running = this.running.get(id)
     if (running) {

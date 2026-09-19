@@ -27,7 +27,7 @@ string enum. JSON cannot represent both on the same property: v1 preserves the
 enum and names the optional entry `uiEntry`. The host defaults it to
 `ui/index.html`. Entry paths are relative to the plugin root, without traversal.
 Unknown fields (including nested fields), invalid versions/ranges, and duplicate
-contribution IDs are errors. Icons use the exported Heroicon name, e.g.
+contribution IDs are errors. Semver build metadata (`+build`) is refused by design. Icons use the exported Heroicon name, e.g.
 `SparklesIcon`.
 
 ```ts

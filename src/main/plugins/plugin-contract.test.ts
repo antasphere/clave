@@ -41,6 +41,8 @@ describe('plugin manifest v1', () => {
       }
     },
     { ...input, permissions: ['sessions.delete'] },
+    { ...input, kind: 'extension' },
+    { ...input, version: '1.0.0+build' },
     { ...input, version: '1.0' },
     { ...input, version: 'v1.0.0' },
     { ...input, engines: { clave: 'yesterday' } },
