@@ -1,5 +1,6 @@
 import {
   mkdirSync,
+  existsSync,
   readdirSync,
   readFileSync,
   lstatSync,
@@ -17,6 +18,8 @@ import { validateManifest, validateTokens, parseSkinCss } from './validation'
 export class SkinStore {
   private watcher?: FSWatcher
   private timer?: ReturnType<typeof setTimeout>
+  private poll?: ReturnType<typeof setInterval>
+  private fingerprint = ''
   constructor(
     private root: string,
     private version: string,
@@ -45,7 +48,9 @@ export class SkinStore {
   list(): SkinState {
     const skins = [...bundledSkins]
     const errors: string[] = []
-    for (const entry of readdirSync(this.root, { withFileTypes: true })) {
+    for (const entry of existsSync(this.root)
+      ? readdirSync(this.root, { withFileTypes: true })
+      : []) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       try {
         const skin = this.read(join(this.root, entry.name))
@@ -97,6 +102,7 @@ export class SkinStore {
       throw new Error('A skin with this id is already installed')
     const target = join(this.root, skin.id)
     const staging = join(this.root, `.${skin.id}-${Date.now()}`)
+    mkdirSync(this.root, { recursive: true })
     mkdirSync(staging)
     try {
       const { tokens, ...manifest } = skin
@@ -124,14 +130,29 @@ export class SkinStore {
     this.changed(state)
     return state
   }
+  private refreshIfChanged(): void {
+    const state = this.list()
+    const fingerprint = JSON.stringify(state)
+    if (fingerprint !== this.fingerprint) {
+      this.fingerprint = fingerprint
+      this.changed(state)
+    }
+  }
+
   startWatching(): void {
+    this.fingerprint = JSON.stringify(this.list())
     this.watcher = watch(this.root, { recursive: true }, () => {
       clearTimeout(this.timer)
-      this.timer = setTimeout(() => this.publish(), 150)
+      this.timer = setTimeout(() => this.refreshIfChanged(), 150)
     })
+    // Native recursive watchers can miss edits while their directory watches
+    // are being established (notably on macOS). Reconcile content as well.
+    this.poll = setInterval(() => this.refreshIfChanged(), 1000)
+    this.poll.unref()
   }
   close(): void {
     clearTimeout(this.timer)
+    clearInterval(this.poll)
     this.watcher?.close()
   }
 }

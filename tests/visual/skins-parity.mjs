@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Compare the original stylesheet cascade with extracted skin tokens in real Electron.
 // Images stay in memory; no screenshot files are retained.
 import assert from 'node:assert/strict'
