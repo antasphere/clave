@@ -1,4 +1,12 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  existsSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { launchApp, seedWorkspaces, until, stubFolderDialog, callMcp } from './harness.mjs'
@@ -299,6 +307,13 @@ export async function run(t) {
         )
       )
     )
+    t.equal(
+      'broken plugin toggle is off',
+      await win
+        .getByRole('switch', { name: 'Enable test.bridge', exact: true })
+        .getAttribute('aria-checked'),
+      'false'
+    )
     t.check(
       'parse error retains persisted consent',
       JSON.parse(readFileSync(path.join(dir, 'clave-plugins', 'installed.json'), 'utf8')).some(
@@ -356,6 +371,97 @@ export async function run(t) {
     } finally {
       await app.close()
     }
+    rmSync(root, { recursive: true, force: true })
+  }
+  await closedSwapChecks(t)
+}
+
+async function closedSwapChecks(t) {
+  const root = mkdtempSync(path.join(tmpdir(), 'clave-lane2-swaps-'))
+  const dir = path.join(root, 'profile')
+  const tmuxDir = path.join(root, 'tmux')
+  mkdirSync(tmuxDir)
+  seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
+  const fixtures = ['module', 'link'].map((kind) => {
+    const directory = path.join(dir, 'clave-plugins', 'plugins', kind)
+    const marker = path.join(root, `${kind}-executed`)
+    const manifest = {
+      id: `test.${kind}`,
+      name: `Swap ${kind}`,
+      version: '1.0.0',
+      kind: 'plugin',
+      engines: { clave: '*' },
+      ui: 'none',
+      main: 'main.mjs',
+      permissions: []
+    }
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(path.join(directory, 'clave-plugin.json'), JSON.stringify(manifest))
+    writeFileSync(path.join(directory, 'main.mjs'), "export { default } from './helper.mjs'")
+    const code = (label) =>
+      `import { writeFileSync } from 'node:fs'; export default { activate() { writeFileSync(${JSON.stringify(marker)}, ${JSON.stringify(label)}) } }`
+    writeFileSync(path.join(directory, 'helper.mjs'), code('original'))
+    return { kind, directory, marker, manifest, code }
+  })
+  let app
+  try {
+    let launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    app = launched.app
+    for (const f of fixtures) {
+      await launched.win.evaluate((id) => window.electronAPI.pluginsEnable(id, []), f.manifest.id)
+      t.check(
+        `${f.kind} original executes before closed swap`,
+        await until(() => existsSync(f.marker))
+      )
+    }
+    await app.close()
+    app = null
+    for (const f of fixtures) {
+      rmSync(f.marker, { force: true })
+      if (f.kind === 'module') {
+        writeFileSync(path.join(f.directory, 'helper.mjs'), f.code('replacement'))
+      } else {
+        rmSync(f.directory, { recursive: true })
+        const replacement = path.join(root, 'replacement')
+        mkdirSync(replacement)
+        writeFileSync(path.join(replacement, 'clave-plugin.json'), JSON.stringify(f.manifest))
+        writeFileSync(path.join(replacement, 'main.mjs'), "export { default } from './helper.mjs'")
+        writeFileSync(path.join(replacement, 'helper.mjs'), f.code('replacement'))
+        symlinkSync(replacement, f.directory)
+      }
+    }
+    launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    app = launched.app
+    const win = launched.win
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+    await win.click('[data-settings-nav-row="plugins"]')
+    const records = await win.evaluate(() => window.electronAPI.pluginsList())
+    for (const f of fixtures) {
+      const record = records.find((p) => p.id === f.manifest.id)
+      t.check(
+        `${f.kind} closed swap requires review`,
+        record &&
+          !record.enabled &&
+          record.status === 'disabled' &&
+          record.needsReview === (f.kind === 'link' ? 'source-change' : 'digest-change'),
+        record
+      )
+      t.equal(`${f.kind} replacement never executes`, existsSync(f.marker), false)
+      t.equal(
+        `${f.kind} swapped toggle is off`,
+        await win
+          .getByRole('switch', { name: `Enable Swap ${f.kind}`, exact: true })
+          .getAttribute('aria-checked'),
+        'false'
+      )
+    }
+    t.equal(
+      'both closed swaps show review suffix',
+      await win.getByText(/Needs review before enabling/).count(),
+      2
+    )
+  } finally {
+    if (app) await app.close()
     rmSync(root, { recursive: true, force: true })
   }
 }
