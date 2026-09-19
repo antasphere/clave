@@ -1,10 +1,15 @@
+import excludedTokenNames from '@clave/skins/excluded-token-names.json'
 import { describe, it, expect } from 'vitest'
 import { validateManifest, validateTokens, parseSkinCss } from './validation'
-import { bundledSkins } from '../../../packages/skins/bundled'
+import { bundledSkins } from '@clave/skins/bundled'
 import { execFileSync } from 'child_process'
 import { readFileSync } from 'fs'
 
 describe('skin trust boundary', () => {
+  it.each(excludedTokenNames)('refuses stylesheet-owned token %s by name', (token) => {
+    expect(() => validateTokens({ [token]: '77px' })).toThrow(token)
+    expect(() => parseSkinCss(`:root { ${token}: 77px; }`)).toThrow(token)
+  })
   it('accepts each bundled skin', () => {
     for (const skin of bundledSkins) {
       expect(validateManifest(skin, '1.90.2').id).toBe(skin.id)

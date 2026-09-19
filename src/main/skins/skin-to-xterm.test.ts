@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { bundledSkins } from '../../../packages/skins/bundled'
-import {
-  XTERM_TOKEN_MAP,
-  skinToXterm,
-  inheritSkinTokens
-} from '../../../packages/skins/skin-to-xterm'
+import { bundledSkins } from '@clave/skins/bundled'
+import { XTERM_TOKEN_MAP, skinToXterm, inheritSkinTokens } from '@clave/skins/skin-to-xterm'
 import legacy from '../../../tests/visual/fixtures/legacy-xterm.json'
 
 describe('skin terminal mapping', () => {

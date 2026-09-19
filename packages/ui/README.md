@@ -188,7 +188,7 @@ must never import the app's stores, Electron bridge, or feature components.
 
 `ColorPicker` accepts a `presets` map and an explicit `presetOrder` array; `ThemeToggle` accepts `theme` and `setTheme`;
 `EmptyState` accepts an `action` node. The app keeps thin adapters at the old paths
-for its terminal palette, persisted theme, and new-session action. All other old
+for its terminal palette and new-session action; Appearance owns persisted skin selection. All other old
 primitive paths are compatibility re-exports for one release.
 
 ## Verification

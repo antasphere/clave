@@ -1,7 +1,8 @@
 import { setTerminalSkin } from './terminal-theme'
 import { create } from 'zustand'
-import { bundledSkins } from '../../../../packages/skins/bundled'
-import type { Skin, SkinState } from '../../../../packages/skins/types'
+import tokenNames from '@clave/skins/token-names.json'
+import { bundledSkins } from '@clave/skins/bundled'
+import type { Skin, SkinState } from '@clave/skins/types'
 import { useSessionStore, type Theme } from '../store/session-store'
 
 export const useSkinStore = create<SkinState & { revision: number; error: string | null }>(() => ({
@@ -18,7 +19,9 @@ export function applySkin(tokens: Record<string, string>): void {
   const root = document.documentElement
   for (const key of appliedKeys) root.style.removeProperty(key)
   // This preference remains owned by the tree-separator control.
-  appliedKeys = Object.keys(tokens).filter((key) => key !== '--rule-intensity')
+  appliedKeys = Object.keys(tokens).filter(
+    (key) => tokenNames.includes(key) && key !== '--rule-intensity'
+  )
   for (const key of appliedKeys) root.style.setProperty(key, tokens[key])
   setTerminalSkin(tokens)
   useSkinStore.setState((s) => ({ revision: s.revision + 1 }))
@@ -63,9 +66,11 @@ export function initializeSkins(): () => void {
     const state = await window.electronAPI.skinsList()
     if (!state.activeId) {
       const legacyTheme = useSessionStore.getState().theme
-      return window.electronAPI.skinsActivate(
-        state.skins.some((skin) => skin.id === legacyTheme) ? legacyTheme : 'light'
-      )
+      // Preserve the legacy appearance without recording a choice the user never made.
+      return {
+        ...state,
+        activeId: state.skins.some((skin) => skin.id === legacyTheme) ? legacyTheme : 'dark'
+      }
     }
     return state
   })

@@ -3,13 +3,16 @@ import { fileURLToPath } from 'node:url'
 import postcss from 'postcss'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const css = postcss.parse(readFileSync(`${root}../ui/src/tokens.css`, 'utf8'))
+const excluded = new Set(JSON.parse(readFileSync(`${root}excluded-token-names.json`, 'utf8')))
 const names = new Set()
-css.walkDecls((d) => names.add(d.prop))
+css.walkDecls((d) => {
+  if (d.prop.startsWith('--') && !excluded.has(d.prop)) names.add(d.prop)
+})
 writeFileSync(`${root}token-names.json`, JSON.stringify([...names].sort(), null, 2) + '\n')
 const defaults = {}
 css.walkAtRules('theme', (rule) =>
   rule.walkDecls((d) => {
-    defaults[d.prop] = d.value
+    if (names.has(d.prop)) defaults[d.prop] = d.value
   })
 )
 const themes = {}
@@ -18,7 +21,7 @@ css.walkRules((rule) => {
   if (!id) return
   themes[id] = {}
   rule.walkDecls((d) => {
-    themes[id][d.prop] = d.value
+    if (names.has(d.prop)) themes[id][d.prop] = d.value
   })
 })
 for (const id of ['dark', 'charcoal', 'light', 'coffee']) {

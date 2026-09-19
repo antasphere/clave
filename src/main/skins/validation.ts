@@ -1,8 +1,8 @@
 import postcss from 'postcss'
 import valueParser from 'postcss-value-parser'
 import { valid, validRange, satisfies } from 'semver'
-import tokenNames from '../../../packages/skins/token-names.json'
-import type { SkinManifest } from '../../../packages/skins/types'
+import tokenNames from '@clave/skins/token-names.json'
+import type { SkinManifest } from '@clave/skins/types'
 
 const allowed = new Set(tokenNames)
 

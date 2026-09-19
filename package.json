@@ -110,6 +110,7 @@
   },
   "workspaces": [
     "packages/ui",
-    "packages/plugin-sdk"
+    "packages/plugin-sdk",
+    "packages/skins"
   ]
 }

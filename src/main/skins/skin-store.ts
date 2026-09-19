@@ -1,4 +1,4 @@
-import { inheritSkinTokens, skinToXterm } from '../../../packages/skins/skin-to-xterm'
+import { inheritSkinTokens, skinToXterm } from '@clave/skins/skin-to-xterm'
 import {
   mkdirSync,
   existsSync,
@@ -11,15 +11,16 @@ import {
   watch,
   type FSWatcher
 } from 'fs'
-import { join, basename } from 'path'
-import { bundledSkins } from '../../../packages/skins/bundled'
-import type { Skin, SkinState } from '../../../packages/skins/types'
+import { join, basename, dirname } from 'path'
+import { bundledSkins } from '@clave/skins/bundled'
+import type { Skin, SkinState } from '@clave/skins/types'
 import { validateManifest, validateTokens, parseSkinCss } from './validation'
 
 export class SkinStore {
   private watcher?: FSWatcher
   private timer?: ReturnType<typeof setTimeout>
-  private poll?: ReturnType<typeof setInterval>
+  private startupTimer?: ReturnType<typeof setTimeout>
+  private watching = false
   private fingerprint = ''
   constructor(
     private root: string,
@@ -27,11 +28,9 @@ export class SkinStore {
     private active: () => string | null,
     private persist: (id: string) => void,
     private changed: (state: SkinState) => void
-  ) {
-    mkdirSync(root, { recursive: true })
-  }
+  ) {}
 
-  private read(folder: string): Skin {
+  private read(folder: string, resolve = true): Skin {
     const read = (name: string): string => {
       const file = join(folder, name)
       if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink())
@@ -45,7 +44,7 @@ export class SkinStore {
     const base = bundledSkins.find((s) => s.id === manifest.skin.base)!
     const resolved = inheritSkinTokens(base.tokens, tokens)
     skinToXterm(resolved)
-    return { ...manifest, tokens: resolved, bundled: false }
+    return { ...manifest, tokens: resolve ? resolved : tokens, bundled: false }
   }
 
   list(): SkinState {
@@ -99,7 +98,7 @@ export class SkinStore {
         bundled: false
       }
     } else {
-      skin = this.read(source)
+      skin = this.read(source, false)
     }
     validateManifest(skin, this.version)
     skinToXterm(
@@ -122,6 +121,7 @@ export class SkinStore {
     } finally {
       rmSync(staging, { recursive: true, force: true })
     }
+    if (this.watching) this.startWatching()
     return this.activate(skin.id)
   }
 
@@ -147,19 +147,26 @@ export class SkinStore {
   }
 
   startWatching(): void {
+    this.close()
+    this.watching = true
     this.fingerprint = JSON.stringify(this.list())
-    this.watcher = watch(this.root, { recursive: true }, () => {
-      clearTimeout(this.timer)
-      this.timer = setTimeout(() => this.refreshIfChanged(), 150)
-    })
-    // Native recursive watchers can miss edits while their directory watches
-    // are being established (notably on macOS). Reconcile content as well.
-    this.poll = setInterval(() => this.refreshIfChanged(), 1000)
-    this.poll.unref()
+    // Watch the existing parent until first import creates the skins directory.
+    const target = existsSync(this.root) ? this.root : dirname(this.root)
+    if (existsSync(target)) {
+      this.watcher = watch(target, { recursive: true }, () => {
+        clearTimeout(this.timer)
+        this.timer = setTimeout(() => this.refreshIfChanged(), 150)
+      })
+    }
+    // Reconcile once after macOS has established its recursive directory watches.
+    this.startupTimer = setTimeout(() => this.refreshIfChanged(), 2500)
+    this.startupTimer.unref()
   }
   close(): void {
+    this.watching = false
     clearTimeout(this.timer)
-    clearInterval(this.poll)
+    clearTimeout(this.startupTimer)
     this.watcher?.close()
+    this.watcher = undefined
   }
 }

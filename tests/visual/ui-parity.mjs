@@ -57,8 +57,9 @@ try {
   })
   await win.reload()
   await win.waitForSelector('.launcher-panel')
+  await win.evaluate(() => window.electronAPI.skinsActivate?.('dark'))
   await callMcp(app, 'createGroup', { name: 'Design system', cwd: root })
-  async function capture(name, selector) {
+  async function capture(name, selector, reportOnly = false) {
     await win.mouse.move(1190, 790)
     await win.evaluate(() => document.fonts.ready)
     await win.waitForTimeout(500)
@@ -87,10 +88,10 @@ try {
       rmSync(file)
       assert.deepEqual(result.a, result.b, `${name} dimensions`)
       assert(
-        result.ratio <= 0.001,
-        `${name}: ${(result.ratio * 100).toFixed(4)}% differs (limit 0.1%)`
+        reportOnly || result.ratio === 0,
+        `${name}: ${(result.ratio * 100).toFixed(4)}% differs (expected 0.0000%)`
       )
-      console.log(`PASS ${name}: ${(result.ratio * 100).toFixed(4)}%`)
+      console.log(`${reportOnly ? 'MEASURE' : 'PASS'} ${name}: ${(result.ratio * 100).toFixed(4)}%`)
     }
   }
   if (process.env.CLAVE_UI_PARITY_MUTATE) {
@@ -115,7 +116,33 @@ try {
       .locator(`.theme-swatch`)
       .filter({ hasText: new RegExp(`^${theme}$`, 'i') })
       .click()
-    await capture(`appearance-${theme}`, '.settings-scroller')
+    await capture(`appearance-${theme}`, '.settings-scroller', true)
+    // Verify every other pixel after removing precisely the two intended changes.
+    const restore = await win.evaluate(() => {
+      const row = [...document.querySelectorAll('.settings-row')].find(
+        (row) => row.querySelector('button')?.textContent.trim() === 'Import skin'
+      )
+      const description = [...document.querySelectorAll('.settings-section-description')].find(
+        (el) =>
+          el.textContent === 'Installed skins share their tokens with every panel and terminal.'
+      )
+      const text = description?.textContent
+      if (row) row.style.display = 'none'
+      if (description)
+        description.textContent = 'Four skins on the same tokens; the terminals follow.'
+      return { text }
+    })
+    await capture(`appearance-${theme}-unchanged`, '.settings-scroller')
+    await win.evaluate(({ text }) => {
+      const row = [...document.querySelectorAll('.settings-row')].find(
+        (row) => row.querySelector('button')?.textContent.trim() === 'Import skin'
+      )
+      if (row) row.style.removeProperty('display')
+      if (text)
+        [...document.querySelectorAll('.settings-section-description')].find(
+          (el) => el.textContent === 'Four skins on the same tokens; the terminals follow.'
+        ).textContent = text
+    }, restore)
   }
   complete = true
 } finally {

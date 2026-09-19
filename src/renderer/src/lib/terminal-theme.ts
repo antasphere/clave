@@ -1,6 +1,6 @@
 import type { Theme } from '../store/session-types'
-import { bundledSkins } from '../../../../packages/skins/bundled'
-import { skinToXterm, type SkinTerminalTheme } from '../../../../packages/skins/skin-to-xterm'
+import { bundledSkins } from '@clave/skins/bundled'
+import { skinToXterm, type SkinTerminalTheme } from '@clave/skins/skin-to-xterm'
 
 let activeTheme: SkinTerminalTheme | undefined
 

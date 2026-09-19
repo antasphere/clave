@@ -1201,7 +1201,6 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTheme: (theme) => {
     localStorage.setItem('clave-theme', theme)
     set({ theme })
-    void window.electronAPI.skinsActivate(theme)
   },
 
   setTreeRuleIntensity: (treeRuleIntensity) => {
