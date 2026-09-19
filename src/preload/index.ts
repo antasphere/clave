@@ -558,10 +558,10 @@ const electronAPI = {
   skinsActivate: (id: string) => ipcRenderer.invoke('skins:activate', id),
   skinsImport: (source?: string) => ipcRenderer.invoke('skins:import', source),
   skinsRemove: (id: string) => ipcRenderer.invoke('skins:remove', id),
-  onSkinsChanged: (callback: (state: import('../../packages/skins/types').SkinState) => void) => {
+  onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      state: import('../../packages/skins/types').SkinState
+      state: import('@clave/skins/types').SkinState
     ): void => callback(state)
     ipcRenderer.on('skins:changed', listener)
     return () => {

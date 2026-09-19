@@ -108,6 +108,7 @@
     "vitest": "^3.2.7"
   },
   "workspaces": [
-    "packages/ui"
+    "packages/ui",
+    "packages/skins"
   ]
 }

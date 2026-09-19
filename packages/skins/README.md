@@ -34,8 +34,11 @@ traverse directories. Bundled ids cannot be replaced or removed.
 ```
 
 The accent token is **`--color-accent`**, not `--accent`. Unknown names are errors.
-`token-names.json` is generated from the design system, never hand-maintained.
-Unspecified values inherit the selected base. The tree separator intensity is a
+`token-names.json` is generated from the design system with the explicit
+`excluded-token-names.json` list. Skins change colour and material only: metrics,
+radii, fonts, animation and easing remain owned by the stylesheet.
+Both folder and JSON imports store only declared overrides; unspecified values
+inherit the current selected base at read time. The tree separator intensity is a
 user preference and is preserved when applying a skin.
 
 Optional CSS accepts only `:root { --known-token: value; }` declarations. It is
@@ -49,7 +52,8 @@ JSON token map, validates before writing, and copies only normalized manifest an
 token data into `~/.clave/skins/<id>`. A single JSON file receives an `imported-`
 id based on its filename and a dark base. Import activates the new skin. Removing
 an active skin reverts to Dark. The active id lives in app preferences and applies
-across windows. Changes under the skin directory reload automatically; invalid
+across windows. First boot keeps the legacy theme without persisting a skin id;
+only a user choice persists one. The skins folder is created on first import. Changes under the skin directory reload automatically; invalid
 packages are excluded and their errors appear in Appearance. Test-mode apps use
 `<isolated-user-data>/skins` instead of the user's home directory.
 

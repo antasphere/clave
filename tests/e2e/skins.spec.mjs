@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import {
   launchApp,
@@ -37,6 +37,9 @@ export async function run(t) {
     const launched = await launchApp(dir)
     app = launched.app
     const win = launched.win
+    assert.equal((await win.evaluate(() => window.electronAPI.skinsList())).activeId, null)
+    assert.equal(existsSync(`${dir}/skins`), false)
+    t.check('first boot persists no skin choice and creates no skins folder', true)
     if (process.env.CLAVE_SKIN_E2E_MUTATE) {
       // Break the real main-to-renderer update path; the hot-edit check must fail.
       win.setDefaultTimeout(5000)
@@ -72,6 +75,8 @@ export async function run(t) {
       opened.sessionId
     )
     t.check('the already-running terminal receives the imported accent', true)
+    // Past the one-shot startup reconciliation: this edit must arrive via fs.watch.
+    await win.waitForTimeout(3000)
     writeFileSync(
       `${dir}/skins/test-accent/skin.json`,
       JSON.stringify({ '--color-accent': '#abc123' })

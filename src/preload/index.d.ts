@@ -877,12 +877,12 @@ export interface ElectronAPI {
     maxDepth?: number
   } | null>
   readImageAsDataUrl: (absolutePath: string) => Promise<string | null>
-  skinsList: () => Promise<import('../../packages/skins/types').SkinState>
-  skinsActivate: (id: string) => Promise<import('../../packages/skins/types').SkinState>
-  skinsImport: (source?: string) => Promise<import('../../packages/skins/types').SkinState>
-  skinsRemove: (id: string) => Promise<import('../../packages/skins/types').SkinState>
+  skinsList: () => Promise<import('@clave/skins/types').SkinState>
+  skinsActivate: (id: string) => Promise<import('@clave/skins/types').SkinState>
+  skinsImport: (source?: string) => Promise<import('@clave/skins/types').SkinState>
+  skinsRemove: (id: string) => Promise<import('@clave/skins/types').SkinState>
   onSkinsChanged: (
-    callback: (state: import('../../packages/skins/types').SkinState) => void
+    callback: (state: import('@clave/skins/types').SkinState) => void
   ) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>

@@ -1,9 +1,9 @@
 import { it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SkinStore } from './skin-store'
-import { bundledSkins } from '../../../packages/skins/bundled'
+import { bundledSkins } from '@clave/skins/bundled'
 it('imports, activates, persists, reloads edits and reverts removed skins', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'clave-skin-test-'))
   let active: string | null = null
@@ -18,6 +18,10 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     (state) => updates.push(state)
   )
   try {
+    store.startWatching()
+    expect(store.list().activeId).toBeNull()
+    expect(active).toBeNull()
+    expect(existsSync(join(dir, 'installed'))).toBe(false)
     const source = join(dir, 'source')
     mkdirSync(source)
     writeFileSync(
@@ -27,15 +31,19 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     writeFileSync(join(source, 'skin.json'), JSON.stringify({ '--color-accent': '#abcdef' }))
     expect(store.import(source).activeId).toBe('custom')
     expect(active).toBe('custom')
+    expect(JSON.parse(readFileSync(join(dir, 'installed/custom/skin.json'), 'utf8'))).toEqual({
+      '--color-accent': '#abcdef'
+    })
     expect(store.list().skins.find((s) => s.id === 'custom')?.tokens['--color-accent']).toBe(
       '#abcdef'
     )
-    store.startWatching()
+    await new Promise((resolve) => setTimeout(resolve, 2800))
+    const beforeEdit = updates.length
     writeFileSync(
       join(dir, 'installed/custom/skin.json'),
       JSON.stringify({ '--color-accent': '#fedcba' })
     )
-    await vi.waitFor(() => expect(updates.length).toBeGreaterThan(1), { timeout: 3000 })
+    await vi.waitFor(() => expect(updates.length).toBeGreaterThan(beforeEdit), { timeout: 3000 })
     expect(store.list().skins.find((s) => s.id === 'custom')?.tokens['--color-accent']).toBe(
       '#fedcba'
     )
@@ -46,4 +54,4 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     store.close()
     rmSync(dir, { recursive: true, force: true })
   }
-})
+}, 10000)
