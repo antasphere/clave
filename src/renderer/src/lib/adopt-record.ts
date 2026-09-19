@@ -2,6 +2,9 @@ import type { SessionRecord } from '../../../preload/index.d'
 import { useSessionStore } from '../store/session-store'
 import type { Session, SessionViewConfig } from '../store/session-types'
 import { resolveHiddenOwner } from './boot-adoption'
+import { legacyAgentProvider } from '../../../shared/session-migration'
+import { remapHiddenOwner, remapSessionId } from '../../../shared/session-remap'
+import { applySessionMappings } from './session-migration'
 
 /**
  * Bring one persisted session record back as a live tab in THIS window's
@@ -43,46 +46,54 @@ async function spawnFromRecord(
 ): Promise<{ session: Session } | null> {
   try {
     const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
-    const info = await window.electronAPI.spawnSession(s.cwd, {
-      claudeMode: s.claudeMode,
-      antigravityMode: s.antigravityMode,
-      codexMode: s.codexMode,
-      piMode: s.piMode,
-      claudeAgentsMode: s.claudeAgentsMode,
-      dangerousMode: s.dangerousMode,
-      model: s.model,
-      // Live survivor: MUST go through tmux to reattach. Dead record: fresh
-      // spawn under the current global tmux preference — the name is still
-      // offered so a tmux respawn reuses it.
-      ...(s.live && s.tmuxName
-        ? { tmuxMode: true, adoptTmuxName: s.tmuxName }
-        : s.tmuxName
-          ? { adoptTmuxName: s.tmuxName }
-          : {}),
-      // Reuse the original id so lifecycle-hook status routing keeps working.
-      adoptSessionId: s.id,
-      // Live survivor: reattach (claudeSessionId only drives the badge). Dead
-      // record: re-spawn with --resume to reload the prior conversation.
-      ...(s.live
-        ? { claudeSessionId: s.claudeSessionId, piSessionId: s.piSessionId }
-        : s.claudeMode && s.claudeSessionId
-          ? { resumeSessionId: s.claudeSessionId }
-          : s.piMode && s.piSessionId
-            ? { resumeSessionId: s.piSessionId }
-          : {}),
-      launchProfileId: s.launchProfileId,
-      piProvider: s.piProvider,
-      piThinking: s.piThinking,
-      configDir: s.configDir,
-      claudeProfileId: s.claudeProfileId,
-      claudeProfileLabel: s.claudeProfileLabel,
-      workspaceId,
-      // Carry the ownership forward: an adoption rewrites the record, and a
-      // hidden half that came back unstamped would be a tab at the NEXT boot.
-      link: s.link
-    })
+    const legacyAgentId = legacyAgentProvider(s) ? s.id : undefined
+    const info = legacyAgentId
+      ? {
+          ...s,
+          alive: Boolean(s.live),
+          claudeSessionId: s.claudeSessionId ?? null
+        }
+      : await window.electronAPI.spawnSession(s.cwd, {
+          claudeMode: s.claudeMode,
+          antigravityMode: s.antigravityMode,
+          codexMode: s.codexMode,
+          piMode: s.piMode,
+          claudeAgentsMode: s.claudeAgentsMode,
+          dangerousMode: s.dangerousMode,
+          model: s.model,
+          // Live survivor: MUST go through tmux to reattach. Dead record: fresh
+          // spawn under the current global tmux preference — the name is still
+          // offered so a tmux respawn reuses it.
+          ...(s.live && s.tmuxName
+            ? { tmuxMode: true, adoptTmuxName: s.tmuxName }
+            : s.tmuxName
+              ? { adoptTmuxName: s.tmuxName }
+              : {}),
+          // Reuse the original id so lifecycle-hook status routing keeps working.
+          adoptSessionId: s.id,
+          // Live survivor: reattach (claudeSessionId only drives the badge). Dead
+          // record: re-spawn with --resume to reload the prior conversation.
+          ...(s.live
+            ? { claudeSessionId: s.claudeSessionId, piSessionId: s.piSessionId }
+            : s.claudeMode && s.claudeSessionId
+              ? { resumeSessionId: s.claudeSessionId }
+              : s.piMode && s.piSessionId
+                ? { resumeSessionId: s.piSessionId }
+                : {}),
+          launchProfileId: s.launchProfileId,
+          piProvider: s.piProvider,
+          piThinking: s.piThinking,
+          configDir: s.configDir,
+          claudeProfileId: s.claudeProfileId,
+          claudeProfileLabel: s.claudeProfileLabel,
+          workspaceId,
+          // Carry the ownership forward: an adoption rewrites the record, and a
+          // hidden half that came back unstamped would be a tab at the NEXT boot.
+          link: s.link
+        })
     const session: Session = {
       id: info.id,
+      legacyAgentId,
       cwd: info.cwd,
       folderName: info.folderName,
       name: s.displayName || s.folderName,
@@ -154,11 +165,7 @@ export async function adoptHiddenRecord(
       ? (state.sessions.find((o) => o.id === link.ownerId)?.view ?? null)
       : null
   if (resolveHiddenOwner(link, state) === 'discard') {
-    console.warn(
-      '[boot] discarding hidden session record with no owner:',
-      s.tmuxName ?? s.id,
-      link
-    )
+    console.warn('[boot] discarding hidden session record with no owner:', s.tmuxName ?? s.id, link)
     void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
     return null
   }
@@ -186,15 +193,54 @@ export async function adoptHiddenRecord(
  * already in this store, then acknowledges to main so a caller waiting to
  * act on the moved tab here (an MCP move into a group) can proceed.
  */
+const pendingRehomes = new Map<
+  string,
+  { ids: string[]; workspaceId: string | null; focus: boolean }
+>()
+
+/** A service outage must not strand a tab already detached by the source window. */
+export async function retryPendingRehomes(): Promise<void> {
+  for (const request of [...pendingRehomes.values()]) {
+    await adoptRehomed(request.ids, request.workspaceId, request.focus)
+  }
+}
+
 export async function adoptRehomed(
   ids: string[],
   activeWorkspaceId: string | null,
   focus = false
 ): Promise<void> {
   if (ids.length === 0) return
+  const key = JSON.stringify(ids)
+  pendingRehomes.set(key, { ids, workspaceId: activeWorkspaceId, focus })
+  const mappings = await window.electronAPI.sessionMigration.mappings().catch(() => ({}))
+  applySessionMappings(mappings)
+  const mappedIds = [...new Set(ids.map((id) => remapSessionId(id, mappings)))]
   const already = new Set(useSessionStore.getState().sessions.map((s) => s.id))
-  const records =
-    (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
+  const conversationIds = mappedIds.filter((id) => id.startsWith('conversation-'))
+  let complete = true
+  if (conversationIds.length) {
+    const { conversationToSession } = await import('./conversation-sessions')
+    for (const id of conversationIds) {
+      if (already.has(id)) continue
+      try {
+        const { session } = await window.electronAPI.conversations.snapshot(id)
+        useSessionStore.getState().adoptSessionInPlace(conversationToSession(session), { focus })
+        focus = false
+      } catch {
+        complete = false
+      }
+    }
+  }
+  const terminalIdsToAdopt = mappedIds.filter((id) => !id.startsWith('conversation-'))
+  const records = terminalIdsToAdopt.length
+    ? ((await window.electronAPI
+        ?.listSessionRecords?.({ ids: terminalIdsToAdopt })
+        .catch(() => [])) ?? [])
+    : []
+  if (terminalIdsToAdopt.some((id) => !already.has(id) && !records.some((r) => r.id === id))) {
+    complete = false
+  }
   // A deliberate move focuses ONE tab that lands: a group member or a
   // single moved tab, never a quick-launch terminal riding along (the
   // records come back in directory order, which would otherwise put the
@@ -204,15 +250,30 @@ export async function adoptRehomed(
   for (const g of useSessionStore.getState().groups) {
     for (const t of g.terminals) if (t.sessionId) terminalIds.add(t.sessionId)
   }
-  const ordered = [...records].sort(
-    (a, b) => Number(terminalIds.has(a.id)) - Number(terminalIds.has(b.id))
-  )
+  const ordered = records
+    .map((record) => remapHiddenOwner(record, mappings))
+    .sort((a, b) => Number(terminalIds.has(a.id)) - Number(terminalIds.has(b.id)))
   let first = true
   for (const r of ordered) {
     if (already.has(r.id)) continue
+    const link = r.link
+    if (
+      link?.kind === 'session-view' &&
+      !useSessionStore.getState().sessions.some((session) => session.id === link.ownerId)
+    ) {
+      complete = false
+      continue
+    }
     const takeFocus = focus && first && !terminalIds.has(r.id)
-    const id = await adoptRecord(r, activeWorkspaceId, { focus: takeFocus })
+    const id =
+      r.link?.kind === 'session-view' || r.link?.kind === 'group-terminal'
+        ? await adoptHiddenRecord(r, activeWorkspaceId)
+        : await adoptRecord(r, activeWorkspaceId, { focus: takeFocus })
     if (id && takeFocus) first = false
+    if (!id) complete = false
   }
-  window.electronAPI?.ackRehomed?.(ids)
+  if (complete) {
+    pendingRehomes.delete(key)
+    window.electronAPI?.ackRehomed?.(ids)
+  }
 }

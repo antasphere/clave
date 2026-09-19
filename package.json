@@ -1,6 +1,6 @@
 {
   "name": "clave",
-  "version": "1.90.2",
+  "version": "1.91.0",
   "description": "Manage multiple Claude Code sessions from a single desktop app",
   "author": "Codika <hello@codika.io> (https://codika.io)",
   "license": "MIT",
@@ -18,6 +18,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "npm run native:build && electron-vite dev",
+    "dev:ui": "npm run native:build && electron-vite dev -- --user-data-dir=.clave-ui-dev",
     "native:build": "bash scripts/build-native.sh",
     "build": "npm run native:build && npm run typecheck && electron-vite build",
     "postinstall": "node scripts/postinstall.cjs",

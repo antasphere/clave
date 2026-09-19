@@ -26,6 +26,9 @@ import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
+import { registerConversationHandlers } from './conversation-handlers'
+import { registerRuntimePluginHandlers } from './runtime-plugin-handlers'
+import { registerSessionMigrationHandlers } from './session-migration-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -37,6 +40,9 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerFeedbackHandlers()
   registerFsHandlers()
   registerPtyHandlers()
+  registerConversationHandlers()
+  registerSessionMigrationHandlers()
+  registerRuntimePluginHandlers()
   registerShellHandlers()
   registerLocationHandlers()
   registerSshHandlers()

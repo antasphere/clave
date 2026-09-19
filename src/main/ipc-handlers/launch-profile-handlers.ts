@@ -1,10 +1,13 @@
 import { ipcMain } from 'electron'
 import { launchProfileManager } from '../launch-profile-manager'
-import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
+import {
+  isLauncherFamily,
+  type LaunchProfile,
+  type LauncherFamily
+} from '../../shared/agent-launch'
 
-const FAMILIES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
 function family(value: unknown): LauncherFamily {
-  if (!FAMILIES.has(value as LauncherFamily)) throw new Error('Invalid launcher family')
+  if (!isLauncherFamily(value)) throw new Error('Invalid launcher family')
   return value as LauncherFamily
 }
 

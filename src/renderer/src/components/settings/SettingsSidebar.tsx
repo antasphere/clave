@@ -32,6 +32,7 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     label: 'Agents',
     rows: [
       { id: 'agents', label: 'Agents', icon: CpuChipIcon },
+      { id: 'runtime-plugins', label: 'Runtime plugins', icon: CpuChipIcon },
       { id: 'usage', label: 'Usage', icon: ChartBarIcon }
     ]
   },

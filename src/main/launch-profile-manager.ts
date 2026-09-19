@@ -1,7 +1,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
+import { runtimePluginRegistry } from './runtime-plugins/registry-runtime'
 import {
+  BUILT_IN_LAUNCH_PROFILES,
   DEFAULT_LAUNCH_PROFILE_PREFERENCES,
   resolveLaunchProfile,
   sanitizeLaunchProfilePreferences,
@@ -13,7 +15,11 @@ import {
 export class LaunchProfileManager {
   private preferences: LaunchProfilePreferences
 
-  constructor(private readonly filePath: string) {
+  constructor(
+    private readonly filePath: string,
+    private readonly defaultProfiles: () => readonly LaunchProfile[] = () =>
+      BUILT_IN_LAUNCH_PROFILES
+  ) {
     this.preferences = this.load()
   }
 
@@ -36,7 +42,7 @@ export class LaunchProfileManager {
   }
 
   getPreferences(): LaunchProfilePreferences {
-    return structuredClone(this.preferences)
+    return structuredClone({ ...this.preferences, defaultProfiles: [...this.defaultProfiles()] })
   }
 
   replace(raw: unknown): LaunchProfilePreferences {
@@ -46,6 +52,9 @@ export class LaunchProfileManager {
   }
 
   upsert(profile: LaunchProfile): LaunchProfilePreferences {
+    if (this.defaultProfiles().some((item) => item.id === profile.id)) {
+      throw new Error('Invalid launch profile: built-in profiles cannot be replaced')
+    }
     const parsed = sanitizeLaunchProfilePreferences({
       ...this.preferences,
       customProfiles: [
@@ -108,18 +117,47 @@ export class LaunchProfileManager {
   resolve(
     family: LauncherFamily,
     workspaceId?: string | null,
-    profileId?: string | null
+    profileId?: string | null,
+    providerDefault?: { name: string; command: string[] }
   ): LaunchProfile {
-    return resolveLaunchProfile(this.preferences, family, workspaceId, profileId)
+    // A conversation's provider revision owns its default command. The settings
+    // catalog describes current enabled providers, not a previously pinned one.
+    const preferences = providerDefault
+      ? {
+          ...this.preferences,
+          defaultProfiles: [
+            {
+              id: `builtin-${family}`,
+              name: providerDefault.name,
+              family,
+              command: providerDefault.command,
+              additionalArgs: [],
+              builtIn: true
+            }
+          ]
+        }
+      : this.getPreferences()
+    return resolveLaunchProfile(preferences, family, workspaceId, profileId)
   }
 
   private assertProfile(family: LauncherFamily, profileId: string): LaunchProfile {
-    const profile = resolveLaunchProfile(this.preferences, family, null, profileId)
-    if (profile.id !== profileId) throw new Error('Unknown launch profile')
-    return profile
+    return resolveLaunchProfile(this.getPreferences(), family, null, profileId)
   }
 }
 
 export const launchProfileManager = new LaunchProfileManager(
-  path.join(app.getPath('userData'), 'agent-launch-profiles.json')
+  path.join(app.getPath('userData'), 'agent-launch-profiles.json'),
+  () => [
+    ...BUILT_IN_LAUNCH_PROFILES.filter((profile) => profile.family === 'antigravity'),
+    ...runtimePluginRegistry()
+      .providers()
+      .map((provider) => ({
+        id: `builtin-${provider.id}`,
+        name: provider.name,
+        family: provider.id,
+        command: runtimePluginRegistry().resolveProvider(provider.id, provider.plugin).command,
+        additionalArgs: [],
+        builtIn: true
+      }))
+  ]
 )

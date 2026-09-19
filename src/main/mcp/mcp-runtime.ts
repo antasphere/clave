@@ -244,6 +244,9 @@ export function sweepSessionMcpConfigs(): void {
     /* no records dir — every config is stale */
   }
   for (const file of configFiles) {
+    // Conversation configs are owned and removed by the detached session
+    // lifecycle. PTY records cannot tell us whether their agent is alive.
+    if (/^conversation-[0-9a-f-]{36}\.json$/i.test(file)) continue
     if (!liveIds.has(path.basename(file, '.json'))) {
       try {
         fs.unlinkSync(path.join(sessionConfigDir(), file))

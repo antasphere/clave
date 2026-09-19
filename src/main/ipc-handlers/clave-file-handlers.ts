@@ -184,7 +184,7 @@ function removeTrustedRoot(root: string): void {
 }
 
 /** True if absolutePath lives at or under any trusted root (after realpath). */
-function isUnderTrustedRoot(absolutePath: string): boolean {
+export function isUnderTrustedRoot(absolutePath: string): boolean {
   let real: string
   try {
     real = fs.realpathSync(absolutePath)

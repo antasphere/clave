@@ -44,6 +44,7 @@ import {
 import { cn } from '../../lib/utils'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { RuntimePluginsSettings } from './RuntimePluginsSettings'
 
 /** The themes, by id and label only: each swatch is painted with the theme's
  *  own tokens (`.theme-swatch-preview` carries `data-theme`), so there is no
@@ -205,6 +206,7 @@ export function SettingsPanel(): React.JSX.Element {
       <div className="max-w-3xl mx-auto w-full">
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}
+        {settingsSection === 'runtime-plugins' && <RuntimePluginsSettings />}
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}

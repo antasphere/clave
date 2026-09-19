@@ -30,6 +30,7 @@ import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
+import { conversationComposer } from './conversation-composer'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -1084,16 +1085,18 @@ async function handleSendToSession(payload: {
   // checkpoint path — resolved BEFORE the reach gate, which has nothing to
   // gate on a message that never leaves the session.
   if (payload.callerSessionId && payload.sessionId === 'mine') {
+    assertMigrationComplete(resolveTargetSession(payload.callerSessionId, payload.callerSessionId))
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
   const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
+  assertMigrationComplete(target)
   if (payload.callerSessionId && target.id === payload.callerSessionId) {
     return handleSelfCheckpoint(payload.callerSessionId, payload.message)
   }
   assertCanReach(payload.callerSessionId, target, 'message')
   if (!target.alive) throw new Error(`Session "${target.name}" has ended`)
   const mode = sessionMode(target)
-  if (mode === 'terminal') {
+  if (mode === 'terminal' && !target.id.startsWith('conversation-')) {
     throw new Error(
       'Refusing to send to a plain terminal — text typed there would run as a shell command. Target an agent tab (claude/antigravity/codex).'
     )
@@ -1120,6 +1123,12 @@ async function handleSendToSession(payload: {
   const text = `${cleanHeader}\n${cleanMessage}`
 
   const targetId = target.id
+
+  if (targetId.startsWith('conversation-')) {
+    await window.electronAPI.conversations.send(targetId, text, crypto.randomUUID())
+    useSessionStore.getState().setSessionInjectedFrom(targetId, sender?.name ?? 'another tab')
+    return { delivered: true, sessionId: targetId, name: target.name, mode, draftHandling: 'none' }
+  }
 
   // Set once the SUBMIT below has landed — the moment the message exists in
   // the target. The capture (see the chain wiring) keys off this and NOT off
@@ -1235,13 +1244,36 @@ async function handleSendToSession(payload: {
   }
 }
 
-function handleReadSession(payload: {
+function assertMigrationComplete(session: Session): void {
+  if (session.legacyAgentId) {
+    throw new Error('Session migration required. Open this tab in Clave and move it to a conversation before reading or sending messages.')
+  }
+}
+
+async function handleReadSession(payload: {
   sessionId: string
   lines?: number
   callerSessionId?: string
-}): unknown {
+}): Promise<unknown> {
   const target = resolveTargetSession(payload.sessionId, payload.callerSessionId)
   assertCanReach(payload.callerSessionId, target, 'read')
+  assertMigrationComplete(target)
+  if (target.id.startsWith('conversation-')) {
+    const snapshot = await window.electronAPI.conversations.snapshot(target.id)
+    const requested = Math.min(Math.max(payload.lines ?? 100, 1), 500)
+    const lines = snapshot.entries.flatMap((entry) => {
+      switch (entry.kind) {
+        case 'message': return `${entry.role}: ${entry.text}`.split('\n')
+        case 'artifact': return `${entry.title}\n${entry.fallback}`.split('\n')
+        case 'tool': return `${entry.name} (${entry.status})\n${entry.input ?? ''}\n${entry.output ?? ''}`.split('\n')
+      }
+    }).slice(-requested)
+    return {
+      sessionId: target.id, name: target.name, mode: snapshot.session.provider,
+      alive: snapshot.session.status !== 'closed', agentState: snapshot.session.status,
+      lines: lines.length, text: lines.join('\n')
+    }
+  }
   const terminal = getRegisteredTerminal(target.id)
   if (!terminal) {
     throw new Error(`Session "${target.name}" has no terminal buffer (tab not mounted yet)`)
@@ -1337,6 +1369,40 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
     }
     case 'openFile':
       return handleOpenFile(payload as Parameters<typeof handleOpenFile>[0])
+    case 'pluginSetDraft': {
+      const p = payload as { sessionId: string; text: string }
+      const state = conversationComposer.read(p.sessionId)
+      if (state.text.length || state.sending) throw new Error('The composer already contains a draft. Clear it before inserting plugin text.')
+      conversationComposer.edit(p.sessionId, p.text)
+      return { updated: true }
+    }
+    case 'publishArtifact': {
+      const p = payload as import('../../../shared/runtime-plugins').ArtifactInput & {
+        callerSessionId?: string; commandId: string
+      }
+      const caller = useSessionStore.getState().sessions.find((item) => item.id === p.callerSessionId)
+      if (!caller?.id.startsWith('conversation-')) throw new Error('Publish artifacts from an authenticated conversation session')
+      return window.electronAPI.conversations.publishArtifact(caller.id, {
+        title: p.title, mimeType: p.mimeType, content: p.content, fallback: p.fallback, sourceUrl: p.sourceUrl
+      }, p.commandId)
+    }
+    case 'pluginOpenFile': {
+      const p = payload as { sessionId: string; path: string }
+      return handleOpenFile({ path: p.path, callerSessionId: p.sessionId })
+    }
+    case 'pluginOpenArtifact': {
+      const p = payload as { sessionId: string; entryId: string }
+      handleFocus({ sessionId: p.sessionId })
+      // Focusing another tab can mount its conversation asynchronously.
+      const deadline = Date.now() + 5000
+      const selector = `[data-conversation-id="${CSS.escape(p.sessionId)}"] [data-artifact-id="${CSS.escape(p.entryId)}"]`
+      while (!document.querySelector(selector)) {
+        if (Date.now() >= deadline) throw new Error('Artifact view is not available in this window')
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      window.dispatchEvent(new CustomEvent('clave:open-artifact', { detail: p }))
+      return { opened: true }
+    }
     case 'notify':
       return handleNotify(payload as Parameters<typeof handleNotify>[0])
     default:

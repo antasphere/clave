@@ -7,7 +7,7 @@ import { FolderIcon } from '@heroicons/react/24/outline'
 interface ExportClaveDialogProps {
   isOpen: boolean
   defaultFileName: string
-  onExport: (folder: string, fileName: string, keepSynced: boolean) => void
+  onExport: (folder: string, fileName: string, keepSynced: boolean) => void | Promise<void>
   onCancel: () => void
 }
 
@@ -20,12 +20,15 @@ export function ExportClaveDialog({
   const [folder, setFolder] = useState<string | null>(null)
   const [fileName, setFileName] = useState(defaultFileName)
   const [keepSynced, setKeepSynced] = useState(false)
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (isOpen) {
       setFileName(defaultFileName)
       setKeepSynced(false)
+      setError(undefined)
       // Load downloads path as default
       window.electronAPI?.getDownloadsPath().then((p) => {
         setFolder((prev) => prev ?? p)
@@ -36,11 +39,19 @@ export function ExportClaveDialog({
     }
   }, [isOpen, defaultFileName])
 
-  const handleExport = () => {
+  const handleExport = async (): Promise<void> => {
     const name = fileName.trim()
-    if (!name || !folder) return
+    if (!name || !folder || busy) return
     const finalName = name.endsWith('.clave') ? name : `${name}.clave`
-    onExport(folder, finalName, keepSynced)
+    setBusy(true)
+    setError(undefined)
+    try {
+      await onExport(folder, finalName, keepSynced)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const handlePickFolder = async () => {
@@ -72,6 +83,7 @@ export function ExportClaveDialog({
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
                       Save this group definition to a file.
                     </DialogPrimitive.Description>
+                    {error && <p role="alert" className="mt-2 text-xs text-text-secondary">{error}</p>}
 
                     {/* Folder picker */}
                     <button
@@ -140,6 +152,7 @@ export function ExportClaveDialog({
                     <button
                       type="button"
                       onClick={handleExport}
+                      disabled={busy}
                       className="btn-dialog text-accent hover:brightness-110 outline-none"
                     >
                       Export

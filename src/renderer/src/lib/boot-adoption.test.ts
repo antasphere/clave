@@ -19,6 +19,21 @@ const toolbar = (id: string, live = true, key = 'pin:0'): BootRecordLike => ({
 })
 
 describe('planBootAdoption — a record only becomes a tab when it IS one', () => {
+  it('restores dead supported agents as metadata without asking to relaunch', () => {
+    const records = [
+      { ...tab('claude', false), claudeMode: true },
+      { ...tab('codex', false), codexMode: true },
+      { ...tab('pi', false), piMode: true },
+      { ...tab('antigravity', false), claudeMode: true, antigravityMode: true },
+      { ...tab('agents', false), claudeMode: true, claudeAgentsMode: true },
+      { ...term('hidden', false), claudeMode: true }
+    ]
+    const plan = planBootAdoption(records)
+    expect(plan.liveTabs.map((record) => record.id)).toEqual(['claude', 'codex', 'pi'])
+    expect(plan.deadTabs.map((record) => record.id)).toEqual(['antigravity', 'agents'])
+    expect(plan.discard.map((record) => record.id)).toEqual(['hidden'])
+  })
+
   it('an unlinked record is a tab, live or dead (every legacy record)', () => {
     const plan = planBootAdoption([tab('a'), tab('b', false)])
     expect(plan.liveTabs.map((r) => r.id)).toEqual(['a'])
@@ -84,10 +99,7 @@ import { resolveHiddenOwner } from './boot-adoption'
 describe('resolveHiddenOwner — an ownerless hidden half is discarded, never surfaced', () => {
   const state = {
     groups: [{ id: 'g1', terminals: [{ id: 't1' }] }],
-    sessions: [
-      { id: 'owner', view: { url: 'http://127.0.0.1:4740' } },
-      { id: 'plain' }
-    ]
+    sessions: [{ id: 'owner', view: { url: 'http://127.0.0.1:4740' } }, { id: 'plain' }]
   }
 
   it('links a group terminal back to a group that still carries its terminal', () => {

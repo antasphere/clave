@@ -3934,6 +3934,257 @@ button.extension-card:hover {
   text-decoration: underline;
 }
 
+/* ── Conversation views ────────────────────────────────────────────────────
+   The transcript and composer share a reading column. Provider protocols live
+   behind this view; only actionable state deserves persistent chrome. */
+.conversation-panel {
+  --conversation-gutter: calc(var(--spacing) * 5);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface-0);
+}
+.conversation-toolbar,
+.conversation-identity,
+.conversation-status,
+.conversation-request-heading,
+.conversation-progress {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.conversation-toolbar {
+  flex-shrink: 0;
+  padding: calc(var(--spacing) * 2) var(--conversation-gutter);
+  border-bottom: 1px solid var(--border-subtle-color);
+  font-size: var(--text-xs);
+}
+.conversation-identity { flex: 1; min-width: 0; }
+.conversation-model {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-status { color: var(--text-secondary); white-space: nowrap; }
+.conversation-status::before {
+  content: "";
+  width: calc(var(--spacing) * 1.5);
+  height: calc(var(--spacing) * 1.5);
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.conversation-status[data-state="running"]::before,
+.conversation-status[data-state="starting"]::before { background: var(--color-accent); }
+.conversation-status[data-state="waiting"]::before { background: var(--color-warning); }
+.conversation-status[data-state="error"]::before { background: var(--color-destructive); }
+.conversation-details {
+  width: min(var(--container-xs), var(--radix-popover-content-available-width));
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  padding: calc(var(--spacing) * 4);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.conversation-details h3 { font-size: var(--text-sm); margin-bottom: calc(var(--spacing) * 2); }
+.conversation-details p { color: var(--text-secondary); }
+.conversation-details dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  margin-block: calc(var(--spacing) * 4);
+}
+.conversation-details dt { color: var(--text-secondary); }
+.conversation-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) var(--conversation-gutter);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--surface-50);
+  border-bottom: 1px solid var(--border-subtle-color);
+}
+.conversation-notice svg { flex-shrink: 0; }
+.conversation-reading { position: relative; flex: 1; min-height: 0; }
+.conversation-scroll {
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+.conversation-scroll:focus-visible { outline: 1px solid var(--color-accent); outline-offset: -1px; }
+.conversation-transcript {
+  width: min(100%, var(--container-3xl));
+  min-height: 100%;
+  margin-inline: auto;
+  padding: calc(var(--spacing) * 5) var(--conversation-gutter) calc(var(--spacing) * 8);
+  overflow-wrap: anywhere;
+}
+.conversation-empty { padding-block: calc(var(--control-h-lg) * 2); }
+.conversation-empty h2 { font-size: var(--text-xl); letter-spacing: -0.025em; margin-bottom: calc(var(--spacing) * 3); }
+.conversation-empty > p { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.7; }
+.conversation-empty .conversation-actions { margin-block: calc(var(--spacing) * 5); }
+.conversation-folder { display: block; color: var(--text-tertiary); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.conversation-message { min-width: 0; margin-block: calc(var(--spacing) * 6); }
+.conversation-message:first-child { margin-top: 0; }
+.conversation-message[data-role="user"] {
+  padding: calc(var(--spacing) * 4);
+  border-radius: var(--radius-xl);
+  background: var(--surface-100);
+}
+.conversation-user-text { white-space: pre-wrap; font-size: var(--text-sm); line-height: 1.7; }
+/* Compact Markdown normally pads a whole preview. A message already owns its
+   spacing; removing that extra inset aligns prose with tools and the composer. */
+.conversation-message .prose-preview { padding: 0; min-width: 0; }
+.conversation-message pre,
+.conversation-message table { max-width: 100%; }
+.conversation-tool {
+  margin-block: calc(var(--spacing) * 2);
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+.conversation-tool > summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: var(--control-h-md);
+  padding: 0 calc(var(--spacing) * 2);
+  cursor: pointer;
+  list-style: none;
+}
+.conversation-tool > summary::-webkit-details-marker { display: none; }
+.conversation-tool > summary:hover { background: var(--surface-100); }
+.conversation-tool > summary span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-tool > summary svg { flex-shrink: 0; }
+.conversation-tool[open] > summary .conversation-chevron { transform: rotate(90deg); }
+.conversation-tool[data-state="failed"] { border-color: var(--color-destructive); }
+.conversation-tool-body { border-top: 1px solid var(--border-subtle-color); padding: calc(var(--spacing) * 3); }
+.conversation-tool-body h4 { margin-bottom: var(--spacing); color: var(--text-tertiary); }
+.conversation-tool-body pre,
+.conversation-request-description {
+  max-height: calc(var(--control-h-lg) * 6);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  margin-block: calc(var(--spacing) * 2);
+}
+.conversation-progress { padding-block: calc(var(--spacing) * 3); font-size: var(--text-xs); color: var(--text-secondary); }
+.conversation-working { animation: var(--animate-spin); }
+@media (prefers-reduced-motion: reduce) {
+  .conversation-working { animation: none; }
+}
+.conversation-jump.btn-secondary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  position: absolute;
+  bottom: calc(var(--spacing) * 3);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+}
+.conversation-requests {
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle-color);
+}
+.conversation-request,
+.conversation-error {
+  padding: calc(var(--spacing) * 4) var(--conversation-gutter);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.conversation-request { border-left: 2px solid var(--color-accent); background: var(--surface-50); }
+.conversation-request + .conversation-request { border-top: 1px solid var(--border-subtle-color); }
+.conversation-request-heading { font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: calc(var(--spacing) * 2); }
+.conversation-request-heading svg { flex-shrink: 0; }
+.conversation-request-title { margin-bottom: calc(var(--spacing) * 3); }
+.conversation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--spacing) * 2); }
+.conversation-answer { display: flex; gap: calc(var(--spacing) * 2); margin-top: calc(var(--spacing) * 3); }
+.conversation-answer .input-field { flex: 1; min-width: 0; }
+.conversation-error {
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 30%;
+  overflow: auto;
+  border-top: 1px solid var(--color-destructive);
+  background: var(--surface-50);
+}
+.conversation-error > p { margin-bottom: calc(var(--spacing) * 3); }
+.conversation-compose { flex-shrink: 0; padding: calc(var(--spacing) * 3) var(--conversation-gutter); }
+.conversation-compose-box {
+  max-width: calc(var(--container-3xl) - var(--conversation-gutter) * 2);
+  margin-inline: auto;
+  border: 1px solid var(--border-subtle-color);
+  border-radius: var(--radius-xl);
+  background: var(--surface-100);
+}
+.conversation-compose-box:focus-within { border-color: var(--color-accent); }
+.conversation-input.textarea-field {
+  display: block;
+  min-height: calc(var(--control-h-lg) * 2);
+  max-height: calc(var(--control-h-lg) * 6);
+  padding: calc(var(--spacing) * 3);
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: transparent;
+  overflow-y: auto;
+}
+.conversation-compose-footer {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 2) calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+}
+.conversation-compose-footer > span { flex: 1; color: var(--text-tertiary); font-size: var(--text-xs); }
+.conversation-send.panel-icon-btn { color: var(--color-switch-knob); background: var(--color-accent); }
+.conversation-send.panel-icon-btn:hover:not(:disabled) { background: var(--color-accent-hover); }
+
+/* Plugin content never owns the original/close controls around its frame. */
+.runtime-plugin-entry > h3 { font-size: var(--text-sm); margin-bottom: calc(var(--spacing) * 3); }
+.runtime-plugin-content { display: flex; flex-direction: column; min-height: 0; gap: calc(var(--spacing) * 3); }
+.runtime-plugin-body { min-height: 0; overflow: auto; overflow-wrap: anywhere; }
+.runtime-plugin-frame { display: block; width: 100%; height: calc(var(--control-h-lg) * 10); border: 0; }
+.runtime-plugin-dialog { width: 90vw; max-width: var(--container-6xl); height: 85vh; display: flex; flex-direction: column; overflow: hidden; }
+.runtime-plugin-dialog .runtime-plugin-content,
+.runtime-plugin-dialog .runtime-plugin-body { flex: 1; }
+.runtime-plugin-dialog .runtime-plugin-frame { height: 100%; min-height: 0; }
+
+/* Conversation tool runs share one compact disclosure. Raw records are secondary. */
+.conversation-tool > summary:focus-visible,
+.conversation-tool-raw > summary:focus-visible { outline: 1px solid var(--color-accent); outline-offset: -1px; }
+.conversation-tool-item + .conversation-tool-item,
+.conversation-tool-body > .runtime-plugin-entry + .conversation-tool-item,
+.conversation-tool-body > .conversation-tool-item + .runtime-plugin-entry {
+  border-top: 1px solid var(--border-subtle-color);
+  margin-top: calc(var(--spacing) * 3);
+  padding-top: calc(var(--spacing) * 3);
+}
+.conversation-tool-heading { display: flex; align-items: baseline; gap: calc(var(--spacing) * 2); color: var(--text-primary); }
+.conversation-tool-heading svg { flex-shrink: 0; align-self: flex-start; }
+.conversation-tool-heading span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conversation-tool-item[data-state="failed"] > .conversation-tool-heading { color: var(--color-destructive); }
+.conversation-tool-meta { color: var(--text-tertiary); margin-block: var(--spacing); }
+.conversation-tool-preview { margin-block: calc(var(--spacing) * 3); }
+.conversation-tool-raw { margin-top: calc(var(--spacing) * 2); }
+.conversation-tool-raw > summary { cursor: pointer; color: var(--text-tertiary); }
+.conversation-tool-raw h4 { margin-top: calc(var(--spacing) * 2); }
+.conversation-caret-measure { position: fixed; visibility: hidden; pointer-events: none; top: 0; left: 0; box-sizing: border-box; white-space: pre-wrap; }
+
+
 /* ── View notice ──
    What a web view shows when it has no page to show: the server is being
    checked, is starting, is down, or the page is still loading. The ground is

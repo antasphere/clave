@@ -40,6 +40,8 @@ import { usageManager } from './usage-manager'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
+import { disconnectConversationClient, isConversationId } from './conversations/runtime'
+import { attachRuntimePluginHost } from './runtime-plugins/host'
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -75,6 +77,7 @@ function onWindowClosed(windowId: number, windowKey: string): void {
   // shutdown.
   const remaining = windowRegistry.listWindows().filter((w) => w.id !== windowId)
   if (remaining.length === 0) {
+    disconnectConversationClient()
     ptyManager.killAll()
     sshManager.disconnectAll()
     openclawClient.disconnectAll()
@@ -96,13 +99,21 @@ function onWindowClosed(windowId: number, windowKey: string): void {
   // records follow the primary so the next boot offers them there.
   const tmuxBacked: string[] = []
   for (const id of hosted) {
-    if (ptyManager.getSession(id)?.tmuxName) tmuxBacked.push(id)
-    else {
+    if (isConversationId(id)) {
+      tmuxBacked.push(id)
+      continue
+    }
+    const tracked = ptyManager.getSession(id)
+    if (tracked?.tmuxName || (!tracked && ptyManager.readLegacyMigrationRecord(id))) {
+      tmuxBacked.push(id)
+    } else {
       if (primaryKey) ptyManager.setSessionWindowKey(id, primaryKey)
       ptyManager.kill(id, false)
     }
   }
-  moveSessionsToWindow(tmuxBacked, primary.id, layout, false)
+  void moveSessionsToWindow(tmuxBacked, primary.id, layout, false).catch((error) => {
+    console.error('[sessions] Window handoff failed', error)
+  })
   broadcastIdentities()
 }
 
@@ -222,6 +233,7 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
   })
 
   hardenViewHost(win)
+  attachRuntimePluginHost(win.webContents)
 
   win.webContents.setWindowOpenHandler((details) => {
     if (details.url.startsWith('clave://')) {

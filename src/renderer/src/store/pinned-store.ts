@@ -5,6 +5,14 @@ import { resolveGroupDefaults } from './group-defaults'
 import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
 import { getActiveWorkspaceId } from './workspace-store'
+import { assertPinnableSessions } from '../lib/conversation-pin-guard'
+
+function assertPinnableGroup(groupId: string | null): void {
+  if (!groupId) return
+  const { groups, sessions } = useSessionStore.getState()
+  const group = groups.find((candidate) => candidate.id === groupId)
+  if (group) assertPinnableSessions(sessions.filter((session) => group.sessionIds.includes(session.id)))
+}
 
 export type { PinnedGroup }
 
@@ -395,6 +403,7 @@ export function getExportFileName(pinnedId: string): string {
 export async function exportClaveFile(pinnedId: string, folder: string, fileName: string, keepSynced: boolean): Promise<void> {
   const pg = usePinnedStore.getState().pinnedGroups.find((p) => p.id === pinnedId)
   if (!pg) return
+  assertPinnableGroup(pg.activeGroupId)
 
   const filePath = `${folder}/${fileName}`
 
@@ -545,6 +554,7 @@ export function initClaveFileWatchers(): () => void {
 
 /** Capture a live group as a pinned blueprint */
 export function pinGroupFromCurrent(groupId: string): void {
+  assertPinnableGroup(groupId)
   const { groups, sessions } = useSessionStore.getState()
   const group = groups.find((g) => g.id === groupId)
   if (!group) return
@@ -838,6 +848,7 @@ export function removePinnedGroupWithCleanup(pinnedId: string): void {
 
 /** Re-sync a pinned group's blueprint from the current live group state */
 export function resyncPinnedGroup(groupId: string): void {
+  assertPinnableGroup(groupId)
   const { groups, sessions } = useSessionStore.getState()
   const group = groups.find((g) => g.id === groupId)
   if (!group) return

@@ -1,4 +1,5 @@
 import type { SessionRecord } from '../../../preload/index.d'
+import { legacyAgentProvider, type LegacyAgentModes } from '../../../shared/session-migration'
 
 /**
  * What the launch does with each surviving session record — the rule that
@@ -19,14 +20,14 @@ import type { SessionRecord } from '../../../preload/index.d'
  */
 
 /** The fields of a record this decision reads. */
-export interface BootRecordLike {
+export interface BootRecordLike extends LegacyAgentModes {
   id: string
   live?: boolean
   link?: SessionRecord['link']
 }
 
 export interface BootPlan<R extends BootRecordLike> {
-  /** Ordinary tabs whose process is still running — reattach silently. */
+  /** Live ordinary tabs reattach; supported agents restore metadata only, even when dead. */
   liveTabs: R[]
   /** Ordinary tabs whose process is gone — offered behind the restore prompt. */
   deadTabs: R[]
@@ -54,7 +55,7 @@ export function planBootAdoption<R extends BootRecordLike>(records: R[]): BootPl
   for (const r of records) {
     const kind = r.link?.kind
     if (!kind) {
-      ;(r.live ? plan.liveTabs : plan.deadTabs).push(r)
+      ;(r.live || legacyAgentProvider(r) ? plan.liveTabs : plan.deadTabs).push(r)
       continue
     }
     if (!r.live) {
@@ -78,10 +79,7 @@ export function survivingIds<R extends BootRecordLike>(
   plan: BootPlan<R>,
   adoptedTabIds: Iterable<string>
 ): string[] {
-  return [
-    ...adoptedTabIds,
-    ...plan.hidden.map((r) => r.id)
-  ]
+  return [...adoptedTabIds, ...plan.hidden.map((r) => r.id)]
 }
 
 /** The store shape the hidden-owner lookup reads. */

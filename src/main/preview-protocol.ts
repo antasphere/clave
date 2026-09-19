@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { previewContentType } from './preview-content-type'
 import { VIEW_PARTITION } from './view-guests'
+import { PLUGIN_SCHEME } from './runtime-plugins/protocol'
 
 /**
  * clave-preview:// — serves a registered HTML file and its sibling assets to
@@ -29,7 +30,8 @@ export function registerPreviewScheme(): void {
     {
       scheme: 'clave-preview',
       privileges: { standard: true, supportFetchAPI: true, corsEnabled: true }
-    }
+    },
+    PLUGIN_SCHEME
   ])
 }
 

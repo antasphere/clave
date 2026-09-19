@@ -1,4 +1,6 @@
 import { app } from 'electron'
+import { mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 /** Honor `--user-data-dir=<path>` for REAL profile isolation.
  *
@@ -11,9 +13,11 @@ import { app } from 'electron'
  */
 const overrideDir = app.commandLine.getSwitchValue('user-data-dir')
 if (overrideDir) {
-  app.setPath('userData', overrideDir)
+  const directory = resolve(overrideDir)
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  app.setPath('userData', directory)
   // sessionData (Chromium storage: localStorage, IndexedDB, caches) follows
   // userData by default only when unset — set it explicitly so renderer
   // storage is isolated too, not just our JSON files.
-  app.setPath('sessionData', overrideDir)
+  app.setPath('sessionData', directory)
 }

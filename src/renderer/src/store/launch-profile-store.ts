@@ -32,9 +32,10 @@ export async function loadLaunchProfiles(): Promise<void> {
 
 export function profilesFor(family: LauncherFamily): LaunchProfile[] {
   const preferences = useLaunchProfileStore.getState().preferences
-  return [...BUILT_IN_LAUNCH_PROFILES, ...preferences.customProfiles].filter(
-    (profile) => profile.family === family
-  )
+  return [
+    ...(preferences.defaultProfiles ?? BUILT_IN_LAUNCH_PROFILES),
+    ...preferences.customProfiles
+  ].filter((profile) => profile.family === family)
 }
 
 export function selectedLaunchProfile(

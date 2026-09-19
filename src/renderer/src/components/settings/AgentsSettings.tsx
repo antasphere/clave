@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CommandLineIcon,
+  PlusIcon,
+  TrashIcon
+} from '@heroicons/react/24/outline'
 import {
   deleteLaunchProfile,
   profilesFor,
@@ -10,6 +16,7 @@ import {
 } from '../../store/launch-profile-store'
 import { getLastAgentSetup, rememberAgentSetup } from '../../store/launch-prefs'
 import { useWorkspaceStore } from '../../store/workspace-store'
+import { restartConversationService } from '../../lib/session-migration'
 import type {
   LaunchProfile,
   LauncherFamily,
@@ -216,6 +223,31 @@ export function AgentsSettings(): React.JSX.Element {
   const preferences = useLaunchProfileStore((state) => state.preferences)
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId)
   const [editing, setEditing] = useState<LaunchProfile | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState('')
+  const restart = async (): Promise<void> => {
+    setRestarting(true)
+    setRestartError('')
+    try {
+      await restartConversationService()
+    } catch (error) {
+      setRestartError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRestarting(false)
+    }
+  }
+  const families = [...FAMILIES]
+  for (const profile of [...(preferences.defaultProfiles ?? []), ...preferences.customProfiles]) {
+    if (!families.some((family) => family.id === profile.family)) {
+      families.push({
+        id: profile.family,
+        label:
+          preferences.defaultProfiles?.find((item) => item.family === profile.family)?.name ??
+          profile.family,
+        Logo: () => <CommandLineIcon className="w-4 h-4" />
+      })
+    }
+  }
   const setWorkspaceDefault = async (
     workspaceId: string,
     family: LauncherFamily,
@@ -235,7 +267,24 @@ export function AgentsSettings(): React.JSX.Element {
       title="Agents"
       description="One launch profile per agent family: the command Clave runs and its arguments. Commands are stored locally as argument tokens; never put a password or an API key in them."
     >
-      {FAMILIES.map(({ id: family, label, Logo }) => {
+      <SettingsSection title="Background service">
+        <SettingsCard>
+          <SettingsRow
+            label="Restart conversation service"
+            description="Recover after a service update. Clave asks before interrupting active work. Providers stay stopped until you send a message."
+          >
+            <button className="btn-secondary" disabled={restarting} onClick={() => void restart()}>
+              {restarting ? 'Restarting…' : 'Restart background service'}
+            </button>
+          </SettingsRow>
+        </SettingsCard>
+        {restartError && (
+          <p role="alert" className="text-xs text-destructive">
+            {restartError}
+          </p>
+        )}
+      </SettingsSection>
+      {families.map(({ id: family, label, Logo }) => {
         const profiles = profilesFor(family)
         const globalId =
           preferences.globalDefaults[family] ?? profiles.find((profile) => profile.builtIn)?.id
@@ -322,7 +371,7 @@ export function AgentsSettings(): React.JSX.Element {
                     id: crypto.randomUUID(),
                     name: `Custom ${label}`,
                     family,
-                    command: [family === 'antigravity' ? 'agy' : family],
+                    command: [...(profiles.find((profile) => profile.builtIn)?.command ?? [])],
                     additionalArgs: []
                   })
                 }

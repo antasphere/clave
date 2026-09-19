@@ -23,6 +23,7 @@ Thumbs.db
 .playwright-mcp/
 .mcp.json
 .playwright-electron.config.json
+.clave-ui-dev/
 
 # Planning docs
 next-features.md

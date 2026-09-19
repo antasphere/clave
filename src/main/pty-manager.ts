@@ -14,6 +14,8 @@ import { claudeAccountsManager } from './claude-accounts'
 import { resolvePosixShellLaunch } from './shell-launch'
 import { CODEX_TITLE_CONFIG } from '../shared/codex-state'
 import { tmuxKillSessionArgs } from './tmux-args'
+import { legacyAgentProvider, type LegacyImportState } from '../shared/session-migration'
+import type { LegacyMigrationRecord } from './conversations/legacy-migration'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -1209,10 +1211,10 @@ class PtyManager {
    * that outlives it. Called on every rename (manual, auto-title, or reset to
    * the folder name); a no-op for sessions with no tmux sidecar to update.
    */
-  /** The persisted record key for an in-memory session (tmux name or id). */
+  /** Migration placeholders have a record but deliberately have no local PTY. */
   private recordKeyForSession(id: string): string | null {
     const session = this.sessions.get(id)
-    if (!session) return null
+    if (!session) return this.readLegacyMigrationRecord(id)?.recordKey ?? null
     return session.tmuxName ?? id
   }
 
@@ -1220,6 +1222,97 @@ class PtyManager {
    *  which is also the answer to "who owns this tab's scrollback". */
   tmuxNameOf(id: string): string | null {
     return this.sessions.get(id)?.tmuxName ?? null
+  }
+
+  /** Includes adopted records; never prunes or stops anything during inspection. */
+  readLegacyMigrationRecord(id: string): LegacyMigrationRecord | undefined {
+    if (!UUID_RE.test(id)) return undefined
+    const dir = sessionRecordsDir()
+    if (!fs.existsSync(dir)) return undefined
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue
+      const key = file.slice(0, -5)
+      const record = readSessionRecord(key)
+      if (!record || record.id !== id || recordKeyOf(record) !== key) continue
+      if (!legacyAgentProvider(record)) return undefined
+      const tracked = this.sessions.get(id)
+      const tmux = record.tmuxName ? detectTmux() : null
+      return { ...record, recordKey: key,
+        live: record.tmuxName ? !!tmux && liveTmuxSessions(tmux).has(record.tmuxName) : !!tracked?.alive }
+    }
+    return undefined
+  }
+
+  async stopAndForgetLegacyRecord(identity: LegacyImportState): Promise<void> {
+    const { sourceId, recordKey, tmuxName } = identity
+    if (!UUID_RE.test(sourceId) || !isValidRecordKey(recordKey) ||
+      recordKey !== (tmuxName ?? sourceId) || (tmuxName && !isValidTmuxName(tmuxName)))
+      throw new Error('Invalid legacy record identity')
+    const record = readSessionRecord(recordKey)
+    if (record && (record.id !== sourceId || !legacyAgentProvider(record)))
+      throw new Error('Legacy record ownership changed')
+    const tracked = this.sessions.get(sourceId)
+    if (tracked && tracked.tmuxName !== tmuxName) throw new Error('Legacy process ownership changed')
+    if (tmuxName) {
+      const tmux = detectTmux()
+      if (!tmux) throw new Error('Cannot verify the legacy tmux session is stopped')
+      const run = (args: string[]): Promise<void> => new Promise((resolve, reject) => {
+        execFile(tmux, args, { timeout: 10000 }, (error, _stdout, stderr) => {
+          if (error) reject(Object.assign(error, { stderr }))
+          else resolve()
+        })
+      })
+      const exists = async (): Promise<boolean> => {
+        try {
+          await run(['-L', TMUX_SOCKET, 'has-session', '-t', `=${tmuxName}`])
+          return true
+        } catch (error) {
+          const failure = error as { code?: number; stderr?: string }
+          if (failure.code === 1 && /can't find session:|no server running|No such file or directory/.test(failure.stderr ?? ''))
+            return false
+          throw error
+        }
+      }
+      if (await exists()) await run(tmuxKillSessionArgs(TMUX_SOCKET, tmuxName))
+      if (await exists()) throw new Error('Legacy tmux session is still running')
+      // Only detach the client after the named server-side session is gone.
+      if (tracked?.alive) tracked.ptyProcess?.kill()
+    } else if (tracked?.alive && tracked.ptyProcess) {
+      const process = tracked.ptyProcess
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          subscription.dispose()
+          reject(new Error('Legacy process did not exit; its record was preserved'))
+        }, 10000)
+        const subscription = process.onExit(() => {
+          clearTimeout(timer)
+          subscription.dispose()
+          resolve()
+        })
+        try { process.kill() } catch (error) {
+          clearTimeout(timer)
+          subscription.dispose()
+          reject(error)
+        }
+      })
+    }
+    // Unlike the old best-effort discard path, deletion errors abort completion.
+    fs.rmSync(path.join(sessionRecordsDir(), `${recordKey}.json`), { force: true })
+    this.sessions.delete(sourceId)
+    deleteSessionMcpConfig(sourceId)
+    dismissSessionOffers(sourceId)
+  }
+
+  remapSessionViewOwner(sourceId: string, targetId: string): void {
+    const dir = sessionRecordsDir()
+    if (!fs.existsSync(dir)) return
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue
+      const record = readSessionRecord(file.slice(0, -5))
+      if (record?.link?.kind !== 'session-view' || record.link.ownerId !== sourceId) continue
+      if (!writeSessionRecord({ ...record, link: { kind: 'session-view', ownerId: targetId } }))
+        throw new Error('Could not remap attached view owner')
+    }
   }
 
   setSessionDisplayName(id: string, displayName: string | null, userRenamed: boolean): void {

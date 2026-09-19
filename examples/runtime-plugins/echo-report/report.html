@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Interactive message report</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font:
+          14px/1.6 system-ui,
+          sans-serif;
+        color: #232323;
+        background: #fafaf8;
+      }
+      h1 {
+        font-size: 20px;
+        margin-top: 0;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 12px;
+        background: #eeeee9;
+        border-radius: 6px;
+      }
+      button {
+        padding: 8px 12px;
+        margin: 0 8px 8px 0;
+        cursor: pointer;
+      }
+      #status {
+        min-height: 2em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Message report</h1>
+    <pre id="report">Connecting to Clave…</pre>
+    <button id="draft">Prepare a follow-up</button>
+    <button id="history">Count conversation entries</button>
+    <p id="status" role="status"></p>
+    <script>
+      const status = document.getElementById('status')
+      window.clave.ready
+        .then(({ entry }) => {
+          document.getElementById('report').textContent = JSON.stringify(
+            JSON.parse(entry.content),
+            null,
+            2
+          )
+        })
+        .catch((error) => {
+          status.textContent = error.message
+        })
+      document.getElementById('draft').onclick = async () => {
+        try {
+          await window.clave.request('composer.setDraft', {
+            text: 'Explain the report in more detail.'
+          })
+          status.textContent = 'Draft prepared. Review it in the Clave composer before sending.'
+        } catch (error) {
+          status.textContent = error.message
+        }
+      }
+      document.getElementById('history').onclick = async () => {
+        try {
+          const snapshot = await window.clave.request('conversation.read', {})
+          status.textContent = `Clave retains ${snapshot.entries.length} conversation entries.`
+        } catch (error) {
+          status.textContent = error.message
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -477,6 +477,10 @@ export interface MagicPullResult {
 }
 
 export interface ElectronAPI {
+  onConversationsChanged: (callback: () => void) => () => void
+  sessionMigration: import('../shared/session-migration').SessionMigrationAPI
+  conversations: import('../shared/agent-session').ConversationAPI
+  runtimePlugins: import('../shared/runtime-plugins').RuntimePluginsAPI
   /** `process.platform` of the main process. The renderer reads it only to
    *  decide whether to hold room for window buttons drawn inside our own
    *  chrome — macOS does, Windows and Linux do not. */
@@ -764,11 +768,7 @@ export interface ElectronAPI {
   gitOutgoingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitIncomingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitRangeFiles: (cwd: string, direction: GitRangeDirection) => Promise<GitCommitFileStatus[]>
-  gitRangeDiff: (
-    cwd: string,
-    direction: GitRangeDirection,
-    filePath: string
-  ) => Promise<string>
+  gitRangeDiff: (cwd: string, direction: GitRangeDirection, filePath: string) => Promise<string>
   gitCommitFiles: (cwd: string, hash: string) => Promise<GitCommitFileStatus[]>
   gitCommitDiff: (cwd: string, hash: string, filePath: string) => Promise<string>
   gitGenerateCommitMessage: (cwd: string) => Promise<string>

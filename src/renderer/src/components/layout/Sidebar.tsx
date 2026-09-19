@@ -1,5 +1,6 @@
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
+import { duplicateConversation } from '../../lib/conversation-sessions'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   useSessionStore,
@@ -175,6 +176,15 @@ export function Sidebar() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState<string | null>(null)
+  const [pinError, setPinError] = useState<string | null>(null)
+  const savePin = useCallback((groupId: string, resync = false): void => {
+    try {
+      if (resync) resyncPinnedGroup(groupId)
+      else pinGroupFromCurrent(groupId)
+    } catch (error) {
+      setPinError(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
   const [terminalDialogState, setTerminalDialogState] = useState<{
     groupId: string
     terminalId: string | null // null = adding new
@@ -248,10 +258,10 @@ export function Sidebar() {
   const handlePinnedDrop = useCallback((groupId: string) => {
     const existing = findPinnedByGroupId(groupId)
     if (!existing) {
-      pinGroupFromCurrent(groupId)
+      savePin(groupId)
     }
     // If already pinned, do nothing (visual highlight was already shown)
-  }, [])
+  }, [savePin])
 
   // Pointer-based DnD
   const { isDragging, draggedIds, dropIndicator, isOverPinnedZone, handlePointerDown } = useSidebarDnd({
@@ -793,6 +803,11 @@ export function Sidebar() {
 
       let newSessionId: string | null = null
 
+      if (sessionId.startsWith('conversation-')) {
+        await duplicateConversation(sessionId)
+        return
+      }
+
       if (session.sessionType === 'remote-terminal' || session.sessionType === 'remote-claude') {
         if (session.locationId) {
           // spawnRemoteSession calls addSession internally, so we need to track the new ID.
@@ -1142,13 +1157,13 @@ export function Sidebar() {
               ? {
                   label: 'Re-sync pin',
                   icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                  onClick: () => resyncPinnedGroup(groupId)
+                  onClick: () => savePin(groupId, true)
                 }
               : null
             : {
                 label: 'Pin group',
                 icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                onClick: () => pinGroupFromCurrent(groupId)
+                onClick: () => savePin(groupId)
               },
           {
             label: 'Rename',
@@ -1206,7 +1221,7 @@ export function Sidebar() {
         )
       })
     },
-    [handleUngroup, handleDeleteGroup, setGroupColor, setGroupView, setActiveGroupView, moveToWindowItems, moveGroupToWindow]
+    [handleUngroup, handleDeleteGroup, setGroupColor, setGroupView, setActiveGroupView, moveToWindowItems, moveGroupToWindow, savePin]
   )
 
   const handleFileTabContextMenu = useCallback(
@@ -1809,6 +1824,14 @@ export function Sidebar() {
       )}
 
       {/* Delete session confirmation */}
+      <ConfirmDialog
+        isOpen={pinError !== null}
+        title="Cannot save group"
+        message={pinError ?? ''}
+        confirmLabel="OK"
+        onConfirm={() => setPinError(null)}
+        onCancel={() => setPinError(null)}
+      />
       <ConfirmDialog
         isOpen={deleteConfirmSessionId !== null}
         title="Delete session"

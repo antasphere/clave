@@ -46,6 +46,9 @@ import {
 import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
+import { restoreConversations } from '../../lib/conversation-sessions'
+import { applySessionMappings, deferConversationRecovery, refreshMigratedConversations } from '../../lib/session-migration'
+import { remapHiddenOwner, remapSessionLayout } from '../../../../shared/session-remap'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
@@ -155,6 +158,7 @@ export function AppShell() {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
     void (async () => {
+      let layoutReady = false
       try {
         // Workspace registry + pins hydrate FIRST: adoption stamps each
         // surviving session against it, and unstamped survivors fall back to
@@ -169,11 +173,13 @@ export function AppShell() {
         // overwritten before we've loaded it. One file per window; the
         // primary's load also brings in the orphans of windows that no
         // longer exist.
+        const migrations = await window.electronAPI.sessionMigration.mappings().catch(() => ({}))
+        applySessionMappings(migrations)
         const savedLayout = await window.electronAPI?.sidebarLayoutLoad?.().catch(() => null)
-        const persisted = {
+        const persisted = remapSessionLayout({
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
-        }
+        }, migrations)
 
         // This window's own records (plus the orphans, for the primary):
         // live tmux survivors re-attach silently, whatever their workspace
@@ -186,7 +192,9 @@ export function AppShell() {
         // server all leave one behind. planBootAdoption sorts them by what
         // the record says the session IS, so the hidden halves come back
         // where they belong instead of as rows beside the groups.
-        const survivors = (await window.electronAPI?.listSessionRecords?.()) ?? []
+        const survivors = ((await window.electronAPI?.listSessionRecords?.()) ?? [])
+          .filter((record) => !migrations[record.id])
+          .map((record) => remapHiddenOwner(record, migrations))
         const plan = planBootAdoption(survivors)
 
         const adoptedIds: string[] = []
@@ -231,25 +239,56 @@ export function AppShell() {
           null,
           ...useWorkspaceStore.getState().workspaces.map((w) => w.id)
         ]
+        let conversationsAvailable = true
+        const conversationIds = await restoreConversations().catch((error) => {
+          console.error('Failed to restore conversations:', error)
+          conversationsAvailable = false
+          return new Set<string>()
+        })
+        // A failed list is not an empty service. Keep every saved reference
+        // and leave disk untouched until a successful refresh recovers it.
+        if (!conversationsAvailable) {
+          for (const id of persisted.displayOrder) conversationIds.add(id)
+          for (const group of persisted.groups) {
+            for (const id of group.sessionIds) conversationIds.add(id)
+            for (const terminal of group.terminals) {
+              if (terminal.sessionId) conversationIds.add(terminal.sessionId)
+            }
+          }
+        }
         useSessionStore
           .getState()
-          .mergeLayoutForKeys(keys, persisted, survivingIds(plan, adoptedIds))
+          .mergeLayoutForKeys(keys, persisted, new Set([...survivingIds(plan, adoptedIds), ...conversationIds]))
 
         // Owners are in place now (groups from the merge, owning tabs from
         // the adoption above), so the hidden halves can hang themselves back
         // off them.
         for (const s of plan.hidden) {
+          if (!conversationsAvailable && s.link?.kind === 'session-view') continue
           await adoptHiddenRecord(s, activeWorkspaceId)
         }
+        if (!conversationsAvailable) {
+          deferConversationRecovery(async () => {
+            const mappings = await window.electronAPI.sessionMigration.mappings()
+            for (const record of plan.hidden) {
+              if (record.link?.kind === 'session-view') {
+                await adoptHiddenRecord(remapHiddenOwner(record, mappings), activeWorkspaceId)
+              }
+            }
+            enableSidebarPersistence()
+            startSessionHistoryStamping()
+          })
+        }
+        layoutReady = conversationsAvailable
       } catch (err) {
         console.error('Failed to restore sessions/groups on launch:', err)
       } finally {
         // Turn persistence on only now — after the saved layout was loaded
         // and groups restored — so adoption writes can't clobber the file.
-        enableSidebarPersistence()
+        if (layoutReady) enableSidebarPersistence()
         // And the history ledger's diff: the restored tabs are stamped where
         // they actually sit, not mid-restore (PRDCT-1738).
-        startSessionHistoryStamping()
+        if (layoutReady) startSessionHistoryStamping()
       }
 
       // Boot tail: land the initial selection in the active workspace, start
@@ -485,6 +524,12 @@ export function AppShell() {
   // The pull is the point — a push-only updater loses the "an update exists"
   // fact for 30 minutes if the renderer was not listening when it fired.
   useEffect(() => connectUpdaterStore(), [])
+  useEffect(() => window.electronAPI.onConversationsChanged(() => {
+    void refreshMigratedConversations().catch((error) => console.error('Failed to discover conversations:', error))
+  }), [])
+  useEffect(() => window.electronAPI.runtimePlugins.onChanged(() => {
+    void loadLaunchProfiles()
+  }), [])
   useEffect(() => connectKeymapStore(), [])
 
   // Open Settings → Updates when asked from the native menu.

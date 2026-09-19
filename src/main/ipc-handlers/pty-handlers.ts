@@ -10,7 +10,15 @@ import {
 import { getPreference } from './clave-file-handlers'
 import { workspaceManager } from '../workspace-manager'
 import { windowRegistry } from '../window-registry'
-import { windowState } from '../window-state'
+import { conversationProviderForSpawn } from '../conversations/launch'
+import { legacyAgentProvider } from '../../shared/session-migration'
+import { ownsSession, requireMigrationHost, requireSessionHome } from './session-migration-handlers'
+import {
+  closeConversation,
+  conversationClient,
+  isConversationId,
+  spawnConversation
+} from '../conversations/runtime'
 import * as titleGenerator from '../title-generator'
 import {
   startWatching as startAgentStateWatching,
@@ -28,8 +36,9 @@ export function registerPtyHandlers(): void {
     }
   })
 
-  ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) => {
+  ipcMain.handle('pty:spawn', async (_event, cwd: string, options?: PtySpawnOptions) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
+    if (win && conversationProviderForSpawn(options)) return spawnConversation(win, cwd, options)
     // tmux mode is a global app setting, ON by default. Honour it unless a
     // caller overrides per-spawn or the user explicitly turned it off. (When
     // tmux isn't installed the spawn transparently falls back to a plain shell.)
@@ -60,9 +69,11 @@ export function registerPtyHandlers(): void {
       !options?.piMode &&
       !options?.claudeAgentsMode
     const isResumed = !!options?.resumeSessionId
+    const isRestored = !!options?.adoptSessionId || !!options?.adoptTmuxName
 
-    // Schedule title generation for new Claude-mode sessions
-    if (isClaudeMode && !isResumed && session.claudeSessionId && win) {
+    // A restored tab already has history and a persisted name. Reattaching it
+    // must not rerun paid title generation against its old first message.
+    if (isClaudeMode && !isResumed && !isRestored && session.claudeSessionId && win) {
       titleGenerator.scheduleTitleGeneration(session.id, session.cwd, session.claudeSessionId, win)
     }
 
@@ -88,7 +99,7 @@ export function registerPtyHandlers(): void {
 
     if (session.claudeSessionId) {
       console.log(
-        `[claude-session] PTY ${session.id} → claude session ${session.claudeSessionId}${options?.resumeSessionId ? ' (resumed)' : ' (new)'}`
+        `[claude-session] PTY ${session.id} → claude session ${session.claudeSessionId} (${isRestored ? 'restored' : isResumed ? 'resumed' : 'new'})`
       )
     }
 
@@ -141,6 +152,22 @@ export function registerPtyHandlers(): void {
   })
 
   ipcMain.handle('pty:kill', async (_event, id: string) => {
+    if (isConversationId(id)) {
+      await requireSessionHome(requireMigrationHost(_event), id)
+      return closeConversation(id)
+    }
+    const legacy = ptyManager.readLegacyMigrationRecord(id)
+    if (legacy) {
+      await requireSessionHome(requireMigrationHost(_event), id)
+      await ptyManager.stopAndForgetLegacyRecord({
+        sourceId: id,
+        recordKey: legacy.recordKey,
+        tmuxName: legacy.tmuxName,
+        complete: false
+      })
+      windowRegistry.unbindSession(id)
+      return
+    }
     const owner = windowRegistry.getWindowForSession(id)
     if (
       owner &&
@@ -164,7 +191,10 @@ export function registerPtyHandlers(): void {
   // restart, a crash, or a reboot instead of reverting to the folder name.
   ipcMain.handle(
     'session:set-display-name',
-    (_event, id: string, displayName: string | null, userRenamed: boolean) => {
+    async (_event, id: string, displayName: string | null, userRenamed: boolean) => {
+      if (isConversationId(id)) {
+        return (await conversationClient()).updateMetadata(id, { title: displayName?.trim() ?? '' })
+      }
       ptyManager.setSessionDisplayName(id, displayName, userRenamed === true)
     }
   )
@@ -199,7 +229,7 @@ export function registerPtyHandlers(): void {
   // and must not smuggle extra keys into the record file.
   ipcMain.handle(
     'session:set-view',
-    (
+    async (
       _event,
       id: string,
       view: { url?: unknown; title?: unknown; command?: unknown; cwd?: unknown } | null
@@ -213,15 +243,25 @@ export function registerPtyHandlers(): void {
               ...(typeof view.cwd === 'string' ? { cwd: view.cwd } : {})
             }
           : null
+      if (isConversationId(id)) {
+        await requireSessionHome(requireMigrationHost(_event), id)
+        return (await conversationClient()).updateMetadata(id, { view: clean })
+      }
       ptyManager.setSessionViewRecord(id, clean)
     }
   )
 
   // Workspace reassignment (workspace removal, future "move to workspace") —
   // mirrored into the session record so the stamp survives restarts.
-  ipcMain.handle('session:set-workspace', (_event, id: string, workspaceId: string | null) => {
-    ptyManager.setSessionWorkspace(id, workspaceId)
-  })
+  ipcMain.handle(
+    'session:set-workspace',
+    async (_event, id: string, workspaceId: string | null) => {
+      if (isConversationId(id)) {
+        return (await conversationClient()).updateMetadata(id, { workspaceId })
+      }
+      ptyManager.setSessionWorkspace(id, workspaceId)
+    }
+  )
 
   // Lets the settings UI enable/disable the "persistent sessions" toggle.
   ipcMain.handle('tmux:available', () => {
@@ -239,17 +279,28 @@ export function registerPtyHandlers(): void {
   // exists). `ids` overrides the filter: the re-home path hands a window the
   // ids of sessions another window just released, whatever their stamp.
   ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
+    const win = requireMigrationHost(event)
+    const key = windowRegistry.getKeyForWindow(win.id)!
     const all = ptyManager.listAdoptableSessions()
-    if (filter && Array.isArray(filter.ids)) {
-      const wanted = new Set(filter.ids.filter((x): x is string => typeof x === 'string'))
-      return all.filter((r) => wanted.has(r.id))
+    const wanted =
+      filter && Array.isArray(filter.ids)
+        ? new Set(filter.ids.filter((x): x is string => typeof x === 'string'))
+        : null
+    const eligible = all.filter(
+      (record) =>
+        (!wanted || wanted.has(record.id)) && ownsSession(win, record.id, record.windowKey)
+    )
+    // Supported legacy agents now adopt only metadata, not a new PTY. Main
+    // still owns their window binding and must stamp orphan records at boot.
+    for (const record of eligible) {
+      if (!legacyAgentProvider(record)) continue
+      if (record.windowKey !== key) {
+        ptyManager.setSessionWindowKey(record.id, key)
+        record.windowKey = key
+      }
+      windowRegistry.bindSession(record.id, win.id)
     }
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const key = win ? windowRegistry.getKeyForWindow(win.id) : null
-    if (!win || !key) return []
-    if (!windowRegistry.isPrimary(win.id)) return all.filter((r) => r.windowKey === key)
-    const known = new Set([...windowState.keys(), ...windowRegistry.liveKeys()])
-    return all.filter((r) => r.windowKey === key || !r.windowKey || !known.has(r.windowKey))
+    return eligible
   })
 
   // User declined to bring a survivor back → destroy it (record + tmux session).

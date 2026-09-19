@@ -4,6 +4,7 @@ import {
   buildAgentArgv,
   resolveLaunchProfile,
   sanitizeLaunchProfilePreferences,
+  type LaunchProfile,
   type LaunchProfilePreferences
 } from './agent-launch'
 
@@ -30,6 +31,44 @@ const prefs: LaunchProfilePreferences = {
 }
 
 describe('launch profile policy', () => {
+  it('fails closed for explicit missing profiles, wrong families, and unknown providers', () => {
+    expect(() => resolveLaunchProfile(prefs, 'claude', 'workspace', 'missing')).toThrow(
+      'Unknown launch profile'
+    )
+    expect(() => resolveLaunchProfile(prefs, 'pi', 'workspace', 'tokenops-claude')).toThrow(
+      'does not match provider pi'
+    )
+    expect(() => resolveLaunchProfile(prefs, 'missing.provider')).toThrow('No launch profile')
+  })
+
+  it.each(['opencode', 'test.installed-provider'])(
+    'resolves all priority levels for %s',
+    (family) => {
+      const profile = (id: string): LaunchProfile => ({
+        id,
+        family,
+        name: id,
+        command: ['wrapper', id],
+        additionalArgs: ['--custom']
+      })
+      const preferences: LaunchProfilePreferences = {
+        version: 1,
+        defaultProfiles: [{ ...profile(`builtin-${family}`), builtIn: true }],
+        customProfiles: ['global', 'workspace', 'explicit'].map(profile),
+        globalDefaults: { [family]: 'global' },
+        workspaceOverrides: { work: { [family]: 'workspace' } }
+      }
+      expect(resolveLaunchProfile(preferences, family, 'work', 'explicit').id).toBe('explicit')
+      expect(resolveLaunchProfile(preferences, family, 'work').id).toBe('workspace')
+      expect(resolveLaunchProfile(preferences, family).id).toBe('global')
+      expect(resolveLaunchProfile({ ...preferences, globalDefaults: {} }, family).id).toBe(
+        `builtin-${family}`
+      )
+      const saved = sanitizeLaunchProfilePreferences(JSON.parse(JSON.stringify(preferences)))
+      expect(saved).toEqual({ ...preferences, defaultProfiles: undefined })
+    }
+  )
+
   it('resolves explicit, workspace, global, then built-in profiles', () => {
     expect(resolveLaunchProfile(prefs, 'claude', 'workspace', 'tokenops-claude').id).toBe(
       'tokenops-claude'
@@ -87,7 +126,14 @@ describe('agent argv', () => {
         dangerousMode: true,
         model: 'gpt-5.5'
       })
-    ).toEqual(['codex', '--yolo', '-m', 'gpt-5.5', '-c', 'tui.terminal_title=["app-name","status","spinner"]'])
+    ).toEqual([
+      'codex',
+      '--yolo',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      'tui.terminal_title=["app-name","status","spinner"]'
+    ])
   })
 
   it('preserves the TokenOps command vector and appends Clave-owned Claude args', () => {

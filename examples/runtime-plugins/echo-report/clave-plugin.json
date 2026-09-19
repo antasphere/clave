@@ -1,0 +1,27 @@
+{
+  "apiVersion": 1,
+  "id": "example.echo-report",
+  "name": "Echo report example",
+  "version": "1.0.0",
+  "provider": {
+    "id": "example.echo",
+    "name": "Example echo",
+    "entry": "provider.cjs",
+    "command": ["node"],
+    "capabilities": {
+      "permissions": false,
+      "questions": false,
+      "resume": false,
+      "notice": "Local demonstration only. No model or external commands are used."
+    }
+  },
+  "views": [
+    {
+      "id": "report",
+      "name": "Interactive report",
+      "entry": "report.html",
+      "mimeTypes": ["application/json"],
+      "capabilities": ["conversation.read", "composer.setDraft"]
+    }
+  ]
+}

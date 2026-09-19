@@ -1,7 +1,8 @@
 import { CODEX_TITLE_CONFIG } from './codex-state'
+import { RUNTIME_PLUGIN_ID_PATTERN } from './runtime-plugins'
 
-export type LauncherFamily = 'claude' | 'antigravity' | 'codex' | 'pi'
-export type AgentKind = LauncherFamily | 'claude-agents'
+export type LauncherFamily = string
+export type AgentKind = 'claude' | 'antigravity' | 'codex' | 'pi' | 'claude-agents'
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface LaunchProfile {
@@ -23,6 +24,8 @@ export interface LaunchProfilePreferences {
   customProfiles: LaunchProfile[]
   globalDefaults: Partial<Record<LauncherFamily, string>>
   workspaceOverrides: Record<string, Partial<Record<LauncherFamily, string>>>
+  /** Derived from the installed provider registry, never persisted. */
+  defaultProfiles?: LaunchProfile[]
 }
 
 export const BUILT_IN_LAUNCH_PROFILES: readonly LaunchProfile[] = [
@@ -60,7 +63,13 @@ export const DEFAULT_LAUNCH_PROFILE_PREFERENCES: LaunchProfilePreferences = {
   workspaceOverrides: {}
 }
 
-const FAMILY_VALUES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
+export function isLauncherFamily(value: unknown): value is LauncherFamily {
+  return (
+    typeof value === 'string' &&
+    RUNTIME_PLUGIN_ID_PATTERN.test(value) &&
+    !['__proto__', 'constructor', 'prototype'].includes(value)
+  )
+}
 const THINKING_VALUES = new Set<PiThinkingLevel>([
   'off',
   'minimal',
@@ -70,6 +79,10 @@ const THINKING_VALUES = new Set<PiThinkingLevel>([
   'xhigh',
   'max'
 ])
+export function isPiThinkingLevel(value: unknown): value is PiThinkingLevel {
+  return THINKING_VALUES.has(value as PiThinkingLevel)
+}
+
 const TOKEN_MAX_LENGTH = 4_096
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 // eslint-disable-next-line no-control-regex
@@ -124,6 +137,7 @@ function cleanTokens(value: unknown, allowEmpty: boolean): string[] | undefined 
 
 function hasManagedArg(family: LauncherFamily, args: string[]): boolean {
   const managed = MANAGED_ARGS[family]
+  if (!managed) return false
   return args.some(
     (arg) => managed.has(arg) || [...managed].some((flag) => arg.startsWith(`${flag}=`))
   )
@@ -141,7 +155,7 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
     !id ||
     !PROFILE_ID_RE.test(id) ||
     !name ||
-    !FAMILY_VALUES.has(family as LauncherFamily) ||
+    !isLauncherFamily(family) ||
     !command ||
     !additionalArgs
   ) {
@@ -152,10 +166,7 @@ function sanitizeProfile(value: unknown): LaunchProfile | null {
   const piRaw = raw.pi && typeof raw.pi === 'object' ? (raw.pi as Record<string, unknown>) : null
   const provider = piRaw ? cleanText(piRaw.provider, 200) : undefined
   const model = piRaw ? cleanText(piRaw.model, 200) : undefined
-  const thinking =
-    piRaw && THINKING_VALUES.has(piRaw.thinking as PiThinkingLevel)
-      ? (piRaw.thinking as PiThinkingLevel)
-      : undefined
+  const thinking = piRaw && isPiThinkingLevel(piRaw.thinking) ? piRaw.thinking : undefined
   return {
     id,
     name,
@@ -178,9 +189,13 @@ function cleanDefaults(value: unknown): Partial<Record<LauncherFamily, string>> 
   if (!value || typeof value !== 'object') return {}
   const raw = value as Record<string, unknown>
   const result: Partial<Record<LauncherFamily, string>> = {}
-  for (const family of FAMILY_VALUES) {
-    const id = cleanText(raw[family], 128)
-    if (id && PROFILE_ID_RE.test(id)) result[family] = id
+  for (const family of Object.keys(raw).filter(isLauncherFamily)) {
+    const id = cleanText(raw[family], 136)
+    if (
+      id &&
+      (PROFILE_ID_RE.test(id) || (id.startsWith('builtin-') && isLauncherFamily(id.slice(8))))
+    )
+      result[family] = id
   }
   return result
 }
@@ -226,15 +241,24 @@ export function resolveLaunchProfile(
   workspaceId?: string | null,
   requestedProfileId?: string | null
 ): LaunchProfile {
-  const profiles = [...BUILT_IN_LAUNCH_PROFILES, ...preferences.customProfiles]
+  if (!isLauncherFamily(family)) throw new Error(`Invalid launcher family: ${family}`)
+  const defaults = preferences.defaultProfiles ?? BUILT_IN_LAUNCH_PROFILES
+  const profiles = [...defaults, ...preferences.customProfiles]
+  if (requestedProfileId) {
+    const requested = profiles.find((profile) => profile.id === requestedProfileId)
+    if (!requested) throw new Error(`Unknown launch profile: ${requestedProfileId}`)
+    if (requested.family !== family)
+      throw new Error(`Launch profile ${requestedProfileId} does not match provider ${family}`)
+    return requested
+  }
   const find = (id: string | null | undefined): LaunchProfile | undefined =>
     id ? profiles.find((profile) => profile.id === id && profile.family === family) : undefined
-  return (
-    find(requestedProfileId) ??
+  const profile =
     find(workspaceId ? preferences.workspaceOverrides[workspaceId]?.[family] : undefined) ??
     find(preferences.globalDefaults[family]) ??
-    BUILT_IN_LAUNCH_PROFILES.find((profile) => profile.family === family)!
-  )
+    defaults.find((profile) => profile.family === family)
+  if (!profile) throw new Error(`No launch profile available for provider: ${family}`)
+  return profile
 }
 
 export function buildAgentArgv(input: {

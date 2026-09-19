@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
 import {
@@ -45,6 +45,8 @@ import {
   DropdownMenuSubContent
 } from '../ui/dropdown-menu'
 import { useShortcutLabel } from '../../store/keymap-store'
+import { launchRuntimeProvider, restoreConversations } from '../../lib/conversation-sessions'
+import type { PluginProviderDescriptor } from '../../../../shared/runtime-plugins'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the
  *  remote directory picker (remote launches never touch the local cwd rules). */
@@ -121,6 +123,18 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const [menuOpen, setMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [launchError, setLaunchError] = useState<string>()
+  const [runtimeProviders, setRuntimeProviders] = useState<PluginProviderDescriptor[]>([])
+  useEffect(() => {
+    const refresh = (): void => {
+      void window.electronAPI.runtimePlugins
+        .providers()
+        .then(setRuntimeProviders)
+        .catch(() => setRuntimeProviders([]))
+    }
+    refresh()
+    return window.electronAPI.runtimePlugins.onChanged(refresh)
+  }, [])
   const [menuAlignOffset, setMenuAlignOffset] = useState(0)
   const caretRef = useRef<HTMLButtonElement | null>(null)
   const agentButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -156,7 +170,11 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
   const AgentLogo = AGENT_LOGOS[setup.kind]
   const setupFamily: LauncherFamily = setup.kind === 'claude-agents' ? 'claude' : setup.kind
-  const binaryProfile = selectedLaunchProfile(setupFamily, activeWorkspaceId, setup.launchProfileId)
+  // A deleted remembered profile must not crash the launcher. Keep its ID so
+  // launching reports the missing profile instead of silently using another.
+  const binaryProfile = setup.launchProfileId
+    ? profilesFor(setupFamily).find((profile) => profile.id === setup.launchProfileId)
+    : selectedLaunchProfile(setupFamily, activeWorkspaceId)
   const profileLabel =
     multiProfile && (setup.kind === 'claude' || setup.kind === 'claude-agents')
       ? profiles.find((p) => p.id === (setup.claudeProfileId ?? selectedProfileId))?.label
@@ -322,6 +340,45 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     [activeWorkspaceId, launchAgent]
   )
 
+  const renderRuntimeProvider = (provider: PluginProviderDescriptor): React.JSX.Element => {
+    const profiles = profilesFor(provider.id)
+    const launch = (launchProfileId?: string): void => {
+      setBusy(true)
+      setLaunchError(undefined)
+      void launchRuntimeProvider(provider.id, undefined, launchProfileId)
+        .catch((error) => setLaunchError(String(error)))
+        .finally(() => setBusy(false))
+    }
+    if (profiles.length <= 1)
+      return (
+        <DropdownMenuItem key={provider.id} disabled={busy} onSelect={() => launch()}>
+          <CommandLineIcon className="w-3.5 h-3.5 text-text-tertiary" />
+          <span>{provider.name}</span>
+        </DropdownMenuItem>
+      )
+    const selected = selectedLaunchProfile(provider.id, activeWorkspaceId)
+    return (
+      <DropdownMenuSub key={provider.id}>
+        <DropdownMenuSubTrigger>
+          <CommandLineIcon className="w-3.5 h-3.5 text-text-tertiary" />
+          <span className="flex-1">{provider.name}</span>
+          <ChevronRightIcon className="w-3 h-3 text-text-tertiary" />
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
+          {profiles.map((profile) => (
+            <DropdownMenuItem key={profile.id} disabled={busy} onSelect={() => launch(profile.id)}>
+              <span className="flex-1 truncate">{profile.name}</span>
+              {profile.id === selected.id && (
+                <CheckIcon className="w-3.5 h-3.5 text-text-tertiary" />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+  }
+
   return (
     <div className="relative">
       <div className="launcher-panel">
@@ -344,7 +401,7 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
               disabled={busy}
               className="launcher-btn"
               data-launcher-agent
-              title={`${describeSetup(setup, [binaryProfile.name, profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
+              title={`${describeSetup(setup, [binaryProfile?.name ?? 'Missing launch profile', profileLabel].filter(Boolean).join(' · '))} — workspace root (⌥ to choose a folder)`}
               onClick={(e) => void run({ setup, cwd: cwdFor(e), remember: true })}
             >
               <AgentLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -407,6 +464,22 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                   true
                 )}
                 {renderAgentEntry('pi', 'Pi', piShortcut ?? undefined)}
+                {runtimeProviders
+                  .filter((provider) => provider.id === 'opencode')
+                  .map(renderRuntimeProvider)}
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setLaunchError(undefined)
+                    void restoreConversations().catch((error) => setLaunchError(String(error)))
+                  }}
+                >
+                  Reconnect conversations
+                </DropdownMenuItem>
+                {runtimeProviders
+                  .filter(
+                    (provider) => !['claude', 'codex', 'pi', 'opencode'].includes(provider.id)
+                  )
+                  .map(renderRuntimeProvider)}
 
                 {connectedRemoteLocations.map((loc) => (
                   <div key={loc.id}>
@@ -519,6 +592,11 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
 
       {agentPickerOpen && (
         <AgentPickerPopover anchorRef={caretRef} onClose={() => setAgentPickerOpen(false)} />
+      )}
+      {launchError && (
+        <p role="alert" className="text-xs text-text-secondary">
+          {launchError}
+        </p>
       )}
     </div>
   )

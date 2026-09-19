@@ -1,6 +1,6 @@
 [
   {
-    "version": "next",
+    "version": "1.91.0",
     "title": "A project group opens on its board, and waits for it",
     "description": "Click a group whose page is served by one of its terminals — an Exos board, a wave page — and the page comes up by itself: a terminal the workspace file declares auto-run is started the first time the view finds its server down, instead of showing a dead page and a button after every restart.\n\nA start is now patient. An Exos board refreshes from the hub before it serves, forty seconds on a good day and up to two minutes; the view used to give up at sixty and show \"Server not responding\" with the same Start button, whose click interrupted the refresh still running. It now stays on \"Starting server…\" with the seconds counting, and after a while offers the serving terminal (\"Show terminal\") and an explicit Restart — never a silent give-up. A start that cannot even spawn says why."
   },

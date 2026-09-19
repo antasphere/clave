@@ -202,6 +202,8 @@ export type ServerStatus = 'running' | 'stopped' | 'starting' | null
 
 export interface Session {
   id: string
+  /** Legacy agent metadata only: never attach a terminal until explicitly migrated. */
+  legacyAgentId?: string
   cwd: string
   folderName: string
   name: string
@@ -345,7 +347,14 @@ export interface FileTab {
 
 export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
-export type SettingsSection = 'general' | 'agents' | 'appearance' | 'keymaps' | 'updates' | 'usage'
+export type SettingsSection =
+  | 'general'
+  | 'agents'
+  | 'runtime-plugins'
+  | 'appearance'
+  | 'keymaps'
+  | 'updates'
+  | 'usage'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 

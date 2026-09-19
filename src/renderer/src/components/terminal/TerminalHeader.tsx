@@ -55,7 +55,8 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
   if (!session) return null
 
   const serverStatus = session.serverStatus
-  const hasServer = session.detectedUrl && serverStatus
+  const isConversation = sessionId.startsWith('conversation-')
+  const hasServer = !isConversation && session.detectedUrl && serverStatus
 
   return (
     <>
@@ -132,7 +133,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
 
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <SessionCopyOffers sessionId={sessionId} />
-          {session.claudeSessionId && (
+          {!isConversation && session.claudeSessionId && (
             <button
               onClick={() => setMessageTrailEnabled(!messageTrailEnabled)}
               className="panel-icon-btn"
@@ -142,7 +143,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               <ChatBubbleBottomCenterTextIcon className="w-4 h-4" />
             </button>
           )}
-          {session.claudeMode && session.claudeSessionId && (
+          {!isConversation && session.claudeMode && session.claudeSessionId && (
             <>
               <button
                 onClick={() =>

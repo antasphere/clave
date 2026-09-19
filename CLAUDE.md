@@ -1,12 +1,13 @@
 # Clave
 
-Mac desktop app for managing multiple coding-agent CLI sessions in parallel. Provider-agnostic: it orchestrates Claude Code (Cmd+N), Antigravity CLI (Cmd+I), Codex CLI (Cmd+U), and Pi (Cmd+Shift+P) sessions side by side, plus plain terminals (Cmd+T) and remote agents over OpenClaw. Electron + React + TypeScript.
+Mac desktop app for managing multiple coding-agent CLI sessions in parallel. Provider-agnostic: it orchestrates Claude Code (Cmd+N), Antigravity CLI (Cmd+I), Codex CLI (Cmd+U), Pi (Cmd+Shift+P), and OpenCode (launcher menu) sessions side by side, plus plain terminals (Cmd+T) and remote agents over OpenClaw. Electron + React + TypeScript.
 
 Clave's companion agent plugin (`clave`, exposing `/clave:create-workspace` and `/clave:recover-sessions`) ships from `plugin/` in this repo — see `plugin/CLAUDE.md`. It is installed with `npx plugins add antasphere/clave`, resolved through `.claude-plugin/marketplace.json` at the root. The Electron app reads installed plugins from `~/.claude/plugins/` at runtime and never reads `plugin/` directly; the folder is here so a `.clave` format change and the skill that describes it land in the same commit (see the schema sync rule below).
 
 ## Commands
 
 - `npm run dev` — start dev (Electron window + hot reload)
+- `npm run dev:ui` — hot reload with a separate `.clave-ui-dev/` app profile, without restoring the installed app's tabs
 - `npm run build` — typecheck + build
 - `npm run build:mac` — build + package macOS universal dmg + zip (signed + notarized)
 - `npm run typecheck` — typecheck only
@@ -17,11 +18,13 @@ Clave's companion agent plugin (`clave`, exposing `/clave:create-workspace` and 
 
 ## Architecture
 
-Three-process Electron app:
+Electron app with a detached local conversation service:
 
-- **Main** (`src/main/`): Electron window, node-pty, IPC handlers, domain managers. Agent PTYs spawn through launch profiles as `<shell> -l -c '<wrapper>'`, where the shell is the user's own while it speaks POSIX and Clave's (`/bin/zsh` on macOS, `/bin/sh` elsewhere) when it does not — Nushell and Fish cannot parse the wrapper (`src/main/shell-launch.ts`). IPC handlers are split into modular files under `ipc-handlers/`.
+- **Main** (`src/main/`): Electron windows, IPC handlers, launch/account resolution, and legacy node-pty sessions. Legacy agent PTYs spawn through launch profiles as `<shell> -l -c '<wrapper>'`, using a POSIX-compatible shell (`src/main/shell-launch.ts`). New supported agent launches use the conversation service instead.
 - **Preload** (`src/preload/`): Typed `window.electronAPI` via contextBridge. All main↔renderer communication goes through IPC.
 - **Renderer** (`src/renderer/src/`): React + Zustand + xterm.js + Tailwind v4 + Framer Motion.
+- **Conversation service** (`src/main/conversations/`): one detached daemon per user-data directory, with provider adapters and durable history. `conversation-*` sessions use a shared view and survive full app quit. Claude uses the installed CLI's stream-JSON protocol, not the SDK; Codex uses app-server, OpenCode HTTP/SSE, and Pi RPC. Keep provider formats out of the renderer. Existing terminal adoption stays on the PTY path. See `docs/conversation-sessions.md` for lifecycle/limits and run `npm run test:e2e -- conversation` for the integrated check.
+- **Runtime plugins** (`src/main/runtime-plugins/`): internal local-folder provider adapters and isolated HTML view enhancers, distinct from the Claude companion plugins. Built-in providers use the same adapter registry. Sessions pin provider revisions at creation and view revisions on first use. Clave owns artifact content/fallback and enforces scoped RPC; generated HTML has no capabilities by default. See `docs/runtime-plugins.md` and run `npm run test:e2e -- runtime-plugins` plus `node src/main/runtime-plugins/protocol.electron.mjs`.
 
 **Windows** (PRDCT-1703): a window is the whole app once more, on whatever workspace the user put it on — several windows may show the same workspace. One main process, one MCP server, one pty-manager, one event store; each window is a renderer with its own Zustand stores. Sessions and groups live in the window they were opened in, and that is all "which window" means: every window has a persisted `windowKey` (`windows.json`, `src/main/window-state.ts`), its own sidebar layout file (`sidebar-layouts/windows/<key>.json`), and session records carry the key of their home window. The runtime truth (window ↔ key ↔ workspace, session → window) is `src/main/window-registry.ts`; the lowest-id live window is the *primary*: it adopts orphans at boot (records and layouts whose window no longer exists) and takes in what a closing window leaves (its tmux-backed tabs re-home there with their groups, ids preserved). Moving a tab or a group between windows is the same detach + re-adopt (`window:move-sessions` / `window:move-group`), and the agent tools take a `window` argument for it. A call from an agent lands in the window holding its subject session, else the window it names, else the caller's window — never a window picked from the `workspace` argument.
 

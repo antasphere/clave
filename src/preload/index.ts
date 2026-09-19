@@ -3,6 +3,10 @@ import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
+import type { ConversationAPI } from '../shared/agent-session'
+import type { SessionMigrationAPI } from '../shared/session-migration'
+import type { RuntimePluginsAPI } from '../shared/runtime-plugins'
+import { createSharedSubscription } from './shared-subscription'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -16,7 +20,55 @@ function createIpcListener<T extends unknown[]>(
   }
 }
 
+const onRuntimePluginsChanged = createSharedSubscription<[]>((callback) =>
+  createIpcListener('runtime-plugins:changed', callback)
+)
+
 const electronAPI = {
+  runtimePlugins: {
+    list: () => ipcRenderer.invoke('runtime-plugins:list'),
+    install: () => ipcRenderer.invoke('runtime-plugins:install'),
+    update: (pluginId) => ipcRenderer.invoke('runtime-plugins:update', pluginId),
+    setEnabled: (pluginId, enabled) =>
+      ipcRenderer.invoke('runtime-plugins:set-enabled', pluginId, enabled),
+    providers: () => ipcRenderer.invoke('runtime-plugins:providers'),
+    views: (sessionId, entryId) => ipcRenderer.invoke('runtime-plugins:views', sessionId, entryId),
+    openView: (sessionId, entryId, view) =>
+      ipcRenderer.invoke('runtime-plugins:open-view', sessionId, entryId, view),
+    closeView: (leaseId) => ipcRenderer.invoke('runtime-plugins:close-view', leaseId),
+    request: (leaseId, request) => ipcRenderer.invoke('runtime-plugins:request', leaseId, request),
+    onChanged: onRuntimePluginsChanged
+  } satisfies RuntimePluginsAPI,
+  onConversationsChanged: (callback: () => void) =>
+    createIpcListener('conversation:refresh', callback),
+  sessionMigration: {
+    inspect: (legacyId) => ipcRenderer.invoke('session-migration:inspect', legacyId),
+    migrate: (legacyId, launchProfileId) =>
+      ipcRenderer.invoke('session-migration:migrate', legacyId, launchProfileId),
+    mappings: () => ipcRenderer.invoke('session-migration:mappings'),
+    restartService: () => ipcRenderer.invoke('session-migration:restart-service')
+  } satisfies SessionMigrationAPI,
+  conversations: {
+    create: (options) => ipcRenderer.invoke('conversation:command', { type: 'create', options }),
+    list: () => ipcRenderer.invoke('conversation:command', { type: 'list' }),
+    snapshot: (sessionId) =>
+      ipcRenderer.invoke('conversation:command', { type: 'snapshot', sessionId }),
+    send: (sessionId, text, commandId) =>
+      ipcRenderer.invoke('conversation:command', { type: 'send', sessionId, text, commandId }),
+    publishArtifact: (sessionId, artifact, commandId) =>
+      ipcRenderer.invoke('conversation:command', {
+        type: 'publish-artifact',
+        sessionId,
+        artifact,
+        commandId
+      }),
+    interrupt: (sessionId) =>
+      ipcRenderer.invoke('conversation:command', { type: 'interrupt', sessionId }),
+    respond: (sessionId, response) =>
+      ipcRenderer.invoke('conversation:command', { type: 'respond', sessionId, response }),
+    close: (sessionId) => ipcRenderer.invoke('conversation:command', { type: 'close', sessionId }),
+    onEvent: (callback) => createIpcListener('conversation:event', callback)
+  } satisfies ConversationAPI,
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
