@@ -36,7 +36,13 @@ export class LaunchProfileManager {
   }
 
   getPreferences(): LaunchProfilePreferences {
-    return structuredClone(this.preferences)
+    const preferences = structuredClone(this.preferences)
+    preferences.customProfiles = preferences.customProfiles.filter(
+      (profile) => profile.id !== 'dev-echo-adapter'
+    )
+    if (process.argv.includes('--dev-echo-adapter'))
+      preferences.customProfiles.push(DEV_ECHO_PROFILE)
+    return preferences
   }
 
   replace(raw: unknown): LaunchProfilePreferences {
@@ -46,6 +52,7 @@ export class LaunchProfileManager {
   }
 
   upsert(profile: LaunchProfile): LaunchProfilePreferences {
+    if (profile.id === 'dev-echo-adapter') throw new Error('Reserved development profile')
     const parsed = sanitizeLaunchProfilePreferences({
       ...this.preferences,
       customProfiles: [
@@ -110,10 +117,12 @@ export class LaunchProfileManager {
     workspaceId?: string | null,
     profileId?: string | null
   ): LaunchProfile {
-    return resolveLaunchProfile(this.preferences, family, workspaceId, profileId)
+    if (isEchoLaunchProfile(profileId)) return DEV_ECHO_PROFILE
+    return resolveLaunchProfile(this.getPreferences(), family, workspaceId, profileId)
   }
 
   private assertProfile(family: LauncherFamily, profileId: string): LaunchProfile {
+    if (isEchoLaunchProfile(profileId) && family === 'claude') return DEV_ECHO_PROFILE
     const profile = resolveLaunchProfile(this.preferences, family, null, profileId)
     if (profile.id !== profileId) throw new Error('Unknown launch profile')
     return profile
@@ -123,3 +132,17 @@ export class LaunchProfileManager {
 export const launchProfileManager = new LaunchProfileManager(
   path.join(app.getPath('userData'), 'agent-launch-profiles.json')
 )
+
+/** Development fixture exposed through the existing profile picker only. */
+const DEV_ECHO_PROFILE: LaunchProfile = {
+  id: 'dev-echo-adapter',
+  name: 'Echo (development)',
+  family: 'claude',
+  command: ['echo'],
+  additionalArgs: []
+}
+export function isEchoLaunchProfile(id?: string | null): boolean {
+  if (id !== 'dev-echo-adapter') return false
+  if (!process.argv.includes('--dev-echo-adapter')) throw new Error('Echo adapter is disabled')
+  return true
+}

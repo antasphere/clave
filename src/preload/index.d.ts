@@ -1,3 +1,17 @@
+import type { Session, SessionStream, UserMessage } from '../shared/session-model'
+
+/** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface SessionIPC {
+  'sessions:list': { args: []; result: Session[] }
+  'sessions:subscribe': { args: [sessionId: string]; result: Session }
+  'sessions:unsubscribe': { args: [sessionId: string]; result: void }
+  'sessions:write': { args: [sessionId: string, input: Uint8Array | UserMessage]; result: void }
+}
+export interface SessionIPCEvents {
+  [channel: `sessions:stream:${string}`]: SessionStream
+  [channel: `sessions:exit:${string}`]: number
+}
+
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'

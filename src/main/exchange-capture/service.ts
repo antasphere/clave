@@ -1,3 +1,6 @@
+import { sessionManager } from '../sessions/session-manager'
+import { ptyBackend } from '../sessions/adapters/pty-backend'
+import type { SessionState } from './types'
 import * as path from 'path'
 import { app } from 'electron'
 import { validateWorkstreamEvent } from './contract/workstream-events'
@@ -132,13 +135,101 @@ export function captureTabSpawn(payload: TabSpawnCapturePayload): void {
   }
 }
 
-export function captureSessionState(payload: SessionStateCapturePayload): void {
+// The manager owns transitions; renderer reports only enrich their identities.
+// Wait briefly for the matching report so group moves/renames land on THIS
+// transition, not the following one. Headless sessions and Codex titles (whose
+// renderer does not emit capture reports) use the best-known identity after 1s.
+const endpoints = new Map<string, EndpointIdentity>()
+const capturedStates = new Map<string, SessionState>()
+interface PendingStateCapture {
+  payload: SessionStateCapturePayload
+  ready: boolean
+  timer: ReturnType<typeof setTimeout>
+}
+const pendingStates = new Map<string, PendingStateCapture[]>()
+
+function flushPendingStates(id: string): void {
+  const queue = pendingStates.get(id)
+  if (!queue) return
+  while (queue[0]?.ready) {
+    const pending = queue.shift()!
+    clearTimeout(pending.timer)
+    recordSessionState(pending.payload)
+  }
+  if (!queue.length) pendingStates.delete(id)
+}
+
+sessionManager.subscribeAll((id, stream) => {
+  if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+  const session = sessionManager.get(id)
+  if (!session || !['claude', 'claude-agents', 'codex', 'antigravity'].includes(session.provider))
+    return
+  const state: SessionState =
+    stream.event.state === 'ended'
+      ? 'exited'
+      : stream.event.state === 'working' || stream.event.state === 'blocked'
+        ? stream.event.state
+        : 'idle'
+  const previous = capturedStates.get(id) ?? null
+  if (state === previous) return
+  const pty = ptyBackend.getSession(id)
+  const cached = endpoints.get(id)
+  const endpoint: EndpointIdentity = {
+    sessionId: id,
+    name: session.title,
+    mode: session.provider as EndpointIdentity['mode'],
+    cwd: session.cwd,
+    claudeSessionId: pty?.claudeSessionId ?? cached?.claudeSessionId ?? null,
+    groupId: cached?.groupId ?? session.groupId ?? null,
+    groupName: cached?.groupName ?? null,
+    model: pty?.model ?? cached?.model ?? null
+  }
+  const payload: SessionStateCapturePayload = {
+    ts: new Date().toISOString(),
+    session: endpoint,
+    state,
+    previous,
+    source: state === 'exited' ? 'pty' : 'hooks'
+  }
+  const pending: PendingStateCapture = {
+    payload,
+    ready: false,
+    timer: setTimeout(() => {
+      pending.ready = true
+      flushPendingStates(id)
+    }, 1000)
+  }
+  pending.timer.unref?.()
+  const queue = pendingStates.get(id) ?? []
+  queue.push(pending)
+  pendingStates.set(id, queue)
+  capturedStates.set(id, state)
+})
+
+function recordSessionState(payload: SessionStateCapturePayload): void {
   try {
     const event: SessionStateEvent = { v: 2, kind: 'session_state', ...payload }
     write(event)
   } catch (err) {
     console.error('[exchange-capture] failed to record session state', err)
   }
+}
+
+export function captureSessionState(payload: SessionStateCapturePayload): void {
+  const id = payload.session.sessionId
+  endpoints.set(id, payload.session)
+  const pending = pendingStates
+    .get(id)
+    ?.find((entry) => !entry.ready && entry.payload.state === payload.state)
+  if (pending) {
+    pending.payload.session = payload.session
+    pending.ready = true
+    flushPendingStates(id)
+  }
+  // Never replay a renderer's mapped or delayed state into the manager. This
+  // guard also covers exit reports that arrive after the tab has been removed.
+  if (sessionManager.get(id) || capturedStates.has(id)) return
+  recordSessionState(payload)
 }
 
 export function captureTabClosed(payload: TabClosedCapturePayload): void {
