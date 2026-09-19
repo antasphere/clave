@@ -764,11 +764,7 @@ export interface ElectronAPI {
   gitOutgoingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitIncomingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitRangeFiles: (cwd: string, direction: GitRangeDirection) => Promise<GitCommitFileStatus[]>
-  gitRangeDiff: (
-    cwd: string,
-    direction: GitRangeDirection,
-    filePath: string
-  ) => Promise<string>
+  gitRangeDiff: (cwd: string, direction: GitRangeDirection, filePath: string) => Promise<string>
   gitCommitFiles: (cwd: string, hash: string) => Promise<GitCommitFileStatus[]>
   gitCommitDiff: (cwd: string, hash: string, filePath: string) => Promise<string>
   gitGenerateCommitMessage: (cwd: string) => Promise<string>
@@ -881,9 +877,7 @@ export interface ElectronAPI {
   skinsActivate: (id: string) => Promise<import('@clave/skins/types').SkinState>
   skinsImport: (source?: string) => Promise<import('@clave/skins/types').SkinState>
   skinsRemove: (id: string) => Promise<import('@clave/skins/types').SkinState>
-  onSkinsChanged: (
-    callback: (state: import('@clave/skins/types').SkinState) => void
-  ) => () => void
+  onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
   keymapsLoad: () => Promise<unknown>

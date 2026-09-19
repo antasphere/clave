@@ -150,9 +150,11 @@ export class SkinStore {
     this.close()
     this.watching = true
     this.fingerprint = JSON.stringify(this.list())
-    // Watch the existing parent until first import creates the skins directory.
-    const target = existsSync(this.root) ? this.root : dirname(this.root)
-    if (existsSync(target)) {
+    // Only the dedicated production .clave parent is safe to watch before import.
+    // In tests the parent is all of userData; import re-arms us on the skins root.
+    const parent = dirname(this.root)
+    const target = existsSync(this.root) ? this.root : basename(parent) === '.clave' ? parent : null
+    if (target && existsSync(target)) {
       this.watcher = watch(target, { recursive: true }, () => {
         clearTimeout(this.timer)
         this.timer = setTimeout(() => this.refreshIfChanged(), 150)

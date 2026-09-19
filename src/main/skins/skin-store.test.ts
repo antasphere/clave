@@ -1,10 +1,16 @@
 import { it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, watch } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SkinStore } from './skin-store'
 import { bundledSkins } from '@clave/skins/bundled'
+vi.mock('fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('fs')>()
+  return { ...fs, watch: vi.fn(fs.watch) }
+})
+
 it('imports, activates, persists, reloads edits and reverts removed skins', async () => {
+  vi.mocked(watch).mockClear()
   const dir = mkdtempSync(join(tmpdir(), 'clave-skin-test-'))
   let active: string | null = null
   const updates: unknown[] = []
@@ -22,6 +28,7 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     expect(store.list().activeId).toBeNull()
     expect(active).toBeNull()
     expect(existsSync(join(dir, 'installed'))).toBe(false)
+    expect(watch).not.toHaveBeenCalled()
     const source = join(dir, 'source')
     mkdirSync(source)
     writeFileSync(
@@ -30,6 +37,11 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     )
     writeFileSync(join(source, 'skin.json'), JSON.stringify({ '--color-accent': '#abcdef' }))
     expect(store.import(source).activeId).toBe('custom')
+    expect(watch).toHaveBeenCalledWith(
+      join(dir, 'installed'),
+      { recursive: true },
+      expect.any(Function)
+    )
     expect(active).toBe('custom')
     expect(JSON.parse(readFileSync(join(dir, 'installed/custom/skin.json'), 'utf8'))).toEqual({
       '--color-accent': '#abcdef'
@@ -55,3 +67,19 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     rmSync(dir, { recursive: true, force: true })
   }
 }, 10000)
+
+it('watches the dedicated .clave parent before the skins directory exists', () => {
+  vi.mocked(watch).mockClear()
+  const dir = mkdtempSync(join(tmpdir(), 'clave-skin-parent-test-'))
+  const parent = join(dir, '.clave')
+  mkdirSync(parent)
+  const store = new SkinStore(join(parent, 'skins'), '1.90.2', () => null, vi.fn(), vi.fn())
+  try {
+    store.startWatching()
+    expect(watch).toHaveBeenCalledWith(parent, { recursive: true }, expect.any(Function))
+    expect(existsSync(join(parent, 'skins'))).toBe(false)
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
