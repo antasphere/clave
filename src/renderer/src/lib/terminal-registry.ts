@@ -1,4 +1,4 @@
-import type { Terminal } from '@xterm/xterm'
+import type { Terminal, ITheme } from '@xterm/xterm'
 
 /**
  * Live xterm instances by session id. TerminalGrid keeps every local tab's
@@ -28,10 +28,15 @@ declare global {
      *  viewport, so the specs assert a scroll against the MODEL's position —
      *  the same "assert Clave-internal state" rule as focus under
      *  --test-no-activate. */
+    __claveTerminalTheme?: (sessionId: string) => ITheme | null
     __claveViewportY?: (sessionId: string) => number | null
   }
 }
 if (typeof window !== 'undefined') {
+  window.__claveTerminalTheme = (sessionId: string): ITheme | null => {
+    const terminal = terminals.get(sessionId)
+    return terminal ? { ...terminal.options.theme } : null
+  }
   window.__claveViewportY = (sessionId: string): number | null => {
     const t = terminals.get(sessionId)
     return t ? t.buffer.active.viewportY : null

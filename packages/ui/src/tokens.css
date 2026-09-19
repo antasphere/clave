@@ -168,6 +168,29 @@
    instead of a copied hex. Same rule, two selectors: nothing is duplicated. */
 [data-theme="dark"],
 :root {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: rgba(255, 255, 255, 0.9);
+  --terminal-accent: rgba(255, 255, 255, 0.8);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(255, 255, 255, 0.15);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1a1a1a;
+  --terminal-red: #f87171;
+  --terminal-green: #4ade80;
+  --terminal-yellow: #facc15;
+  --terminal-blue: #60a5fa;
+  --terminal-magenta: #c084fc;
+  --terminal-cyan: #22d3ee;
+  --terminal-white: #e5e5e5;
+  --terminal-bright-black: #404040;
+  --terminal-bright-red: #fca5a5;
+  --terminal-bright-green: #86efac;
+  --terminal-bright-yellow: #fde047;
+  --terminal-bright-blue: #93bbfd;
+  --terminal-bright-magenta: #d8b4fe;
+  --terminal-bright-cyan: #67e8f9;
+  --terminal-bright-white: #ffffff;
+
   /* Off-black ramp — lifted off pure #000 with a subtle warm tint (R>G>B),
      mirroring the warm off-white of the light/coffee themes for a shared vibe. */
   --surface-0: #0e0d0c;
@@ -243,6 +266,29 @@
 
 /* Light theme — Linear-inspired warm grays */
 [data-theme="light"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #1b1b18;
+  --terminal-accent: rgba(27, 27, 24, 0.7);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(0, 0, 0, 0.1);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1b1b18;
+  --terminal-red: #dc2626;
+  --terminal-green: #16a34a;
+  --terminal-yellow: #ca8a04;
+  --terminal-blue: #2563eb;
+  --terminal-magenta: #9333ea;
+  --terminal-cyan: #0891b2;
+  --terminal-white: #d7d6d3;
+  --terminal-bright-black: #6c6c65;
+  --terminal-bright-red: #ef4444;
+  --terminal-bright-green: #22c55e;
+  --terminal-bright-yellow: #eab308;
+  --terminal-bright-blue: #3b82f6;
+  --terminal-bright-magenta: #a855f7;
+  --terminal-bright-cyan: #06b6d4;
+  --terminal-bright-white: #9b9b94;
+
   --surface-0: #fbfbf9;
   --surface-50: #f5f4f2;
   --surface-100: #eeedeb;
@@ -290,6 +336,29 @@
 
 /* Coffee theme — warm light, matching Claude's cream/beige aesthetic */
 [data-theme="coffee"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #1b1610;
+  --terminal-accent: rgba(27, 22, 16, 0.7);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(120, 100, 80, 0.15);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1b1610;
+  --terminal-red: #c53030;
+  --terminal-green: #2f855a;
+  --terminal-yellow: #b7791f;
+  --terminal-blue: #2b6cb0;
+  --terminal-magenta: #805ad5;
+  --terminal-cyan: #0e7490;
+  --terminal-white: #d0cbc3;
+  --terminal-bright-black: #756e66;
+  --terminal-bright-red: #e53e3e;
+  --terminal-bright-green: #38a169;
+  --terminal-bright-yellow: #d69e2e;
+  --terminal-bright-blue: #3182ce;
+  --terminal-bright-magenta: #9f7aea;
+  --terminal-bright-cyan: #0891b2;
+  --terminal-bright-white: #9b9590;
+
   --surface-0: #f5f1eb;
   --surface-50: #eeebe5;
   --surface-100: #e8e4dd;
@@ -358,6 +427,29 @@
    the chrome that the window ground and the sidebar share. Cards are wells
    here exactly as they are in dark. */
 [data-theme="charcoal"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #efece9;
+  --terminal-accent: rgba(255, 243, 232, 0.8);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(255, 243, 232, 0.18);
+  --terminal-selection-foreground: none;
+  --terminal-black: #3d3834;
+  --terminal-red: #f0857c;
+  --terminal-green: #8fce87;
+  --terminal-yellow: #e6c068;
+  --terminal-blue: #7fb0ea;
+  --terminal-magenta: #c49bef;
+  --terminal-cyan: #6cc9d4;
+  --terminal-white: #d7d3d0;
+  --terminal-bright-black: #736f6b;
+  --terminal-bright-red: #f7a9a1;
+  --terminal-bright-green: #b0e0a4;
+  --terminal-bright-yellow: #f2d68a;
+  --terminal-bright-blue: #a6c9f5;
+  --terminal-bright-magenta: #d9bcf7;
+  --terminal-bright-cyan: #98dfe6;
+  --terminal-bright-white: #faf8f6;
+
   --surface-0: #2b2722;
   --surface-50: #34302c;
   --surface-100: #3e3a35;

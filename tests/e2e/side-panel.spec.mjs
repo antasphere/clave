@@ -462,24 +462,21 @@ export async function run(t) {
     // "Removed" has to mean removed, not hidden: a --tree-guide-color left
     // standing in one theme is a guide one class away from coming back. Swept
     // over ALL FOUR themes because each declares its own palette block.
-    const tokenSweep = await win.evaluate(() => {
-      const root = document.documentElement
-      const was = root.getAttribute('data-theme')
+    const tokenSweep = await win.evaluate(async () => {
+      const was = (await window.electronAPI.skinsList()).activeId
       const probe = document.createElement('span')
       probe.style.position = 'fixed'
       document.body.appendChild(probe)
       const out = {}
       for (const theme of ['dark', 'charcoal', 'light', 'coffee']) {
-        if (theme === 'dark') root.removeAttribute('data-theme')
-        else root.setAttribute('data-theme', theme)
+        await window.electronAPI.skinsActivate(theme)
         probe.style.backgroundColor = ''
         probe.style.backgroundColor = 'var(--tree-guide-color)'
         // An undefined custom property makes the declaration invalid at
         // computed-value time, so background-color falls back to transparent.
         out[theme] = getComputedStyle(probe).backgroundColor
       }
-      if (was === null) root.removeAttribute('data-theme')
-      else root.setAttribute('data-theme', was)
+      if (was) await window.electronAPI.skinsActivate(was)
       probe.remove()
       return out
     })
