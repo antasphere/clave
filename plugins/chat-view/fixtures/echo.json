@@ -1,0 +1,32 @@
+[
+  {
+    "type": "user_message",
+    "text": "hello"
+  },
+  {
+    "type": "state_change",
+    "state": "working"
+  },
+  {
+    "type": "assistant_text",
+    "delta": "hello",
+    "final": true
+  },
+  {
+    "type": "tool_call",
+    "id": "3749b1cd-f562-4a9c-a524-2a4f6ad676af:echo:1",
+    "name": "echo",
+    "input": {
+      "text": "hello"
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "3749b1cd-f562-4a9c-a524-2a4f6ad676af:echo:1",
+    "output": "hello"
+  },
+  {
+    "type": "state_change",
+    "state": "done"
+  }
+]

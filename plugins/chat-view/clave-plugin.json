@@ -1,0 +1,11 @@
+{
+  "id": "clave.chat-view",
+  "name": "Chat",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <2.0.0" },
+  "ui": "native",
+  "main": "main.mjs",
+  "contributes": { "views": [{ "id": "chat", "renders": ["events"] }] },
+  "permissions": ["sessions.read", "sessions.write"]
+}

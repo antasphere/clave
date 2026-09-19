@@ -1,3 +1,4 @@
+import { useViewRegistry } from '../../views/store'
 import { initLinkedDocuments, useLinkedDocumentStore } from '../../store/linked-document-store'
 import { LinkedDocumentPanel } from '../files/LinkedDocumentPanel'
 import { useEffect, useMemo, useState } from 'react'
@@ -8,7 +9,7 @@ import {
   inActiveWorkspace
 } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
-import { TerminalPanel } from '../terminal/TerminalPanel'
+import { RegisteredSessionView } from '../../views/registry'
 import { RemoteTerminalPanel } from '../terminal/RemoteTerminalPanel'
 import { TerminalErrorBoundary } from '../terminal/TerminalErrorBoundary'
 import { FileViewer } from '../files/FileViewer'
@@ -50,6 +51,7 @@ function computeGridLayout(count: number): { cols: number; rows: number } {
 }
 
 export function TerminalGrid(): React.JSX.Element {
+  useViewRegistry()
   const linked = useLinkedDocumentStore((s) => s.documents)
   useEffect(() => initLinkedDocuments(), [])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
@@ -311,7 +313,7 @@ export function TerminalGrid(): React.JSX.Element {
                     locationId={session.locationId}
                   />
                 ) : (
-                  <TerminalPanel sessionId={session.id} />
+                  <RegisteredSessionView sessionId={session.id} />
                 )}
               </TerminalErrorBoundary>
             </div>

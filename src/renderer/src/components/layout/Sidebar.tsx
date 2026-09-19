@@ -1,3 +1,4 @@
+import { SessionViewBadge } from '../../views/registry'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -11,7 +12,7 @@ import {
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
-import { SessionItem } from '../session/SessionItem'
+import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
 import { ContextMenu } from '../ui/ContextMenu'
@@ -1997,5 +1998,14 @@ function PinnedSection({
         onCancel={() => setExportDialogPinnedId(null)}
       />
     </>
+  )
+}
+
+function SessionItem(props: React.ComponentProps<typeof BaseSessionItem>): React.JSX.Element {
+  return (
+    <div className="chat-sidebar-row">
+      <BaseSessionItem {...props} />
+      <SessionViewBadge sessionId={props.session.id} />
+    </div>
   )
 }

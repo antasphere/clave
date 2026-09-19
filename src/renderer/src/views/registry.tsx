@@ -1,0 +1,121 @@
+import { useCallback, useState, type ComponentType } from 'react'
+import { useRegistry } from './store'
+import { ChatBubbleLeftRightIcon, CommandLineIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import type { Session, AgentState } from '../../../shared/session-model'
+import type { PluginRecord } from '../../../main/plugins/plugin-store'
+import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
+import { TerminalPanel } from '../components/terminal/TerminalPanel'
+import { useSessionStore } from '../store/session-store'
+
+const nativeViews: Record<string, ComponentType<ChatViewProps>> = { 'clave.chat-view': ChatView }
+function resolveView(session: Session | undefined, plugins: PluginRecord[]): string | undefined {
+  if (!session || session.transport !== 'events') return undefined
+  const plugin = plugins.find(
+    (p) =>
+      p.source === 'bundled' &&
+      p.enabled &&
+      p.status === 'active' &&
+      !p.error &&
+      p.permissionsGranted.includes('sessions.read') &&
+      p.permissionsGranted.includes('sessions.write') &&
+      p.manifest?.ui === 'native' &&
+      p.manifest.contributes.views.some((view) => view.renders.includes(session.transport)) &&
+      nativeViews[p.id]
+  )
+  return plugin?.id
+}
+export function SessionViewBadge({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+  const registry = useRegistry()
+  const record = registry.sessions.find((s) => s.id === sessionId)
+  if (record?.transport !== 'events') return null
+  const chat = resolveView(record, registry.plugins) && !registry.terminal.has(sessionId)
+  const Icon = chat ? ChatBubbleLeftRightIcon : CommandLineIcon
+  return (
+    <span
+      className="chat-view-badge"
+      title={chat ? 'Chat view' : 'Terminal view'}
+      aria-label={chat ? 'Chat view' : 'Terminal view'}
+    >
+      <Icon />
+    </span>
+  )
+}
+export function RegisteredSessionView({ sessionId }: { sessionId: string }): React.JSX.Element {
+  const registry = useRegistry()
+  const session = registry.sessions.find((s) => s.id === sessionId)
+  const viewId = resolveView(session, registry.plugins)
+  const View = viewId ? nativeViews[viewId] : undefined
+  const focused = useSessionStore((s) => s.focusedSessionId === sessionId)
+  const [meta, setMeta] = useState<{ state: string; model: string | null }>({
+    state: 'idle',
+    model: null
+  })
+  const onState = useCallback(
+    (state: AgentState, model: string | null): void => {
+      setMeta({ state, model })
+      const store = useSessionStore.getState()
+      if (state === 'ended') store.updateSessionAlive(sessionId, false)
+      else store.setAgentState(sessionId, state)
+    },
+    [sessionId]
+  )
+  // v1 describes exactly one transport. A future dual-transport record can pass
+  // its PTY session id here without changing the view plugin's bridge.
+  const terminalSessionId = session?.transport === 'pty' ? session.id : undefined
+  const terminal = registry.terminal.has(sessionId)
+  if (!session || session.transport === 'pty' || !View)
+    return <TerminalPanel sessionId={sessionId} />
+  return (
+    <section
+      className="chat-host"
+      data-focused={focused}
+      onPointerDown={() => useSessionStore.getState().setFocusedSession(sessionId)}
+    >
+      <header className="chat-header">
+        <span className="chat-header-title">
+          {session.provider}
+          {meta.model ? ` · ${meta.model}` : ''}
+        </span>
+        <span className="chat-cwd" title={session.cwd}>
+          {session.cwd.replace(/^\/Users\/[^/]+/, '~')}
+        </span>
+        <span className="chat-state" data-state={meta.state}>
+          {meta.state}
+        </span>
+        <span
+          title={terminalSessionId ? 'Show terminal' : 'This events session has no PTY terminal'}
+        >
+          <button
+            className="panel-icon-btn"
+            aria-label="Show terminal"
+            disabled={!terminalSessionId}
+            data-active={terminal}
+            onClick={() =>
+              useRegistry.setState({
+                terminal: new Set(
+                  terminal
+                    ? [...registry.terminal].filter((id) => id !== sessionId)
+                    : [...registry.terminal, sessionId]
+                )
+              })
+            }
+          >
+            <CommandLineIcon />
+          </button>
+        </span>
+        <button
+          className="panel-icon-btn"
+          aria-label="Close session"
+          onClick={() => useSessionStore.getState().closeSession(sessionId)}
+        >
+          <XMarkIcon />
+        </button>
+      </header>
+      {terminal && terminalSessionId ? (
+        <TerminalPanel sessionId={terminalSessionId} />
+      ) : (
+        <View session={session} onState={onState} />
+      )}
+    </section>
+  )
+}
