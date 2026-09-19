@@ -259,8 +259,11 @@ describe('consent across content and declaration changes', () => {
     instance.discover()
     expect(instance.get(value.id)).toMatchObject({
       enabled: true,
-      permissionsGranted: ['sessions.read']
+      permissionsGranted: []
     })
+    expect(
+      JSON.parse(readFileSync(join(root, 'installed.json'), 'utf8'))[0].permissionsGranted
+    ).toEqual([])
     writePlugin(directory, value)
     instance.discover()
     expect(instance.get(value.id)).toMatchObject({
@@ -285,6 +288,78 @@ describe('consent across content and declaration changes', () => {
       enabled: true,
       permissionsGranted: ['sessions.read']
     })
+  })
+  it('requires review after a git directory is swapped for a link while closed', () => {
+    const { directory, value } = fixture('git')
+    rmSync(directory, { recursive: true })
+    const replacement = join(temporary, 'replacement')
+    writePlugin(replacement, value)
+    writeFileSync(join(replacement, 'main.mjs'), 'export default { replaced: true }')
+    symlinkSync(replacement, directory)
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get(value.id)).toMatchObject({
+      source: 'link',
+      enabled: false,
+      needsReview: 'source-change',
+      permissionsGranted: ['sessions.read']
+    })
+    restarted.discover()
+    expect(restarted.get(value.id).needsReview).toBe('source-change')
+  })
+  it.each(['helper.mjs', 'ui/app.js'])('seals secondary file %s', (entry) => {
+    const { instance, directory, value } = fixture('git')
+    mkdirSync(join(directory, 'ui'))
+    writeFileSync(join(directory, entry), 'original')
+    instance.discover()
+    instance.enable(value.id, value.permissions!)
+    writeFileSync(join(directory, entry), 'replacement')
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get(value.id)).toMatchObject({ enabled: false, needsReview: 'digest-change' })
+  })
+  it('rejects an escaping symlink outside the entry points', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { directory, value } = fixture('git')
+    writeFileSync(join(temporary, 'outside'), 'outside')
+    symlinkSync(join(temporary, 'outside'), join(directory, 'asset'))
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get(value.id)).toMatchObject({ status: 'error' })
+    expect(restarted.get(value.id).manifest).toBeUndefined()
+  })
+  it('excludes dependency trees, git metadata and internal symlinks', () => {
+    const { instance, directory, value } = fixture('git')
+    for (const name of ['node_modules', '.git']) {
+      mkdirSync(join(directory, name))
+      writeFileSync(join(directory, name, 'file'), 'unsealed')
+    }
+    symlinkSync(directory, join(directory, 'self'))
+    instance.discover()
+    expect(instance.get(value.id)).toMatchObject({ enabled: true })
+  })
+  it('keeps digest review through engine refusal and recovery', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { instance, directory, value } = fixture('git')
+    writeFileSync(join(directory, 'main.mjs'), 'replacement')
+    instance.discover()
+    const incompatible = new PluginStore(root, bundled, '0.0.1')
+    incompatible.discover()
+    expect(incompatible.get(value.id).needsReview).toBe('digest-change')
+    const compatible = store()
+    compatible.discover()
+    expect(compatible.get(value.id)).toMatchObject({ enabled: false, needsReview: 'digest-change' })
+  })
+  it('clears engine refusal when the app now meets the range', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { instance, directory, value } = fixture('link')
+    writePlugin(directory, { ...value, engines: { clave: '>=2' } })
+    instance.discover()
+    expect(instance.get(value.id).needsReview).toBe('engine-refusal')
+    const upgraded = new PluginStore(root, bundled, '2.0.0')
+    upgraded.discover()
+    expect(upgraded.get(value.id).needsReview).toBeUndefined()
+    expect(upgraded.get(value.id).error).toBeUndefined()
   })
   it('distinguishes a deliberate disable from engine refusal', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})

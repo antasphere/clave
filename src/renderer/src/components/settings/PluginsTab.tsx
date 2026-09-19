@@ -173,7 +173,7 @@ export function PluginsTab(): React.JSX.Element {
                 description={`${plugin.manifest?.kind ?? 'Invalid manifest'} · ${plugin.version} · ${plugin.source} · ${plugin.status}${plugin.needsReview ? ' · Needs review before enabling' : ''}`}
               >
                 <Toggle
-                  checked={plugin.enabled}
+                  checked={plugin.enabled && !!plugin.manifest}
                   disabled={busy || !plugin.manifest || (!!plugin.error && !plugin.enabled)}
                   ariaLabel={`Enable ${plugin.manifest?.name ?? plugin.id}`}
                   onChange={(enabled) =>

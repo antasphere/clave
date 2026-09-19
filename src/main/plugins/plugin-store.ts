@@ -35,7 +35,9 @@ const installedSchema = z.array(
     contentDigest: z.string().optional(),
     reviewDigest: z.string().optional(),
     declaredPermissions: z.array(z.string()).optional(),
-    needsReview: z.enum(['permission-growth', 'digest-change', 'engine-refusal']).optional()
+    needsReview: z
+      .enum(['permission-growth', 'digest-change', 'source-change', 'engine-refusal'])
+      .optional()
   })
 )
 export type InstalledPlugin = z.infer<typeof installedSchema>[number]
@@ -95,19 +97,36 @@ export class PluginStore {
           if (this.records.has(id))
             throw new Error(`Duplicate plugin id ${id}; bundled plugins cannot be overridden`)
           const saved = this.installed.find((r) => r.id === id)
-          const contentHash = createHash('sha256').update(manifestBytes)
-          // Version-only releases and permission reductions preserve consent. Hash all
-          // other manifest fields and executable bytes separately to distinguish them
-          // from replacements, while retaining the full content digest for auditing.
+          const contentHash = createHash('sha256')
+          const reviewHash = createHash('sha256')
+          // Seal every regular file, including imported modules and surface assets.
+          // Only version and permission changes are excluded from consent comparison.
           const reviewManifest = { ...rawManifest }
           delete reviewManifest.version
           delete reviewManifest.permissions
-          const reviewHash = createHash('sha256').update(JSON.stringify(reviewManifest))
-          for (const entry of [manifest.main, manifest.uiEntry]) {
-            if (!entry) continue
-            const bytes = readFileSync(pluginFile(directory, entry))
-            for (const hash of [contentHash, reviewHash])
-              hash.update(`\0${entry}\0${bytes.length}\0`).update(bytes)
+          const files: string[] = []
+          const walk = (folder: string): void => {
+            for (const name of readdirSync(folder).sort()) {
+              const file = join(folder, name)
+              const stat = lstatSync(file)
+              if (stat.isSymbolicLink()) {
+                const target = relative(realpathSync(directory), realpathSync(file))
+                if (target === '..' || target.startsWith(`..${sep}`) || isAbsolute(target))
+                  throw new Error('Path leaves plugin directory')
+                continue
+              }
+              if (name === 'node_modules' || name === '.git') continue
+              if (stat.isDirectory()) walk(file)
+              else if (stat.isFile()) files.push(relative(directory, file))
+            }
+          }
+          walk(directory)
+          for (const entry of files.sort()) {
+            const bytes = readFileSync(join(directory, entry))
+            const reviewBytes =
+              entry === 'clave-plugin.json' ? Buffer.from(JSON.stringify(reviewManifest)) : bytes
+            contentHash.update(JSON.stringify([entry, bytes.length])).update(bytes)
+            reviewHash.update(JSON.stringify([entry, reviewBytes.length])).update(reviewBytes)
           }
           const contentDigest = contentHash.digest('hex')
           const reviewDigest = reviewHash.digest('hex')
@@ -129,7 +148,7 @@ export class PluginStore {
             enabled: saved ? saved.enabled : firstBundledInstall,
             permissionsGranted: [
               ...(saved
-                ? saved.permissionsGranted
+                ? saved.permissionsGranted.filter((p) => manifest.permissions.includes(p))
                 : firstBundledInstall
                   ? manifest.permissions
                   : [])
@@ -138,7 +157,7 @@ export class PluginStore {
             contentDigest,
             reviewDigest,
             declaredPermissions: [...manifest.permissions],
-            needsReview: saved?.needsReview,
+            needsReview: saved?.needsReview === 'engine-refusal' ? undefined : saved?.needsReview,
             manifest,
             directory,
             status: 'disabled',
@@ -151,9 +170,10 @@ export class PluginStore {
             record.needsReview = 'permission-growth'
             record.permissionsGranted = []
           }
+          if (saved && saved.source !== actualSource) record.needsReview = 'source-change'
           if (!isEngineCompatible(manifest, this.version)) {
             record.error = `Requires Clave ${manifest.engines.clave}; running ${this.version}`
-            record.needsReview = 'engine-refusal'
+            record.needsReview ??= 'engine-refusal'
           }
           if (
             record.needsReview ||
