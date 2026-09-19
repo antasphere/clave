@@ -170,7 +170,7 @@ export function PluginsTab(): React.JSX.Element {
             <div key={plugin.id} data-plugin-id={plugin.id}>
               <SettingsRow
                 label={plugin.manifest?.name ?? plugin.id}
-                description={`${plugin.manifest?.kind ?? 'Invalid manifest'} · ${plugin.version} · ${plugin.source} · ${plugin.status}${!plugin.enabled && plugin.manifest && !plugin.error ? ' · Needs review before enabling' : ''}`}
+                description={`${plugin.manifest?.kind ?? 'Invalid manifest'} · ${plugin.version} · ${plugin.source} · ${plugin.status}${plugin.needsReview ? ' · Needs review before enabling' : ''}`}
               >
                 <Toggle
                   checked={plugin.enabled}
@@ -203,7 +203,7 @@ export function PluginsTab(): React.JSX.Element {
               {review === plugin.id && (
                 <SettingsCallout
                   title={`Enable ${plugin.manifest?.name}?`}
-                  text={`Host API permissions: ${plugin.manifest?.permissions.join(', ') || 'none'}. The plugin runs as a separate process with a trimmed environment. These permissions govern Clave host APIs, not OS access.`}
+                  text={`Host API permissions: ${plugin.manifest?.permissions.join(', ') || 'none'}. The plugin runs as a separate process with a trimmed environment. It can read and write your files. These permissions govern Clave host APIs, not OS access.`}
                 >
                   <button className="btn-dialog" onClick={() => setReview(null)}>
                     Cancel
