@@ -1,3 +1,4 @@
+import { useSkinStore } from '../lib/skin'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -23,6 +24,7 @@ export function useToolbarTerminal({ sessionId, persistent }: UseToolbarTerminal
   const fitAddonRef = useRef<FitAddon | null>(null)
   const [status, setStatus] = useState<ToolbarTerminalStatus>('running')
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   useEffect(() => {
     const container = containerRef.current
@@ -127,7 +129,7 @@ export function useToolbarTerminal({ sessionId, persistent }: UseToolbarTerminal
     if (terminalRef.current) {
       terminalRef.current.options.theme = getXtermTheme(theme)
     }
-  }, [theme])
+  }, [theme, skinRevision])
 
   const focus = useCallback(() => {
     terminalRef.current?.focus()

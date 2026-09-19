@@ -1,3 +1,4 @@
+import { useSkinStore } from '../lib/skin'
 import { useEffect, useRef, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -25,6 +26,7 @@ export function useRemoteTerminal(shellId: string) {
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isVisibleRef = useRef(false)
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   const fit = useCallback(() => {
     fitAddonRef.current?.fit()
@@ -319,7 +321,7 @@ export function useRemoteTerminal(shellId: string) {
     if (terminalRef.current) {
       terminalRef.current.options.theme = getXtermTheme(theme)
     }
-  }, [theme])
+  }, [theme, skinRevision])
 
   // Track visibility and toggle cursor blink for hidden terminals.
   // Also re-fit when anything that alters the terminal grid's available width

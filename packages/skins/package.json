@@ -1,0 +1,14 @@
+{
+  "name": "@clave/skins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./bundled": "./bundled.ts",
+    "./types": "./types.ts",
+    "./skin-to-xterm": "./skin-to-xterm.ts",
+    "./token-names.json": "./token-names.json",
+    "./excluded-token-names.json": "./excluded-token-names.json",
+    "./skins/*": "./skins/*"
+  }
+}

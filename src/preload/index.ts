@@ -402,9 +402,8 @@ const electronAPI = {
   getUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
     ipcRenderer.invoke('usage:get-limits', accountId, options),
   getClaudeUsageSnapshot: () => ipcRenderer.invoke('usage:claude-snapshot'),
-  onClaudeAccountUsage: (
-    callback: (update: { accountId: string; result: unknown }) => void
-  ) => createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
+  onClaudeAccountUsage: (callback: (update: { accountId: string; result: unknown }) => void) =>
+    createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
   claudeAccountsList: () => ipcRenderer.invoke('claude-accounts:list'),
@@ -555,6 +554,20 @@ const electronAPI = {
     } | null>,
   readImageAsDataUrl: (absolutePath: string) =>
     ipcRenderer.invoke('clave:read-image', absolutePath) as Promise<string | null>,
+  skinsList: () => ipcRenderer.invoke('skins:list'),
+  skinsActivate: (id: string) => ipcRenderer.invoke('skins:activate', id),
+  skinsImport: (source?: string) => ipcRenderer.invoke('skins:import', source),
+  skinsRemove: (id: string) => ipcRenderer.invoke('skins:remove', id),
+  onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: import('@clave/skins/types').SkinState
+    ): void => callback(state)
+    ipcRenderer.on('skins:changed', listener)
+    return () => {
+      ipcRenderer.removeListener('skins:changed', listener)
+    }
+  },
   preferencesGet: (key: string) => ipcRenderer.invoke('preferences:get', key),
   preferencesSet: (key: string, value: unknown) =>
     ipcRenderer.invoke('preferences:set', key, value),

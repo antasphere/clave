@@ -195,9 +195,9 @@ export async function run(t) {
     )
 
     // ── 2. The tree hairline in light mode ───────────────────────────────
-    const rule = await win.evaluate(() => {
-      const prev = document.documentElement.getAttribute('data-theme')
-      document.documentElement.setAttribute('data-theme', 'light')
+    const rule = await win.evaluate(async () => {
+      const prev = (await window.electronAPI.skinsList()).activeId
+      await window.electronAPI.skinsActivate('light')
       const probe = document.createElement('div')
       probe.className = 'tree-rule'
       document.body.appendChild(probe)
@@ -212,8 +212,7 @@ export async function run(t) {
         borderSubtle: root.getPropertyValue('--border-subtle-color').trim()
       }
       probe.remove()
-      if (prev) document.documentElement.setAttribute('data-theme', prev)
-      else document.documentElement.removeAttribute('data-theme')
+      if (prev) await window.electronAPI.skinsActivate(prev)
       return out
     })
 
