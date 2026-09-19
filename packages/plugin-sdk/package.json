@@ -1,0 +1,19 @@
+{
+  "name": "@clave/plugin-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./manifest": "./src/manifest.ts",
+    "./bridge": "./src/bridge.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3",
+    "semver": "^7.7.2"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.0"
+  }
+}

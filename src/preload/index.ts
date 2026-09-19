@@ -49,6 +49,19 @@ const electronAPI = {
   onSessionStreamExit: (id: string, callback: (code: number) => void) =>
     createIpcListener(`sessions:exit:${id}`, callback),
 
+  pluginsList: () => ipcRenderer.invoke('plugins:list'),
+  pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
+    ipcRenderer.invoke('plugins:enable', id, grants),
+  pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  pluginsLink: (folder?: string) => ipcRenderer.invoke('plugins:link', folder),
+  pluginsRemove: (id: string) => ipcRenderer.invoke('plugins:remove', id),
+  pluginsCommand: (id: string, command: string) =>
+    ipcRenderer.invoke('plugins:command', id, command),
+  pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
+  pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
+  pluginsSecretReply: (id: string, value: string | null) =>
+    ipcRenderer.invoke('plugins:secret-reply', id, value),
+  onPluginsChanged: (callback: () => void) => createIpcListener('plugins:changed', callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,

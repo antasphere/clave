@@ -1,3 +1,4 @@
+import { PluginsTab } from './PluginsTab'
 import { useState, useRef, useEffect, type ReactNode } from 'react'
 import {
   type Theme,
@@ -208,6 +209,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}
+        {settingsSection === 'plugins' && <PluginsTab />}
         {settingsSection === 'usage' && <UsageSettings />}
       </div>
     </div>

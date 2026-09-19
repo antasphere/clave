@@ -31,6 +31,7 @@
     "test:e2e": "node tests/e2e/run.mjs"
   },
   "dependencies": {
+    "@clave/plugin-sdk": "*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/language": "^6.12.3",
     "@codemirror/language-data": "^6.5.2",
@@ -105,6 +106,7 @@
     "vitest": "^3.2.7"
   },
   "workspaces": [
-    "packages/ui"
+    "packages/ui",
+    "packages/plugin-sdk"
   ]
 }

@@ -490,6 +490,12 @@ export interface MagicPullResult {
   error: string | null
 }
 
+export interface PluginSecretPrompt {
+  id: string
+  pluginId: string
+  title: string
+  description?: string
+}
 export interface ElectronAPI {
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
@@ -500,6 +506,19 @@ export interface ElectronAPI {
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
 
+  pluginsList: () => Promise<import('../main/plugins/plugin-store').PluginRecord[]>
+  pluginsEnable: (
+    id: string,
+    grants: import('@clave/plugin-sdk').PluginPermission[]
+  ) => Promise<void>
+  pluginsDisable: (id: string) => Promise<void>
+  pluginsLink: (folder?: string) => Promise<string | null>
+  pluginsRemove: (id: string) => Promise<void>
+  pluginsCommand: (id: string, command: string) => Promise<void>
+  pluginsPanel: (id: string, panel: string) => Promise<{ url: string }>
+  pluginsSecrets: () => Promise<PluginSecretPrompt[]>
+  pluginsSecretReply: (id: string, value: string | null) => Promise<void>
+  onPluginsChanged: (callback: () => void) => () => void
   /** `process.platform` of the main process. The renderer reads it only to
    *  decide whether to hold room for window buttons drawn inside our own
    *  chrome — macOS does, Windows and Linux do not. */
