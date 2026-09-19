@@ -69,7 +69,11 @@ describe('plugin discovery and persisted grants', () => {
         source: 'git',
         enabled: false,
         permissionsGranted: ['sessions.read'],
-        installedAt: discovered.installedAt
+        installedAt: discovered.installedAt,
+        directory: discovered.directory,
+        contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        reviewDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        declaredPermissions: ['sessions.read']
       }
     ])
   })
@@ -149,7 +153,7 @@ it('removes copied installations from the managed folder', () => {
 })
 
 it.each([false, true])(
-  'revokes grants when a folder is replaced under the same id (missing discovery: %s)',
+  'requires review when a folder is replaced under the same id (missing discovery: %s)',
   (discoverMissing) => {
     const initial = store()
     const directory = join(root, 'plugins', 'original')
@@ -172,7 +176,160 @@ it.each([false, true])(
       manifest: { name: 'Replacement' },
       version: '2.0.0',
       enabled: false,
-      permissionsGranted: []
+      permissionsGranted: discoverMissing ? [] : ['sessions.read']
     })
   }
 )
+
+describe('consent across content and declaration changes', () => {
+  function fixture(source: 'git' | 'bundled' | 'link'): {
+    instance: PluginStore
+    directory: string
+    value: PluginManifestInput
+  } {
+    const instance = store()
+    const directory =
+      source === 'bundled'
+        ? join(bundled, 'example')
+        : source === 'link'
+          ? join(temporary, 'source')
+          : join(root, 'plugins', 'example')
+    const value = { ...manifest(), main: 'main.mjs' }
+    writePlugin(directory, value)
+    writeFileSync(join(directory, 'main.mjs'), 'export default {}')
+    if (source === 'link') instance.link(directory)
+    instance.discover()
+    instance.enable(value.id, value.permissions!)
+    return { instance, directory, value }
+  }
+  it('detects a same-id same-version replacement while closed and retains unapplied grants', () => {
+    const { directory } = fixture('git')
+    writeFileSync(join(directory, 'main.mjs'), 'export default { replaced: true }')
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get('example.plugin')).toMatchObject({
+      enabled: false,
+      needsReview: 'digest-change',
+      permissionsGranted: ['sessions.read']
+    })
+    const again = store()
+    again.discover()
+    expect(again.get('example.plugin').needsReview).toBe('digest-change')
+    again.enable('example.plugin', ['sessions.read'])
+    expect(again.get('example.plugin').needsReview).toBeUndefined()
+  })
+  it.each(['git', 'bundled', 'link'] as const)('keeps consent on a %s version bump', (source) => {
+    const { directory, value } = fixture(source)
+    writePlugin(directory, { ...value, version: '2.0.0' })
+    const restarted = store()
+    restarted.discover()
+    expect(restarted.get(value.id)).toMatchObject({
+      enabled: true,
+      permissionsGranted: ['sessions.read']
+    })
+    expect(restarted.get(value.id).needsReview).toBeUndefined()
+  })
+  it.each(['bundled', 'link'] as const)('keeps consent on a %s code edit', (source) => {
+    const { instance, directory, value } = fixture(source)
+    writeFileSync(join(directory, 'main.mjs'), 'export default { changed: true }')
+    writePlugin(directory, { ...value, version: '2.0.0' })
+    instance.discover()
+    expect(instance.get(value.id)).toMatchObject({
+      enabled: true,
+      permissionsGranted: ['sessions.read']
+    })
+  })
+  it.each(['git', 'bundled', 'link'] as const)(
+    'revokes grants on %s permission growth',
+    (source) => {
+      const { directory, value } = fixture(source)
+      writePlugin(directory, { ...value, permissions: ['sessions.read', 'shell'] })
+      const restarted = store()
+      restarted.discover()
+      expect(restarted.get(value.id)).toMatchObject({
+        enabled: false,
+        permissionsGranted: [],
+        needsReview: 'permission-growth'
+      })
+    }
+  )
+  it('keeps consent on permission reduction but reviews regrowth', () => {
+    const { instance, directory, value } = fixture('git')
+    writePlugin(directory, { ...value, permissions: [] })
+    instance.discover()
+    expect(instance.get(value.id)).toMatchObject({
+      enabled: true,
+      permissionsGranted: ['sessions.read']
+    })
+    writePlugin(directory, value)
+    instance.discover()
+    expect(instance.get(value.id)).toMatchObject({
+      enabled: false,
+      permissionsGranted: [],
+      needsReview: 'permission-growth'
+    })
+  })
+  it('preserves the saved record across a trailing comma and repair, even after restart', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { instance, directory, value } = fixture('git')
+    const before = readFileSync(join(root, 'installed.json'), 'utf8')
+    writeFileSync(join(directory, 'clave-plugin.json'), JSON.stringify(value).replace(/}$/, ',}'))
+    instance.discover()
+    expect(instance.get(value.id).status).toBe('error')
+    expect(readFileSync(join(root, 'installed.json'), 'utf8')).toBe(before)
+    const restarted = store()
+    restarted.discover()
+    writePlugin(directory, value)
+    restarted.discover()
+    expect(restarted.get(value.id)).toMatchObject({
+      enabled: true,
+      permissionsGranted: ['sessions.read']
+    })
+  })
+  it('distinguishes a deliberate disable from engine refusal', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { instance, directory, value } = fixture('link')
+    instance.disable(value.id)
+    instance.discover()
+    expect(instance.get(value.id).needsReview).toBeUndefined()
+    writePlugin(directory, { ...value, engines: { clave: '>=999' } })
+    instance.discover()
+    expect(instance.get(value.id)).toMatchObject({ enabled: false, needsReview: 'engine-refusal' })
+  })
+})
+
+it('includes the surface entry in replacement detection', () => {
+  const instance = store()
+  const directory = join(root, 'plugins', 'surface')
+  writePlugin(directory, { ...manifest(), ui: 'surface' })
+  mkdirSync(join(directory, 'ui'))
+  writeFileSync(join(directory, 'ui', 'index.html'), '<p>Original</p>')
+  instance.discover()
+  instance.enable('example.plugin', ['sessions.read'])
+  const before = instance.get('example.plugin').contentDigest
+  writeFileSync(join(directory, 'ui', 'index.html'), '<p>Replacement</p>')
+  const restarted = store()
+  restarted.discover()
+  expect(restarted.get('example.plugin')).toMatchObject({
+    enabled: false,
+    needsReview: 'digest-change',
+    permissionsGranted: ['sessions.read']
+  })
+  expect(restarted.get('example.plugin').contentDigest).not.toBe(before)
+})
+
+it('includes same-version manifest changes in replacement detection', () => {
+  const instance = store()
+  const directory = join(root, 'plugins', 'example')
+  writePlugin(directory)
+  instance.discover()
+  instance.enable('example.plugin', ['sessions.read'])
+  writePlugin(directory, { ...manifest(), name: 'Replacement' })
+  const restarted = store()
+  restarted.discover()
+  expect(restarted.get('example.plugin')).toMatchObject({
+    enabled: false,
+    needsReview: 'digest-change',
+    permissionsGranted: ['sessions.read']
+  })
+})

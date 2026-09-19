@@ -13,6 +13,7 @@ import {
 } from 'node:fs'
 import { join, relative, isAbsolute, sep } from 'node:path'
 import { z } from 'zod'
+import { createHash } from 'node:crypto'
 import {
   pluginManifestSchema,
   isEngineCompatible,
@@ -29,7 +30,12 @@ const installedSchema = z.array(
     permissionsGranted: z.array(
       z.enum(['sessions.read', 'sessions.write', 'fs.read', 'fs.write', 'net', 'secrets', 'shell'])
     ),
-    installedAt: z.string().datetime()
+    installedAt: z.string().datetime(),
+    directory: z.string().optional(),
+    contentDigest: z.string().optional(),
+    reviewDigest: z.string().optional(),
+    declaredPermissions: z.array(z.string()).optional(),
+    needsReview: z.enum(['permission-growth', 'digest-change', 'engine-refusal']).optional()
   })
 )
 export type InstalledPlugin = z.infer<typeof installedSchema>[number]
@@ -82,28 +88,57 @@ export class PluginStore {
         const actualSource =
           source === 'git' && lstatSync(directory).isSymbolicLink() ? 'link' : source
         try {
-          const manifest = pluginManifestSchema.parse(
-            JSON.parse(readFileSync(join(directory, 'clave-plugin.json'), 'utf8'))
-          )
+          const manifestBytes = readFileSync(join(directory, 'clave-plugin.json'))
+          const rawManifest = JSON.parse(manifestBytes.toString('utf8'))
+          const manifest = pluginManifestSchema.parse(rawManifest)
           id = manifest.id
           if (this.records.has(id))
             throw new Error(`Duplicate plugin id ${id}; bundled plugins cannot be overridden`)
           const saved = this.installed.find((r) => r.id === id)
-          const sameVersion = saved?.version === manifest.version
+          const contentHash = createHash('sha256').update(manifestBytes)
+          // Version-only releases and permission reductions preserve consent. Hash all
+          // other manifest fields and executable bytes separately to distinguish them
+          // from replacements, while retaining the full content digest for auditing.
+          const reviewManifest = { ...rawManifest }
+          delete reviewManifest.version
+          delete reviewManifest.permissions
+          const reviewHash = createHash('sha256').update(JSON.stringify(reviewManifest))
+          for (const entry of [manifest.main, manifest.uiEntry]) {
+            if (!entry) continue
+            const bytes = readFileSync(pluginFile(directory, entry))
+            for (const hash of [contentHash, reviewHash])
+              hash.update(`\0${entry}\0${bytes.length}\0`).update(bytes)
+          }
+          const contentDigest = contentHash.digest('hex')
+          const reviewDigest = reviewHash.digest('hex')
+          const permissionGrowth =
+            saved &&
+            manifest.permissions.some(
+              (p) => !(saved.declaredPermissions ?? saved.permissionsGranted).includes(p)
+            )
+          const digestChanged =
+            saved &&
+            actualSource === 'git' &&
+            saved.contentDigest !== contentDigest &&
+            saved.reviewDigest !== reviewDigest
           const firstBundledInstall = !saved && source === 'bundled'
           const record: PluginRecord = {
             id,
             version: manifest.version,
             source: actualSource,
-            enabled: sameVersion ? saved.enabled : firstBundledInstall,
+            enabled: saved ? saved.enabled : firstBundledInstall,
             permissionsGranted: [
-              ...(sameVersion
+              ...(saved
                 ? saved.permissionsGranted
                 : firstBundledInstall
                   ? manifest.permissions
                   : [])
             ],
             installedAt: saved?.installedAt ?? new Date().toISOString(),
+            contentDigest,
+            reviewDigest,
+            declaredPermissions: [...manifest.permissions],
+            needsReview: saved?.needsReview,
             manifest,
             directory,
             status: 'disabled',
@@ -111,9 +146,19 @@ export class PluginStore {
             commands: [],
             generation: 0
           }
-          if (!isEngineCompatible(manifest, this.version))
+          if (digestChanged) record.needsReview = 'digest-change'
+          if (permissionGrowth) {
+            record.needsReview = 'permission-growth'
+            record.permissionsGranted = []
+          }
+          if (!isEngineCompatible(manifest, this.version)) {
             record.error = `Requires Clave ${manifest.engines.clave}; running ${this.version}`
-          if (manifest.permissions.some((p) => !record.permissionsGranted.includes(p)))
+            record.needsReview = 'engine-refusal'
+          }
+          if (
+            record.needsReview ||
+            manifest.permissions.some((p) => !record.permissionsGranted.includes(p))
+          )
             record.enabled = false
           if (manifest.main) pluginFile(directory, manifest.main)
           if (manifest.uiEntry) {
@@ -124,7 +169,11 @@ export class PluginStore {
           this.records.set(id, record)
         } catch (error) {
           // A duplicate gets a separate diagnostic row; it never replaces the original.
-          const key = this.records.has(id) ? `invalid:${directory}` : id
+          const duplicate = this.records.has(id)
+          const saved = !duplicate
+            ? this.installed.find((r) => r.directory === directory || r.id === id)
+            : undefined
+          const key = duplicate ? `invalid:${directory}` : (saved?.id ?? id)
           this.records.set(key, {
             id: key,
             version: '',
@@ -132,6 +181,7 @@ export class PluginStore {
             enabled: false,
             permissionsGranted: [],
             installedAt: new Date().toISOString(),
+            ...saved,
             directory,
             error: String(error),
             status: 'error',
@@ -162,6 +212,7 @@ export class PluginStore {
       throw new Error('All declared permissions must be granted before enabling')
     record.permissionsGranted = record.manifest.permissions.filter((p) => grants.includes(p))
     record.enabled = true
+    delete record.needsReview
     this.save()
   }
   disable(id: string): void {
@@ -192,16 +243,42 @@ export class PluginStore {
     this.save()
   }
   save(): void {
-    const current = this.list()
-      .filter((r) => r.manifest)
-      .map(({ id, version, source, enabled, permissionsGranted, installedAt }) => ({
+    const current = this.list().flatMap((record): InstalledPlugin[] => {
+      if (!record.manifest) {
+        // A half-written manifest is not an uninstall. Keep the exact saved entry
+        // until it can be parsed again, including its consent and previous digests.
+        const saved = this.installed.find((r) => r.id === record.id)
+        return saved ? [saved] : []
+      }
+      const {
         id,
         version,
         source,
         enabled,
         permissionsGranted,
-        installedAt
-      }))
+        installedAt,
+        directory,
+        contentDigest,
+        reviewDigest,
+        declaredPermissions,
+        needsReview
+      } = record
+      return [
+        {
+          id,
+          version,
+          source,
+          enabled,
+          permissionsGranted,
+          installedAt,
+          directory,
+          contentDigest,
+          reviewDigest,
+          declaredPermissions,
+          needsReview
+        }
+      ]
+    })
     // Absence revokes trust: a replacement must be reviewed on discovery.
     this.installed = current
     const file = join(this.root, 'installed.json')

@@ -102,6 +102,11 @@ export async function run(t) {
       'disabling removes panel',
       await until(async () => (await win.locator('[data-plugin-panel]').count()) === 0)
     )
+    t.equal(
+      'deliberately disabled plugin has no review suffix',
+      await win.getByText(/Needs review before enabling/).count(),
+      0
+    )
     const disabled = await win.evaluate(() => window.electronAPI.pluginsList())
     t.equal(
       'disabled plugin contributions are removed',
@@ -171,10 +176,10 @@ export async function run(t) {
     )
     await win.getByRole('switch', { name: 'Enable Bridge fixture' }).click()
     t.check(
-      'enable review explains host API permissions and process isolation',
+      'enable review explains host API permissions and file access',
       await win
         .getByText(
-          'Host API permissions: secrets. The plugin runs as a separate process with a trimmed environment. These permissions govern Clave host APIs, not OS access.',
+          'Host API permissions: secrets. The plugin runs as a separate process with a trimmed environment. It can read and write your files. These permissions govern Clave host APIs, not OS access.',
           { exact: true }
         )
         .isVisible()
@@ -261,6 +266,8 @@ export async function run(t) {
         )
       )
     )
+    manifest.version = '2.0.0'
+    writeFileSync(path.join(linked, 'clave-plugin.json'), JSON.stringify(manifest))
     writeFileSync(
       path.join(linked, 'main.mjs'),
       `export default { async activate(api) { await api.ui.registerCommand('probe', async () => { await api.notify({title:'Hot reload works'}) }) } }`
@@ -279,6 +286,54 @@ export async function run(t) {
       await until(
         async () => (await win.getByText('Hot reload works', { exact: true }).count()) === 1
       )
+    )
+    writeFileSync(
+      path.join(linked, 'clave-plugin.json'),
+      JSON.stringify(manifest).replace(/}$/, ',}')
+    )
+    t.check(
+      'transient malformed manifest becomes an error',
+      await until(async () =>
+        (await win.evaluate(() => window.electronAPI.pluginsList())).some(
+          (p) => p.id === 'test.bridge' && p.status === 'error'
+        )
+      )
+    )
+    t.check(
+      'parse error retains persisted consent',
+      JSON.parse(readFileSync(path.join(dir, 'clave-plugins', 'installed.json'), 'utf8')).some(
+        (p) => p.id === 'test.bridge' && p.enabled && p.permissionsGranted.includes('secrets')
+      )
+    )
+    writeFileSync(path.join(linked, 'clave-plugin.json'), JSON.stringify(manifest))
+    t.check(
+      'repair resumes linked plugin without re-consent',
+      await until(async () =>
+        (await win.evaluate(() => window.electronAPI.pluginsList())).some(
+          (p) => p.id === 'test.bridge' && p.status === 'active'
+        )
+      )
+    )
+    writeFileSync(
+      path.join(linked, 'clave-plugin.json'),
+      JSON.stringify({ ...manifest, permissions: ['secrets', 'shell'] })
+    )
+    t.check(
+      'permission growth disables the linked runtime and clears grants',
+      await until(async () =>
+        (await win.evaluate(() => window.electronAPI.pluginsList())).some(
+          (p) =>
+            p.id === 'test.bridge' &&
+            !p.enabled &&
+            p.status === 'disabled' &&
+            p.permissionsGranted.length === 0 &&
+            p.needsReview === 'permission-growth'
+        )
+      )
+    )
+    t.check(
+      'permission growth shows the review suffix',
+      await until(async () => (await win.getByText(/Needs review before enabling/).count()) === 1)
     )
     writeFileSync(
       path.join(linked, 'clave-plugin.json'),
