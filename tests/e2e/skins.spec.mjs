@@ -37,6 +37,19 @@ export async function run(t) {
     const launched = await launchApp(dir)
     app = launched.app
     const win = launched.win
+    if (process.env.CLAVE_SKIN_E2E_MUTATE) {
+      // Break the real main-to-renderer update path; the hot-edit check must fail.
+      win.setDefaultTimeout(5000)
+      await app.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          const send = window.webContents.send.bind(window.webContents)
+          window.webContents.send = (channel, ...args) => {
+            if (channel !== 'skins:changed') send(channel, ...args)
+          }
+        }
+      })
+    }
+
     const opened = await callMcp(app, 'openSession', {
       cwd: fixture,
       mode: 'terminal',

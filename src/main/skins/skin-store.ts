@@ -101,6 +101,7 @@ export class SkinStore {
     } else {
       skin = this.read(source)
     }
+    validateManifest(skin, this.version)
     skinToXterm(
       inheritSkinTokens(bundledSkins.find((s) => s.id === skin.skin.base)!.tokens, skin.tokens)
     )
