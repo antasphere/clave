@@ -87,6 +87,17 @@ export async function run(t) {
       opened.sessionId
     )
     t.check('the live terminal follows a hot edit', true)
+    writeFileSync(
+      `${dir}/skins/test-accent/skin.json`,
+      JSON.stringify({ '--color-accent': '#abc123', '--terminal-cursor': 'rgb(10 20 30 / 50%)' })
+    )
+    await win.waitForFunction((id) => {
+      const cursor = window.__claveTerminalTheme?.(id)?.cursor ?? ''
+      const match = /^rgba\(10, 20, 30, ([\d.]+)\)$/.exec(cursor)
+      return match && Number(match[1]) > 0.49 && Number(match[1]) < 0.51
+    }, opened.sessionId)
+    t.check('modern CSS alpha colors reach xterm as compatible RGBA', true)
+
     await win.getByRole('button', { name: 'Remove Test accent' }).click()
     await win.waitForFunction(
       () =>

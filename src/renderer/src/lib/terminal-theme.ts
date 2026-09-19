@@ -8,7 +8,13 @@ export function setTerminalSkin(tokens: Record<string, string>): void {
   activeTheme = skinToXterm(tokens, (value) => {
     // xterm accepts hex/rgb colors, but skins also accept modern CSS colors.
     // Keep legacy strings intact; resolve other CSS colors through the browser.
-    if (/^(#|rgba?\()/i.test(value)) return value
+    if (
+      /^#[\da-f]{3,8}$/i.test(value) ||
+      /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|\d?\.\d+)\s*)?\)$/i.test(
+        value
+      )
+    )
+      return value
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = 1
     const context = canvas.getContext('2d')!
