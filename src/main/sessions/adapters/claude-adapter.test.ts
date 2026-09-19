@@ -289,7 +289,7 @@ it('kills only the owned process group, escalates a stuck child, and cleans up t
     })
     mock.spawn.mockReturnValue(child)
     const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
-      if (signal === 'SIGKILL') child.emit('close', null)
+      if (signal === 'SIGKILL') child.emit('exit', null)
       return true
     })
     const adapter = new ClaudeAdapter()
@@ -383,4 +383,119 @@ it('names mode-changing permission suggestions and includes the tool in descript
       { id: 'deny' }
     ]
   })
+})
+
+it('settles kill on process exit even when a setsid grandchild holds stdout open', async () => {
+  const { spawn: realSpawn } =
+    await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  let child: import('node:child_process').ChildProcessWithoutNullStreams | undefined
+  let grandchildPid: number | undefined
+  mock.spawn.mockImplementation(() => {
+    child = realSpawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {spawn} = require('node:child_process');
+      process.on('SIGTERM', () => {});
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true, stdio: ['ignore', process.stdout, process.stderr]
+      });
+      grandchild.unref();
+      console.log(JSON.stringify({type: 'fixture', pid: grandchild.pid}));
+      setInterval(() => {}, 1000);
+    `
+      ],
+      { detached: true, stdio: 'pipe' }
+    )
+    return child
+  })
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  try {
+    const descendant = new Promise<void>((resolve) => {
+      adapter.on(handle, 'stream', (stream) => {
+        if (stream.kind === 'event' && stream.event.type === 'provider_event') {
+          const payload = stream.event.payload as { type: string; pid: number }
+          if (payload.type === 'fixture') {
+            grandchildPid = payload.pid
+            resolve()
+          }
+        }
+      })
+    })
+    adapter.write(handle, { type: 'user_message', text: 'start' })
+    await descendant
+    const started = Date.now()
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        adapter.kill(handle),
+        new Promise((_, reject) => {
+          deadline = setTimeout(() => reject(new Error('kill hung on inherited stdout')), 3000)
+        })
+      ])
+    } finally {
+      clearTimeout(deadline)
+    }
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(child!.signalCode).toBe('SIGKILL')
+    expect(process.kill(grandchildPid!, 0)).toBe(true)
+    // Descendant still lives; shutdown has released its inherited pipe locally.
+    expect(child!.stdout.destroyed).toBe(true)
+    await expect(adapter.attach(spec.id)).rejects.toThrow(/Unknown/)
+  } finally {
+    if (grandchildPid) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL')
+      } catch {
+        // Fixture descendant already exited.
+      }
+    }
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    child?.stdin.destroy()
+    child?.stdout.destroy()
+    child?.stderr.destroy()
+    await adapter.kill(handle)
+  }
+})
+
+it('retains the configured prompt when starting it throws and reports divergent provider identity', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn
+    .mockImplementationOnce(() => {
+      throw new Error('temporary spawn error')
+    })
+    .mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, { claudeSessionId: 'minted-id', initialPrompt: 'retry me' })
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  expect(() => adapter.ready(handle)).toThrow('temporary spawn error')
+  adapter.ready(handle)
+  adapter.ready(handle)
+  expect(child.stdin.read().toString()).toContain('retry me')
+  expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1)
+  child.stdout.write(
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'different-id', model: 'opus' }) +
+      '\n'
+  )
+  expect(events).toContainEqual({
+    type: 'session_meta',
+    providerSessionId: 'different-id',
+    model: 'opus'
+  })
+  expect(events).toContainEqual({
+    type: 'error',
+    message: expect.stringContaining('keeping the launch identity'),
+    fatal: false
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
 })

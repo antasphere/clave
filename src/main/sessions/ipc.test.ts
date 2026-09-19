@@ -134,3 +134,62 @@ it('readies an adapter only once and only after stream and exit notifications ar
   mocks.handlers.get('sessions:unsubscribe')({ sender }, id)
   sessionManager.forget(id)
 })
+
+it('keeps subscriptions after ready errors and retries until one successful call', () => {
+  const id = `ipc-retry-${++sequence}`
+  const adapter = new EchoAdapter()
+  const ready = vi
+    .fn()
+    .mockImplementationOnce(() => {
+      throw new Error('temporary startup failure')
+    })
+    .mockImplementation((handle) =>
+      adapter.write(handle, { type: 'user_message', text: 'initial prompt' })
+    )
+  Object.assign(adapter, { ready })
+  const record = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Retry'
+  }
+  sessionManager.adopt(record, adapter.prepare(record), adapter)
+  const sender = Object.assign(new EventEmitter(), {
+    id: sequence,
+    isDestroyed: () => false,
+    send: vi.fn()
+  })
+  const subscribe = (): unknown => mocks.handlers.get('sessions:subscribe')({ sender }, id)
+  expect(subscribe()).toEqual(record)
+  expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
+    kind: 'event',
+    event: {
+      type: 'error',
+      message: 'Session readiness failed: temporary startup failure',
+      fatal: false
+    }
+  })
+  sender.send.mockClear()
+  sessionManager.write(id, { type: 'user_message', text: 'subscription still works' })
+  expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
+    kind: 'event',
+    event: { type: 'user_message', text: 'subscription still works' }
+  })
+  subscribe()
+  subscribe()
+  expect(ready).toHaveBeenCalledTimes(2)
+  expect(
+    sender.send.mock.calls.filter(
+      ([, stream]) =>
+        stream.event?.type === 'user_message' && stream.event.text === 'initial prompt'
+    )
+  ).toHaveLength(1)
+  mocks.handlers.get('sessions:unsubscribe')({ sender }, id)
+  sessionManager.kill(id)
+  sessionManager.forget(id)
+})

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 const fixture = vi.hoisted(() => ({
   dir: '',
+  runtimeIdentities: new Map<string, { claudeSessionId: string; model: string }>(),
   watcher: null as null | ((event: string, file: string) => void)
 }))
 vi.mock('electron', () => ({ app: { getPath: () => fixture.dir } }))
@@ -16,18 +17,27 @@ vi.mock('fs', async (original) => ({
   })
 }))
 vi.mock('../pty-manager', () => ({
-  ptyManager: { getSession: () => ({ claudeSessionId: 'conversation', model: 'opus' }) }
+  ptyManager: {
+    getSession: (id: string) =>
+      fixture.runtimeIdentities.get(id) ?? { claudeSessionId: 'conversation', model: 'opus' }
+  }
 }))
 import { writeFileSync } from 'fs'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
 import { CaptureStore } from '../exchange-capture/store'
-import { captureSessionState, captureTabClosed } from '../exchange-capture/service'
+import {
+  captureMessage,
+  captureTabSpawn,
+  captureSessionState,
+  captureTabClosed
+} from '../exchange-capture/service'
 import { startWatching, stateFilePath } from '../agent-state-manager'
 import type { SessionState, EndpointIdentity, CaptureEvent } from '../exchange-capture/types'
 fixture.dir = mkdtempSync(join(tmpdir(), 'clave-2527-capture-'))
 afterEach(() => {
   for (const session of sessionManager.list()) sessionManager.forget(session.id)
+  fixture.runtimeIdentities.clear()
 })
 process.on('exit', () => rmSync(fixture.dir, { recursive: true, force: true }))
 let n = 0
@@ -79,8 +89,66 @@ function events(
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
-    .filter((e) => e.session.sessionId === id)
+    .filter((e) => e.session?.sessionId === id)
 }
+
+it.each(['stale', null] as const)(
+  'persists runtime identity at every events capture entry point with %s renderer identity',
+  (rendererIdentity) => {
+    const senderId = adopt()
+    const targetId = adopt()
+    const senderRuntime = { claudeSessionId: `runtime-${senderId}`, model: 'runtime-sender-model' }
+    const targetRuntime = { claudeSessionId: `runtime-${targetId}`, model: 'runtime-target-model' }
+    fixture.runtimeIdentities.set(senderId, senderRuntime)
+    fixture.runtimeIdentities.set(targetId, targetRuntime)
+    const sender = {
+      ...endpoint(senderId),
+      claudeSessionId: rendererIdentity,
+      model: rendererIdentity
+    }
+    const target = {
+      ...endpoint(targetId),
+      claudeSessionId: rendererIdentity,
+      model: rendererIdentity
+    }
+    const ts = new Date().toISOString()
+    captureMessage({ ts, sender, target, text: 'hello', provenance: 'test', delivered: true })
+    captureTabSpawn({ ts, spawner: sender, session: target, prompt: null, model: null })
+    captureSessionState({ ts, session: target, state: 'working', previous: null, source: 'hooks' })
+    captureTabClosed({ ts, session: target, by: 'user', closer: null })
+
+    // Assert the durable record: a renderer payload alone cannot prove that
+    // either identity field survives each capture entry point.
+    const written: CaptureEvent[] = readFileSync(
+      join(fixture.dir, 'exchange-capture/events.jsonl'),
+      'utf8'
+    )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    const message = written.find(
+      (event) => event.kind === 'message' && event.sender.sessionId === senderId
+    )
+    expect(message).toMatchObject({
+      kind: 'message',
+      sender: { ...sender, ...senderRuntime },
+      target: { ...target, ...targetRuntime }
+    })
+    const sessionEvents = events(targetId)
+    expect(sessionEvents.map((event) => event.kind)).toEqual([
+      'tab_spawn',
+      'session_state',
+      'tab_closed'
+    ])
+    for (const event of sessionEvents) {
+      expect(event.session).toEqual({ ...target, ...targetRuntime })
+    }
+    expect(sender.claudeSessionId).toBe(rendererIdentity)
+    expect(sender.model).toBe(rendererIdentity)
+    expect(target.claudeSessionId).toBe(rendererIdentity)
+    expect(target.model).toBe(rendererIdentity)
+  }
+)
 it('writes immediately, enriches from the last report, and preserves renderer-only transitions', () => {
   const id = adopt()
   sessionManager.setState(id, 'working')

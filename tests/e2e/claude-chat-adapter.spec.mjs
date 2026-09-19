@@ -34,6 +34,9 @@ export async function run(t) {
 const fs = require('node:fs'); const readline = require('node:readline');
 const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/permission-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
 process.on('SIGTERM',()=>{});
+const grandchild = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {detached:true, stdio:['ignore',process.stdout,process.stderr]});
+grandchild.unref();
+fs.appendFileSync(${JSON.stringify(`${ROOT}/descendants.jsonl`)}, JSON.stringify({pid:grandchild.pid})+'\\n');
 const argv=process.argv.slice(2); const providerId=argv[argv.indexOf('--session-id')+1];
 for(const frame of frames) if(frame.session_id) frame.session_id=providerId;
 const split = frames.findIndex(f => f.type === 'control_request');
@@ -41,7 +44,7 @@ fs.writeFileSync(${JSON.stringify(`${ROOT}/process.json`)}, JSON.stringify({pid:
 function emit(f) { process.stdout.write(JSON.stringify(f)+'\\n'); }
 readline.createInterface({input:process.stdin}).on('line', line => {
  fs.appendFileSync(${JSON.stringify(`${ROOT}/input.ndjson`)}, line+'\\n'); const input=JSON.parse(line);
- if(input.type==='user') { emit(frames[0]); setTimeout(()=>frames.slice(1,split+1).forEach(emit),350); }
+ if(input.type==='user') { if(input.message.content==='configured first prompt') frames[0].session_id='provider-diverged'; emit(frames[0]); setTimeout(()=>frames.slice(1,split+1).forEach(emit),350); }
  if(input.type==='control_response') setTimeout(()=>frames.slice(split+1).forEach(emit),350);
 });
 setInterval(()=>{},1000);
@@ -200,7 +203,10 @@ setInterval(()=>{},1000);
       'launcher, stream order, permission round trip, sidebar, capture and token isolation',
       true
     )
-    await callMcp(app, 'closeSession', { sessionId: session.id })
+    await bounded(
+      callMcp(app, 'closeSession', { sessionId: session.id }),
+      'tab close with inherited stdout'
+    )
     assert.ok(
       await until(() => win.evaluate(() => window.__chatExit !== null)),
       'closing delivers exit'
@@ -247,14 +253,60 @@ setInterval(()=>{},1000);
       1
     )
     t.check('configured prompt starts once after listeners; shell commands report an error', true)
+    assert.equal(
+      secondEvents.find((e) => e.type === 'session_meta').providerSessionId,
+      'provider-diverged'
+    )
+    assert.ok(
+      secondEvents.some(
+        (e) => e.type === 'error' && !e.fatal && e.message.includes('keeping the launch identity')
+      )
+    )
+    const secondRows = readFileSync(path.join(DIR, 'exchange-capture/events.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse)
+      .filter((row) => row.session?.sessionId === second.id)
+    assert.ok(secondRows.length)
+    for (const row of secondRows) assert.equal(row.session.claudeSessionId, second.claudeSessionId)
+    assert.notEqual(second.claudeSessionId, 'provider-diverged')
     const secondPid = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8')).pid
-    await app.close()
+    await bounded(app.close(), 'quit waits for killAll with inherited stdout')
     closed = true
     assert.throws(() => process.kill(secondPid, 0), /ESRCH/, 'quit waits for SIGKILL escalation')
-    t.check('app quit waits for stubborn owned process to exit', true)
+    t.check(
+      'killAll settles on quit with detached descendants holding stdout; minted identity survives divergence',
+      true
+    )
   } finally {
+    // Only fixture descendants whose PIDs this test recorded are ours to kill.
+    try {
+      for (const line of readFileSync(`${ROOT}/descendants.jsonl`, 'utf8').trim().split('\n')) {
+        try {
+          process.kill(JSON.parse(line).pid, 'SIGKILL')
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error
+        }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
     if (!closed) await app.close()
     rmSync(DIR, { recursive: true, force: true })
     rmSync(ROOT, { recursive: true, force: true })
+  }
+}
+
+async function bounded(promise, label) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} exceeded 4 seconds`)), 4000)
+      })
+    ])
+  } finally {
+    clearTimeout(timer)
   }
 }

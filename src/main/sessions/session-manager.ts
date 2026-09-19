@@ -123,8 +123,19 @@ export class SessionManager {
   ready(id: string): void {
     const entry = this.require(id)
     if (entry.ready) return
-    entry.ready = true
-    entry.adapter.ready?.(entry.handle)
+    try {
+      entry.adapter.ready?.(entry.handle)
+      entry.ready = true
+    } catch (error) {
+      this.publish(entry, {
+        kind: 'event',
+        event: {
+          type: 'error',
+          message: `Session readiness failed: ${error instanceof Error ? error.message : String(error)}`,
+          fatal: false
+        }
+      })
+    }
   }
 
   write(id: string, input: Uint8Array | SessionInput): void {

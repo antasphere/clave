@@ -249,7 +249,15 @@ export class ClaudeAdapter implements SessionAdapter {
     )
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
-      if (event.type === 'session_meta') live.initialized = true
+      if (event.type === 'session_meta') {
+        live.initialized = true
+        if (event.providerSessionId && event.providerSessionId !== sessionId)
+          emit({
+            type: 'error',
+            message: `Claude reported session ${event.providerSessionId}, but this session was launched as ${sessionId}; keeping the launch identity.`,
+            fatal: false
+          })
+      }
       for (const listener of emitter.listeners('stream')) {
         try {
           listener({ kind: 'event', event })
@@ -359,12 +367,12 @@ export class ClaudeAdapter implements SessionAdapter {
   ready(handle: SessionHandle): void {
     const live = this.live(handle)
     if (live.ready || live.ended) return
-    live.ready = true
     if (live.commandError) live.emit({ type: 'error', message: live.commandError, fatal: false })
     const initialPrompt = live.initialPrompt
-    live.initialPrompt = undefined
     if (initialPrompt !== undefined)
       this.write(handle, { type: 'user_message', text: initialPrompt })
+    live.initialPrompt = undefined
+    live.ready = true
   }
   write(handle: SessionHandle, raw: Uint8Array | SessionInput): void {
     if (raw instanceof Uint8Array)
@@ -401,7 +409,7 @@ export class ClaudeAdapter implements SessionAdapter {
     const live = this.handles.get(handle.id)
     if (!live) return
     const child = live.process
-    if (child && !live.ended) {
+    if (child && child.exitCode == null && child.signalCode == null && !live.ended) {
       const signal = (sig: NodeJS.Signals): void => {
         try {
           if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, sig)
@@ -412,14 +420,19 @@ export class ClaudeAdapter implements SessionAdapter {
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => signal('SIGKILL'), 1000)
-        child.once('close', () => {
+        // 'close' waits for inherited pipes, including detached descendants.
+        // The owned process exiting is the shutdown boundary.
+        child.once('exit', () => {
           clearTimeout(timer)
           resolve()
         })
         signal('SIGTERM')
       })
     }
-    live.finish(0)
+    child?.stdin.destroy()
+    child?.stdout.destroy()
+    child?.stderr.destroy()
+    live.finish(child?.exitCode ?? 0)
     this.handles.delete(handle.id)
     live.emitter.removeAllListeners()
   }

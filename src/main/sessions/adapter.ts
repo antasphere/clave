@@ -24,7 +24,7 @@ export interface SessionAdapter {
   readonly transports: readonly Transport[]
   spawn(spec: SpawnSpec): Promise<SessionHandle>
   attach(sessionId: string): Promise<SessionHandle>
-  /** Called once after the first consumer has bound stream and exit listeners. */
+  /** Called after consumer listeners are bound; completed once, retried if it throws. */
   ready?(handle: SessionHandle): void
   write(handle: SessionHandle, input: Uint8Array | SessionInput): void
   resize?(handle: SessionHandle, cols: number, rows: number): void

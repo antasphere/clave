@@ -123,8 +123,6 @@ class PtyManager {
         const session = this.eventSessions.get(id)
         if (session) {
           session.model = stream.event.model ?? undefined
-          if (sessionManager.get(id)?.provider === 'claude' && stream.event.providerSessionId)
-            session.claudeSessionId = stream.event.providerSessionId
         }
       }
       if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))

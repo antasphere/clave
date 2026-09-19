@@ -20,6 +20,7 @@ import {
   userDataDir,
   spyPtySpawn
 } from './harness.mjs'
+import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-prompt')
@@ -36,13 +37,21 @@ const WS = {
 
 // A family becomes a submenu when chat/custom profiles are registered.
 // Follow the built-in leaf so the assertions still exercise the terminal CLI.
-async function selectBuiltIn(win, label, profileName) {
+async function selectBuiltIn(win, label, profileName, family) {
+  const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
+  // One terminal built-in always exists; registered chat profiles add a second.
+  const count = 1 + profiles.customProfiles.filter((p) => p.family === family).length
   const entry = win
     .locator('[role="menuitem"]')
     .filter({ has: win.getByText(label, { exact: true }) })
   const submenu = (await entry.getAttribute('aria-haspopup')) === 'menu'
+  assert.equal(
+    submenu,
+    count > 1,
+    `${label}: ${count} profiles must produce ${count > 1 ? 'a submenu' : 'a flat item'}`
+  )
   await entry.click()
-  if (submenu) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
+  if (count > 1) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
 }
 
 export async function run(t) {
@@ -89,7 +98,7 @@ export async function run(t) {
     // AND puts it on a command line this spec can read.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await selectBuiltIn(win, 'Codex CLI', 'Codex')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
     await win.waitForTimeout(4000)
 
     // Add the group through the picker.
@@ -165,7 +174,7 @@ export async function run(t) {
     // arrived.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await selectBuiltIn(win, 'Claude Agents', 'Claude')
+    await selectBuiltIn(win, 'Claude Agents', 'Claude', 'claude')
     await win.waitForTimeout(4000)
 
     const agentsTooltip = await win.evaluate(
