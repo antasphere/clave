@@ -20,6 +20,7 @@ import { VIEW_PARTITION } from './view-guests'
  */
 
 const ROOT_BY_TOKEN = new Map<string, string>()
+const CSP_BY_TOKEN = new Map<string, string>()
 const TOKEN_BY_FILE = new Map<string, string>()
 
 /** MUST run before app ready — grants the scheme URL semantics (host + relative
@@ -38,7 +39,10 @@ export function registerPreviewScheme(): void {
  * Idempotent per file path (same token across calls, so iframe reloads and
  * tab dedup keep one origin per file).
  */
-export function registerPreviewFile(filePath: string): { url: string } {
+export function registerPreviewFile(
+  filePath: string,
+  contentSecurityPolicy?: string
+): { url: string } {
   const abs = path.resolve(filePath)
   const stat = fs.statSync(abs)
   if (!stat.isFile()) throw new Error(`Not a file: ${abs}`)
@@ -48,7 +52,18 @@ export function registerPreviewFile(filePath: string): { url: string } {
     TOKEN_BY_FILE.set(abs, token)
     ROOT_BY_TOKEN.set(token, path.dirname(abs))
   }
+  if (contentSecurityPolicy) CSP_BY_TOKEN.set(token, contentSecurityPolicy)
   return { url: `clave-preview://${token}/${encodeURIComponent(path.basename(abs))}` }
+}
+
+export function unregisterPreviewFile(filePath: string): void {
+  const abs = path.resolve(filePath)
+  const token = TOKEN_BY_FILE.get(abs)
+  if (token) {
+    ROOT_BY_TOKEN.delete(token)
+    CSP_BY_TOKEN.delete(token)
+    TOKEN_BY_FILE.delete(abs)
+  }
 }
 
 function respond(status: number, body: string): Response {
@@ -103,7 +118,10 @@ async function handlePreviewRequest(request: Request): Promise<Response> {
         // their assets cross-origin; the wildcard keeps those requests alive.
         'Access-Control-Allow-Origin': '*',
         // Files under active edit must never go stale in the frame.
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        ...(CSP_BY_TOKEN.has(url.host)
+          ? { 'Content-Security-Policy': CSP_BY_TOKEN.get(url.host)! }
+          : {})
       }
     })
   } catch {

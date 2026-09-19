@@ -5,6 +5,7 @@ import {
   ArrowDownTrayIcon,
   ChartBarIcon,
   CommandLineIcon,
+  PuzzlePieceIcon,
   CpuChipIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
@@ -37,7 +38,10 @@ const GROUPS: { label: string; rows: Row[] }[] = [
   },
   {
     label: 'Clave',
-    rows: [{ id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }]
+    rows: [
+      { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
+      { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
+    ]
   }
 ]
 

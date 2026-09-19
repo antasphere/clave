@@ -1,3 +1,4 @@
+import { registerPluginHandlers } from './plugin-ipc'
 import { registerLinkedDocumentHandlers } from '../linked-documents/runtime'
 import { registerAppHandlers } from './app-handlers'
 import { registerUsageHandlers } from './usage-handlers'
@@ -29,6 +30,7 @@ import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
+  registerPluginHandlers()
   registerClaudeAccountHandlers()
   registerUsageHandlers()
   registerGitHandlers()
