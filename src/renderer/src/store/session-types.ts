@@ -345,7 +345,14 @@ export interface FileTab {
 
 export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
-export type SettingsSection = 'general' | 'agents' | 'appearance' | 'keymaps' | 'updates' | 'usage'
+export type SettingsSection =
+  | 'general'
+  | 'agents'
+  | 'appearance'
+  | 'audio'
+  | 'keymaps'
+  | 'updates'
+  | 'usage'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 

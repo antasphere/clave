@@ -44,6 +44,7 @@ import {
 import { cn } from '../../lib/utils'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { AudioSettings } from './AudioSettings'
 
 /** The themes, by id and label only: each swatch is painted with the theme's
  *  own tokens (`.theme-swatch-preview` carries `data-theme`), so there is no
@@ -206,6 +207,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}
         {settingsSection === 'appearance' && <AppearanceSettings />}
+        {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}
         {settingsSection === 'usage' && <UsageSettings />}

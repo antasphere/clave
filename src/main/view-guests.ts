@@ -1,5 +1,6 @@
 import { app, session, shell, type BrowserWindow, type WebContents } from 'electron'
 import { decideNavigation } from '../shared/view-navigation'
+import { allowsViewPermission } from '../shared/view-permissions'
 
 /**
  * The web views behind a group's or a session's attached page.
@@ -15,9 +16,14 @@ import { decideNavigation } from '../shared/view-navigation'
  *    app's own `clave-preview` protocol (an .html file and its folder, nothing
  *    beyond).
  *  - The guest never gets the machine's either. Every guest lives in the
- *    `VIEW_PARTITION` session, whose permission handlers refuse everything —
- *    microphone, camera, notifications, location, clipboard. Electron grants
- *    by default; a dashboard has no business asking.
+ *    `VIEW_PARTITION` session, whose permission handlers refuse camera,
+ *    notifications, location, clipboard and the rest. Electron grants by
+ *    default; a dashboard has no business asking. The ONE exception is the
+ *    microphone for a page Clave serves from this machine — an Exos board, a
+ *    dev server, the Exos voice dock — which is the pages the person started
+ *    themselves. The rule is `shared/view-permissions.ts`, kept pure and
+ *    tested because a rule too loose fails silently: a page nobody vetted
+ *    gets a microphone and nothing in the app looks any different.
  *  - Where a link goes is decided by `decideNavigation` (shared, unit-tested):
  *    the local machine and the view's own origin stay in the pane, the rest of
  *    the web opens in the system browser, anything else is dropped. The rule
@@ -61,8 +67,36 @@ function policeNavigation(contents: WebContents, url: string): boolean {
 
 export function installViewGuestPolicy(): void {
   const viewSession = session.fromPartition(VIEW_PARTITION)
-  viewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  viewSession.setPermissionCheckHandler(() => false)
+
+  // The microphone, and only for a page Clave serves from this machine. See
+  // `shared/view-permissions.ts` for the rule; the two handlers ask the SAME
+  // function because a page granted by one and refused by the other gets a
+  // stream it is then told it does not have.
+  //
+  // The origin is taken from the details Chromium passes, never from the
+  // contents' current URL: a page can navigate between the check and the
+  // request, and the URL read late is not the URL that asked.
+  viewSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
+    const origin = 'securityOrigin' in details ? details.securityOrigin : undefined
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined
+    callback(
+      allowsViewPermission(
+        { origin: origin ?? '', mediaTypes, isMainFrame: details.isMainFrame },
+        permission
+      )
+    )
+  })
+  viewSession.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
+    const mediaType = details.mediaType
+    return allowsViewPermission(
+      {
+        origin: requestingOrigin,
+        mediaTypes: mediaType ? [mediaType] : undefined,
+        isMainFrame: details.isMainFrame
+      },
+      permission
+    )
+  })
 
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() !== 'webview') return
