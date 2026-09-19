@@ -75,6 +75,8 @@ and `interrupt`. Raw bytes are rejected by Claude. The shared launch argv builde
 POSIX shell resolver, hook settings, MCP config, account token and config folder
 are reused. Account context stays in main, outside the Session record. Options
 are `{ resume?, model?, permissionMode? }`; resume replaces `--session-id`.
+The launcher dangerous toggle maps to Claude `bypassPermissions` and Codex
+`never`, matching each adapter’s provider-specific permission vocabulary.
 Closing the tab terminates the owned process group, escalates after one second,
 and publishes ended then exit before the facade forgets the record.
 

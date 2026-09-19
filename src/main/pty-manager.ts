@@ -87,7 +87,11 @@ class PtyManager {
           options: {
             resume: options?.resumeSessionId,
             model: options?.model,
-            permissionMode: options?.dangerousMode ? 'bypassPermissions' : undefined
+            permissionMode: options?.dangerousMode
+              ? adapter.provider === 'codex'
+                ? 'never'
+                : 'bypassPermissions'
+              : undefined
           }
         })
       : session
