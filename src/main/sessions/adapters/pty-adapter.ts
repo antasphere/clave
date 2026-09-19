@@ -1,4 +1,3 @@
-import { codexTitleReader } from './pty-title-state'
 import { EventEmitter } from 'node:events'
 import { StringDecoder } from 'node:string_decoder'
 import type { SessionAdapter, SessionAdapterEvents, SessionHandle, SpawnSpec } from '../adapter'
@@ -22,14 +21,10 @@ export class PtyAdapter implements SessionAdapter {
     const channel = new EventEmitter()
     this.channels.set(session.id, channel)
     this.decoders.set(session.id, new StringDecoder('utf8'))
-    const readTitle = options?.codexMode
-      ? codexTitleReader((state) => channel.emit('state', state))
-      : undefined
     ptyBackend.attachListeners(
       session.id,
       (data) => {
         channel.emit('stream', { kind: 'pty', data: new TextEncoder().encode(data) })
-        readTitle?.(data)
       },
       (code) => {
         channel.emit('exit', code)

@@ -31,6 +31,7 @@ class PtyManager {
       options?.launchProfileId ??
       (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
     const echo = isEchoLaunchProfile(profileId)
+    if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const session: PtySession = echo
       ? {
           id: randomUUID(),

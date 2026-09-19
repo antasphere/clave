@@ -68,7 +68,7 @@ describe('PTY adapter compatibility', () => {
     manager.write(id, new Uint8Array([0xa9]))
     expect(backend.write).toHaveBeenCalledExactlyOnceWith(id, 'é')
   })
-  it('publishes Codex title state without scanning body output', () => {
+  it('leaves Codex titles as bytes for the existing renderer state path', () => {
     const adapter = new PtyAdapter()
     const handle = adapter.prepare('/project', { codexMode: true })
     const state = vi.fn()
@@ -77,7 +77,7 @@ describe('PTY adapter compatibility', () => {
     onData('codex | Working')
     expect(state).not.toHaveBeenCalled()
     onData('\x1b]0;codex | Working\x07')
-    expect(state).toHaveBeenCalledWith('working')
+    expect(state).not.toHaveBeenCalled()
   })
   it('detaches the tmux client on shutdown and destroys it only on explicit kill', () => {
     const adapter = new PtyAdapter()

@@ -1,26 +1,40 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const { append } = vi.hoisted(() => ({ append: vi.fn() }))
-vi.mock('electron', () => ({ app: { getPath: () => '/tmp/clave-session-capture-test' } }))
-vi.mock('../exchange-capture/store', () => ({
-  CaptureStore: class {
-    append = append
-  }
+import { afterEach, expect, it, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const fixture = vi.hoisted(() => ({
+  dir: '',
+  watcher: null as null | ((event: string, file: string) => void)
+}))
+vi.mock('electron', () => ({ app: { getPath: () => fixture.dir } }))
+vi.mock('./ipc', () => ({ registerSessionIpc: vi.fn() }))
+vi.mock('fs', async (original) => ({
+  ...(await original<typeof import('fs')>()),
+  watch: vi.fn((_dir, callback) => {
+    fixture.watcher = callback
+    return { close: vi.fn() }
+  })
 }))
 vi.mock('./adapters/pty-backend', () => ({
-  ptyBackend: { getSession: () => ({ claudeSessionId: 'conversation' }) }
+  ptyBackend: { getSession: () => ({ claudeSessionId: 'conversation', model: 'opus' }) }
 }))
+import { writeFileSync } from 'fs'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
-import { captureSessionState } from '../exchange-capture/service'
-import type { SessionState } from '../exchange-capture/types'
-
+import { captureSessionState, captureTabClosed } from '../exchange-capture/service'
+import { startWatching, stateFilePath } from '../agent-state-manager'
+import type { SessionState, EndpointIdentity, CaptureEvent } from '../exchange-capture/types'
+fixture.dir = mkdtempSync(join(tmpdir(), 'clave-2527-capture-'))
+afterEach(() => {
+  for (const session of sessionManager.list()) sessionManager.forget(session.id)
+})
+process.on('exit', () => rmSync(fixture.dir, { recursive: true, force: true }))
 let n = 0
-function fixture(): string {
-  const id = `capture-${++n}`
+function adopt(provider = 'claude', id = `capture-${++n}`): string {
   const adapter = new EchoAdapter()
   const session = {
     id,
-    provider: 'claude',
+    provider,
     transport: 'events' as const,
     cwd: '/project',
     windowKey: 'window',
@@ -32,85 +46,129 @@ function fixture(): string {
   sessionManager.adopt(session, adapter.prepare(session), adapter)
   return id
 }
-function report(id: string, state: SessionState, groupName: string): void {
+function endpoint(id: string): EndpointIdentity {
+  return {
+    sessionId: id,
+    name: 'Renamed',
+    mode: 'claude' as const,
+    cwd: '/project',
+    claudeSessionId: 'conversation',
+    groupId: 'group',
+    groupName: 'Group'
+  }
+}
+function report(id: string, state: SessionState, previous: SessionState | null = null): void {
   captureSessionState({
     ts: new Date().toISOString(),
-    session: {
-      sessionId: id,
-      name: 'Renamed',
-      mode: 'claude',
-      cwd: '/project',
-      claudeSessionId: 'conversation',
-      groupId: groupName,
-      groupName
-    },
+    session: endpoint(id),
     state,
-    previous: null,
+    previous,
     source: state === 'exited' ? 'pty' : 'hooks'
   })
 }
-
-describe('exchange capture consumes session state streams', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    append.mockClear()
-  })
-  afterEach(() => {
-    vi.runAllTimers()
-    vi.useRealTimers()
-  })
-  it('records manager transitions without renderer messages using a bounded fallback', () => {
-    const id = fixture()
+function events(
+  id: string
+): (CaptureEvent & { session: EndpointIdentity; state?: SessionState })[] {
+  return readFileSync(join(fixture.dir, 'exchange-capture/events.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((e) => e.session.sessionId === id)
+}
+it('writes immediately, enriches from the last report, and preserves renderer-only transitions', () => {
+  const id = adopt()
+  sessionManager.setState(id, 'working')
+  expect(events(id).map((e) => e.state)).toEqual(['working'])
+  report(id, 'working')
+  expect(events(id)).toHaveLength(1)
+  sessionManager.setState(id, 'blocked')
+  expect(events(id)[1].session).toMatchObject({ groupName: 'Group', model: 'opus' })
+  report(id, 'blocked', 'working')
+  report(id, 'idle', 'blocked')
+  expect(events(id).map((e) => e.state)).toEqual(['working', 'blocked', 'idle'])
+  sessionManager.kill(id)
+  sessionManager.forget(id)
+  report(id, 'exited', 'idle')
+  expect(events(id).map((e) => e.state)).toEqual(['working', 'blocked', 'idle', 'exited'])
+})
+it('prunes identity, mapped state and acknowledgements independently on exit, close and removal', () => {
+  for (const close of ['exit', 'close', 'remove']) {
+    const id = adopt()
     sessionManager.setState(id, 'working')
-    sessionManager.setState(id, 'done')
-    sessionManager.setState(id, 'idle')
-    expect(append).not.toHaveBeenCalled()
-    vi.runAllTimers()
-    expect(append.mock.calls.map(([e]) => [e.state, e.previous])).toEqual([
-      ['working', null],
-      ['idle', 'working']
-    ])
-    expect(append.mock.calls[0][0].session.claudeSessionId).toBe('conversation')
-    sessionManager.forget(id)
-  })
-  it('uses each transition’s current group identity and never replays delayed renderer states', () => {
-    const id = fixture()
-    sessionManager.setState(id, 'working')
+    report(id, 'working')
     sessionManager.setState(id, 'blocked')
-    report(id, 'working', 'First group')
-    expect(sessionManager.get(id)?.state).toBe('blocked')
-    report(id, 'blocked', 'Moved group')
-    expect(append.mock.calls.map(([e]) => [e.state, e.previous, e.session.groupName])).toEqual([
-      ['working', null, 'First group'],
-      ['blocked', 'working', 'Moved group']
-    ])
-    sessionManager.setState(id, 'done')
-    report(id, 'idle', 'Moved group')
-    expect(sessionManager.get(id)?.state).toBe('done')
-    report(id, 'working', 'Late report')
-    expect(sessionManager.get(id)?.state).toBe('done')
-    expect(append).toHaveBeenCalledTimes(3)
-    sessionManager.kill(id)
-    sessionManager.forget(id)
-    report(id, 'exited', 'Moved group')
-    report(id, 'exited', 'Moved group')
-    expect(append).toHaveBeenCalledTimes(4)
-    expect(append.mock.calls.at(-1)?.[0]).toMatchObject({
-      state: 'exited',
-      source: 'pty',
-      previous: 'idle'
+    if (close === 'close')
+      captureTabClosed({
+        ts: new Date().toISOString(),
+        session: endpoint(id),
+        by: 'user',
+        closer: null
+      })
+    else if (close === 'exit') sessionManager.setState(id, 'ended')
+    if (close === 'remove') {
+      sessionManager.forget(id)
+      adopt('claude', id)
+    }
+    // Starting another transition exposes stale caches without test-only APIs.
+    // Exit/close are checked before forget(), so removal cannot mask a leak.
+    sessionManager.setState(id, 'working')
+    const last = events(id).at(-1)
+    expect(last).toMatchObject({ state: 'working', previous: null, session: { groupName: null } })
+    report(id, 'working')
+    report(id, 'blocked', 'working')
+    expect(events(id).at(-1)?.state).toBe('blocked')
+  }
+})
+it('hook watcher drives the manager and a synchronous capture line for Claude; Pi keeps its contract exclusion', () => {
+  startWatching(vi.fn())
+  for (const provider of ['claude', 'pi']) {
+    const id = adopt(provider)
+    const observed = vi.fn()
+    sessionManager.subscribe(id, observed)
+    writeFileSync(stateFilePath(id), 'working')
+    fixture.watcher!('change', `${id}.state`)
+    expect(sessionManager.get(id)?.state).toBe('working')
+    expect(observed).toHaveBeenCalledWith({
+      kind: 'event',
+      event: { type: 'state_change', state: 'working' }
     })
-  })
-  it('retains manager order when renderer reports arrive out of order', () => {
-    const id = fixture()
-    sessionManager.setState(id, 'working')
-    sessionManager.setState(id, 'blocked')
-    report(id, 'blocked', 'Group')
-    expect(append).not.toHaveBeenCalled()
-    report(id, 'working', 'Group')
-    expect(append.mock.calls.map(([e]) => e.state)).toEqual(['working', 'blocked'])
-    vi.runAllTimers()
-    expect(append).toHaveBeenCalledTimes(2)
-    sessionManager.forget(id)
-  })
+    if (provider === 'claude')
+      expect(events(id)).toMatchObject([
+        { kind: 'session_state', state: 'working', source: 'hooks' }
+      ])
+    else expect(events(id)).toEqual([])
+  }
+})
+
+it('matches the codex-glow capture from base 08ccc92, including both exits and append order', () => {
+  const base = readFileSync(join(import.meta.dirname, 'fixtures/codex-glow-08ccc92.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  const ids = new Map<string, string>()
+  for (const line of base) {
+    if (!ids.has(line.session.sessionId)) ids.set(line.session.sessionId, adopt('codex'))
+    const id = ids.get(line.session.sessionId)!
+    const payload = {
+      ...line,
+      ts: new Date().toISOString(),
+      session: { ...line.session, sessionId: id }
+    }
+    if (line.kind === 'session_state') {
+      // Plain PTY reaches the manager; tmux pane exit can be renderer-only.
+      if (line.session.name === 'Codex plain PTY') sessionManager.setState(id, 'ended')
+      captureSessionState(payload)
+    } else {
+      captureTabClosed(payload)
+      sessionManager.kill(id)
+      sessionManager.forget(id)
+    }
+  }
+  const actual = [...ids.values()].flatMap((id) => events(id))
+  expect(actual.map((e) => [e.kind, e.state])).toEqual(base.map((e) => [e.kind, e.state]))
+  for (const id of ids.values()) {
+    expect(events(id)).toHaveLength(2)
+    expect(events(id).filter((e) => e.state === 'exited')).toHaveLength(1)
+  }
+  expect(actual.map((e) => e.ts)).toEqual(actual.map((e) => e.ts).sort())
 })

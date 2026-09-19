@@ -135,41 +135,54 @@ export function captureTabSpawn(payload: TabSpawnCapturePayload): void {
   }
 }
 
-// The manager owns transitions; renderer reports only enrich their identities.
-// Wait briefly for the matching report so group moves/renames land on THIS
-// transition, not the following one. Headless sessions and Codex titles (whose
-// renderer does not emit capture reports) use the best-known identity after 1s.
+// Writes are synchronous and append-ordered. Renderer identities enrich only
+// subsequent transitions; capture never waits for a renderer acknowledgement.
 const endpoints = new Map<string, EndpointIdentity>()
 const capturedStates = new Map<string, SessionState>()
-interface PendingStateCapture {
-  payload: SessionStateCapturePayload
-  ready: boolean
-  timer: ReturnType<typeof setTimeout>
-}
-const pendingStates = new Map<string, PendingStateCapture[]>()
+const managerReports = new Map<string, Pick<SessionStateCapturePayload, 'state' | 'previous'>[]>()
 
-function flushPendingStates(id: string): void {
-  const queue = pendingStates.get(id)
-  if (!queue) return
-  while (queue[0]?.ready) {
-    const pending = queue.shift()!
-    clearTimeout(pending.timer)
-    recordSessionState(pending.payload)
+// Terminal acknowledgements can arrive after the manager has forgotten a tab.
+// Consult the append-only record for this rare path instead of retaining dead
+// session ids or timers forever. No event is rewritten or buffered.
+function terminalEventRecorded(id: string): boolean {
+  const createdAt = sessionManager.get(id)?.createdAt ?? 0
+  const events = getStore().readAll().events
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event.kind !== 'session_state' && event.kind !== 'tab_closed') continue
+    const session = event.session as EndpointIdentity | undefined
+    if (session?.sessionId !== id || Date.parse(event.ts) < createdAt) continue
+    return event.kind === 'tab_closed' || event.state === 'exited'
   }
-  if (!queue.length) pendingStates.delete(id)
+  return false
 }
+
+export function forgetCaptureSession(id: string): void {
+  endpoints.delete(id)
+  capturedStates.delete(id)
+  managerReports.delete(id)
+}
+
+sessionManager.subscribeRemoved(forgetCaptureSession)
 
 sessionManager.subscribeAll((id, stream) => {
   if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+  // Codex titles and their exit identity remain renderer-owned, as on base.
+  // Pi is excluded by the existing exos contract (no Pi EndpointMode).
   const session = sessionManager.get(id)
-  if (!session || !['claude', 'claude-agents', 'codex', 'antigravity'].includes(session.provider))
-    return
+  if (!session || !['claude', 'claude-agents', 'antigravity'].includes(session.provider)) return
   const state: SessionState =
     stream.event.state === 'ended'
       ? 'exited'
       : stream.event.state === 'working' || stream.event.state === 'blocked'
         ? stream.event.state
         : 'idle'
+  // A close is already captured as tab_closed. An adapter's synthetic exit
+  // during kill must not invent an additional lifecycle event after it.
+  if (state === 'exited' && terminalEventRecorded(id)) {
+    forgetCaptureSession(id)
+    return
+  }
   const previous = capturedStates.get(id) ?? null
   if (state === previous) return
   const pty = ptyBackend.getSession(id)
@@ -180,7 +193,7 @@ sessionManager.subscribeAll((id, stream) => {
     mode: session.provider as EndpointIdentity['mode'],
     cwd: session.cwd,
     claudeSessionId: pty?.claudeSessionId ?? cached?.claudeSessionId ?? null,
-    groupId: cached?.groupId ?? session.groupId ?? null,
+    groupId: session.groupId ?? cached?.groupId ?? null,
     groupName: cached?.groupName ?? null,
     model: pty?.model ?? cached?.model ?? null
   }
@@ -191,19 +204,15 @@ sessionManager.subscribeAll((id, stream) => {
     previous,
     source: state === 'exited' ? 'pty' : 'hooks'
   }
-  const pending: PendingStateCapture = {
-    payload,
-    ready: false,
-    timer: setTimeout(() => {
-      pending.ready = true
-      flushPendingStates(id)
-    }, 1000)
-  }
-  pending.timer.unref?.()
-  const queue = pendingStates.get(id) ?? []
-  queue.push(pending)
-  pendingStates.set(id, queue)
+  recordSessionState(payload)
   capturedStates.set(id, state)
+  if (state === 'exited') {
+    forgetCaptureSession(id)
+    return
+  }
+  const reports = managerReports.get(id) ?? []
+  reports.push({ state, previous })
+  managerReports.set(id, reports)
 })
 
 function recordSessionState(payload: SessionStateCapturePayload): void {
@@ -217,25 +226,29 @@ function recordSessionState(payload: SessionStateCapturePayload): void {
 
 export function captureSessionState(payload: SessionStateCapturePayload): void {
   const id = payload.session.sessionId
-  endpoints.set(id, payload.session)
-  const pending = pendingStates
-    .get(id)
-    ?.find((entry) => !entry.ready && entry.payload.state === payload.state)
-  if (pending) {
-    pending.payload.session = payload.session
-    pending.ready = true
-    flushPendingStates(id)
+  if (payload.session.mode !== 'codex' && payload.state === 'exited' && terminalEventRecorded(id)) {
+    forgetCaptureSession(id)
+    return
   }
-  // Never replay a renderer's mapped or delayed state into the manager. This
-  // guard also covers exit reports that arrive after the tab has been removed.
-  if (sessionManager.get(id) || capturedStates.has(id)) return
-  recordSessionState(payload)
+  endpoints.set(id, payload.session)
+  const reports = managerReports.get(id)
+  const match =
+    reports?.findIndex(
+      (report) => report.state === payload.state && report.previous === payload.previous
+    ) ?? -1
+  if (match >= 0) reports!.splice(match, 1)
+  else {
+    recordSessionState(payload)
+    capturedStates.set(id, payload.state)
+  }
+  if (payload.state === 'exited') forgetCaptureSession(id)
 }
 
 export function captureTabClosed(payload: TabClosedCapturePayload): void {
   try {
     const event: TabClosedEvent = { v: 2, kind: 'tab_closed', ...payload }
     write(event)
+    forgetCaptureSession(payload.session.sessionId)
   } catch (err) {
     console.error('[exchange-capture] failed to record tab close', err)
   }

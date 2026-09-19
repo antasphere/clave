@@ -10,6 +10,8 @@ import {
   type LauncherFamily
 } from '../shared/agent-launch'
 
+const echoEnabled = process.argv.includes('--dev-echo-adapter')
+
 export class LaunchProfileManager {
   private preferences: LaunchProfilePreferences
 
@@ -40,8 +42,7 @@ export class LaunchProfileManager {
     preferences.customProfiles = preferences.customProfiles.filter(
       (profile) => profile.id !== 'dev-echo-adapter'
     )
-    if (process.argv.includes('--dev-echo-adapter'))
-      preferences.customProfiles.push(DEV_ECHO_PROFILE)
+    if (echoEnabled) preferences.customProfiles.push(DEV_ECHO_PROFILE)
     return preferences
   }
 
@@ -118,7 +119,16 @@ export class LaunchProfileManager {
     profileId?: string | null
   ): LaunchProfile {
     if (isEchoLaunchProfile(profileId)) return DEV_ECHO_PROFILE
-    return resolveLaunchProfile(this.getPreferences(), family, workspaceId, profileId)
+    const customProfiles = this.preferences.customProfiles.filter(
+      (profile) => profile.id !== 'dev-echo-adapter'
+    )
+    if (echoEnabled) customProfiles.push(DEV_ECHO_PROFILE)
+    return resolveLaunchProfile(
+      { ...this.preferences, customProfiles },
+      family,
+      workspaceId,
+      profileId
+    )
   }
 
   private assertProfile(family: LauncherFamily, profileId: string): LaunchProfile {
@@ -142,7 +152,5 @@ const DEV_ECHO_PROFILE: LaunchProfile = {
   additionalArgs: []
 }
 export function isEchoLaunchProfile(id?: string | null): boolean {
-  if (id !== 'dev-echo-adapter') return false
-  if (!process.argv.includes('--dev-echo-adapter')) throw new Error('Echo adapter is disabled')
-  return true
+  return id === 'dev-echo-adapter' && echoEnabled
 }

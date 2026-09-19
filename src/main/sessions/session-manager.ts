@@ -23,6 +23,7 @@ export class SessionManager {
   private adapters = new Map<string, SessionAdapter>()
   private entries = new Map<string, Entry>()
   private pending = new Set<string>()
+  private removed = new Set<(id: string) => void>()
   private all = new Set<(id: string, stream: SessionStream) => void>()
 
   registerAdapter(adapter: SessionAdapter): void {
@@ -183,6 +184,13 @@ export class SessionManager {
     }
   }
 
+  subscribeRemoved(callback: (id: string) => void): Unsubscribe {
+    this.removed.add(callback)
+    return () => {
+      this.removed.delete(callback)
+    }
+  }
+
   detachWindow(windowKey: string): void {
     for (const entry of this.entries.values()) {
       for (const listener of entry.streams)
@@ -200,6 +208,7 @@ export class SessionManager {
     entry.streams.clear()
     entry.exits.clear()
     this.entries.delete(id)
+    for (const callback of this.removed) this.notify(() => callback(id))
   }
 
   private notify(callback: () => void): void {

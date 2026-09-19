@@ -68,3 +68,31 @@ it('rejects nonexistent sessions and malformed user messages', () => {
     mocks.handlers.get('sessions:write')(event, 'absent', { type: 'user_message', text: 4 })
   ).toThrow()
 })
+
+it('refuses subscribe and write across windows, including unregistered callers', () => {
+  const id = `ipc-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'owner',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const event = { sender: { id: 101 } }
+  for (const key of ['other', undefined]) {
+    mocks.keyForWindow.mockReturnValue(key)
+    expect(mocks.handlers.get('sessions:list')(event)).toEqual([])
+    expect(() => mocks.handlers.get('sessions:subscribe')(event, id)).toThrow('another window')
+    expect(() =>
+      mocks.handlers.get('sessions:write')(event, id, { type: 'user_message', text: 'blocked' })
+    ).toThrow('another window')
+    expect(sessionManager.get(id)?.state).toBe('idle')
+  }
+  sessionManager.forget(id)
+})

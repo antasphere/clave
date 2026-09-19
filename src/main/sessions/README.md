@@ -10,17 +10,17 @@ and registers a handle, then the first terminal resize starts the process. The
 PTY backend retains launch profiles, Claude account injection, tmux metadata and
 recovery. Its data reaches xterm through a registry subscription; additional
 consumers do not replace that subscription. App shutdown detaches tmux clients;
-explicit close destroys the backing session. `attach` binds to an existing
-adapter handle; restoring a persisted PTY uses the existing adoption spawn
-options so the same tmux session is reattached at the terminal's measured size.
+explicit close destroys the backing session. `attach()` is reserved for event
+adapters and has no production caller in this wave. Restoring a persisted PTY
+uses the existing adoption spawn options so the same tmux session is reattached at the terminal's measured size.
 
 ## IPC
 
 - `sessions:list` returns the asking window's records.
-- `sessions:subscribe(id)` returns the record and starts notifications on
+- `sessions:subscribe(id)` refuses sessions outside the caller’s window, returns the record and starts notifications on
   `sessions:stream:<id>` and `sessions:exit:<id>` for that WebContents.
 - `sessions:unsubscribe(id)` removes that consumer's notifications.
-- `sessions:write(id, input)` accepts `Uint8Array` or a `user_message` event.
+- `sessions:write(id, input)` refuses sessions outside the caller’s window and accepts `Uint8Array` or a `user_message` event.
 
 The preload exposes `sessionsList`, `sessionsSubscribe`, `sessionsUnsubscribe`,
 `sessionsWrite`, `onSessionStream`, and `onSessionStreamExit` on `window.electronAPI`.
@@ -46,4 +46,15 @@ transport `events` through the normal launcher. A `user_message` produces, in
 order: the message, working state, final assistant text, a correlated tool call
 and result, and done state. Closing the tab emits ended state and exit code 0.
 The profile is absent without the flag, and explicit attempts to use its reserved
-id are rejected. It does not invoke a provider or require credentials.
+id return false from the echo-profile predicate. It does not invoke a provider or require credentials.
+
+## Capture compatibility
+
+Hook transitions append immediately with main-process identity and the last
+renderer identity already received. Matching renderer reports acknowledge those
+writes; reports without a manager transition still append. Codex title state
+and exits retain the existing renderer capture path; there is no main-process
+OSC parser. Pi remains excluded by the unchanged exos contract. Capture caches
+are cleared at exit, tab close, and manager removal (including app shutdown).
+Late terminal acknowledgements consult the durable log instead of retaining
+closed session ids in memory. No capture write waits on a timer.

@@ -21,7 +21,9 @@ export function registerSessionIpc(): void {
     const sender = event.sender
     const win = BrowserWindow.fromWebContents(sender)
     if (!win) throw new Error('Session subscriptions require an app window')
-    const windowKey = windowRegistry.getKeyForWindow(win.id) ?? ''
+    const windowKey = windowRegistry.getKeyForWindow(win.id)
+    if (!windowKey || sessionManager.get(id)?.windowKey !== windowKey)
+      throw new Error('Session belongs to another window')
     let owned = subscriptions.get(sender.id)
     if (!owned) {
       owned = new Map()
@@ -61,7 +63,11 @@ export function registerSessionIpc(): void {
     subscriptions.get(event.sender.id)?.get(id)?.()
     subscriptions.get(event.sender.id)?.delete(id)
   })
-  ipcMain.handle('sessions:write', (_event, id: string, input: unknown) => {
+  ipcMain.handle('sessions:write', (event, id: string, input: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const key = win && windowRegistry.getKeyForWindow(win.id)
+    if (!key || sessionManager.get(id)?.windowKey !== key)
+      throw new Error('Session belongs to another window')
     sessionManager.write(id, input instanceof Uint8Array ? input : UserMessageSchema.parse(input))
   })
 }
