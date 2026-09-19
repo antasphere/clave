@@ -33,12 +33,15 @@ export async function run(t) {
     `#!${process.execPath}
 const fs = require('node:fs'); const readline = require('node:readline');
 const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/permission-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
+process.on('SIGTERM',()=>{});
+const argv=process.argv.slice(2); const providerId=argv[argv.indexOf('--session-id')+1];
+for(const frame of frames) if(frame.session_id) frame.session_id=providerId;
 const split = frames.findIndex(f => f.type === 'control_request');
-fs.writeFileSync(${JSON.stringify(`${ROOT}/process.json`)}, JSON.stringify({pid:process.pid, argv:process.argv.slice(2), token:process.env.CLAUDE_CODE_OAUTH_TOKEN, configDir:process.env.CLAUDE_CONFIG_DIR}));
+fs.writeFileSync(${JSON.stringify(`${ROOT}/process.json`)}, JSON.stringify({pid:process.pid, providerId, argv:process.argv.slice(2), token:process.env.CLAUDE_CODE_OAUTH_TOKEN, configDir:process.env.CLAUDE_CONFIG_DIR}));
 function emit(f) { process.stdout.write(JSON.stringify(f)+'\\n'); }
 readline.createInterface({input:process.stdin}).on('line', line => {
  fs.appendFileSync(${JSON.stringify(`${ROOT}/input.ndjson`)}, line+'\\n'); const input=JSON.parse(line);
- if(input.type==='user') setTimeout(()=>frames.slice(0,split+1).forEach(emit),350);
+ if(input.type==='user') { emit(frames[0]); setTimeout(()=>frames.slice(1,split+1).forEach(emit),350); }
  if(input.type==='control_response') setTimeout(()=>frames.slice(split+1).forEach(emit),350);
 });
 setInterval(()=>{},1000);
@@ -48,6 +51,7 @@ setInterval(()=>{},1000);
   const { app, win } = await launchApp(DIR, {
     env: { SHELL: `${ROOT}/bin/bash`, PATH: `${ROOT}/bin:${process.env.PATH}` }
   })
+  let closed = false
   try {
     // Create the account in main. Track all outbound IPC AFTER storing the token;
     // no renderer input or process-output payload is allowed to carry it.
@@ -94,7 +98,6 @@ setInterval(()=>{},1000);
     assert.ok(
       profiles.customProfiles.some((p) => p.id === 'claude-chat' && p.name === 'Claude (chat)')
     )
-    assert.ok(!profiles.customProfiles.some((p) => p.id === 'codex-chat'))
     await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'claude-chat'))
     await win.reload()
     await win.locator('.launcher-split .launcher-btn').waitFor()
@@ -129,6 +132,15 @@ setInterval(()=>{},1000);
     )
     assert.ok(request)
     assert.equal(request.toolName, 'Write')
+    assert.ok(request.description.includes('Write'))
+    assert.ok(request.options.some((o) => o.label.includes('acceptEdits')))
+    writeFileSync(path.join(DIR, 'agent-state', `${session.id}.state`), 'idle')
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    assert.equal(
+      (await win.evaluate(() => window.electronAPI.sessionsList())).find((s) => s.id === session.id)
+        .state,
+      'blocked'
+    )
     const processInfo = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8'))
     assert.equal(processInfo.token, TOKEN)
     assert.equal(processInfo.configDir, '/tmp/clave-chat-account')
@@ -177,6 +189,11 @@ setInterval(()=>{},1000);
     assert.ok(capture.some((e) => e.state === 'working'))
     assert.ok(capture.some((e) => e.state === 'blocked'))
     assert.ok(capture.some((e) => e.state === 'idle'))
+    const model = events.find((e) => e.type === 'session_meta').model
+    for (const row of capture) {
+      assert.equal(row.session.claudeSessionId, processInfo.providerId)
+      assert.equal(row.session.model, model)
+    }
     assert.deepEqual(await app.evaluate(() => globalThis.__chatLeaks), [])
     assert.ok(!JSON.stringify({ session, events }).includes(TOKEN))
     t.check(
@@ -191,8 +208,52 @@ setInterval(()=>{},1000);
     assert.equal((await win.evaluate(() => window.__chat)).at(-1).state, 'ended')
     assert.throws(() => process.kill(processInfo.pid, 0), /ESRCH/, 'closing kills owned process')
     t.check('closing tab ends stream and kills process', true)
-  } finally {
+    const second = await win.evaluate(
+      (root) =>
+        window.electronAPI.spawnSession(root, {
+          claudeMode: true,
+          launchProfileId: 'claude-chat',
+          initialPrompt: 'configured first prompt',
+          initialCommand: 'echo must-not-run',
+          autoExecute: true
+        }),
+      ROOT
+    )
+    await win.evaluate(async (id) => {
+      window.__second = []
+      window.electronAPI.onSessionStream(id, (value) => window.__second.push(value.event))
+      await window.electronAPI.sessionsSubscribe(id)
+      await window.electronAPI.sessionsSubscribe(id)
+    }, second.id)
+    assert.ok(
+      await until(async () =>
+        (await win.evaluate(() => window.__second)).some((e) => e.type === 'session_meta')
+      )
+    )
+    const secondEvents = await win.evaluate(() => window.__second)
+    assert.equal(secondEvents.filter((e) => e.type === 'user_message').length, 1)
+    assert.equal(
+      secondEvents.find((e) => e.type === 'user_message').text,
+      'configured first prompt'
+    )
+    assert.ok(secondEvents.some((e) => e.type === 'error' && !e.fatal))
+    const inputRows = readFileSync(`${ROOT}/input.ndjson`, 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse)
+    assert.equal(
+      inputRows.filter((e) => e.type === 'user' && e.message.content === 'configured first prompt')
+        .length,
+      1
+    )
+    t.check('configured prompt starts once after listeners; shell commands report an error', true)
+    const secondPid = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8')).pid
     await app.close()
+    closed = true
+    assert.throws(() => process.kill(secondPid, 0), /ESRCH/, 'quit waits for SIGKILL escalation')
+    t.check('app quit waits for stubborn owned process to exit', true)
+  } finally {
+    if (!closed) await app.close()
     rmSync(DIR, { recursive: true, force: true })
     rmSync(ROOT, { recursive: true, force: true })
   }

@@ -66,6 +66,7 @@ export function registerSessionIpc(): void {
         sessionManager.detachWindow(windowKey)
       })
     }
+    sessionManager.ready(id)
     return sessionManager.get(id)
   })
   ipcMain.handle('sessions:unsubscribe', (event, id: string) => {

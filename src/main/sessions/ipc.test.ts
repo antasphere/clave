@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
-  BrowserWindow: { fromWebContents: mocks.fromWebContents }
+  BrowserWindow: { fromWebContents: mocks.fromWebContents, getAllWindows: () => [] }
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 import { registerSessionIpc } from './ipc'
@@ -94,5 +94,43 @@ it('refuses subscribe and write across windows, including unregistered callers',
     ).toThrow('another window')
     expect(sessionManager.get(id)?.state).toBe('idle')
   }
+  sessionManager.forget(id)
+})
+
+it('readies an adapter only once and only after stream and exit notifications are bound', () => {
+  const id = `ipc-ready-${++sequence}`
+  const adapter = new EchoAdapter()
+  const ready = vi.fn((handle: { id: string }) => {
+    adapter.write(handle, { type: 'user_message', text: 'initial prompt' })
+    adapter.kill(handle)
+  })
+  Object.assign(adapter, { ready })
+  const record = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Ready'
+  }
+  sessionManager.adopt(record, adapter.prepare(record), adapter)
+  const sender = Object.assign(new EventEmitter(), {
+    id: sequence,
+    isDestroyed: () => false,
+    send: vi.fn()
+  })
+  expect(ready).not.toHaveBeenCalled()
+  mocks.handlers.get('sessions:subscribe')({ sender }, id)
+  expect(sender.send).toHaveBeenCalledWith(`sessions:stream:${id}`, {
+    kind: 'event',
+    event: { type: 'user_message', text: 'initial prompt' }
+  })
+  expect(sender.send).toHaveBeenCalledWith(`sessions:exit:${id}`, 0)
+  mocks.handlers.get('sessions:subscribe')({ sender }, id)
+  expect(ready).toHaveBeenCalledTimes(1)
+  mocks.handlers.get('sessions:unsubscribe')({ sender }, id)
   sessionManager.forget(id)
 })

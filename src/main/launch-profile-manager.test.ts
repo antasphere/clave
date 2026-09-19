@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { sessionManager } from './sessions/session-manager'
+import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { LaunchProfileManager, isEchoLaunchProfile } from './launch-profile-manager'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
@@ -105,5 +107,50 @@ it('echo detection is a non-throwing predicate and resolution does not clone pre
     expect(clone).not.toHaveBeenCalled()
   } finally {
     clone.mockRestore()
+  }
+})
+
+it('lists event profiles only with registered adapters and hides Claude chat on Windows', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(undefined)
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    withManager((manager) => {
+      expect(manager.getPreferences().customProfiles).toEqual([])
+      lookup.mockReturnValue(new EchoAdapter())
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat'
+      ])
+      Object.defineProperty(process, 'platform', { value: 'win32' })
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'codex-chat'
+      ])
+      expect(() => manager.setGlobalDefault('claude', 'claude-chat')).toThrow(
+        'Unknown launch profile'
+      )
+    })
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+    lookup.mockRestore()
+  }
+})
+
+it('keeps the development echo profile exclusive to the Claude family', async () => {
+  const argv = process.argv.slice()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-echo-family-'))
+  try {
+    process.argv.push('--dev-echo-adapter')
+    vi.resetModules()
+    const { LaunchProfileManager: DevManager } = await import('./launch-profile-manager')
+    const manager = new DevManager(path.join(dir, 'profiles.json'))
+    expect(() => manager.setGlobalDefault('codex', 'dev-echo-adapter')).toThrow(/Claude-family/)
+    expect(manager.setGlobalDefault('claude', 'dev-echo-adapter').globalDefaults.claude).toBe(
+      'dev-echo-adapter'
+    )
+  } finally {
+    process.argv.splice(0, process.argv.length, ...argv)
+    fs.rmSync(dir, { recursive: true, force: true })
+    vi.resetModules()
   }
 })

@@ -71,7 +71,11 @@ export class LaunchProfileManager {
     )
     if (echoEnabled) preferences.customProfiles.push(DEV_ECHO_PROFILE)
     preferences.customProfiles.push(
-      ...CHAT_PROFILES.filter((p) => sessionManager.getAdapter(p.adapterId))
+      ...CHAT_PROFILES.filter(
+        (p) =>
+          (p.id !== 'claude-chat' || process.platform !== 'win32') &&
+          sessionManager.getAdapter(p.adapterId)
+      )
     )
     return preferences
   }
@@ -154,7 +158,13 @@ export class LaunchProfileManager {
       (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) customProfiles.push(DEV_ECHO_PROFILE)
-    customProfiles.push(...CHAT_PROFILES.filter((p) => sessionManager.getAdapter(p.adapterId)))
+    customProfiles.push(
+      ...CHAT_PROFILES.filter(
+        (p) =>
+          (p.id !== 'claude-chat' || process.platform !== 'win32') &&
+          sessionManager.getAdapter(p.adapterId)
+      )
+    )
     return resolveLaunchProfile(
       { ...this.preferences, customProfiles },
       family,
@@ -164,8 +174,11 @@ export class LaunchProfileManager {
   }
 
   private assertProfile(family: LauncherFamily, profileId: string): LaunchProfile {
-    if (isEchoLaunchProfile(profileId) && family === 'claude') return DEV_ECHO_PROFILE
-    const profile = resolveLaunchProfile(this.getPreferences(), family, null, profileId)
+    if (isEchoLaunchProfile(profileId)) {
+      if (family !== 'claude') throw new Error('Echo is a Claude-family development profile')
+      return DEV_ECHO_PROFILE
+    }
+    const profile = this.resolve(family, null, profileId)
     if (profile.id !== profileId) throw new Error('Unknown launch profile')
     return profile
   }

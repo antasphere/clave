@@ -1,5 +1,5 @@
 import { sessionManager } from '../sessions/session-manager'
-import { ptyBackend } from '../sessions/adapters/pty-backend'
+import { ptyManager } from '../pty-manager'
 import type { SessionState } from './types'
 import * as path from 'path'
 import { app } from 'electron'
@@ -101,7 +101,23 @@ function discoverSubagents(endpoint: EndpointIdentity): void {
   }
 }
 
+/** Event views do not have a terminal hook to fill provider identity back in. */
+function withRuntimeIdentity(endpoint: EndpointIdentity): EndpointIdentity {
+  if (sessionManager.get(endpoint.sessionId)?.transport !== 'events') return endpoint
+  const runtime = ptyManager.getSession(endpoint.sessionId)
+  return {
+    ...endpoint,
+    claudeSessionId: runtime?.claudeSessionId ?? endpoint.claudeSessionId,
+    model: runtime?.model ?? endpoint.model
+  }
+}
+
 export function captureMessage(payload: MessageCapturePayload): void {
+  payload = {
+    ...payload,
+    sender: withRuntimeIdentity(payload.sender),
+    target: withRuntimeIdentity(payload.target)
+  }
   try {
     discoverSubagents(payload.sender)
     discoverSubagents(payload.target)
@@ -128,6 +144,7 @@ export function captureMessage(payload: MessageCapturePayload): void {
 }
 
 export function captureTabSpawn(payload: TabSpawnCapturePayload): void {
+  payload = { ...payload, session: withRuntimeIdentity(payload.session) }
   try {
     const event: TabSpawnEvent = { v: 2, kind: 'tab_spawn', ...payload }
     write(event)
@@ -188,7 +205,7 @@ sessionManager.subscribeAll((id, stream) => {
   if (state !== 'exited') terminalEvents.delete(id)
   const previous = capturedStates.get(id) ?? null
   if (state === previous) return
-  const pty = ptyBackend.getSession(id)
+  const pty = ptyManager.getSession(id)
   const cached = endpoints.get(id)
   const endpoint: EndpointIdentity = {
     sessionId: id,
@@ -228,6 +245,7 @@ function recordSessionState(payload: SessionStateCapturePayload): void {
 }
 
 export function captureSessionState(payload: SessionStateCapturePayload): void {
+  payload = { ...payload, session: withRuntimeIdentity(payload.session) }
   const id = payload.session.sessionId
   if (payload.session.mode !== 'codex' && payload.state === 'exited' && terminalEventRecorded(id)) {
     finishCaptureSession(id)
@@ -249,6 +267,7 @@ export function captureSessionState(payload: SessionStateCapturePayload): void {
 }
 
 export function captureTabClosed(payload: TabClosedCapturePayload): void {
+  payload = { ...payload, session: withRuntimeIdentity(payload.session) }
   try {
     const event: TabClosedEvent = { v: 2, kind: 'tab_closed', ...payload }
     if (write(event)) terminalEvents.add(payload.session.sessionId)

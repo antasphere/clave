@@ -69,6 +69,8 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
         // A truncate-then-write can momentarily yield an empty/partial read;
         // we simply ignore anything that isn't a known state word and wait for
         // the follow-up change event carrying the full word.
+        // Events adapters own state; retain hook files without racing the stream.
+        if (sessionManager.get(claveSessionId)?.transport === 'events') return
         if (VALID.has(raw)) {
           sessionManager.setState(claveSessionId, raw as AgentState)
           onState(claveSessionId, raw as AgentState)

@@ -97,3 +97,18 @@ flow through the existing main capture subscription; hook settings are retained
 for capture compatibility. Chat rendering is owned by the separate chat-view
 lane. `claude-adapter.test.ts` and `tests/e2e/claude-chat-adapter.spec.mjs` use
 recorded fixtures and a stub executable; they never call a real provider.
+
+
+An adapter may implement optional `ready(handle)`. The manager calls it at most
+once per session, from `sessions:subscribe` after that consumer's stream and exit
+notifications are bound. Claude sends a configured `initialPrompt` then, and
+reports `initialCommand` / `autoExecute` as unsupported error events; it never
+executes those shell commands. Other adapters need no readiness hook.
+
+For events sessions the stream exclusively owns state; hook files are still
+written but cannot race the stream's state. Init metadata stamps the facade's
+provider identity and model before the first working transition, so main-side
+capture, usage snapshots and subagent discovery do not depend on a terminal view.
+The init frame is deliberately not forwarded as a raw provider event because it
+contains local memory and socket paths. App quit awaits process termination and
+escalation before allowing Electron to exit. Claude chat is hidden on Windows.

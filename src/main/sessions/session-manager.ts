@@ -16,6 +16,7 @@ interface Entry {
   streams: Set<Listener<SessionStream>>
   exits: Set<Listener<number>>
   exited: boolean
+  ready: boolean
 }
 
 /** Process-independent registry: closing a view never kills its provider. */
@@ -73,7 +74,8 @@ export class SessionManager {
       off: [],
       streams: new Set(),
       exits: new Set(),
-      exited: false
+      exited: false,
+      ready: false
     }
     this.entries.set(parsed.id, entry)
     try {
@@ -116,6 +118,13 @@ export class SessionManager {
     entry.exited = false
     this.bind(entry)
     return handle
+  }
+
+  ready(id: string): void {
+    const entry = this.require(id)
+    if (entry.ready) return
+    entry.ready = true
+    entry.adapter.ready?.(entry.handle)
   }
 
   write(id: string, input: Uint8Array | SessionInput): void {

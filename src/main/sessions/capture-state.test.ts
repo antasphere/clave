@@ -15,8 +15,8 @@ vi.mock('fs', async (original) => ({
     return { close: vi.fn() }
   })
 }))
-vi.mock('./adapters/pty-backend', () => ({
-  ptyBackend: { getSession: () => ({ claudeSessionId: 'conversation', model: 'opus' }) }
+vi.mock('../pty-manager', () => ({
+  ptyManager: { getSession: () => ({ claudeSessionId: 'conversation', model: 'opus' }) }
 }))
 import { writeFileSync } from 'fs'
 import { sessionManager } from './session-manager'
@@ -31,12 +31,17 @@ afterEach(() => {
 })
 process.on('exit', () => rmSync(fixture.dir, { recursive: true, force: true }))
 let n = 0
-function adopt(provider = 'claude', id = `capture-${++n}`): string {
+function adopt(
+  provider = 'claude',
+  id = `capture-${++n}`,
+  transport: 'pty' | 'events' = 'events'
+): string {
   const adapter = new EchoAdapter()
+  Object.defineProperty(adapter, 'transports', { value: ['pty', 'events'] })
   const session = {
     id,
     provider,
-    transport: 'events' as const,
+    transport,
     cwd: '/project',
     windowKey: 'window',
     state: 'idle' as const,
@@ -123,7 +128,7 @@ it('prunes identity, mapped state and acknowledgements independently on exit, cl
 it('hook watcher drives the manager and a synchronous capture line for Claude; Pi keeps its contract exclusion', () => {
   startWatching(vi.fn())
   for (const provider of ['claude', 'pi']) {
-    const id = adopt(provider)
+    const id = adopt(provider, `hook-${++n}`, 'pty')
     const observed = vi.fn()
     sessionManager.subscribe(id, observed)
     writeFileSync(stateFilePath(id), 'working')
@@ -197,4 +202,16 @@ it('deduplicates repeated exits without reading the append-only log', () => {
   } finally {
     readAll.mockRestore()
   }
+})
+
+it('ignores hook-file state for events sessions so it cannot overwrite stream state', () => {
+  const onHook = vi.fn()
+  startWatching(onHook)
+  const id = adopt()
+  sessionManager.setState(id, 'blocked')
+  writeFileSync(stateFilePath(id), 'idle')
+  fixture.watcher!('change', `${id}.state`)
+  expect(sessionManager.get(id)?.state).toBe('blocked')
+  expect(events(id).map((event) => event.state)).toEqual(['blocked'])
+  expect(onHook).not.toHaveBeenCalled()
 })

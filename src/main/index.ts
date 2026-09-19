@@ -343,7 +343,12 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
+let quitReady = false
+let quitCleanup: Promise<void> | undefined
+app.on('before-quit', (event) => {
+  if (quitReady) return
+  event.preventDefault()
+  if (quitCleanup) return
   quitting = true
   cleanupClaveWatchers()
   cleanupAutoUpdater()
@@ -351,6 +356,16 @@ app.on('before-quit', () => {
   cleanupMissionControl()
   usageManager.stopPolling()
   stopMcpServer()
+  // Keep the event loop alive until owned event children finish their escalation.
+  quitCleanup = ptyManager
+    .killAll()
+    .catch((error) => {
+      console.error('Session shutdown failed:', error)
+    })
+    .finally(() => {
+      quitReady = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {

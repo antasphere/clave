@@ -171,7 +171,10 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   mock.spawn.mockReturnValue(child)
   const adapter = new ClaudeAdapter()
   adapter.configure(spec.id, { configDir: '/account', claudeProfileId: 'account-id' })
-  const handle = await adapter.spawn({ ...spec, options: { resume: 'resume-id', model: 'opus' } })
+  const handle = await adapter.spawn({
+    ...spec,
+    options: { resume: 'resume-id', model: 'opus', permissionMode: 'manual' }
+  })
   expect(await adapter.attach(spec.id)).toBe(handle)
   adapter.on(handle, 'stream', (s) => {
     if (s.kind === 'event') events.push(s.event)
@@ -185,6 +188,7 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   const command = mock.spawn.mock.calls[0][1][2]
   expect(command).toContain("'--resume' 'resume-id'")
   expect(command).not.toContain('--session-id')
+  expect(command).toContain("'--permission-mode' 'manual'")
   expect(command).toContain("'--settings'")
   expect(command).toContain("'--debug'")
   expect(command).toContain("'--permission-prompts' 'host'")
@@ -310,4 +314,73 @@ it('preserves plain-text user acknowledgements without duplicate rows or false e
   const payload = { type: 'user', message: { role: 'user', content: 'already echoed' } }
   feed(payload)
   expect(events).toEqual([{ type: 'provider_event', provider: 'claude', payload }])
+})
+
+it('sends the configured initial prompt only on ready and refuses shell commands visibly', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, {
+    initialPrompt: 'initial prompt',
+    initialCommand: 'echo unsafe',
+    autoExecute: true
+  })
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  expect(mock.spawn).not.toHaveBeenCalled()
+  adapter.ready(handle)
+  adapter.ready(handle)
+  expect(events.filter((event) => event.type === 'user_message')).toEqual([
+    { type: 'user_message', text: 'initial prompt' }
+  ])
+  expect(events.filter((event) => event.type === 'error')).toEqual([
+    {
+      type: 'error',
+      message: expect.stringContaining('initialCommand and autoExecute'),
+      fatal: false
+    }
+  ])
+  expect(child.stdin.read().toString()).toBe(
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } }) + '\n'
+  )
+  expect(events.some((event) => event.type === 'state_change')).toBe(false)
+  child.stdout.write(
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'provider-id', model: 'opus' }) +
+      '\n'
+  )
+  expect(events.slice(-2)).toEqual([
+    { type: 'session_meta', providerSessionId: 'provider-id', model: 'opus' },
+    { type: 'state_change', state: 'working' }
+  ])
+  child.emit('close', 0)
+  await adapter.kill(handle)
+  await expect(adapter.spawn({ ...spec, options: { permissionMode: 'default' } })).rejects.toThrow()
+})
+
+it('names mode-changing permission suggestions and includes the tool in descriptions', () => {
+  feed({
+    type: 'control_request',
+    request_id: 'mode',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Write',
+      input: {},
+      description: '/tmp/file',
+      permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+    }
+  })
+  expect(events.find((event) => event.type === 'permission_request')).toMatchObject({
+    description: 'Allow Write: /tmp/file',
+    options: [
+      { id: 'allow-once' },
+      { id: 'allow-always', label: 'Switch session to acceptEdits' },
+      { id: 'deny' }
+    ]
+  })
 })

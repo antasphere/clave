@@ -37,7 +37,7 @@ const optionsSchema = z.object({
   resume: z.string().optional(),
   model: z.string().optional(),
   permissionMode: z
-    .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
+    .enum(['manual', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
     .optional()
 })
 type Permission = { input: unknown; suggestions: unknown[] }
@@ -65,6 +65,7 @@ export class ClaudeStreamTranslator {
         model: typeof p.model === 'string' ? p.model : null,
         providerSessionId: typeof p.session_id === 'string' ? p.session_id : null
       })
+      this.emit({ type: 'state_change', state: 'working' })
     } else if (p.type === 'stream_event') {
       const e = envelope.parse(p.event)
       if (e.type === 'message_start') {
@@ -119,17 +120,36 @@ export class ClaudeStreamTranslator {
         .parse(p.request)
       const id = z.string().parse(p.request_id)
       const suggestions = r.permission_suggestions ?? []
+      const modeChanges = suggestions.flatMap((suggestion) => {
+        const mode = z
+          .object({
+            type: z.literal('setMode'),
+            mode: z.string(),
+            destination: z.string().optional()
+          })
+          .safeParse(suggestion)
+        return mode.success
+          ? [`Switch ${mode.data.destination ?? 'session'} to ${mode.data.mode}`]
+          : []
+      })
       this.permissions.set(id, { input: r.input, suggestions })
       this.emit({
         type: 'permission_request',
         id,
-        description: r.description ?? `Allow ${r.tool_name}?`,
+        description: r.description
+          ? `Allow ${r.tool_name}: ${r.description}`
+          : `Allow ${r.tool_name}?`,
         toolName: r.tool_name,
         input: r.input,
         options: [
           { id: 'allow-once', label: 'Allow once' },
           ...(suggestions.length
-            ? [{ id: 'allow-always', label: 'Allow suggested permissions' }]
+            ? [
+                {
+                  id: 'allow-always',
+                  label: modeChanges.length ? modeChanges.join('; ') : 'Allow suggested permissions'
+                }
+              ]
             : []),
           { id: 'deny', label: 'Deny' }
         ]
@@ -194,6 +214,11 @@ interface Live {
   start: () => ChildProcessWithoutNullStreams
   process?: ChildProcessWithoutNullStreams
   ended: boolean
+  initialized: boolean
+  ready: boolean
+  initialPrompt?: string
+  commandError?: string
+  emit: (event: SessionEvent) => void
   finish: (code: number) => void
 }
 
@@ -208,6 +233,8 @@ export class ClaudeAdapter implements SessionAdapter {
     this.contexts.set(id, context)
   }
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
+    if (process.platform === 'win32')
+      throw new Error('Claude chat sessions are not supported on Windows')
     if (this.handles.has(spec.id)) throw new Error(`Claude session already exists: ${spec.id}`)
     const options = optionsSchema.parse(spec.options ?? {})
     const context = this.contexts.get(spec.id) ?? {}
@@ -222,6 +249,7 @@ export class ClaudeAdapter implements SessionAdapter {
     )
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
+      if (event.type === 'session_meta') live.initialized = true
       for (const listener of emitter.listeners('stream')) {
         try {
           listener({ kind: 'event', event })
@@ -235,6 +263,14 @@ export class ClaudeAdapter implements SessionAdapter {
       emitter,
       translator: new ClaudeStreamTranslator(emit),
       ended: false,
+      initialized: false,
+      ready: false,
+      initialPrompt: context.initialPrompt,
+      commandError:
+        context.initialCommand !== undefined || context.autoExecute === true
+          ? 'initialCommand and autoExecute are not supported by Claude chat sessions; use a terminal session for shell commands.'
+          : undefined,
+      emit,
       finish: (code) => {
         if (live.ended) return
         live.ended = true
@@ -320,6 +356,16 @@ export class ClaudeAdapter implements SessionAdapter {
   async attach(id: string): Promise<SessionHandle> {
     return this.live({ id }).handle
   }
+  ready(handle: SessionHandle): void {
+    const live = this.live(handle)
+    if (live.ready || live.ended) return
+    live.ready = true
+    if (live.commandError) live.emit({ type: 'error', message: live.commandError, fatal: false })
+    const initialPrompt = live.initialPrompt
+    live.initialPrompt = undefined
+    if (initialPrompt !== undefined)
+      this.write(handle, { type: 'user_message', text: initialPrompt })
+  }
   write(handle: SessionHandle, raw: Uint8Array | SessionInput): void {
     if (raw instanceof Uint8Array)
       throw new Error('Claude events adapter accepts SessionInput, not raw bytes')
@@ -333,9 +379,9 @@ export class ClaudeAdapter implements SessionAdapter {
     }
     if (input.type === 'user_message') {
       live.process ??= live.start()
-      live.emitter.emit('stream', { kind: 'event', event: input })
+      live.emit(input)
       // A queued prompt must not hide a permission that still needs an answer.
-      if (!live.translator.permissions.size)
+      if (live.initialized && !live.translator.permissions.size)
         live.emitter.emit('stream', {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }

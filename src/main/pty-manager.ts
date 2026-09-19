@@ -36,6 +36,8 @@ class PtyManager {
     const echo = isEchoLaunchProfile(profileId)
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const events = eventsProfile(profileId)
+    if (events?.id === 'claude-chat' && process.platform === 'win32')
+      throw new Error('Claude chat sessions are not supported on Windows')
     const adapter = events
       ? sessionManager.getAdapter(events.adapterId)
       : echo
@@ -50,7 +52,8 @@ class PtyManager {
           folderName: cwd.split('/').pop() || cwd,
           alive: true,
           ptyProcess: null,
-          launchProfileId: profileId
+          launchProfileId: profileId,
+          model: options?.model
         }
       : ptyAdapter.prepare(cwd, options)
     const record: Session = {
@@ -116,6 +119,14 @@ class PtyManager {
     if (!sessionManager.get(id)) return
     const decoder = new TextDecoder()
     const stopStream = sessionManager.subscribe(id, (stream) => {
+      if (stream.kind === 'event' && stream.event.type === 'session_meta') {
+        const session = this.eventSessions.get(id)
+        if (session) {
+          session.model = stream.event.model ?? undefined
+          if (sessionManager.get(id)?.provider === 'claude' && stream.event.providerSessionId)
+            session.claudeSessionId = stream.event.providerSessionId
+        }
+      }
       if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))
     })
     const stopExit = sessionManager.subscribeExit(id, (code) => {
