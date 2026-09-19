@@ -25,7 +25,7 @@ import {
 const isWindows = process.platform === 'win32'
 
 /** Wrap a string as a single shell-quoted token (safe for embedding in `zsh -c`). */
-function shellSingleQuote(s: string): string {
+export function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
@@ -35,7 +35,7 @@ function shellSingleQuote(s: string): string {
  * a poisoned tmux sidecar or persisted session state) would be code execution.
  * Restrict to the UUID-safe alphabet.
  */
-function isValidClaudeSessionId(id: string): boolean {
+export function isValidClaudeSessionId(id: string): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(id)
 }
 
@@ -45,7 +45,7 @@ function isValidClaudeSessionId(id: string): boolean {
  * model refs use: aliases ("opus"), full ids ("claude-fable-5"), and
  * provider-prefixed ids with dots, slashes, or colons (Bedrock/Vertex).
  */
-function isValidModelName(model: string): boolean {
+export function isValidModelName(model: string): boolean {
   // No `..` segment and no leading/trailing separator: keeps the value a
   // model-ref shape and not a path-traversal-looking string, even though it is
   // only ever handed to the CLI as a --model/-m value (and single-quoted on
@@ -78,7 +78,7 @@ function isValidPiOptionValue(value: string): boolean {
  * (permission/elicitation prompt), done (turn complete), ended (session end).
  * `--settings` merges with (never replaces) the user's own settings.
  */
-function buildClaudeHookSettingsArg(claveSessionId: string): string | null {
+export function buildClaudeHookSettingsArg(claveSessionId: string): string | null {
   if (isWindows) return null
   const statePath = stateFilePath(claveSessionId)
   const q = JSON.stringify(statePath) // double-quoted shell token for the path

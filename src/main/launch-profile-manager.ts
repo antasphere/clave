@@ -10,6 +10,33 @@ import {
   type LauncherFamily
 } from '../shared/agent-launch'
 
+import { sessionManager } from './sessions/session-manager'
+
+export type EventsLaunchProfile = LaunchProfile & { adapterId: string }
+const CHAT_PROFILES: EventsLaunchProfile[] = [
+  {
+    id: 'claude-chat',
+    name: 'Claude (chat)',
+    family: 'claude',
+    command: ['claude'],
+    additionalArgs: [],
+    adapterId: 'claude-chat',
+    builtIn: true
+  },
+  {
+    id: 'codex-chat',
+    name: 'Codex (chat)',
+    family: 'codex',
+    command: ['codex'],
+    additionalArgs: [],
+    adapterId: 'codex-chat',
+    builtIn: true
+  }
+]
+export function eventsProfile(id?: string | null): EventsLaunchProfile | undefined {
+  return CHAT_PROFILES.find((p) => p.id === id)
+}
+
 const echoEnabled = process.argv.includes('--dev-echo-adapter')
 
 export class LaunchProfileManager {
@@ -40,9 +67,12 @@ export class LaunchProfileManager {
   getPreferences(): LaunchProfilePreferences {
     const preferences = structuredClone(this.preferences)
     preferences.customProfiles = preferences.customProfiles.filter(
-      (profile) => profile.id !== 'dev-echo-adapter'
+      (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) preferences.customProfiles.push(DEV_ECHO_PROFILE)
+    preferences.customProfiles.push(
+      ...CHAT_PROFILES.filter((p) => sessionManager.getAdapter(p.adapterId))
+    )
     return preferences
   }
 
@@ -53,6 +83,7 @@ export class LaunchProfileManager {
   }
 
   upsert(profile: LaunchProfile): LaunchProfilePreferences {
+    if (eventsProfile(profile.id)) throw new Error('Reserved events profile')
     if (profile.id === 'dev-echo-adapter') throw new Error('Reserved development profile')
     const parsed = sanitizeLaunchProfilePreferences({
       ...this.preferences,
@@ -120,9 +151,10 @@ export class LaunchProfileManager {
   ): LaunchProfile {
     if (isEchoLaunchProfile(profileId)) return DEV_ECHO_PROFILE
     const customProfiles = this.preferences.customProfiles.filter(
-      (profile) => profile.id !== 'dev-echo-adapter'
+      (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) customProfiles.push(DEV_ECHO_PROFILE)
+    customProfiles.push(...CHAT_PROFILES.filter((p) => sessionManager.getAdapter(p.adapterId)))
     return resolveLaunchProfile(
       { ...this.preferences, customProfiles },
       family,
@@ -133,7 +165,7 @@ export class LaunchProfileManager {
 
   private assertProfile(family: LauncherFamily, profileId: string): LaunchProfile {
     if (isEchoLaunchProfile(profileId) && family === 'claude') return DEV_ECHO_PROFILE
-    const profile = resolveLaunchProfile(this.preferences, family, null, profileId)
+    const profile = resolveLaunchProfile(this.getPreferences(), family, null, profileId)
     if (profile.id !== profileId) throw new Error('Unknown launch profile')
     return profile
   }

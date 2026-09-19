@@ -9,6 +9,15 @@ let registered = false
 export function registerSessionIpc(): void {
   if (registered || !ipcMain?.handle) return
   registered = true
+  sessionManager.subscribeAll((id, stream) => {
+    if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+    const record = sessionManager.get(id)
+    if (record?.transport !== 'events') return
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && windowRegistry.getKeyForWindow(win.id) === record.windowKey)
+        win.webContents.send(`agent:state:${id}`, stream.event.state)
+    }
+  })
   const subscriptions = new Map<number, Map<string, () => void>>()
   const watched = new Set<number>()
   ipcMain.handle('sessions:list', (event) => {

@@ -28,7 +28,7 @@ export function registerPtyHandlers(): void {
     }
   })
 
-  ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) => {
+  ipcMain.handle('pty:spawn', async (_event, cwd: string, options?: PtySpawnOptions) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
     // tmux mode is a global app setting, ON by default. Honour it unless a
     // caller overrides per-spawn or the user explicitly turned it off. (When
@@ -48,7 +48,7 @@ export function registerPtyHandlers(): void {
     // record, so the next boot brings the tab back in that window (an
     // adoption or a move re-stamps through this same path).
     const windowKey = (win ? windowRegistry.getKeyForWindow(win.id) : null) ?? undefined
-    const session = ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
+    const session = await ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
     // The sender hosts the session from now on: its renderer holds the xterm
     // and receives pty:data. Adoption and re-homing rebind through this same
     // path (the adopting window is the sender).
@@ -150,7 +150,7 @@ export function registerPtyHandlers(): void {
     ) {
       await callRenderer('flushLinkedDocument', { sessionId: id, allowConflict: true }, owner)
     }
-    ptyManager.kill(id)
+    await ptyManager.kill(id)
     // A session that never started has no exit event to unbind it.
     windowRegistry.unbindSession(id)
   })

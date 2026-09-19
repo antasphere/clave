@@ -1,23 +1,26 @@
 import { randomUUID } from 'node:crypto'
 import { ptyBackend, type PtySession, type PtySpawnOptions } from './sessions/adapters/pty-backend'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
+import { ClaudeAdapter } from './sessions/adapters/claude-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
-import { isEchoLaunchProfile, launchProfileManager } from './launch-profile-manager'
+import { eventsProfile, isEchoLaunchProfile, launchProfileManager } from './launch-profile-manager'
 import type { Session } from '../shared/session-model'
 
 // Keep all existing helper/type imports stable while the process engine lives
 // behind the adapter. No renderer PTY channel or spawn result changes.
 export * from './sessions/adapters/pty-backend'
 const echoAdapter = new EchoAdapter()
+const claudeAdapter = new ClaudeAdapter()
 sessionManager.registerAdapter(ptyAdapter)
 sessionManager.registerAdapter(echoAdapter)
+sessionManager.registerAdapter(claudeAdapter)
 
 class PtyManager {
-  private echoSessions = new Map<string, PtySession>()
+  private eventSessions = new Map<string, PtySession>()
   private listeners = new Map<string, () => void>()
 
-  spawn(cwd: string, options?: PtySpawnOptions): PtySession {
+  async spawn(cwd: string, options?: PtySpawnOptions): Promise<PtySession> {
     const family = options?.piMode
       ? 'pi'
       : options?.antigravityMode
@@ -32,7 +35,15 @@ class PtyManager {
       (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
     const echo = isEchoLaunchProfile(profileId)
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
-    const session: PtySession = echo
+    const events = eventsProfile(profileId)
+    const adapter = events
+      ? sessionManager.getAdapter(events.adapterId)
+      : echo
+        ? echoAdapter
+        : ptyAdapter
+    if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
+    const isEvents = !!events || echo
+    const session: PtySession = isEvents
       ? {
           id: randomUUID(),
           cwd,
@@ -45,8 +56,8 @@ class PtyManager {
     const record: Session = {
       id: session.id,
       cwd,
-      provider: echo
-        ? 'echo'
+      provider: isEvents
+        ? adapter.provider
         : options?.piMode
           ? 'pi'
           : options?.codexMode
@@ -58,23 +69,35 @@ class PtyManager {
                 : options?.claudeMode === false
                   ? 'terminal'
                   : 'claude',
-      transport: echo ? 'events' : 'pty',
-      adapterId: echo ? echoAdapter.id : ptyAdapter.id,
+      transport: isEvents ? 'events' : 'pty',
+      adapterId: adapter.id,
       windowKey: options?.windowKey ?? '',
       state: 'idle',
       createdAt: Date.now(),
       title: session.folderName,
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined
     }
-    const handle = echo ? echoAdapter.prepare(record) : session
+    if (isEvents && adapter.id === 'claude-chat') {
+      session.claudeSessionId = options?.resumeSessionId ?? options?.claudeSessionId ?? randomUUID()
+      claudeAdapter.configure(session.id, { ...options, claudeSessionId: session.claudeSessionId })
+    }
+    const handle = isEvents
+      ? await adapter.spawn({
+          ...record,
+          options: {
+            resume: options?.resumeSessionId,
+            model: options?.model,
+            permissionMode: options?.dangerousMode ? 'bypassPermissions' : undefined
+          }
+        })
+      : session
     try {
-      sessionManager.adopt(record, handle, echo ? echoAdapter : ptyAdapter)
+      sessionManager.adopt(record, handle, adapter)
     } catch (error) {
-      if (echo) echoAdapter.kill(handle)
-      else ptyAdapter.kill(handle)
+      await adapter.kill(handle)
       throw error
     }
-    if (echo) this.echoSessions.set(session.id, session)
+    if (isEvents) this.eventSessions.set(session.id, session)
     return session
   }
 
@@ -107,25 +130,26 @@ class PtyManager {
     if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
   }
   write(id: string, data: string): void {
-    if (sessionManager.get(id)) sessionManager.write(id, new TextEncoder().encode(data))
+    if (sessionManager.get(id)?.transport === 'pty')
+      sessionManager.write(id, new TextEncoder().encode(data))
   }
-  kill(id: string, killTmuxSession = true): void {
+  async kill(id: string, killTmuxSession = true): Promise<void> {
     if (!sessionManager.get(id)) return
-    if (!killTmuxSession && !this.echoSessions.has(id)) ptyAdapter.detach({ id })
-    else sessionManager.kill(id)
+    if (!killTmuxSession && !this.eventSessions.has(id)) ptyAdapter.detach({ id })
+    else await sessionManager.kill(id)
     this.listeners.get(id)?.()
     this.listeners.delete(id)
-    this.echoSessions.delete(id)
+    this.eventSessions.delete(id)
     sessionManager.forget(id)
   }
-  killAll(): void {
-    for (const session of sessionManager.list()) this.kill(session.id, false)
+  async killAll(): Promise<void> {
+    await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {
-    return this.echoSessions.get(id) ?? ptyBackend.getSession(id)
+    return this.eventSessions.get(id) ?? ptyBackend.getSession(id)
   }
   getAllSessions(): { id: string; cwd: string; folderName: string; alive: boolean }[] {
-    return [...ptyBackend.getAllSessions(), ...this.echoSessions.values()].map(
+    return [...ptyBackend.getAllSessions(), ...this.eventSessions.values()].map(
       ({ id, cwd, folderName, alive }) => ({ id, cwd, folderName, alive })
     )
   }

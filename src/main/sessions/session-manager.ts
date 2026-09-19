@@ -33,6 +33,10 @@ export class SessionManager {
     this.adapters.set(adapter.id, adapter)
   }
 
+  getAdapter(id: string): SessionAdapter | undefined {
+    return this.adapters.get(id)
+  }
+
   async create(spec: SpawnSpec): Promise<Session> {
     const session = SessionSchema.parse(spec)
     if (this.entries.has(session.id) || this.pending.has(session.id))
