@@ -98,9 +98,9 @@ export async function run(t) {
         'clave-user-profile',
         JSON.stringify({ name: 'Ada Lovelace', avatarIcon: 'bolt', avatarColor: '#db8b4e' })
       )
-      localStorage.setItem('clave-theme', 'dark')
       localStorage.setItem('clave-work-tracker-enabled', 'true')
     })
+    await win.evaluate(() => window.electronAPI.skinsActivate('dark'))
     await win.evaluate(() => window.electronAPI?.feedbackSetCollapsed?.())
     await win.reload()
     await win.waitForSelector('.sidebar-panel', { timeout: 20000 })
