@@ -83,3 +83,6 @@ provided. Thus a single accent edit updates panels and already-running terminals
 Bundled cursor colors remain exactly as before. `tests/visual/fixtures/legacy-xterm.json`
 is a test-only snapshot of the palettes before conversion; unit and Electron
 checks compare every original property against it.
+
+`CLAVE_SKIN_E2E_MUTATE=1 node tests/e2e/run.mjs skins` blocks the real
+main-to-renderer skin update event and must fail the watched-edit assertion.
