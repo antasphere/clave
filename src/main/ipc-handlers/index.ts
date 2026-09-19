@@ -1,3 +1,4 @@
+import { registerSkinHandlers } from './skin-handlers'
 import { registerLinkedDocumentHandlers } from '../linked-documents/runtime'
 import { registerAppHandlers } from './app-handlers'
 import { registerUsageHandlers } from './usage-handlers'
@@ -29,6 +30,7 @@ import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
+  registerSkinHandlers()
   registerClaudeAccountHandlers()
   registerUsageHandlers()
   registerGitHandlers()

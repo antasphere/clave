@@ -1,3 +1,4 @@
+import { useSkinStore } from '../lib/skin'
 import { emitAgentStateWord, emitSessionExited } from '../lib/exchange-capture'
 import { codexStateFromTitle } from '../../../shared/codex-state'
 import { useEffect, useRef, useCallback } from 'react'
@@ -32,6 +33,7 @@ export function useTerminal(sessionId: string) {
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isVisibleRef = useRef(false)
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   const fit = useCallback(() => {
     fitAddonRef.current?.fit()
@@ -500,7 +502,7 @@ export function useTerminal(sessionId: string) {
     if (terminalRef.current) {
       terminalRef.current.options.theme = getXtermTheme(theme)
     }
-  }, [theme])
+  }, [theme, skinRevision])
 
   // Track visibility and toggle cursor blink for hidden terminals.
   // Also re-fit when anything that alters the terminal grid's available width
