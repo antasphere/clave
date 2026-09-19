@@ -300,3 +300,9 @@ it('kills only the owned process group, escalates a stuck child, and cleans up t
     vi.useRealTimers()
   }
 })
+
+it('preserves plain-text user acknowledgements without duplicate rows or false errors', () => {
+  const payload = { type: 'user', message: { role: 'user', content: 'already echoed' } }
+  feed(payload)
+  expect(events).toEqual([{ type: 'provider_event', provider: 'claude', payload }])
+})

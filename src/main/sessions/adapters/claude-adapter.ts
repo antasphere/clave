@@ -79,6 +79,13 @@ export class ClaudeStreamTranslator {
         this.finish()
       } else fallback()
     } else if (p.type === 'assistant' || p.type === 'user') {
+      // Replayed user acknowledgements may carry plain text, not tool blocks.
+      // The local write already echoed it; retain the provider frame without
+      // duplicating the conversation row or calling valid JSON malformed.
+      if (p.type === 'user' && typeof object.parse(p.message).content === 'string') {
+        fallback()
+        return
+      }
       const message = z.object({ content: z.array(object) }).parse(p.message)
       for (const block of message.content) {
         if (block.type === 'text' && p.type === 'assistant' && !this.streamed) {
