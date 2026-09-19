@@ -35,6 +35,7 @@ export class CodexTranslator {
   completedTurnId = ''
   model: string | null = null
   readonly approvals = new Map<string, Approval>()
+  private metadataEmitted = false
   private streamed = new Map<string, string>()
   constructor(private emit: (event: SessionEvent) => void) {}
 
@@ -42,6 +43,8 @@ export class CodexTranslator {
     const r = object(result)
     this.threadId = text(object(r.thread).id) || this.threadId
     this.model = text(r.model) || text(object(r.thread).model) || this.model
+    if (this.metadataEmitted) return
+    this.metadataEmitted = true
     this.emit({ type: 'session_meta', model: this.model, providerSessionId: this.threadId || null })
   }
   notification(frame: RpcNotification): void {
@@ -57,7 +60,10 @@ export class CodexTranslator {
     }
     switch (frame.method) {
       case 'thread/started':
-        this.metadata(p)
+        // The start/resume reply owns the complete model metadata. Preserve the
+        // notification, but emit session_meta only once from that reply.
+        this.threadId = text(object(p.thread).id) || this.threadId
+        fallback()
         return
       case 'turn/started':
         this.turnId = text(object(p.turn).id)
@@ -192,7 +198,15 @@ export class CodexTranslator {
       type: 'permission_request',
       id,
       description: text(p.reason) || text(p.message) || text(p.command) || frame.method,
-      options: [...responses.keys()].map((id) => ({ id, label: id })),
+      options: [...responses.keys()].map((id, index) => ({
+        id,
+        label:
+          frame.method === 'item/permissions/requestApproval'
+            ? index === 0
+              ? 'Deny extra permissions'
+              : 'Allow for this turn'
+            : id
+      })),
       toolName: frame.method,
       input: frame.params
     })
@@ -307,9 +321,15 @@ export class CodexAdapter implements SessionAdapter {
             state.connection!.reject(frame.id, `Unsupported request: ${frame.method}`)
         },
         error: (error) => this.error(state, error, true),
-        exit: (code) => {
+        exit: (code, stderr) => {
           if (code !== 0 && !state.closing)
-            this.error(state, new Error(`Codex app-server exited with code ${code}`), true)
+            this.error(
+              state,
+              new Error(
+                `Codex app-server exited with code ${code}${stderr?.trim() ? `: ${stderr.trim()}` : ''}`
+              ),
+              true
+            )
           this.finish(state, code)
         }
       })
@@ -323,8 +343,7 @@ export class CodexAdapter implements SessionAdapter {
         cwd: state.spec.cwd,
         ...(text(options.model) ? { model: text(options.model) } : {}),
         approvalPolicy: permissionMode,
-        approvalsReviewer: 'user',
-        sandbox: 'workspace-write'
+        approvalsReviewer: 'user'
       })
       state.translator.metadata(result)
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
@@ -379,6 +398,8 @@ export class CodexAdapter implements SessionAdapter {
     state.translator.approvals.clear()
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)
+    if (this.handles.get(state.spec.id) === state) this.handles.delete(state.spec.id)
+    state.emitter.removeAllListeners()
   }
   private error(state: HandleState, error: unknown, fatal: boolean): void {
     if (!state.ended && !state.closing)

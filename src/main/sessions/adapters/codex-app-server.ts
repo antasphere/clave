@@ -20,7 +20,7 @@ export interface CodexCallbacks {
   notification(frame: RpcNotification): void
   request(frame: RpcRequest): void
   error(error: Error): void
-  exit(code: number): void
+  exit(code: number, stderr?: string): void
 }
 export function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -43,6 +43,7 @@ export class CodexAppServer implements CodexConnection {
   >()
   private incoming = new Set<RpcId>()
   private buffer = ''
+  private stderrTail = Buffer.alloc(0)
   private closed = false
   private stopping = false
   private stopPromise?: Promise<void>
@@ -59,8 +60,11 @@ export class CodexAppServer implements CodexConnection {
     })
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (data: string) => this.read(data))
-    // Drain stderr without forwarding unstructured provider output to a view.
-    child.stderr.resume()
+    // Keep only the diagnostic tail; never forward unbounded provider logs.
+    child.stderr.on('data', (chunk: Buffer) => {
+      this.stderrTail = Buffer.concat([this.stderrTail, chunk.subarray(-4096)]).subarray(-4096)
+    })
+    child.stderr.on('error', (error) => this.fail(error))
     child.on('error', (error) => this.fail(error))
     child.stdin.on('error', (error) => {
       if (!this.stopping) this.fail(error)
@@ -73,7 +77,7 @@ export class CodexAppServer implements CodexConnection {
       this.rejectPending(new Error('Codex app-server disconnected'))
       this.incoming.clear()
       this.resolveEnded()
-      this.callbacks.exit(code ?? 1)
+      this.callbacks.exit(code ?? 1, this.stderrTail.toString('utf8'))
     })
   }
 

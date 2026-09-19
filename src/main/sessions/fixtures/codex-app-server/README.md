@@ -22,9 +22,16 @@ interrupted with `turn/interrupt`. The command approval was answered `decline`;
 no command executed. The first completed assistant message was exactly
 `Clave protocol ready.`; the final turn completed with status `interrupted`.
 
-The generated schema advertises `untrusted`, but this installed executable
-rejects it at startup. The adapter accepts `on-request` (default) and explicit
-`never`, always with `workspace-write` sandboxing. Model and approval policy go
+The installed executable rejects `untrusted` as a `-c approval_policy` flag,
+but accepts it as `thread/start.approvalPolicy` (confirmed by the independent
+verifier on 0.154.0). This adapter deliberately exposes only `on-request`
+(default) and explicit `never` for now; its `untrusted` rejection is an adapter
+limitation, not a limitation of the thread protocol.
+
+The adapter omits `sandbox` on start and resume, preserving the user’s own
+Codex configuration, including a stricter `read-only` preference. It never
+sends a sandbox-disabling value. Explicit `never` changes approval prompts,
+not the configured sandbox. Model and approval policy go
 through the thread protocol instead of shell interpolation. The PTY-only
 `tui.terminal_title` override is intentionally irrelevant to the headless adapter.
 `thread/resume` uses `threadId`, and `turn/interrupt` requires both IDs.

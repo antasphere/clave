@@ -89,7 +89,7 @@ describe('Codex stdio JSON-RPC', () => {
     ])
     child.emit('close', 7)
     await checks
-    expect(callbacks.exit).toHaveBeenCalledExactlyOnceWith(7)
+    expect(callbacks.exit).toHaveBeenCalledExactlyOnceWith(7, '')
     await expect(client.request('c')).rejects.toThrow('closed')
     await client.close()
   })
@@ -119,4 +119,17 @@ describe('Codex stdio JSON-RPC', () => {
     expect(writes[0]).toEqual({ id: 'server-id', error: { code: -32601, message: 'Unsupported' } })
     await client.close()
   })
+})
+
+it('retains only the last 4 KiB of stderr for abnormal-exit diagnostics', () => {
+  const { child, callbacks } = setup()
+  child.stderr.write('discarded prefix\n' + 'x'.repeat(5000))
+  child.stderr.write('\nError: invalid Codex configuration')
+  child.emit('close', 1)
+  expect(callbacks.exit).toHaveBeenCalledTimes(1)
+  const [code, stderr] = callbacks.exit.mock.calls[0]
+  expect(code).toBe(1)
+  expect(Buffer.byteLength(stderr)).toBe(4096)
+  expect(stderr).not.toContain('discarded prefix')
+  expect(stderr).toMatch(/Error: invalid Codex configuration$/)
 })

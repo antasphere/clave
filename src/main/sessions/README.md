@@ -119,3 +119,13 @@ inside the subscribe handler and can emit the initial prompt or an error before
 that promise resolves. A failed ready call emits a non-fatal error without
 rejecting subscription and can be retried by subscribing again; only successful
 readiness consumes the one-shot.
+## Codex events adapter
+
+`codex-chat` uses one `codex app-server` stdio connection per session. It omits
+`sandbox` on `thread/start` and `thread/resume`, preserving the user's own Codex
+configuration; it never requests `danger-full-access`. Explicit permission mode
+`never` changes approval prompts without choosing a sandbox. The current adapter
+supports `on-request` and `never`; `untrusted` is an adapter limitation even though
+Codex 0.154.0 accepts it through the thread protocol (but rejects the CLI `-c` form).
+A second `user_message` during an active turn is refused by design; steering an
+active Codex turn is not exposed through this v1 adapter.

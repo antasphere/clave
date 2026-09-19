@@ -143,6 +143,11 @@ export async function run(t) {
     assert.ok(
       events.some((e) => e.type === 'session_meta' && e.providerSessionId === 'thread-recorded')
     )
+    assert.equal(
+      events.filter((e) => e.type === 'session_meta').length,
+      1,
+      'Startup metadata must not be duplicated'
+    )
     const firstFinal = events.findIndex((e) => e.type === 'assistant_text' && e.final)
     const firstDone = events.findIndex((e) => e.type === 'state_change' && e.state === 'done')
     assert.ok(

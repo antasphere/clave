@@ -181,8 +181,7 @@ describe('Codex adapter lifecycle', () => {
       cwd: '/tmp',
       model: 'model; no shell',
       approvalPolicy: 'on-request',
-      approvalsReviewer: 'user',
-      sandbox: 'workspace-write'
+      approvalsReviewer: 'user'
     })
     expect(connection.request).toHaveBeenCalledWith('turn/start', {
       threadId: 'thread',
@@ -298,6 +297,7 @@ describe('Codex races and failure boundaries', () => {
     })
     const connection = { respond: vi.fn() } as unknown as CodexConnection
     translator.answer('1', 'cancel', connection)
+    expect(connection.respond).toHaveBeenCalledExactlyOnceWith(1, { decision: 'cancel' })
     expect(events.at(-1)).toEqual({ type: 'state_change', state: 'blocked' })
     translator.notification({ method: 'serverRequest/resolved', params: { requestId: '1' } })
     expect(() => translator.answer('"1"', 'accept', connection)).toThrow()
@@ -402,3 +402,85 @@ it('intentional close during initialization does not publish a fatal error or ac
   await closing
   expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
 })
+
+it('attaches stderr to a fatal exit event and releases the spontaneously exited handle', async () => {
+  const { adapter, callback } = fake()
+  const handle = await adapter.spawn(spec)
+  const events: SessionEvent[] = []
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  adapter.write(handle, { type: 'user_message', text: 'hello' })
+  await tick()
+  callback().exit(1, 'Error: invalid Codex configuration\n')
+  expect(events.slice(-2)).toEqual([
+    {
+      type: 'error',
+      message: 'Codex app-server exited with code 1: Error: invalid Codex configuration',
+      fatal: true
+    },
+    { type: 'state_change', state: 'ended' }
+  ])
+  await expect(adapter.attach(handle.id)).rejects.toThrow('Unknown')
+  // Reusing the id also proves the adapter released its retained HandleState.
+  const replacement = await adapter.spawn(spec)
+  await adapter.kill(replacement)
+})
+
+it.each(['notification-first', 'reply-first'])(
+  'emits metadata once with the authoritative model (%s)',
+  (order) => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    const notification = (): void =>
+      translator.notification({ method: 'thread/started', params: { thread: { id: 'thread' } } })
+    const reply = (): void => translator.metadata({ thread: { id: 'thread' }, model: 'model' })
+    if (order === 'notification-first') {
+      notification()
+      reply()
+    } else {
+      reply()
+      notification()
+    }
+    expect(events.filter((e) => e.type === 'session_meta')).toEqual([
+      { type: 'session_meta', model: 'model', providerSessionId: 'thread' }
+    ])
+    expect(events.filter((e) => e.type === 'provider_event')).toHaveLength(1)
+  }
+)
+
+it('labels permission grants as choices while retaining real JSON response ids', () => {
+  const events: SessionEvent[] = []
+  new CodexTranslator((e) => events.push(e)).request({
+    id: 1,
+    method: 'item/permissions/requestApproval',
+    params: { permissions: { network: { enabled: true } } }
+  })
+  const event = events[0]
+  if (event.type !== 'permission_request') throw new Error('missing approval')
+  expect(event.options.map((o) => o.label)).toEqual([
+    'Deny extra permissions',
+    'Allow for this turn'
+  ])
+  expect(event.options.map((o) => JSON.parse(o.id))).toEqual([
+    { permissions: {}, scope: 'turn' },
+    { permissions: { network: { enabled: true } }, scope: 'turn' }
+  ])
+})
+
+it.each(['on-request', 'never'])(
+  'never overrides the configured sandbox in %s mode',
+  async (permissionMode) => {
+    const { adapter, connection } = fake()
+    const handle = await adapter.spawn({ ...spec, options: { permissionMode } })
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    const call = vi
+      .mocked(connection.request)
+      .mock.calls.find(([method]) => method === 'thread/start')
+    expect(call).toBeDefined()
+    expect(call![1]).not.toHaveProperty('sandbox')
+    expect(JSON.stringify(call![1])).not.toContain('danger-full-access')
+    await adapter.kill(handle)
+  }
+)
