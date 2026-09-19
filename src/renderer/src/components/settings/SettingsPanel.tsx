@@ -1,11 +1,7 @@
 import { PluginsTab } from './PluginsTab'
+import { useSkinStore, skinAction } from '../../lib/skin'
 import { useState, useRef, useEffect, type ReactNode } from 'react'
-import {
-  type Theme,
-  TREE_RULE_INTENSITIES,
-  PANEL_ROOTS,
-  useSessionStore
-} from '../../store/session-store'
+import { TREE_RULE_INTENSITIES, PANEL_ROOTS, useSessionStore } from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
@@ -45,16 +41,6 @@ import {
 import { cn } from '@clave/ui/components'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
-
-/** The themes, by id and label only: each swatch is painted with the theme's
- *  own tokens (`.theme-swatch-preview` carries `data-theme`), so there is no
- *  copy of any palette here to drift from `main.css`. */
-const themes: { id: Theme; label: string }[] = [
-  { id: 'dark', label: 'Dark' },
-  { id: 'charcoal', label: 'Charcoal' },
-  { id: 'light', label: 'Light' },
-  { id: 'coffee', label: 'Coffee' }
-]
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -234,8 +220,7 @@ function GeneralSettings(): React.JSX.Element {
 }
 
 function AppearanceSettings(): React.JSX.Element {
-  const theme = useSessionStore((s) => s.theme)
-  const setTheme = useSessionStore((s) => s.setTheme)
+  const { skins: themes, activeId: theme, error, errors } = useSkinStore()
 
   return (
     <SettingsPage
@@ -244,15 +229,15 @@ function AppearanceSettings(): React.JSX.Element {
     >
       <SettingsSection
         title="Theme"
-        description="Four skins on the same tokens; the terminals follow."
+        description="Installed skins share their tokens with every panel and terminal."
       >
         <SettingsCard>
           <div className="settings-row">
-            <div className="flex gap-3 flex-1">
+            <div className="flex flex-wrap gap-3 flex-1">
               {themes.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => setTheme(t.id)}
+                  onClick={() => void skinAction(() => window.electronAPI.skinsActivate(t.id))}
                   className="theme-swatch"
                   data-selected={theme === t.id ? 'true' : undefined}
                   data-theme-option={t.id}
@@ -260,7 +245,11 @@ function AppearanceSettings(): React.JSX.Element {
                 >
                   {/* The preview carries the theme, so it is painted with
                       that theme's own surfaces and ink. */}
-                  <div className="theme-swatch-preview" data-theme={t.id}>
+                  <div
+                    className="theme-swatch-preview"
+                    data-theme={t.skin.base}
+                    style={t.tokens as React.CSSProperties}
+                  >
                     <div className="theme-swatch-line w-10 mb-2" style={{ opacity: 0.7 }} />
                     <div className="flex gap-1.5">
                       <div className="theme-swatch-tile" />
@@ -268,12 +257,37 @@ function AppearanceSettings(): React.JSX.Element {
                     </div>
                     <div className="theme-swatch-line w-14 mt-2" style={{ opacity: 0.4 }} />
                   </div>
-                  <div className="theme-swatch-label">{t.label}</div>
+                  <div className="theme-swatch-label">{t.name}</div>
                 </button>
               ))}
             </div>
           </div>
+          <SettingsRow label="Import skin" description="Choose a skin folder or a skin.json file.">
+            <button
+              className="btn-secondary"
+              onClick={() => void skinAction(() => window.electronAPI.skinsImport())}
+            >
+              Import skin
+            </button>
+          </SettingsRow>
+          {themes
+            .filter((skin) => !skin.bundled)
+            .map((skin) => (
+              <SettingsRow key={skin.id} label={skin.name}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => void skinAction(() => window.electronAPI.skinsRemove(skin.id))}
+                >
+                  Remove {skin.name}
+                </button>
+              </SettingsRow>
+            ))}
         </SettingsCard>
+        {(error || errors.length > 0) && (
+          <div role="alert" className="settings-callout" data-tone="danger">
+            {error || errors.join('; ')}
+          </div>
+        )}
       </SettingsSection>
 
       <TreeSeparatorsSection />

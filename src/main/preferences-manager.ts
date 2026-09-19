@@ -5,6 +5,7 @@ import { app } from 'electron'
 export type AppIcon = 'dark' | 'light' | 'claude'
 
 interface Preferences {
+  activeSkinId: string | null
   appIcon: AppIcon
   telemetryEnabled: boolean
   telemetryInstallId: string | null
@@ -15,6 +16,7 @@ interface Preferences {
 }
 
 const DEFAULTS: Preferences = {
+  activeSkinId: null,
   appIcon: 'dark',
   telemetryEnabled: true,
   telemetryInstallId: null,

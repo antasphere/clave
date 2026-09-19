@@ -1,3 +1,4 @@
+import { initializeSkins } from '../../lib/skin'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -82,7 +83,6 @@ export function AppShell() {
   const sidebarWidth = useSessionStore((s) => s.sidebarWidth)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
   const setSidebarWidth = useSessionStore((s) => s.setSidebarWidth)
-  const theme = useSessionStore((s) => s.theme)
   const treeRuleIntensity = useSessionStore((s) => s.treeRuleIntensity)
   const toggleFilePalette = useSessionStore((s) => s.toggleFilePalette)
   const fileTreeOpen = useSessionStore((s) => s.fileTreeOpen)
@@ -465,10 +465,7 @@ export function AppShell() {
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
   const commandHud = useKeymapManager(keymapActions)
 
-  // Sync data-theme attribute to root element
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-  }, [theme])
+  useEffect(() => initializeSkins(), [])
 
   // The weight of every tree's row rules, as a multiplier on the theme's own
   // --rule-alpha. One property on the root element is the whole mechanism: the
