@@ -32,14 +32,19 @@ export class SkinStore {
 
   private read(folder: string, resolve = true): Skin {
     const read = (name: string): string => {
-      const file = join(folder, name)
+      // Reject symlinks in every component, including nested SDK-valid paths.
+      let file = folder
+      for (const part of name.split('/')) {
+        file = join(file, part)
+        if (lstatSync(file).isSymbolicLink()) throw new Error('Symlink skins are not supported')
+      }
       if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink())
         throw new Error('Skin files must be regular files')
       if (lstatSync(file).size > 128 * 1024) throw new Error('Skin file exceeds 128 KB')
       return readFileSync(file, 'utf8')
     }
     const manifest = validateManifest(JSON.parse(read('clave-plugin.json')), this.version)
-    const tokens = validateTokens(JSON.parse(read('skin.json')))
+    const tokens = validateTokens(JSON.parse(read(manifest.skin.tokens)))
     if (manifest.skin.css) Object.assign(tokens, parseSkinCss(read(manifest.skin.css)))
     const base = bundledSkins.find((s) => s.id === manifest.skin.base)!
     const resolved = inheritSkinTokens(base.tokens, tokens)
@@ -114,7 +119,7 @@ export class SkinStore {
       const { tokens, ...manifest } = skin
       delete (manifest as Partial<Skin>).bundled
       // Only validated data is copied. CSS is flattened; unrelated package files never enter Clave.
-      delete manifest.skin.css
+      manifest.skin = { tokens: 'skin.json', base: manifest.skin.base }
       writeFileSync(join(staging, 'clave-plugin.json'), JSON.stringify(manifest, null, 2))
       writeFileSync(join(staging, 'skin.json'), JSON.stringify(tokens, null, 2))
       renameSync(staging, target)

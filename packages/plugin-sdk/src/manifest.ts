@@ -25,6 +25,13 @@ const relativePath = z
       value.split('/').every((part) => part !== '..' && part !== '.' && part.length > 0),
     'Expected a relative path without traversal'
   )
+// Shared by plugin discovery and the dedicated skin loader.
+export const skinManifestSchema = z.strictObject({
+  tokens: relativePath,
+  css: relativePath.optional(),
+  base: z.enum(['dark', 'light'])
+})
+
 const contributions = z
   .strictObject({
     panels: z
@@ -74,13 +81,7 @@ export const pluginManifestSchema = z
         .refine((value) => validRange(value) !== null, 'Expected a semver range')
     }),
     ui: z.enum(['native', 'surface', 'none']).optional(),
-    skin: z
-      .strictObject({
-        tokens: relativePath,
-        css: relativePath.optional(),
-        base: z.enum(['dark', 'light'])
-      })
-      .optional(),
+    skin: skinManifestSchema.optional(),
     main: relativePath.optional(),
     uiEntry: relativePath.optional(),
     contributes: contributions.prefault({}),

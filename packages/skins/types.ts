@@ -4,7 +4,7 @@ export interface SkinManifest {
   name: string
   version: string
   engines: { clave: string }
-  skin: { tokens: 'skin.json'; css?: 'skin.css'; base: 'dark' | 'light' }
+  skin: { tokens: string; css?: string; base: 'dark' | 'light' }
 }
 export interface Skin extends SkinManifest {
   tokens: Record<string, string>

@@ -1,3 +1,4 @@
+import { skinManifestSchema } from '@clave/plugin-sdk'
 import excludedTokenNames from '@clave/skins/excluded-token-names.json'
 import { describe, it, expect } from 'vitest'
 import { validateManifest, validateTokens, parseSkinCss } from './validation'
@@ -67,4 +68,14 @@ describe('skin trust boundary', () => {
     execFileSync(process.execPath, ['packages/skins/scripts/extract-skins.mjs'])
     expect(files.map((f) => readFileSync(f, 'utf8'))).toEqual(before)
   })
+})
+
+it('uses the SDK skin sub-schema for nested paths and rejects unknown fields', () => {
+  const skin = { tokens: 'theme/tokens.json', css: 'theme/overrides.css', base: 'dark' }
+  expect(validateManifest({ ...bundledSkins[0], skin }, '1.90.2').skin).toEqual(
+    skinManifestSchema.parse(skin)
+  )
+  expect(() =>
+    validateManifest({ ...bundledSkins[0], skin: { ...skin, script: 'run.js' } }, '1.90.2')
+  ).toThrow()
 })

@@ -1,3 +1,4 @@
+import { skinManifestSchema } from '@clave/plugin-sdk'
 import postcss from 'postcss'
 import valueParser from 'postcss-value-parser'
 import { valid, validRange, satisfies } from 'semver'
@@ -79,19 +80,13 @@ export function validateManifest(input: unknown, appVersion: string): SkinManife
     !satisfies(appVersion, m.engines.clave)
   )
     throw new Error('Incompatible Clave engine version')
-  if (
-    !m.skin ||
-    m.skin.tokens !== 'skin.json' ||
-    (m.skin.css !== undefined && m.skin.css !== 'skin.css') ||
-    !['dark', 'light'].includes(m.skin.base)
-  )
-    throw new Error('Invalid skin paths or base')
+  const skin = skinManifestSchema.parse(m.skin)
   return {
     kind: 'skin',
     id: m.id,
     name: m.name,
     version: m.version,
     engines: { clave: m.engines.clave },
-    skin: { ...m.skin }
+    skin
   }
 }

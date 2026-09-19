@@ -30,12 +30,21 @@ it('imports, activates, persists, reloads edits and reverts removed skins', asyn
     expect(existsSync(join(dir, 'installed'))).toBe(false)
     expect(watch).not.toHaveBeenCalled()
     const source = join(dir, 'source')
-    mkdirSync(source)
+    mkdirSync(join(source, 'theme'), { recursive: true })
     writeFileSync(
       join(source, 'clave-plugin.json'),
-      JSON.stringify({ ...bundledSkins[0], id: 'custom', name: 'Custom', tokens: undefined })
+      JSON.stringify({
+        ...bundledSkins[0],
+        id: 'custom',
+        name: 'Custom',
+        tokens: undefined,
+        skin: { tokens: 'theme/tokens.json', base: 'dark' }
+      })
     )
-    writeFileSync(join(source, 'skin.json'), JSON.stringify({ '--color-accent': '#abcdef' }))
+    writeFileSync(
+      join(source, 'theme/tokens.json'),
+      JSON.stringify({ '--color-accent': '#abcdef' })
+    )
     expect(store.import(source).activeId).toBe('custom')
     expect(watch).toHaveBeenCalledWith(
       join(dir, 'installed'),
