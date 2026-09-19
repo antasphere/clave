@@ -8,5 +8,9 @@
     <true/>
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
+    <!-- The microphone, for pages Clave shows from this machine (a voice dock).
+         A hardened-runtime build without this is refused by the system. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
