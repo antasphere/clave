@@ -256,7 +256,7 @@ export class CodexAdapter implements SessionAdapter {
       throw new Error('Codex chat accepts structured SessionInput, not raw terminal bytes')
     const value = SessionInputSchema.parse(input)
     const state = this.require(handle)
-    if (state.ended) throw new Error('Codex session has ended')
+    if (state.ended || state.closing) throw new Error('Codex session has ended')
     if (value.type === 'permission_response') {
       if (!state.connection) throw new Error('Codex has no pending approval')
       state.translator.answer(value.id, value.optionId, state.connection)
@@ -381,7 +381,7 @@ export class CodexAdapter implements SessionAdapter {
     state.emitter.emit('exit', code)
   }
   private error(state: HandleState, error: unknown, fatal: boolean): void {
-    if (!state.ended)
+    if (!state.ended && !state.closing)
       state.emitter.emit('stream', {
         kind: 'event',
         event: {

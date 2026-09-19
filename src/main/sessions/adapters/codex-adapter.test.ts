@@ -363,3 +363,42 @@ it('expires legacy approvals with the active turn even without a turnId field', 
   expect(() => translator.answer('1', 'approved', connection)).toThrow('expired')
   expect(connection.respond).not.toHaveBeenCalled()
 })
+
+it('intentional close during initialization does not publish a fatal error or accept new input', async () => {
+  let cb!: CodexCallbacks
+  let rejectInit!: (error: Error) => void
+  let finishClose!: () => void
+  const closed = new Promise<void>((resolve) => {
+    finishClose = resolve
+  })
+  const adapter = new CodexAdapter((_cwd, callbacks) => {
+    cb = callbacks
+    return {
+      request: () =>
+        new Promise((_resolve, reject) => {
+          rejectInit = reject
+        }),
+      notify: vi.fn(),
+      respond: vi.fn(),
+      reject: vi.fn(),
+      close: () => {
+        rejectInit(new Error('Codex app-server closed'))
+        return closed
+      }
+    }
+  })
+  const handle = await adapter.spawn(spec)
+  const events: SessionEvent[] = []
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  adapter.write(handle, { type: 'user_message', text: 'hello' })
+  const closing = adapter.kill(handle)
+  await tick()
+  expect(() => adapter.write(handle, { type: 'user_message', text: 'too late' })).toThrow('ended')
+  expect(events.filter((e) => e.type === 'error')).toEqual([])
+  cb.exit(0)
+  finishClose()
+  await closing
+  expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
+})
