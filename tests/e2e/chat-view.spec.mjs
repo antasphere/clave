@@ -142,10 +142,23 @@ export async function run(t) {
       }
     ])
     await win.getByRole('button', { name: 'Allow once', exact: true }).waitFor()
-    assert.equal(await win.locator('.chat-state').innerText(), 'blocked')
+    await win.locator('.chat-state[data-state="blocked"]').waitFor()
+    const waitingDot = win.locator(`[data-sidebar-item-id="${record.id}"] .bg-status-waiting`)
     assert.equal(
-      await win.locator(`[data-sidebar-item-id="${record.id}"] .bg-status-waiting`).count(),
-      1
+      (await win.evaluate(() => window.electronAPI.sessionsList())).find((s) => s.id === record.id)
+        .state,
+      'done'
+    )
+    assert.equal(
+      await waitingDot.count(),
+      0,
+      'view-only permission events cannot overwrite kernel sidebar state'
+    )
+    await kernelState(app, record.id, 'blocked')
+    assert.ok(await until(async () => (await waitingDot.count()) === 1))
+    t.check(
+      'view-only permission event leaves sidebar unchanged; kernel blocked shows waiting',
+      true
     )
     assert.match(await win.locator('.chat-header').innerText(), /fixture-model/)
     await win.getByRole('button', { name: 'Allow once', exact: true }).click()
@@ -163,6 +176,9 @@ export async function run(t) {
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
     await win.locator('.chat-state[data-state="working"]').waitFor()
     assert.equal(await win.locator('.chat-state').innerText(), 'working')
+    assert.equal(await waitingDot.count(), 1, 'view-only answers cannot clear kernel blocked state')
+    await kernelState(app, record.id, 'working')
+    assert.ok(await until(async () => (await waitingDot.count()) === 0))
     await win.getByRole('button', { name: 'Interrupt', exact: true }).click()
     assert.match(
       await win
@@ -240,5 +256,15 @@ async function unsubscribeCount(app, id) {
         (call) => call.channel === 'sessions:unsubscribe' && call.id === id
       ).length,
     id
+  )
+}
+
+// The host sidebar receives kernel state on its own channel, independently of
+// the view's synthetic transcript and stubbed permission response above.
+async function kernelState(app, id, state) {
+  await app.evaluate(
+    ({ BrowserWindow }, { id, state }) =>
+      BrowserWindow.getAllWindows()[0].webContents.send(`agent:state:${id}`, state),
+    { id, state }
   )
 }
