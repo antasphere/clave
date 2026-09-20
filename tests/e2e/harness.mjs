@@ -4,6 +4,7 @@
 // PTYs — against an isolated `--user-data-dir`, so they never touch the user's
 // installed Clave. The regular `playwright` MCP opens the renderer in Chrome
 // where `window.electronAPI` is undefined and none of this works.
+import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright-core'
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -437,4 +438,23 @@ export async function spawnAgentTabIn(app, page, dir, { until: untilFn = until }
     readFileSync(cfg.file, 'utf-8')
   ).mcpServers?.clave?.headers?.Authorization?.replace(/^Bearer /, '')
   return { sessionId: cfg.claveId, token }
+}
+
+// A family becomes a submenu when chat/custom profiles are registered.
+// Follow the built-in leaf so the assertions still exercise the terminal CLI.
+export async function selectBuiltIn(win, label, profileName, family) {
+  const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
+  // One terminal built-in always exists; registered chat profiles add a second.
+  const count = 1 + profiles.customProfiles.filter((p) => p.family === family).length
+  const entry = win
+    .locator('[role="menuitem"]')
+    .filter({ has: win.getByText(label, { exact: true }) })
+  const submenu = (await entry.getAttribute('aria-haspopup')) === 'menu'
+  assert.equal(
+    submenu,
+    count > 1,
+    `${label}: ${count} profiles must produce ${count > 1 ? 'a submenu' : 'a flat item'}`
+  )
+  await entry.click()
+  if (count > 1) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
 }

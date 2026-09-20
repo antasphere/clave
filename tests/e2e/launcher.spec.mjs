@@ -12,7 +12,8 @@ import {
   userDataDir,
   stubFolderDialog,
   sidebarRows,
-  agentButtonLabel
+  agentButtonLabel,
+  selectBuiltIn
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
@@ -82,7 +83,7 @@ export async function run(t) {
     t.equal('the agent button starts on Claude', await agentButtonLabel(win), 'Claude')
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Codex CLI")')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
     await win.waitForTimeout(4000)
     t.equal('picking Codex makes it the remembered agent', await agentButtonLabel(win), 'Codex')
     t.equal('and still no folder dialog', await dialogCalls(), 0)

@@ -1,4 +1,4 @@
-import { useCallback, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useState, type ComponentType } from 'react'
 import { useRegistry } from './store'
 import { ChatBubbleLeftRightIcon, CommandLineIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { Session, AgentState } from '../../../shared/session-model'
@@ -59,15 +59,47 @@ export function RegisteredSessionView({
     state: 'idle',
     model: null
   })
-  const onState = useCallback(
-    (state: AgentState, model: string | null): void => {
-      setMeta({ state, model })
+  // Views may report presentation metadata, but only the kernel owns sidebar state.
+  const onState = useCallback((state: AgentState, model: string | null): void => {
+    setMeta({ state, model })
+  }, [])
+  const transport = session?.transport
+  useEffect(() => {
+    if (transport !== 'events') return
+    let active = true
+    let receivedState = false
+    const applyState = (state: string): void => {
       const store = useViewSessionStore.getState()
-      if (state === 'ended') store.updateSessionAlive(sessionId, false)
-      else store.setAgentState(sessionId, state)
-    },
-    [sessionId]
-  )
+      if (state === 'ended') {
+        if (store.sessions.find((s) => s.id === sessionId)?.alive)
+          store.updateSessionAlive(sessionId, false)
+      } else if (
+        state === 'idle' ||
+        state === 'working' ||
+        state === 'blocked' ||
+        state === 'done'
+      ) {
+        store.setAgentState(sessionId, state)
+      }
+    }
+    const stop = window.electronAPI.onAgentState(sessionId, (state) => {
+      receivedState = true
+      applyState(state)
+    })
+    // Bind before reading so mounting/remounting cannot miss a transition, and
+    // never let an older list response overwrite a state already received live.
+    void window.electronAPI
+      .sessionsList()
+      .then((records) => {
+        const record = records.find((s) => s.id === sessionId)
+        if (active && !receivedState && record) applyState(record.state)
+      })
+      .catch(console.error)
+    return () => {
+      active = false
+      stop()
+    }
+  }, [sessionId, transport])
   const close = async (): Promise<void> => {
     const current = useViewSessionStore.getState()
     const closing = current.sessions.find((s) => s.id === sessionId)

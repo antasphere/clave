@@ -13,7 +13,7 @@ import {
 import { sessionManager } from './sessions/session-manager'
 
 export type EventsLaunchProfile = LaunchProfile & { adapterId: string }
-/** Registering a chat profile makes its launcher family a submenu (terminal + chat). */
+/** Any family with two built-in profiles renders a submenu (terminal + chat), including Claude and Codex. */
 const CHAT_PROFILES: EventsLaunchProfile[] = [
   {
     id: 'claude-chat',

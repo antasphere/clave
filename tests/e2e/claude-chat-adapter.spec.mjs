@@ -112,6 +112,7 @@ setInterval(()=>{},1000);
     )
     assert.ok(session, 'launcher creates Claude events session')
     assert.equal(session.transport, 'events')
+    await win.getByTestId('chat-view').waitFor()
     await win.evaluate(async (id) => {
       window.__chat = []
       window.__chatExit = null
@@ -151,6 +152,7 @@ setInterval(()=>{},1000);
     assert.ok(processInfo.argv.includes('--session-id'))
     assert.ok(processInfo.argv.includes('--permission-prompt-tool'))
     assert.ok(processInfo.argv.includes('stdio'))
+    // Answer through a separate IPC consumer, never the chat view action.
     await win.evaluate(
       ({ id, requestId }) =>
         window.electronAPI.sessionsWrite(id, {
@@ -160,6 +162,23 @@ setInterval(()=>{},1000);
         }),
       { id: session.id, requestId: request.id }
     )
+    assert.ok(
+      await until(
+        async () => {
+          const record = (await win.evaluate(() => window.electronAPI.sessionsList())).find(
+            (s) => s.id === session.id
+          )
+          return (
+            record?.state === 'working' &&
+            (await win.locator('.sidebar-tab-icon .text-status-working').count()) === 1 &&
+            (await win.locator('.sidebar-tab-icon .bg-status-waiting').count()) === 0
+          )
+        },
+        { gapMs: 25 }
+      ),
+      'an outside-view sessionsWrite answer clears the waiting dot while the kernel is working'
+    )
+    t.check('outside-view permission answer makes the sidebar follow kernel working state', true)
     assert.ok(
       await until(async () =>
         (await win.evaluate(() => window.__chat)).some(
@@ -180,7 +199,11 @@ setInterval(()=>{},1000);
       events.filter((e) => e.type === 'state_change').map((e) => e.state),
       ['working', 'blocked', 'working', 'done']
     )
-    assert.equal(await win.locator('.sidebar-tab-icon .bg-status-waiting').count(), 0)
+    assert.equal(
+      await win.locator('.sidebar-tab-icon .bg-status-waiting').count(),
+      0,
+      'the waiting dot stays clear when the kernel finishes the external answer'
+    )
     const inputs = readFileSync(`${ROOT}/input.ndjson`, 'utf8').trim().split('\n').map(JSON.parse)
     assert.equal(inputs[1].response.request_id, request.id)
     assert.equal(inputs[1].response.response.behavior, 'deny')
