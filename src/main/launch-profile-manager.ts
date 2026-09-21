@@ -213,7 +213,18 @@ export class LaunchProfileManager {
     return resolved
   }
 
-  /** The profile id this call actually asked for, explicit or stored. */
+  /**
+   * The profile id this call actually asked for: the first of explicit id,
+   * workspace override, then global default that is PRESENT.
+   *
+   * The shared resolver instead falls through each one that fails to MATCH, and
+   * the two differ in one narrow case: an explicit id that no longer resolves,
+   * such as a deleted custom profile, passed while a switched-off plugin is the
+   * stored default. Then this returns the explicit id, which is nobody's plugin,
+   * the refusal below does not fire, and the built-in fallback answers — which is
+   * the right answer for a deleted custom profile anyway. Reaching it needs both
+   * halves at once, so it is left as it is rather than made more clever.
+   */
   private requestedId(
     family: LauncherFamily,
     workspaceId?: string | null,

@@ -69,7 +69,9 @@ const streamEvents = (app) =>
   )
 
 export async function run(t) {
-  const dir = '/tmp/clave-e2e-plugin-provider'
+  // Per run, not shared: a fixed path here collided with another lane's suite and
+  // cost the verifier a red round on a check that passes alone.
+  const dir = `/tmp/clave-e2e-plugin-provider-${process.pid}`
   const { app, win, root } = await open(dir)
   try {
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
@@ -94,6 +96,17 @@ export async function run(t) {
 
     // The review a user walks: the switch, the disclosure, the confirmation.
     await toggle.click()
+    // An agent from a plugin runs inside Clave, and the dialog must say so before
+    // the grant. Without this the wording can be reverted and every gate stays green.
+    const review = win
+      .locator('.settings-callout[data-tone="danger"]')
+      .filter({ hasText: 'Enable Echo provider?' })
+    await review.waitFor()
+    const consent = await review.innerText()
+    assert.match(consent, /runs INSIDE Clave/)
+    assert.match(consent, /full environment including any credentials in it/)
+    assert.match(consent, /trust its author as much as you trust Clave/)
+    assert.doesNotMatch(consent, /separate process with a trimmed environment/)
     await win.getByRole('button', { name: 'Enable plugin', exact: true }).click()
     assert.ok(await until(async () => (await pluginRecord()).enabled === true))
     assert.deepEqual((await pluginRecord()).permissionsGranted, ['sessions.write'])
@@ -103,7 +116,10 @@ export async function run(t) {
     ).customProfiles.find((p) => p.id === ADAPTER_ID)
     assert.deepEqual(profile.command, ['echo', '--from-manifest'])
     assert.equal(profile.name, 'Echo (plugin)')
-    t.check('the Settings review enables it and the launcher gains the manifest command', true)
+    t.check(
+      'the review names the privilege an agent plugin gets, then enabling it adds the manifest command',
+      true
+    )
 
     await win.evaluate((id) => window.electronAPI.launchProfileSetGlobal('claude', id), ADAPTER_ID)
     await win.reload()
@@ -229,9 +245,26 @@ export async function run(t) {
       ),
       'disabling the plugin left the running session alone'
     )
-    await input.fill('still running')
-    await input.press('Enter')
-    await win.getByText('Echo from echo --from-manifest: still running').waitFor()
+    // Disabling broadcasts a plugin change and the composer can remount under the
+    // keystroke, dropping the draft — a view-side race, not the behaviour under
+    // test here, which is that the SESSION survives. So the send is retried until
+    // the user's turn appears, and only then is the answer awaited: a lost
+    // keystroke reads as a lost keystroke rather than as a dead provider.
+    const sent = win.locator('.chat-turn[data-role="user"]').filter({ hasText: 'still running' })
+    assert.ok(
+      await until(
+        async () => {
+          const composer = win.locator('[data-testid="chat-view"] textarea:not(:disabled)')
+          await composer.waitFor()
+          await composer.fill('still running')
+          await composer.press('Enter')
+          return (await sent.count()) > 0
+        },
+        { tries: 6, gapMs: 500 }
+      ),
+      'the composer accepted a message after the plugin was disabled'
+    )
+    await win.getByText('Echo from echo --from-manifest: still running').first().waitFor()
     t.check('disabling hides new launches without touching the session already running', true)
   } finally {
     await app.close()

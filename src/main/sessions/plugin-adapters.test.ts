@@ -457,6 +457,28 @@ describe('plugin adapter registry', () => {
     expect(errors.some((args) => String(args[0]).includes('limit 262144'))).toBe(true)
   })
 
+  it('drops an event it cannot even measure, and keeps the one after it', async () => {
+    const registry = new PluginAdapterRegistry()
+    const record = plugin({
+      source: `exports.createAdapter = (launch, emit) => ({
+        start() {},
+        send() {
+          const cyclic = { name: 'loop' }
+          cyclic.self = cyclic
+          // tool_call.input is unknown to the schema, so the reference survives
+          // validation and only the size check meets it.
+          emit({ type: 'tool_call', id: 'c', name: 'x', input: cyclic })
+          emit({ type: 'assistant_text', delta: 'after the circular one', final: true })
+        },
+        interrupt() {}, respond() {}, dispose() {}
+      })`
+    })
+    const { adapter, handle, seen } = await start(registry, record)
+    adapter.write(handle, { type: 'user_message', text: 'x' })
+    expect(events(seen).map((event) => event.type)).toEqual(['assistant_text'])
+    expect(errors.some((args) => String(args[0]).includes('unmeasurable bytes'))).toBe(true)
+  })
+
   it('accepts an event just under the limit', async () => {
     const registry = new PluginAdapterRegistry()
     const record = plugin({
