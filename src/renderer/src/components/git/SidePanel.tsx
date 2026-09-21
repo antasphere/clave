@@ -416,7 +416,11 @@ function SidePanelBody(): React.JSX.Element {
             one control tall, centred — not a full-width box with two buttons
             adrift in it, and not a bar-height frame around a word. */}
         <div
-          className="panel-tabs"
+          // A contributed tab makes this bar as wide as the panel: the app's own two
+          // tabs left room for one, and a second plugin would have wrapped it onto a
+          // second row — the one thing the row below it is written never to do. It
+          // scrolls instead, and only when it has to.
+          className="panel-tabs max-w-full overflow-x-auto"
           data-panel-bar="tabs"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
@@ -470,7 +474,7 @@ function SidePanelBody(): React.JSX.Element {
                 title={`${panel.title} (${panel.pluginName})`}
               >
                 <PluginIcon name={panel.icon} className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>{panel.title}</span>
+                <span className="truncate">{panel.title}</span>
               </button>
             ))}
         </div>
