@@ -5,7 +5,12 @@ import { ClaudeAdapter } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
-import { eventsProfile, isEchoLaunchProfile, launchProfileManager } from './launch-profile-manager'
+import {
+  defaultViewFor,
+  eventsProfile,
+  isEchoLaunchProfile,
+  launchProfileManager
+} from './launch-profile-manager'
 import type { Session } from '../shared/session-model'
 
 // Keep all existing helper/type imports stable while the process engine lives
@@ -83,7 +88,7 @@ class PtyManager {
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
       // The profile's default view, when it names one; the pane's picker
       // overwrites it on the record from there on.
-      viewId: events?.viewId
+      viewId: defaultViewFor(profileId)
     }
     if (isEvents && adapter.id === 'claude-chat') {
       session.claudeSessionId = options?.resumeSessionId ?? options?.claudeSessionId ?? randomUUID()

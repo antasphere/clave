@@ -53,13 +53,29 @@ export function registerPluginHandlers(): void {
    *  the pane, whatever its page does. */
   const viewLeases = new Map<
     string,
-    { pluginId: string; viewId: string; sessionId: string; windowId: number; stop: () => void }
+    {
+      pluginId: string
+      viewId: string
+      sessionId: string
+      windowId: number
+      file: string
+      stop: () => void
+    }
   >()
   const revokeLease = (leaseId: string): void => {
     const lease = viewLeases.get(leaseId)
     if (!lease) return
     lease.stop()
     viewLeases.delete(leaseId)
+    // The page stops being servable with the authority that opened it: a
+    // revoked lease must not leave its token answering. The token is per FILE
+    // and shared (`registerPreviewFile` is idempotent), so it goes only when
+    // nothing else is still showing that page — another lease of the same
+    // plugin, or its panel surface.
+    const stillShown =
+      [...viewLeases.values()].some((other) => other.file === lease.file) ||
+      surfaces.get(lease.pluginId) === lease.file
+    if (!stillShown) unregisterPreviewFile(lease.file)
   }
   const revokeLeasesOf = (pluginId: string): void => {
     for (const [id, lease] of viewLeases) if (lease.pluginId === pluginId) revokeLease(id)
@@ -309,6 +325,7 @@ export function registerPluginHandlers(): void {
         viewId,
         sessionId,
         windowId: win.id,
+        file,
         stop: () => {
           stop()
           if (!win.isDestroyed()) {

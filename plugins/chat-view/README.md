@@ -5,7 +5,13 @@ per session from the pane header: `chat` (this file's subject) and `compact`
 (`src/CompactView.tsx`, one line per turn, no markdown, no tool bodies). Compact
 reads the host's per-session event log (`src/renderer/src/views/conversation-store.ts`)
 and reduces it with the same `reducer.ts`, so it shows the whole conversation
-however late it is opened; chat still keeps its own reducer and subscription. Activation,
+however late it is opened; chat still keeps its own reducer and subscription, and
+moves onto the log once PRDCT-2549 has merged (PRDCT-2616).
+
+The compact composer deliberately does NOT wear the `chat-composer` class: both
+views are mounted at once, and one class on two elements is a strict locator
+resolving to two — which is exactly how this plugin's own end-to-end spec went
+red during PRDCT-2610. Activation,
 grants and disablement use the ordinary plugin host. The renderer registry owns
 pane chrome; this plugin owns only the conversation content and the public session
 bridge subscription. It does not launch a provider or read provider files.

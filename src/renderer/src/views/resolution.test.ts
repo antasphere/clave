@@ -85,6 +85,26 @@ describe('view resolution', () => {
     }
     expect(availableViews(session(), [plugin({ manifest })], both)[0].title).toBe('chat')
   })
+  it('offers only the views that render THIS session, not every view the plugin has', () => {
+    const manifest = {
+      id: 'clave.chat-view',
+      name: 'Chat',
+      ui: 'native',
+      contributes: {
+        views: [
+          { id: 'chat', title: 'Chat', renders: ['pty'] },
+          { id: 'compact', title: 'Compact', renders: ['events'] }
+        ]
+      }
+    }
+    // The per-view filter, not the early return: this session IS an events one.
+    expect(availableViews(session(), [plugin({ manifest })], both)).toEqual([
+      { id: 'clave.chat-view/compact', title: 'Compact', pluginName: 'Chat', kind: 'native' }
+    ])
+    expect(
+      resolveView(session({ viewId: 'clave.chat-view/chat' }), [plugin({ manifest })], both)
+    ).toBe('clave.chat-view/compact')
+  })
   it('offers nothing to a PTY session, whatever a manifest claims', () => {
     const manifest = {
       id: 'clave.chat-view',
@@ -134,9 +154,9 @@ describe('view resolution', () => {
         contributes: { views: [{ id: 'board', title: 'Board', renders: ['events'] }] }
       }
       expect(availableViews(session(), [surface({ manifest: noEntry })], new Set())).toEqual([])
-      expect(
-        availableViews(session(), [surface({ permissionsGranted: [] })], new Set())
-      ).toEqual([])
+      expect(availableViews(session(), [surface({ permissionsGranted: [] })], new Set())).toEqual(
+        []
+      )
       expect(availableViews(session(), [surface({ enabled: false })], new Set())).toEqual([])
       expect(availableViews(session(), [surface({ status: 'starting' })], new Set())).toEqual([])
     })

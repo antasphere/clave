@@ -6,7 +6,12 @@ import { sessionManager } from './sessions/session-manager'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { syncPluginAdapters } from './sessions/plugin-adapters'
 import type { PluginRecord } from './plugins/plugin-store'
-import { LaunchProfileManager, eventsProfile, isEchoLaunchProfile } from './launch-profile-manager'
+import {
+  LaunchProfileManager,
+  defaultViewFor,
+  eventsProfile,
+  isEchoLaunchProfile
+} from './launch-profile-manager'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
 
@@ -302,4 +307,16 @@ it('derives a launch profile from an enabled adapter plugin and hides it once di
     Object.defineProperty(process, 'platform', platform)
     lookup.mockRestore()
   }
+})
+describe('the view a profile opens its sessions in', () => {
+  it('names the chat view on both built-in chat profiles', () => {
+    expect(eventsProfile('claude-chat')?.viewId).toBe('clave.chat-view/chat')
+    expect(eventsProfile('codex-chat')?.viewId).toBe('clave.chat-view/chat')
+    expect(defaultViewFor('claude-chat')).toBe('clave.chat-view/chat')
+    expect(defaultViewFor('codex-chat')).toBe('clave.chat-view/chat')
+  })
+  it('names none for a terminal profile, an unknown one, or nothing at all', () => {
+    for (const id of ['claude-terminal', 'tokenops-claude', 'dev-echo-adapter', null, undefined])
+      expect(defaultViewFor(id)).toBeUndefined()
+  })
 })

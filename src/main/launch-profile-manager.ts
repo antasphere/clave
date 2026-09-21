@@ -268,3 +268,16 @@ const DEV_ECHO_PROFILE: LaunchProfile = {
 export function isEchoLaunchProfile(id?: string | null): boolean {
   return id === 'dev-echo-adapter' && echoEnabled
 }
+/** The development fixture may be told to name a default view, so the path from
+ *  a profile to the session record is exercised by the end-to-end suite rather
+ *  than left to inspection: `--dev-echo-view=<pluginId>/<viewId>`. */
+const ECHO_VIEW_FLAG = '--dev-echo-view='
+const echoDefaultView = process.argv
+  .find((argument) => argument.startsWith(ECHO_VIEW_FLAG))
+  ?.slice(ECHO_VIEW_FLAG.length)
+/** The view a session launched from this profile opens in, when its profile
+ *  names one; absent means the host picks the first view that renders it. */
+export function defaultViewFor(profileId?: string | null): string | undefined {
+  if (isEchoLaunchProfile(profileId)) return echoDefaultView || undefined
+  return eventsProfile(profileId)?.viewId
+}

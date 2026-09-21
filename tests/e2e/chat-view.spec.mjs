@@ -6,7 +6,14 @@ import { REPO, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
 
 export const TOOL_RESULT = 'chat-result: verified payload 2537'
 
-export async function openChat(suffix = 'chat-view') {
+/** `extraArgs` go to the Electron launch; `ready` is what the caller waits for
+ *  before the fixture is handed over — the chat composer by default, another
+ *  view's when a launch profile opens the session in one. */
+export async function openChat(
+  suffix = 'chat-view',
+  extraArgs = [],
+  ready = '[data-testid="chat-view"] textarea:not(:disabled)'
+) {
   const dir = `/tmp/clave-e2e-${suffix}`
   const root = `${dir}-root`
   mkdirSync(root, { recursive: true })
@@ -21,7 +28,7 @@ export async function openChat(suffix = 'chat-view') {
       REPO,
       'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
     ),
-    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', '--dev-echo-adapter'],
+    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', '--dev-echo-adapter', ...extraArgs],
     cwd: REPO,
     env: { ...process.env }
   })
@@ -40,7 +47,7 @@ export async function openChat(suffix = 'chat-view') {
   await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'dev-echo-adapter'))
   await win.reload()
   await win.locator('.launcher-split .launcher-btn').click()
-  await win.locator('[data-testid="chat-view"] textarea:not(:disabled)').waitFor()
+  await win.locator(ready).waitFor()
   const record = await until(async () =>
     (await win.evaluate(() => window.electronAPI.sessionsList())).find(
       (s) => s.adapterId === 'echo'

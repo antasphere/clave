@@ -130,9 +130,12 @@ export function RegisteredSessionView({
   const session = registry.sessions.find((s) => s.id === sessionId)
   const views = availableViews(session, registry.plugins, implemented)
   const viewId = resolveView(session, registry.plugins, implemented)
-  // The host keeps the session's event log for the pane's lifetime, so a view
-  // that reads it renders the whole conversation however late it is opened.
-  useSessionLog(session?.transport === 'events' ? sessionId : '')
+  // The host keeps the session's event log while a view is mounted on it, so a
+  // view that reads the log renders the whole conversation however late it is
+  // opened. It is held on `viewId`, not on the transport: with no view resolved
+  // the pane falls back to the terminal, and a claim kept there would never
+  // reach zero — main would go on streaming into a log nobody reads.
+  useSessionLog(session?.transport === 'events' && viewId ? sessionId : '')
   // Every view this session can be read in is mounted for the pane's lifetime
   // and all but one are hidden. Switching therefore finds a view exactly as it
   // was left — including the state a view keeps privately rather than reading

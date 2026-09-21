@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { until } from './harness.mjs'
-import { openChat } from './chat-view.spec.mjs'
+import { openChat, inject } from './chat-view.spec.mjs'
 
 const FIXTURE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -39,8 +39,18 @@ async function choose(win, picker, label) {
   await win.keyboard.press('Enter')
   await items.first().waitFor({ state: 'detached' })
 }
-const guestFrame = async (win) =>
-  until(() => win.frames().find((f) => f.url().startsWith('clave-preview://')))
+const guestFrames = (win) => win.frames().filter((f) => f.url().startsWith('clave-preview://'))
+const guestFrame = async (win) => until(() => guestFrames(win)[0])
+/** The guest frame leased to one session. Two surface panes show the same page
+ *  on the same token, so the session it was handed is what tells them apart. */
+const guestFor = async (win, sessionId) =>
+  until(async () => {
+    for (const frame of guestFrames(win)) {
+      const held = await frame.evaluate(() => window.__fixture?.state.sessionId).catch(() => null)
+      if (held === sessionId) return frame
+    }
+    return null
+  })
 
 export async function run(t) {
   const fixture = await openChat('surface-view')
@@ -80,7 +90,9 @@ export async function run(t) {
     t.check('a linked plugin contributes a view the picker offers beside the bundled ones', true)
 
     await choose(win, picker, 'Fixture log')
-    const iframe = win.locator(`[data-view-id="${VIEW}"] iframe`)
+    const iframe = win.locator(
+      `.chat-host[data-session-id="${record.id}"] [data-view-id="${VIEW}"] iframe`
+    )
     await iframe.waitFor()
     const sandbox = await iframe.getAttribute('sandbox')
     assert.equal(sandbox, 'allow-scripts')
@@ -142,6 +154,50 @@ export async function run(t) {
     assert.ok(!(await other.innerText()).includes('written by the guest'))
     t.check('a guest write lands on the leased session and never on the one it named', true)
 
+    // The header follows the view ON SCREEN. The conversation view is mounted
+    // and hidden behind this one, and it reports a model of its own the moment
+    // one is announced; the header must not take it, because the reader is not
+    // looking at that view. (Injected on the renderer channel, which is the
+    // hidden native view's path and not the lease's.)
+    await inject(app, record.id, [
+      { type: 'session_meta', model: 'fixture-model', providerSessionId: 'fixture' }
+    ])
+    await until(async () => (await leased.innerText()).includes('fixture-model'), {
+      tries: 6,
+      gapMs: 150
+    })
+    assert.equal(await leased.locator('.pane-header-meta').count(), 0)
+    t.check('a view that is not on screen never writes the header', true)
+
+    // TWO guest frames at once, of two different sessions. Every host listens on
+    // the same window for messages, so what keeps one guest out of another's
+    // lease is the host checking that the message came from ITS OWN frame.
+    const secondPicker = win
+      .locator(`.chat-host[data-session-id="${second.id}"]`)
+      .getByLabel('Change view', { exact: true })
+    await secondPicker.waitFor()
+    await choose(win, secondPicker, 'Fixture log')
+    await until(async () => guestFrames(win).length === 2)
+    const guestA = await guestFor(win, record.id)
+    const guestB = await guestFor(win, second.id)
+    assert.ok(guestA && guestB && guestA !== guestB)
+    await guestA.evaluate(() => window.__fixture.write('only the first guest said this'))
+    assert.ok(
+      await until(async () => (await leased.innerText()).includes('only the first guest said this'))
+    )
+    // The other session must not have heard it: its host saw the message and
+    // dropped it, because it did not come from the frame it hosts.
+    assert.ok(!(await other.innerText()).includes('only the first guest said this'))
+    assert.equal(
+      await guestB.evaluate(() => window.__fixture.state.events.length),
+      await guestB.evaluate(
+        () =>
+          window.__fixture.state.events.filter((e) => !String(e.text ?? '').includes('first guest'))
+            .length
+      )
+    )
+    t.check('one guest cannot drive another guest lease, in the same window', true)
+
     // Disabling the plugin takes the view off the pane AND the authority with
     // it: the guest's frame goes, and the lease it held answers nothing.
     const held = await app.evaluate(() => globalThis.__viewLeases.at(-1))
@@ -169,7 +225,7 @@ export async function run(t) {
     )
     // Attached, not visible: a second session's pane is the one on screen by
     // now, and this one is rendered behind it.
-    await win.locator(`[data-view-id="${VIEW}"] iframe`).waitFor({ state: 'attached' })
+    await leased.locator(`[data-view-id="${VIEW}"] iframe`).first().waitFor({ state: 'attached' })
     t.check('disabling the plugin removes its view and revokes the lease it held', true)
 
     // The lease is the pane's, and main is what enforces it: a renderer that

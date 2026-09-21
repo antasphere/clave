@@ -59,16 +59,25 @@ the host's terminal switch remains disabled with an explanation until a dual
 transport contract can supply a PTY session id through the host component's optional
 `terminalSessionId` prop. Switching keeps the conversation subscribed and mounted.
 
-Every view a session can be read in is mounted for the pane's lifetime and all
-but one are hidden, so switching finds a view exactly as it was left — including
-a transcript a view keeps privately. `conversation-store.ts` is the host's own
-per-session record of what arrived: it keeps the event LOG, not a reduction of
-it, because reducing is a view's reading of the session and two views of one
-plugin read the same events differently. A view reduces that log with its own
-reducer (`CompactView` does) and therefore renders the whole conversation
-however late it is opened; `ChatView` still keeps its own reducer and its own
-subscription, which the preload's reference count makes safe beside the log, and
-moves onto it once PRDCT-2549 has merged.
+Every NATIVE view a session can be read in is mounted for the pane's lifetime and
+all but one are hidden, so switching finds a view exactly as it was left —
+including a transcript a view keeps privately. A SURFACE view is not: it mounts
+only while it is the view on screen, because it costs a guest process and a
+lease, so it loses what it held on every switch and takes a fresh lease on the
+way back; and it gets no backlog, since its lease subscribes from its own birth
+and nothing earlier is replayed.
+
+`conversation-store.ts` is the host's own per-session record of what arrived. It
+is held while a view is mounted on the session — on the RESOLVED VIEW, never on
+the transport: with no view resolved the pane falls back to the terminal, and a
+claim kept there would never reach zero, so main would go on streaming into a log
+nobody reads. It keeps the event LOG, not a reduction of it, because reducing is
+a view's reading of the session and two views of one plugin read the same events
+differently. A native view reduces that log with its own reducer (`CompactView`
+does) and therefore renders the whole conversation however late it is opened;
+`ChatView` still keeps its own reducer and its own subscription, which the
+preload's reference count makes safe beside the log, and moves onto it once
+PRDCT-2549 has merged (PRDCT-2616).
 
 Native views are compiled into the renderer: `sessions.write` gates mounting,
 not the preload IPC itself. The terminal fallback for an events-only session is
@@ -76,3 +85,12 @@ currently blank (the adapter lane owns that path).
 
 Markdown HTTP(S) and mailto links use the host's existing `openExternal` path.
 Other destinations render as plain text rather than inert clickable links.
+
+A known limit, and the one thing here a reader would not assume: `registry.tsx`
+refreshes its copy of the session records when the session store changes or a
+plugin does, and main broadcasts no record change of its own. The picker
+compensates by patching that copy after its IPC, and a session launched from a
+profile arrives with the store change that created it — so every path a person
+can take is current. A `viewId` written any OTHER way reaches the record but not
+the pane until something unrelated refreshes it. Whoever adds the next writer
+adds the broadcast with it.

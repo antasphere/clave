@@ -109,7 +109,11 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
       </div>
       <div className="chat-composer-wrap">
         {failure && <p className="text-text-tertiary text-xs">{failure}</p>}
-        <div className="chat-composer">
+        {/* Not `chat-composer`: that class is the conversation view's own box,
+            and both views are mounted at once — one class on two elements is a
+            strict locator resolving to two, which is how the chat view's own
+            end-to-end spec went red. The field carries its own frame. */}
+        <div className="flex items-center gap-2">
           <input
             className="input-field"
             value={draft}
