@@ -15,8 +15,10 @@ function themeCSS(): string {
 /** The one host for a plugin's `ui: surface` HTML: the settings page, the side panel and the
  * tiled area all render a plugin through this component, so the CSP the main process attached
  * to the preview URL, the theme-variable injection and the revocable URL behave identically
- * wherever a surface appears. `url` comes from `pluginsPanel`; remount on a new url with
- * `key={url}` so a revoked URL never survives in a live guest. */
+ * wherever a surface appears. `url` comes from `pluginsPanel`. A caller that points one
+ * element at a succession of panels — the settings page does — remounts it with `key={url}`,
+ * so a revoked URL never survives in a live guest; a caller that mounts one surface per panel
+ * already remounts on a key of its own. */
 export function PluginSurface({
   url,
   title,

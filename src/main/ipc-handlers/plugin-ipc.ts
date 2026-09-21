@@ -31,8 +31,16 @@ export function registerPluginHandlers(): void {
   /** Which session the user is looking at. Only a renderer knows this — focus is a
    *  renderer-store fact — so each window reports its own, and the most recent report
    *  wins: the host is one per application, and the last window to move focus is the
-   *  window the user is in. A window that goes away takes its report with it. */
+   *  window the user is in.
+   *
+   *  A window that goes away has its report cleared HERE, on the window's own `closed`
+   *  event. The renderer's unmount does clear it on an ordinary teardown, but a renderer
+   *  destroyed with its window never runs that cleanup and could not reach us afterwards
+   *  anyway (`guard` throws for a destroyed window) — so every plugin holding
+   *  `sessions.read` would have gone on being told a closed window's session was the
+   *  focused one, and the id still resolves, because sessions outlive their window. */
   let focused: { windowId: number; sessionId: string } | null = null
+  const watchedWindows = new Set<number>()
   const secretRequests = new Map<
     string,
     {
@@ -183,6 +191,19 @@ export function registerPluginHandlers(): void {
     if (sessionId === null) {
       if (focused?.windowId === win.id) focused = null
     } else focused = { windowId: win.id, sessionId }
+    // One listener per reporting window, attached where we first hear from it: this file
+    // is registered once at startup and windows arrive later.
+    if (!watchedWindows.has(win.id)) {
+      const id = win.id
+      watchedWindows.add(id)
+      win.once('closed', () => {
+        watchedWindows.delete(id)
+        if (focused?.windowId === id) {
+          focused = null
+          host?.contextChanged()
+        }
+      })
+    }
     host?.contextChanged()
   })
   ipcMain.handle('plugins:secrets', (event) => {

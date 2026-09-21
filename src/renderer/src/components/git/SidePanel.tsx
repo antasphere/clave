@@ -750,7 +750,11 @@ function SidePanelBody(): React.JSX.Element {
           name, three badges and six controls do not fit the 240px default
           width, and a second line inside the panel reads as intended where the
           old loose row running toward the edge did not. */}
-      {isGitTabActive && !pluginTab && !isRemoteSession && multiRepo.result.mode !== 'none' && multiRepo.result.mode !== 'loading' && (
+      {isGitTabActive &&
+        !pluginTab &&
+        !isRemoteSession &&
+        multiRepo.result.mode !== 'none' &&
+        multiRepo.result.mode !== 'loading' && (
         <div className="px-2 pb-1.5 flex-shrink-0">
           <div className="panel-bar" data-panel-bar="git">
             {/* Everything that NAMES the repo is one flex item, and the controls
@@ -871,10 +875,7 @@ function SidePanelBody(): React.JSX.Element {
 
       {/* Active tab content */}
       {pluginTab ? (
-        <div
-          className="flex flex-col flex-1 min-h-0"
-          data-plugin-side-panel={pluginTab.panelId}
-        >
+        <div className="flex flex-col flex-1 min-h-0" data-plugin-side-panel={pluginTab.panelId}>
           <PluginPanelHost
             key={`${pluginTab.pluginId}:${pluginTab.panelId}:${pluginTab.generation}`}
             pluginId={pluginTab.pluginId}

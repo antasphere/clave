@@ -42,5 +42,9 @@ export function PluginPanelHost({
       </div>
     )
   if (!url) return <div className="flex-1" />
+  // The key is belt and braces here and says so: this component fetches its url once per
+  // mount and every host keys the component itself on pluginId:panelId:generation, so the
+  // url never changes under a mounted host. It earns its keep at the settings page's call
+  // site, where the same element is pointed at one panel's url after another.
   return <PluginSurface key={url} url={url} title={title} />
 }

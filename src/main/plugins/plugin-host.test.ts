@@ -145,7 +145,9 @@ describe('plugin utility-process host', () => {
     host.startAll()
     ready()
     const pushes = (): unknown[] =>
-      port().postMessage.mock.calls.flat().filter((m) => (m as { method?: string })?.method === 'context.changed')
+      port()
+        .postMessage.mock.calls.flat()
+        .filter((m) => (m as { method?: string })?.method === 'context.changed')
     // No sessions.read: the focused session is session data and never leaves the host.
     store.get('example.host').permissionsGranted = []
     vi.advanceTimersByTime(500)
@@ -184,6 +186,73 @@ describe('plugin utility-process host', () => {
     store.get('example.host').permissionsGranted = ['sessions.read']
     await request('sessions.focused', {}, 21)
     expect(port().postMessage).toHaveBeenCalledWith({ jsonrpc: '2.0', id: 21, result: focused })
+  })
+  it('lands a toolbar registration on the plugin that asked, and refuses a neighbour’s id', async () => {
+    // Every other fixture here holds one plugin, so "the caller's record" and "some record"
+    // are the same object and a registration written to the wrong one would look identical.
+    const neighbour = join(temporary, 'bundled', 'neighbour')
+    mkdirSync(neighbour, { recursive: true })
+    writeFileSync(join(neighbour, 'main.cjs'), '')
+    writeFileSync(
+      join(neighbour, 'clave-plugin.json'),
+      JSON.stringify({
+        id: 'example.neighbour',
+        name: 'Neighbour',
+        version: '1.0.0',
+        kind: 'plugin',
+        engines: { clave: '^1.90.0' },
+        ui: 'none',
+        main: 'main.cjs',
+        permissions: [],
+        contributes: {
+          commands: [{ id: 'ping', title: 'Ping' }],
+          toolbar: [{ id: 'ping', title: 'Ping', icon: 'SparklesIcon', kind: 'action' }]
+        }
+      })
+    )
+    store.discover()
+    store.enable('example.neighbour', [])
+    host.startAll()
+    expect(store.list().map((r) => r.id)).toEqual(['example.host', 'example.neighbour'])
+    // The caller is the first plugin; the mutation that writes to the last record would
+    // land this on the neighbour and every single-plugin assertion would still pass.
+    port(0).emit('message', { data: { jsonrpc: '2.0', method: 'plugin.ready' } })
+    port(0).emit('message', {
+      data: { jsonrpc: '2.0', id: 30, method: 'ui.registerToolbar', params: { id: 'hello' } }
+    })
+    await Promise.resolve()
+    expect(store.get('example.host').toolbar).toEqual(['hello'])
+    expect(store.get('example.neighbour').toolbar).toEqual([])
+    // A plugin cannot register an entry its neighbour declared, even though it exists.
+    port(0).emit('message', {
+      data: { jsonrpc: '2.0', id: 31, method: 'ui.registerToolbar', params: { id: 'ping' } }
+    })
+    await Promise.resolve()
+    expect(port(0).postMessage).toHaveBeenCalledWith({
+      jsonrpc: '2.0',
+      id: 31,
+      error: { code: -32001, message: 'Undeclared contribution: ping', data: undefined }
+    })
+    expect(store.get('example.host').toolbar).toEqual(['hello'])
+    expect(store.get('example.neighbour').toolbar).toEqual([])
+  })
+  it('refuses to run a command for a plugin the user has switched off', async () => {
+    host.startAll()
+    ready()
+    await request('ui.registerCommand', { id: 'hello' })
+    // Everything the command needs is in place: registered, active, enabled. Running it
+    // here would wait on a reply this fixture never sends, so the precondition is asserted
+    // on the record rather than by executing it.
+    expect(store.get('example.host')).toMatchObject({
+      enabled: true,
+      status: 'active',
+      commands: ['hello']
+    })
+    // The window between the user's switch and the process stopping: the record is off,
+    // the process is still up, the command is still registered, and a toolbar button may
+    // still be mid-click. `enabled` is the only guard that can refuse here.
+    store.disable('example.host')
+    await expect(host.execute('example.host', 'hello')).rejects.toThrow('Command is not active')
   })
   it('retries crashes with exponential backoff and a bounded restart count', () => {
     host.startAll()

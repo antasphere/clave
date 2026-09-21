@@ -156,8 +156,7 @@ export class PluginStore {
             actualSource === 'git' &&
             saved.contentDigest !== contentDigest &&
             saved.reviewDigest !== reviewDigest
-          const firstBundledInstall =
-            !saved && source === 'bundled' && this.autoEnable.includes(id)
+          const firstBundledInstall = !saved && source === 'bundled' && this.autoEnable.includes(id)
           const record: PluginRecord = {
             id,
             version: manifest.version,

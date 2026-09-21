@@ -60,7 +60,7 @@ import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
 import { PluginToolbar } from '../plugins/PluginToolbar'
 import { PluginMainPanel } from '../plugins/PluginMainPanel'
-import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
+import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store'
 import { ConfirmDialog } from '@clave/ui/components'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
@@ -144,6 +144,7 @@ export function AppShell() {
     initMcpDispatcher()
     initSecretStore()
     initCopyOfferStore()
+    initPluginUI()
     // Re-homing: take in what another window hands over — a closing window's
     // sessions with its groups, a tab or a group moved here — and drop a tab
     // whose session moved AWAY (moved, not died — never kill the pty). The

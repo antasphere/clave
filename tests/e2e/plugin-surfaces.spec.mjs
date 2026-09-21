@@ -85,7 +85,9 @@ export async function run(t) {
     await win.waitForSelector('[data-plugin-toolbar-menu="hello-menu"]')
     t.equal(
       'the popover lists every declared item',
-      await win.locator('[data-plugin-toolbar-menu="hello-menu"] [data-plugin-toolbar-item]').count(),
+      await win
+        .locator('[data-plugin-toolbar-menu="hello-menu"] [data-plugin-toolbar-item]')
+        .count(),
       3
     )
     await win.click('[data-plugin-toolbar-item="say-hello"]')
@@ -127,15 +129,24 @@ export async function run(t) {
     )
     // The app's two tabs filled most of a 240px bar on their own; a contributed tab is
     // what would have wrapped it onto a second row.
-    const bar = await win.evaluate(() => {
-      const el = document.querySelector('[data-panel-bar="tabs"]')
-      const box = el.getBoundingClientRect()
-      return {
-        width: box.width,
-        parentWidth: el.parentElement.getBoundingClientRect().width,
-        rows: Math.round(box.height / el.querySelector('.panel-tab').getBoundingClientRect().height)
-      }
+    // Measured only once the panel has finished opening. Taken during the animation, every
+    // geometry claim below passes on a 4px bar inside a 16px panel — true, and about nothing.
+    const measure = () =>
+      win.evaluate(() => {
+        const el = document.querySelector('[data-panel-bar="tabs"]')
+        const box = el.getBoundingClientRect()
+        const tab = el.querySelector('.panel-tab')?.getBoundingClientRect()
+        return {
+          width: box.width,
+          parentWidth: el.parentElement.getBoundingClientRect().width,
+          rows: tab && tab.height ? Math.round(box.height / tab.height) : 0
+        }
+      })
+    const bar = await until(async () => {
+      const value = await measure()
+      return value.parentWidth >= 200 && value.width > 100 ? value : null
     })
+    t.check('the panel settled at its real width before being measured', !!bar, bar)
     t.check(
       'the bar takes the contributed tab without outgrowing the panel or wrapping',
       bar.width <= bar.parentWidth && bar.rows === 1,
@@ -167,6 +178,29 @@ export async function run(t) {
       await until(async () => (await guestSurface()) === hostSurface),
       { hostSurface, guestSurface: await guestSurface() }
     )
+    // The one claim the extraction is about, and the one nothing held: the policy the main
+    // process attaches to the preview URL reaches a surface wherever it is hosted. Widening
+    // it to `default-src *` leaves every other check in this repo green.
+    const csp = await win.evaluate(async () => {
+      const view = document.querySelector('[data-plugin-side-panel="hello"] webview')
+      try {
+        return await view.executeJavaScript(
+          "fetch(location.href).then(r => r.headers.get('content-security-policy'))"
+        )
+      } catch (error) {
+        return String(error)
+      }
+    })
+    t.check(
+      'the side-panel surface is served under the locked-down policy',
+      typeof csp === 'string' &&
+        csp.includes("default-src 'self'") &&
+        csp.includes("frame-src 'none'") &&
+        csp.includes("object-src 'none'") &&
+        csp.includes("base-uri 'none'") &&
+        !csp.includes('unsafe-eval'),
+      csp
+    )
     t.equal(
       'the folder bar, which is about Files and Git, steps aside',
       await win.locator('[data-panel-bar="path"]').count(),
@@ -191,8 +225,12 @@ export async function run(t) {
 
     // 6. Disabling the plugin takes every surface with it: a contribution outliving its
     //    plugin would render a revoked URL and a button that answers nothing.
+    // Both surfaces open, so the switch has two things to take away and two things it must
+    // not bring back on its own.
     await win.click('[data-plugin-tab="hello"]')
     await win.waitForSelector('[data-plugin-side-panel="hello"] webview')
+    await win.click('[data-plugin-main-toggle="hello-main"]')
+    await win.waitForSelector('[data-plugin-main-panel="hello-main"] webview')
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.hello'))
     t.check(
       'disabling removes the tab, the surface and the toolbar entries',
@@ -205,13 +243,43 @@ export async function run(t) {
       ),
       {
         tabs: await win.locator('[data-plugin-tab]').count(),
-        toolbar: await win.locator('[data-plugin-toolbar]').count()
+        toolbar: await win.locator('[data-plugin-toolbar]').count(),
+        mainPanels: await win.locator('[data-plugin-main-panel]').count()
       }
+    )
+    t.equal(
+      'and the terminals come back from under the main panel',
+      await win.locator('[data-plugin-main-panel]').count(),
+      0
     )
     t.equal(
       'the panel falls back to Files rather than an empty pane',
       await win.locator('[data-panel-bar="path"]').count(),
       1
+    )
+    // 7. Switching it back on must open nothing: the user clicked a switch in Settings, not
+    //    a tab and not a toolbar button. A main panel reopening itself takes the whole
+    //    content column back from the session mosaic.
+    await win.evaluate(() => window.electronAPI.pluginsEnable('clave.hello', ['sessions.read']))
+    await until(async () => (await win.locator('[data-plugin-tab="hello"]').count()) === 1)
+    t.equal(
+      'switching the plugin back on reopens no side panel',
+      await win.locator('[data-plugin-side-panel]').count(),
+      0
+    )
+    t.equal(
+      'and reopens no main panel over the terminals',
+      await win.locator('[data-plugin-main-panel]').count(),
+      0
+    )
+    t.check(
+      'the contributions are back, waiting to be clicked',
+      (await win.locator('[data-plugin-toolbar]').count()) === 2 &&
+        (await win.locator('[data-plugin-main-toggle]').count()) === 1,
+      {
+        toolbar: await win.locator('[data-plugin-toolbar]').count(),
+        mainToggles: await win.locator('[data-plugin-main-toggle]').count()
+      }
     )
   } finally {
     try {

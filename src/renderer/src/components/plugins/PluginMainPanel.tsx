@@ -13,8 +13,7 @@ export function PluginMainPanel(): React.JSX.Element | null {
   const close = usePluginUIStore((s) => s.openMainPanel)
   const panel =
     pluginPanels(usePluginRecords(), 'main').find(
-      (entry) =>
-        entry.pluginId === selection?.pluginId && entry.panelId === selection?.panelId
+      (entry) => entry.pluginId === selection?.pluginId && entry.panelId === selection?.panelId
     ) ?? null
   if (!panel) return null
   return (

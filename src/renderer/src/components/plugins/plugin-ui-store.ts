@@ -11,7 +11,8 @@ export interface PluginPanelEntry {
   title: string
   icon: string
   placement: 'side' | 'main'
-  /** Bumped when the plugin restarts, so a surface opened on a dead generation closes. */
+  /** Bumped when the plugin restarts. A host keys its surface on it, so a restart remounts
+   *  the panel on the new run rather than leaving a guest pointed at a revoked URL. */
   generation: number
 }
 export interface PluginToolbarEntry {
@@ -41,6 +42,41 @@ export const usePluginUIStore = create<PluginUIState>((set) => ({
   openSidePanel: (entry) => set({ sidePanel: entry }),
   openMainPanel: (entry) => set({ mainPanel: entry })
 }))
+
+let watching = false
+
+/** Watch the registry for the one transition a selection cannot survive: the user switching
+ *  a plugin off, or removing it. Resolving the selection against the live records was not
+ *  enough — a disabled plugin's panels correctly vanish, but the selection naming them stayed
+ *  behind, so switching the plugin back on in Settings reopened both surfaces with no click,
+ *  and a main panel reopening takes the whole content column back from the session mosaic.
+ *
+ *  The test is `enabled`, deliberately, not "the contribution is gone": a plugin that crashes
+ *  and restarts clears and re-registers its contributions while staying enabled, and there the
+ *  panel the user had open SHOULD come back. Only the user's own switch clears the selection. */
+export function initPluginUI(): void {
+  if (watching) return
+  watching = true
+  const prune = (records: PluginRecord[]): void => {
+    const dropped = (selection: { pluginId: string } | null): boolean =>
+      !!selection && !records.some((record) => record.id === selection.pluginId && record.enabled)
+    const state = usePluginUIStore.getState()
+    const next: Partial<PluginUIState> = {}
+    if (dropped(state.sidePanel)) next.sidePanel = null
+    if (dropped(state.mainPanel)) next.mainPanel = null
+    if (Object.keys(next).length) usePluginUIStore.setState(next)
+  }
+  const update = (): void => {
+    void window.electronAPI
+      .pluginsList()
+      .then(prune)
+      .catch(() => {
+        /* The registry reports its own errors in Settings. */
+      })
+  }
+  update()
+  window.electronAPI.onPluginsChanged(update)
+}
 
 /** The plugin records, kept current by the host's `plugins:changed` broadcast. Every host
  *  outside the settings page reads its contributions from here. */
