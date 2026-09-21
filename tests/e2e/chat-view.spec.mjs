@@ -113,7 +113,11 @@ export async function run(t) {
     const resultCard = view.locator('.chat-tool-run').filter({ hasText: 'Read fixture' })
     await resultCard.locator('> summary').locator('[aria-label="Complete"]').waitFor()
     await resultCard.locator('> summary').click()
-    assert.match(await resultCard.innerText(), new RegExp(TOOL_RESULT))
+    // The item's own Output preview, exactly — not a substring match over the
+    // whole card, and not the fixture string used unescaped as a regex.
+    const output = resultCard.locator('.chat-tool-item .chat-tool-section pre').first()
+    await output.waitFor()
+    assert.equal(await output.innerText(), TOOL_RESULT)
     t.check('Enter sends slash text through echo; Shift+Enter only inserts a newline', true)
     await app.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler('shell:openExternal')

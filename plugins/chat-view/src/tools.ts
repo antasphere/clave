@@ -22,6 +22,15 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
  *  turns is one step, and the approval the agent needed mid-run is part of it
  *  rather than a border. (The view before this one broke the run on any
  *  non-tool entry, so one permission split a single step into two rows.) */
+/** An assistant turn that opened and said nothing renders nowhere, so it may
+ *  not end a run either — otherwise the run breaks in a place the reader cannot
+ *  see. Both views filter through THIS, so both break a run in the same place;
+ *  the conversation view used to filter before grouping and the compact view
+ *  not at all, which split a run in one view and not the other. */
+export function visibleEntries(entries: Entry[]): Entry[] {
+  return entries.filter((e) => e.kind !== 'assistant' || e.text.trim() !== '')
+}
+
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
@@ -67,6 +76,23 @@ function field(data: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const value = data[key]
     if (typeof value === 'string' && value) return value
+    // argv rather than a command line: Codex sends `command` as an array.
+    if (Array.isArray(value) && value.every((v) => typeof v === 'string') && value.length)
+      return value.join(' ')
+  }
+  return ''
+}
+/* The argument a human recognises a call by, when the kind's own keys found
+   nothing. The port from #58 read only path / pattern / command keys, which
+   left every WebFetch, Task, TodoWrite and MCP call reading as a bare name —
+   the helper this replaced looked wider than that, and so does this. */
+const GENERIC_KEYS = ['url', 'description', 'prompt', 'title', 'name', 'id']
+function anyTarget(data: Record<string, unknown>): string {
+  const known = field(data, ...GENERIC_KEYS)
+  if (known) return known
+  for (const key of Object.keys(data)) {
+    const value = data[key]
+    if (typeof value === 'string' && value) return value
   }
   return ''
 }
@@ -89,7 +115,15 @@ export function content(value: unknown): string {
   if (data.content !== undefined) return content(data.content)
   if (typeof data.stdout === 'string' || typeof data.stderr === 'string')
     return [data.stdout, data.stderr].filter((v) => typeof v === 'string' && v).join('\n')
-  return JSON.stringify(value, null, 2) ?? ''
+  return safeJson(value)
+}
+/** A render may not throw. `JSON.stringify` does, on a circular payload. */
+export function safeJson(value: unknown, indent = 2): string {
+  try {
+    return JSON.stringify(value, null, indent) ?? ''
+  } catch {
+    return String(value)
+  }
 }
 
 export function describeTool(tool: ToolEntry): ToolDescription {
@@ -116,12 +150,13 @@ export function describeTool(tool: ToolEntry): ToolDescription {
   const query = field(data, 'pattern', 'query', 'glob')
   const command = field(data, 'command', 'cmd')
   const literal = typeof input === 'string' ? input : ''
-  const target =
+  const byKind =
     kind === 'search'
       ? query || literal || path
       : kind === 'command'
         ? command || literal
         : path || literal
+  const target = byKind || anyTarget(data)
   const sections: Section[] = []
   if (target.includes('\n') || target.length > 200)
     sections.push({ label: kind === 'command' ? 'Command' : 'Target', text: target })
@@ -182,7 +217,7 @@ export function toolGroupSummary(tools: ToolEntry[]): string {
   }
   const counts = new Map<
     string,
-    { kind: ToolKind; label: string; count: number; targets: Set<string> }
+    { kind: ToolKind; label: string; count: number; targets: Set<string>; named: number }
   >()
   for (const tool of tools) {
     const { kind, label, target } = describeTool(tool)
@@ -190,12 +225,20 @@ export function toolGroupSummary(tools: ToolEntry[]): string {
     const previous = counts.get(key)
     const targets = previous?.targets ?? new Set<string>()
     if (target) targets.add(target)
-    counts.set(key, { kind, label, count: (previous?.count ?? 0) + 1, targets })
+    counts.set(key, {
+      kind,
+      label,
+      count: (previous?.count ?? 0) + 1,
+      targets,
+      // "Read 2 files" may only be said when every read named a file. One
+      // unreadable call among five made the row claim a single file.
+      named: (previous?.named ?? 0) + (target ? 1 : 0)
+    })
   }
   return [...counts.values()]
-    .map(({ kind, label, count, targets }) => {
+    .map(({ kind, label, count, targets, named }) => {
       const files = (verb: string): string =>
-        targets.size
+        targets.size && named === count
           ? `${verb} ${targets.size} ${targets.size === 1 ? 'file' : 'files'}`
           : `${verb} ${times(count)}`
       if (kind === 'read') return files('Read')
@@ -222,6 +265,10 @@ export const PREVIEW_LINES = 8
 export const PREVIEW_CHARS = 2000
 /** What an opened tool shows before the reader asks for the rest. */
 export function toolPreview(text: string): { text: string; truncated: boolean } {
-  const preview = text.split('\n').slice(0, PREVIEW_LINES).join('\n').slice(0, PREVIEW_CHARS)
+  let preview = text.split('\n').slice(0, PREVIEW_LINES).join('\n').slice(0, PREVIEW_CHARS)
+  // A slice at PREVIEW_CHARS can land between the two halves of an astral
+  // character; the lone surrogate left behind renders as U+FFFD.
+  const last = preview.charCodeAt(preview.length - 1)
+  if (last >= 0xd800 && last <= 0xdbff) preview = preview.slice(0, -1)
   return { text: preview, truncated: preview.length < text.length }
 }

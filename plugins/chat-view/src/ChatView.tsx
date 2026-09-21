@@ -20,7 +20,7 @@ import type {
   CommandOption
 } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
-import { groupEntries } from './tools'
+import { groupEntries, visibleEntries } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ChatCode } from './code'
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
@@ -73,8 +73,21 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
 /** The provider's mark at the end of the transcript: breathing while the agent
  *  works (from the moment it starts, before any text), resting fully opaque
  *  under the finished answer. */
-function ProviderMark({ provider, working }: { provider: string; working: boolean }): React.JSX.Element {
-  const Logo = provider === 'claude' ? ClaudeLogo : provider === 'codex' ? CodexLogo : provider === 'pi' ? PiLogo : null
+function ProviderMark({
+  provider,
+  working
+}: {
+  provider: string
+  working: boolean
+}): React.JSX.Element {
+  const Logo =
+    provider === 'claude'
+      ? ClaudeLogo
+      : provider === 'codex'
+        ? CodexLogo
+        : provider === 'pi'
+          ? PiLogo
+          : null
   return (
     <div
       className="chat-provider-mark"
@@ -146,7 +159,11 @@ function SlashMenu({
     return () => bind(null)
   }, [bind, shown, index, onPick, onClose])
   return (
-    <div className="menu-surface menu-pop-mount chat-slash-menu" role="listbox" aria-label="Commands">
+    <div
+      className="menu-surface menu-pop-mount chat-slash-menu"
+      role="listbox"
+      aria-label="Commands"
+    >
       <div className="menu-label">Commands</div>
       {commands === null && !failure && <div className="chat-model-empty">Loading…</div>}
       {failure && <div className="chat-model-empty">Commands unavailable</div>}
@@ -170,9 +187,7 @@ function SlashMenu({
             onClick={() => onPick(command)}
           >
             <span className="chat-slash-name">/{command.name}</span>
-            {command.description && (
-              <span className="chat-slash-hint">{command.description}</span>
-            )}
+            {command.description && <span className="chat-slash-hint">{command.description}</span>}
           </button>
         ))}
       </div>
@@ -240,9 +255,7 @@ function ModelMenu({
           title="Change model"
           disabled={disabled}
         >
-          <span className="chat-model-trigger-label">
-            {current?.label ?? model ?? 'Default'}
-          </span>
+          <span className="chat-model-trigger-label">{current?.label ?? model ?? 'Default'}</span>
           <ChevronDownIcon />
         </button>
       </DropdownMenu.Trigger>
@@ -384,30 +397,30 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     if (entry.kind === 'assistant')
       return (
         <div key={index} className="chat-turn-wrap" data-side="start">
-        <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: ChatCode,
-              a: ({ href, children }) =>
-                href && /^(https?:|mailto:)/i.test(href) ? (
-                  <a
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void window.electronAPI.openExternal(href).catch(report)
-                    }}
-                  >
-                    {children}
-                  </a>
-                ) : (
-                  <span>{children}</span>
-                )
-            }}
-          >
-            {entry.text}
-          </ReactMarkdown>
-        </article>
+          <article className="chat-turn chat-prose" data-role="assistant">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code: ChatCode,
+                a: ({ href, children }) =>
+                  href && /^(https?:|mailto:)/i.test(href) ? (
+                    <a
+                      href={href}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        void window.electronAPI.openExternal(href).catch(report)
+                      }}
+                    >
+                      {children}
+                    </a>
+                  ) : (
+                    <span>{children}</span>
+                  )
+              }}
+            >
+              {entry.text}
+            </ReactMarkdown>
+          </article>
           <TurnMeta at={entry.at} text={entry.text} />
         </div>
       )
@@ -512,8 +525,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   }, [])
   const closeSlash = useCallback((): void => setSlashDismissed(draft), [draft])
   // Empty assistant turns (a closing frame that opened nothing) do not render;
-  // consecutive tool calls fold into one tight group.
-  const visible = conversation.entries.filter((e) => e.kind !== 'assistant' || e.text.trim())
+  // consecutive tool calls fold into one row. Both views filter and group
+  // through the same two functions, so a run breaks in the same place in each.
+  const visible = visibleEntries(conversation.entries)
   const blocks = groupEntries(visible)
   const lastVisible = visible.at(-1)
   const showMark = state === 'working' || (!!lastVisible && lastVisible.kind !== 'user')

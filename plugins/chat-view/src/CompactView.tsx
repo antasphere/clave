@@ -6,7 +6,14 @@ import {
   type LoggedEvent
 } from '../../../src/renderer/src/views/conversation-store'
 import { emptyConversation, reduceConversation, type Conversation } from './reducer'
-import { failureCount, groupEntries, groupStatus, toolGroupSummary, type Block } from './tools'
+import {
+  failureCount,
+  groupEntries,
+  groupStatus,
+  toolGroupSummary,
+  visibleEntries,
+  type Block
+} from './tools'
 import type { ChatViewProps } from './ChatView'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
@@ -43,8 +50,7 @@ function toolLine(tools: Extract<Block, { kind: 'tool-group' }>['tools']): {
   const status = groupStatus(tools)
   const failures = failureCount(tools)
   const summary = toolGroupSummary(tools)
-  const suffix =
-    status === 'running' ? ' — running…' : failures > 0 ? ` — ${failures} failed` : ''
+  const suffix = status === 'running' ? ' — running…' : failures > 0 ? ` — ${failures} failed` : ''
   return { role: 'Tools', text: `${summary}${suffix}` }
 }
 export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
@@ -103,16 +109,14 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
           </div>
         ) : (
           <ol className="chat-column" aria-label="Conversation, compact">
-            {groupEntries(conversation.entries).map((block, index) => {
+            {groupEntries(visibleEntries(conversation.entries)).map((block, index) => {
               const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
               return (
                 <li
                   key={block.kind === 'tool-group' ? `tools-${block.id}` : index}
                   className="flex items-baseline gap-2 min-w-0"
                   data-kind={block.kind}
-                  data-state={
-                    block.kind === 'tool-group' ? groupStatus(block.tools) : undefined
-                  }
+                  data-state={block.kind === 'tool-group' ? groupStatus(block.tools) : undefined}
                   data-failures={
                     block.kind === 'tool-group' ? failureCount(block.tools) : undefined
                   }

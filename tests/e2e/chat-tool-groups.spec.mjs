@@ -41,22 +41,44 @@ export async function run(t) {
     await run1.locator('summary [aria-label="Running"]').waitFor()
     t.check('four consecutive tools render as one row, counted by kind, with a loader', true)
 
-    // The run is closed until the reader says otherwise.
+    // The run is closed until the reader says otherwise, and while closed it
+    // puts none of its tools' bodies in the document.
     assert.equal(await run1.evaluate((el) => el.open), false)
+    assert.equal(await run1.locator('.chat-tool-item').count(), 0)
     await run1.locator('> summary').click()
     assert.equal(await run1.evaluate((el) => el.open), true)
-    assert.equal(await run1.locator('.chat-tool-item').count(), 4)
+    // The bodies are built on the first open, so they arrive a tick later.
+    await until(async () => (await run1.locator('.chat-tool-item').count()) === 4)
     const first = run1.locator('.chat-tool-item').first()
     assert.equal(await first.locator('.chat-tool-name').innerText(), 'Read')
     assert.match(await first.innerText(), /first file/)
     t.check('the row opens to one item per call, each with its own preview', true)
 
-    // The reader's choice survives the last result arriving.
-    await inject(app, record.id, [{ type: 'tool_result', id: 'g4', output: 'third file' }])
+    // The reader's choice survives a NEW CALL joining the open run. This is the
+    // commoner live case — the agent keeps calling tools while the row is open —
+    // and keying the row on the run's length rather than its first tool id
+    // passes every other check here while closing the row under the reader.
+    await inject(app, record.id, [
+      { type: 'tool_call', id: 'g5', name: 'Grep', input: { pattern: 'TODO' } }
+    ])
+    await until(async () => (await run1.locator('.chat-tool-item').count()) === 5)
+    assert.equal(
+      await run1.evaluate((el) => el.open),
+      true,
+      'an opened run must stay open when a new call joins it'
+    )
+    assert.equal(await run1.getAttribute('data-tools'), '5')
+    t.check('a new call joining an open run leaves it open', true)
+
+    // And the choice survives the last results arriving.
+    await inject(app, record.id, [
+      { type: 'tool_result', id: 'g5', output: 'one match' },
+      { type: 'tool_result', id: 'g4', output: 'third file' }
+    ])
     await run1.locator('summary [aria-label="Complete"]').waitFor()
     assert.equal(await run1.getAttribute('data-state'), 'complete')
     assert.equal(await run1.evaluate((el) => el.open), true)
-    assert.equal(await run1.locator('.chat-tool-item').count(), 4)
+    assert.equal(await run1.locator('.chat-tool-item').count(), 5)
     t.check('a result arriving mid-run leaves an opened row open', true)
 
     // A message ends the run; a permission card does not.
@@ -107,7 +129,7 @@ export async function run(t) {
     assert.equal(await compactRows.first().locator('span').first().innerText(), 'Tools')
     assert.equal(
       await compactRows.first().locator('span').nth(1).innerText(),
-      'Read 3 files · Ran 1 command'
+      'Read 3 files · Ran 1 command · Searched once'
     )
     assert.equal(await compactRows.nth(2).getAttribute('data-state'), 'failed')
     assert.equal(await compactRows.nth(2).getAttribute('data-failures'), '1')

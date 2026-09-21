@@ -604,5 +604,11 @@ it('carries the CLI word that a tool failed, and says nothing when it did not', 
     { type: 'tool_result', id: 'bad', output: 'permission denied', error: true },
     { type: 'tool_result', id: 'said-no', output: 'fine', error: false }
   ])
-  for (const event of results) expect(() => SessionEventSchema.parse(event)).not.toThrow()
+  // The flag must survive the contract, not merely fail to crash it: zod strips
+  // an unknown key silently, so `not.toThrow()` would pass with no field at all.
+  expect(results.map((e) => SessionEventSchema.parse(e))).toMatchObject([
+    { error: undefined },
+    { error: true },
+    { error: false }
+  ])
 })

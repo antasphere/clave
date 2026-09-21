@@ -40,6 +40,8 @@ try {
   // One run row per step since PRDCT-2613, and its items carry summaries of
   // their own — so open the RUN, not any summary under it.
   await win.locator('.chat-tool-run > summary').click()
+  // The run builds its bodies on the first open.
+  await win.locator('.chat-tool-item .chat-tool-section pre').first().waitFor()
   const colors = new Set()
   for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
     await win.evaluate((theme) => {
@@ -78,7 +80,10 @@ try {
     assert.match(values.font, /Geist/)
     assert.equal(values.overflow, false, `${theme}: view does not overflow`)
     colors.add(values.background)
-    assert.match(await win.locator('.chat-tool-run').innerText(), new RegExp(TOOL_RESULT))
+    assert.equal(
+      await win.locator('.chat-tool-item .chat-tool-section pre').first().innerText(),
+      TOOL_RESULT
+    )
     assert.ok(await win.getByRole('button', { name: 'Allow', exact: true }).isVisible())
     // Screenshot bytes remain in memory, never in the project or baseline tree.
     const screenshot = await win.locator('.chat-host').screenshot()

@@ -11,22 +11,26 @@ import {
   groupStatus,
   toolGroupSummary,
   toolPreview,
+  safeJson,
   type GroupStatus,
   type Section,
   type ToolEntry,
   type ToolGroup as Group
 } from './tools'
 
-const stringify = (value: unknown): string =>
-  typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '')
+const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
 
 function StatusIcon({ status }: { status: GroupStatus }): React.JSX.Element {
   if (status === 'running')
-    return (
-      <ArrowPathIcon className="chat-tool-status" data-running="true" aria-label="Running" />
-    )
+    return <ArrowPathIcon className="chat-tool-status" data-running="true" aria-label="Running" />
   if (status === 'failed')
-    return <ExclamationTriangleIcon className="chat-tool-status" data-failed="true" aria-label="Failed" />
+    return (
+      <ExclamationTriangleIcon
+        className="chat-tool-status"
+        data-failed="true"
+        aria-label="Failed"
+      />
+    )
   return <CheckIcon className="chat-tool-status" aria-label="Complete" />
 }
 
@@ -108,12 +112,21 @@ export function ToolGroup({ group }: { group: Group }): React.JSX.Element {
   const status = groupStatus(group.tools)
   const failures = failureCount(group.tools)
   const summary = toolGroupSummary(group.tools)
+  /* The bodies are built only once the reader has opened the row, and stay
+     built after. A closed run of big outputs otherwise puts every byte in the
+     document TWICE per tool — the preview and the raw block — and re-derives
+     both on every event of the session. This reads `open` rather than setting
+     it, so the row stays uncontrolled and nothing here can expand it. */
+  const [opened, setOpened] = useState(false)
   return (
     <details
       className="chat-tool-card chat-tool-run"
       data-state={status}
       data-failures={failures}
       data-tools={group.tools.length}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setOpened(true)
+      }}
     >
       <summary>
         <ChevronRightIcon className="chat-tool-chevron" />
@@ -121,16 +134,10 @@ export function ToolGroup({ group }: { group: Group }): React.JSX.Element {
         <span className="chat-tool-run-summary" title={summary}>
           {summary}
         </span>
-        {failures > 0 && (
-          <span className="chat-tool-failures">
-            {failures} failed
-          </span>
-        )}
+        {failures > 0 && <span className="chat-tool-failures">{failures} failed</span>}
       </summary>
       <div className="chat-card-body">
-        {group.tools.map((tool) => (
-          <ToolItem key={tool.id} tool={tool} />
-        ))}
+        {opened && group.tools.map((tool) => <ToolItem key={tool.id} tool={tool} />)}
       </div>
     </details>
   )

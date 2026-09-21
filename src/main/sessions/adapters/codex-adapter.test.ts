@@ -525,8 +525,15 @@ describe('Codex tool failure', () => {
     })
     expect(resultFor({ id: 'm2', type: 'mcpToolCall', result: 'ok' }).error).toBe(undefined)
   })
-  it('emits an event the contract still accepts', () => {
-    const event = resultFor({ id: 'c4', type: 'commandExecution', exitCode: 2, aggregatedOutput: '' })
-    expect(() => SessionEventSchema.parse(event)).not.toThrow()
+  it('carries the flag THROUGH the contract, not merely past it', () => {
+    const event = resultFor({
+      id: 'c4',
+      type: 'commandExecution',
+      exitCode: 2,
+      aggregatedOutput: ''
+    })
+    // zod strips an unknown key silently, so asserting "did not throw" would
+    // pass just as well with `error` removed from the schema altogether.
+    expect(SessionEventSchema.parse(event)).toMatchObject({ type: 'tool_result', error: true })
   })
 })

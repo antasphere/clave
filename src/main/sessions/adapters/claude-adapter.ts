@@ -80,7 +80,8 @@ export class ClaudeStreamTranslator {
     else
       this.emit({
         type: 'error',
-        message: response.data.error ?? `Claude refused to switch to ${model ?? 'the default model'}`,
+        message:
+          response.data.error ?? `Claude refused to switch to ${model ?? 'the default model'}`,
         fatal: false
       })
     return true

@@ -2349,10 +2349,8 @@ button.extension-card:hover {
 }
 .chat-prose th { color: var(--text-secondary); font-weight: var(--font-weight-medium); }
 
-/* Tool rows: one line closed, the input and result under it when opened.
-   The view folds consecutive rows into .chat-tool-group, spaced by the row
-   rhythm, so a run of tools reads as one tight step list. */
-.chat-tool-group { align-self: stretch; display: flex; flex-direction: column; gap: var(--row-gap); }
+/* Tool rows: one line closed, the calls under it when opened. A whole RUN of
+   tools is one .chat-tool-run row (see below), so nothing emits a wrapper. */
 .chat-tool-card {
   align-self: stretch;
   border: thin solid var(--border-subtle-color);
@@ -2429,7 +2427,6 @@ button.extension-card:hover {
    default, opening to one item per call. The run row reuses .chat-tool-card so
    a single frame spec covers both; what is new is the run's own summary line,
    the failure chip and the item inside the body. */
-.chat-tool-run summary { gap: calc(var(--spacing) * 2); }
 .chat-tool-run-summary {
   flex: 1;
   min-width: 0;
@@ -2479,8 +2476,13 @@ button.extension-card:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.chat-tool-more, .chat-tool-raw summary {
+.chat-tool-more, .chat-tool-card .chat-tool-raw > summary {
+  /* Overrides .chat-tool-card summary, which this one sits inside: without the
+     display and min-height the text toggle takes that row's own flex box and
+     without the background it takes its hover pill. */
+  display: inline-block;
   align-self: flex-start;
+  min-height: 0;
   list-style: none;
   padding: 0;
   border: none;
@@ -2490,7 +2492,11 @@ button.extension-card:hover {
   cursor: pointer;
   transition: color var(--default-transition-duration);
 }
-.chat-tool-more:hover, .chat-tool-raw summary:hover { color: var(--text-secondary); }
+.chat-tool-more:hover,
+.chat-tool-card .chat-tool-raw > summary:hover {
+  background: none;
+  color: var(--text-secondary);
+}
 .chat-tool-raw summary::-webkit-details-marker { display: none; }
 .chat-tool-raw { display: flex; flex-direction: column; gap: var(--spacing); }
 

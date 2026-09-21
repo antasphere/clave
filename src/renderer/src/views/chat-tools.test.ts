@@ -9,6 +9,9 @@ import {
   PREVIEW_LINES,
   toolGroupSummary,
   toolPreview,
+  safeJson,
+  content,
+  visibleEntries,
   type ToolEntry
 } from '../../../../plugins/chat-view/src/tools'
 
@@ -84,7 +87,10 @@ describe('groupEntries', () => {
 
 describe('groupStatus and failureCount', () => {
   it('is running while any tool is incomplete, even beside a failure', () => {
-    const tools = [tool({ id: 'a', complete: true, failed: true }), tool({ id: 'b', complete: false })]
+    const tools = [
+      tool({ id: 'a', complete: true, failed: true }),
+      tool({ id: 'b', complete: false })
+    ]
     expect(groupStatus(tools)).toBe('running')
     expect(failureCount(tools)).toBe(1)
   })
@@ -114,9 +120,9 @@ describe('describeTool', () => {
     expect(describeTool(tool({ id: 'a', name: 'Sparkle' })).label).toBe('Sparkle')
   })
   it('takes the target a human recognises the call by, per kind', () => {
-    expect(describeTool(tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts' } })).target).toBe(
-      '/x.ts'
-    )
+    expect(
+      describeTool(tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts' } })).target
+    ).toBe('/x.ts')
     expect(
       describeTool(tool({ id: 'a', name: 'Bash', input: { command: 'npm test' } })).target
     ).toBe('npm test')
@@ -125,8 +131,9 @@ describe('describeTool', () => {
     ).toBe('TODO')
   })
   it('reads the line range of a Read as its detail', () => {
-    expect(describeTool(tool({ id: 'a', input: { file_path: '/x', offset: 10, limit: 5 } })).detail)
-      .toBe('Lines 10–14')
+    expect(
+      describeTool(tool({ id: 'a', input: { file_path: '/x', offset: 10, limit: 5 } })).detail
+    ).toBe('Lines 10–14')
   })
   it('reads a shell exit code out of the output as its detail', () => {
     const shell = tool({ id: 'a', name: 'Bash', input: { command: 'ls' }, output: { exitCode: 2 } })
@@ -139,7 +146,11 @@ describe('describeTool', () => {
     expect(done && describeTool(done).sections).toEqual([{ label: 'Content', text: 'body' }])
   })
   it('renders content blocks as text and anything else as readable JSON', () => {
-    const blocks = tool({ id: 'a', input: { file_path: '/x' }, output: [{ text: 'one' }, { text: 'two' }] })
+    const blocks = tool({
+      id: 'a',
+      input: { file_path: '/x' },
+      output: [{ text: 'one' }, { text: 'two' }]
+    })
     expect(describeTool(blocks).sections[0].text).toBe('one\ntwo')
     const odd = tool({ id: 'a', input: { file_path: '/x' }, output: { shape: [1, 2] } })
     expect(describeTool(odd).sections[0].text).toContain('"shape"')
@@ -175,6 +186,13 @@ describe('toolGroupSummary', () => {
       ])
     ).toBe('Searched twice')
   })
+  it('will not claim N files unless EVERY read named one', () => {
+    const tools = [
+      tool({ id: 'a', name: 'Read', input: { file_path: '/x' } }),
+      ...['b', 'c', 'd', 'e'].map((id) => tool({ id, name: 'Read', input: {} }))
+    ]
+    expect(toolGroupSummary(tools)).toBe('Read 5 times')
+  })
   it('falls back to a count when a read carries no recognisable target', () => {
     expect(
       toolGroupSummary([
@@ -197,7 +215,71 @@ describe('toolGroupSummary', () => {
   })
 })
 
+describe('a target for every tool, not only the file-shaped ones', () => {
+  it('names a WebFetch by its url and a Task by its description', () => {
+    expect(
+      describeTool(tool({ id: 'a', name: 'WebFetch', input: { url: 'https://example.com/docs' } }))
+        .target
+    ).toBe('https://example.com/docs')
+    expect(
+      describeTool(tool({ id: 'a', name: 'Task', input: { description: 'find the seam' } })).target
+    ).toBe('find the seam')
+  })
+  it('falls back to the first string an unknown input carries', () => {
+    expect(
+      describeTool(tool({ id: 'a', name: 'mcp__linear__list', input: { teamId: 'TEAM-7' } })).target
+    ).toBe('TEAM-7')
+  })
+  it('reads argv sent as an array as one command line', () => {
+    const argv = tool({ id: 'a', name: 'commandExecution', input: { command: ['npm', 'test'] } })
+    expect(describeTool(argv).target).toBe('npm test')
+  })
+  it("still prefers the kind's own key over the generic fallback", () => {
+    const read = tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts', url: 'http://n' } })
+    expect(describeTool(read).target).toBe('/x.ts')
+  })
+})
+
+describe('visibleEntries', () => {
+  it('drops an assistant turn that said nothing, so a run does not break on it', () => {
+    const entries = [tool({ id: 'a' }), assistant('   \n '), tool({ id: 'b' })]
+    expect(visibleEntries(entries)).toHaveLength(2)
+    const blocks = groupEntries(visibleEntries(entries))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].kind === 'tool-group' && blocks[0].tools).toHaveLength(2)
+  })
+  it('keeps an assistant turn that said something', () => {
+    expect(visibleEntries([assistant('a word')])).toHaveLength(1)
+  })
+})
+
+describe('safeJson', () => {
+  it('returns a string rather than throwing on a circular payload', () => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    expect(typeof safeJson(circular)).toBe('string')
+    expect(typeof content(circular)).toBe('string')
+  })
+})
+
 describe('toolPreview', () => {
+  it('previews the documented 8 lines and 2000 characters', () => {
+    // The README, the commit message and the component all state these figures;
+    // asserted literally, because a test written against the constants stays
+    // green while they drift away from the prose.
+    expect(PREVIEW_LINES).toBe(8)
+    expect(PREVIEW_CHARS).toBe(2000)
+    expect(toolPreview(Array.from({ length: 12 }, (_, i) => i).join('\n')).text).toBe(
+      '0\n1\n2\n3\n4\n5\n6\n7'
+    )
+  })
+  it('never ends on half a character', () => {
+    const { text } = toolPreview('x' + '\u{1F600}'.repeat(PREVIEW_CHARS))
+    expect(text.length).toBeLessThanOrEqual(PREVIEW_CHARS)
+    const last = text.charCodeAt(text.length - 1)
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false)
+    expect([...text].every((c) => c === 'x' || c === '\u{1F600}')).toBe(true)
+  })
   it('keeps the first lines and reports that there is more', () => {
     const text = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
     const preview = toolPreview(text)
