@@ -95,7 +95,7 @@ function InlineCreateInput({
 
   return (
     <div
-      className="flex items-center gap-1.5 h-7 pr-3"
+      className="flex items-center gap-1.5 h-control-md pr-3"
       style={{ paddingLeft: `${TREE_ROW_PAD_PX + depth * TREE_INDENT_PX}px` }}
     >
       <span className="w-2.5 flex-shrink-0" />
@@ -134,7 +134,7 @@ function InlineCreateInput({
           onKeyDown={handleKeyDown}
           onBlur={submit}
           placeholder={state.type === 'file' ? 'filename' : 'folder name'}
-          className={`w-full h-5 px-1.5 rounded text-xs font-mono bg-surface-100 text-text-primary placeholder:text-text-tertiary outline-none border ${
+          className={`w-full h-control-xs px-1.5 rounded text-xs font-mono bg-surface-100 text-text-primary placeholder:text-text-tertiary outline-none border ${
             error ? 'border-red-400' : 'border-accent'
           }`}
         />

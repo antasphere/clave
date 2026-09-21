@@ -1483,7 +1483,7 @@ export function Sidebar() {
                                 }
                               >
                                 <FolderIcon className="sidebar-tab-icon flex-shrink-0" />
-                                <span className="flex-1 min-w-0 truncate text-[13px] font-medium text-text-secondary">
+                                <span className="flex-1 min-w-0 truncate text-control font-medium text-text-secondary">
                                   {entry.name}
                                 </span>
                                 <button

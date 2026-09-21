@@ -150,7 +150,7 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JS
           {(['credentials', 'test', 'summary'] as Step[]).map((s, i) => (
             <div key={s} className="flex items-center gap-2">
               <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                className={`w-6 h-control-sm rounded-full flex items-center justify-center text-xs font-medium ${
                   step === s
                     ? 'bg-accent text-white'
                     : i < ['credentials', 'test', 'summary'].indexOf(step)

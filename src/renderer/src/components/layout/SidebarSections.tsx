@@ -11,7 +11,7 @@ export function SectionHeading({
   // Both paddings derive from the shared sidebar keyline (--sidebar-gutter) so
   // the label aligns with row text on the left and any action icons align with
   // the rows' trailing icons on the right.
-  const label = <span className="text-[13px] font-medium text-text-tertiary">{title}</span>
+  const label = <span className="text-control font-medium text-text-tertiary">{title}</span>
   return (
     <div className="w-full flex items-center px-[var(--sidebar-gutter)] pt-3.5 pb-1 flex-shrink-0">
       {onToggle ? (

@@ -25,18 +25,18 @@ export function RemotePathInput({ defaultPath = '~', onSubmit, onCancel }: Remot
           if (e.key === 'Escape') onCancel()
         }}
         placeholder="Remote path (e.g. ~/projects)"
-        className="flex-1 h-7 px-2 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
+        className="flex-1 h-control-md px-2 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
         autoFocus
       />
       <button
         onClick={handleSubmit}
-        className="h-7 px-3 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors"
+        className="h-control-md px-3 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors"
       >
         Open
       </button>
       <button
         onClick={onCancel}
-        className="h-7 px-2 rounded-lg text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-200 transition-colors"
+        className="h-control-md px-2 rounded-lg text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-200 transition-colors"
       >
         Cancel
       </button>

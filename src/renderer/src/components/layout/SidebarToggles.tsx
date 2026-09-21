@@ -11,8 +11,8 @@ export function ClaudeToggle({ compact }: { compact?: boolean }) {
       <IconButton
         onClick={toggleClaudeMode}
         className={compact
-          ? 'relative w-5 h-5 flex items-center justify-center rounded-md hover:bg-surface-200 transition-colors duration-150'
-          : 'relative w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-200'
+          ? 'relative w-5 h-control-xs flex items-center justify-center rounded-md hover:bg-surface-200 transition-colors duration-150'
+          : 'relative w-8 h-control-lg flex items-center justify-center rounded-lg transition-all duration-200'
         }
         style={compact ? undefined : {
           backgroundColor: claudeMode
@@ -50,8 +50,8 @@ export function DangerousToggle({ compact }: { compact?: boolean }) {
       <IconButton
         onClick={toggleDangerousMode}
         className={compact
-          ? 'relative w-5 h-5 flex items-center justify-center rounded-md hover:bg-surface-200 transition-colors duration-150'
-          : 'relative w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-200'
+          ? 'relative w-5 h-control-xs flex items-center justify-center rounded-md hover:bg-surface-200 transition-colors duration-150'
+          : 'relative w-8 h-control-lg flex items-center justify-center rounded-lg transition-all duration-200'
         }
         style={compact ? undefined : {
           backgroundColor: dangerousMode

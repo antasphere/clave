@@ -77,7 +77,7 @@ function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Icon className="w-8 h-8 text-text-tertiary/50 mb-3" />
-      <p className="text-[13px] text-text-tertiary max-w-xs">{message}</p>
+      <p className="text-control text-text-tertiary max-w-xs">{message}</p>
     </div>
   )
 }
@@ -125,7 +125,7 @@ function MarketplacesGrid({
         >
           <div className="flex items-center gap-2">
             <BuildingStorefrontIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               {m.name}
             </span>
             {m.autoUpdate && <Chip className="!bg-green-500/15 !text-green-600">auto</Chip>}
@@ -148,7 +148,7 @@ function MarketplacesGrid({
         >
           <div className="flex items-center gap-2">
             <FolderOpenIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               Standalone
             </span>
           </div>
@@ -220,7 +220,7 @@ function MarketplaceView({
             <button key={p.id} className="extension-card" onClick={() => onOpenPlugin(p.id)}>
               <div className="flex items-center gap-2">
                 <CubeTransparentIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-                <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+                <span className="text-control font-semibold text-text-primary truncate flex-1">
                   {p.name}
                 </span>
                 {!p.enabled && <Chip className="!bg-amber-500/15 !text-amber-600">disabled</Chip>}
@@ -242,7 +242,7 @@ function MarketplaceView({
               <div key={name} className="extension-card extension-card-muted">
                 <div className="flex items-center gap-2">
                   <CubeTransparentIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-                  <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+                  <span className="text-control font-semibold text-text-primary truncate flex-1">
                     {name}
                   </span>
                 </div>
@@ -422,7 +422,7 @@ function McpGrid({ inv }: { inv: ExtensionsInventory }) {
         <div key={`${m.scope}:${m.name}:${i}`} className="extension-card">
           <div className="flex items-center gap-2">
             <ServerStackIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               {m.name}
             </span>
             <Chip className="!bg-accent/12 !text-accent">{m.transport}</Chip>
@@ -450,7 +450,7 @@ function McpGrid({ inv }: { inv: ExtensionsInventory }) {
 
 function Breadcrumb({ segments }: { segments: { label: string; onClick?: () => void }[] }) {
   return (
-    <div className="flex items-center gap-1 text-[13px] mb-4 min-w-0">
+    <div className="flex items-center gap-1 text-control mb-4 min-w-0">
       {segments.map((seg, i) => {
         const isLast = i === segments.length - 1
         return (
@@ -722,13 +722,13 @@ export function ExtensionsPanel() {
         )}
 
         {error && (
-          <div className="px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/20 text-[13px] text-red-500">
+          <div className="px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/20 text-control text-red-500">
             {error}
           </div>
         )}
 
         {!error && loading && !inv && (
-          <p className="text-[13px] text-text-tertiary py-16 text-center">Reading extensions…</p>
+          <p className="text-control text-text-tertiary py-16 text-center">Reading extensions…</p>
         )}
 
         {!error && inv && section === 'mcp' && <McpGrid inv={inv} />}

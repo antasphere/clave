@@ -215,6 +215,49 @@ export async function run(t) {
       spaciousRow
     })
 
+    // ── A renderer label follows the spec, measured, not grepped ───────────
+    // The round-1 review's defect 1: the renderer pinned the control's numbers
+    // as Tailwind arbitrary values, so a Spacious 31.5px row kept a 13px name.
+    // check-tokens.mjs now refuses the LITERAL `text-[13px]`, but a literal ban
+    // only catches the number it knows — mutating that span to `text-[19px]`
+    // slips straight past it, because 19 is not a number the spec owns. The
+    // only check that cannot be dodged is measuring the rendered label against
+    // the token at a non-default stop, which is what this does. The hook is a
+    // data-testid rather than the class under test: swap the class for a
+    // literal and the element is still found, and still wrong.
+    await win.keyboard.press('End')
+    await until(async () => (await win.textContent('[data-testid="density-value"]')) === 'Spacious')
+    const spec = await win.evaluate(RESOLVE, ['--control-text'])
+    const labelPx = await win.evaluate(() => {
+      const el = document.querySelector('[data-testid="settings-nav-title"]')
+      return el ? parseFloat(getComputedStyle(el).fontSize) : null
+    })
+    t.check(
+      'the Settings nav label is drawn at --control-text, not a pinned literal',
+      labelPx !== null && near(labelPx, spec['--control-text']),
+      { labelPx, controlText: spec['--control-text'], stop: 'Spacious' }
+    )
+    t.check(
+      'and it actually moved off the default stop value',
+      labelPx !== null && !near(labelPx, 13),
+      labelPx
+    )
+
+    // Nothing in the app's own chrome may still be sitting at the default
+    // stop's 13px once the slider is at Spacious. The terminal is excluded by
+    // the brief — its font size is the terminal's setting, not the chrome's.
+    const stuck = await win.evaluate(() =>
+      [...document.querySelectorAll('body *')]
+        .filter((el) => !el.closest('.xterm') && el.textContent?.trim())
+        .filter((el) => Math.abs(parseFloat(getComputedStyle(el).fontSize) - 13) < 0.01)
+        .slice(0, 8)
+        .map((el) => ({
+          cls: el.className?.toString?.().slice(0, 60),
+          text: el.textContent.trim().slice(0, 30)
+        }))
+    )
+    t.check('no chrome text is still pinned at 13px at Spacious', stuck.length === 0, stuck)
+
     // ── It survives a skin change ───────────────────────────────────────────
     // applySkin() clears the properties it wrote; --density is not one of them
     // and must still be standing afterwards, at the value the user picked.

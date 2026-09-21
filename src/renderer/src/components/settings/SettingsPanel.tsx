@@ -419,7 +419,7 @@ function TreeSeparatorsSection(): React.JSX.Element {
                   <div className="tree-rule" style={{ marginLeft: 12 + i * 12, marginRight: 12 }} />
                 )}
                 <div
-                  className="h-6 flex items-center text-[11px] text-text-tertiary"
+                  className="h-control-sm flex items-center text-[11px] text-text-tertiary"
                   style={{ paddingLeft: 12 + i * 12 }}
                 >
                   {name}

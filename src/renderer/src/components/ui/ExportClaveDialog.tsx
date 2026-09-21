@@ -66,7 +66,7 @@ export function ExportClaveDialog({
               <ModalPositioner className="w-[320px]">
                 <div className="modal-card">
                   <div className="px-4 pt-4 pb-3">
-                    <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                    <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                       Export as .clave
                     </DialogPrimitive.Title>
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
@@ -77,7 +77,7 @@ export function ExportClaveDialog({
                     <button
                       type="button"
                       onClick={handlePickFolder}
-                      className="mt-3 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
+                      className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
                       title={folder ?? 'Select folder'}
                     >
                       <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />

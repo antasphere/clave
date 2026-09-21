@@ -212,7 +212,7 @@ export function RemoteDirectoryPicker({
         {/* Header */}
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border-subtle">
           <FolderIcon className="w-4 h-4 text-accent flex-shrink-0" />
-          <h3 className="flex-1 min-w-0 text-[13px] font-semibold text-text-primary">
+          <h3 className="flex-1 min-w-0 text-control font-semibold text-text-primary">
             Open folder
           </h3>
           <span
@@ -270,7 +270,7 @@ export function RemoteDirectoryPicker({
             <button
               onClick={startEditing}
               title="Edit path"
-              className="flex-1 min-w-0 flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-xs text-text-tertiary overflow-x-auto hover:bg-surface-100 transition-colors"
+              className="flex-1 min-w-0 flex items-center gap-0.5 h-control-md px-1.5 rounded-lg text-xs text-text-tertiary overflow-x-auto hover:bg-surface-100 transition-colors"
             >
               <span
                 onClick={(e) => {
@@ -334,7 +334,7 @@ export function RemoteDirectoryPicker({
                 onClick={() => navigateTo(item.path)}
                 onMouseMove={() => setHighlight(i)}
                 className={cn(
-                  'group w-full flex items-center gap-2.5 px-2.5 h-8 rounded-lg text-left transition-colors',
+                  'group w-full flex items-center gap-2.5 px-2.5 h-control-lg rounded-lg text-left transition-colors',
                   i === highlight ? 'bg-surface-100' : 'hover:bg-surface-100'
                 )}
               >
@@ -348,7 +348,7 @@ export function RemoteDirectoryPicker({
                 />
                 <span
                   className={cn(
-                    'flex-1 min-w-0 truncate text-[13px]',
+                    'flex-1 min-w-0 truncate text-control',
                     item.kind === 'up' ? 'text-text-secondary' : 'text-text-primary'
                   )}
                 >

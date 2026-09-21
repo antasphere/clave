@@ -55,7 +55,7 @@ export function AddMarketplaceDialog({ isOpen, onAdd, onCancel, busy }: AddMarke
               <ModalPositioner className="w-[360px]">
                 <div className="modal-card">
                   <div className="px-4 pt-4 pb-3">
-                    <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                    <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                       Add marketplace
                     </DialogPrimitive.Title>
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
@@ -78,7 +78,7 @@ export function AddMarketplaceDialog({ isOpen, onAdd, onCancel, busy }: AddMarke
                       autoCapitalize="off"
                       autoCorrect="off"
                       disabled={busy}
-                      className="mt-3 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors font-mono"
+                      className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors font-mono"
                     />
 
                     <div className="mt-3 flex items-start gap-2 px-2.5 py-2 rounded-lg bg-amber-500/8 border border-amber-500/20">

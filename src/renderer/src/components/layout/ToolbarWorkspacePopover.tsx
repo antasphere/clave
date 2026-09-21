@@ -180,7 +180,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
                       title={shortenPath(ws.rootDir)}
                     >
                       <span className="flex-1 min-w-0 py-0.5">
-                        <span className="block text-[13px] leading-tight text-text-primary truncate">
+                        <span className="block text-control leading-tight text-text-primary truncate">
                           {ws.name}
                         </span>
                         <span className="block text-[11px] leading-tight text-text-tertiary truncate mt-0.5">

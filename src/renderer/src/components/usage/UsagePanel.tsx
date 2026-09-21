@@ -42,9 +42,9 @@ function UsageBar({ window }: { window: UsageWindow }): ReactElement {
   return (
     <div className="space-y-1.5" data-usage-window={window.key}>
       <div className="flex items-baseline justify-between">
-        <span className="text-[13px] font-medium text-text-primary">{window.label}</span>
+        <span className="text-control font-medium text-text-primary">{window.label}</span>
         <span
-          className="text-[13px] tabular-nums font-semibold text-text-primary"
+          className="text-control tabular-nums font-semibold text-text-primary"
           aria-label={`${pct}% used`}
         >
           {pct}%
@@ -133,7 +133,7 @@ function QuotaWindows({
 
       {status === 'error' && (
         <div className="flex flex-col items-start gap-3 py-2">
-          <span className="text-[13px] text-text-tertiary">{error}</span>
+          <span className="text-control text-text-tertiary">{error}</span>
           <button onClick={() => load({ force: true })} className="btn-secondary">
             Retry
           </button>
@@ -141,7 +141,7 @@ function QuotaWindows({
       )}
 
       {status === 'ready' && windows.length === 0 && (
-        <span className="text-[13px] text-text-tertiary">
+        <span className="text-control text-text-tertiary">
           {data?.message ?? 'No usage limits to show yet.'}
         </span>
       )}
@@ -169,7 +169,7 @@ function ClaudeAccountUsage({ account }: { account: ClaudeProfile }): ReactEleme
         resource={claudeUsageStore(account.id)}
         title={
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[13px] font-medium text-text-primary truncate">
+            <span className="text-control font-medium text-text-primary truncate">
               {account.label}
             </span>
             <span className="badge bg-surface-200 text-text-tertiary flex-shrink-0">
@@ -201,7 +201,7 @@ function ClaudeUsage(): ReactElement {
 function ComingSoon({ label }: { label: string }): ReactElement {
   return (
     <div className="flex flex-col items-center gap-1.5 py-12 text-center">
-      <span className="text-[13px] font-medium text-text-primary">
+      <span className="text-control font-medium text-text-primary">
         {label} usage isn’t available yet
       </span>
       <span className="text-xs text-text-tertiary">
@@ -252,13 +252,13 @@ function PiUsage(): ReactElement {
       </div>
       {status === 'error' ? (
         <div className="space-y-3">
-          <p className="text-[13px] text-text-tertiary">{error}</p>
+          <p className="text-control text-text-tertiary">{error}</p>
           <button className="btn-secondary" onClick={() => load({ force: true })}>
             Retry
           </button>
         </div>
       ) : !totals ? (
-        <span className="text-[13px] text-text-tertiary">Reading local Pi sessions…</span>
+        <span className="text-control text-text-tertiary">Reading local Pi sessions…</span>
       ) : (
         <>
           <p className="text-xs text-text-tertiary">
@@ -276,7 +276,7 @@ function PiUsage(): ReactElement {
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg bg-surface-100 px-3 py-2.5">
                 <div className="text-xs text-text-tertiary">{label}</div>
-                <div className="text-[13px] tabular-nums text-text-primary">{value}</div>
+                <div className="text-control tabular-nums text-text-primary">{value}</div>
               </div>
             ))}
           </div>

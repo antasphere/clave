@@ -124,7 +124,7 @@ export function GroupCommandDialog({
               <ModalPositioner className="w-[320px]">
                 <div className="modal-card">
                   <div className="px-4 pt-4 pb-3">
-                    <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                    <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                       {onDelete ? 'Edit terminal' : 'Add terminal'}
                     </DialogPrimitive.Title>
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
@@ -135,7 +135,7 @@ export function GroupCommandDialog({
                     <button
                       type="button"
                       onClick={handlePickFolder}
-                      className="mt-3 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
+                      className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
                       title={cwd ?? 'Select folder'}
                     >
                       <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -160,7 +160,7 @@ export function GroupCommandDialog({
                         }
                       }}
                       placeholder="e.g., npm run dev (optional)"
-                      className="mt-2 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
+                      className="mt-2 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
                     />
 
                     <div className="mt-3 flex items-center gap-3">

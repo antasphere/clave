@@ -85,7 +85,7 @@ export function HelpPanel(): ReactNode {
           placeholder="Search help..."
           value={filterText}
           onChange={(e) => setFilterText(e.target.value)}
-          className="flex-1 h-[20px] px-2 rounded bg-surface-100 text-[11px] text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-border transition-colors min-w-0"
+          className="flex-1 h-control-xs px-2 rounded bg-surface-100 text-[11px] text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-border transition-colors min-w-0"
         />
       </div>
       <div className="flex-1 overflow-y-auto pb-12">

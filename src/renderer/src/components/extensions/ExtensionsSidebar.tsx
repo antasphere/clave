@@ -39,7 +39,7 @@ export function ExtensionsSidebar() {
         >
           <ChevronLeftIcon className="w-4 h-4" />
         </button>
-        <span className="text-[13px] font-semibold text-text-primary select-none">Extensions</span>
+        <span className="text-control font-semibold text-text-primary select-none">Extensions</span>
       </div>
 
       <nav className="px-2 space-y-0.5">

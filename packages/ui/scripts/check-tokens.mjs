@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const dir = path.dirname(fileURLToPath(import.meta.url))
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8')
 const css = read('../src/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '')
 const app = read('../../../src/renderer/src/assets/main.css').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -152,7 +155,15 @@ const SPEC_LITERALS = {
     '1.75rem': '--control-h-md',
     '28px': '--control-h-md',
     '2rem': '--control-h-lg',
-    '32px': '--control-h-lg'
+    '32px': '--control-h-lg',
+    /* The foot panel's own shape (defect 2 of the round-1 review): a row
+       written as "the control plus its air" and then frozen as one number.
+       34px is --control-h-md + 6, 40px is --control-h-lg + 8; both belong in
+       a calc() that names the control, so the air survives the scale. */
+    '2.125rem': '--control-h-md (+ its air)',
+    '34px': '--control-h-md (+ its air)',
+    '2.5rem': '--control-h-lg (+ its air)',
+    '40px': '--control-h-lg (+ its air)'
   }
 }
 SPEC_LITERALS['min-height'] = SPEC_LITERALS.height
@@ -176,7 +187,57 @@ for (const [, selector, body] of system.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   }
 }
 
+/* ── The same rule, one directory over ───────────────────────────────────────
+ *
+ * The check above reads system.css. The round-1 review of PR #69 showed that is
+ * where the labels are NOT: the renderer pinned the control spec's numbers in
+ * 44 places as Tailwind arbitrary values — `text-[13px]` on the session tab
+ * name, the sidebar's section labels, the group name — so a Spacious 31.5px row
+ * kept a 13px name in it. Mutating the session name to `text-[19px]` left the
+ * whole suite green, audit included: a 6px jump in the most-read text in the
+ * app, invisible to every check.
+ *
+ * The literal is not wrong at the default stop — it IS 13px there. That is what
+ * makes it worth a gate rather than a review comment: it looks right in every
+ * screenshot and only fails once somebody moves the slider.
+ *
+ * Deliberately narrow. It refuses the arbitrary-value forms that restate the
+ * spec's own numbers, not every length in the renderer — `h-4` icons, `text-xs`
+ * captions and the rest are Tailwind's scale doing its job, and dragging them in
+ * would make this noise nobody reads. The terminal and plugins/ are out of scope
+ * by the brief; this only walks src/renderer/src.
+ */
+const RENDERER = path.join(dir, '../../../src/renderer/src')
+/* Each pattern: what a component must not write, and what to write instead. */
+const RENDERER_LITERALS = [
+  [/\btext-\[13px\]/, 'text-[13px]', 'text-control (font-size: var(--control-text))'],
+  [/\btext-\[length:13px\]/, 'text-[length:13px]', 'text-control'],
+  [/\bh-\[28px\]/, 'h-[28px]', 'h-control-md (height: var(--control-h-md))'],
+  [/\bh-\[24px\]/, 'h-[24px]', 'h-control-sm'],
+  [/\bh-\[20px\]/, 'h-[20px]', 'h-control-xs'],
+  [/\bh-\[32px\]/, 'h-[32px]', 'h-control-lg']
+]
+const walk = (folder) =>
+  readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(folder, entry.name)
+    if (entry.isDirectory()) return walk(full)
+    return entry.isFile() && /\.tsx?$/.test(entry.name) ? [full] : []
+  })
+for (const file of walk(RENDERER)) {
+  const source = readFileSync(file, 'utf8')
+  for (const [pattern, literal, instead] of RENDERER_LITERALS) {
+    const line = source.split('\n').findIndex((l) => pattern.test(l))
+    assert(
+      line === -1,
+      `${path.relative(path.join(dir, '../../..'), file)}:${line + 1} pins ${literal}, ` +
+        `a number the control spec owns — use ${instead} so it moves with --density`
+    )
+  }
+}
+
 console.log(
   `All ${expected.length} baseline tokens resolve in all four themes (CodeMirror remains app-owned).`
 )
-console.log('The control and frame spec derives from --density, and no system class bypasses it.')
+console.log(
+  'The control and frame spec derives from --density; neither system.css nor the renderer bypasses it.'
+)

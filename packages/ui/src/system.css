@@ -673,9 +673,14 @@ body,
   min-width: 0;
 }
 
-/* The identity row, tall enough to carry the avatar with air around it. */
+/* The identity row, tall enough to carry the avatar with air around it.
+   The comment below is an ARITHMETIC, so it is now written as one: the row was
+   a frozen 2.5rem while the control it sits beside moved with --density, which
+   left the promised 4px of air at 8px on Compact and 0.25px on Spacious. The
+   avatar is a fixed 32px canvas (--control-h-lg's value at the default stop),
+   so the row follows the same token and keeps its air at every stop. */
 .sidebar-footer-row--user {
-  height: 2.5rem; /* 40px = 32px avatar + 4px above and below (+3px panel = 7) */
+  height: calc(var(--control-h-lg) + 8px); /* 40px = 32px avatar + 4px above and below (+3px panel = 7) */
 }
 
 /* The second line: headroom on the left, the doors on the right. Shorter than
@@ -683,7 +688,7 @@ body,
    control it holds, which is the whole point: a 28px button in a 28px row has
    nowhere to be. */
 .sidebar-footer-row--meta {
-  height: 2.125rem; /* 34px = 28px control + 3px above and below (+3px panel = 6) */
+  height: calc(var(--control-h-md) + 6px); /* 34px = 28px control + 3px above and below (+3px panel = 6) */
 }
 
 /* The hairline between them. Inset from the panel's edges so it reads as a
@@ -1482,6 +1487,32 @@ body,
 .segmented-item[data-active="true"] {
   background-color: var(--surface-200);
   color: var(--text-primary);
+}
+
+/* ── The control spec, as classes a component can wear ──
+ * A component that needs the control's label size or one of its four heights
+ * writes one of these instead of `text-[13px]` or `h-7`. The Tailwind literal
+ * is not wrong at the default stop — it IS 13px there — which is exactly why it
+ * is dangerous: it looks correct in every screenshot and then refuses to move
+ * when the user changes the density, leaving a 31.5px row with a 13px name in
+ * it. These classes are unlayered, so they win over the utility they replace.
+ *
+ * `check-tokens.mjs` refuses the literals in both `system.css` and the renderer,
+ * so the only way to write the spec's numbers is to reference the spec. */
+.text-control {
+  font-size: var(--control-text);
+}
+.h-control-xs {
+  height: var(--control-h-xs);
+}
+.h-control-sm {
+  height: var(--control-h-sm);
+}
+.h-control-md {
+  height: var(--control-h-md);
+}
+.h-control-lg {
+  height: var(--control-h-lg);
 }
 
 /* ── Range field ──

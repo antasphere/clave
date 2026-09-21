@@ -104,7 +104,7 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
           left: anchorRef.current?.getBoundingClientRect().left ?? 0
         }}
       >
-        <p className="text-[13px] text-text-tertiary text-center">
+        <p className="text-control text-text-tertiary text-center">
           No connected locations have agents.
           <br />
           Connect a location in Settings.

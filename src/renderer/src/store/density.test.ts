@@ -70,8 +70,15 @@ describe('the stop the app boots on', () => {
     expect(resolveDensity('spacious')).toBe('spacious')
   })
 
-  it.each(['enormous', '', '1.125', '__proto__', 'Regular', 'REGULAR', ' regular'])(
-    'refuses %j and returns a real stop',
+  /* Every case here names a stop that is NOT the default's own id. That is the
+     point, and it was got wrong first time: `'Regular'`, `'REGULAR'` and
+     `' regular'` are satisfied equally by refusing them and by normalising
+     them, so a `resolveDensity` loosened to `.trim().toLowerCase()` kept the
+     file green (round-1 review, mutation M15). Casing and whitespace variants
+     of SPACIOUS cannot pass by normalisation: a normalising implementation
+     would return 'spacious', which is not the default. */
+  it.each(['enormous', '', '1.125', '__proto__', 'Spacious', 'SPACIOUS', ' spacious'])(
+    'refuses %j and returns the default rather than normalising it',
     (saved) => {
       const density = resolveDensity(saved)
       expect(DENSITY_LEVELS.map((level) => level.id)).toContain(density)

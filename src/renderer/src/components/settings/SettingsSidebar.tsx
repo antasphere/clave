@@ -77,7 +77,10 @@ export function SettingsSidebar(): React.JSX.Element {
               <ChevronLeftIcon className="w-4 h-4" />
             </button>
             <span className="launcher-sep" />
-            <span className="px-2 text-[13px] font-medium text-text-primary select-none truncate">
+            <span
+              data-testid="settings-nav-title"
+              className="px-2 text-control font-medium text-text-primary select-none truncate"
+            >
               Settings
             </span>
           </div>

@@ -144,10 +144,14 @@ export function SidebarTabItem({
             onBlur={commitRename}
             onKeyDown={handleInputKeyDown}
             onClick={(e) => e.stopPropagation()}
-            className="flex-1 min-w-0 bg-transparent text-[13px] font-medium text-text-primary outline-none border-none"
+            className="flex-1 min-w-0 bg-transparent text-control font-medium text-text-primary outline-none border-none"
           />
         ) : (
-          <span className="flex-1 min-w-0 text-[13px] font-medium truncate" onDoubleClick={handleDoubleClick}>
+          <span
+            data-testid="session-tab-name"
+            className="flex-1 min-w-0 text-control font-medium truncate"
+            onDoubleClick={handleDoubleClick}
+          >
             {name}
           </span>
         )}

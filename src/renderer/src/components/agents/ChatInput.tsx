@@ -53,7 +53,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             onClick={handleSend}
             disabled={!value.trim() || disabled}
             aria-label="Send message"
-            className="flex items-center justify-center w-7 h-7 rounded-full bg-accent text-white hover:bg-accent-hover disabled:opacity-30 disabled:hover:bg-accent transition-colors flex-shrink-0"
+            className="flex items-center justify-center w-7 h-control-md rounded-full bg-accent text-white hover:bg-accent-hover disabled:opacity-30 disabled:hover:bg-accent transition-colors flex-shrink-0"
           >
             <ArrowUpIcon className="w-3.5 h-3.5" />
           </button>

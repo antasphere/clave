@@ -386,7 +386,7 @@ function HistoryPanel({ presetGroupId }: { presetGroupId: string | null }): Reac
       <div className="group-picker-panel group-picker-panel--history">
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
           <ClockIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-          <h2 className="text-[13px] font-medium text-text-primary">History</h2>
+          <h2 className="text-control font-medium text-text-primary">History</h2>
           <div className="search-field ml-2">
             <MagnifyingGlassIcon className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
             <input

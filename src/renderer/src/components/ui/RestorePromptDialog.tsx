@@ -48,7 +48,7 @@ export function RestorePromptDialog(): React.JSX.Element | null {
             <ModalPositioner className="w-[300px]">
               <div className="modal-card">
                 <div className="px-4 pt-4 pb-3 text-center">
-                  <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                  <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                     Restore previous session?
                   </DialogPrimitive.Title>
                   <DialogPrimitive.Description className="mt-1.5 text-xs text-text-secondary leading-relaxed">

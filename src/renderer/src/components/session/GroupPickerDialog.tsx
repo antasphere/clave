@@ -142,7 +142,7 @@ export function GroupPickerDialog({
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
           <Squares2X2Icon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-          <h2 className="text-[13px] font-medium text-text-primary">Add a group</h2>
+          <h2 className="text-control font-medium text-text-primary">Add a group</h2>
           <div className="search-field ml-2">
             <MagnifyingGlassIcon className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
             <input
@@ -252,7 +252,7 @@ function GroupCard({
             style={{ backgroundColor: dotColor }}
           />
         )}
-        <span className="flex-1 truncate text-[13px] font-medium text-text-primary">
+        <span className="flex-1 truncate text-control font-medium text-text-primary">
           {template.name}
         </span>
       </div>

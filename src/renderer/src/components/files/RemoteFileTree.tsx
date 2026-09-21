@@ -88,7 +88,7 @@ function RemoteFileTreeRow({
   return (
     <button
       onClick={() => onClick(node)}
-      className="w-full flex items-center h-7 px-2 cursor-pointer select-none transition-colors text-sm text-left hover:bg-surface-100"
+      className="w-full flex items-center h-control-md px-2 cursor-pointer select-none transition-colors text-sm text-left hover:bg-surface-100"
       style={{ paddingLeft: `${8 + node.depth * 8}px` }}
       title={node.name}
     >
