@@ -68,6 +68,13 @@ const streamEvents = (app) =>
       .map((entry) => entry.event)
   )
 
+/** The conversation view's own container. A session can have SEVERAL views
+ *  mounted at once since PRDCT-2610 — the one on screen and the ones kept alive
+ *  behind it — so a conversation's text is in the document more than once, and a
+ *  window-wide text query resolves to every copy. Scope to the view under test,
+ *  the way this spec already does for the composer. */
+const chatView = (win) => win.locator('[data-testid="chat-view"]')
+
 export async function run(t) {
   // Per run, not shared: a fixed path here collided with another lane's suite and
   // cost the verifier a red round on a check that passes alone.
@@ -156,7 +163,7 @@ export async function run(t) {
 
     await input.fill('!invalid')
     await input.press('Enter')
-    await win.getByText('The invalid event was dropped.', { exact: true }).waitFor()
+    await chatView(win).getByText('The invalid event was dropped.', { exact: true }).waitFor()
     const texts = (await streamEvents(app)).filter((event) => event.type === 'assistant_text')
     assert.ok(
       texts.every((event) => typeof event.delta === 'string' && typeof event.final === 'boolean'),
@@ -172,7 +179,7 @@ export async function run(t) {
     assert.equal(request.id, `${PLUGIN_ID}:ask-2`)
     await allow.click()
     // The plugin threw if the prefix had not been stripped on the way back in.
-    await win.getByText('Allowed, and echoed.', { exact: true }).waitFor()
+    await chatView(win).getByText('Allowed, and echoed.', { exact: true }).waitFor()
     assert.equal(
       (await streamEvents(app)).filter((e) => e.type === 'error').length,
       0,
@@ -234,7 +241,9 @@ export async function run(t) {
     assert.ok(listed, 'the events session is in the host service listing')
     assert.equal(listed.alive, true)
     assert.equal(listed.folderName, path.basename(root))
-    await win.getByText('Echo from echo --from-manifest: from the reader plugin').waitFor()
+    await chatView(win)
+      .getByText('Echo from echo --from-manifest: from the reader plugin')
+      .waitFor()
     t.check('a plugin lists the events session and its send reaches the provider', true)
 
     await win.evaluate((id) => window.electronAPI.pluginsDisable(id), PLUGIN_ID)
@@ -264,7 +273,7 @@ export async function run(t) {
       ),
       'the composer accepted a message after the plugin was disabled'
     )
-    await win.getByText('Echo from echo --from-manifest: still running').first().waitFor()
+    await chatView(win).getByText('Echo from echo --from-manifest: still running').first().waitFor()
     t.check('disabling hides new launches without touching the session already running', true)
   } finally {
     await app.close()

@@ -86,6 +86,16 @@ currently blank (the adapter lane owns that path).
 Markdown HTTP(S) and mailto links use the host's existing `openExternal` path.
 Other destinations render as plain text rather than inert clickable links.
 
+One consequence for anyone writing a test against a pane: with several views
+mounted on one session, the conversation's text is in the document more than
+once — the view on screen and the ones kept alive behind it, which `hidden`
+takes out of sight and out of the accessibility tree but not out of the DOM. A
+window-wide text or class query therefore resolves to every copy and fails on
+strictness. Scope to the pane (`.chat-host[data-session-id=…]`) or to the view
+(`[data-view-id=…]`, `[data-testid="chat-view"]`). Two specs learned this the
+hard way during PRDCT-2610: the chat view's own, on a shared class, and the
+provider lane's, on a shared message.
+
 A known limit, and the one thing here a reader would not assume: `registry.tsx`
 refreshes its copy of the session records when the session store changes or a
 plugin does, and main broadcasts no record change of its own. The picker
