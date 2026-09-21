@@ -84,7 +84,9 @@ beforeEach(() => {
       }
     })
   )
-  store = new PluginStore(join(temporary, 'user'), bundled, '1.90.2')
+  // The fixture stands in for a bundled plugin the host activates on first install; the
+  // real list is BUNDLED_ON_FIRST_INSTALL, and these tests are about the runtime, not it.
+  store = new PluginStore(join(temporary, 'user'), bundled, '1.90.2', ['example.host'])
   store.discover()
   services = {
     sessions: { list: vi.fn(() => []), send: vi.fn(), focused: vi.fn(() => null) },

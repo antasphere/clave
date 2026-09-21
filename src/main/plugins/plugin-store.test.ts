@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { PluginStore, pluginFile } from './plugin-store'
+import { PluginStore, pluginFile, BUNDLED_ON_FIRST_INSTALL } from './plugin-store'
 import type { PluginManifestInput } from '@clave/plugin-sdk'
 
 let temporary: string
@@ -136,9 +136,28 @@ describe('plugin discovery and persisted grants', () => {
   })
 })
 
+it('activates only the bundled plugins the host lists, and grants nothing to the others', () => {
+  writePlugin(join(bundled, 'feature'), manifest('clave.chat-view'))
+  writePlugin(join(bundled, 'demo'), manifest('clave.hello'))
+  const instance = new PluginStore(root, bundled, '1.90.2')
+  instance.discover()
+  // A plugin that IS a feature of the app runs on first install, with its declared
+  // permissions granted; a bundled demo waits for the user, and holds no grant until then.
+  expect(instance.get('clave.chat-view')).toMatchObject({
+    enabled: true,
+    permissionsGranted: ['sessions.read']
+  })
+  expect(instance.get('clave.hello')).toMatchObject({
+    enabled: false,
+    permissionsGranted: [],
+    status: 'disabled'
+  })
+  expect(BUNDLED_ON_FIRST_INSTALL).toEqual(['clave.chat-view'])
+})
+
 it('keeps declaration and grants independent for bundled plugins', () => {
   writePlugin(join(bundled, 'example'))
-  const instance = store()
+  const instance = new PluginStore(root, bundled, '1.90.2', ['example.plugin'])
   instance.discover()
   const record = instance.get('example.plugin')
   record.permissionsGranted.push('sessions.write')

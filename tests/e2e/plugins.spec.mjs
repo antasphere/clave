@@ -45,12 +45,29 @@ export async function run(t) {
     const marker = 'PLUGIN_FORBIDDEN_INPUT'
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
     await win.click('[data-settings-nav-row="plugins"]')
+    // hello is the bundled DEMO: it ships disabled, because a demonstration has no
+    // business contributing to the app's chrome until the user asks for it. Enabling it
+    // goes through the same review the user sees for any other plugin.
+    const dormant = await until(async () =>
+      (await win.evaluate(() => window.electronAPI.pluginsList())).find(
+        (p) => p.id === 'clave.hello'
+      )
+    )
+    t.check(
+      'the bundled demo ships disabled, with no permission granted',
+      dormant?.enabled === false &&
+        dormant?.status === 'disabled' &&
+        dormant?.permissionsGranted.length === 0,
+      dormant
+    )
+    await win.getByRole('switch', { name: 'Enable Hello Clave', exact: true }).click()
+    await win.getByRole('button', { name: 'Enable plugin', exact: true }).click()
     const hello = await until(async () =>
       (await win.evaluate(() => window.electronAPI.pluginsList())).find(
         (p) => p.id === 'clave.hello' && p.status === 'active'
       )
     )
-    t.check('bundled hello activates', !!hello, hello)
+    t.check('bundled hello activates once enabled', !!hello, hello)
     const utility = await app.evaluate(({ app }) =>
       app.getAppMetrics().filter((m) => m.name === 'Clave plugin: clave.hello')
     )

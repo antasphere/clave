@@ -64,13 +64,23 @@ export function pluginFile(root: string, entry: string): string {
   return target
 }
 
+/** The bundled plugins that activate on first install. Clave ships plugins of two kinds:
+ *  the ones that ARE a feature of the app (the chat view — without it a session has no
+ *  chat), and the ones that demonstrate the contract (hello). The first start enabled,
+ *  because the app would be missing a feature otherwise; a demo must not, because it has
+ *  no business putting a tab in someone's side panel or a button in their toolbar until
+ *  they ask for it. The list lives in the host, never in a manifest: whether a plugin the
+ *  app ships runs unasked is the host's call, not the plugin's own declaration. */
+export const BUNDLED_ON_FIRST_INSTALL: readonly string[] = ['clave.chat-view']
+
 export class PluginStore {
   readonly records = new Map<string, PluginRecord>()
   private installed: InstalledPlugin[]
   constructor(
     readonly root: string,
     readonly bundled: string,
-    readonly version: string
+    readonly version: string,
+    readonly autoEnable: readonly string[] = BUNDLED_ON_FIRST_INSTALL
   ) {
     mkdirSync(join(root, 'plugins'), { recursive: true })
     const file = join(root, 'installed.json')
@@ -146,7 +156,8 @@ export class PluginStore {
             actualSource === 'git' &&
             saved.contentDigest !== contentDigest &&
             saved.reviewDigest !== reviewDigest
-          const firstBundledInstall = !saved && source === 'bundled'
+          const firstBundledInstall =
+            !saved && source === 'bundled' && this.autoEnable.includes(id)
           const record: PluginRecord = {
             id,
             version: manifest.version,

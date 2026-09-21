@@ -28,11 +28,36 @@ export async function run(t) {
         return last?.title === title ? last : null
       })
 
+    // A fresh profile shows the app's own panel and nothing else: the bundled demo ships
+    // disabled, so no plugin touches the chrome until the user says so in Settings.
+    await win.click('button[title^="File tree"]')
+    await win.waitForSelector('[data-panel-bar="tabs"]')
+    t.equal(
+      'a fresh profile has no contributed tab',
+      await win.locator('[data-plugin-tab]').count(),
+      0
+    )
+    t.equal(
+      'and the panel holds only the app’s own two tabs',
+      (await win.locator('[data-panel-bar="tabs"] .panel-tab').allInnerTexts()).join(','),
+      'Files,Git'
+    )
+    t.equal(
+      'and nothing plugin-contributed is in the toolbar',
+      await win.locator('[data-plugin-toolbar], [data-plugin-main-toggle]').count(),
+      0
+    )
+
+    // Enable it the way a user does: Settings → Plugins, the review, the switch.
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+    await win.click('[data-settings-nav-row="plugins"]')
+    await win.getByRole('switch', { name: 'Enable Hello Clave', exact: true }).click()
+    await win.getByRole('button', { name: 'Enable plugin', exact: true }).click()
     const hello = await until(async () => {
       const found = await record()
       return found?.status === 'active' ? found : null
     })
-    t.check('bundled hello activates with its contributions', !!hello, hello)
+    t.check('the demo activates once enabled with its contributions', !!hello, hello)
     t.equal('side panel contribution is registered', hello.panels.includes('hello'), true)
     t.check(
       'toolbar contributions are registered through ui.registerToolbar',
@@ -85,7 +110,6 @@ export async function run(t) {
     )
 
     // 4. The side panel: a tab beside Files and Git, rendering the plugin's own surface.
-    await win.click('button[title^="File tree"]')
     // The tab bar mounts before the plugin records reach the renderer, so wait for the
     // contribution itself rather than for the bar that will hold it.
     await win.waitForSelector('[data-plugin-tab="hello"]')
@@ -100,6 +124,22 @@ export async function run(t) {
       'a main panel is not a side-panel tab',
       await win.locator('[data-plugin-tab="hello-main"]').count(),
       0
+    )
+    // The app's two tabs filled most of a 240px bar on their own; a contributed tab is
+    // what would have wrapped it onto a second row.
+    const bar = await win.evaluate(() => {
+      const el = document.querySelector('[data-panel-bar="tabs"]')
+      const box = el.getBoundingClientRect()
+      return {
+        width: box.width,
+        parentWidth: el.parentElement.getBoundingClientRect().width,
+        rows: Math.round(box.height / el.querySelector('.panel-tab').getBoundingClientRect().height)
+      }
+    })
+    t.check(
+      'the bar takes the contributed tab without outgrowing the panel or wrapping',
+      bar.width <= bar.parentWidth && bar.rows === 1,
+      bar
     )
     t.equal(
       'the panel contributes a tab, titled and iconed from the manifest',
