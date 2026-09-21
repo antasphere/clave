@@ -503,6 +503,9 @@ export interface ElectronAPI {
   /** Release this view's subscription, then remove its stream/exit listeners. */
   sessionsUnsubscribe: (id: string) => Promise<void>
   sessionsWrite: (id: string, input: Uint8Array | SessionInput) => Promise<void>
+  /** Set the view a session is read in (`<pluginId>/<viewId>`), null to clear
+   *  it; returns the updated record. */
+  sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void

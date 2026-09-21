@@ -1,6 +1,11 @@
 # Chat view
 
-A bundled first-party native view for the public `events` transport. Activation,
+Two bundled first-party native views for the public `events` transport, chosen
+per session from the pane header: `chat` (this file's subject) and `compact`
+(`src/CompactView.tsx`, one line per turn, no markdown, no tool bodies). Compact
+reads the host's per-session event log (`src/renderer/src/views/conversation-store.ts`)
+and reduces it with the same `reducer.ts`, so it shows the whole conversation
+however late it is opened; chat still keeps its own reducer and subscription. Activation,
 grants and disablement use the ordinary plugin host. The renderer registry owns
 pane chrome; this plugin owns only the conversation content and the public session
 bridge subscription. It does not launch a provider or read provider files.
@@ -32,7 +37,10 @@ No provider tokens were spent.
 
 Verification:
 
-- `npm test` (reducer checks in `src/renderer/src/views/reducer.test.ts`).
+- `npm test` (reducer checks in `src/renderer/src/views/reducer.test.ts`,
+  resolution in `resolution.test.ts`, the host log in `conversation-store.test.ts`).
+- `node tests/e2e/run.mjs plugin-views` (the picker, the switch in both
+  directions, the choice on the record).
 - `node tests/e2e/run.mjs chat-view` after building.
 - `node tests/visual/chat-view.mjs` (four real skins, token audit and actual Shiki spans).
 

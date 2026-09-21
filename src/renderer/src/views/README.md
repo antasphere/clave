@@ -1,7 +1,15 @@
 # Native session views
 
 The host owns the pane, focus, close and header. Bundled first-party native views
-are resolved by plugin id through the single static import map in `registry.tsx`.
+are resolved by `<pluginId>/<viewId>` through the single static import map in
+`registry.tsx`, and the resolution itself is `resolution.ts`, which imports no
+React and is unit-tested on its own. A plugin may contribute SEVERAL views
+(`contributes.views[]`, each with an optional `title` the picker shows): the
+session record carries the chosen one in `viewId`, set by the launch profile at
+spawn or by the picker in the pane header, and `sessions:set-view` writes it in
+main. Resolution never fails — the session's own choice, else the first view
+that renders its transport, else the terminal — so disabling a plugin or
+dropping a view from a manifest can never strand a session on a dead view.
 Only active, enabled bundled plugins with session read/write grants and a matching
 manifest view contribution mount. Disabling the plugin or failure of its utility
 process falls back to the terminal. A React render failure is caught by the host error boundary and shows
@@ -33,6 +41,17 @@ The v1 model has one transport per session, so events sessions have no terminal;
 the host's terminal switch remains disabled with an explanation until a dual
 transport contract can supply a PTY session id through the host component's optional
 `terminalSessionId` prop. Switching keeps the conversation subscribed and mounted.
+
+Every view a session can be read in is mounted for the pane's lifetime and all
+but one are hidden, so switching finds a view exactly as it was left — including
+a transcript a view keeps privately. `conversation-store.ts` is the host's own
+per-session record of what arrived: it keeps the event LOG, not a reduction of
+it, because reducing is a view's reading of the session and two views of one
+plugin read the same events differently. A view reduces that log with its own
+reducer (`CompactView` does) and therefore renders the whole conversation
+however late it is opened; `ChatView` still keeps its own reducer and its own
+subscription, which the preload's reference count makes safe beside the log, and
+moves onto it once PRDCT-2549 has merged.
 
 Native views are compiled into the renderer: `sessions.write` gates mounting,
 not the preload IPC itself. The terminal fallback for an events-only session is

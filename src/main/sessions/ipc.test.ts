@@ -193,3 +193,45 @@ it('keeps subscriptions after ready errors and retries until one successful call
   sessionManager.kill(id)
   sessionManager.forget(id)
 })
+
+it('sets the view only for the window that owns the session, and only on a valid id', () => {
+  const id = `ipc-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const event = {
+    sender: Object.assign(new EventEmitter(), {
+      id: sequence,
+      isDestroyed: () => false,
+      send: vi.fn()
+    })
+  }
+  const setView = mocks.handlers.get('sessions:set-view')
+  expect(setView(event, id, 'clave.chat-view/compact')).toMatchObject({
+    id,
+    viewId: 'clave.chat-view/compact'
+  })
+  expect(sessionManager.get(id)?.viewId).toBe('clave.chat-view/compact')
+  expect(() => setView(event, id, 'compact')).toThrow('Invalid view id')
+  expect(() => setView(event, id, 42)).toThrow('Invalid view id')
+  expect(setView(event, id, null).viewId).toBeUndefined()
+  // Another window may not decide how this session is read, the rule every
+  // session call keeps.
+  mocks.keyForWindow.mockReturnValue('other-window')
+  expect(() => setView(event, id, 'clave.chat-view/chat')).toThrow('another window')
+  expect(sessionManager.get(id)?.viewId).toBeUndefined()
+  mocks.keyForWindow.mockReturnValue('window')
+  // An unregistered caller has no window key at all.
+  mocks.fromWebContents.mockReturnValueOnce(null)
+  expect(() => setView(event, id, 'clave.chat-view/chat')).toThrow('another window')
+})

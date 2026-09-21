@@ -73,6 +73,16 @@ export function registerSessionIpc(): void {
     subscriptions.get(event.sender.id)?.get(id)?.()
     subscriptions.get(event.sender.id)?.delete(id)
   })
+  // The pane's view picker. The window that owns the session is the only one
+  // allowed to change what it is read in, the same rule every session call keeps.
+  ipcMain.handle('sessions:set-view', (event, id: string, viewId: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const key = win && windowRegistry.getKeyForWindow(win.id)
+    if (!key || sessionManager.get(id)?.windowKey !== key)
+      throw new Error('Session belongs to another window')
+    if (viewId !== null && typeof viewId !== 'string') throw new Error('Invalid view id')
+    return sessionManager.setView(id, viewId)
+  })
   ipcMain.handle('sessions:write', (event, id: string, input: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const key = win && windowRegistry.getKeyForWindow(win.id)

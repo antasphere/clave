@@ -80,7 +80,10 @@ class PtyManager {
       state: 'idle',
       createdAt: Date.now(),
       title: session.folderName,
-      groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined
+      groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
+      // The profile's default view, when it names one; the pane's picker
+      // overwrites it on the record from there on.
+      viewId: events?.viewId
     }
     if (isEvents && adapter.id === 'claude-chat') {
       session.claudeSessionId = options?.resumeSessionId ?? options?.claudeSessionId ?? randomUUID()

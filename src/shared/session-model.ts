@@ -15,7 +15,11 @@ export const SessionSchema = z.object({
   state: AgentStateSchema,
   createdAt: z.number(),
   adapterId: z.string().min(1),
-  title: z.string()
+  title: z.string(),
+  /** The view this session is read in, `<pluginId>/<viewId>`, as the pane's
+   *  picker set it or the launch profile named it. Absent means the host
+   *  picks the first view that renders this transport. */
+  viewId: z.string().min(1).optional()
 })
 export type Session = z.infer<typeof SessionSchema>
 

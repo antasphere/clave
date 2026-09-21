@@ -44,6 +44,8 @@ const electronAPI = {
   },
   sessionsWrite: (id: string, input: Uint8Array | SessionInput): Promise<void> =>
     ipcRenderer.invoke('sessions:write', id, input),
+  sessionsSetView: (id: string, viewId: string | null): Promise<Session> =>
+    ipcRenderer.invoke('sessions:set-view', id, viewId),
   sessionsModels: (id: string): Promise<ModelOption[]> => ipcRenderer.invoke('sessions:models', id),
   sessionsCommands: (id: string): Promise<CommandOption[]> =>
     ipcRenderer.invoke('sessions:commands', id),

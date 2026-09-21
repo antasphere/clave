@@ -1,0 +1,141 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUpIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline'
+import type { SessionInput } from '../../../src/shared/session-model'
+import {
+  useSessionLogValue,
+  type LoggedEvent
+} from '../../../src/renderer/src/views/conversation-store'
+import { emptyConversation, reduceConversation, type Conversation, type Entry } from './reducer'
+import type { ChatViewProps } from './ChatView'
+
+/** The same events the chat view reads, read as a list: one line per turn, no
+ *  markdown, no tool bodies. The second view this plugin contributes, and the
+ *  proof that two views of one plugin read one session — the host keeps the
+ *  log, each view reduces it its own way. */
+function reduceLog(events: LoggedEvent[], initialState: Conversation['state']): Conversation {
+  return events.reduce(reduceConversation, { ...emptyConversation, state: initialState })
+}
+/** What a row says about a turn, in the fewest words that still identify it. */
+function lineOf(entry: Entry): { role: string; text: string } {
+  switch (entry.kind) {
+    case 'user':
+      return { role: 'You', text: entry.text }
+    case 'assistant':
+      return { role: 'Agent', text: entry.text }
+    case 'tool':
+      return { role: entry.name ?? 'Tool', text: entry.complete ? 'done' : 'running…' }
+    case 'permission':
+      return {
+        role: 'Permission',
+        text: entry.answer ? `${entry.request.description} — answered` : entry.request.description
+      }
+    case 'error':
+      return { role: 'Error', text: entry.message }
+  }
+}
+export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
+  const log = useSessionLogValue(session.id)
+  const conversation = useMemo(
+    () => reduceLog(log.events, session.state),
+    [log.events, session.state]
+  )
+  const waiting = conversation.entries.some((e) => e.kind === 'permission' && !e.answer)
+  const exited = log.exitCode !== undefined
+  const state =
+    exited || conversation.state === 'ended' ? 'ended' : waiting ? 'blocked' : conversation.state
+  useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [failure, setFailure] = useState('')
+  const scroll = useRef<HTMLDivElement>(null)
+  const stuck = useRef(true)
+  useEffect(() => {
+    const el = scroll.current
+    if (el && stuck.current) el.scrollTop = el.scrollHeight
+  }, [conversation.entries])
+  const send = async (): Promise<void> => {
+    if (!log.ready || sending || state === 'ended' || !draft.trim()) return
+    const text = draft
+    setSending(true)
+    stuck.current = true
+    try {
+      const input: SessionInput = { type: 'user_message', text }
+      await window.electronAPI.sessionsWrite(session.id, input)
+      setDraft((current) => (current === text ? '' : current))
+      setFailure('')
+    } catch (error) {
+      setFailure(String(error))
+    } finally {
+      setSending(false)
+    }
+  }
+  return (
+    <div className="chat-view" data-view="compact">
+      <div
+        ref={scroll}
+        className="chat-scroll"
+        onScroll={(event) => {
+          const el = event.currentTarget
+          stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight
+        }}
+      >
+        {conversation.entries.length === 0 ? (
+          <div className="chat-empty">
+            <span className="chat-empty-icon">
+              <ChatBubbleLeftRightIcon />
+            </span>
+            <h2>Nothing yet</h2>
+            <p>This session has said nothing so far.</p>
+          </div>
+        ) : (
+          <ol className="chat-column" aria-label="Conversation, compact">
+            {conversation.entries.map((entry, index) => {
+              const line = lineOf(entry)
+              return (
+                <li
+                  key={index}
+                  className="flex items-baseline gap-2 min-w-0"
+                  data-kind={entry.kind}
+                >
+                  <span className="text-text-tertiary text-xs shrink-0">{line.role}</span>
+                  <span className="truncate" title={line.text}>
+                    {line.text.replace(/\s+/g, ' ').trim()}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </div>
+      <div className="chat-composer-wrap">
+        {failure && <p className="text-text-tertiary text-xs">{failure}</p>}
+        <div className="chat-composer">
+          <input
+            className="input-field"
+            value={draft}
+            placeholder={state === 'ended' ? 'Session ended' : 'Message'}
+            disabled={state === 'ended' || !log.ready}
+            aria-label="Message"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void send()
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="panel-icon-btn"
+            aria-label="Send"
+            title="Send"
+            disabled={state === 'ended' || !log.ready || sending || !draft.trim()}
+            onClick={() => void send()}
+          >
+            <ArrowUpIcon className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

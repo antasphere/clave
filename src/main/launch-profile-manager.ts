@@ -13,7 +13,10 @@ import {
 import { sessionManager } from './sessions/session-manager'
 import { pluginAdapterProfiles, unavailablePluginAdapter } from './sessions/plugin-adapters'
 
-export type EventsLaunchProfile = LaunchProfile & { adapterId: string }
+/** An events profile names its adapter and, optionally, the view its sessions
+ *  open in (`<pluginId>/<viewId>`). Absent means the host picks the first view
+ *  that renders the transport, exactly as before profiles could name one. */
+export type EventsLaunchProfile = LaunchProfile & { adapterId: string; viewId?: string }
 /** Any family with two built-in profiles renders a submenu (terminal + chat), including Claude and Codex. */
 const CHAT_PROFILES: EventsLaunchProfile[] = [
   {
@@ -23,6 +26,7 @@ const CHAT_PROFILES: EventsLaunchProfile[] = [
     command: ['claude'],
     additionalArgs: [],
     adapterId: 'claude-chat',
+    viewId: 'clave.chat-view/chat',
     builtIn: true
   },
   {
@@ -32,6 +36,7 @@ const CHAT_PROFILES: EventsLaunchProfile[] = [
     command: ['codex'],
     additionalArgs: [],
     adapterId: 'codex-chat',
+    viewId: 'clave.chat-view/chat',
     builtIn: true
   }
 ]

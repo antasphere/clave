@@ -6,6 +6,11 @@
   "engines": { "clave": ">=1.90.0 <2.0.0" },
   "ui": "native",
   "main": "main.mjs",
-  "contributes": { "views": [{ "id": "chat", "renders": ["events"] }] },
+  "contributes": {
+    "views": [
+      { "id": "chat", "title": "Chat", "renders": ["events"] },
+      { "id": "compact", "title": "Compact", "renders": ["events"] }
+    ]
+  },
   "permissions": ["sessions.read", "sessions.write"]
 }

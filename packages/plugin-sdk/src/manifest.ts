@@ -104,7 +104,15 @@ const contributions = z
       )
       .default([]),
     views: z
-      .array(z.strictObject({ id: identifier, renders: z.array(z.enum(['pty', 'events'])).min(1) }))
+      .array(
+        z.strictObject({
+          id: identifier,
+          // What the pane's view picker calls this view. Optional so a manifest
+          // written before the picker still loads; the host falls back to the id.
+          title: title.optional(),
+          renders: z.array(z.enum(['pty', 'events'])).min(1)
+        })
+      )
       .default([]),
     adapters: z.array(adapterContribution).default([])
   })

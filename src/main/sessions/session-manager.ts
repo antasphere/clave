@@ -176,10 +176,32 @@ export class SessionManager {
 
   update(
     id: string,
-    patch: Partial<Pick<Session, 'cwd' | 'windowKey' | 'groupId' | 'title'>>
+    patch: Partial<Pick<Session, 'cwd' | 'windowKey' | 'groupId' | 'title' | 'viewId'>>
   ): void {
     const entry = this.require(id)
     entry.session = SessionSchema.parse({ ...entry.session, ...patch })
+  }
+
+  /** The view the session is read in. The shape is checked here
+   *  (`<pluginId>/<viewId>`, both halves non-empty); whether a plugin still
+   *  offers it is the renderer's resolution, which falls back rather than
+   *  failing, so disabling a plugin never strands a session on a dead view.
+   *  null clears the choice and hands the session back to that fallback. */
+  setView(id: string, viewId: string | null): Session {
+    const entry = this.require(id)
+    if (viewId !== null) {
+      const parts = viewId.split('/')
+      if (parts.length !== 2 || parts.some((part) => part.length === 0))
+        throw new Error(`Invalid view id: ${viewId}`)
+    }
+    // Clearing drops the key rather than leaving it undefined: the record
+    // crosses IPC and a JSON round trip, where an absent field and an undefined
+    // one stop being the same thing.
+    const next: Record<string, unknown> = { ...entry.session }
+    delete next.viewId
+    if (viewId !== null) next.viewId = viewId
+    entry.session = SessionSchema.parse(next)
+    return { ...entry.session }
   }
 
   setState(id: string, state: AgentState): void {

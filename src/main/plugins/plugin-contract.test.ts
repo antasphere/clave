@@ -58,6 +58,31 @@ describe('plugin manifest v1', () => {
   it('accepts every contribution kind and the surface entry without losing fields', () => {
     expect(pluginManifestSchema.parse(input)).toEqual(input)
   })
+  it('carries a view title when a manifest gives one, and stays valid without it', () => {
+    const titled = {
+      ...input,
+      contributes: {
+        ...input.contributes,
+        views: [
+          { id: 'chat', title: 'Chat', renders: ['events'] },
+          { id: 'compact', title: 'Compact', renders: ['events'] }
+        ]
+      }
+    }
+    expect(pluginManifestSchema.parse(titled).contributes.views).toEqual(titled.contributes.views)
+    // The picker falls back to the id, so a manifest written before titles
+    // existed still loads rather than failing the whole plugin.
+    expect(pluginManifestSchema.parse(input).contributes.views[0].title).toBeUndefined()
+    expect(() =>
+      pluginManifestSchema.parse({
+        ...input,
+        contributes: {
+          ...input.contributes,
+          views: [{ id: 'chat', title: '  ', renders: ['events'] }]
+        }
+      })
+    ).toThrow()
+  })
   it.each([
     { ...input, unexpected: true },
     { ...input, engines: { ...input.engines, unexpected: true } },
