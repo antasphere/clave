@@ -1,4 +1,11 @@
-import type { Session, SessionStream, SessionInput, ModelOption, CommandOption } from '../shared/session-model'
+import type {
+  Session,
+  SessionStream,
+  SessionInput,
+  SessionEvent,
+  ModelOption,
+  CommandOption
+} from '../shared/session-model'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface SessionIPC {
@@ -512,6 +519,18 @@ export interface ElectronAPI {
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
 
   pluginsList: () => Promise<import('../main/plugins/plugin-store').PluginRecord[]>
+  /** Open a plugin's surface view on one session. The returned lease is the
+   *  only name a later call gives; the session id never travels again. */
+  pluginsViewLease: (
+    pluginId: string,
+    viewId: string,
+    sessionId: string
+  ) => Promise<{ leaseId: string; url: string; sessionId: string }>
+  /** One call from a guest page, relayed by the pane holding the lease. Main
+   *  re-checks the plugin's grants on every one of them. */
+  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) => Promise<unknown>
+  pluginsViewRevoke: (leaseId: string) => Promise<void>
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => () => void
   pluginsEnable: (
     id: string,
     grants: import('@clave/plugin-sdk').PluginPermission[]

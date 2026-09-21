@@ -3,6 +3,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { PluginStore, pluginFile } from '../plugins/plugin-store'
+import { windowRegistry } from '../window-registry'
+import { SessionInputSchema } from '../../shared/session-model'
 import { PluginHost } from '../plugins/plugin-host'
 import { sessionManager } from '../sessions/session-manager'
 import { listPluginSessions, pluginSessionById } from '../sessions/plugin-sessions'
@@ -44,6 +46,24 @@ export function registerPluginHandlers(): void {
    *  focused one, and the id still resolves, because sessions outlive their window. */
   let focused: { windowId: number; sessionId: string } | null = null
   const watchedWindows = new Set<number>()
+  /** A plugin view's authority over ONE session, held by the pane that opened
+   *  it. The guest page never sees any of this: it talks to the app renderer
+   *  over postMessage, the renderer names the lease, and main answers from what
+   *  the lease says — so a guest can neither name another session nor outlive
+   *  the pane, whatever its page does. */
+  const viewLeases = new Map<
+    string,
+    { pluginId: string; viewId: string; sessionId: string; windowId: number; stop: () => void }
+  >()
+  const revokeLease = (leaseId: string): void => {
+    const lease = viewLeases.get(leaseId)
+    if (!lease) return
+    lease.stop()
+    viewLeases.delete(leaseId)
+  }
+  const revokeLeasesOf = (pluginId: string): void => {
+    for (const [id, lease] of viewLeases) if (lease.pluginId === pluginId) revokeLease(id)
+  }
   const secretRequests = new Map<
     string,
     {
@@ -94,6 +114,9 @@ export function registerPluginHandlers(): void {
           const file = surfaces.get(id)
           if (file) unregisterPreviewFile(file)
           surfaces.delete(id)
+          // A stopped plugin keeps no authority over a session: its panes go
+          // blank on the next render, and their leases answer nothing before.
+          revokeLeasesOf(id)
           clearSecrets(id)
         },
         notify: (id, title, body) => {
@@ -226,6 +249,109 @@ export function registerPluginHandlers(): void {
       })
     }
     host?.contextChanged()
+  })
+  /** Open a plugin's view on ONE session: check the plugin, the contribution
+   *  and the grant, then hand back a URL and a lease id. The session id is
+   *  fixed here and never travels again — every later call names the lease. */
+  ipcMain.handle(
+    'plugins:view-lease',
+    (event, pluginId: string, viewId: string, sessionId: string) => {
+      const win = guard(event)
+      const record = store.get(pluginId)
+      const manifest = record.manifest
+      if (
+        !record.enabled ||
+        record.status !== 'active' ||
+        record.error ||
+        manifest?.ui !== 'surface' ||
+        !manifest.uiEntry
+      )
+        throw new Error('View is not active')
+      const view = manifest.contributes.views.find((entry) => entry.id === viewId)
+      if (!view) throw new Error('Undeclared view')
+      if (!record.permissionsGranted.includes('sessions.read'))
+        throw new Error('Plugin may not read sessions')
+      const session = sessionManager.get(sessionId)
+      const windowKey = windowRegistry.getKeyForWindow(win.id)
+      if (!session || !windowKey || session.windowKey !== windowKey)
+        throw new Error('Session belongs to another window')
+      if (!view.renders.includes(session.transport))
+        throw new Error('View does not render this transport')
+      const file = pluginFile(record.directory, manifest.uiEntry)
+      const net = record.permissionsGranted.includes('net') ? 'https: http:' : ''
+      const { url } = registerPreviewFile(
+        file,
+        `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${net}; connect-src 'self' ${net}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
+      )
+      const leaseId = randomUUID()
+      // The events reach the app renderer, which relays them into the frame:
+      // the guest has no channel of its own to main, by design.
+      const stop = sessionManager.subscribe(
+        sessionId,
+        (stream) => {
+          if (stream.kind !== 'event') return
+          if (!win.isDestroyed())
+            win.webContents.send(`plugins:view-event:${leaseId}`, stream.event)
+        },
+        windowKey
+      )
+      // A renderer that reloads or dies cannot revoke what it no longer
+      // remembers, so main drops the lease itself. Without this a reload leaves
+      // authority over a session behind, held by nobody and revoked by nothing.
+      const drop = (): void => revokeLease(leaseId)
+      // `did-navigate` is the MAIN frame's, never a guest iframe's (that is
+      // `did-frame-navigate`), so a reload of the app drops the lease while the
+      // plugin page loading inside it does not.
+      win.webContents.on('did-navigate', drop)
+      win.webContents.once('destroyed', drop)
+      viewLeases.set(leaseId, {
+        pluginId,
+        viewId,
+        sessionId,
+        windowId: win.id,
+        stop: () => {
+          stop()
+          if (!win.isDestroyed()) {
+            win.webContents.off('did-navigate', drop)
+            win.webContents.off('destroyed', drop)
+          }
+        }
+      })
+      sessionManager.ready(sessionId)
+      return { leaseId, url, sessionId }
+    }
+  )
+  /** One call from a plugin view, relayed by the pane that holds its lease. The
+   *  grants are read HERE, not at the lease's birth: a permission taken away
+   *  stops the next write, not only the next pane. */
+  ipcMain.handle('plugins:view-request', (event, leaseId: string, method: string, params) => {
+    const win = guard(event)
+    const lease = viewLeases.get(leaseId)
+    if (!lease || lease.windowId !== win.id) throw new Error('Unknown view lease')
+    const record = store.get(lease.pluginId)
+    if (!record.enabled || record.status !== 'active' || record.error)
+      throw new Error('View is not active')
+    const session = sessionManager.get(lease.sessionId)
+    if (!session) throw new Error('Unknown session')
+    if (method === 'session.get') {
+      if (!record.permissionsGranted.includes('sessions.read'))
+        throw new Error('Plugin may not read sessions')
+      return session
+    }
+    if (method === 'session.write') {
+      if (!record.permissionsGranted.includes('sessions.write'))
+        throw new Error('Plugin may not write sessions')
+      // The lease's session, never one the guest named: `params` carries the
+      // input and nothing else that could select a target.
+      sessionManager.write(lease.sessionId, SessionInputSchema.parse(params))
+      return null
+    }
+    throw new Error(`Unknown plugin view method: ${method}`)
+  })
+  ipcMain.handle('plugins:view-revoke', (event, leaseId: string) => {
+    const win = guard(event)
+    const lease = viewLeases.get(leaseId)
+    if (lease && lease.windowId === win.id) revokeLease(leaseId)
   })
   ipcMain.handle('plugins:secrets', (event) => {
     const win = guard(event)

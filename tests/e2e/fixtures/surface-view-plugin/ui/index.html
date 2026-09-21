@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Surface Fixture</title>
+  </head>
+  <body>
+    <!--
+      A plugin's own page, rendering one session through the host's lease. It is
+      a TEST FIXTURE: besides showing what it receives, it reports what it can
+      and cannot reach, so the end-to-end spec can assert the boundary from the
+      guest's own side rather than from the outside.
+    -->
+    <h1>Surface fixture</h1>
+    <p>Session: <span id="session">(none)</span></p>
+    <p>Events: <span id="count">0</span></p>
+    <p>Parent DOM: <span id="parent-dom">untested</span></p>
+    <p>electronAPI: <span id="electron-api">untested</span></p>
+    <ul id="events"></ul>
+    <script>
+      const state = {
+        sessionId: null,
+        events: [],
+        pending: new Map(),
+        seq: 0,
+        parentDom: 'untested',
+        electronApi: 'untested',
+        lastError: ''
+      }
+      // Can this page read the app's document? An opaque-origin frame cannot,
+      // and the access throws rather than returning null.
+      try {
+        state.parentDom = window.parent.document ? 'reachable' : 'blocked'
+      } catch {
+        state.parentDom = 'blocked'
+      }
+      // Is the app's bridge reachable AT ALL — on this window, on the parent's,
+      // or through a host that relays whatever method it is handed? The last
+      // one is the probe that notices a host too generous with its own powers,
+      // and it is answered later, once the bridge has had a chance to reply.
+      state.electronApi = typeof window.electronAPI === 'undefined' ? 'absent' : 'present'
+      try {
+        if (window.parent.electronAPI) state.electronApi = 'present'
+      } catch {
+        /* Opaque origin: the parent is unreadable, which is the point. */
+      }
+
+      function render() {
+        document.getElementById('session').textContent = state.sessionId ?? '(none)'
+        document.getElementById('count').textContent = String(state.events.length)
+        document.getElementById('parent-dom').textContent = state.parentDom
+        document.getElementById('electron-api').textContent = state.electronApi
+        document.getElementById('events').innerHTML = state.events
+          .map((event) => `<li>${event.type}: ${event.text ?? event.delta ?? ''}</li>`)
+          .join('')
+      }
+      window.addEventListener('message', (message) => {
+        const data = message.data
+        if (!data || typeof data !== 'object') return
+        if (data.clave === 'init') state.sessionId = data.sessionId
+        else if (data.clave === 'event') state.events.push(data.event)
+        else if (data.clave === 'response') {
+          const resolve = state.pending.get(data.id)
+          if (resolve) {
+            state.pending.delete(data.id)
+            resolve(data)
+          }
+        }
+        render()
+      })
+      /** Ask the host, which names the lease to main. Nothing here names a
+       *  session: the guest has no way to say which one it means. */
+      function request(method, params) {
+        const id = ++state.seq
+        return new Promise((resolve) => {
+          state.pending.set(id, resolve)
+          window.parent.postMessage({ clave: 'request', id, method, params }, '*')
+        })
+      }
+      window.__fixture = {
+        state,
+        request,
+        async write(text, pretendSessionId) {
+          // The second argument is the point of the test: a guest trying to
+          // aim a write at another session by smuggling an id into the params.
+          const answer = await request('session.write', {
+            type: 'user_message',
+            text,
+            sessionId: pretendSessionId,
+            id: pretendSessionId
+          })
+          state.lastError = answer.error ?? ''
+          render()
+          return answer
+        }
+      }
+      render()
+      window.parent.postMessage({ clave: 'hello' }, '*')
+      // Ask the host for something outside the lease's two methods. A host that
+      // relays by name would answer, and that is a bridge in all but the name.
+      request('sessionsList').then((answer) => {
+        if (answer && answer.error === undefined) state.electronApi = 'present'
+        render()
+      })
+    </script>
+  </body>
+</html>

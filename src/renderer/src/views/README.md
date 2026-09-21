@@ -34,7 +34,24 @@ card goes dead with a note, and a later `blocked` reopens it — the kernel awai
 something again, and the view cannot tell which request, so it restores what it
 closed on the kernel's word.
 
-Third-party native views and surface views are deliberately outside wave 2.
+A SURFACE view is the other kind, and the reason a plugin the user linked can
+render a session at all: the plugin's own page, served on its `clave-preview`
+URL with the panel CSP, in an iframe whose `sandbox` is `allow-scripts` and
+NEVER `allow-same-origin` (`PluginViewSurface.tsx`). The guest has no preload,
+no `electronAPI` and no route to the app's document — it is opaque-origin AND on
+a different origin, two independent guards. Its only channel is `postMessage` to
+the host, accepted solely when `event.source` is that frame's own window.
+
+The authority is a LEASE minted in main (`plugins:view-lease`): it fixes ONE
+session id, and every later call names the lease, never a session, so a guest
+cannot aim at another session however it shapes its params. Main re-reads the
+plugin's grants on every call rather than trusting the mint, and a lease dies
+with what held it — the pane unmounting, the plugin being disabled, the window
+reloading or closing. `tests/e2e/plugin-surface-view.spec.mjs` asserts all of
+that against a linked fixture plugin, negatives included.
+
+Third-party NATIVE views are deliberately still outside this wave: code compiled
+into the renderer stays the host's own.
 A plugin's code uses the public session preload bridge, installs listeners before
 subscribing, awaits subscription before writes and releases both on unmount.
 The v1 model has one transport per session, so events sessions have no terminal;

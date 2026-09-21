@@ -1,16 +1,20 @@
 import type { Session } from '../../../shared/session-model'
 import type { PluginRecord } from '../../../main/plugins/plugin-store'
 
-/** One view a session may be read in, as the picker lists it. */
+/** One view a session may be read in, as the picker lists it. `kind` says who
+ *  renders it: `native` is code compiled into the renderer, `surface` is the
+ *  plugin's own page in a sandboxed frame. */
 export interface AvailableView {
   id: string
   title: string
   pluginName: string
+  kind: 'native' | 'surface'
 }
-/** A plugin may contribute a view only while it is the host's own bundled code,
- *  enabled, running, and granted both session permissions — the same bar wave 2
- *  set for mounting the one view there was. */
-function eligible(plugin: PluginRecord): boolean {
+/** A NATIVE view is the host's own code, so the bar is the one wave 2 set for
+ *  the single view there was: bundled with the app, enabled, running, granted
+ *  both session permissions. A plugin the user linked cannot ship code into the
+ *  renderer. */
+function eligibleNative(plugin: PluginRecord): boolean {
   return (
     plugin.source === 'bundled' &&
     plugin.enabled &&
@@ -19,6 +23,21 @@ function eligible(plugin: PluginRecord): boolean {
     plugin.permissionsGranted.includes('sessions.read') &&
     plugin.permissionsGranted.includes('sessions.write') &&
     plugin.manifest?.ui === 'native'
+  )
+}
+/** A SURFACE view is the plugin's own page in a sandboxed frame with no origin
+ *  of its own, reading the session through a lease main can revoke. That is why
+ *  a linked plugin may contribute one where it may not contribute native code.
+ *  Reading is the bar to be LISTED; writing is checked again in main, per call,
+ *  against the grants as they stand then. */
+function eligibleSurface(plugin: PluginRecord): boolean {
+  return (
+    plugin.enabled &&
+    plugin.status === 'active' &&
+    !plugin.error &&
+    plugin.permissionsGranted.includes('sessions.read') &&
+    plugin.manifest?.ui === 'surface' &&
+    !!plugin.manifest.uiEntry
   )
 }
 /** Every view that can render this session, in manifest order: what the picker
@@ -31,18 +50,24 @@ export function availableViews(
   implemented: ReadonlySet<string>
 ): AvailableView[] {
   if (!session || session.transport !== 'events') return []
-  return plugins.filter(eligible).flatMap((plugin) =>
-    (plugin.manifest?.contributes.views ?? [])
+  return plugins.flatMap((plugin) => {
+    const kind = eligibleNative(plugin) ? 'native' : eligibleSurface(plugin) ? 'surface' : null
+    if (!kind) return []
+    return (plugin.manifest?.contributes.views ?? [])
       .filter(
         (view) =>
-          view.renders.includes(session.transport) && implemented.has(`${plugin.id}/${view.id}`)
+          view.renders.includes(session.transport) &&
+          // A native view exists only if this build carries its component; a
+          // surface view is the plugin's own page, so the plugin is enough.
+          (kind === 'surface' || implemented.has(`${plugin.id}/${view.id}`))
       )
       .map((view) => ({
         id: `${plugin.id}/${view.id}`,
         title: view.title ?? view.id,
-        pluginName: plugin.manifest?.name ?? plugin.id
+        pluginName: plugin.manifest?.name ?? plugin.id,
+        kind
       }))
-  )
+  })
 }
 /** Which view this session is read in. The session's own choice wins; a choice
  *  whose plugin is gone, disabled or no longer contributing that view falls back

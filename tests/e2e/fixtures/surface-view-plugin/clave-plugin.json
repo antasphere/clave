@@ -1,0 +1,13 @@
+{
+  "id": "fixture.surface-view",
+  "name": "Surface Fixture",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <3.0.0" },
+  "ui": "surface",
+  "uiEntry": "ui/index.html",
+  "contributes": {
+    "views": [{ "id": "log", "title": "Fixture log", "renders": ["events"] }]
+  },
+  "permissions": ["sessions.read", "sessions.write"]
+}

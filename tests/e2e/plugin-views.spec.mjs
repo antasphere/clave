@@ -13,21 +13,24 @@ import { openChat, inject } from './chat-view.spec.mjs'
 const CHAT = 'clave.chat-view/chat'
 const COMPACT = 'clave.chat-view/compact'
 
-/** Pick a view from the pane's menu by keyboard: the menu animates in, and a
- *  click aimed at a moving item is a flake, not a check. The highlight is
- *  asserted before Enter, so choosing the wrong row fails here rather than
- *  three assertions later. */
+/** Walk the menu to a label with the arrows, one press per poll so the
+ *  highlight has settled before the next read — pressing faster than the menu
+ *  updates overshoots and lands on a neighbour. */
 async function choose(win, picker, label) {
   const items = win.getByRole('menuitem')
   await picker.click()
   await items.first().waitFor()
   const highlighted = win.locator('[role="menuitem"][data-highlighted]')
-  for (let step = 0; step < 6; step += 1) {
-    const current = await highlighted.innerText().catch(() => '')
-    if (current.trim() === label) break
-    await win.keyboard.press('ArrowDown')
-  }
-  assert.equal((await highlighted.innerText()).trim(), label)
+  const landed = await until(
+    async () => {
+      const current = await highlighted.innerText().catch(() => '')
+      if (current.trim() === label) return true
+      await win.keyboard.press('ArrowDown')
+      return false
+    },
+    { tries: 12, gapMs: 120 }
+  )
+  assert.ok(landed, `never highlighted ${label}`)
   await win.keyboard.press('Enter')
   await items.first().waitFor({ state: 'detached' })
 }

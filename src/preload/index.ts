@@ -1,4 +1,11 @@
-import type { Session, SessionStream, SessionInput, ModelOption, CommandOption } from '../shared/session-model'
+import type {
+  Session,
+  SessionStream,
+  SessionInput,
+  SessionEvent,
+  ModelOption,
+  CommandOption
+} from '../shared/session-model'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
@@ -55,6 +62,13 @@ const electronAPI = {
     createIpcListener(`sessions:exit:${id}`, callback),
 
   pluginsList: () => ipcRenderer.invoke('plugins:list'),
+  pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
+    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
+  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) =>
+    ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
+  pluginsViewRevoke: (leaseId: string) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) =>
+    createIpcListener(`plugins:view-event:${leaseId}`, callback),
   pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
     ipcRenderer.invoke('plugins:enable', id, grants),
   pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),

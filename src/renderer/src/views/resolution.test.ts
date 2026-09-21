@@ -40,8 +40,8 @@ const both: ReadonlySet<string> = new Set(['clave.chat-view/chat', 'clave.chat-v
 describe('view resolution', () => {
   it('offers one entry per contributed view, keyed by plugin and view', () => {
     expect(availableViews(session(), [plugin()], both)).toEqual([
-      { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat' },
-      { id: 'clave.chat-view/compact', title: 'Compact', pluginName: 'Chat' }
+      { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat', kind: 'native' },
+      { id: 'clave.chat-view/compact', title: 'Compact', pluginName: 'Chat', kind: 'native' }
     ])
   })
   it('resolves the view the session names', () => {
@@ -70,7 +70,7 @@ describe('view resolution', () => {
   })
   it('never offers a view this build cannot mount', () => {
     expect(availableViews(session(), [plugin()], new Set(['clave.chat-view/chat']))).toEqual([
-      { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat' }
+      { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat', kind: 'native' }
     ])
     expect(
       resolveView(session({ viewId: 'clave.chat-view/compact' }), [plugin()], new Set())
@@ -94,15 +94,56 @@ describe('view resolution', () => {
     }
     expect(availableViews(session({ transport: 'pty' }), [plugin({ manifest })], both)).toEqual([])
   })
-  it('refuses a plugin missing either session grant, a surface plugin, and a linked one', () => {
+  it('refuses a native view from a plugin missing a grant, stopped, broken, or merely linked', () => {
     expect(
       resolveView(session(), [plugin({ permissionsGranted: ['sessions.read'] })], both)
-    ).toBeUndefined()
-    expect(
-      resolveView(session(), [plugin({ manifest: { ...plugin().manifest, ui: 'surface' } })], both)
     ).toBeUndefined()
     expect(resolveView(session(), [plugin({ source: 'linked' })], both)).toBeUndefined()
     expect(resolveView(session(), [plugin({ status: 'stopped' })], both)).toBeUndefined()
     expect(resolveView(session(), [plugin({ error: 'crashed' })], both)).toBeUndefined()
+  })
+  describe('surface views', () => {
+    const surface = (patch: Record<string, unknown> = {}): PluginRecord =>
+      plugin({
+        id: 'vendor.board',
+        source: 'linked',
+        manifest: {
+          id: 'vendor.board',
+          name: 'Board',
+          ui: 'surface',
+          uiEntry: 'ui/index.html',
+          contributes: { views: [{ id: 'board', title: 'Board', renders: ['events'] }] }
+        },
+        ...patch
+      })
+    it('are offered by a LINKED plugin, which native views never are', () => {
+      expect(availableViews(session(), [surface()], new Set())).toEqual([
+        { id: 'vendor.board/board', title: 'Board', pluginName: 'Board', kind: 'surface' }
+      ])
+    })
+    it('need no compiled component: the native map does not gate them', () => {
+      expect(resolveView(session({ viewId: 'vendor.board/board' }), [surface()], new Set())).toBe(
+        'vendor.board/board'
+      )
+    })
+    it('need a page to render and the read grant to be listed at all', () => {
+      const noEntry = {
+        id: 'vendor.board',
+        name: 'Board',
+        ui: 'surface',
+        contributes: { views: [{ id: 'board', title: 'Board', renders: ['events'] }] }
+      }
+      expect(availableViews(session(), [surface({ manifest: noEntry })], new Set())).toEqual([])
+      expect(
+        availableViews(session(), [surface({ permissionsGranted: [] })], new Set())
+      ).toEqual([])
+      expect(availableViews(session(), [surface({ enabled: false })], new Set())).toEqual([])
+      expect(availableViews(session(), [surface({ status: 'starting' })], new Set())).toEqual([])
+    })
+    it('are listed WITHOUT the write grant — writing is checked in main, per call', () => {
+      expect(
+        availableViews(session(), [surface({ permissionsGranted: ['sessions.read'] })], new Set())
+      ).toHaveLength(1)
+    })
   })
 })

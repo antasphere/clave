@@ -15,6 +15,7 @@ import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
 import { useSessionLog } from './conversation-store'
+import { PluginViewSurface } from './PluginViewSurface'
 import { availableViews, resolveView, type AvailableView } from './resolution'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { ConfirmDialog } from '@clave/ui/components'
@@ -129,7 +130,6 @@ export function RegisteredSessionView({
   const session = registry.sessions.find((s) => s.id === sessionId)
   const views = availableViews(session, registry.plugins, implemented)
   const viewId = resolveView(session, registry.plugins, implemented)
-  const View = viewId ? nativeViews[viewId] : undefined
   // The host keeps the session's event log for the pane's lifetime, so a view
   // that reads it renders the whole conversation however late it is opened.
   useSessionLog(session?.transport === 'events' ? sessionId : '')
@@ -200,11 +200,16 @@ export function RegisteredSessionView({
   // its PTY session id here without changing the view plugin's bridge.
   const terminal = registry.terminal.has(sessionId)
   const name = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId)?.name)
-  if (!session || session.transport === 'pty' || !View)
+  // The terminal is the fallback when nothing resolves — not when the resolved
+  // view happens to be a surface one, which has no entry in the native map.
+  if (!session || session.transport === 'pty' || !viewId)
     return <TerminalPanel sessionId={sessionId} />
   return (
     <section
       className="chat-host"
+      // Which session this pane is showing, so a test can tell two panes apart
+      // without counting them.
+      data-session-id={sessionId}
       onPointerDown={() => useViewSessionStore.getState().setFocusedSession(sessionId)}
     >
       <header className="pane-header chat-header">
@@ -261,17 +266,26 @@ export function RegisteredSessionView({
           </button>
         </div>
       </header>
-      {mounted.map((id) => {
-        const Mounted = nativeViews[id]
-        if (!Mounted) return null
+      {views.map((view) => {
+        const Mounted = nativeViews[view.id]
+        const hidden = view.id !== viewId || (terminal && !!terminalSessionId)
+        // A surface view is the plugin's own page and costs a lease and a
+        // process, so it mounts only while it is the view on screen; a native
+        // view is cheap and stays mounted to keep what it holds privately.
+        if (view.kind === 'surface' && hidden) return null
         return (
-          <div
-            key={id}
-            className="chat-content-slot"
-            data-view-id={id}
-            hidden={id !== viewId || (terminal && !!terminalSessionId)}
-          >
-            <Mounted session={session} onState={reporters.get(id)!} />
+          <div key={view.id} className="chat-content-slot" data-view-id={view.id} hidden={hidden}>
+            {view.kind === 'surface' ? (
+              <PluginViewSurface
+                key={`${view.id}:${session.id}`}
+                pluginId={view.id.slice(0, view.id.lastIndexOf('/'))}
+                viewId={view.id.slice(view.id.lastIndexOf('/') + 1)}
+                session={session}
+                onState={reporters.get(view.id)!}
+              />
+            ) : Mounted ? (
+              <Mounted session={session} onState={reporters.get(view.id)!} />
+            ) : null}
           </div>
         )
       })}
