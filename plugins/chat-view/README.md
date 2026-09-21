@@ -8,7 +8,14 @@ bridge subscription. It does not launch a provider or read provider files.
 The reducer preserves arrival order, joins assistant deltas until `final`, pairs
 tools by id (including an early result), and retains permission answers. Permission
 buttons disable only after an acknowledged write; failures remain visible and can
-be retried. Session exit disables the composer. Transcripts currently live for the
+be retried. Session exit disables the composer.
+
+The pane's header state is the kernel record the session stream carries, never a
+tally of what this view answered: a permission answered anywhere else (another
+window, an agent tool, a write from outside the view) is closed for the adapter,
+so the reducer marks it `answeredElsewhere` on the first non-blocked
+`state_change`, the card says it was answered outside this view, and its buttons
+go dead rather than sending an answer the adapter would refuse. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
 Markdown is rendered without raw HTML. Shiki has one lazy highlighter with light /

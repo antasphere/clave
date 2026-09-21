@@ -178,6 +178,31 @@ setInterval(()=>{},1000);
       ),
       'an outside-view sessionsWrite answer clears the waiting dot while the kernel is working'
     )
+    // The chat pane is the same record. Its header leaves blocked, the card says
+    // the request was answered outside this view, and its buttons go dead: a
+    // click would reach an adapter that has already dropped the id (PRDCT-2549).
+    const card = win.locator('.chat-permission-card').first()
+    await card.locator('.chat-permission-answer[data-answered="elsewhere"]').waitFor()
+    assert.ok(
+      await until(
+        async () => (await win.locator('.chat-state[data-state="blocked"]').count()) === 0
+      ),
+      'the pane header leaves blocked when the kernel does'
+    )
+    const buttons = await card.getByRole('button').all()
+    assert.ok(buttons.length > 0, 'the permission card still shows the options it offered')
+    for (const button of buttons)
+      assert.equal(
+        await button.isDisabled(),
+        true,
+        'a request answered outside the view offers no live button'
+      )
+    assert.equal(
+      await win.getByRole('alert').count(),
+      0,
+      'an outside answer raises no error card in the pane'
+    )
+    t.check('the chat pane follows the kernel after an outside-view answer', true)
     t.check('outside-view permission answer makes the sidebar follow kernel working state', true)
     assert.ok(
       await until(async () =>

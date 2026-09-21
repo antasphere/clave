@@ -13,7 +13,17 @@ export type Entry =
       complete: boolean
       at: number
     }
-  | { kind: 'permission'; request: Permission; answer?: string; at: number }
+  | {
+      kind: 'permission'
+      request: Permission
+      answer?: string
+      /* The kernel left blocked without this view answering: somebody else did
+         (another window, an agent tool, a write from outside the view). The
+         request is closed for the adapter, so the card says so and offers no
+         click it would refuse. */
+      answeredElsewhere?: boolean
+      at: number
+    }
   | { kind: 'error'; message: string; at: number }
 export interface Conversation {
   entries: Entry[]
@@ -34,7 +44,9 @@ export function reduceConversation(state: Conversation, action: Action): Convers
         ? { ...e, answer: action.optionId }
         : e
     )
-    const waiting = entries.some((e) => e.kind === 'permission' && !e.answer)
+    const waiting = entries.some(
+      (e) => e.kind === 'permission' && !e.answer && !e.answeredElsewhere
+    )
     return {
       ...state,
       entries,
@@ -79,8 +91,24 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
         entries.push({ kind: 'permission', request: event, at })
       return { ...state, entries, state: 'blocked' }
-    case 'state_change':
-      return { ...state, state: event.state }
+    case 'state_change': {
+      // The kernel record is the conversation's state, never the view's own
+      // tally of what it answered. Once the kernel leaves blocked, no request
+      // is outstanding for the adapter any more — both adapters emit a working
+      // state only when their pending set is empty — so a request this view
+      // never answered was answered somewhere else.
+      if (event.state === 'blocked' || event.state === 'ended')
+        return { ...state, entries, state: event.state }
+      return {
+        ...state,
+        entries: entries.map((e) =>
+          e.kind === 'permission' && !e.answer && !e.answeredElsewhere
+            ? { ...e, answeredElsewhere: true }
+            : e
+        ),
+        state: event.state
+      }
+    }
     case 'session_meta':
       return { ...state, model: event.model }
     case 'error':

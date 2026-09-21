@@ -177,6 +177,61 @@ export async function run(t) {
     await win.locator('.chat-permission-answer').filter({ hasText: 'Allow once' }).waitFor()
     assert.equal(await win.getByRole('button', { name: 'Deny', exact: true }).count(), 0)
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
+    // A second request, answered by somebody else. The echo adapter has no
+    // permission vocabulary, so the outside answer is represented by its kernel
+    // consequence: the state_change both real adapters emit once their pending
+    // set empties (claude-adapter.ts:217, codex-adapter.ts:224). The whole path
+    // — a real adapter, answered through sessionsWrite from outside the view —
+    // is proven in claude-chat-adapter.spec.mjs.
+    await inject(app, record.id, [
+      {
+        type: 'permission_request',
+        id: 'permit-elsewhere',
+        description: 'Delete this file?',
+        toolName: 'Bash',
+        input: { command: 'rm /tmp/example' },
+        options: [
+          { id: 'allow', label: 'Allow once' },
+          { id: 'deny', label: 'Deny' }
+        ]
+      }
+    ])
+    const outside = win.locator('.chat-permission-card').filter({ hasText: 'Delete this file?' })
+    await outside.waitFor()
+    await win.locator('.chat-state[data-state="blocked"]').waitFor()
+    assert.equal(
+      await outside.getByRole('button', { name: 'Deny', exact: true }).isDisabled(),
+      false,
+      'an outstanding request offers a live button'
+    )
+    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await win.locator('.chat-state[data-state="working"]').waitFor()
+    await outside.locator('.chat-permission-answer[data-answered="elsewhere"]').waitFor()
+    assert.match(
+      await outside.locator('.chat-permission-answer').innerText(),
+      /Answered outside this view/
+    )
+    for (const label of ['Allow once', 'Deny'])
+      assert.equal(
+        await outside.getByRole('button', { name: label, exact: true }).isDisabled(),
+        true,
+        `${label} must be dead once the kernel says the request was answered`
+      )
+    // Forced through the actionability checks: a disabled button fires nothing,
+    // so no answer crosses the write IPC and no error card lands.
+    await outside.getByRole('button', { name: 'Deny', exact: true }).click({ force: true })
+    assert.equal(
+      await app.evaluate(
+        () =>
+          globalThis.__chatWrites.filter(
+            (x) => x.type === 'permission_response' && x.id === 'permit-elsewhere'
+          ).length
+      ),
+      0,
+      'a card answered elsewhere can send no answer of its own'
+    )
+    assert.equal(await win.getByRole('alert').count(), 0, 'and raises no error card')
+    t.check('a request answered elsewhere leaves blocked, is marked, and goes dead', true)
     await win.getByRole('button', { name: 'Model', exact: true }).click()
     await win.getByRole('menuitem', { name: /Echo 2/ }).click()
     assert.ok(

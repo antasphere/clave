@@ -342,8 +342,13 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       void window.electronAPI.sessionsUnsubscribe(session.id)
     }
   }, [session.id])
-  const waiting = conversation.entries.some((e) => e.kind === 'permission' && !e.answer)
-  const state = conversation.state === 'ended' ? 'ended' : waiting ? 'blocked' : conversation.state
+  /* The pane's state is the kernel's record, the same one the sidebar follows:
+     the reducer holds the last state_change the session stream carried, and a
+     permission_request puts it on blocked exactly as the adapter does. The view
+     never re-derives it from its own answers — an answer given in another
+     window would leave this pane blocked with live buttons the adapter would
+     refuse (PRDCT-2549). */
+  const state = conversation.state
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   useEffect(() => {
     const el = scroll.current
@@ -451,6 +456,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         ? (entry.request.options.find((option) => option.id === entry.answer)?.label ??
           entry.answer)
         : null
+      const elsewhere = !chosen && entry.answeredElsewhere === true
       return (
         <section key={index} className="chat-permission-card" aria-label="Permission request">
           <div className="chat-permission-title">
@@ -474,18 +480,28 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               {chosen}
             </p>
           ) : (
-            <div className="chat-actions">
-              {entry.request.options.map((option, i) => (
-                <button
-                  key={option.id}
-                  className={i === 0 ? 'btn-primary' : 'btn-secondary'}
-                  disabled={!ready || pending.includes(entry.request.id) || state === 'ended'}
-                  onClick={() => void answer(entry.request.id, option.id)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            <>
+              {elsewhere && (
+                <p className="chat-permission-answer" role="status" data-answered="elsewhere">
+                  <CheckIcon />
+                  Answered outside this view
+                </p>
+              )}
+              <div className="chat-actions">
+                {entry.request.options.map((option, i) => (
+                  <button
+                    key={option.id}
+                    className={i === 0 ? 'btn-primary' : 'btn-secondary'}
+                    disabled={
+                      !ready || pending.includes(entry.request.id) || state === 'ended' || elsewhere
+                    }
+                    onClick={() => void answer(entry.request.id, option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </section>
       )

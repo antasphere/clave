@@ -6,6 +6,7 @@ import type { PluginRecord } from '../../../main/plugins/plugin-store'
 import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
+import { bindKernelState } from './kernel-state'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { ConfirmDialog } from '@clave/ui/components'
 
@@ -72,39 +73,18 @@ export function RegisteredSessionView({
   const transport = session?.transport
   useEffect(() => {
     if (transport !== 'events') return
-    let active = true
-    let receivedState = false
-    const applyState = (state: string): void => {
-      const store = useViewSessionStore.getState()
-      if (state === 'ended') {
-        if (store.sessions.find((s) => s.id === sessionId)?.alive)
-          store.updateSessionAlive(sessionId, false)
-      } else if (
-        state === 'idle' ||
-        state === 'working' ||
-        state === 'blocked' ||
-        state === 'done'
-      ) {
-        store.setAgentState(sessionId, state)
+    return bindKernelState(
+      sessionId,
+      {
+        onAgentState: (id, callback) => window.electronAPI.onAgentState(id, callback),
+        sessionsList: () => window.electronAPI.sessionsList()
+      },
+      {
+        isAlive: (id) => useViewSessionStore.getState().sessions.find((s) => s.id === id)?.alive,
+        setAlive: (id, alive) => useViewSessionStore.getState().updateSessionAlive(id, alive),
+        setState: (id, state) => useViewSessionStore.getState().setAgentState(id, state)
       }
-    }
-    const stop = window.electronAPI.onAgentState(sessionId, (state) => {
-      receivedState = true
-      applyState(state)
-    })
-    // Bind before reading so mounting/remounting cannot miss a transition, and
-    // never let an older list response overwrite a state already received live.
-    void window.electronAPI
-      .sessionsList()
-      .then((records) => {
-        const record = records.find((s) => s.id === sessionId)
-        if (active && !receivedState && record) applyState(record.state)
-      })
-      .catch(console.error)
-    return () => {
-      active = false
-      stop()
-    }
+    )
   }, [sessionId, transport])
   const close = async (): Promise<void> => {
     const current = useViewSessionStore.getState()

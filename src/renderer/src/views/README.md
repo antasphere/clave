@@ -8,6 +8,18 @@ process falls back to the terminal. A React render failure is caught by the host
 an error card; it does not switch views. PTY sessions retain their existing
 terminal implementation.
 
+The kernel record is the one source of a session's state, for the sidebar and for
+the pane alike. `kernel-state.ts` binds `agent:state:<id>` (the main process's
+forward of the same `state_change` the view receives on its session stream) and
+hydrates from the session record, validating every incoming word against
+`AgentStateSchema`; a view never writes sidebar state, and never re-derives its
+own header state from the entries it has answered. That second half matters when
+a permission is answered somewhere else — another window, an agent tool, a write
+from outside the view: the kernel leaves `blocked`, the request is closed for the
+adapter, and a pane that trusted its own tally would keep offering an Allow the
+adapter would refuse. The conversation reducer marks such a request
+`answeredElsewhere` and the card goes dead with a note.
+
 Third-party native views and surface views are deliberately outside wave 2.
 A plugin's code uses the public session preload bridge, installs listeners before
 subscribing, awaits subscription before writes and releases both on unmount.

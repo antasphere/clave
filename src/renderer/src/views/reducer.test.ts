@@ -9,6 +9,8 @@ import {
 } from '../../../../plugins/chat-view/src/reducer'
 const run = (events: ChatEvent[]): Conversation =>
   events.reduce((state, event) => reduceConversation(state, { event, at: 1 }), emptyConversation)
+const elsewhere = (entry: Conversation['entries'][number]): boolean | undefined =>
+  entry.kind === 'permission' ? entry.answeredElsewhere : undefined
 describe('conversation stream', () => {
   it('renders the recorded echo sequence in order and correlates its tool', () => {
     const state = run(recordedEcho.map((event) => SessionEventSchema.parse(event)))
@@ -51,5 +53,80 @@ describe('conversation stream', () => {
     expect(state.entries.map((e) => e.kind)).toEqual(['assistant', 'tool', 'permission', 'error'])
     expect(reduceConversation(state, { exit: 7 })).toMatchObject({ state: 'ended', exitCode: 7 })
     expect(run([{ type: 'error', message: 'fatal', fatal: true }]).state).toBe('ended')
+  })
+  it('marks a request answered elsewhere when the kernel leaves blocked without this view', () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'p',
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [
+        { id: 'yes', label: 'Allow' },
+        { id: 'no', label: 'Deny' }
+      ]
+    }
+    let state = run([request])
+    expect(state.state).toBe('blocked')
+    expect(state.entries[0]).toMatchObject({ kind: 'permission' })
+    expect(elsewhere(state.entries[0])).toBe(undefined)
+    // Another consumer answered: the kernel says working, so the request is no
+    // longer outstanding and this view's card must stop offering a click.
+    state = reduceConversation(state, { event: { type: 'state_change', state: 'working' } })
+    expect(state.state).toBe('working')
+    expect(elsewhere(state.entries[0])).toBe(true)
+    expect(state.entries[0]).toMatchObject({ kind: 'permission' })
+    expect((state.entries[0] as { answer?: string }).answer).toBe(undefined)
+  })
+  it('keeps a pending request open while the kernel stays blocked, and on ended', () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'p',
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [{ id: 'yes', label: 'Allow' }]
+    }
+    const blocked = reduceConversation(run([request]), {
+      event: { type: 'state_change', state: 'blocked' }
+    })
+    expect(elsewhere(blocked.entries[0])).toBe(undefined)
+    const ended = reduceConversation(blocked, { event: { type: 'state_change', state: 'ended' } })
+    expect(ended.state).toBe('ended')
+    expect(elsewhere(ended.entries[0])).toBe(undefined)
+  })
+  it('never relabels a request this view answered itself', () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'p',
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [{ id: 'yes', label: 'Allow' }]
+    }
+    let state = reduceConversation(run([request]), { answer: 'p', optionId: 'yes' })
+    state = reduceConversation(state, { event: { type: 'state_change', state: 'working' } })
+    expect(state.entries[0]).toMatchObject({ answer: 'yes' })
+    expect(elsewhere(state.entries[0])).toBe(undefined)
+  })
+  it('lets this view answer a second request while the first was answered elsewhere', () => {
+    const make = (id: string): ChatEvent => ({
+      type: 'permission_request' as const,
+      id,
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [{ id: 'yes', label: 'Allow' }]
+    })
+    let state = run([make('one')])
+    state = reduceConversation(state, { event: { type: 'state_change', state: 'working' } })
+    state = reduceConversation(state, { event: make('two') })
+    expect(state.state).toBe('blocked')
+    state = reduceConversation(state, { answer: 'two', optionId: 'yes' })
+    // Nothing is outstanding any more: the one answered elsewhere does not hold
+    // the conversation on blocked.
+    expect(state.state).toBe('working')
+    expect(state.entries[0]).toMatchObject({ answeredElsewhere: true })
+    expect(state.entries[1]).toMatchObject({ answer: 'yes' })
   })
 })
