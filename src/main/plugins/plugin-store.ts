@@ -49,6 +49,7 @@ export interface PluginRecord extends InstalledPlugin {
   status: 'disabled' | 'starting' | 'active' | 'error'
   panels: string[]
   commands: string[]
+  toolbar: string[]
   generation: number
   lastNotification?: { title: string; body?: string }
 }
@@ -172,6 +173,7 @@ export class PluginStore {
             status: 'disabled',
             panels: [],
             commands: [],
+            toolbar: [],
             generation: 0
           }
           if (digestChanged) record.needsReview = 'digest-change'
@@ -219,6 +221,7 @@ export class PluginStore {
             status: 'error',
             panels: [],
             commands: [],
+            toolbar: [],
             generation: 0
           })
         }

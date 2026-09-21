@@ -15,10 +15,16 @@ export interface PluginAPI {
     list(): Promise<PluginSession[]>
     get(id: string): Promise<PluginSession | null>
     subscribe(listener: (sessions: PluginSession[]) => void): Promise<() => void>
+    /** The session the user is looking at, or null when no tab holds focus. */
+    focused(): Promise<PluginSession | null>
+    /** Listen to the host's `context.changed` push; returns the unsubscribe. Requires
+     *  `sessions.read`, without which the host never pushes and the listener never fires. */
+    onContextChanged(listener: (session: PluginSession | null) => void): () => void
     send(id: string, text: string): Promise<void>
   }
   ui: {
     registerPanel(id: string): Promise<void>
+    registerToolbar(id: string): Promise<void>
     registerCommand(id: string, handler: PluginCommandHandler): Promise<void>
   }
   notify(options: { title: string; body?: string }): Promise<void>

@@ -16,7 +16,8 @@ main and utility-process entries as well.
   "main": "main.cjs",
   "contributes": {
     "panels": [{ "id": "hello", "title": "Hello", "icon": "SparklesIcon", "placement": "side" }],
-    "commands": [{ "id": "greet", "title": "Say hello" }]
+    "commands": [{ "id": "greet", "title": "Say hello" }],
+    "toolbar": [{ "id": "greet", "title": "Say hello", "icon": "HandRaisedIcon", "kind": "action" }]
   },
   "permissions": []
 }
@@ -44,6 +45,19 @@ export default definePlugin({
 })
 ```
 
+A panel's `placement` says which host renders it: `side` is a tab of the side panel,
+beside Files and Git; `main` is a panel in the content column, opened from a button the
+toolbar gives it. Both render the plugin's `uiEntry` in a guarded webview carrying the
+app's own theme tokens.
+
+A `toolbar` entry is a face for a command, in the toolbar's right-hand cluster. `kind:
+"action"` is one button and runs the command whose id it shares; `kind: "popover"` opens a
+menu of `items`, each item running the command whose id IT shares. Every id a toolbar entry
+executes must name a declared command — a manifest whose toolbar points at nothing is
+refused, because at click time the host would simply refuse the command and the button
+would look fine. Registration goes through `ui.registerToolbar(id)`, guarded by the same
+exact-id check as panels and commands.
+
 The host checks both requested and granted permissions for every API request.
 Session reads and subscriptions require `sessions.read`; sending text requires
 `sessions.write`; secret prompts require `secrets`. Registering UI requires an
@@ -53,6 +67,12 @@ The other declared permissions reserve future host APIs; they do not expose
 filesystem, network, or shell methods in v1. Utility processes provide crash
 isolation, not an OS security sandbox for arbitrary Node.js plugin code. Only
 install host-side code you trust.
+
+`sessions.focused()` resolves to the session the user is looking at, or `null`; the host
+also pushes it unasked as a `context.changed` notification whenever it changes, delivered
+to `sessions.onContextChanged(listener)` (which returns its own disposer). Both require
+`sessions.read` — without the grant the host never pushes and the listener never fires —
+and both are how a panel surface follows the focused tab's folder.
 
 `sessions.subscribe` resolves to a disposer and supplies session-list snapshots.
 `secrets.request({title, description?})` prompts the user and resolves to the

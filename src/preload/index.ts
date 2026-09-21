@@ -61,6 +61,7 @@ const electronAPI = {
   pluginsCommand: (id: string, command: string) =>
     ipcRenderer.invoke('plugins:command', id, command),
   pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
+  pluginsContext: (sessionId: string | null) => ipcRenderer.invoke('plugins:context', sessionId),
   pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
   pluginsSecretReply: (id: string, value: string | null) =>
     ipcRenderer.invoke('plugins:secret-reply', id, value),

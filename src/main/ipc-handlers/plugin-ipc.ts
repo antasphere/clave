@@ -28,6 +28,11 @@ export function registerPluginHandlers(): void {
       if (!win.isDestroyed()) win.webContents.send('plugins:changed')
   }
   const surfaces = new Map<string, string>()
+  /** Which session the user is looking at. Only a renderer knows this — focus is a
+   *  renderer-store fact — so each window reports its own, and the most recent report
+   *  wins: the host is one per application, and the last window to move focus is the
+   *  window the user is in. A window that goes away takes its report with it. */
+  let focused: { windowId: number; sessionId: string } | null = null
   const secretRequests = new Map<
     string,
     {
@@ -51,6 +56,10 @@ export function registerPluginHandlers(): void {
     ? new PluginHost(store!, {
         sessions: {
           list: () => ptyManager.getAllSessions(),
+          focused: () =>
+            focused
+              ? (ptyManager.getAllSessions().find((s) => s.id === focused!.sessionId) ?? null)
+              : null,
           send: (id, text) => {
             if (!ptyManager.getSession(id)?.alive) throw new Error('Session is not running')
             ptyManager.write(id, text)
@@ -164,6 +173,17 @@ export function registerPluginHandlers(): void {
       file,
       `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${net}; connect-src 'self' ${net}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
     )
+  })
+  // The renderer reports its focused session whenever it changes; the host turns that
+  // into the plugins' `context.changed`. Null clears this window's report.
+  ipcMain.handle('plugins:context', (event, sessionId: string | null) => {
+    const win = guard(event)
+    if (sessionId !== null && (typeof sessionId !== 'string' || sessionId.length > 256))
+      throw new Error('Invalid session id')
+    if (sessionId === null) {
+      if (focused?.windowId === win.id) focused = null
+    } else focused = { windowId: win.id, sessionId }
+    host?.contextChanged()
   })
   ipcMain.handle('plugins:secrets', (event) => {
     const win = guard(event)

@@ -58,6 +58,9 @@ import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
 import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
+import { PluginToolbar } from '../plugins/PluginToolbar'
+import { PluginMainPanel } from '../plugins/PluginMainPanel'
+import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
 import { ConfirmDialog } from '@clave/ui/components'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
@@ -95,6 +98,24 @@ export function AppShell() {
   const previewSource = useSessionStore((s) => s.previewSource)
   const filePaletteShortcut = useShortcutLabel('openFilePalette')
   const sidePanelShortcut = useShortcutLabel('toggleSidePanel')
+  const pluginMainPanelOpen = usePluginMainPanelOpen()
+
+  // Which session the user is looking at is a renderer fact; the plugin host needs it to
+  // push `context.changed` to plugins holding sessions.read, so this window reports its own
+  // focus on every change and clears the report when it goes away. A window that never
+  // reports leaves the plugins with the last report from whichever window did.
+  const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
+  useEffect(() => {
+    void window.electronAPI.pluginsContext(focusedSessionId ?? null).catch(() => {
+      /* The plugin registry reports its own failures in Settings. */
+    })
+  }, [focusedSessionId])
+  useEffect(
+    () => () => {
+      void window.electronAPI.pluginsContext(null).catch(() => {})
+    },
+    []
+  )
 
   const addSession = useSessionStore((s) => s.addSession)
   const removeSession = useSessionStore((s) => s.removeSession)
@@ -718,6 +739,10 @@ export function AppShell() {
             >
               <ToolbarQuickActions />
               <ToolbarSecretPopover />
+              {/* Plugin contributions sit with the app's own toolbar controls, left of the
+                  search and file-tree pair: a plugin configures this bar, it does not get
+                  a bar of its own. */}
+              <PluginToolbar />
               {/* File palette button */}
               <button
                 onClick={toggleFilePalette}
@@ -738,11 +763,15 @@ export function AppShell() {
           </div>
         </div>
 
+        {/* A main-placement plugin panel takes the content column while it is open: it is
+            one of the places this column shows, like Settings or the mosaic. */}
+        <PluginMainPanel />
+
         {/* Non-terminal views — single floating card */}
         <div
           className={cn(
             'flex-1 min-h-0 floating-card',
-            activeView === 'terminals' ? 'hidden' : 'flex'
+            activeView === 'terminals' || pluginMainPanelOpen ? 'hidden' : 'flex'
           )}
         >
           {/* view-fade-in re-fires each time a hidden panel is shown (display:none
@@ -763,7 +792,11 @@ export function AppShell() {
         </div>
 
         {/* Terminal grid — each terminal is its own floating card */}
-        <div className={activeView === 'terminals' ? 'flex-1 flex min-h-0' : 'hidden'}>
+        <div
+          className={
+            activeView === 'terminals' && !pluginMainPanelOpen ? 'flex-1 flex min-h-0' : 'hidden'
+          }
+        >
           <TerminalGrid />
         </div>
       </div>

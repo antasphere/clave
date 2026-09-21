@@ -47,7 +47,19 @@ const contributions = z
     commands: z
       .array(z.strictObject({ id: identifier, title, keybinding: title.optional() }))
       .default([]),
-    sidebarSections: z.array(z.strictObject({ id: identifier, title })).default([]),
+    // A toolbar entry is a face for a command: an action is one button, a popover is a
+    // button opening a menu of them. `items` therefore belongs to a popover and only to one.
+    toolbar: z
+      .array(
+        z.strictObject({
+          id: identifier,
+          title,
+          icon: z.string().regex(/^[A-Z][A-Za-z0-9]*Icon$/),
+          kind: z.enum(['action', 'popover']),
+          items: z.array(z.strictObject({ id: identifier, title })).optional()
+        })
+      )
+      .default([]),
     views: z
       .array(z.strictObject({ id: identifier, renders: z.array(z.enum(['pty', 'events'])).min(1) }))
       .default([]),
@@ -66,6 +78,50 @@ const contributions = z
         ids.add(entry.id)
       })
     }
+    // A toolbar entry that runs nothing is a button the user presses for no effect, and the
+    // failure is silent: the host refuses an unregistered command and the toolbar looks fine.
+    // So every id a toolbar entry will execute — its own, for an action; each item's, for a
+    // popover — has to name a declared command here, where the failure is a manifest error.
+    const commands = new Set(value.commands.map((command) => command.id))
+    value.toolbar.forEach((entry, index) => {
+      if (entry.kind === 'popover') {
+        if (!entry.items?.length)
+          context.addIssue({
+            code: 'custom',
+            path: ['toolbar', index, 'items'],
+            message: 'A popover needs at least one item'
+          })
+        const seen = new Set<string>()
+        entry.items?.forEach((item, itemIndex) => {
+          if (seen.has(item.id))
+            context.addIssue({
+              code: 'custom',
+              path: ['toolbar', index, 'items', itemIndex, 'id'],
+              message: 'Duplicate popover item id'
+            })
+          seen.add(item.id)
+          if (!commands.has(item.id))
+            context.addIssue({
+              code: 'custom',
+              path: ['toolbar', index, 'items', itemIndex, 'id'],
+              message: `Undeclared command: ${item.id}`
+            })
+        })
+        return
+      }
+      if (entry.items)
+        context.addIssue({
+          code: 'custom',
+          path: ['toolbar', index, 'items'],
+          message: 'items requires kind: popover'
+        })
+      if (!commands.has(entry.id))
+        context.addIssue({
+          code: 'custom',
+          path: ['toolbar', index, 'id'],
+          message: `Undeclared command: ${entry.id}`
+        })
+    })
   })
 
 export const pluginManifestSchema = z

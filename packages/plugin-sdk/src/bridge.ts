@@ -41,6 +41,7 @@ const methodPermissions: Record<string, PluginPermission> = {
   'sessions.list': 'sessions.read',
   'sessions.get': 'sessions.read',
   'sessions.subscribe': 'sessions.read',
+  'sessions.focused': 'sessions.read',
   'sessions.unsubscribe': 'sessions.read',
   'sessions.send': 'sessions.write',
   'secrets.request': 'secrets'
@@ -60,10 +61,18 @@ export function assertMethodPermission(
     }
     return
   }
-  if (method === 'ui.registerPanel' || method === 'ui.registerCommand') {
+  if (
+    method === 'ui.registerPanel' ||
+    method === 'ui.registerCommand' ||
+    method === 'ui.registerToolbar'
+  ) {
     const id = typeof params === 'object' && params !== null && 'id' in params ? params.id : null
     const contributions =
-      method === 'ui.registerPanel' ? manifest.contributes.panels : manifest.contributes.commands
+      method === 'ui.registerPanel'
+        ? manifest.contributes.panels
+        : method === 'ui.registerCommand'
+          ? manifest.contributes.commands
+          : manifest.contributes.toolbar
     if (!contributions.some((entry) => entry.id === id)) {
       throw Object.assign(new Error(`Undeclared contribution: ${String(id)}`), { code: -32001 })
     }
@@ -89,6 +98,7 @@ export function createPluginAPI(
   >()
   const commands = new Map<string, PluginCommandHandler>()
   const listeners = new Set<(sessions: PluginSession[]) => void>()
+  const contextListeners = new Set<(session: PluginSession | null) => void>()
   const request = <T>(
     method: string,
     params: unknown = {},
@@ -129,6 +139,18 @@ export function createPluginAPI(
         )
       } else entry.resolve(message.result)
       return
+    }
+    // The host pushes the focused session unasked, to every plugin allowed to read
+    // sessions: a surface that draws the focused folder must not have to poll for it.
+    if (message.method === 'context.changed' && !('id' in message)) {
+      const params = message.params as { session?: PluginSession | null } | undefined
+      for (const listener of contextListeners) {
+        try {
+          listener(params?.session ?? null)
+        } catch {
+          /* A listener cannot break transport dispatch. */
+        }
+      }
     }
     if (
       message.method === 'sessions.changed' &&
@@ -186,6 +208,11 @@ export function createPluginAPI(
       list: () => request('sessions.list'),
       get: (id) => request('sessions.get', { id }),
       send: (id, text) => request('sessions.send', { id, text }),
+      focused: () => request('sessions.focused'),
+      onContextChanged: (listener) => {
+        contextListeners.add(listener)
+        return () => contextListeners.delete(listener)
+      },
       subscribe: async (listener) => {
         listeners.add(listener)
         try {
@@ -202,6 +229,7 @@ export function createPluginAPI(
     },
     ui: {
       registerPanel: (id) => request('ui.registerPanel', { id }),
+      registerToolbar: (id) => request('ui.registerToolbar', { id }),
       registerCommand: async (id, handler) => {
         const previous = commands.get(id)
         commands.set(id, handler)
@@ -227,6 +255,7 @@ export function createPluginAPI(
       disposed = true
       unsubscribe()
       listeners.clear()
+      contextListeners.clear()
       commands.clear()
       for (const entry of pending.values()) {
         clearTimeout(entry.timer)

@@ -9,9 +9,29 @@
   "uiEntry": "ui/index.html",
   "contributes": {
     "panels": [
-      { "id": "hello", "title": "Hello panel", "icon": "HandRaisedIcon", "placement": "side" }
+      { "id": "hello", "title": "Hello panel", "icon": "HandRaisedIcon", "placement": "side" },
+      { "id": "hello-main", "title": "Hello main", "icon": "SparklesIcon", "placement": "main" }
     ],
-    "commands": [{ "id": "say-hello", "title": "Say hello" }]
+    "commands": [
+      { "id": "say-hello", "title": "Say hello" },
+      { "id": "wave", "title": "Wave" },
+      { "id": "pushed-context", "title": "Pushed context" },
+      { "id": "focused-session", "title": "Focused session" }
+    ],
+    "toolbar": [
+      { "id": "wave", "title": "Wave", "icon": "HandRaisedIcon", "kind": "action" },
+      {
+        "id": "hello-menu",
+        "title": "Hello menu",
+        "icon": "SparklesIcon",
+        "kind": "popover",
+        "items": [
+          { "id": "say-hello", "title": "Say hello" },
+          { "id": "pushed-context", "title": "Pushed context" },
+          { "id": "focused-session", "title": "Focused session" }
+        ]
+      }
+    ]
   },
-  "permissions": []
+  "permissions": ["sessions.read"]
 }

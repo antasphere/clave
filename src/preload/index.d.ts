@@ -518,6 +518,9 @@ export interface ElectronAPI {
   pluginsRemove: (id: string) => Promise<void>
   pluginsCommand: (id: string, command: string) => Promise<void>
   pluginsPanel: (id: string, panel: string) => Promise<{ url: string }>
+  /** Report the focused session to the plugin host, which pushes it to plugins as
+   *  `context.changed`. Null clears this window's report. */
+  pluginsContext: (sessionId: string | null) => Promise<void>
   pluginsSecrets: () => Promise<PluginSecretPrompt[]>
   pluginsSecretReply: (id: string, value: string | null) => Promise<void>
   onPluginsChanged: (callback: () => void) => () => void

@@ -22,6 +22,9 @@ import {
   ArrowUturnLeftIcon,
   DocumentTextIcon
 } from '@heroicons/react/24/outline'
+import { PluginIcon } from '../plugins/plugin-icon'
+import { PluginPanelHost } from '../plugins/PluginPanelHost'
+import { usePluginRecords, pluginPanels, usePluginUIStore } from '../plugins/plugin-ui-store'
 
 /** Which root the panel hangs from. The rungs, their glyphs and the phrase the
  *  tooltips read all come from PANEL_ROOTS, so the panel and the Settings pane
@@ -107,6 +110,20 @@ function SidePanelBody(): React.JSX.Element {
   const sessions = useSessionStore((s) => s.sessions)
   const sidePanelTab = useSessionStore((s) => s.sidePanelTab)
   const setSidePanelTab = useSessionStore((s) => s.setSidePanelTab)
+  // Plugin panels declared `placement: 'side'` are tabs of this panel. The selection lives
+  // in the plugin store, not in `sidePanelTab`: Files and Git stay what that field means,
+  // and a plugin tab is the choice layered over it. A selection whose plugin has since
+  // stopped resolves to nothing and the panel falls back to Files, which is what the user
+  // sees when a plugin is disabled while its tab is open.
+  const pluginPanelSelection = usePluginUIStore((s) => s.sidePanel)
+  const openPluginPanel = usePluginUIStore((s) => s.openSidePanel)
+  const sidePlugins = pluginPanels(usePluginRecords(), 'side')
+  const activePluginPanel =
+    sidePlugins.find(
+      (panel) =>
+        panel.pluginId === pluginPanelSelection?.pluginId &&
+        panel.panelId === pluginPanelSelection?.panelId
+    ) ?? null
 
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
@@ -270,6 +287,7 @@ function SidePanelBody(): React.JSX.Element {
 
   // Force files tab for remote sessions
   const effectiveTab = isRemoteSession ? 'files' : sidePanelTab
+  const pluginTab = isRemoteSession ? null : activePluginPanel
   const isGitTabActive = effectiveTab === 'git'
   const multiRepo = useMultiRepoStatus(cwd, isGitTabActive)
 
@@ -403,18 +421,24 @@ function SidePanelBody(): React.JSX.Element {
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
-            onClick={() => setSidePanelTab('files')}
+            onClick={() => {
+              openPluginPanel(null)
+              setSidePanelTab('files')
+            }}
             className="panel-tab"
-            data-selected={effectiveTab === 'files' ? 'true' : undefined}
+            data-selected={!pluginTab && effectiveTab === 'files' ? 'true' : undefined}
           >
             <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />
             <span>Files</span>
           </button>
           {!isRemoteSession && (
             <button
-              onClick={() => setSidePanelTab('git')}
+              onClick={() => {
+                openPluginPanel(null)
+                setSidePanelTab('git')
+              }}
               className="panel-tab"
-              data-selected={effectiveTab === 'git' ? 'true' : undefined}
+              data-selected={!pluginTab && effectiveTab === 'git' ? 'true' : undefined}
             >
               {/* Heroicons has no branch glyph — the one hand-rolled icon the
                   convention leaves room for. */}
@@ -429,6 +453,26 @@ function SidePanelBody(): React.JSX.Element {
               <span>Git</span>
             </button>
           )}
+          {!isRemoteSession &&
+            sidePlugins.map((panel) => (
+              <button
+                key={`${panel.pluginId}:${panel.panelId}`}
+                onClick={() =>
+                  openPluginPanel({ pluginId: panel.pluginId, panelId: panel.panelId })
+                }
+                className="panel-tab"
+                data-plugin-tab={panel.panelId}
+                data-selected={
+                  pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId
+                    ? 'true'
+                    : undefined
+                }
+                title={`${panel.title} (${panel.pluginName})`}
+              >
+                <PluginIcon name={panel.icon} className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{panel.title}</span>
+              </button>
+            ))}
         </div>
 
         {/* Row 2 — where you are, as one control. The root chip says which
@@ -440,7 +484,7 @@ function SidePanelBody(): React.JSX.Element {
             naked line of text with its own controls stranded a row above. It
             does not wrap — a long path truncates, which is what a path is for;
             wrapping would drop collapse-all onto a second line at every width. */}
-        {effectiveTab !== 'help' && (
+        {effectiveTab !== 'help' && !pluginTab && (
           <div
             className="panel-bar panel-bar--nowrap relative"
             data-panel-bar="path"
@@ -702,7 +746,7 @@ function SidePanelBody(): React.JSX.Element {
           name, three badges and six controls do not fit the 240px default
           width, and a second line inside the panel reads as intended where the
           old loose row running toward the edge did not. */}
-      {isGitTabActive && !isRemoteSession && multiRepo.result.mode !== 'none' && multiRepo.result.mode !== 'loading' && (
+      {isGitTabActive && !pluginTab && !isRemoteSession && multiRepo.result.mode !== 'none' && multiRepo.result.mode !== 'loading' && (
         <div className="px-2 pb-1.5 flex-shrink-0">
           <div className="panel-bar" data-panel-bar="git">
             {/* Everything that NAMES the repo is one flex item, and the controls
@@ -822,7 +866,20 @@ function SidePanelBody(): React.JSX.Element {
       )}
 
       {/* Active tab content */}
-      {effectiveTab === 'help' ? (
+      {pluginTab ? (
+        <div
+          className="flex flex-col flex-1 min-h-0"
+          data-plugin-side-panel={pluginTab.panelId}
+        >
+          <PluginPanelHost
+            key={`${pluginTab.pluginId}:${pluginTab.panelId}:${pluginTab.generation}`}
+            pluginId={pluginTab.pluginId}
+            panelId={pluginTab.panelId}
+            title={pluginTab.title}
+            generation={pluginTab.generation}
+          />
+        </div>
+      ) : effectiveTab === 'help' ? (
         <HelpPanel />
       ) : isRemoteSession && remoteLocationId && effectiveCwd && effectiveCwd !== '' && effectiveCwd !== '~' && effectiveCwd.startsWith('/') ? (
         <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />

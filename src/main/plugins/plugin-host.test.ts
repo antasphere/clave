@@ -78,13 +78,16 @@ beforeEach(() => {
       ui: 'none',
       main: 'main.cjs',
       permissions: ['sessions.read', 'secrets'],
-      contributes: { commands: [{ id: 'hello', title: 'Hello' }] }
+      contributes: {
+        commands: [{ id: 'hello', title: 'Hello' }],
+        toolbar: [{ id: 'hello', title: 'Hello', icon: 'SparklesIcon', kind: 'action' }]
+      }
     })
   )
   store = new PluginStore(join(temporary, 'user'), bundled, '1.90.2')
   store.discover()
   services = {
-    sessions: { list: vi.fn(() => []), send: vi.fn() },
+    sessions: { list: vi.fn(() => []), send: vi.fn(), focused: vi.fn(() => null) },
     notify: vi.fn(),
     requestSecret: vi.fn(async () => null),
     changed: vi.fn(),
@@ -117,6 +120,68 @@ describe('plugin utility-process host', () => {
     })
     await request('sessions.list')
     expect(services.sessions.list).toHaveBeenCalledOnce()
+  })
+  it('records a declared toolbar registration and refuses one the manifest never declared', async () => {
+    host.startAll()
+    ready()
+    await request('ui.registerToolbar', { id: 'hello' })
+    expect(store.get('example.host').toolbar).toEqual(['hello'])
+    await request('ui.registerToolbar', { id: 'smuggled' }, 11)
+    expect(store.get('example.host').toolbar).toEqual(['hello'])
+    expect(port().postMessage).toHaveBeenCalledWith({
+      jsonrpc: '2.0',
+      id: 11,
+      error: { code: -32001, message: 'Undeclared contribution: smuggled', data: undefined }
+    })
+    // A stopped plugin contributes nothing: the toolbar button goes with the process.
+    host.stop('example.host')
+    expect(store.get('example.host').toolbar).toEqual([])
+  })
+  it('pushes the focused session to a reader, once per change, and never to a plugin without the grant', () => {
+    const focused = { id: 'session-1', cwd: '/repo/app', folderName: 'app', alive: true }
+    services.sessions.focused = vi.fn(() => focused)
+    host.startAll()
+    ready()
+    const pushes = (): unknown[] =>
+      port().postMessage.mock.calls.flat().filter((m) => (m as { method?: string })?.method === 'context.changed')
+    // No sessions.read: the focused session is session data and never leaves the host.
+    store.get('example.host').permissionsGranted = []
+    vi.advanceTimersByTime(500)
+    expect(pushes()).toHaveLength(0)
+    store.get('example.host').permissionsGranted = ['sessions.read']
+    vi.advanceTimersByTime(500)
+    expect(pushes()).toEqual([
+      { jsonrpc: '2.0', method: 'context.changed', params: { session: focused } }
+    ])
+    // Unchanged focus is not re-announced on every tick.
+    vi.advanceTimersByTime(2000)
+    expect(pushes()).toHaveLength(1)
+    services.sessions.focused = vi.fn(() => null)
+    host.contextChanged()
+    expect(pushes()).toEqual([
+      { jsonrpc: '2.0', method: 'context.changed', params: { session: focused } },
+      { jsonrpc: '2.0', method: 'context.changed', params: { session: null } }
+    ])
+  })
+  it('answers sessions.focused from the services, under the sessions.read grant', async () => {
+    const focused = { id: 'session-1', cwd: '/repo/app', folderName: 'app', alive: true }
+    services.sessions.focused = vi.fn(() => focused)
+    host.startAll()
+    ready()
+    store.get('example.host').permissionsGranted = []
+    await request('sessions.focused', {}, 20)
+    expect(port().postMessage).toHaveBeenCalledWith({
+      jsonrpc: '2.0',
+      id: 20,
+      error: {
+        code: -32001,
+        message: 'Plugin permission denied: sessions.read',
+        data: { permission: 'sessions.read' }
+      }
+    })
+    store.get('example.host').permissionsGranted = ['sessions.read']
+    await request('sessions.focused', {}, 21)
+    expect(port().postMessage).toHaveBeenCalledWith({ jsonrpc: '2.0', id: 21, result: focused })
   })
   it('retries crashes with exponential backoff and a bounded restart count', () => {
     host.startAll()

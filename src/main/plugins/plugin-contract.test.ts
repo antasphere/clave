@@ -18,7 +18,16 @@ const input = {
   contributes: {
     panels: [{ id: 'panel', title: 'Panel', icon: 'SparklesIcon', placement: 'side' }],
     commands: [{ id: 'command', title: 'Command', keybinding: 'Mod+K' }],
-    sidebarSections: [{ id: 'section', title: 'Section' }],
+    toolbar: [
+      { id: 'command', title: 'Action', icon: 'SparklesIcon', kind: 'action' },
+      {
+        id: 'menu',
+        title: 'Menu',
+        icon: 'HandRaisedIcon',
+        kind: 'popover',
+        items: [{ id: 'command', title: 'Command' }]
+      }
+    ],
     views: [{ id: 'view', renders: ['pty', 'events'] }],
     adapters: [{ id: 'adapter', provider: 'example' }]
   },
@@ -46,7 +55,10 @@ describe('plugin manifest v1', () => {
     { ...input, version: '1.0' },
     { ...input, version: 'v1.0.0' },
     { ...input, engines: { clave: 'yesterday' } },
-    { ...input, id: 'undotted' }
+    { ...input, id: 'undotted' },
+    // sidebarSections was declared and never read; it is gone, and a manifest still
+    // carrying it now fails rather than passing validation with a dead field.
+    { ...input, contributes: { ...input.contributes, sidebarSections: [{ id: 's', title: 'S' }] } }
   ])('rejects unknown fields and invalid contract values %#', (manifest) => {
     expect(pluginManifestSchema.safeParse(manifest).success).toBe(false)
   })
@@ -61,6 +73,85 @@ describe('plugin manifest v1', () => {
       pluginManifestSchema.safeParse({
         ...input,
         contributes: { panels: [input.contributes.panels[0], input.contributes.panels[0]] }
+      }).success
+    ).toBe(false)
+  })
+  it.each([
+    // A popover with nothing in it is a button that opens an empty surface.
+    [{ id: 'menu', title: 'Menu', icon: 'SparklesIcon', kind: 'popover' }],
+    [{ id: 'menu', title: 'Menu', icon: 'SparklesIcon', kind: 'popover', items: [] }],
+    // items belong to a popover: an action runs one command and opens nothing.
+    [
+      {
+        id: 'command',
+        title: 'Action',
+        icon: 'SparklesIcon',
+        kind: 'action',
+        items: [{ id: 'command', title: 'Command' }]
+      }
+    ],
+    // A toolbar entry names the command it runs; an undeclared one runs nothing, and the
+    // host would refuse it silently at click time.
+    [{ id: 'absent', title: 'Action', icon: 'SparklesIcon', kind: 'action' }],
+    [
+      {
+        id: 'menu',
+        title: 'Menu',
+        icon: 'SparklesIcon',
+        kind: 'popover',
+        items: [{ id: 'absent', title: 'Absent' }]
+      }
+    ],
+    // Duplicate item ids inside one popover.
+    [
+      {
+        id: 'menu',
+        title: 'Menu',
+        icon: 'SparklesIcon',
+        kind: 'popover',
+        items: [
+          { id: 'command', title: 'Command' },
+          { id: 'command', title: 'Command again' }
+        ]
+      }
+    ],
+    // The icon follows the app's own convention: a Heroicon export name.
+    [{ id: 'command', title: 'Action', icon: 'sparkles', kind: 'action' }],
+    [{ id: 'command', title: 'Action', icon: 'SparklesIcon', kind: 'menu' }],
+    [{ id: 'command', title: 'Action', icon: 'SparklesIcon', kind: 'action', unexpected: true }]
+  ])('rejects an invalid toolbar contribution %#', (entry) => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...input,
+        contributes: { ...input.contributes, toolbar: [entry] }
+      }).success
+    ).toBe(false)
+  })
+  it('accepts a popover whose own id names no command, since only its items run', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...input,
+        contributes: {
+          ...input.contributes,
+          toolbar: [
+            {
+              id: 'not-a-command',
+              title: 'Menu',
+              icon: 'SparklesIcon',
+              kind: 'popover',
+              items: [{ id: 'command', title: 'Command' }]
+            }
+          ]
+        }
+      }).success
+    ).toBe(true)
+  })
+  it('rejects duplicate toolbar ids', () => {
+    const entry = { id: 'command', title: 'Action', icon: 'SparklesIcon', kind: 'action' }
+    expect(
+      pluginManifestSchema.safeParse({
+        ...input,
+        contributes: { ...input.contributes, toolbar: [entry, entry] }
       }).success
     ).toBe(false)
   })
@@ -125,6 +216,27 @@ describe('plugin host permission boundary', () => {
     expect(() =>
       assertMethodPermission(manifest, [], 'ui.registerCommand', { id: 'other' })
     ).toThrow('Undeclared contribution')
+    // A toolbar registration is guarded exactly like a panel: the id must be one this
+    // manifest declared, and a popover item id is not one of them — items are commands.
+    expect(() =>
+      assertMethodPermission(manifest, [], 'ui.registerToolbar', { id: 'menu' })
+    ).not.toThrow()
+    expect(() =>
+      assertMethodPermission(manifest, [], 'ui.registerToolbar', { id: 'command' })
+    ).not.toThrow()
+    expect(() =>
+      assertMethodPermission(manifest, [], 'ui.registerToolbar', { id: 'other' })
+    ).toThrow('Undeclared contribution')
+    expect(() => assertMethodPermission(manifest, [], 'ui.registerToolbar', {})).toThrow(
+      'Undeclared contribution'
+    )
+    // The focused session is session data: the same grant governs it.
+    expect(() => assertMethodPermission(manifest, [], 'sessions.focused')).toThrow(
+      PluginPermissionError
+    )
+    expect(() =>
+      assertMethodPermission(manifest, ['sessions.read'], 'sessions.focused')
+    ).not.toThrow()
     expect(() => assertMethodPermission(manifest, [], 'notify')).not.toThrow()
     expect(() => assertMethodPermission(manifest, [], 'log')).not.toThrow()
     expect(() => assertMethodPermission(manifest, [], 'shell.exec')).toThrow(

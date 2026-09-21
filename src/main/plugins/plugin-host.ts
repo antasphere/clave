@@ -15,13 +15,20 @@ interface RunningPlugin {
   stopping: boolean
   subscribed: boolean
   snapshot?: string
+  /** Last `context.changed` payload sent, so an unchanged focus is not re-pushed. */
+  context?: string
   pending: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
   >
 }
 export interface PluginServices {
-  sessions: { list: () => PluginSession[]; send: (id: string, text: string) => void }
+  sessions: {
+    list: () => PluginSession[]
+    send: (id: string, text: string) => void
+    /** The session the user is looking at, reported by the renderer that holds it. */
+    focused: () => PluginSession | null
+  }
   notify: (id: string, title: string, body?: string) => void
   requestSecret: (id: string, title: string, description?: string) => Promise<string | null>
   changed: () => void
@@ -42,7 +49,10 @@ export class PluginHost {
     private services: PluginServices,
     private runner = join(__dirname, 'plugin-runner.js')
   ) {
-    this.poll = setInterval(() => this.publishSessions(), 500)
+    this.poll = setInterval(() => {
+      this.publishSessions()
+      this.publishContext()
+    }, 500)
     this.poll.unref()
   }
   startAll(): void {
@@ -57,6 +67,7 @@ export class PluginHost {
     record.generation = ++this.generation
     record.panels = []
     record.commands = []
+    record.toolbar = []
     if (!record.manifest.main) {
       record.panels =
         record.manifest.ui === 'surface'
@@ -114,6 +125,7 @@ export class PluginHost {
         this.running.delete(id)
         record.panels = []
         record.commands = []
+        record.toolbar = []
         this.services.stopped(id)
         if (!running.stopping && !this.closing && record.enabled) {
           record.status = 'error'
@@ -214,6 +226,9 @@ export class PluginHost {
         case 'sessions.get':
           result = this.services.sessions.list().find((s) => s.id === string('id')) ?? null
           break
+        case 'sessions.focused':
+          result = this.services.sessions.focused()
+          break
         case 'sessions.subscribe':
           running.subscribed = true
           running.snapshot = undefined
@@ -231,6 +246,10 @@ export class PluginHost {
           break
         case 'ui.registerCommand':
           if (!record.commands.includes(string('id'))) record.commands.push(string('id'))
+          this.services.changed()
+          break
+        case 'ui.registerToolbar':
+          if (!record.toolbar.includes(string('id'))) record.toolbar.push(string('id'))
           this.services.changed()
           break
         case 'notify': {
@@ -292,6 +311,36 @@ export class PluginHost {
       }
     }
   }
+  /** Push the focused session to every plugin allowed to read sessions, whenever it
+   *  changes. Unlike the session list this needs no subscribe: a panel surface is meant
+   *  to follow the user's focus from the moment it is opened, and the payload is the same
+   *  class of data `sessions.read` already governs. */
+  private publishContext(): void {
+    for (const [id, running] of this.running) {
+      const record = this.store.get(id)
+      if (
+        running.stopping ||
+        !record.enabled ||
+        !record.permissionsGranted.includes('sessions.read')
+      )
+        continue
+      const session = this.services.sessions.focused()
+      const serialized = JSON.stringify(session)
+      if (serialized !== running.context) {
+        running.context = serialized
+        running.port.postMessage({
+          jsonrpc: '2.0',
+          method: 'context.changed',
+          params: { session }
+        })
+      }
+    }
+  }
+  /** The renderer reported a new focused session: push it now rather than at the next
+   *  poll, so a surface opened by a click draws the folder that click was about. */
+  contextChanged(): void {
+    this.publishContext()
+  }
   execute(id: string, command: string): Promise<void> {
     const record = this.store.get(id)
     const running = this.running.get(id)
@@ -338,6 +387,7 @@ export class PluginHost {
     const record = this.store.get(id)
     record.panels = []
     record.commands = []
+    record.toolbar = []
     record.status = 'disabled'
     record.error =
       record.manifest && (hadRuntimeFailure || record.error?.startsWith('Plugin '))
