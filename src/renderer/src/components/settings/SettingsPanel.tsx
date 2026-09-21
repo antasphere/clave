@@ -1,7 +1,13 @@
 import { PluginsTab } from './PluginsTab'
 import { useSkinStore, skinAction } from '../../lib/skin'
 import { useState, useRef, useEffect, type ReactNode } from 'react'
-import { TREE_RULE_INTENSITIES, PANEL_ROOTS, useSessionStore } from '../../store/session-store'
+import {
+  TREE_RULE_INTENSITIES,
+  DENSITY_LEVELS,
+  PANEL_ROOTS,
+  densityIndex,
+  useSessionStore
+} from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
@@ -225,7 +231,7 @@ function AppearanceSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Appearance"
-      description="The theme, the hairlines every tree is ruled with, and what the sidebar shows."
+      description="The theme, how tight the app is drawn, the hairlines every tree is ruled with, and what the sidebar shows."
     >
       <SettingsSection
         title="Theme"
@@ -290,10 +296,84 @@ function AppearanceSettings(): React.JSX.Element {
         )}
       </SettingsSection>
 
+      <DensitySection />
       <TreeSeparatorsSection />
       <SidebarWidgetsSection />
       <MissionControlSection />
     </SettingsPage>
+  )
+}
+
+/**
+ * How tight the app's chrome is drawn.
+ *
+ * One number behind it: the slider writes `--density` on the root element, and
+ * the control and frame spec in tokens.css is a calc() cut from it, so every
+ * control, frame, toolbar row and derived radius moves together. The middle
+ * stop is the spec as it was set on 2026-09-21, which is why a user who never
+ * comes here sees the app unchanged.
+ *
+ * It is a real range input rather than a fifth segmented control on this page,
+ * and deliberately: five ordered stops are a continuum, arrow keys and
+ * Home/End come free from the platform, and a screen reader is told it is a
+ * slider without anything having to say so. The stop names are what a person
+ * reads, so `aria-valuetext` carries the name rather than leaving a bare "3".
+ *
+ * There is no preview tile under it on purpose. The setting redraws the whole
+ * window, this page included — the controls on this very card resize under the
+ * user's hand — so a miniature beside the real thing would be the less honest
+ * of the two.
+ */
+function DensitySection(): React.JSX.Element {
+  const density = useSessionStore((s) => s.density)
+  const setDensity = useSessionStore((s) => s.setDensity)
+  const index = densityIndex(density)
+  const level = DENSITY_LEVELS[index]
+
+  return (
+    <SettingsSection
+      title="Density"
+      description="How tight the app's controls, bars and rows are drawn. Applies everywhere at once, and to this page as you move it."
+    >
+      <SettingsCard>
+        <SettingsRow
+          label="Scale"
+          description="The middle stop is the app's default. Left and right arrows step through the stops."
+        >
+          <span className="text-text-secondary" data-testid="density-value">
+            {level.label}
+          </span>
+        </SettingsRow>
+        <div className="settings-row">
+          <div className="w-full flex flex-col gap-1">
+            <input
+              type="range"
+              className="range-field"
+              min={0}
+              max={DENSITY_LEVELS.length - 1}
+              step={1}
+              value={index}
+              aria-label="Density"
+              aria-valuetext={level.label}
+              data-testid="density-slider"
+              onChange={(e) => setDensity(DENSITY_LEVELS[Number(e.target.value)].id)}
+            />
+            <div className="range-ticks" aria-hidden>
+              {DENSITY_LEVELS.map((stop) => (
+                <span
+                  key={stop.id}
+                  className="range-tick"
+                  data-active={stop.id === level.id}
+                  data-density-tick={stop.id}
+                >
+                  {stop.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 

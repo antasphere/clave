@@ -37,6 +37,51 @@ export function treeRuleMultiplier(intensity: TreeRuleIntensity): number {
 }
 
 /**
+ * How tight the app's chrome is drawn — the one number the control and frame
+ * spec in `packages/ui/src/tokens.css` is cut from, written on the root element
+ * as `--density`. Every control, frame, toolbar row and derived radius is a
+ * `calc(<base> * var(--density))`, so these five stops move all of them at once
+ * rather than one family at a time.
+ *
+ * The range is not arbitrary. `regular` is 1: the spec exactly as the design
+ * lead set it on 2026-09-21, so a user who never touches this slider sees the
+ * file as it was written. `spacious` puts a control at 31.5px, which is the
+ * 32px row the sidebar had before 2026-09-20 — the size the team asked for when
+ * the new ratio read too small — and `compact` goes the same distance the other
+ * way. A wider range than that is a different app, not a density setting.
+ *
+ * Ids are stored, not numbers, for the same reason as TREE_RULE_INTENSITIES
+ * above: the scales are a design call and can be retuned without stranding what
+ * is already in a user's localStorage.
+ */
+export const DENSITY_LEVELS = [
+  { id: 'compact', label: 'Compact', scale: 0.875 },
+  { id: 'snug', label: 'Snug', scale: 0.9375 },
+  { id: 'regular', label: 'Regular', scale: 1 },
+  { id: 'relaxed', label: 'Relaxed', scale: 1.0625 },
+  { id: 'spacious', label: 'Spacious', scale: 1.125 }
+] as const
+
+export type Density = (typeof DENSITY_LEVELS)[number]['id']
+
+/** The stop the app opens at, and what an unknown id falls back to. */
+export const DEFAULT_DENSITY: Density = 'regular'
+
+/** The scale a stop draws at; unknown ids fall back to the default's. */
+export function densityScale(density: Density): number {
+  return (
+    DENSITY_LEVELS.find((d) => d.id === density)?.scale ??
+    DENSITY_LEVELS.find((d) => d.id === DEFAULT_DENSITY)!.scale
+  )
+}
+
+/** The stop's position on the slider; an unknown id sits on the default. */
+export function densityIndex(density: Density): number {
+  const i = DENSITY_LEVELS.findIndex((d) => d.id === density)
+  return i === -1 ? DENSITY_LEVELS.findIndex((d) => d.id === DEFAULT_DENSITY) : i
+}
+
+/**
  * Which folder the side panel hangs from — the Files tab, the Git tab, and the
  * root chip that switches between them. `session` is the focused tab's own
  * folder, `group` the folder its group was declared on, `workspace` the

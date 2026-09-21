@@ -63,17 +63,17 @@
      defaults. Every rounded-* utility resolves to these, and the design-system
      classes (.sidebar-item, .btn-*, .input-*, .floating-card) reference them,
      so this is the single knob for how round the whole app feels. */
-  --radius: 0.375rem;       /* base (== --radius-lg) */
-  --radius-sm: 0.1875rem;   /* 3px  (was 4px) */
-  --radius-md: 0.25rem;     /* 4px  (was 6px) */
-  --radius-lg: 0.375rem;    /* 6px  (was 8px)  — buttons, tabs, inputs */
+  --radius: calc(0.375rem * var(--density));       /* base (== --radius-lg) */
+  --radius-sm: calc(0.1875rem * var(--density));   /* 3px  (was 4px) */
+  --radius-md: calc(0.25rem * var(--density));     /* 4px  (was 6px) */
+  --radius-lg: calc(0.375rem * var(--density));    /* 6px  (was 8px)  — buttons, tabs, inputs */
   /* --radius-xl is DERIVED, not chosen: the corner of a SURFACE (a menu, a
      card, a pane) around 28px rows, concentric by construction: control
      corner + the surface's inset + its border. 11px; it was a hand-picked
      10px. Frames (bars) are a size down and take --frame-radius. */
   --radius-xl: calc(var(--control-radius) + var(--surface-inset) + var(--frame-border));
-  --radius-2xl: 0.875rem;   /* 14px (was 16px) */
-  --radius-full: 9999px;    /* pills, dots, round buttons */
+  --radius-2xl: calc(0.875rem * var(--density));   /* 14px (was 16px) */
+  --radius-full: 9999px;    /* pills, dots, round buttons — a pill is a pill at every density */
 
   /* The radius of a control sitting INSIDE a --radius-xl panel — every button,
      chip, tab and field in the toolbar, the sidebar's launcher and switcher, and
@@ -87,18 +87,42 @@
      stylesheet; the value is the same. */
   --radius-control: var(--control-radius); /* alias kept for older classes */
 
+  /* ── The density scale ─────────────────────────────────────────────────
+     ONE unitless number the whole control and frame spec is cut from, so a
+     user who finds the app tight or loose moves every control, frame,
+     toolbar row and derived radius together instead of one of them. 1 is
+     the spec as the design lead set it on 2026-09-21 — at --density: 1
+     every number below resolves to exactly the value it was written as, so
+     the default is this file before the scale existed, byte for byte.
+
+     It is a plain user setting, owned by the person and not by a skin or a
+     plugin: Appearance → Density writes it on the root element, and it is
+     on packages/skins/excluded-token-names.json with the rest of the
+     metrics, so no installed skin can reach it. The terminal's own font
+     size is NOT part of it (that is the terminal's setting, not the
+     chrome's), and neither are hairlines — see --frame-border below.
+
+     Two rules for anything added to this file later:
+       · a LENGTH the chrome is measured in scales — write it as
+         calc(<the number you meant> * var(--density));
+       · a HAIRLINE, a full-round radius, or a term that mirrors a Tailwind
+         utility written in a component does not — scaling one side of a
+         pair the other side does not know about only desyncs them. */
+  --density: 1;
+
   /* ── The control spec ──────────────────────────────────────────────────
      One control, five numbers. Every button, chip, tab, row and field reads
      ALL of them from here and writes none as a literal, so the ratio Luca
      picked on the workspace popover's rows (28px, 8px sides, 13px label,
      6px corner) is the ratio of every control in the app, and a change here
-     is a change everywhere (2026-09-21, with the design lead). */
+     is a change everywhere (2026-09-21, with the design lead). The comments
+     below name the value at --density: 1. */
   --control-h: var(--control-h-md);  /* 28px */
-  --control-px: 0.5rem;              /* 8px  — the sides of a text control */
-  --control-gap: 0.375rem;           /* 6px  — icon to label inside a control */
-  --control-text: 13px;              /* the label */
+  --control-px: calc(0.5rem * var(--density));     /* 8px  — the sides of a text control */
+  --control-gap: calc(0.375rem * var(--density));  /* 6px  — icon to label inside a control */
+  --control-text: calc(13px * var(--density));     /* the label */
   --control-radius: var(--radius-lg);/* 6px */
-  --control-icon: 1rem;              /* 16px — the glyph in a 28px box */
+  --control-icon: calc(1rem * var(--density));     /* 16px — the glyph in a 28px box */
 
   /* ── The frame spec ────────────────────────────────────────────────────
      A frame is a bordered box that GROUPS two or more controls: the
@@ -108,25 +132,32 @@
      the same size: a control is 28px free-standing and ONE SIZE DOWN inside
      a frame, so the frame itself is one control tall with the control's
      corner, the way a macOS segmented control relates to the buttons beside
-     it. Every number below is derived from that sentence (2026-09-21). */
+     it. Every number below is derived from that sentence (2026-09-21).
+
+     The two 1px numbers do NOT take --density. A hairline is a hairline at
+     every density — a 0.875px border is a grey smudge, not a thinner line —
+     and they are also the terms the concentric-corner arithmetic below
+     subtracts, so scaling them would move a framed control's corner away
+     from the frame's by a different amount at each stop. Everything else
+     here is a var() of a scaled number and moves on its own. */
   --frame-border: 1px;
   --frame-inset: 1px;                /* framed control to frame edge */
   --frame-h: var(--control-h);       /* 28px: a frame is one control tall */
   --frame-radius: var(--control-radius);                                              /* 6px */
   --framed-control-h: calc(var(--frame-h) - 2 * (var(--frame-inset) + var(--frame-border)));   /* 24px */
   --framed-control-radius: calc(var(--frame-radius) - var(--frame-inset) - var(--frame-border)); /* 4px */
-  --framed-control-icon: 0.875rem;   /* 14px glyph in a 24px box */
+  --framed-control-icon: calc(0.875rem * var(--density));  /* 14px glyph in a 24px box */
 
   /* A surface (menu, card, pane) is not a frame: it holds full-size rows and
      insets them by this much, which is what --radius-xl above is cut from. */
-  --surface-inset: 4px;
+  --surface-inset: calc(4px * var(--density));
 
   /* Control height scale — single source of truth for row/button/input heights.
      Components reference these via var(--control-h-*) so a change here propagates everywhere. */
-  --control-h-xs: 1.25rem; /* 20px — row-level affordances (a file row's stage/discard) */
-  --control-h-sm: 1.5rem;  /* 24px — extra compact */
-  --control-h-md: 1.75rem; /* 28px — default rows, buttons, compact inputs */
-  --control-h-lg: 2rem;    /* 32px — inputs */
+  --control-h-xs: calc(1.25rem * var(--density)); /* 20px — row-level affordances (a file row's stage/discard) */
+  --control-h-sm: calc(1.5rem * var(--density));  /* 24px — extra compact */
+  --control-h-md: calc(1.75rem * var(--density)); /* 28px — default rows, buttons, compact inputs */
+  --control-h-lg: calc(2rem * var(--density));    /* 32px — inputs */
 
   /* The toolbar's inner row, and the card height that follows from it once the
      floating card's 1px borders are added. The sidebar's launcher panel is cut
@@ -139,14 +170,21 @@
      card, and the gap between them (gap-2). The sidebar pads its top spacer to
      the same offset, which is what puts the launcher panel's top edge on the
      terminal cards' top edge instead of a few pixels under it. Comfortably
-     clears the macOS traffic lights (y=16, ~14px tall). */
+     clears the macOS traffic lights (y=16, ~14px tall).
+
+     The two 0.5rem terms are NOT scaled: they are this file restating the
+     `my-2` and `gap-2` utilities the column and the toolbar are written
+     with in the components. Scaling them here and not there would put the
+     sidebar's spacer off the cards' top edge at every stop but the middle,
+     which is the one thing this token exists to prevent. --toolbar-h
+     carries the density, and that is the part that moves. */
   --content-top-offset: calc(0.5rem + var(--toolbar-h) + 0.5rem); /* 50px */
 
   /* Height of a row in the git panel's repo tree (a directory or a repo
      header). Sized to hold the trailing sync badges, which come and go — a
      folder's roll-up only shows while it is collapsed, and a repo's ↓ clears
      on pull — so the row is fixed rather than content-sized. */
-  --git-tree-row-h: 1.875rem; /* 30px = 18px badge + 12px of padding */
+  --git-tree-row-h: calc(1.875rem * var(--density)); /* 30px = 18px badge + 12px of padding */
 
   /* Height of a leaf row in either side-panel tree — a file or a folder in the
      Files tab, a file or a folder inside a repo in the Git tab. One token
@@ -156,9 +194,16 @@
      directory rows of the git tree stay one notch taller (--git-tree-row-h):
      they carry the sync badges, and they are the level you scan, not the level
      you read. */
-  --panel-row-h: 1.75rem; /* 28px */
+  --panel-row-h: calc(1.75rem * var(--density)); /* 28px */
   --brand-claude: #d97757; /* Claude's mark keeps its colour in every skin */
-  --row-gap: 2px;         /* the air between two filled rows — see "Row rhythm" in system.css */
+  /* The air between two filled rows — see "Row rhythm" in system.css. NOT
+     scaled by --density, and the reason is the line above it: --row-gap is one
+     of the few metrics a SKIN may set (it is deliberately absent from
+     packages/skins/excluded-token-names.json), so a calc() reaching for
+     --density here is extracted into every bundled skin.json, and a skin token
+     whose value names a token skins cannot see is refused by validateTokens.
+     2px is also below the width the eye reads a change at. */
+  --row-gap: 2px;
 
   /* Height of a tab row in the sidebar list — a session, a file tab, a group
      header, a group's `+`. Its own token rather than --control-h-md so the list
@@ -171,12 +216,12 @@
 
   /* Sidebar tab icon size — single source of truth for the leading icon on
      session/file/group tabs in the sidebar. Change here to resize all of them. */
-  --sidebar-tab-icon-size: 0.9375rem; /* 15px (was 14px) */
+  --sidebar-tab-icon-size: calc(0.9375rem * var(--density)); /* 15px (was 14px) */
 
   /* Sidebar row horizontal padding — distance from a tab row's edge to its
      leading/trailing icons. Tab rows, the group header, and the section-label
      alignment all derive from this, so changing it keeps everything in sync. */
-  --sidebar-row-px: 0.625rem; /* 10px (was 7px) */
+  --sidebar-row-px: calc(0.625rem * var(--density)); /* 10px (was 7px) */
 
   /* Sidebar content keyline — the vertical guide that row content aligns to on
      both edges: the list container's padding (px-2 = 0.5rem) plus the row's own

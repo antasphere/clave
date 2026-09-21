@@ -11,6 +11,7 @@
   "--control-px",
   "--control-radius",
   "--control-text",
+  "--density",
   "--ease-out-expo",
   "--font-mono",
   "--font-sans",

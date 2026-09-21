@@ -193,7 +193,7 @@ body,
   justify-content: center;
   height: var(--sidebar-row-h);
   padding: 0 var(--sidebar-row-px);
-  font-size: 13px;
+  font-size: var(--control-text);
   font-style: italic;
   color: var(--text-tertiary);
   user-select: none;
@@ -797,7 +797,7 @@ body,
   flex: 1 1 auto;
   min-width: 0;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--control-text);
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
@@ -1377,7 +1377,7 @@ body,
 .btn-dialog {
   flex: 1;
   padding: 0.625rem 0;     /* py-2.5 */
-  font-size: 13px;
+  font-size: var(--control-text);
   font-weight: var(--font-weight-medium);
   transition: color 150ms, background-color 150ms;
 }
@@ -1481,6 +1481,105 @@ body,
 }
 .segmented-item[data-active="true"] {
   background-color: var(--surface-200);
+  color: var(--text-primary);
+}
+
+/* ── Range field ──
+ * A stepped slider for a setting with a handful of ordered stops, where the
+ * order is the point and the number behind it is not (density today).
+ *
+ * It is a real <input type="range">, not a row of buttons or a hand-rolled
+ * thumb: arrow keys, Home/End, Page Up/Down and the drag all arrive from the
+ * platform already correct, and a screen reader is told it is a slider without
+ * anything having to say so. Its stop NAMES are what the user reads, so the
+ * control carries aria-valuetext and the ticks below it are labelled in words.
+ *
+ * The track and the thumb are painted per-vendor because a range input exposes
+ * no cross-browser box to style. The two arms must stay in step, which is why
+ * the thumb's size and the track's height are declared once at the top as the
+ * element's own custom properties rather than repeated in four places.
+ *
+ * It takes the control spec like every other control here, so the slider that
+ * sets the density is itself redrawn at the stop it has just picked. */
+.range-field {
+  --range-track-h: 4px;
+  --range-thumb: var(--control-icon);
+  width: 100%;
+  height: var(--control-h);
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.range-field::-webkit-slider-runnable-track {
+  height: var(--range-track-h);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-200);
+}
+.range-field::-moz-range-track {
+  height: var(--range-track-h);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-200);
+}
+.range-field::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--range-thumb);
+  height: var(--range-thumb);
+  /* Centre the thumb on the track: half the difference between the two. */
+  margin-top: calc((var(--range-track-h) - var(--range-thumb)) / 2);
+  border-radius: var(--radius-full);
+  border: var(--frame-border) solid var(--border-color);
+  background-color: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+  transition: border-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.range-field::-moz-range-thumb {
+  width: var(--range-thumb);
+  height: var(--range-thumb);
+  border-radius: var(--radius-full);
+  border: var(--frame-border) solid var(--border-color);
+  background-color: var(--surface-0);
+  box-shadow: var(--overlay-shadow);
+  transition: border-color 150ms, scale 120ms var(--ease-out-expo);
+}
+.range-field:hover::-webkit-slider-thumb,
+.range-field:focus-visible::-webkit-slider-thumb {
+  border-color: var(--color-accent);
+}
+.range-field:hover::-moz-range-thumb,
+.range-field:focus-visible::-moz-range-thumb {
+  border-color: var(--color-accent);
+}
+.range-field:active::-webkit-slider-thumb {
+  scale: 0.94;
+}
+.range-field:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-lg);
+}
+
+/* The stop names under a .range-field: one column per stop, so each name sits
+   under its own position on the track, with the first and last pulled to the
+   edges so they read as the ends of the range rather than as two more stops
+   inside it. */
+.range-ticks {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  width: 100%;
+  font-size: var(--control-text);
+  color: var(--text-tertiary);
+}
+.range-tick {
+  text-align: center;
+}
+.range-tick:first-child {
+  text-align: left;
+}
+.range-tick:last-child {
+  text-align: right;
+}
+.range-tick[data-active="true"] {
   color: var(--text-primary);
 }
 
@@ -1633,7 +1732,7 @@ body,
 }
 .settings-page-description {
   margin-top: 0.25rem;
-  font-size: 13px;
+  font-size: var(--control-text);
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -1664,7 +1763,7 @@ body,
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 13px;
+  font-size: var(--control-text);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
 }
@@ -1706,7 +1805,7 @@ body,
   padding: 0.625rem 0.875rem;  /* py-2.5 px-3.5 */
 }
 .settings-row-title {
-  font-size: 13px;
+  font-size: var(--control-text);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
 }
@@ -1751,7 +1850,7 @@ body,
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 .settings-callout-title {
-  font-size: 13px;
+  font-size: var(--control-text);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
 }
@@ -1965,7 +2064,7 @@ button.extension-card:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;              /* gap-1 */
-  height: 20px;
+  height: var(--control-h-xs);
   padding: 0 6px;        /* px-1.5 */
   border-radius: 9999px; /* rounded-full */
   background-color: var(--surface-100);

@@ -5,6 +5,7 @@ import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
   Theme,
   AppIcon,
+  Density,
   TreeRuleIntensity,
   PanelScope,
   ActivityStatus,
@@ -21,7 +22,7 @@ import type {
   ExtensionsSection,
   SessionType
 } from './session-types'
-import { PANEL_ROOTS } from './session-types'
+import { PANEL_ROOTS, DENSITY_LEVELS, DEFAULT_DENSITY } from './session-types'
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
@@ -46,6 +47,7 @@ export type {
   ExtensionsSection,
   SessionType,
   TreeRuleIntensity,
+  Density,
   PanelScope
 }
 export {
@@ -54,8 +56,12 @@ export {
   TERMINAL_COLOR_VALUES,
   TREE_RULE_INTENSITIES,
   PANEL_ROOTS,
+  DENSITY_LEVELS,
+  DEFAULT_DENSITY,
   resolveColorHex,
   treeRuleMultiplier,
+  densityScale,
+  densityIndex,
   panelRootLadder
 } from './session-types'
 
@@ -90,6 +96,8 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
+  /** How tight the chrome is drawn — the stop `--density` is written from. */
+  density: Density
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -262,6 +270,7 @@ interface SessionState {
   setTheme: (theme: Theme) => void
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
+  setDensity: (density: Density) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
@@ -531,6 +540,17 @@ export function fileTabDedupKey(tab: FileTab): string {
   return `file:${tab.filePath}`
 }
 
+/** The saved density stop, CHECKED against the table rather than cast to it.
+ *  This one is read straight into a CSS length multiplier, so a stale id from an
+ *  older build (or anything else that ends up under the key) would otherwise be
+ *  written to the root element as `--density: <garbage>` — which does not throw,
+ *  does not warn, and silently invalidates every calc() in the control spec at
+ *  once. A value that is not one of the five stops is not a density. */
+function readDensity(): Density {
+  const saved = localStorage.getItem('clave-density')
+  return DENSITY_LEVELS.some((level) => level.id === saved) ? (saved as Density) : DEFAULT_DENSITY
+}
+
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: [],
   fileTabs: [],
@@ -546,6 +566,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
+  density: readDensity(),
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -1206,6 +1227,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTreeRuleIntensity: (treeRuleIntensity) => {
     localStorage.setItem('clave-tree-rule-intensity', treeRuleIntensity)
     set({ treeRuleIntensity })
+  },
+
+  setDensity: (density) => {
+    localStorage.setItem('clave-density', density)
+    set({ density })
   },
 
   setAppIcon: (appIcon) => {
