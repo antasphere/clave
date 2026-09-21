@@ -11,6 +11,7 @@ import {
 } from '../shared/agent-launch'
 
 import { sessionManager } from './sessions/session-manager'
+import { pluginAdapterProfiles, unavailablePluginAdapter } from './sessions/plugin-adapters'
 
 export type EventsLaunchProfile = LaunchProfile & { adapterId: string }
 /** Any family with two built-in profiles renders a submenu (terminal + chat), including Claude and Codex. */
@@ -34,8 +35,47 @@ const CHAT_PROFILES: EventsLaunchProfile[] = [
     builtIn: true
   }
 ]
+/**
+ * A plugin's adapter becomes an ordinary events profile: the manifest names it
+ * and supplies the command, and the host puts it beside Claude (chat) and
+ * Codex (chat). Plugin providers have no launcher family of their own, so they
+ * join the Claude one, as the echo development fixture already does.
+ */
+function pluginProfiles(): EventsLaunchProfile[] {
+  return pluginAdapterProfiles().map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    family: 'claude',
+    command: [...profile.command],
+    additionalArgs: [],
+    adapterId: profile.id
+  }))
+}
+
+/**
+ * Resolves a launch id to its events profile, INCLUDING a disabled plugin's.
+ * A disabled plugin must not silently launch a shell instead of its provider:
+ * the spawn resolves the adapter, which then refuses the launch by name.
+ */
 export function eventsProfile(id?: string | null): EventsLaunchProfile | undefined {
-  return CHAT_PROFILES.find((p) => p.id === id)
+  return CHAT_PROFILES.find((p) => p.id === id) ?? pluginProfiles().find((p) => p.id === id)
+}
+
+/** The events profiles the launcher offers: built-ins with a live adapter, plugins that are enabled. */
+function offeredChatProfiles(): EventsLaunchProfile[] {
+  const enabled = new Set(
+    pluginAdapterProfiles()
+      .filter((profile) => profile.enabled)
+      .map((profile) => profile.id)
+  )
+  return [
+    ...CHAT_PROFILES.filter(
+      (p) =>
+        (p.id !== 'claude-chat' || process.platform !== 'win32') &&
+        sessionManager.getAdapter(p.adapterId)
+    ),
+    ...pluginProfiles().filter((p) => enabled.has(p.id))
+  ]
 }
 
 const echoEnabled = process.argv.includes('--dev-echo-adapter')
@@ -71,13 +111,7 @@ export class LaunchProfileManager {
       (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) preferences.customProfiles.push(DEV_ECHO_PROFILE)
-    preferences.customProfiles.push(
-      ...CHAT_PROFILES.filter(
-        (p) =>
-          (p.id !== 'claude-chat' || process.platform !== 'win32') &&
-          sessionManager.getAdapter(p.adapterId)
-      )
-    )
+    preferences.customProfiles.push(...offeredChatProfiles())
     return preferences
   }
 
@@ -159,18 +193,36 @@ export class LaunchProfileManager {
       (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) customProfiles.push(DEV_ECHO_PROFILE)
-    customProfiles.push(
-      ...CHAT_PROFILES.filter(
-        (p) =>
-          (p.id !== 'claude-chat' || process.platform !== 'win32') &&
-          sessionManager.getAdapter(p.adapterId)
-      )
-    )
-    return resolveLaunchProfile(
+    customProfiles.push(...offeredChatProfiles())
+    const resolved = resolveLaunchProfile(
       { ...this.preferences, customProfiles },
       family,
       workspaceId,
       profileId
+    )
+    // A launch that asked for a plugin's agent must never quietly become a
+    // terminal. The shared resolver falls back to the family's built-in when the
+    // id it was given is not on offer, which is right for a deleted custom
+    // profile and wrong for a plugin that is merely switched off: the stored
+    // default is the common case, and it is not passed an explicit id.
+    const asked = this.requestedId(family, workspaceId, profileId)
+    if (asked && resolved.id !== asked) {
+      const refusal = unavailablePluginAdapter(asked)
+      if (refusal) throw new Error(refusal)
+    }
+    return resolved
+  }
+
+  /** The profile id this call actually asked for, explicit or stored. */
+  private requestedId(
+    family: LauncherFamily,
+    workspaceId?: string | null,
+    profileId?: string | null
+  ): string | undefined {
+    return (
+      profileId ??
+      (workspaceId ? this.preferences.workspaceOverrides[workspaceId]?.[family] : undefined) ??
+      this.preferences.globalDefaults[family]
     )
   }
 

@@ -32,6 +32,49 @@ export const skinManifestSchema = z.strictObject({
   base: z.enum(['dark', 'light'])
 })
 
+/** Adapter ids Clave registers itself; a plugin cannot take one over. */
+export const BUILT_IN_ADAPTER_IDS = ['pty', 'echo', 'claude-chat', 'codex-chat'] as const
+
+/** What a plugin-supplied adapter may do, enforced by the host at runtime. */
+export const adapterCapabilitiesSchema = z.strictObject({
+  /** May raise a permission request naming a tool. */
+  permissions: z.boolean(),
+  /** May raise a request that names no tool: a free-form question. */
+  questions: z.boolean(),
+  /** Accepts a provider session id to resume; a launch that carries one is
+   *  refused when this is false, rather than quietly starting a fresh session. */
+  resume: z.boolean(),
+  /** Shown to the user once the session starts (what this provider does, what it costs). */
+  notice: z.string().trim().min(1).max(2000).optional()
+})
+export type PluginAdapterCapabilities = z.infer<typeof adapterCapabilitiesSchema>
+
+const adapterContribution = z.strictObject({
+  id: identifier.refine(
+    (value) => !(BUILT_IN_ADAPTER_IDS as readonly string[]).includes(value),
+    'Reserved adapter id'
+  ),
+  name: title,
+  /** Built CommonJS, resolved inside the plugin directory and loaded only when a session starts. */
+  entry: relativePath.refine(
+    (value) => value.endsWith('.cjs'),
+    'Adapter entry must be CommonJS (.cjs)'
+  ),
+  /** The provider command the adapter runs; the host derives its launch profile from it. */
+  command: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(4096)
+        .refine((value) => !value.includes('\0'), 'Command arguments cannot contain NUL')
+    )
+    .min(1)
+    .max(32),
+  capabilities: adapterCapabilitiesSchema
+})
+export type PluginAdapterContribution = z.infer<typeof adapterContribution>
+
 const contributions = z
   .strictObject({
     panels: z
@@ -63,7 +106,7 @@ const contributions = z
     views: z
       .array(z.strictObject({ id: identifier, renders: z.array(z.enum(['pty', 'events'])).min(1) }))
       .default([]),
-    adapters: z.array(z.strictObject({ id: identifier, provider: title })).default([])
+    adapters: z.array(adapterContribution).default([])
   })
   .superRefine((value, context) => {
     for (const [key, entries] of Object.entries(value)) {
@@ -168,6 +211,13 @@ export const pluginManifestSchema = z
       })
     if (new Set(value.permissions).size !== value.permissions.length)
       context.addIssue({ code: 'custom', path: ['permissions'], message: 'Duplicate permission' })
+    // An adapter owns a session's input and output; nothing less than sessions.write covers that.
+    if (value.contributes.adapters.length && !value.permissions.includes('sessions.write'))
+      context.addIssue({
+        code: 'custom',
+        path: ['permissions'],
+        message: 'Adapter contributions require the sessions.write permission'
+      })
   })
   .transform((value) => ({
     ...value,

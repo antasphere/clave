@@ -98,7 +98,6 @@ for capture compatibility. Chat rendering is owned by the separate chat-view
 lane. `claude-adapter.test.ts` and `tests/e2e/claude-chat-adapter.spec.mjs` use
 recorded fixtures and a stub executable; they never call a real provider.
 
-
 An adapter may implement optional `ready(handle)`. The manager completes it at most
 once per session (failed calls may retry), from `sessions:subscribe` after that
 consumer's stream and exit notifications are bound. Claude sends a configured `initialPrompt` then, and
@@ -119,6 +118,7 @@ inside the subscribe handler and can emit the initial prompt or an error before
 that promise resolves. A failed ready call emits a non-fatal error without
 rejecting subscription and can be retried by subscribing again; only successful
 readiness consumes the one-shot.
+
 ## Codex events adapter
 
 `codex-chat` uses one `codex app-server` stdio connection per session. It omits
@@ -129,3 +129,102 @@ supports `on-request` and `never`; `untrusted` is an adapter limitation even tho
 Codex 0.154.0 accepts it through the thread protocol (but rejects the CLI `-c` form).
 A second `user_message` during an active turn is refused by design; steering an
 active Codex turn is not exposed through this v1 adapter.
+
+## Plugin-supplied adapters (wave 3)
+
+A plugin contributes a provider through `contributes.adapters[]`:
+`{ id, name, entry, command, capabilities }`, validated in
+`packages/plugin-sdk/src/manifest.ts`. The entry is a **built CommonJS file**
+inside the plugin, `id` may not be one of `pty`, `echo`, `claude-chat`,
+`codex-chat`, and declaring an adapter at all requires `sessions.write` in
+`permissions` — an adapter owns a session's input and output, and nothing
+narrower covers that. `src/main/sessions/plugin-adapters.ts` is the host side.
+
+**The mapping onto `SessionAdapter`.** The plugin does not implement the
+adapter interface; `PluginSessionAdapter` does, one instance per contributed id,
+and it is what `sessionManager` registers. The plugin exports
+`createAdapter(launch, emit)` returning `{ start, send, interrupt, respond,
+dispose }` plus optional `models` / `commands` / `setModel`. `launch` carries
+`{ sessionId, cwd, command, options }`, frozen; `command` is the manifest's,
+verbatim, which is what a real provider spawns.
+
+| `SessionAdapter`              | The plugin's adapter                                         |
+| ----------------------------- | ------------------------------------------------------------ |
+| `spawn`                       | resolves the pinned revision, requires the module, `start()` |
+| `ready`                       | drains what `start()` emitted (see below)                    |
+| `write` `user_message`        | `send(text)`                                                 |
+| `write` `interrupt`           | `interrupt()`                                                |
+| `write` `permission_response` | `respond({ id, optionId })`, prefix stripped                 |
+| `write` `set_model`           | `setModel(model)`, or a non-fatal error if it has none       |
+| `write` raw bytes             | refused: a plugin adapter is events-only                     |
+| `models` / `commands`         | the optional methods, or an empty list                       |
+| `kill`                        | `dispose()`, then exit 0                                     |
+
+**Readiness, not binding, releases the first events.** The manager binds its own
+listeners inside `adopt()` but publishes to the consumers it has at that moment,
+and it has none until `sessions:subscribe`. So everything emitted between
+`spawn` and readiness is buffered (1000 events) and flushed in `ready()`, which
+runs after a consumer's stream and exit notifications are bound. A plugin can
+therefore speak in `start()` without its first words falling on the floor.
+
+**Every event crosses a schema.** `emit` validates against `SessionEventSchema`;
+an invalid event is dropped with a logged error and the session continues. Ids a
+plugin mints (`tool_call`, `tool_result`, `permission_request`) are prefixed with
+the plugin id so two plugins cannot collide, and the prefix is stripped off an
+incoming `permission_response` before the plugin sees it.
+
+**Capabilities are enforced.** `permissions: false` drops a request that names a
+`toolName`; `questions: false` drops one that does not — a request naming no tool
+is a free-form question. `resume: false` refuses a launch carrying a resume id
+rather than quietly starting a fresh session. `notice` is emitted once at session
+start as a `provider_event` carrying `{ notice }`; rendering it is the view's.
+
+**The module loads at spawn and nowhere else** — never during discovery, install
+or listing. The plugin's `contentDigest`, which `PluginStore` computes at
+discovery, is pinned per session: a revision the store has re-hashed since is
+required afresh rather than served from Node's module cache, sessions already
+running keep the factory they started on, and `attach` refuses once the pin and
+the store disagree. The digest is the store's _discovery-time_ digest, so bytes
+edited mid-run are caught at the next discovery (`needsReview: 'digest-change'`),
+not at the next spawn.
+
+**Enabling and disabling.** An adapter id keeps resolving to its events profile
+for the life of the app, whether the plugin is enabled, disabled or since removed,
+so a launch naming it is refused by name instead of silently becoming a terminal.
+That holds on both paths: an explicit launch id is refused when the adapter spawns,
+and a _stored default_ is refused in `resolve()`, which is the common case and the
+one the shared resolver would otherwise answer with the family's built-in. Its one
+limit is a restart: an id contributed by a plugin removed in an earlier run is
+indistinguishable from a deleted custom profile, and takes the built-in fallback.
+Only enabled plugins with `sessions.write` actually granted appear in the launcher. Disabling hides new launches and leaves running
+sessions alone — the registered adapter lives for the app's lifetime, and the
+manager holds its reference per session. Whether a bundled plugin starts enabled
+is the host's own rule (`BUNDLED_ON_FIRST_INSTALL` in
+`src/main/plugins/plugin-store.ts`); `clave.echo-provider` is deliberately not on
+that list, because a launcher must not offer a provider nobody asked for.
+
+**The manifest's `command` is a declaration, not a launch.** The host never runs
+it. Nothing is spawned for an events session, and the command is handed to the
+adapter as frozen data for it to interpret, besides being shown as the launch
+profile's command. So there is no host-side environment stripping and no binary
+check on it, and a plugin may start whatever it likes with the main process's
+full environment.
+
+**This is a protocol boundary, not a sandbox.** A plugin's adapter module is
+`createRequire`d into Clave's **main process**: the app's pid, the app's full
+environment, `require` of anything, and the ability to start other programs. That
+is a different and much weaker containment than the one `src/main/plugins/README.md`
+describes for a plugin's `main`, which does get its own utility process and a
+trimmed environment; that file now carries both models side by side, and the
+review dialog says which one applies before an adapter plugin is enabled. Link
+only code you trust.
+
+**Two limits worth knowing.** A plugin can emit `user_message` and a fatal
+`error` on its own session, so it can write turns into its own transcript that
+read as the user's and can end its own session; this reaches no other session.
+And an event is bounded at 256 KiB, dropped with a logged error above that,
+because plugin code mints these and they cross into a renderer.
+
+`plugins/echo-provider/` is the bundled example, and `plugin-adapters.test.ts`,
+`plugin-sessions.test.ts` and `tests/e2e/plugin-provider.spec.mjs` are what hold
+all of the above.

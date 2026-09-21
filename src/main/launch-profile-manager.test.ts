@@ -4,7 +4,9 @@ import * as os from 'os'
 import * as path from 'path'
 import { sessionManager } from './sessions/session-manager'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
-import { LaunchProfileManager, isEchoLaunchProfile } from './launch-profile-manager'
+import { syncPluginAdapters } from './sessions/plugin-adapters'
+import type { PluginRecord } from './plugins/plugin-store'
+import { LaunchProfileManager, eventsProfile, isEchoLaunchProfile } from './launch-profile-manager'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
 
@@ -152,5 +154,152 @@ it('keeps the development echo profile exclusive to the Claude family', async ()
     process.argv.splice(0, process.argv.length, ...argv)
     fs.rmSync(dir, { recursive: true, force: true })
     vi.resetModules()
+  }
+})
+
+/** A store record for a plugin contributing one adapter, as the registry reads it. */
+function adapterPlugin(enabled: boolean): PluginRecord {
+  return {
+    id: 'acme.agent',
+    version: '1.0.0',
+    source: 'bundled',
+    enabled,
+    permissionsGranted: ['sessions.write'],
+    installedAt: new Date().toISOString(),
+    directory: '/tmp/acme-agent',
+    contentDigest: 'digest',
+    status: 'active',
+    panels: [],
+    commands: [],
+    toolbar: [],
+    generation: 0,
+    manifest: {
+      id: 'acme.agent',
+      name: 'Acme agent',
+      version: '1.0.0',
+      kind: 'plugin',
+      engines: { clave: '>=1.0.0' },
+      ui: 'none',
+      uiEntry: undefined,
+      permissions: ['sessions.write'],
+      contributes: {
+        panels: [],
+        commands: [],
+        toolbar: [],
+        sidebarSections: [],
+        views: [],
+        adapters: [
+          {
+            id: 'acme-agent',
+            name: 'Acme (plugin)',
+            entry: 'provider.cjs',
+            command: ['acme', '--stdio'],
+            capabilities: { permissions: true, questions: false, resume: false }
+          }
+        ]
+      }
+    } as PluginRecord['manifest']
+  }
+}
+
+it('refuses a stored default whose plugin is switched off, instead of starting a terminal', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const echo = new EchoAdapter()
+  const lookup = vi
+    .spyOn(sessionManager, 'getAdapter')
+    .mockImplementation((id: string) =>
+      id === 'claude-chat' || id === 'codex-chat' ? echo : undefined
+    )
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    syncPluginAdapters({ list: () => [adapterPlugin(true)] })
+    withManager((manager) => {
+      manager.setGlobalDefault('claude', 'acme-agent')
+      expect(manager.resolve('claude').id).toBe('acme-agent')
+      // Switched off, the stored default still points at it. The shared resolver
+      // would hand back the family's built-in, which is a terminal Claude.
+      syncPluginAdapters({ list: () => [adapterPlugin(false)] })
+      expect(() => manager.resolve('claude')).toThrow(
+        'Acme (plugin) is not enabled; enable it in Settings → Plugins'
+      )
+      // Uninstalled entirely, it is still named rather than silently replaced.
+      syncPluginAdapters({ list: () => [] })
+      expect(() => manager.resolve('claude')).toThrow('Acme (plugin) is no longer installed')
+      // A workspace override is the same story.
+      manager.setWorkspaceDefault('workspace-1', 'claude', null)
+      expect(() => manager.resolve('claude', 'workspace-1')).toThrow('no longer installed')
+    })
+  } finally {
+    syncPluginAdapters({ list: () => [] })
+    Object.defineProperty(process, 'platform', { value: platform.value })
+    lookup.mockRestore()
+  }
+})
+
+it('leaves an ordinary deleted profile to the built-in fallback', () => {
+  withManager((manager) => {
+    manager.upsert({
+      id: 'gone-custom',
+      name: 'Gone',
+      family: 'claude',
+      command: ['x'],
+      additionalArgs: []
+    })
+    manager.setGlobalDefault('claude', 'gone-custom')
+    manager.delete('gone-custom')
+    // Nothing to name and nothing to refuse: this is what the fallback is for.
+    expect(manager.resolve('claude').id).toBe('builtin-claude')
+  })
+})
+
+it('derives a launch profile from an enabled adapter plugin and hides it once disabled', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const echo = new EchoAdapter()
+  const lookup = vi
+    .spyOn(sessionManager, 'getAdapter')
+    .mockImplementation((id: string) =>
+      id === 'claude-chat' || id === 'codex-chat' ? echo : undefined
+    )
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    syncPluginAdapters({ list: () => [adapterPlugin(true)] })
+    withManager((manager) => {
+      const profiles = manager.getPreferences().customProfiles
+      expect(profiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat',
+        'acme-agent'
+      ])
+      const acme = profiles.find((profile) => profile.id === 'acme-agent')!
+      // The command is the manifest's, verbatim, and the profile joins the Claude family.
+      expect(acme.command).toEqual(['acme', '--stdio'])
+      expect(acme.name).toBe('Acme (plugin)')
+      expect(acme.family).toBe('claude')
+      expect(manager.resolve('claude', null, 'acme-agent').id).toBe('acme-agent')
+      // It is an events profile, so it is reserved against a user-authored one.
+      expect(() =>
+        manager.upsert({
+          id: 'acme-agent',
+          name: 'Mine',
+          family: 'claude',
+          command: ['mine'],
+          additionalArgs: []
+        })
+      ).toThrow('Reserved events profile')
+    })
+    syncPluginAdapters({ list: () => [adapterPlugin(false)] })
+    withManager((manager) => {
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat'
+      ])
+    })
+    // Disabled hides new launches; the id still resolves to its adapter, so a
+    // stale launch is refused by name instead of silently starting a shell.
+    expect(eventsProfile('acme-agent')?.adapterId).toBe('acme-agent')
+  } finally {
+    syncPluginAdapters({ list: () => [] })
+    Object.defineProperty(process, 'platform', platform)
+    lookup.mockRestore()
   }
 })

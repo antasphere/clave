@@ -29,10 +29,30 @@ const input = {
       }
     ],
     views: [{ id: 'view', renders: ['pty', 'events'] }],
-    adapters: [{ id: 'adapter', provider: 'example' }]
+    adapters: [
+      {
+        id: 'adapter',
+        name: 'Example provider',
+        entry: 'dist/provider.cjs',
+        command: ['example-cli', '--stdio'],
+        capabilities: { permissions: true, questions: false, resume: true, notice: 'Local only.' }
+      }
+    ]
   },
-  permissions: ['sessions.read']
+  permissions: ['sessions.read', 'sessions.write']
 }
+
+/** The same manifest with one field of its single adapter contribution replaced. */
+const adapterManifest = (
+  patch: Record<string, unknown>
+): ReturnType<typeof pluginManifestSchema.safeParse> =>
+  pluginManifestSchema.safeParse({
+    ...input,
+    contributes: {
+      ...input.contributes,
+      adapters: [{ ...input.contributes.adapters[0], ...patch }]
+    }
+  })
 
 describe('plugin manifest v1', () => {
   it('accepts every contribution kind and the surface entry without losing fields', () => {
@@ -68,6 +88,52 @@ describe('plugin manifest v1', () => {
       expect(pluginManifestSchema.safeParse({ ...input, main }).success).toBe(false)
     }
   )
+  it.each([{ id: 'pty' }, { id: 'echo' }, { id: 'claude-chat' }, { id: 'codex-chat' }])(
+    'rejects the built-in adapter id %o',
+    (patch) => {
+      expect(adapterManifest(patch).success).toBe(false)
+    }
+  )
+  it.each(['../provider.cjs', '/provider.cjs', 'dist/../../provider.cjs', 'C:\\provider.cjs'])(
+    'rejects a traversing adapter entry %s',
+    (entry) => {
+      expect(adapterManifest({ entry }).success).toBe(false)
+    }
+  )
+  it.each(['provider.js', 'provider.mjs', 'provider'])(
+    'rejects an adapter entry that is not built CommonJS: %s',
+    (entry) => {
+      expect(adapterManifest({ entry }).success).toBe(false)
+    }
+  )
+  it.each([
+    { command: [] },
+    { command: ['ok', 'bad\u0000arg'] },
+    { capabilities: { permissions: true, questions: false } },
+    { capabilities: { permissions: true, questions: false, resume: false, unexpected: true } },
+    { unexpected: true }
+  ])('rejects an invalid adapter contribution %#', (patch) => {
+    expect(adapterManifest(patch).success).toBe(false)
+  })
+  it('refuses an adapter contribution without the sessions.write permission', () => {
+    expect(
+      pluginManifestSchema.safeParse({ ...input, permissions: ['sessions.read'] }).success
+    ).toBe(false)
+    expect(
+      pluginManifestSchema.safeParse({ ...input, permissions: ['sessions.write'] }).success
+    ).toBe(true)
+  })
+  it('rejects two adapters sharing an id inside one manifest', () => {
+    expect(
+      pluginManifestSchema.safeParse({
+        ...input,
+        contributes: {
+          ...input.contributes,
+          adapters: [input.contributes.adapters[0], input.contributes.adapters[0]]
+        }
+      }).success
+    ).toBe(false)
+  })
   it('rejects duplicate contribution IDs', () => {
     expect(
       pluginManifestSchema.safeParse({
@@ -165,7 +231,13 @@ describe('plugin manifest v1', () => {
 })
 
 describe('plugin host permission boundary', () => {
-  const manifest = pluginManifestSchema.parse(input)
+  // Read-only on purpose: this block is about a permission the manifest never
+  // declared, so it drops the adapter contribution and the sessions.write it needs.
+  const manifest = pluginManifestSchema.parse({
+    ...input,
+    contributes: { ...input.contributes, adapters: [] },
+    permissions: ['sessions.read']
+  })
   it('refuses sessions.send with a typed error without sessions.write', () => {
     try {
       assertMethodPermission(manifest, ['sessions.read'], 'sessions.send', {

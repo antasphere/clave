@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { PluginStore, pluginFile } from '../plugins/plugin-store'
 import { PluginHost } from '../plugins/plugin-host'
-import { ptyManager } from '../pty-manager'
+import { sessionManager } from '../sessions/session-manager'
+import { listPluginSessions, pluginSessionById } from '../sessions/plugin-sessions'
+import { syncPluginAdapters } from '../sessions/plugin-adapters'
 import { registerPreviewFile, unregisterPreviewFile } from '../preview-protocol'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import type { PluginPermission } from '@clave/plugin-sdk'
@@ -19,6 +21,7 @@ export function registerPluginHandlers(): void {
   try {
     store = new PluginStore(root, bundled, app.getVersion())
     store.discover()
+    syncPluginAdapters(store)
   } catch (error) {
     initializationError = `Plugin registry could not be read: ${String(error)}`
     console.error(initializationError)
@@ -63,17 +66,30 @@ export function registerPluginHandlers(): void {
   const host = !initializationError
     ? new PluginHost(store!, {
         sessions: {
-          list: () => ptyManager.getAllSessions(),
-          focused: () =>
-            focused
-              ? (ptyManager.getAllSessions().find((s) => s.id === focused!.sessionId) ?? null)
-              : null,
+          // The whole service reads the session registry, not the PTY manager:
+          // one row per live session whatever its transport, `alive` from the
+          // record's own state, and focus resolved the same way — so `list` and
+          // `focused` can never disagree about a chat session.
+          list: listPluginSessions,
+          focused: () => (focused ? pluginSessionById(focused.sessionId) : null),
           send: (id, text) => {
-            if (!ptyManager.getSession(id)?.alive) throw new Error('Session is not running')
-            ptyManager.write(id, text)
+            const session = sessionManager.get(id)
+            if (!session || session.state === 'ended') throw new Error('Session is not running')
+            // A granted sessions.write must reach a chat session too, not only a terminal.
+            sessionManager.write(
+              id,
+              session.transport === 'events'
+                ? { type: 'user_message', text }
+                : new TextEncoder().encode(text)
+            )
           }
         },
-        changed: broadcast,
+        // A linked plugin edited on disk re-discovers through the host's own
+        // watcher, which never passes through the handlers below.
+        changed: () => {
+          syncPluginAdapters(store)
+          broadcast()
+        },
         stopped: (id) => {
           const file = surfaces.get(id)
           if (file) unregisterPreviewFile(file)
@@ -128,13 +144,16 @@ export function registerPluginHandlers(): void {
     guard(event)
     if (!Array.isArray(grants)) throw new Error('Permission grants are required')
     store.enable(id, grants)
+    syncPluginAdapters(store)
     host!.start(id)
     broadcast()
   })
   ipcMain.handle('plugins:disable', (event, id: string) => {
     guard(event)
     store.disable(id)
+    syncPluginAdapters(store)
     host!.stop(id)
+    broadcast()
   })
   ipcMain.handle('plugins:link', async (event, folder?: string) => {
     const win = guard(event)
@@ -149,6 +168,7 @@ export function registerPluginHandlers(): void {
     if (!selected) return null
     const id = store.link(selected)
     host!.reload()
+    syncPluginAdapters(store)
     return id
   })
   ipcMain.handle('plugins:remove', (event, id: string) => {
@@ -157,6 +177,7 @@ export function registerPluginHandlers(): void {
       throw new Error('Bundled plugins can be disabled, not removed')
     host!.stop(id)
     store.remove(id)
+    syncPluginAdapters(store)
     broadcast()
   })
   ipcMain.handle('plugins:command', (event, id: string, command: string) => {

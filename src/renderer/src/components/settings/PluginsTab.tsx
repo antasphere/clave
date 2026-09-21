@@ -129,7 +129,12 @@ export function PluginsTab(): React.JSX.Element {
               {review === plugin.id && (
                 <SettingsCallout
                   title={`Enable ${plugin.manifest?.name}?`}
-                  text={`Host API permissions: ${plugin.manifest?.permissions.join(', ') || 'none'}. The plugin runs as a separate process with a trimmed environment. It can read and write your files. These permissions govern Clave host APIs, not OS access.`}
+                  tone={plugin.manifest?.contributes.adapters.length ? 'danger' : undefined}
+                  text={`Host API permissions: ${plugin.manifest?.permissions.join(', ') || 'none'}. ${
+                    plugin.manifest?.contributes.adapters.length
+                      ? 'This plugin supplies an agent, and an agent\u2019s code runs INSIDE Clave, in the same process as the app, with everything Clave itself can reach: your full environment including any credentials in it, your files, and the ability to start other programs. Enable it only if you trust its author as much as you trust Clave.'
+                      : 'The plugin runs as a separate process with a trimmed environment. It can read and write your files.'
+                  } These permissions govern Clave host APIs, not OS access.`}
                 >
                   <button className="btn-dialog" onClick={() => setReview(null)}>
                     Cancel

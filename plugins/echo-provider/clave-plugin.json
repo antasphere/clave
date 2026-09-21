@@ -1,0 +1,25 @@
+{
+  "id": "clave.echo-provider",
+  "name": "Echo provider",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <2.0.0" },
+  "ui": "none",
+  "contributes": {
+    "adapters": [
+      {
+        "id": "echo-provider",
+        "name": "Echo (plugin)",
+        "entry": "provider.cjs",
+        "command": ["echo", "--from-manifest"],
+        "capabilities": {
+          "permissions": true,
+          "questions": false,
+          "resume": false,
+          "notice": "A local demonstration provider. No model, no network, no process."
+        }
+      }
+    ]
+  },
+  "permissions": ["sessions.write"]
+}
