@@ -223,16 +223,48 @@ const walk = (folder) =>
     if (entry.isDirectory()) return walk(full)
     return entry.isFile() && /\.tsx?$/.test(entry.name) ? [full] : []
   })
+/* Tailwind's NAMED scale lands on the same four numbers: h-5/6/7/8 are
+ * 20/24/28/32px, the control ladder exactly. `h-[28px]` and `h-7` freeze a row
+ * identically, so refusing only the arbitrary form would leave the easier
+ * spelling wide open.
+ *
+ * The allow-list is a SHAPE, not a file list: a square box (`w-6 h-6`) is an
+ * icon, an avatar or an image, and none of those is a control. An icon that
+ * happens to be 20px is not the xs control, and the sidebar foot's avatar is a
+ * fixed canvas that would need a re-render rather than a class. A bare `h-7`
+ * with no matching width is a row, a button or a field, and those follow the
+ * spec. */
+const NAMED_HEIGHTS = {
+  5: '--control-h-xs',
+  6: '--control-h-sm',
+  7: '--control-h-md',
+  8: '--control-h-lg'
+}
+const CLASS_SUFFIX = { 5: 'xs', 6: 'sm', 7: 'md', 8: 'lg' }
 for (const file of walk(RENDERER)) {
   const source = readFileSync(file, 'utf8')
+  const where = path.relative(path.join(dir, '../../..'), file)
   for (const [pattern, literal, instead] of RENDERER_LITERALS) {
     const line = source.split('\n').findIndex((l) => pattern.test(l))
     assert(
       line === -1,
-      `${path.relative(path.join(dir, '../../..'), file)}:${line + 1} pins ${literal}, ` +
+      `${where}:${line + 1} pins ${literal}, ` +
         `a number the control spec owns — use ${instead} so it moves with --density`
     )
   }
+  source.split('\n').forEach((text, i) => {
+    for (const [n, token] of Object.entries(NAMED_HEIGHTS)) {
+      if (!new RegExp(`(?<![\\w-])h-${n}(?![\\w-])`).test(text)) continue
+      // Square box on the same line => an icon, an avatar or an image.
+      if (new RegExp(`(?<![\\w-])w-${n}(?![\\w-])`).test(text)) continue
+      assert(
+        false,
+        `${where}:${i + 1} pins h-${n}, a control height the spec owns — use ` +
+          `h-control-${CLASS_SUFFIX[n]} (height: var(${token})) so it moves with --density, ` +
+          `or pair it with w-${n} if it is an icon box rather than a control`
+      )
+    }
+  })
 }
 
 console.log(

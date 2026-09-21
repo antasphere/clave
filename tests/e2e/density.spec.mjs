@@ -24,7 +24,14 @@
  * rather than by calling the store: the control being operable is half the
  * requirement.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, until, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  spawnAgentTabIn,
+  until,
+  userDataDir
+} from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('density')
@@ -311,6 +318,38 @@ export async function run(t) {
       'and the spec is back at its written values',
       near(afterGarbage['--control-h'], 28),
       afterGarbage['--control-h']
+    )
+
+    // ── The session tab name, measured on a real tab ────────────────────────
+    // The most-read text in the app, and the one place a pin hurts most. The
+    // round-2 review put `text-[19px]` on it and BOTH gates stayed green: the
+    // chrome sweep above only knows the number 13, and the audit only knows the
+    // literals it lists. Only measuring the rendered name closes that.
+    //
+    // Booted straight into Spacious from localStorage rather than driven
+    // through the UI: Settings replaces the sidebar with its own, so the tab is
+    // not on screen while the slider is, and there is no toggle back out.
+    await win.evaluate(() => localStorage.setItem('clave-density', 'spacious'))
+    await app.close()
+    ;({ app, win } = await launchApp(DIR))
+    const atSpacious = await win.evaluate(RESOLVE, ['--control-text'])
+    t.check(
+      'the app booted into Spacious',
+      near(atSpacious['--control-text'], 13 * 1.125),
+      atSpacious['--control-text']
+    )
+    const spawned = await spawnAgentTabIn(app, win, DIR, { until })
+    t.check('a session tab exists to measure', !!spawned, spawned)
+    const tabName = await until(async () =>
+      win.evaluate(() => {
+        const el = document.querySelector('[data-testid="session-tab-name"]')
+        return el ? parseFloat(getComputedStyle(el).fontSize) : null
+      })
+    )
+    t.check(
+      'the session tab name is drawn at --control-text, not a pinned literal',
+      tabName !== null && near(tabName, atSpacious['--control-text']),
+      { tabName, controlText: atSpacious['--control-text'], stop: 'Spacious' }
     )
   } finally {
     await app.close()
