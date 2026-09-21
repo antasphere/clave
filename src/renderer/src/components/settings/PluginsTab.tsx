@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import type { WebviewTag } from 'electron'
+import { useEffect, useState } from 'react'
 import { XMarkIcon, TrashIcon } from '@heroicons/react/24/outline'
 import type { PluginRecord } from '../../../../main/plugins/plugin-store'
 import type { PluginSecretPrompt } from '../../../../preload/index.d'
+import { PluginSurface } from '../plugins/PluginSurface'
 import {
   SettingsPage,
   SettingsSection,
@@ -11,80 +11,6 @@ import {
   SettingsCallout,
   Toggle
 } from './primitives'
-
-/** Enumerate the computed custom properties, including tokens introduced by a skin.
- * No mirrored token inventory: the live app stylesheet is the authority. */
-function themeCSS(): string {
-  const style = getComputedStyle(document.documentElement)
-  return `:root {${Array.from(style)
-    .filter((name) => name.startsWith('--'))
-    .map((name) => `${name}: ${style.getPropertyValue(name)};`)
-    .join('\n')}}`
-}
-
-function PluginSurface({ url, title }: { url: string; title: string }): React.JSX.Element {
-  const ref = useRef<WebviewTag | null>(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    const guest = ref.current
-    if (!guest) return
-    let disposed = false
-    let cssKey: string | undefined
-    let ready = false
-    let queue = Promise.resolve()
-    const inject = (): void => {
-      queue = queue
-        .then(async () => {
-          if (!ready || disposed) return
-          const next = await guest.insertCSS(themeCSS())
-          if (cssKey) await guest.removeInsertedCSS(cssKey)
-          cssKey = next
-        })
-        .catch((error) => {
-          if (!disposed) setError(String(error))
-        })
-    }
-    const loaded = (): void => {
-      ready = true
-      inject()
-    }
-    const failed = (event: Event): void => {
-      setError((event as Event & { errorDescription: string }).errorDescription)
-    }
-    guest.addEventListener('dom-ready', loaded)
-    guest.addEventListener('did-fail-load', failed)
-    const observer = new MutationObserver(inject)
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme', 'style', 'class']
-    })
-    observer.observe(document.head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true
-    })
-    return () => {
-      disposed = true
-      observer.disconnect()
-      guest.removeEventListener('dom-ready', loaded)
-      guest.removeEventListener('did-fail-load', failed)
-    }
-  }, [url])
-  return (
-    <>
-      {error && <SettingsCallout tone="danger" text={error} />}
-      <webview
-        ref={ref}
-        src={url}
-        title={title}
-        // eslint-disable-next-line react/no-unknown-property -- Electron webview attribute
-        partition="persist:view"
-        className="flex flex-1 w-full h-full min-h-0"
-      />
-    </>
-  )
-}
 
 export function PluginsTab(): React.JSX.Element {
   const [plugins, setPlugins] = useState<PluginRecord[]>([])
