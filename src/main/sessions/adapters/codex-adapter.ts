@@ -30,7 +30,9 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 const failed = (item: Record<string, unknown>): boolean | undefined => {
   if (text(item.type) === 'commandExecution') {
     const code = item.exitCode
-    return typeof code === 'number' && Number.isFinite(code) ? code !== 0 : undefined
+    if (typeof code === 'number' && Number.isFinite(code)) return code !== 0
+    // No exit status: a command that never ran says so with `error` instead, and
+    // reading only the status dropped a failure the server had stated outright.
   }
   if (item.error === undefined || item.error === null) return undefined
   return text(item.error) !== '' || typeof item.error === 'object'
@@ -118,7 +120,9 @@ export class CodexTranslator {
               id,
               output:
                 item.type === 'commandExecution'
-                  ? item.aggregatedOutput
+                  ? // A command that never ran has no aggregated output, and its
+                    // reason is the only thing there is to show.
+                    (item.aggregatedOutput ?? item.error)
                   : item.type === 'fileChange'
                     ? item.changes
                     : (item.result ?? item.error),

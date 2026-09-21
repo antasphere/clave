@@ -39,9 +39,12 @@ try {
   await win.locator('code.language-typescript span[style]').first().waitFor()
   // One run row per step since PRDCT-2613, and its items carry summaries of
   // their own — so open the RUN, not any summary under it.
-  await win.locator('.chat-tool-run > summary').click()
+  await win.locator('[data-testid="chat-view"] .chat-tool-run > summary').click()
   // The run builds its bodies on the first open.
-  await win.locator('.chat-tool-item .chat-tool-section pre').first().waitFor()
+  await win
+    .locator('[data-testid="chat-view"] .chat-tool-item .chat-tool-section pre')
+    .first()
+    .waitFor()
   const colors = new Set()
   for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
     await win.evaluate((theme) => {
@@ -81,7 +84,10 @@ try {
     assert.equal(values.overflow, false, `${theme}: view does not overflow`)
     colors.add(values.background)
     assert.equal(
-      await win.locator('.chat-tool-item .chat-tool-section pre').first().innerText(),
+      await win
+        .locator('[data-testid="chat-view"] .chat-tool-item .chat-tool-section pre')
+        .first()
+        .innerText(),
       TOOL_RESULT
     )
     assert.ok(await win.getByRole('button', { name: 'Allow', exact: true }).isVisible())

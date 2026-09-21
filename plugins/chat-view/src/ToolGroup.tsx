@@ -112,11 +112,13 @@ export function ToolGroup({ group }: { group: Group }): React.JSX.Element {
   const status = groupStatus(group.tools)
   const failures = failureCount(group.tools)
   const summary = toolGroupSummary(group.tools)
-  /* The bodies are built only once the reader has opened the row, and stay
-     built after. A closed run of big outputs otherwise puts every byte in the
-     document TWICE per tool — the preview and the raw block — and re-derives
-     both on every event of the session. This reads `open` rather than setting
-     it, so the row stays uncontrolled and nothing here can expand it. */
+  /* The bodies are built only once the reader has opened the row, and stay built
+     after: a closed run of big outputs otherwise puts every byte in the document
+     TWICE per tool, the preview and the raw block. It does NOT save the
+     derivation — a closed row still summarises itself on every render — which is
+     why the summary reads `describeToolHead` and never turns an output into
+     text. This reads `open` rather than setting it, so the row stays
+     uncontrolled and nothing here can expand it. */
   const [opened, setOpened] = useState(false)
   return (
     <details

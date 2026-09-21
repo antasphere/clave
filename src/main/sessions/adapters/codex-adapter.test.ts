@@ -514,10 +514,26 @@ describe('Codex tool failure', () => {
     })
     expect(passing).toMatchObject({ error: false })
   })
-  it('says nothing when the server reported no exit status at all', () => {
+  it('says nothing when the server reported no exit status and no error', () => {
     expect(resultFor({ id: 'c3', type: 'commandExecution', aggregatedOutput: 'x' }).error).toBe(
       undefined
     )
+  })
+  it('keeps a command failure that arrives as an error with no exit status', () => {
+    // A command that never ran has no exit code; reading only the status
+    // dropped the failure AND its reason, and the row read as a clean success.
+    const spawnFailed = resultFor({ id: 'c5', type: 'commandExecution', error: 'spawn failed' })
+    expect(spawnFailed).toMatchObject({ error: true, output: 'spawn failed' })
+  })
+  it('still prefers the aggregated output when there is one', () => {
+    const both = resultFor({
+      id: 'c6',
+      type: 'commandExecution',
+      exitCode: 0,
+      aggregatedOutput: 'all good',
+      error: ''
+    })
+    expect(both).toMatchObject({ error: false, output: 'all good' })
   })
   it('flags a tool call that carried an error, and leaves a clean one alone', () => {
     expect(resultFor({ id: 'm1', type: 'mcpToolCall', error: 'upstream refused' })).toMatchObject({

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Entry } from '../../../../plugins/chat-view/src/reducer'
 import {
   describeTool,
+  describeToolHead,
   failureCount,
   groupEntries,
   groupStatus,
@@ -253,12 +254,45 @@ describe('visibleEntries', () => {
   })
 })
 
-describe('safeJson', () => {
+describe('safeJson and content', () => {
   it('returns a string rather than throwing on a circular payload', () => {
     const circular: Record<string, unknown> = {}
     circular.self = circular
     expect(typeof safeJson(circular)).toBe('string')
     expect(typeof content(circular)).toBe('string')
+  })
+  it('does not recurse forever on a payload that points back at itself', () => {
+    // content() walks into `content` and into arrays, so it would blow the
+    // stack before safeJson's guard was ever reached.
+    const selfContent: Record<string, unknown> = {}
+    selfContent.content = selfContent
+    expect(() => content(selfContent)).not.toThrow()
+    const selfArray: unknown[] = []
+    selfArray.push(selfArray)
+    expect(() => content(selfArray)).not.toThrow()
+  })
+})
+
+describe('describeToolHead', () => {
+  it('gives the summary what it reads and never turns an output into text', () => {
+    // A CLOSED run summarises itself on every render of the session. Building
+    // the sections there meant a full JSON.stringify of every object-shaped
+    // output for a string nobody reads.
+    let serialised = 0
+    const output = {
+      rows: [1, 2, 3],
+      get marker() {
+        serialised += 1
+        return 'seen'
+      }
+    }
+    const t = tool({ id: 'a', name: 'fileChange', input: { file_path: '/x' }, output })
+    const head = describeToolHead(t)
+    expect(head).toEqual({ kind: 'edit', label: 'Edit', target: '/x' })
+    expect(serialised).toBe(0)
+    // The full description still carries the output, for an opened item.
+    expect(describeTool(t).sections.length).toBeGreaterThan(0)
+    expect(serialised).toBeGreaterThan(0)
   })
 })
 

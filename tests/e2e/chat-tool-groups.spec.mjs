@@ -54,6 +54,18 @@ export async function run(t) {
     assert.match(await first.innerText(), /first file/)
     t.check('the row opens to one item per call, each with its own preview', true)
 
+    // The raw input and output the task brief asks for. Nothing covered this:
+    // the base asserted the raw input through `.chat-tool-card pre`, and this
+    // lane rewrote that line to read the Output preview instead, so emptying
+    // the raw block left every spec green.
+    const raw = first.locator('details.chat-tool-raw')
+    assert.equal(await raw.evaluate((el) => el.open), false)
+    await raw.locator('> summary').click()
+    const rawText = await raw.innerText()
+    assert.match(rawText, /\/one\.ts/, 'the raw block shows the recorded input')
+    assert.match(rawText, /first file/, 'the raw block shows the recorded output')
+    t.check('each call keeps its raw input and output behind its own toggle', true)
+
     // The reader's choice survives a NEW CALL joining the open run. This is the
     // commoner live case — the agent keeps calling tools while the row is open —
     // and keying the row on the run's length rather than its first tool id

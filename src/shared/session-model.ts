@@ -32,10 +32,7 @@ export const PermissionResponseSchema = z.object({
 })
 export const InterruptSchema = z.object({ type: z.literal('interrupt') })
 /** Switch the session's model; null asks the provider for its own default. */
-export const SetModelSchema = z.object({
-  type: z.literal('set_model'),
-  model: z.string().nullable()
-})
+export const SetModelSchema = z.object({ type: z.literal('set_model'), model: z.string().nullable() })
 export type SetModel = z.infer<typeof SetModelSchema>
 export const SessionInputSchema = z.discriminatedUnion('type', [
   UserMessageSchema,

@@ -43,14 +43,17 @@ choice is DOM state a re-render cannot touch — a result arriving neither close
 open row nor opens a closed one, and a failure, having no way to set `open`, can
 never expand the row by itself. `CompactView` groups the same runs with the same
 function, one line each and no bodies, which is that view's whole contract. The
-grouping, the summary and the preview are `src/tools.ts`, pure and unit-tested.
+grouping, the summary and the preview are `src/tools.ts`, pure and unit-tested. A
+CLOSED row still summarises itself on every render of the session, so the summary
+reads `describeToolHead` and never turns an output into text; `describeTool` builds
+the previews, and only an opened item asks for them.
 
 A failure is the ADAPTER's word, carried on `tool_result.error`, never a guess
 read off the output: a `Read` of a log file whose first line is "Error:" is not a
 failed tool. `claude-adapter` forwards the CLI's `is_error`; `codex-adapter`
-derives it from a command's exit status and from an item's `error`. An adapter
-that cannot tell says nothing, and an absent flag means "not known to have
-failed" rather than "succeeded".
+derives it from a command's exit status, falling back to the item's `error` when a
+command never ran and so has no status. An adapter that cannot tell says nothing, and
+an absent flag means "not known to have failed" rather than "succeeded".
 
 Markdown is rendered without raw HTML. Shiki has one lazy highlighter with light /
 dark themes chosen from the skin base. Its JavaScript regex engine works within
@@ -75,5 +78,12 @@ Verification:
 Mutation proofs: removing the permission-response write fails the IPC assertion;
 adding a literal hex color to a conversation class fails the visual token audit;
 grouping a run across a message, dropping the adapter's failure flag in the
-reducer, and opening a failed run by itself each turn `chat-tool-groups` red.
+reducer, opening a failed run by itself, keying a run so it remounts when a call
+joins it, and emptying an item's raw input/output block each turn
+`chat-tool-groups` red. ⚠️ The token audit in `tests/visual/chat-view.mjs` is two
+halves: a static read of the stylesheet at module scope, which catches a literal
+colour or size and has always run, and the four-theme pass after it, which needs the
+app. Scope every locator in that file to `[data-testid="chat-view"]` — two views are
+mounted per session since PRDCT-2610, and an unscoped `.chat-view` killed the second
+half of the script for a whole wave without anyone noticing.
 Screenshot bytes are temporary and no baselines are committed.

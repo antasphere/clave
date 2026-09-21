@@ -105,14 +105,24 @@ function numberField(data: Record<string, unknown>, ...keys: string[]): number |
 }
 /** Plain text blocks are common to several tools; anything else stays readable
  *  JSON rather than `[object Object]`. */
-export function content(value: unknown): string {
+export function content(value: unknown, seen: Set<object> = new Set()): string {
   if (typeof value === 'string') return value
   if (value === null || value === undefined) return ''
   if (typeof value !== 'object') return String(value)
-  if (Array.isArray(value)) return value.map(content).filter(Boolean).join('\n')
+  // The recursion below walks into arrays and into `content`, so a payload that
+  // points back at itself would blow the stack before safeJson's guard is ever
+  // reached. Adapter payloads are JSON.parse output and acyclic; a render is
+  // still not a place to find out otherwise.
+  if (seen.has(value)) return ''
+  seen.add(value)
+  if (Array.isArray(value))
+    return value
+      .map((v) => content(v, seen))
+      .filter(Boolean)
+      .join('\n')
   const data = record(value)
   if (typeof data.text === 'string') return data.text
-  if (data.content !== undefined) return content(data.content)
+  if (data.content !== undefined) return content(data.content, seen)
   if (typeof data.stdout === 'string' || typeof data.stderr === 'string')
     return [data.stdout, data.stderr].filter((v) => typeof v === 'string' && v).join('\n')
   return safeJson(value)
@@ -126,7 +136,20 @@ export function safeJson(value: unknown, indent = 2): string {
   }
 }
 
-export function describeTool(tool: ToolEntry): ToolDescription {
+/* What the summary line needs, and nothing more. Kept apart from describeTool
+   because a CLOSED run still summarises itself on every render of the session,
+   and describeTool's last act is to turn every output into text — a full
+   JSON.stringify for the object-shaped outputs Codex sends for a file change
+   and Claude sends as content blocks. Measured at about 25 ms per render per
+   run on ten tools with large object outputs, for a string nobody reads. */
+export function describeToolHead(
+  tool: ToolEntry
+): Pick<ToolDescription, 'kind' | 'label' | 'target'> {
+  const { kind, label, target } = describeTool(tool, false)
+  return { kind, label, target }
+}
+
+export function describeTool(tool: ToolEntry, withSections = true): ToolDescription {
   const name = (tool.name ?? '').toLowerCase().replace(/[\s_-]/g, '')
   const kind: ToolKind = READ.includes(name)
     ? 'read'
@@ -158,7 +181,7 @@ export function describeTool(tool: ToolEntry): ToolDescription {
         : path || literal
   const target = byKind || anyTarget(data)
   const sections: Section[] = []
-  if (target.includes('\n') || target.length > 200)
+  if (withSections && (target.includes('\n') || target.length > 200))
     sections.push({ label: kind === 'command' ? 'Command' : 'Target', text: target })
   let detail: string | undefined
   if (kind === 'read') {
@@ -172,7 +195,7 @@ export function describeTool(tool: ToolEntry): ToolDescription {
     else if (limit !== undefined) detail = `Up to ${limit} lines`
   } else if (kind === 'search') {
     if (path && path !== target) detail = `In ${path}`
-  } else if (kind === 'edit') {
+  } else if (kind === 'edit' && withSections) {
     const changes = Array.isArray(input) ? input.map(record) : [data]
     for (const change of changes) {
       const diff = field(change, 'diff', 'patch')
@@ -191,13 +214,13 @@ export function describeTool(tool: ToolEntry): ToolDescription {
   }
   const exit = numberField(record(tool.output), 'exit_code', 'exitCode')
   if (kind === 'command' && exit !== undefined) detail = `Exit ${exit}`
-  const outputText = tool.complete ? content(tool.output) : ''
+  const outputText = withSections && tool.complete ? content(tool.output) : ''
   if (outputText)
     sections.push({
       label: kind === 'read' ? 'Content' : kind === 'search' ? 'Matches' : 'Output',
       text: outputText
     })
-  if (!sections.length && !target && tool.input !== undefined) {
+  if (withSections && !sections.length && !target && tool.input !== undefined) {
     const inputText = content(input)
     if (inputText) sections.push({ label: 'Input', text: inputText })
   }
@@ -212,7 +235,7 @@ const times = (n: number): string => (n === 1 ? 'once' : n === 2 ? 'twice' : `${
 export function toolGroupSummary(tools: ToolEntry[]): string {
   if (tools.length === 0) return ''
   if (tools.length === 1) {
-    const { label, target } = describeTool(tools[0])
+    const { label, target } = describeToolHead(tools[0])
     return target ? `${label} · ${target}` : label
   }
   const counts = new Map<
@@ -220,7 +243,7 @@ export function toolGroupSummary(tools: ToolEntry[]): string {
     { kind: ToolKind; label: string; count: number; targets: Set<string>; named: number }
   >()
   for (const tool of tools) {
-    const { kind, label, target } = describeTool(tool)
+    const { kind, label, target } = describeToolHead(tool)
     const key = kind === 'other' ? `other:${label}` : kind
     const previous = counts.get(key)
     const targets = previous?.targets ?? new Set<string>()

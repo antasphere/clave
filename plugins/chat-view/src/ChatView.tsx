@@ -562,11 +562,13 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               </div>
             </div>
           )}
-          {blocks.map((block) =>
+          {/* The index is the block's own, not a lookup: indexOf inside a map is
+              quadratic, and a long transcript pays it on every stream event. */}
+          {blocks.map((block, index) =>
             block.kind === 'tool-group' ? (
               <ToolGroup key={`tools-${block.id}`} group={block} />
             ) : (
-              renderEntry(block, conversation.entries.indexOf(block))
+              renderEntry(block, index)
             )
           )}
           {showMark && <ProviderMark provider={session.provider} working={state === 'working'} />}
