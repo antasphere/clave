@@ -11,11 +11,14 @@ buttons disable only after an acknowledged write; failures remain visible and ca
 be retried. Session exit disables the composer.
 
 The pane's header state is the kernel record the session stream carries, never a
-tally of what this view answered: a permission answered anywhere else (another
-window, an agent tool, a write from outside the view) is closed for the adapter,
-so the reducer marks it `answeredElsewhere` on the first non-blocked
-`state_change`, the card says it was answered outside this view, and its buttons
-go dead rather than sending an answer the adapter would refuse. Transcripts currently live for the
+tally of what this view answered: a request the adapter no longer holds — it
+abandoned it, or another consumer of the same window answered it through
+`sessionsWrite` — is closed, so the reducer marks it `answeredElsewhere` on the
+first non-blocked `state_change`, the card reads "No longer awaiting an answer",
+and its buttons go dead rather than sending an answer the adapter would refuse.
+A later `blocked` clears the mark: something is awaited again, and no adapter
+tells the view which request, so the cards it closed on the kernel's word come
+back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
 Markdown is rendered without raw HTML. Shiki has one lazy highlighter with light /

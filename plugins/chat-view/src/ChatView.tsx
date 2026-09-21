@@ -345,9 +345,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   /* The pane's state is the kernel's record, the same one the sidebar follows:
      the reducer holds the last state_change the session stream carried, and a
      permission_request puts it on blocked exactly as the adapter does. The view
-     never re-derives it from its own answers — an answer given in another
-     window would leave this pane blocked with live buttons the adapter would
-     refuse (PRDCT-2549). */
+     never re-derives it from its own answers — a request the adapter abandoned,
+     or one another consumer of this window answered, would leave this pane
+     blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   useEffect(() => {
@@ -484,7 +484,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               {elsewhere && (
                 <p className="chat-permission-answer" role="status" data-answered="elsewhere">
                   <CheckIcon />
-                  Answered outside this view
+                  No longer awaiting an answer
                 </p>
               )}
               <div className="chat-actions">

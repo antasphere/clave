@@ -109,6 +109,55 @@ describe('conversation stream', () => {
     expect(state.entries[0]).toMatchObject({ answer: 'yes' })
     expect(elsewhere(state.entries[0])).toBe(undefined)
   })
+  it('reopens a card it closed when the kernel goes back to blocked', () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'p',
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [{ id: 'yes', label: 'Allow' }]
+    }
+    // Codex emits working on every turn/started, approvals pending or not, and
+    // leaves an approval whose turn id is empty in its set: without this, the
+    // one request the user must answer would be dead for the session's life.
+    let state = reduceConversation(run([request]), {
+      event: { type: 'state_change', state: 'working' }
+    })
+    expect(elsewhere(state.entries[0])).toBe(true)
+    state = reduceConversation(state, { event: { type: 'state_change', state: 'blocked' } })
+    expect(state.state).toBe('blocked')
+    expect(elsewhere(state.entries[0])).toBe(undefined)
+    // And the card is answerable again, by this view.
+    state = reduceConversation(state, { answer: 'p', optionId: 'yes' })
+    expect(state.entries[0]).toMatchObject({ answer: 'yes' })
+    expect(state.state).toBe('working')
+  })
+  it('never reopens a card this view answered itself', () => {
+    const request = {
+      type: 'permission_request' as const,
+      id: 'p',
+      description: 'Allow?',
+      toolName: 'Write',
+      input: {},
+      options: [{ id: 'yes', label: 'Allow' }]
+    }
+    let state = reduceConversation(run([request]), { answer: 'p', optionId: 'yes' })
+    state = reduceConversation(state, { event: { type: 'state_change', state: 'blocked' } })
+    expect(state.entries[0]).toMatchObject({ answer: 'yes' })
+    expect(elsewhere(state.entries[0])).toBe(undefined)
+  })
+  it('keeps the entries array when a state_change changes nothing in it', () => {
+    const state = run([
+      { type: 'assistant_text', delta: 'hello', final: true },
+      { type: 'tool_call', id: 't', name: 'Read', input: {} }
+    ])
+    for (const word of ['working', 'done', 'idle', 'blocked', 'ended'] as const) {
+      const next = reduceConversation(state, { event: { type: 'state_change', state: word } })
+      expect(next.state).toBe(word)
+      expect(next.entries).toBe(state.entries)
+    }
+  })
   it('lets this view answer a second request while the first was answered elsewhere', () => {
     const make = (id: string): ChatEvent => ({
       type: 'permission_request' as const,

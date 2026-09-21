@@ -177,12 +177,12 @@ export async function run(t) {
     await win.locator('.chat-permission-answer').filter({ hasText: 'Allow once' }).waitFor()
     assert.equal(await win.getByRole('button', { name: 'Deny', exact: true }).count(), 0)
     t.check('permission choice crosses the real write IPC with correlated id and option', true)
-    // A second request, answered by somebody else. The echo adapter has no
-    // permission vocabulary, so the outside answer is represented by its kernel
-    // consequence: the state_change both real adapters emit once their pending
-    // set empties (claude-adapter.ts:217, codex-adapter.ts:224). The whole path
-    // — a real adapter, answered through sessionsWrite from outside the view —
-    // is proven in claude-chat-adapter.spec.mjs.
+    // A second request the adapter stops holding — answered by another consumer
+    // of this window, or abandoned by the adapter itself. The echo adapter has
+    // no permission vocabulary, so it is represented here by its kernel
+    // consequence, the state_change that leaves blocked; the whole path — a real
+    // adapter, answered through sessionsWrite from outside the view — is proven
+    // in claude-chat-adapter.spec.mjs.
     await inject(app, record.id, [
       {
         type: 'permission_request',
@@ -209,7 +209,7 @@ export async function run(t) {
     await outside.locator('.chat-permission-answer[data-answered="elsewhere"]').waitFor()
     assert.match(
       await outside.locator('.chat-permission-answer').innerText(),
-      /Answered outside this view/
+      /No longer awaiting an answer/
     )
     for (const label of ['Allow once', 'Deny'])
       assert.equal(
