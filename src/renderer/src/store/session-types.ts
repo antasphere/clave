@@ -75,6 +75,18 @@ export function densityScale(density: Density): number {
   )
 }
 
+/**
+ * The stop a saved string names, CHECKED against the table rather than cast to
+ * it. This is what localStorage is read through, and the value ends up as a CSS
+ * length multiplier: `--density: enormous` invalidates every calc() in the
+ * control spec at once, and the engine's answer to that is to fall back to the
+ * initial values in silence — no throw, no warning, nothing in the console.
+ * Anything that is not one of the five stops is not a density.
+ */
+export function resolveDensity(saved: string | null): Density {
+  return DENSITY_LEVELS.some((level) => level.id === saved) ? (saved as Density) : DEFAULT_DENSITY
+}
+
 /** The stop's position on the slider; an unknown id sits on the default. */
 export function densityIndex(density: Density): number {
   const i = DENSITY_LEVELS.findIndex((d) => d.id === density)

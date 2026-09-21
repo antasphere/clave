@@ -172,8 +172,7 @@ export async function run(t) {
     for (const [i, stop] of STOPS.entries()) {
       if (i > 0) await win.keyboard.press('ArrowRight')
       await until(
-        async () =>
-          (await win.textContent('[data-testid="density-value"]')) === stop.label
+        async () => (await win.textContent('[data-testid="density-value"]')) === stop.label
       )
       const got = await win.evaluate(RESOLVE, ALL)
       const drifted = Object.entries(METRICS).filter(
@@ -192,9 +191,8 @@ export async function run(t) {
       )
       t.check(
         `${stop.label}: --density is written on the root element`,
-        (await win.evaluate(() =>
-          document.documentElement.style.getPropertyValue('--density')
-        )) === String(stop.scale),
+        (await win.evaluate(() => document.documentElement.style.getPropertyValue('--density'))) ===
+          String(stop.scale),
         await win.evaluate(() => document.documentElement.style.getPropertyValue('--density'))
       )
     }
@@ -212,11 +210,10 @@ export async function run(t) {
     const spaciousRow = await win.evaluate(
       () => document.querySelector('.settings-row-title')?.getBoundingClientRect().height
     )
-    t.check(
-      'a real settings row is taller at Spacious than at Compact',
-      spaciousRow > compactRow,
-      { compactRow, spaciousRow }
-    )
+    t.check('a real settings row is taller at Spacious than at Compact', spaciousRow > compactRow, {
+      compactRow,
+      spaciousRow
+    })
 
     // ── It survives a skin change ───────────────────────────────────────────
     // applySkin() clears the properties it wrote; --density is not one of them
@@ -225,8 +222,7 @@ export async function run(t) {
     const other = skins.skins.find((s) => s.id !== skins.activeId) ?? skins.skins[0]
     await win.evaluate((id) => window.electronAPI.skinsActivate(id), other.id)
     await until(
-      async () =>
-        (await win.evaluate(() => window.electronAPI.skinsList())).activeId === other.id
+      async () => (await win.evaluate(() => window.electronAPI.skinsList())).activeId === other.id
     )
     const afterSkin = await win.evaluate(RESOLVE, ALL)
     t.equal(

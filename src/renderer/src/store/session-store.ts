@@ -22,7 +22,7 @@ import type {
   ExtensionsSection,
   SessionType
 } from './session-types'
-import { PANEL_ROOTS, DENSITY_LEVELS, DEFAULT_DENSITY } from './session-types'
+import { PANEL_ROOTS, resolveDensity } from './session-types'
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
@@ -58,6 +58,7 @@ export {
   PANEL_ROOTS,
   DENSITY_LEVELS,
   DEFAULT_DENSITY,
+  resolveDensity,
   resolveColorHex,
   treeRuleMultiplier,
   densityScale,
@@ -540,17 +541,6 @@ export function fileTabDedupKey(tab: FileTab): string {
   return `file:${tab.filePath}`
 }
 
-/** The saved density stop, CHECKED against the table rather than cast to it.
- *  This one is read straight into a CSS length multiplier, so a stale id from an
- *  older build (or anything else that ends up under the key) would otherwise be
- *  written to the root element as `--density: <garbage>` — which does not throw,
- *  does not warn, and silently invalidates every calc() in the control spec at
- *  once. A value that is not one of the five stops is not a density. */
-function readDensity(): Density {
-  const saved = localStorage.getItem('clave-density')
-  return DENSITY_LEVELS.some((level) => level.id === saved) ? (saved as Density) : DEFAULT_DENSITY
-}
-
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: [],
   fileTabs: [],
@@ -566,7 +556,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
-  density: readDensity(),
+  density: resolveDensity(localStorage.getItem('clave-density')),
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
