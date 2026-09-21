@@ -138,10 +138,14 @@ export class ClaudeStreamTranslator {
             this.emit({ type: 'tool_call', ...tool })
           }
         } else if (block.type === 'tool_result') {
+          // `is_error` is the only word anyone gets that the tool failed: the
+          // content of a failed call is the error text and reads like any other
+          // output. Dropping it here left every view guessing from prose.
           this.emit({
             type: 'tool_result',
             id: z.string().parse(block.tool_use_id),
-            output: block.content
+            output: block.content,
+            error: z.boolean().optional().catch(undefined).parse(block.is_error)
           })
         }
       }

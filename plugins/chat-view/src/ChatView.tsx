@@ -9,7 +9,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
-  ArrowPathIcon,
   ShieldCheckIcon,
   StopIcon
 } from '@heroicons/react/24/outline'
@@ -21,6 +20,8 @@ import type {
   CommandOption
 } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
+import { groupEntries } from './tools'
+import { ToolGroup } from './ToolGroup'
 import { ChatCode } from './code'
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
@@ -31,22 +32,6 @@ export interface ChatViewProps {
 }
 const stringify = (value: unknown): string =>
   typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? '')
-/* The one line a closed tool row shows beside its name: the argument a
-   human would recognise it by (the command, the path, the query), else the
-   first string the input carries, else the input on one line. */
-const SUMMARY_KEYS = ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'description']
-function summarize(input: unknown): string {
-  if (input === undefined || input === null) return ''
-  if (typeof input === 'string') return input
-  if (typeof input === 'object' && !Array.isArray(input)) {
-    const record = input as Record<string, unknown>
-    const key =
-      SUMMARY_KEYS.find((k) => typeof record[k] === 'string' && record[k]) ??
-      Object.keys(record).find((k) => typeof record[k] === 'string' && record[k])
-    if (key) return String(record[key])
-  }
-  return JSON.stringify(input) ?? ''
-}
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
 function whenLabel(at: number, now = Date.now()): string {
@@ -426,31 +411,6 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
           <TurnMeta at={entry.at} text={entry.text} />
         </div>
       )
-    if (entry.kind === 'tool')
-      return (
-        <details key={index} className="chat-tool-card" data-complete={entry.complete}>
-          <summary>
-            <ChevronRightIcon className="chat-tool-chevron" />
-            <span className="chat-tool-name">{entry.name ?? 'Tool'}</span>
-            <span className="chat-tool-summary">{summarize(entry.input)}</span>
-            {entry.complete ? (
-              <CheckIcon className="chat-tool-status" aria-label="Complete" />
-            ) : (
-              <ArrowPathIcon className="chat-tool-status" data-running="true" aria-label="Running" />
-            )}
-          </summary>
-          <div className="chat-card-body">
-            <div className="chat-card-label">Input</div>
-            <pre>{stringify(entry.input)}</pre>
-            {entry.complete && (
-              <>
-                <div className="chat-card-label">Result</div>
-                <pre>{stringify(entry.output)}</pre>
-              </>
-            )}
-          </div>
-        </details>
-      )
     if (entry.kind === 'permission') {
       const chosen = entry.answer
         ? (entry.request.options.find((option) => option.id === entry.answer)?.label ??
@@ -554,13 +514,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // Empty assistant turns (a closing frame that opened nothing) do not render;
   // consecutive tool calls fold into one tight group.
   const visible = conversation.entries.filter((e) => e.kind !== 'assistant' || e.text.trim())
-  const blocks: (Entry | Entry[])[] = []
-  for (const entry of visible) {
-    const last = blocks.at(-1)
-    if (entry.kind === 'tool' && Array.isArray(last)) last.push(entry)
-    else if (entry.kind === 'tool') blocks.push([entry])
-    else blocks.push(entry)
-  }
+  const blocks = groupEntries(visible)
   const lastVisible = visible.at(-1)
   const showMark = state === 'working' || (!!lastVisible && lastVisible.kind !== 'user')
   return (
@@ -594,11 +548,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               </div>
             </div>
           )}
-          {blocks.map((block, i) =>
-            Array.isArray(block) ? (
-              <div key={`tools-${i}`} className="chat-tool-group">
-                {block.map((entry) => renderEntry(entry, conversation.entries.indexOf(entry)))}
-              </div>
+          {blocks.map((block) =>
+            block.kind === 'tool-group' ? (
+              <ToolGroup key={`tools-${block.id}`} group={block} />
             ) : (
               renderEntry(block, conversation.entries.indexOf(block))
             )

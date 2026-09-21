@@ -37,14 +37,18 @@ try {
   ])
   await win.locator('.chat-permission-card').waitFor()
   await win.locator('code.language-typescript span[style]').first().waitFor()
-  await win.locator('.chat-tool-card summary').click()
+  // One run row per step since PRDCT-2613, and its items carry summaries of
+  // their own — so open the RUN, not any summary under it.
+  await win.locator('.chat-tool-run > summary').click()
   const colors = new Set()
   for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
     await win.evaluate((theme) => {
       return window.electronAPI.skinsActivate(theme)
     }, theme)
     await win.waitForFunction((theme) => localStorage.getItem('clave-theme') === theme, theme)
-    const values = await win.locator('.chat-view').evaluate((el) => {
+    // Scoped to the conversation view: two views are mounted per session since
+    // PRDCT-2610 and both carry .chat-view, so the bare class is two elements.
+    const values = await win.locator('[data-testid="chat-view"]').evaluate((el) => {
       const style = getComputedStyle(el)
       const user = getComputedStyle(el.querySelector('[data-role="user"]'))
       const header = getComputedStyle(el.closest('.chat-host').querySelector('.chat-header'))
@@ -74,7 +78,7 @@ try {
     assert.match(values.font, /Geist/)
     assert.equal(values.overflow, false, `${theme}: view does not overflow`)
     colors.add(values.background)
-    assert.equal(await win.locator('.chat-tool-card pre').last().innerText(), TOOL_RESULT)
+    assert.match(await win.locator('.chat-tool-run').innerText(), new RegExp(TOOL_RESULT))
     assert.ok(await win.getByRole('button', { name: 'Allow', exact: true }).isVisible())
     // Screenshot bytes remain in memory, never in the project or baseline tree.
     const screenshot = await win.locator('.chat-host').screenshot()

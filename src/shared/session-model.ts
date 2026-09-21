@@ -61,7 +61,15 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
   z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), input: z.unknown() }),
-  z.object({ type: z.literal('tool_result'), id: z.string(), output: z.unknown() }),
+  /* `error` is the adapter's word that the tool FAILED, never the view's guess.
+     Optional because an adapter that cannot tell says nothing, and an absent
+     flag means "not known to have failed" rather than "succeeded". */
+  z.object({
+    type: z.literal('tool_result'),
+    id: z.string(),
+    output: z.unknown(),
+    error: z.boolean().optional()
+  }),
   z.object({
     type: z.literal('permission_request'),
     id: z.string(),

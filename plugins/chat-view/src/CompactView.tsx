@@ -5,7 +5,8 @@ import {
   useSessionLogValue,
   type LoggedEvent
 } from '../../../src/renderer/src/views/conversation-store'
-import { emptyConversation, reduceConversation, type Conversation, type Entry } from './reducer'
+import { emptyConversation, reduceConversation, type Conversation } from './reducer'
+import { failureCount, groupEntries, groupStatus, toolGroupSummary, type Block } from './tools'
 import type { ChatViewProps } from './ChatView'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
@@ -15,15 +16,17 @@ import type { ChatViewProps } from './ChatView'
 function reduceLog(events: LoggedEvent[], initialState: Conversation['state']): Conversation {
   return events.reduce(reduceConversation, { ...emptyConversation, state: initialState })
 }
-/** What a row says about a turn, in the fewest words that still identify it. */
-function lineOf(entry: Entry): { role: string; text: string } {
+/** What a row says about a turn, in the fewest words that still identify it.
+ *  A run of tools is ONE row here as it is in the conversation view — the same
+ *  `groupEntries`, so the two views break a run in the same place — but it never
+ *  expands: this view's whole contract is one line per turn and no tool bodies,
+ *  and the summary is what that run looks like at this altitude. */
+function lineOf(entry: Exclude<Block, { kind: 'tool-group' }>): { role: string; text: string } {
   switch (entry.kind) {
     case 'user':
       return { role: 'You', text: entry.text }
     case 'assistant':
       return { role: 'Agent', text: entry.text }
-    case 'tool':
-      return { role: entry.name ?? 'Tool', text: entry.complete ? 'done' : 'running…' }
     case 'permission':
       return {
         role: 'Permission',
@@ -32,6 +35,17 @@ function lineOf(entry: Entry): { role: string; text: string } {
     case 'error':
       return { role: 'Error', text: entry.message }
   }
+}
+function toolLine(tools: Extract<Block, { kind: 'tool-group' }>['tools']): {
+  role: string
+  text: string
+} {
+  const status = groupStatus(tools)
+  const failures = failureCount(tools)
+  const summary = toolGroupSummary(tools)
+  const suffix =
+    status === 'running' ? ' — running…' : failures > 0 ? ` — ${failures} failed` : ''
+  return { role: 'Tools', text: `${summary}${suffix}` }
 }
 export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
   const log = useSessionLogValue(session.id)
@@ -89,13 +103,19 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
           </div>
         ) : (
           <ol className="chat-column" aria-label="Conversation, compact">
-            {conversation.entries.map((entry, index) => {
-              const line = lineOf(entry)
+            {groupEntries(conversation.entries).map((block, index) => {
+              const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
               return (
                 <li
-                  key={index}
+                  key={block.kind === 'tool-group' ? `tools-${block.id}` : index}
                   className="flex items-baseline gap-2 min-w-0"
-                  data-kind={entry.kind}
+                  data-kind={block.kind}
+                  data-state={
+                    block.kind === 'tool-group' ? groupStatus(block.tools) : undefined
+                  }
+                  data-failures={
+                    block.kind === 'tool-group' ? failureCount(block.tools) : undefined
+                  }
                 >
                   <span className="text-text-tertiary text-xs shrink-0">{line.role}</span>
                   <span className="truncate" title={line.text}>

@@ -11,6 +11,10 @@ export type Entry =
       input?: unknown
       output?: unknown
       complete: boolean
+      /* The ADAPTER's word that this call failed, carried through untouched.
+         Absent means no adapter said so — never a guess read off the output,
+         which on a Read of a log file would call every error line a failure. */
+      failed?: boolean
       at: number
     }
   | {
@@ -112,7 +116,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       const tool =
         event.type === 'tool_call'
           ? { ...previous, name: event.name, input: event.input }
-          : { ...previous, output: event.output, complete: true }
+          : { ...previous, output: event.output, complete: true, failed: event.error }
       if (index < 0) entries.push(tool)
       else entries[index] = tool
       break

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { SessionEvent } from '../../../shared/session-model'
+import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
 const mock = vi.hoisted(() => ({ spawn: vi.fn(), token: vi.fn(() => 'secret-account-token') }))
 vi.mock('node:child_process', () => ({ spawn: mock.spawn }))
 vi.mock('../../mcp/mcp-runtime', () => ({
@@ -584,4 +584,25 @@ it('ends naturally with code 3 and flushes the last frame despite a setsid stdou
     child?.stderr.destroy()
     await adapter.kill(handle)
   }
+})
+it('carries the CLI word that a tool failed, and says nothing when it did not', () => {
+  feed({
+    type: 'user',
+    message: {
+      content: [
+        { type: 'tool_result', tool_use_id: 'ok', content: 'Error: in the file I read' },
+        { type: 'tool_result', tool_use_id: 'bad', content: 'permission denied', is_error: true },
+        { type: 'tool_result', tool_use_id: 'said-no', content: 'fine', is_error: false }
+      ]
+    }
+  })
+  const results = events.filter((e) => e.type === 'tool_result')
+  // The failure is the CLI's flag, never the prose: the first result READS like
+  // an error and is not one, which is exactly why this view may not guess.
+  expect(results).toEqual([
+    { type: 'tool_result', id: 'ok', output: 'Error: in the file I read', error: undefined },
+    { type: 'tool_result', id: 'bad', output: 'permission denied', error: true },
+    { type: 'tool_result', id: 'said-no', output: 'fine', error: false }
+  ])
+  for (const event of results) expect(() => SessionEventSchema.parse(event)).not.toThrow()
 })

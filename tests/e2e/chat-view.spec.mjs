@@ -94,17 +94,26 @@ export async function run(t) {
     await win.locator('.chat-turn[data-role="assistant"]').waitFor()
     assert.equal(await win.locator('.chat-turn[data-role="user"]').innerText(), '/help')
     assert.match(await win.locator('.chat-turn[data-role="assistant"]').innerText(), /\/help/)
-    await win.locator('.chat-tool-card[data-complete="true"]').waitFor()
-    await win.locator('.chat-tool-card summary').click()
-    assert.equal(await win.locator('.chat-tool-card pre').last().innerText(), '/help\n')
+    // Tools now render as ONE run row per step (PRDCT-2613); the raw input is
+    // under each item's own "Raw input and output". Scoped to the conversation
+    // view because the compact view is mounted on this session too.
+    const view = win.locator('[data-testid="chat-view"]')
+    await view.locator('.chat-tool-run[data-state="complete"]').waitFor()
+    await view.locator('.chat-tool-run > summary').first().click()
+    // The item's own Output preview, which is where the echoed result now reads.
+    assert.equal(
+      await view.locator('.chat-tool-item .chat-tool-section pre').first().innerText(),
+      '/help\n'
+    )
     await inject(app, record.id, [
+      { type: 'assistant_text', delta: 'Reading it now.', final: true },
       { type: 'tool_call', id: 'distinct-result', name: 'Read fixture', input: {} },
       { type: 'tool_result', id: 'distinct-result', output: TOOL_RESULT }
     ])
-    const resultCard = win.locator('.chat-tool-card').filter({ hasText: 'Read fixture' })
-    await resultCard.locator('summary').locator('[aria-label="Complete"]').waitFor()
-    await resultCard.locator('summary').click()
-    assert.equal(await resultCard.locator('pre').last().innerText(), TOOL_RESULT)
+    const resultCard = view.locator('.chat-tool-run').filter({ hasText: 'Read fixture' })
+    await resultCard.locator('> summary').locator('[aria-label="Complete"]').waitFor()
+    await resultCard.locator('> summary').click()
+    assert.match(await resultCard.innerText(), new RegExp(TOOL_RESULT))
     t.check('Enter sends slash text through echo; Shift+Enter only inserts a newline', true)
     await app.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler('shell:openExternal')

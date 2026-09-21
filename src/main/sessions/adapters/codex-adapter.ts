@@ -24,6 +24,17 @@ import {
 } from './codex-app-server'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** Did this completed item fail? The server says so structurally and never in
+ *  prose: a command by its exit status, anything else by carrying an `error`.
+ *  `undefined` means the item gave no word either way, which is not success. */
+const failed = (item: Record<string, unknown>): boolean | undefined => {
+  if (text(item.type) === 'commandExecution') {
+    const code = item.exitCode
+    return typeof code === 'number' && Number.isFinite(code) ? code !== 0 : undefined
+  }
+  if (item.error === undefined || item.error === null) return undefined
+  return text(item.error) !== '' || typeof item.error === 'object'
+}
 interface Approval {
   rpcId: RpcId
   turnId: string
@@ -110,7 +121,8 @@ export class CodexTranslator {
                   ? item.aggregatedOutput
                   : item.type === 'fileChange'
                     ? item.changes
-                    : (item.result ?? item.error)
+                    : (item.result ?? item.error),
+              error: failed(item)
             })
           return
         }

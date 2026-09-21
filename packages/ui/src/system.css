@@ -2425,6 +2425,75 @@ button.extension-card:hover {
   overflow-wrap: anywhere;
 }
 
+/* A RUN of tools is one row: what the agent did between two messages, closed by
+   default, opening to one item per call. The run row reuses .chat-tool-card so
+   a single frame spec covers both; what is new is the run's own summary line,
+   the failure chip and the item inside the body. */
+.chat-tool-run summary { gap: calc(var(--spacing) * 2); }
+.chat-tool-run-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.chat-tool-status[data-failed="true"] { color: var(--color-destructive); }
+.chat-tool-run[data-state="failed"] { border-color: var(--color-destructive); }
+.chat-tool-failures {
+  flex-shrink: 0;
+  padding: 0 calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-100);
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+}
+.chat-tool-item {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+  padding-bottom: calc(var(--spacing) * 2);
+  border-bottom: thin solid var(--border-subtle-color);
+}
+.chat-tool-item:last-of-type { padding-bottom: 0; border-bottom: none; }
+.chat-tool-item-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.chat-tool-detail { font-size: var(--text-xs); color: var(--text-tertiary); flex-shrink: 0; }
+.chat-tool-section { display: flex; flex-direction: column; gap: var(--spacing); }
+.chat-tool-section pre {
+  margin: 0;
+  max-height: calc(var(--spacing) * 60);
+  overflow: auto;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-tool-more, .chat-tool-raw summary {
+  align-self: flex-start;
+  list-style: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--default-transition-duration);
+}
+.chat-tool-more:hover, .chat-tool-raw summary:hover { color: var(--text-secondary); }
+.chat-tool-raw summary::-webkit-details-marker { display: none; }
+.chat-tool-raw { display: flex; flex-direction: column; gap: var(--spacing); }
+
 /* Permission card: the one thing in the transcript that asks for a click. */
 .chat-permission-card {
   align-self: stretch;

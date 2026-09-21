@@ -32,6 +32,26 @@ tells the view which request, so the cards it closed on the kernel's word come
 back rather than one of them staying unanswerable for the session's life. Transcripts currently live for the
 mounted view's lifetime; disabling the plugin releases its subscription.
 
+A RUN of tool calls — everything between two messages — is one row saying what
+the agent did, counted by kind ("Read 3 files · Ran 1 command"), with a loader
+while any call is in flight and the failure count beside it. It opens to one item
+per call, each with an 8-line / 2000-character preview of its output and a raw
+input/output toggle. A permission card does NOT break a run: the approval the
+agent needed mid-run is part of that step, and only a message ends it. The row is
+an uncontrolled `<details>` keyed by the run's first tool id, so the reader's
+choice is DOM state a re-render cannot touch — a result arriving neither closes an
+open row nor opens a closed one, and a failure, having no way to set `open`, can
+never expand the row by itself. `CompactView` groups the same runs with the same
+function, one line each and no bodies, which is that view's whole contract. The
+grouping, the summary and the preview are `src/tools.ts`, pure and unit-tested.
+
+A failure is the ADAPTER's word, carried on `tool_result.error`, never a guess
+read off the output: a `Read` of a log file whose first line is "Error:" is not a
+failed tool. `claude-adapter` forwards the CLI's `is_error`; `codex-adapter`
+derives it from a command's exit status and from an item's `error`. An adapter
+that cannot tell says nothing, and an absent flag means "not known to have
+failed" rather than "succeeded".
+
 Markdown is rendered without raw HTML. Shiki has one lazy highlighter with light /
 dark themes chosen from the skin base. Its JavaScript regex engine works within
 Clave's CSP without enabling WebAssembly evaluation. Code retains Geist Sans.
@@ -44,12 +64,16 @@ No provider tokens were spent.
 Verification:
 
 - `npm test` (reducer checks in `src/renderer/src/views/reducer.test.ts`,
-  resolution in `resolution.test.ts`, the host log in `conversation-store.test.ts`).
+  resolution in `resolution.test.ts`, the host log in `conversation-store.test.ts`,
+  the grouping, summary and preview in `chat-tools.test.ts`).
 - `node tests/e2e/run.mjs plugin-views` (the picker, the switch in both
   directions, the choice on the record).
 - `node tests/e2e/run.mjs chat-view` after building.
+- `node tests/e2e/run.mjs chat-tool-groups` (the run row in both views).
 - `node tests/visual/chat-view.mjs` (four real skins, token audit and actual Shiki spans).
 
 Mutation proofs: removing the permission-response write fails the IPC assertion;
-adding a literal hex color to a conversation class fails the visual token audit.
+adding a literal hex color to a conversation class fails the visual token audit;
+grouping a run across a message, dropping the adapter's failure flag in the
+reducer, and opening a failed run by itself each turn `chat-tool-groups` red.
 Screenshot bytes are temporary and no baselines are committed.

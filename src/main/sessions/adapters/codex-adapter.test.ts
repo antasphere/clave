@@ -484,3 +484,49 @@ it.each(['on-request', 'never'])(
     await adapter.kill(handle)
   }
 )
+
+describe('Codex tool failure', () => {
+  const resultFor = (
+    item: Record<string, unknown>
+  ): Extract<SessionEvent, { type: 'tool_result' }> => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(e))
+    translator.notification({ method: 'item/started', params: { item } })
+    translator.notification({ method: 'item/completed', params: { item } })
+    const result = events.find((e) => e.type === 'tool_result')
+    if (result?.type !== 'tool_result') throw new Error('no tool_result emitted')
+    return result
+  }
+  it('reads a command failure off its exit status, never off its output', () => {
+    const failing = resultFor({
+      id: 'c1',
+      type: 'commandExecution',
+      exitCode: 1,
+      aggregatedOutput: 'nope'
+    })
+    expect(failing).toMatchObject({ type: 'tool_result', id: 'c1', error: true })
+    const passing = resultFor({
+      id: 'c2',
+      type: 'commandExecution',
+      exitCode: 0,
+      // Reads like a failure and is not one: exit 0 is the only word that counts.
+      aggregatedOutput: 'Error: 3 warnings emitted'
+    })
+    expect(passing).toMatchObject({ error: false })
+  })
+  it('says nothing when the server reported no exit status at all', () => {
+    expect(resultFor({ id: 'c3', type: 'commandExecution', aggregatedOutput: 'x' }).error).toBe(
+      undefined
+    )
+  })
+  it('flags a tool call that carried an error, and leaves a clean one alone', () => {
+    expect(resultFor({ id: 'm1', type: 'mcpToolCall', error: 'upstream refused' })).toMatchObject({
+      error: true
+    })
+    expect(resultFor({ id: 'm2', type: 'mcpToolCall', result: 'ok' }).error).toBe(undefined)
+  })
+  it('emits an event the contract still accepts', () => {
+    const event = resultFor({ id: 'c4', type: 'commandExecution', exitCode: 2, aggregatedOutput: '' })
+    expect(() => SessionEventSchema.parse(event)).not.toThrow()
+  })
+})
