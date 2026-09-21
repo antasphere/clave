@@ -31,7 +31,12 @@ export async function run(t) {
     // waits for the body to change, which is the thing under test anyway.
     const ask = async (page, previous) => {
       await page.click('[data-plugin-toolbar="hello-menu"]')
-      await page.click('[data-plugin-toolbar-item="pushed-context"]')
+      // The menu is animated, and on a loaded machine its box is still settling when
+      // Playwright's stability check gives up — that is the animation failing, not the
+      // wiring this spec is about. Wait for the item, then click it regardless.
+      const item = page.locator('[data-plugin-toolbar-item="pushed-context"]')
+      await item.waitFor({ state: 'visible' })
+      await item.click({ force: true })
       return until(async () => {
         const record = (await page.evaluate(() => window.electronAPI.pluginsList())).find(
           (p) => p.id === 'clave.hello'

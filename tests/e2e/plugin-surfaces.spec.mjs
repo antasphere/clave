@@ -90,12 +90,18 @@ export async function run(t) {
         .count(),
       3
     )
-    await win.click('[data-plugin-toolbar-item="say-hello"]')
+    // An animated menu: wait for the item, then click it without waiting for its box to
+    // stop moving. Under load that stability check times out on the animation rather than
+    // on the wiring the click is about — which is how this spec's sibling failed in the
+    // full suite while passing on its own.
+    await win.locator('[data-plugin-toolbar-item="say-hello"]').waitFor({ state: 'visible' })
+    await win.locator('[data-plugin-toolbar-item="say-hello"]').click({ force: true })
     t.check('a popover item runs its command', !!(await notification('Hello from Clave')))
 
     // 3. The focused session reaches the plugin process, pushed and pulled.
     await win.click('[data-plugin-toolbar="hello-menu"]')
-    await win.click('[data-plugin-toolbar-item="pushed-context"]')
+    await win.locator('[data-plugin-toolbar-item="pushed-context"]').waitFor({ state: 'visible' })
+    await win.locator('[data-plugin-toolbar-item="pushed-context"]').click({ force: true })
     const pushed = await notification('Pushed context')
     t.check(
       'context.changed pushed the focused session to the plugin',
@@ -103,7 +109,8 @@ export async function run(t) {
       pushed
     )
     await win.click('[data-plugin-toolbar="hello-menu"]')
-    await win.click('[data-plugin-toolbar-item="focused-session"]')
+    await win.locator('[data-plugin-toolbar-item="focused-session"]').waitFor({ state: 'visible' })
+    await win.locator('[data-plugin-toolbar-item="focused-session"]').click({ force: true })
     const pulled = await notification('Focused session')
     t.check(
       'sessions.focused answers with the same session',
