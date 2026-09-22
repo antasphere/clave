@@ -86,7 +86,11 @@ export function UpdateBanner(): React.ReactElement {
             data-testid="update-banner"
             className="px-2.5 py-2 rounded-xl bg-accent/8 border border-accent/15"
           >
-            <div className="flex items-center gap-2">
+            {/* One row while it fits. A full pre-release version with its
+                mark does not fit beside both buttons at the sidebar's width,
+                so the buttons are allowed to wrap under it rather than the
+                version being cut to "v2.0…" — the whole point of showing it. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
               <div className="relative flex items-center justify-center w-6 h-6 rounded-md bg-accent/12 flex-shrink-0">
                 <ArrowDownTrayIcon className="w-3.5 h-3.5 text-accent" />
                 {/* A release published with an empty body normalises to null
@@ -96,7 +100,7 @@ export function UpdateBanner(): React.ReactElement {
                   <ReleaseNotesBadge notes={releaseNotes} version={version} />
                 )}
               </div>
-              <p className="text-[12px] font-medium text-text-primary leading-tight truncate">
+              <p className="text-[12px] font-medium text-text-primary leading-tight whitespace-nowrap">
                 {version ? `v${version}` : 'Update'}
               </p>
               {/* A beta is named as one: the user asked to see them, and the

@@ -220,8 +220,12 @@ async function channelToggle(t) {
     t.equal('the toggle now reads on', await toggle.getAttribute('aria-checked'), 'true')
     t.equal('the preference is persisted on', readPreferences(dir).prereleaseUpdates, true)
 
-    // The beta on offer is named as one in the sidebar prompt. Through the
-    // store — the seam main pushes state into — never through the DOM.
+    // The beta on offer is named as one in the sidebar prompt. Settings mode
+    // swaps the sidebar for its own navigation, so go back to sessions first;
+    // then through the store — the seam main pushes state into — never
+    // through the DOM.
+    await win.getByRole('button', { name: 'Back to sessions' }).click()
+    await win.waitForTimeout(500)
     await win.evaluate(() =>
       window.__claveUpdaterStoreForTests.setState({
         supported: true,
@@ -342,9 +346,12 @@ async function betaBuild(t) {
       'the session records were copied',
       existsSync(path.join(snapshot, 'session-records', 'sess-1.json'))
     )
+    // The seeded record is NOT checked here: the app's own sweep drops a
+    // record with no live tmux session behind it — which is the app rewriting
+    // the data after the snapshot, the very thing the snapshot is for.
     t.check(
-      'the originals are still in place',
-      existsSync(path.join(dir, 'session-records', 'sess-1.json'))
+      'the originals are still in place (copy, never move)',
+      existsSync(path.join(dir, 'preferences.json'))
     )
     const marker = JSON.parse(readFileSync(path.join(dir, 'last-run-version.json'), 'utf-8'))
     t.equal('the marker now names the beta', marker.version, '2.0.0-beta.1')
