@@ -31,6 +31,7 @@ import { formatDuration } from '../work-tracker/utils'
 import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
+import { PrereleaseMark } from '../ui/PrereleaseMark'
 import { fieldAccent } from '../../lib/brand-field'
 import { cn } from '../../lib/utils'
 import { useShortcutLabel } from '../../store/keymap-store'
@@ -95,9 +96,12 @@ export function UpdateBanner(): React.ReactElement {
                   <ReleaseNotesBadge notes={releaseNotes} version={version} />
                 )}
               </div>
-              <p className="text-[12px] font-medium text-text-primary leading-tight">
+              <p className="text-[12px] font-medium text-text-primary leading-tight truncate">
                 {version ? `v${version}` : 'Update'}
               </p>
+              {/* A beta is named as one: the user asked to see them, and the
+                  prompt must not read as a stable update. */}
+              <PrereleaseMark version={version} />
               <div className="flex items-center gap-1 ml-auto">
                 <button
                   onClick={dismiss}
@@ -183,7 +187,7 @@ function UsageLine({
         {left}% left
       </span>
       <span className="text-[11px] text-text-tertiary truncate">
-        · {provider === 'codex' ? 'Codex' : account ?? 'Claude'} · {shortLabel(w)}
+        · {provider === 'codex' ? 'Codex' : (account ?? 'Claude')} · {shortLabel(w)}
       </span>
     </button>
   )
@@ -278,8 +282,7 @@ export function SidebarFooter(): React.ReactElement {
       : !account && focusedSession?.claudeProfileId
         ? (focusedSession.claudeProfileLabel ?? 'Removed account')
         : null
-  const quota =
-    provider === 'codex' ? quotaUsageStores.codex() : claudeUsageStore(accountId)()
+  const quota = provider === 'codex' ? quotaUsageStores.codex() : claudeUsageStore(accountId)()
   const pi = piUsageStores.today()
   const loadUsage =
     provider === 'pi' ? pi.load : provider === 'claude' || provider === 'codex' ? quota.load : null
