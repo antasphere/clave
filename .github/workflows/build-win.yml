@@ -9,6 +9,10 @@ name: Build Windows Installer
 # Never trigger this on `release: published`: our releases are created with
 # GITHUB_TOKEN, and events raised by that token start no workflows. A trigger on
 # the release event ran for nothing from v1.65 on and nobody noticed.
+#
+# Not called for a pre-release (a push to `beta`): the version below comes from
+# package.json, which a beta never bumps, so the installer would carry the last
+# stable's number. Betas are macOS-only until this reads the tag's version.
 on:
   workflow_call:
     inputs:

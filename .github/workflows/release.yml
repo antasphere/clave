@@ -19,9 +19,18 @@ name: Release
 #
 # The macOS job owns the version, the tag and the GitHub Release; the Windows
 # job (build-win.yml) then attaches its installer to that same release.
+#
+# A push to `beta` cuts a PRE-RELEASE instead (scripts/release.sh --prerelease):
+# a signed, notarized build versioned `X.Y.Z-beta.N`, published as a GitHub
+# pre-release on the pushed sha, with no bump commit and no push back. Only an
+# install with "Receive pre-release builds" on ever sees it: a stable install
+# reads /releases/latest, which excludes pre-releases. The Windows job does not
+# run for a beta — build-win.yml reads its version from package.json, which a
+# beta never bumps, and would mislabel the installer. Every step of the prod
+# path is unchanged; the beta steps are the ones gated on `prerelease`.
 on:
   push:
-    branches: [prod]
+    branches: [prod, beta]
   workflow_dispatch:
     inputs:
       bump:
@@ -46,10 +55,24 @@ jobs:
     timeout-minutes: 90
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
     steps:
+      # Only a push to `beta` is a pre-release; a manual run is a stable
+      # release from prod, exactly as before.
+      - name: Release channel
+        id: channel
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" = "beta" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Channel: beta (pre-release)"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Channel: stable"
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: prod
+          ref: ${{ github.event_name == 'push' && github.ref_name == 'beta' && 'beta' || 'prod' }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -77,6 +100,7 @@ jobs:
 
       - name: Determine bump level
         id: bump
+        if: steps.channel.outputs.prerelease != 'true'
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             bump="${{ inputs.bump }}"
@@ -112,7 +136,22 @@ jobs:
           echo "bump=$bump" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign, notarize, and publish
+        if: steps.channel.outputs.prerelease != 'true'
         run: bash scripts/release.sh --${{ steps.bump.outputs.bump }}
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The beta path: the version is computed from the tags and the markers
+      # (scripts/prerelease-version.mjs), nothing is committed or pushed, and
+      # `gh release create --prerelease --target <sha>` creates the tag.
+      - name: Build, sign, notarize, and publish pre-release
+        if: steps.channel.outputs.prerelease == 'true'
+        run: bash scripts/release.sh --prerelease
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -123,11 +162,14 @@ jobs:
 
       - name: Published tag
         id: tag
+        if: steps.channel.outputs.prerelease != 'true'
         run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
   windows:
     name: Windows
     needs: release
+    # macOS only for pre-releases (see the header).
+    if: needs.release.outputs.prerelease != 'true'
     uses: ./.github/workflows/build-win.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
