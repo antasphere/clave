@@ -3,15 +3,28 @@ import { autoUpdater, CancellationToken } from 'electron-updater'
 import log from 'electron-log/main'
 import sanitizeHtml from 'sanitize-html'
 import { broadcastToAllWindows } from './window-routing'
+import { TEST_VERSION } from './test-mode'
+import { isPrereleaseVersion } from '../shared/version'
+import type { PrereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
 import type {
   DownloadProgress,
   ReleaseNote,
   ReleaseNoteFormat,
+  UpdateChannel,
   UpdatePhase,
+  UpdaterFlags,
   UpdaterState
 } from '../shared/updater-types'
 
-export type { DownloadProgress, ReleaseNote, ReleaseNoteFormat, UpdatePhase, UpdaterState }
+export type {
+  DownloadProgress,
+  ReleaseNote,
+  ReleaseNoteFormat,
+  UpdateChannel,
+  UpdatePhase,
+  UpdaterFlags,
+  UpdaterState
+}
 
 const CHECK_INTERVAL = 30 * 60 * 1000 // 30 minutes
 const INITIAL_DELAY = 5000
@@ -57,6 +70,34 @@ export interface DownloadStrategy {
  */
 export function downloadStrategy(attempt: DownloadAttempt): DownloadStrategy {
   return { disableDifferentialDownload: attempt === 'retry' }
+}
+
+/**
+ * The channel, as the two electron-updater flags it resolves to.
+ *
+ * `allowPrerelease` IS the toggle: on, the GitHub provider reads the releases
+ * feed and takes its newest entry, pre-release or stable, fetching
+ * `beta-mac.yml` for a `-beta` tag; off, it reads `/releases/latest`, which
+ * excludes pre-releases by construction, so a stable install can never be
+ * offered a beta.
+ *
+ * `allowDowngrade` is the way back. A user on `2.0.0-beta.1` who turns the
+ * toggle off is now asking `/releases/latest`, which answers `1.92.0` — a
+ * lower version, which electron-updater refuses to offer unless downgrade is
+ * allowed. So the flag is on exactly when the running build is a pre-release
+ * AND the channel is stable: the next check offers the current stable and
+ * the user leaves the beta the same way they would take an update. In every
+ * other case it stays off, because a downgrade is otherwise never right.
+ */
+export function updaterFlags(prereleaseUpdates: boolean, currentVersion: string): UpdaterFlags {
+  return {
+    allowPrerelease: prereleaseUpdates,
+    allowDowngrade: !prereleaseUpdates && isPrereleaseVersion(currentVersion)
+  }
+}
+
+export function channelFor(prereleaseUpdates: boolean): UpdateChannel {
+  return prereleaseUpdates ? 'beta' : 'stable'
 }
 
 /**
@@ -113,8 +154,28 @@ let state: UpdaterState = {
   progress: initialProgress,
   errorMessage: null,
   checkErrorMessage: null,
-  lastCheckedAt: null
+  lastCheckedAt: null,
+  channel: 'stable',
+  currentIsPrerelease: false,
+  availableIsPrerelease: false,
+  flags: { allowPrerelease: false, allowDowngrade: false },
+  snapshotPath: null
 }
+
+/**
+ * What the updater needs from the rest of main and cannot import: the
+ * preference lives in `preferences-manager.ts`, which reads its file through
+ * `app.getPath` at import time — an import this module's unit tests, which
+ * run without Electron, cannot survive. Handed in by `initAutoUpdater`.
+ */
+export interface UpdaterDeps {
+  /** The persisted "Receive pre-release builds" preference. */
+  prereleaseUpdates: { get(): boolean; set(value: boolean): void }
+  /** What the pre-release data snapshot did at boot. */
+  snapshot: PrereleaseSnapshotOutcome
+}
+
+let deps: UpdaterDeps | null = null
 
 let cancellationToken: CancellationToken | null = null
 let downloadCancelled = false
@@ -272,13 +333,67 @@ export function normalizeReleaseBody(
 export function availableStatePatch(
   info: { version: string; releaseNotes?: RawReleaseNotes },
   now: number
-): Pick<UpdaterState, 'availableVersion' | 'releaseNotes' | 'lastCheckedAt' | 'checkErrorMessage'> {
+): Pick<
+  UpdaterState,
+  | 'availableVersion'
+  | 'availableIsPrerelease'
+  | 'releaseNotes'
+  | 'lastCheckedAt'
+  | 'checkErrorMessage'
+> {
   return {
     availableVersion: info.version,
+    // So the prompt can say "Beta" next to a version the user chose to see.
+    availableIsPrerelease: isPrereleaseVersion(info.version),
     releaseNotes: normalizeReleaseNotes(info.releaseNotes ?? null, info.version),
     lastCheckedAt: now,
     checkErrorMessage: null
   }
+}
+
+/** The version this build reports itself as (a spec may override it, see test-mode.ts). */
+function runningVersion(): string {
+  return TEST_VERSION ?? app.getVersion()
+}
+
+/**
+ * Apply the channel preference to electron-updater and mirror the result
+ * into the state — read BACK off the singleton, so the state says what the
+ * updater will do rather than what we asked of it.
+ */
+function applyChannel(): void {
+  const enabled = deps?.prereleaseUpdates.get() === true
+  const flags = updaterFlags(enabled, runningVersion())
+  autoUpdater.allowPrerelease = flags.allowPrerelease
+  autoUpdater.allowDowngrade = flags.allowDowngrade
+  setState({
+    channel: channelFor(enabled),
+    flags: {
+      allowPrerelease: autoUpdater.allowPrerelease,
+      allowDowngrade: autoUpdater.allowDowngrade
+    }
+  })
+}
+
+/**
+ * The toggle. Persists the preference, applies both flags, and checks at
+ * once — a change of channel is a change of question, so whatever the last
+ * check found on the old channel is dropped first. A download in flight or
+ * finished is the user's and is left alone.
+ */
+export async function setPrereleaseUpdates(enabled: boolean): Promise<UpdaterState> {
+  deps?.prereleaseUpdates.set(enabled)
+  applyChannel()
+  if (state.phase === 'idle' || state.phase === 'checking' || state.phase === 'available') {
+    setState({
+      availableVersion: null,
+      availableIsPrerelease: false,
+      releaseNotes: null,
+      phase: state.phase === 'available' ? 'idle' : state.phase
+    })
+  }
+  log.info(`[updater] Channel: ${state.channel} (${JSON.stringify(state.flags)})`)
+  return checkForUpdatesNow()
 }
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
@@ -309,10 +424,20 @@ function handleDownloadError(message: string): void {
   setState({ phase: 'error', errorMessage: message })
 }
 
-export function initAutoUpdater(): void {
+export function initAutoUpdater(updaterDeps: UpdaterDeps): void {
+  deps = updaterDeps
   // Set before the dev bail-out: the Software Update pane still names the
   // running version in development, it just says updates are unavailable.
-  setState({ currentVersion: app.getVersion(), supported: app.isPackaged })
+  const version = runningVersion()
+  setState({
+    currentVersion: version,
+    currentIsPrerelease: isPrereleaseVersion(version),
+    supported: app.isPackaged,
+    snapshotPath: updaterDeps.snapshot.result?.dir ?? null
+  })
+  // Also before the bail-out: the flags are state the pane and the E2E specs
+  // read, and setting them on the singleton costs nothing in development.
+  applyChannel()
   if (!app.isPackaged) return
 
   // electron-updater logs the entire download path through this logger — which
@@ -323,6 +448,17 @@ export function initAutoUpdater(): void {
   log.initialize()
   log.transports.file.level = 'info'
   autoUpdater.logger = log
+
+  const { result: snapshot, failure: snapshotFailure } = updaterDeps.snapshot
+  if (snapshotFailure) {
+    log.error(`[updater] Pre-release data snapshot failed: ${snapshotFailure}`)
+  } else if (snapshot) {
+    log.info(
+      `[updater] Pre-release ${version} first run on data last written by ${snapshot.fromVersion}: ` +
+        `copied ${snapshot.copied.join(', ')} to ${snapshot.dir}`
+    )
+  }
+  log.info(`[updater] Channel: ${state.channel} (${JSON.stringify(state.flags)})`)
 
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
@@ -359,6 +495,7 @@ export function initAutoUpdater(): void {
     log.info('[updater] App is up to date')
     setState({
       availableVersion: null,
+      availableIsPrerelease: false,
       // Cleared with the version they describe. Notes outliving their update
       // would let the banner open onto the changelog of a version that is no
       // longer on offer.

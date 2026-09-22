@@ -12,6 +12,13 @@ interface Preferences {
   telemetryNoticeShown: boolean
   feedbackPromptCollapsed: boolean
   missionControlOverlayEnabled: boolean
+  /**
+   * "Receive pre-release builds". Off by default, and off it must stay for
+   * anyone who did not ask: a stable install must never be offered a beta.
+   * Applied to electron-updater by `auto-updater.ts` (`allowPrerelease`, and
+   * `allowDowngrade` for the way back).
+   */
+  prereleaseUpdates: boolean
 }
 
 const DEFAULTS: Preferences = {
@@ -21,7 +28,8 @@ const DEFAULTS: Preferences = {
   telemetryLastPingAt: null,
   telemetryNoticeShown: false,
   feedbackPromptCollapsed: false,
-  missionControlOverlayEnabled: true
+  missionControlOverlayEnabled: true,
+  prereleaseUpdates: false
 }
 
 class PreferencesManager {

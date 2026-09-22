@@ -38,6 +38,8 @@ interface UpdaterStore extends UpdaterState {
   hydrate: () => Promise<void>
   applyState: (state: UpdaterState) => void
   check: () => Promise<void>
+  /** The "Receive pre-release builds" toggle; the main process owns the value. */
+  setPrereleaseUpdates: (enabled: boolean) => Promise<void>
   startDownload: (attempt?: 'first' | 'retry') => void
   cancelDownload: () => void
   dismiss: () => void
@@ -74,7 +76,12 @@ const initialState: UpdaterState = {
   progress: initialProgress,
   errorMessage: null,
   checkErrorMessage: null,
-  lastCheckedAt: null
+  lastCheckedAt: null,
+  channel: 'stable',
+  currentIsPrerelease: false,
+  availableIsPrerelease: false,
+  flags: { allowPrerelease: false, allowDowngrade: false },
+  snapshotPath: null
 }
 
 export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
@@ -100,6 +107,11 @@ export const useUpdaterStore = create<UpdaterStore>((set, get) => ({
 
   check: async () => {
     const state = await window.electronAPI?.checkForUpdates?.()
+    if (state) get().applyState(state)
+  },
+
+  setPrereleaseUpdates: async (enabled) => {
+    const state = await window.electronAPI?.setPrereleaseUpdates?.(enabled)
     if (state) get().applyState(state)
   },
 

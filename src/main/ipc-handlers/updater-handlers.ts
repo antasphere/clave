@@ -7,6 +7,7 @@ import {
   openReleasesPage,
   checkForUpdatesNow,
   getUpdaterState,
+  setPrereleaseUpdates,
   type DownloadAttempt
 } from '../auto-updater'
 
@@ -22,4 +23,8 @@ export function registerUpdaterHandlers(): void {
   // it was listening when the one push went out.
   ipcMain.handle('updater:get-state', () => getUpdaterState())
   ipcMain.handle('updater:check', () => checkForUpdatesNow())
+  // "Receive pre-release builds": persists, applies the flags, checks now.
+  ipcMain.handle('updater:set-prerelease-updates', (_event, enabled: boolean) =>
+    setPrereleaseUpdates(enabled === true)
+  )
 }

@@ -1,6 +1,9 @@
 // MUST stay the first import: applies --user-data-dir before any manager
 // captures app.getPath('userData') at module-import time.
 import './user-data-override'
+// SECOND, before any manager: a pre-release's first run on a stable data
+// directory snapshots the state files before anything can rewrite them.
+import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
 import { app, BrowserWindow, shell, nativeImage, nativeTheme } from 'electron'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
@@ -312,7 +315,13 @@ app.whenReady().then(() => {
   applyPersistedIcon()
   openPersistedWindows()
   buildAppMenu({ openWindow })
-  initAutoUpdater()
+  initAutoUpdater({
+    prereleaseUpdates: {
+      get: () => preferencesManager.get('prereleaseUpdates') === true,
+      set: (value) => preferencesManager.set('prereleaseUpdates', value)
+    },
+    snapshot: prereleaseSnapshotOutcome()
+  })
   initTelemetry()
   initMissionControl()
 
@@ -322,16 +331,19 @@ app.whenReady().then(() => {
     if (loc.type === 'remote' && loc.autoConnect) {
       const config = locationManager.getCredentials(loc.id)
       if (config) {
-        sshManager.connect(loc.id, config).then(() => {
-          locationManager.setLocationStatus(loc.id, 'connected')
-          // Connect OpenClaw if detected
-          if (loc.openclawPort && loc.host) {
-            const token = locationManager.getOpenclawToken(loc.id)
-            openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
-          }
-        }).catch(() => {
-          locationManager.setLocationStatus(loc.id, 'error')
-        })
+        sshManager
+          .connect(loc.id, config)
+          .then(() => {
+            locationManager.setLocationStatus(loc.id, 'connected')
+            // Connect OpenClaw if detected
+            if (loc.openclawPort && loc.host) {
+              const token = locationManager.getOpenclawToken(loc.id)
+              openclawClient.connect(loc.id, buildOpenclawWsUrl(loc), token).catch(() => {})
+            }
+          })
+          .catch(() => {
+            locationManager.setLocationStatus(loc.id, 'error')
+          })
       }
     }
   }

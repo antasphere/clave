@@ -24,3 +24,20 @@
  *  registry) rather than OS focus, and never a window being on screen.
  */
 export const TEST_NO_ACTIVATE = process.argv.includes('--test-no-activate')
+
+/**
+ * `--test-version=<semver>`: the version the app REPORTS itself to be, for the
+ * updater's channel logic only, and only under `--test-no-activate`.
+ *
+ * A dev build's `app.getVersion()` is whatever package.json says, always a
+ * stable version, so the one branch of the channel logic that matters most —
+ * a user on a beta who leaves the channel is offered the stable release, a
+ * downgrade electron-updater refuses unless told otherwise — could never be
+ * reached by an E2E spec. This flag lets a spec launch as `2.0.0-beta.1`. It
+ * does not touch electron-updater's own `currentVersion` (a dev build never
+ * checks anyway) and it does not exist outside test mode.
+ */
+export const TEST_VERSION: string | null = TEST_NO_ACTIVATE
+  ? (process.argv.find((a) => a.startsWith('--test-version='))?.slice('--test-version='.length) ??
+    null)
+  : null

@@ -12,6 +12,26 @@
 export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
 
 /**
+ * Which releases the updater reads. `stable` is GitHub's /releases/latest,
+ * which excludes pre-releases by construction; `beta` is the releases feed,
+ * newest entry first, pre-release or not. The user picks with "Receive
+ * pre-release builds" (off by default), and the choice is persisted with the
+ * other preferences.
+ */
+export type UpdateChannel = 'stable' | 'beta'
+
+/**
+ * The two electron-updater flags the channel resolves to, read BACK from the
+ * updater singleton after they are applied — so a test that asserts on them
+ * is asserting on what electron-updater will actually do, not on what we
+ * meant to set.
+ */
+export interface UpdaterFlags {
+  allowPrerelease: boolean
+  allowDowngrade: boolean
+}
+
+/**
  * How a release body is written, because the provider decides and not us.
  *
  * GitHub's releases *feed* — the one `electron-updater` reads — carries each
@@ -74,4 +94,18 @@ export interface UpdaterState {
   checkErrorMessage: string | null
   /** Epoch ms of the last completed check, successful or not. */
   lastCheckedAt: number | null
+  /** The channel the updater reads, per the "Receive pre-release builds" toggle. */
+  channel: UpdateChannel
+  /** True when the running build is itself a pre-release (`2.0.0-beta.1`). */
+  currentIsPrerelease: boolean
+  /** True when the version on offer is a pre-release, so the prompt can say so. */
+  availableIsPrerelease: boolean
+  flags: UpdaterFlags
+  /**
+   * Where the stable app's state files were copied the first time this
+   * pre-release ran on a data directory a stable version had written — a beta
+   * shares ~/Library/Application Support/Clave with the stable app. Null when
+   * no snapshot was taken on this launch.
+   */
+  snapshotPath: string | null
 }

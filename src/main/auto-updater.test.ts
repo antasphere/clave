@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   availableStatePatch,
+  channelFor,
   downloadStrategy,
+  updaterFlags,
   normalizeReleaseBody,
   normalizeReleaseNotes,
   phaseOnAvailable,
@@ -195,7 +197,7 @@ describe('normalizeReleaseBody', () => {
   })
 
   // The exact shape the user saw as text in the card.
-  it('recognises the feed\'s rendered HTML and keeps its structure', () => {
+  it("recognises the feed's rendered HTML and keeps its structure", () => {
     const body = normalizeReleaseBody(
       '<h3>Added</h3> <ul> <li><strong>Edit beside your agent</strong> — a linked file.</li> </ul>'
     )
@@ -295,7 +297,7 @@ describe('availableStatePatch', () => {
   })
 
   // The format travels with the notes or the renderer has to guess again.
-  it('carries the format the provider\'s body turned out to be', () => {
+  it("carries the format the provider's body turned out to be", () => {
     const patch = availableStatePatch(
       { version: '1.80.0', releaseNotes: '<h3>Added</h3><ul><li>A thing</li></ul>' },
       1000
@@ -318,5 +320,59 @@ describe('availableStatePatch', () => {
     expect(
       availableStatePatch({ version: '1.80.0', releaseNotes: null }, 1000).releaseNotes
     ).toBeNull()
+  })
+})
+
+/**
+ * The channel, as electron-updater sees it. Two guarantees matter and both
+ * fail silently if broken: a stable install offered a beta (a user who never
+ * asked gets unfinished software), and a beta user who leaves the channel and
+ * is never offered the stable release (stuck on a beta with no way back).
+ */
+describe('updaterFlags', () => {
+  it('stable channel on a stable build: neither flag', () => {
+    expect(updaterFlags(false, '1.92.0')).toEqual({ allowPrerelease: false, allowDowngrade: false })
+  })
+
+  it('beta channel on a stable build: pre-releases allowed, no downgrade', () => {
+    expect(updaterFlags(true, '1.92.0')).toEqual({ allowPrerelease: true, allowDowngrade: false })
+  })
+
+  it('leaving the channel on a beta build allows the downgrade to the current stable', () => {
+    expect(updaterFlags(false, '2.0.0-beta.1')).toEqual({
+      allowPrerelease: false,
+      allowDowngrade: true
+    })
+  })
+
+  it('staying on the channel on a beta build never downgrades', () => {
+    expect(updaterFlags(true, '2.0.0-beta.1')).toEqual({
+      allowPrerelease: true,
+      allowDowngrade: false
+    })
+  })
+
+  it('the toggle IS allowPrerelease, whatever the running version', () => {
+    for (const v of ['1.92.0', '2.0.0-beta.1', '2.0.0-alpha.3']) {
+      expect(updaterFlags(true, v).allowPrerelease).toBe(true)
+      expect(updaterFlags(false, v).allowPrerelease).toBe(false)
+    }
+  })
+})
+
+describe('channelFor', () => {
+  it('names the channel after the toggle', () => {
+    expect(channelFor(false)).toBe('stable')
+    expect(channelFor(true)).toBe('beta')
+  })
+})
+
+describe('availableStatePatch — pre-release flag', () => {
+  it('marks a beta on offer as one, so the prompt can say so', () => {
+    expect(availableStatePatch({ version: '2.0.0-beta.1' }, 1).availableIsPrerelease).toBe(true)
+  })
+
+  it('does not mark a stable version', () => {
+    expect(availableStatePatch({ version: '1.92.0' }, 1).availableIsPrerelease).toBe(false)
   })
 })

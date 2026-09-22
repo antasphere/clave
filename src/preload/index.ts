@@ -316,6 +316,8 @@ const electronAPI = {
   cancelDownload: () => ipcRenderer.invoke('updater:cancel-download'),
   getUpdaterState: () => ipcRenderer.invoke('updater:get-state') as Promise<UpdaterState>,
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdaterState>,
+  setPrereleaseUpdates: (enabled: boolean) =>
+    ipcRenderer.invoke('updater:set-prerelease-updates', enabled) as Promise<UpdaterState>,
 
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   persistDroppedFile: (sourcePath: string) =>
@@ -402,9 +404,8 @@ const electronAPI = {
   getUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
     ipcRenderer.invoke('usage:get-limits', accountId, options),
   getClaudeUsageSnapshot: () => ipcRenderer.invoke('usage:claude-snapshot'),
-  onClaudeAccountUsage: (
-    callback: (update: { accountId: string; result: unknown }) => void
-  ) => createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
+  onClaudeAccountUsage: (callback: (update: { accountId: string; result: unknown }) => void) =>
+    createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
   claudeAccountsList: () => ipcRenderer.invoke('claude-accounts:list'),

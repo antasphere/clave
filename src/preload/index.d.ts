@@ -679,6 +679,8 @@ export interface ElectronAPI {
   cancelDownload: () => Promise<void>
   getUpdaterState: () => Promise<UpdaterState>
   checkForUpdates: () => Promise<UpdaterState>
+  /** "Receive pre-release builds": persisted, applied, and a check run at once. */
+  setPrereleaseUpdates: (enabled: boolean) => Promise<UpdaterState>
   getPathForFile: (file: File) => string
   persistDroppedFile: (sourcePath: string) => Promise<string | null>
   showNotification: (options: {
@@ -764,11 +766,7 @@ export interface ElectronAPI {
   gitOutgoingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitIncomingCommits: (cwd: string) => Promise<GitLogEntry[]>
   gitRangeFiles: (cwd: string, direction: GitRangeDirection) => Promise<GitCommitFileStatus[]>
-  gitRangeDiff: (
-    cwd: string,
-    direction: GitRangeDirection,
-    filePath: string
-  ) => Promise<string>
+  gitRangeDiff: (cwd: string, direction: GitRangeDirection, filePath: string) => Promise<string>
   gitCommitFiles: (cwd: string, hash: string) => Promise<GitCommitFileStatus[]>
   gitCommitDiff: (cwd: string, hash: string, filePath: string) => Promise<string>
   gitGenerateCommitMessage: (cwd: string) => Promise<string>
