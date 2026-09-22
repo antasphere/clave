@@ -51,10 +51,12 @@ export function seedTrustedRoots(dir, roots) {
  *  focus from whoever is working while it goes. Its cost is that OS focus is
  *  gone — `BrowserWindow.getFocusedWindow()` can be null and `win.isFocused()`
  *  false all run — so assert Clave-internal focus, never the window manager's. */
-export async function launchApp(dir, { settleMs = 4000, env = {} } = {}) {
+export async function launchApp(dir, { settleMs = 4000, env = {}, args = [] } = {}) {
   const app = await electron.launch({
     executablePath: ELECTRON_BIN,
-    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate'],
+    // `args` are extra main-process flags a spec needs (`--test-version=…`,
+    // see src/main/test-mode.ts); the three fixed ones always come first.
+    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
     cwd: REPO,
     // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
     // a spec seeds transcripts without touching the real ~/.claude/projects).
