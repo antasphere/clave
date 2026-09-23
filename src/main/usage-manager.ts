@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import {
@@ -148,11 +149,27 @@ export type ClaudeCredential =
 // main process for that — every window, every PTY, every IPC reply — behind a
 // dialog that may be sitting behind the app. `security` lives at a fixed system
 // path, so execFile (not exec) still avoids the login-shell dance.
+//
+// The item is looked up by ACCOUNT first. Claude Code writes its login under
+// the macOS username, but a machine can also carry a second item with the same
+// service name (account "unknown", holding only `mcpOAuth`), and a lookup by
+// service alone answers whichever macOS finds first. When that was the stray
+// one, a signed-in user read as signed out. The service-only lookup stays as
+// the fallback for a login written under some other account.
 async function readKeychainAccessToken(): Promise<string | null> {
+  const lookups = [['-a', os.userInfo().username], []]
+  for (const account of lookups) {
+    const token = await readKeychainItem(account)
+    if (token) return token
+  }
+  return null
+}
+
+async function readKeychainItem(account: string[]): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       '/usr/bin/security',
-      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+      ['find-generic-password', '-s', KEYCHAIN_SERVICE, ...account, '-w'],
       { timeout: KEYCHAIN_TIMEOUT_MS }
     )
     return accessTokenOf(JSON.parse(stdout.trim()))
