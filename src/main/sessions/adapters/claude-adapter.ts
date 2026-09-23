@@ -53,16 +53,57 @@ const lastCommandsByCwd = new Map<string, string[]>()
 let lastCommandsAnywhere: string[] = []
 const toCommands = (names: string[]): CommandOption[] =>
   names.map((name) => ({ name, insert: `/${name} ` }))
+type ModelListRequest = { resolve: (models: ModelOption[]) => void; reject: (error: Error) => void }
+/** How long the model menu waits on the CLI's answer before calling it unavailable. */
+const MODEL_LIST_TIMEOUT_MS = 20_000
 export class ClaudeStreamTranslator {
   readonly permissions = new Map<string, Permission>()
   /** The slash commands (skills included) the CLI named at init. */
   commands: string[] | null = null
   /** request_id → the model a set_model control request asked for. */
   readonly modelRequests = new Map<string, string | null>()
+  /** request_id → the caller waiting on an initialize control request's models. */
+  readonly listRequests = new Map<string, ModelListRequest>()
   private streamed = false
   private finished = false
   private tools = new Set<string>()
   constructor(private readonly emit: (event: SessionEvent) => void) {}
+  /** A control_response answering one of our initialize requests; false for any other. */
+  private listRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        error: z.string().optional(),
+        response: object.optional()
+      })
+      .safeParse(p.response)
+    if (!response.success) return false
+    const request = this.listRequests.get(response.data.request_id)
+    if (!request) return false
+    this.listRequests.delete(response.data.request_id)
+    const models = z
+      .array(
+        z.object({
+          value: z.string(),
+          displayName: z.string(),
+          description: z.string().optional(),
+          resolvedModel: z.string().optional()
+        })
+      )
+      .safeParse(response.data.response?.models)
+    if (response.data.subtype === 'success' && models.success)
+      request.resolve(
+        models.data.map((model) => ({
+          id: model.value,
+          label: model.displayName,
+          ...(model.description ? { hint: model.description } : {}),
+          ...(model.resolvedModel ? { resolved: model.resolvedModel } : {})
+        }))
+      )
+    else request.reject(new Error(response.data.error ?? 'Claude did not list its models'))
+    return true
+  }
   /** A control_response answering one of our set_model requests; false for any other. */
   private modelRequest(p: Record<string, unknown>): boolean {
     const response = z
@@ -80,7 +121,8 @@ export class ClaudeStreamTranslator {
     else
       this.emit({
         type: 'error',
-        message: response.data.error ?? `Claude refused to switch to ${model ?? 'the default model'}`,
+        message:
+          response.data.error ?? `Claude refused to switch to ${model ?? 'the default model'}`,
         fatal: false
       })
     return true
@@ -151,8 +193,8 @@ export class ClaudeStreamTranslator {
       }
       // Preserve usage, thinking, attachments, and unknown content without duplicate text.
       fallback()
-    } else if (p.type === 'control_response' && this.modelRequest(p)) {
-      // Answered above: the switch either took, or the CLI said why not.
+    } else if (p.type === 'control_response' && (this.modelRequest(p) || this.listRequest(p))) {
+      // Answered above: the switch took or the CLI said why not; the list arrived or did not.
     } else if (p.type === 'control_request' && object.parse(p.request).subtype === 'can_use_tool') {
       const r = z
         .object({
@@ -251,16 +293,6 @@ export class ClaudeStreamTranslator {
   }
 }
 
-/** The CLI's own notion: 'default' is the model it picks for the account. */
-export const CLAUDE_DEFAULT_MODEL = 'default'
-export const CLAUDE_MODELS: ModelOption[] = [
-  { id: CLAUDE_DEFAULT_MODEL, label: 'Default', hint: "Claude Code's recommended model" },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-  { id: 'claude-opus-5', label: 'Opus 5' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' }
-]
-
 interface Live {
   handle: SessionHandle
   emitter: EventEmitter
@@ -346,6 +378,9 @@ export class ClaudeAdapter implements SessionAdapter {
         if (live.ended) return
         live.ended = true
         live.translator.permissions.clear()
+        for (const request of live.translator.listRequests.values())
+          request.reject(new Error('Claude session has ended'))
+        live.translator.listRequests.clear()
         deleteSessionMcpConfig(spec.id)
         emit({ type: 'state_change', state: 'ended' })
         for (const listener of emitter.listeners('exit')) {
@@ -466,6 +501,9 @@ export class ClaudeAdapter implements SessionAdapter {
     const input = SessionInputSchema.parse(raw)
     const live = this.live(handle)
     if (live.ended) throw new Error('Claude session has ended')
+    // A model can be chosen before the first message, as /model can in the
+    // TUI: the switch starts the process, which accepts it before any turn.
+    if (input.type === 'set_model') live.process ??= live.start()
     if (input.type !== 'user_message' && !live.process)
       throw new Error('Claude session has not started')
     const send = (payload: unknown): void => {
@@ -508,9 +546,32 @@ export class ClaudeAdapter implements SessionAdapter {
       live.translator.commands ?? lastCommandsByCwd.get(cwd) ?? lastCommandsAnywhere
     )
   }
-  /** The CLI has no model listing; this is the current family, full ids the CLI accepts. */
-  async models(): Promise<ModelOption[]> {
-    return CLAUDE_MODELS
+  /** The models the CLI itself offers this account, asked of the session's own
+   *  process (started if the session has not spoken yet): no list is kept here,
+   *  so a new or retired model shows the moment the CLI knows of it. */
+  async models(handle: SessionHandle): Promise<ModelOption[]> {
+    const live = this.live(handle)
+    if (live.ended) throw new Error('Claude session has ended')
+    live.process ??= live.start()
+    const requestId = randomUUID()
+    const { translator } = live
+    const list = new Promise<ModelOption[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        translator.listRequests.delete(requestId)
+        reject(new Error('Claude did not list its models in time'))
+      }, MODEL_LIST_TIMEOUT_MS)
+      const settle =
+        <T>(done: (value: T) => void) =>
+        (value: T): void => {
+          clearTimeout(timer)
+          done(value)
+        }
+      translator.listRequests.set(requestId, { resolve: settle(resolve), reject: settle(reject) })
+    })
+    live.process.stdin.write(
+      `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'initialize' } })}\n`
+    )
+    return list
   }
   async kill(handle: SessionHandle): Promise<void> {
     const live = this.handles.get(handle.id)

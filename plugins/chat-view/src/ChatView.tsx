@@ -199,10 +199,21 @@ function SlashMenu({
 const STICK_THRESHOLD = 80
 // The provider reports a full id (claude-opus-5-20260301); the menu lists the
 // family (claude-opus-5). Either being a prefix of the other is the same model.
-const sameModel = (reported: string | null, id: string): boolean =>
+const sameId = (reported: string, id: string): boolean =>
+  reported === id || reported.startsWith(id) || id.startsWith(reported)
+const sameModel = (reported: string | null, option: ModelOption): boolean =>
   reported === null
-    ? id === 'default'
-    : reported === id || reported.startsWith(id) || id.startsWith(reported)
+    ? option.id === 'default'
+    : sameId(reported, option.id) ||
+      (option.resolved !== undefined && sameId(reported, option.resolved))
+// An alias may stand for the same model as another ("default" and "opus[1m]"):
+// the option named exactly wins, then the first whose model it resolves to.
+const currentOption = (
+  reported: string | null,
+  options: ModelOption[] | null
+): ModelOption | undefined =>
+  options?.find((option) => option.id === reported) ??
+  options?.find((option) => sameModel(reported, option))
 /** The model chip on the composer's footer and the menu it opens above it. */
 function ModelMenu({
   sessionId,
@@ -236,7 +247,7 @@ function ModelMenu({
       live = false
     }
   }, [open, sessionId])
-  const current = options?.find((option) => sameModel(model, option.id))
+  const current = currentOption(model, options)
   return (
     <DropdownMenu.Root
       modal={false}
@@ -274,7 +285,7 @@ function ModelMenu({
             <div className="chat-model-empty">This session offers no other model</div>
           )}
           {options?.map((option) => {
-            const selected = sameModel(model, option.id)
+            const selected = option === current
             return (
               <DropdownMenu.Item
                 key={option.id}

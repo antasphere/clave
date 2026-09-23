@@ -612,3 +612,101 @@ it('carries the CLI word that a tool failed, and says nothing when it did not', 
     { error: false }
   ])
 })
+it('lists the models the CLI itself offers, starting a session that has not spoken yet', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  expect(mock.spawn).not.toHaveBeenCalled()
+  const listed = adapter.models(handle)
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  const request = JSON.parse(child.stdin.read().toString())
+  expect(request).toMatchObject({ type: 'control_request', request: { subtype: 'initialize' } })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: {
+          models: [
+            {
+              value: 'default',
+              resolvedModel: 'claude-opus-5-5[1m]',
+              displayName: 'Default (recommended)',
+              description: 'Opus 5.5 with 1M context'
+            },
+            { value: 'haiku', displayName: 'Haiku' }
+          ]
+        }
+      }
+    }) + '\n'
+  )
+  await expect(listed).resolves.toEqual([
+    {
+      id: 'default',
+      label: 'Default (recommended)',
+      hint: 'Opus 5.5 with 1M context',
+      resolved: 'claude-opus-5-5[1m]'
+    },
+    { id: 'haiku', label: 'Haiku' }
+  ])
+  // A second ask reuses the running process and says why when the CLI refuses.
+  const refused = adapter.models(handle)
+  const again = JSON.parse(child.stdin.read().toString())
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: again.request_id, error: 'nope' }
+    }) + '\n'
+  )
+  await expect(refused).rejects.toThrow('nope')
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // One still waiting when the process ends is told so, not left hanging.
+  const orphan = adapter.models(handle)
+  child.emit('close', 0)
+  await expect(orphan).rejects.toThrow(/ended/)
+  await expect(adapter.models(handle)).rejects.toThrow(/ended/)
+  await adapter.kill(handle)
+})
+it('switches the model before the first message, as /model does in the TUI', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  expect(() => adapter.write(handle, { type: 'interrupt' })).toThrow(/not started/)
+  adapter.write(handle, { type: 'set_model', model: 'sonnet' })
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  const request = JSON.parse(child.stdin.read().toString())
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'set_model', model: 'sonnet' }
+  })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: request.request_id }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({ type: 'session_meta', model: 'sonnet', providerSessionId: null })
+  // The first message then goes to the same process.
+  adapter.write(handle, { type: 'user_message', text: 'Hello' })
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  expect(JSON.parse(child.stdin.read().toString())).toEqual({
+    type: 'user',
+    message: { role: 'user', content: 'Hello' }
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})

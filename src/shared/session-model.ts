@@ -44,7 +44,10 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
 export const ModelOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
-  hint: z.string().optional()
+  hint: z.string().optional(),
+  /** The full model id an alias stands for today (Claude's "opus" →
+   *  "claude-opus-5-5"), so a session reporting the full id finds its option. */
+  resolved: z.string().optional()
 })
 export type ModelOption = z.infer<typeof ModelOptionSchema>
 /** One command the composer can offer under "/": the provider says what it is
