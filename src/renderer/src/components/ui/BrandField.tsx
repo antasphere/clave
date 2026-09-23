@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
+import { useSkinStore } from '../../lib/skin'
 import { paintField, type PaletteKey } from '../../lib/brand-field'
 
 /**
@@ -36,9 +37,15 @@ export function BrandField({
   style?: React.CSSProperties
 }): React.ReactElement {
   const ref = useRef<HTMLCanvasElement | null>(null)
-  // Not read directly — it is the repaint trigger. A theme flip changes the
-  // ground the veil is made of, and nothing else would tell this canvas.
+  // Not read directly — they are the repaint triggers. A theme flip changes the
+  // ground the veil is made of, and nothing else would tell this canvas. The
+  // theme NAME alone is not enough: at launch it is already restored from
+  // localStorage, so the first paint reads --surface-0 before the skin's tokens
+  // land, and the skin's arrival then leaves the name unchanged. The skin
+  // revision moves every time tokens are applied, which is the moment that
+  // counts.
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   useEffect(() => {
     const canvas = ref.current
@@ -67,7 +74,7 @@ export function BrandField({
     const ro = new ResizeObserver(draw)
     ro.observe(canvas)
     return () => ro.disconnect()
-  }, [palette, seed, groundLift, grainAlpha, theme])
+  }, [palette, seed, groundLift, grainAlpha, theme, skinRevision])
 
   return <canvas ref={ref} className={className} style={style} aria-hidden="true" />
 }
