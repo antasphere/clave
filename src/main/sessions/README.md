@@ -143,6 +143,19 @@ for capture compatibility. Chat rendering is owned by the separate chat-view
 lane. `claude-adapter.test.ts` and `tests/e2e/claude-chat-adapter.spec.mjs` use
 recorded fixtures and a stub executable; they never call a real provider.
 
+A chat tab is named by its first message, as a terminal tab is. The terminal
+path reads the first user message off Claude's transcript; a chat tab has no
+transcript to watch, so `sessions:write` hands every user message to
+`title-generator.ts` (`notifyChatMessage`), which acts on the first one worth
+a title (not a slash command, not a bare yes/no) for a session the facade
+scheduled at spawn (`scheduleChatTitle`, fresh conversations only — a resumed
+one keeps the name it was saved under). The title arrives on
+`session:auto-title:<id>`, the terminal tab's channel, and the pane host
+(`views/registry.tsx`) applies it through `autoRenameSession`, so a name the
+user chose is never overwritten. `title-generator.test.ts`,
+`pty-manager-chat-records.test.ts`, `ipc.test.ts` and
+`tests/e2e/chat-first-message-title.spec.mjs` hold this.
+
 An adapter may implement optional `ready(handle)`. The manager completes it at most
 once per session (failed calls may retry), from `sessions:subscribe` after that
 consumer's stream and exit notifications are bound. Claude sends a configured `initialPrompt` then, and

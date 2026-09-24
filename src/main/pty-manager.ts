@@ -5,6 +5,7 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
+import * as titleGenerator from './title-generator'
 import {
   defaultViewFor,
   eventsProfile,
@@ -145,6 +146,10 @@ class PtyManager {
     }
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents && adapter.id === 'claude-chat') this.writeChatRecord(session, profileId, options)
+    // A fresh conversation is named by its first message (the terminal path
+    // reads it off the transcript; a chat tab's crosses `sessions:write`). A
+    // resumed one keeps the name it was saved under.
+    if (isEvents && !resume) titleGenerator.scheduleChatTitle(session.id)
     return session
   }
 
@@ -227,6 +232,7 @@ class PtyManager {
     else await sessionManager.kill(id)
     this.listeners.get(id)?.()
     this.listeners.delete(id)
+    if (this.eventSessions.has(id)) titleGenerator.cleanup(id)
     this.eventSessions.delete(id)
     sessionManager.forget(id)
   }

@@ -3,7 +3,7 @@ import { existsSync, watchFile, unwatchFile, watch, readFileSync, promises as fs
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { BrowserWindow } from 'electron'
-import { getLoginShellEnv } from './pty-manager'
+import { getLoginShellEnv } from './sessions/adapters/pty-backend'
 import { TITLE_HELPER_MARKER } from './session-history'
 
 // --- Session tracking ---
@@ -24,6 +24,14 @@ interface SessionEntry {
 }
 
 const sessions = new Map<string, SessionEntry>()
+
+/** Chat tabs (events sessions) waiting to be named. A chat tab has no PTY and
+ *  no transcript to watch: its first user message crosses `sessions:write` in
+ *  main, so that is where the title is asked for. A session enters this set at
+ *  spawn when it starts a fresh conversation and leaves it with the first
+ *  message that reads as an intention; a resumed conversation never enters it
+ *  and keeps the name it was saved under. */
+const chatAwaitingTitle = new Set<string>()
 
 // --- Title generation queue (prevent concurrent CLI spawns) ---
 
@@ -142,7 +150,30 @@ function watchJsonl(sessionId: string, entry: SessionEntry): void {
   }
 }
 
+/** A chat tab that just started a fresh conversation: its first message names it. */
+export function scheduleChatTitle(sessionId: string): void {
+  chatAwaitingTitle.add(sessionId)
+}
+
+/** A user message a chat tab just sent. The first one worth a title — not a
+ *  slash command, not a bare yes/no — becomes the tab's name, delivered on the
+ *  same channel a terminal tab's title arrives on. Anything else leaves the tab
+ *  waiting for the message that does state what the conversation is about. */
+export function notifyChatMessage(sessionId: string, text: string, win: BrowserWindow): void {
+  if (!chatAwaitingTitle.has(sessionId)) return
+  const message = text.trim()
+  if (!isValidMessage(message)) return
+  chatAwaitingTitle.delete(sessionId)
+  console.log(`[title-gen] Chat ${sessionId} message: "${message.slice(0, 80)}"`)
+  generateTitle(sessionId, message)
+    .then((title) => {
+      if (!win.isDestroyed()) win.webContents.send(`session:auto-title:${sessionId}`, title)
+    })
+    .catch(() => {})
+}
+
 export function cleanup(sessionId: string): void {
+  chatAwaitingTitle.delete(sessionId)
   const entry = sessions.get(sessionId)
   if (entry) {
     try { unwatchFile(entry.jsonlPath) } catch { /* ignore */ }

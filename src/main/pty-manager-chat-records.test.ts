@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
       kill: vi.fn(async () => undefined)
     },
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
+    title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
     manager: {
       registerAdapter: vi.fn(),
       getAdapter: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock('./sessions/adapters/echo-adapter', () => ({
   }
 }))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
+vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({
   defaultViewFor: () => 'clave.chat-view/chat',
   eventsProfile: (id?: string) =>
@@ -152,5 +154,40 @@ describe('a Claude chat tab survives a restart', () => {
 
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledTimes(1)
     expect(mocks.backend.discardSessionRecord).toHaveBeenCalledWith(closed.id)
+  })
+})
+
+// A chat tab is named by its first message. The facade knows which tabs start
+// a fresh conversation — the terminal path decides the same at spawn — and a
+// resumed conversation keeps the name it was saved under.
+describe('a chat tab is named by its first message', () => {
+  it('a fresh chat tab waits for its first message', async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(mocks.title.scheduleChatTitle).toHaveBeenCalledWith(session.id)
+  })
+
+  it('a resumed conversation keeps the name it was saved under', async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(mocks.title.scheduleChatTitle).not.toHaveBeenCalled()
+  })
+
+  it('a restored tab that never got a message is named by the one it gets now', async () => {
+    mocks.findTranscript.mockReturnValue(null)
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(mocks.title.scheduleChatTitle).toHaveBeenCalledWith(TAB)
+  })
+
+  it('a closed tab stops waiting', async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    await ptyManager.kill(session.id)
+    expect(mocks.title.cleanup).toHaveBeenCalledWith(session.id)
   })
 })

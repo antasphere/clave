@@ -8,11 +8,13 @@ export const TOOL_RESULT = 'chat-result: verified payload 2537'
 
 /** `extraArgs` go to the Electron launch; `ready` is what the caller waits for
  *  before the fixture is handed over — the chat composer by default, another
- *  view's when a launch profile opens the session in one. */
+ *  view's when a launch profile opens the session in one; `env` is laid over
+ *  the process environment, for a spec that puts a stub on the PATH. */
 export async function openChat(
   suffix = 'chat-view',
   extraArgs = [],
-  ready = '[data-testid="chat-view"] textarea:not(:disabled)'
+  ready = '[data-testid="chat-view"] textarea:not(:disabled)',
+  env = {}
 ) {
   const dir = `/tmp/clave-e2e-${suffix}`
   const root = `${dir}-root`
@@ -30,7 +32,7 @@ export async function openChat(
     ),
     args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', '--dev-echo-adapter', ...extraArgs],
     cwd: REPO,
-    env: { ...process.env }
+    env: { ...process.env, ...env }
   })
   await app.evaluate(({ ipcMain }) => {
     globalThis.__chatSubscriptions = []

@@ -174,7 +174,7 @@ export function RegisteredSessionView({
   const transport = session?.transport
   useEffect(() => {
     if (transport !== 'events') return
-    return bindKernelState(
+    const stopKernel = bindKernelState(
       sessionId,
       {
         onAgentState: (id, callback) => window.electronAPI.onAgentState(id, callback),
@@ -186,6 +186,17 @@ export function RegisteredSessionView({
         setState: (id, state) => useViewSessionStore.getState().setAgentState(id, state)
       }
     )
+    // A chat tab is named by its first message: main asks for the title when
+    // the message crosses `sessions:write` and answers on the channel a
+    // terminal tab's title arrives on. The pane stays mounted, hidden, while
+    // another tab is active, so this listener lives as long as the tab does.
+    const stopTitle = window.electronAPI.onSessionAutoTitle(sessionId, (title) =>
+      useViewSessionStore.getState().autoRenameSession(sessionId, title)
+    )
+    return () => {
+      stopKernel()
+      stopTitle()
+    }
   }, [sessionId, transport])
   const close = async (): Promise<void> => {
     const current = useViewSessionStore.getState()

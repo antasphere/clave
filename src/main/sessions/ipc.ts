@@ -3,6 +3,7 @@ import { sessionManager } from './session-manager'
 import { SessionInputSchema } from '../../shared/session-model'
 import { preparePrompt } from './attachments'
 import { windowRegistry } from '../window-registry'
+import * as titleGenerator from '../title-generator'
 
 let registered = false
 /** Second consumers have independent subscriptions; destroying their window
@@ -92,6 +93,10 @@ export function registerSessionIpc(): void {
     if (input instanceof Uint8Array) return sessionManager.write(id, input)
     const value = SessionInputSchema.parse(input)
     if (value.type !== 'user_message') return sessionManager.write(id, value)
+    // A chat tab is named by its first message, and this is where that
+    // message is first seen in main; the title comes back to the sender's
+    // window on `session:auto-title:<id>`, as a terminal tab's does.
+    if (win) titleGenerator.notifyChatMessage(id, value.text, win)
     // A user message's prepared prompt is main's to build, from the attachment
     // records and the files they name, never the renderer's to supply: the
     // files are read here, at send time, against the adapter's capabilities,

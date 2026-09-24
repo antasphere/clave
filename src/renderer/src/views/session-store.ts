@@ -13,5 +13,7 @@ interface ViewSessionState {
   setFocusedSession: (id: string) => void
   updateSessionAlive: (id: string, alive: boolean) => void
   setAgentState: (id: string, state: Exclude<AgentState, 'ended'>) => void
+  /** Name the tab from the title main generated; a name the user chose wins. */
+  autoRenameSession: (id: string, name: string) => void
 }
 export const useViewSessionStore: UseBoundStore<StoreApi<ViewSessionState>> = useSessionStore

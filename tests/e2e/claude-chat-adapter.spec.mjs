@@ -32,6 +32,11 @@ export async function run(t) {
     `${ROOT}/bin/claude`,
     `#!${process.execPath}
 const fs = require('node:fs'); const readline = require('node:readline');
+// The tab's first message also runs this binary as the title one-shot
+// (\`claude -p --model haiku\`, title-generator.ts), the one invocation with
+// no session id. It answers with a title and touches none of the files
+// below, which describe the chat process.
+if (!process.argv.includes('--session-id')) { process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write('fixture chat title\\n'); process.exit(0); }); return; }
 const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/permission-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
 process.on('SIGTERM',()=>{});
 const grandchild = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {detached:true, stdio:['ignore',process.stdout,process.stderr]});

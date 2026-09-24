@@ -5,13 +5,15 @@ import { join } from 'node:path'
 const mocks = vi.hoisted(() => ({
   handlers: new Map(),
   fromWebContents: vi.fn(),
-  keyForWindow: vi.fn()
+  keyForWindow: vi.fn(),
+  notifyChatMessage: vi.fn()
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
   BrowserWindow: { fromWebContents: mocks.fromWebContents, getAllWindows: () => [] }
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
+vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
@@ -320,6 +322,38 @@ it('prepares attachments at the write: the provider gets references and images, 
   // before attachments existed expects.
   expect(write(event, id, { type: 'user_message', text: 'plain' })).toBeUndefined()
   rmSync(dir, { recursive: true, force: true })
+  sessionManager.kill(id)
+  sessionManager.forget(id)
+})
+
+// A chat tab is named by its first message, and the write is where main first
+// sees that message: every user message reaches the title generator with the
+// sender's window (it decides which one counts), and nothing else does.
+it('hands each user message to the title generator with the sending window', () => {
+  const id = `ipc-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const win = { id: 7 }
+  mocks.fromWebContents.mockReturnValue(win)
+  mocks.notifyChatMessage.mockClear()
+  const event = { sender: { id: sequence, isDestroyed: () => false, send: vi.fn() } }
+  const write = mocks.handlers.get('sessions:write')
+  write(event, id, { type: 'user_message', text: 'please name this tab after me' })
+  expect(mocks.notifyChatMessage).toHaveBeenCalledTimes(1)
+  expect(mocks.notifyChatMessage).toHaveBeenCalledWith(id, 'please name this tab after me', win)
+  write(event, id, { type: 'interrupt' })
+  expect(mocks.notifyChatMessage).toHaveBeenCalledTimes(1)
   sessionManager.kill(id)
   sessionManager.forget(id)
 })
