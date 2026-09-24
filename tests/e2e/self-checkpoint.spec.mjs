@@ -11,32 +11,15 @@
  * or provenance, and a sanitize bypass. The nonexistent-target check is the
  * positive control that non-self dispatch still errors.
  */
-import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
-import { execFileSync } from 'node:child_process'
+import {
+  launchApp,
+  seedWorkspaces,
+  userDataDir,
+  fixturePath,
+  killLeakedE2eTmux
+} from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-
-/**
- * The PTYs live on the SHARED tmux socket ('clave', a fixed constant), so
- * `--user-data-dir` isolation stops at userData: a spawned tab's tmux session
- * and its live agent process survive `app.close()`. Kill ONLY sessions named
- * for e2e fixture roots ('clave-e2e' is the harness's own prefix) — never
- * anything of the user's, and never with pkill.
- */
-function killLeakedE2eTmux() {
-  try {
-    const names = execFileSync('tmux', ['-L', 'clave', 'list-sessions', '-F', '#{session_name}'], {
-      encoding: 'utf-8'
-    })
-      .split('\n')
-      .filter(Boolean)
-    for (const n of names) {
-      if (n.includes('clave-e2e')) execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', n])
-    }
-  } catch {
-    // No tmux server = nothing leaked.
-  }
-}
 
 const DIR = userDataDir('self-checkpoint')
 const ROOT = fixturePath('root-checkpoint')

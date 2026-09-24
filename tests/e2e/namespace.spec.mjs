@@ -1,5 +1,6 @@
 // The fixture namespace (PRDCT-2615): two runs with two namespaces write to two
-// directories, the default is unchanged, and the runner always sets one.
+// directories, a run with no namespace given gets its checkout's, and the
+// leaked-session cleanup never reaches past its own run.
 //
 // No Electron here: this is the one spec about where the others put their
 // files, and it runs in a second.
@@ -13,9 +14,10 @@ import {
   defaultNamespace,
   fixturePath,
   fixtureRoot,
+  fixtureTmuxName,
   namespaceOf
 } from './namespace.mjs'
-import { killLeakedE2eTmux, tmuxSessionAlive, userDataDir } from './harness.mjs'
+import { killLeakedE2eTmux, leakedE2eSessions, tmuxSessionAlive, userDataDir } from './harness.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -51,13 +53,15 @@ export async function run(t) {
     t.equal("run A's marker is its own", readFileSync(path.join(a, 'marker'), 'utf-8'), 'run A')
     t.equal("run B's marker is its own", readFileSync(path.join(b, 'marker'), 'utf-8'), 'run B')
 
-    // ── the default is unchanged ──
+    // ── no namespace given: the checkout's, never /tmp at large ──
+    const mine = defaultNamespace(path.resolve(HERE, '..', '..'))
+    t.equal("no namespace: this checkout's", namespaceOf({}), mine)
     t.equal(
-      'no namespace: the historical path',
+      'and the fixtures live under it',
       fixturePath('foot-root', { env: {} }),
-      '/tmp/clave-e2e-foot-root'
+      `/tmp/${mine}/clave-e2e-foot-root`
     )
-    t.equal('a blank namespace is no namespace', namespaceOf({ [NAMESPACE_ENV]: '  ' }), null)
+    t.equal('a blank namespace is no namespace', namespaceOf({ [NAMESPACE_ENV]: '  ' }), mine)
     t.equal(
       'the real form resolves /tmp the way git reports it',
       fixturePath('git-root', { real: true, env: { [NAMESPACE_ENV]: nsA } }),
@@ -90,9 +94,41 @@ export async function run(t) {
     )
     t.check('the default is a valid namespace', assertNamespace(same) === same, same)
 
+    // ── a tmux name a spec picks itself differs per namespace ──
+    const tA = fixtureTmuxName('move-b', { env: { [NAMESPACE_ENV]: nsA } })
+    const tB = fixtureTmuxName('move-b', { env: { [NAMESPACE_ENV]: nsB } })
+    t.check('two namespaces give two tmux names', tA !== tB, { tA, tB })
+    t.check(
+      'each is a name the app accepts as its own and the cleanup recognises',
+      [tA, tB].every((n) => /^clave-[A-Za-z0-9_-]+$/.test(n) && n.includes('clave-e2e')),
+      { tA, tB }
+    )
+
+    // ── which sessions the cleanup takes: its own run's, by start path ──
+    const envA = { env: { [NAMESPACE_ENV]: nsA } }
+    const real = realpathSync('/tmp')
+    const rows = [
+      `clave-e2e-mine|/tmp/${nsA}/clave-e2e-root`,
+      `clave-e2e-mine-real|${real}/${nsA}/clave-e2e-root`,
+      `clave-e2e-mine-top|/tmp/${nsA}`,
+      `clave-e2e-sibling|/tmp/${nsA}x/clave-e2e-root`,
+      `clave-e2e-other|/tmp/${nsB}/clave-e2e-root`,
+      `clave-e2e-bare|/tmp/clave-e2e-root`,
+      `clave-users-own|/tmp/${nsA}/clave-e2e-root`
+    ].join('\n')
+    t.equal(
+      "the cleanup selects this run's sessions, in /tmp and in its real form, and nothing else",
+      JSON.stringify(leakedE2eSessions(rows, envA)),
+      JSON.stringify(['clave-e2e-mine', 'clave-e2e-mine-real', 'clave-e2e-mine-top'])
+    )
+
     // ── this very run is namespaced by the runner ──
     const ns = namespaceOf()
-    t.check('the runner set a namespace for this run', ns !== null, process.env[NAMESPACE_ENV])
+    t.check(
+      'the runner set a namespace for this run, and the helpers read it',
+      !!process.env[NAMESPACE_ENV] && ns === process.env[NAMESPACE_ENV],
+      { env: process.env[NAMESPACE_ENV], ns }
+    )
     t.check(
       'and the harness builds every user-data dir under it',
       userDataDir('probe').startsWith(`${fixtureRoot()}/clave-e2e-`),
@@ -119,12 +155,6 @@ export async function run(t) {
       t.check("and leaves B's alive", tmuxSessionAlive(sB))
       killLeakedE2eTmux({ env: { [NAMESPACE_ENV]: nsB } })
       t.check("cleanup under namespace B kills B's", !tmuxSessionAlive(sB))
-      startBoth()
-      killLeakedE2eTmux({ env: {} })
-      t.check(
-        'without a namespace the cleanup takes every fixture session, as before',
-        !tmuxSessionAlive(sA) && !tmuxSessionAlive(sB)
-      )
     } finally {
       for (const n of [sA, sB]) {
         try {

@@ -10,12 +10,33 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fixturePath, fixtureRoot } from './namespace.mjs'
+import { createServer } from 'node:net'
+import { fixturePath, fixtureRoot, fixtureTmuxName } from './namespace.mjs'
 
 // Where a run keeps its fixtures (PRDCT-2615): every path a spec seeds goes
 // through `fixturePath`, so a CLAVE_E2E_NS set by the runner moves the whole
 // run under /tmp/<namespace>/ and two worktrees never share a folder.
-export { fixturePath, fixtureRoot }
+export { fixturePath, fixtureRoot, fixtureTmuxName }
+
+/** `n` TCP ports free on 127.0.0.1 right now, asked of the OS rather than
+ *  fixed: two runs at once must not both serve (or probe) the same port. All
+ *  `n` are held open until each is known, so they are distinct. */
+export async function freePorts(n = 1) {
+  const servers = []
+  try {
+    for (let i = 0; i < n; i++) {
+      const srv = createServer()
+      servers.push(srv)
+      await new Promise((resolve, reject) => {
+        srv.once('error', reject)
+        srv.listen(0, '127.0.0.1', resolve)
+      })
+    }
+    return servers.map((s) => s.address().port)
+  } finally {
+    await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r()))))
+  }
+}
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ELECTRON_BIN = path.join(
@@ -239,34 +260,49 @@ export async function closeWindow(app, page) {
  * e2e fixture roots ('clave-e2e' is the harness's own prefix) AND started
  * under THIS run's fixture root — never anything of the user's, never another
  * run's (a namespace is not in the tmux name, which the app builds from the
- * cwd's basename, so the session's start path is what tells two runs apart;
- * without a namespace the root is /tmp and every fixture session matches, as
- * before), and never with pkill.
+ * cwd's basename, so the session's start path is what tells two runs apart),
+ * and never with pkill.
  */
 export function killLeakedE2eTmux({ env = process.env } = {}) {
-  const roots = [fixtureRoot({ env }), fixtureRoot({ env, real: true })]
-  const underRoot = (p) => roots.some((r) => p === r || p.startsWith(r + '/'))
+  let rows
   try {
-    const rows = execFileSync(
+    // A pipe, not a tab: tmux prints a control character in a format as '_'.
+    // The app's session names are [A-Za-z0-9_-], so the first pipe is the cut.
+    rows = execFileSync(
       'tmux',
-      // A pipe, not a tab: tmux prints a control character in a format as '_'.
-      // The app's session names are [A-Za-z0-9_-], so the first pipe is the cut.
       ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
-      { encoding: 'utf-8' }
+      {
+        encoding: 'utf-8'
+      }
     )
-      .split('\n')
-      .filter(Boolean)
-    for (const row of rows) {
-      const cut = row.indexOf('|')
-      const n = cut < 0 ? row : row.slice(0, cut)
-      const startPath = cut < 0 ? '' : row.slice(cut + 1)
-      if (!n.includes('clave-e2e') || !underRoot(startPath)) continue
+  } catch {
+    return // No tmux server = nothing leaked.
+  }
+  for (const n of leakedE2eSessions(rows, { env })) {
+    try {
       // `=name` is an EXACT target: never a prefix or a glob match.
       execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`])
+    } catch {
+      // Gone between the list and the kill.
     }
-  } catch {
-    // No tmux server = nothing leaked.
   }
+}
+
+/** Which rows of `list-sessions -F '#{session_name}|#{session_path}'` are
+ *  this run's leaked fixture sessions. Pure, so the scoping is testable
+ *  without a socket: tmux keeps a start path in the form it was given, so
+ *  both /tmp/<ns> and /private/tmp/<ns> count, and `<ns>x` beside it does not. */
+export function leakedE2eSessions(rows, { env = process.env } = {}) {
+  const roots = [fixtureRoot({ env }), fixtureRoot({ env, real: true })]
+  const underRoot = (p) => roots.some((r) => p === r || p.startsWith(r + '/'))
+  const out = []
+  for (const row of rows.split('\n').filter(Boolean)) {
+    const cut = row.indexOf('|')
+    const n = cut < 0 ? row : row.slice(0, cut)
+    const startPath = cut < 0 ? '' : row.slice(cut + 1)
+    if (n.includes('clave-e2e') && underRoot(startPath)) out.push(n)
+  }
+  return out
 }
 
 /** Is a tmux session of that name alive on the app's socket? */

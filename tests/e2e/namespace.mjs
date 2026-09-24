@@ -5,17 +5,18 @@
 // name. Two worktrees running the suite at the same time — what a wave of
 // lanes does — therefore wrote into each other's folders (PRDCT-2615: a chat
 // spec failed on a root another lane had just emptied). This module is the one
-// place a fixture path is built. With CLAVE_E2E_NS set, every path moves under
-// /tmp/<namespace>/ and keeps its name; without it, nothing changes. The runner
-// (run.mjs) always sets one, derived from the worktree, so two lanes never share
-// a folder by accident; a spec run by hand with the variable unset gets the
-// historical paths.
+// place a fixture path is built: every path lives under /tmp/<namespace>/ and
+// keeps its name. The namespace is CLAVE_E2E_NS when set, and otherwise the
+// checkout's own (defaultNamespace), so there is no mode in which a run's
+// fixtures, or its tmux cleanup, reach into /tmp at large: an un-namespaced
+// mode was exactly what let one run's cleanup kill another run's live tabs.
 //
 // No import from harness.mjs here, on purpose: the harness pulls in
 // playwright-core, and this module is what a plain node test can exercise.
 import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** The environment variable a run reads its namespace from. */
 export const NAMESPACE_ENV = 'CLAVE_E2E_NS'
@@ -36,26 +37,32 @@ const REAL_TMP = (() => {
  *  value can only ever land INSIDE /tmp. Anything else is refused loudly
  *  rather than silently written somewhere surprising. */
 export function assertNamespace(value) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) || value === '.' || value === '..')
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) ||
+    value === '.' ||
+    value === '..'
+  )
     throw new Error(
       `${NAMESPACE_ENV} must be one path segment (letters, digits, . _ -), got ${JSON.stringify(value)}`
     )
   return value
 }
 
-/** The namespace in force, or null when the variable is unset or blank. */
+/** The checkout these specs belong to: tests/e2e/../.. */
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+/** The namespace in force: the variable when set, else this checkout's. */
 export function namespaceOf(env = process.env) {
   const raw = env[NAMESPACE_ENV]
-  if (raw === undefined || raw.trim() === '') return null
+  if (raw === undefined || raw.trim() === '') return defaultNamespace(REPO)
   return assertNamespace(raw.trim())
 }
 
-/** The directory every fixture of this run lives under: /tmp, or
- *  /tmp/<namespace>. `real` gives the resolved form (/private/tmp on macOS). */
+/** The directory every fixture of this run lives under: /tmp/<namespace>.
+ *  `real` gives the resolved form (/private/tmp on macOS). */
 export function fixtureRoot({ real = false, env = process.env } = {}) {
-  const base = real ? REAL_TMP : TMP
-  const ns = namespaceOf(env)
-  return ns ? `${base}/${ns}` : base
+  return `${real ? REAL_TMP : TMP}/${namespaceOf(env)}`
 }
 
 /** A fixture path: `<root>/clave-e2e-<name>`. The `clave-e2e-` prefix is kept
@@ -66,13 +73,26 @@ export function fixturePath(name, opts = {}) {
   return `${fixtureRoot(opts)}/clave-e2e-${name}`
 }
 
-/** The namespace the runner uses when none is given: the checkout's folder
+/** A tmux session name a spec creates itself, as the app would have (a
+ *  survivor to adopt, a marker to follow): `clave-e2e-<name>-<hash>`. The
+ *  hash is six hex of the namespace, so two runs at once never ask tmux for
+ *  the same name (`duplicate session`), and the name stays inside what
+ *  the app accepts as its own, `clave-[A-Za-z0-9_-]+`. */
+export function fixtureTmuxName(name, { env = process.env } = {}) {
+  const hash = createHash('sha1').update(namespaceOf(env)).digest('hex').slice(0, 6)
+  return `clave-e2e-${name}-${hash}`
+}
+
+/** The namespace used when none is given: the checkout's folder
  *  name, then six hex of a hash of its full path. The hash is there because two
  *  clones with the same folder name (`clave-app` twice on one machine) would
  *  otherwise share a folder — exactly the collision the namespace removes. */
 export function defaultNamespace(repo) {
   const full = path.resolve(repo)
-  const base = path.basename(full).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, '')
+  const base = path
+    .basename(full)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
   const hash = createHash('sha1').update(full).digest('hex').slice(0, 6)
   return `clave-e2e-${base || 'repo'}-${hash}`
 }

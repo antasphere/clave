@@ -5,10 +5,11 @@
 // JSON and exits 0 whatever happened is a probe, not a check — it verifies
 // nothing the moment nobody is reading the output. Every spec here asserts, and
 // a failed assertion fails the run.
-import { readdirSync } from 'node:fs'
+import { readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
+import { killLeakedE2eTmux } from './harness.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -60,6 +61,12 @@ if (specs.length === 0) {
 
 console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
 
+// Several specs spawn tmux sessions and leave them to a later sweep, and the
+// sweep is scoped to this run's namespace (harness killLeakedE2eTmux), so no
+// other checkout will ever take them. The run sweeps its own at both ends:
+// the start catches what an interrupted run of this checkout left.
+killLeakedE2eTmux()
+
 let failed = 0
 let passed = 0
 
@@ -83,6 +90,10 @@ for (const file of specs) {
   passed += t.results.filter((r) => r.ok).length
   failed += t.results.filter((r) => !r.ok).length
 }
+
+killLeakedE2eTmux()
+// The fixture folder goes with a green run; a red one keeps it to be read.
+if (failed === 0) rmSync(fixtureRoot(), { recursive: true, force: true })
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
