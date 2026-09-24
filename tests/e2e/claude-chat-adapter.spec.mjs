@@ -243,12 +243,15 @@ setInterval(()=>{},1000);
     assert.ok(capture.some((e) => e.state === 'blocked'))
     assert.ok(capture.some((e) => e.state === 'idle'))
     // The launch announces its model at ready (null: the CLI's default) and the
-    // CLI's init frame names the real one; the capture carries the latest.
+    // CLI's init frame names the real one; the capture carries the latest. The
+    // first message is working before the CLI has answered, so that one row
+    // carries the launch's model; every row after the init frame carries the CLI's.
     const model = events.findLast((e) => e.type === 'session_meta').model
-    for (const row of capture) {
-      assert.equal(row.session.claudeSessionId, processInfo.providerId)
-      assert.equal(row.session.model, model)
-    }
+    assert.ok(model, 'the init frame names the model')
+    assert.equal(capture[0].state, 'working')
+    assert.equal(capture[0].session.model, null)
+    for (const row of capture) assert.equal(row.session.claudeSessionId, processInfo.providerId)
+    for (const row of capture.slice(1)) assert.equal(row.session.model, model)
     assert.deepEqual(await app.evaluate(() => globalThis.__chatLeaks), [])
     assert.ok(!JSON.stringify({ session, events }).includes(TOKEN))
     t.check(

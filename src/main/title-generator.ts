@@ -289,6 +289,24 @@ function extractPlanPath(entry: Record<string, unknown>): string | null {
 
 // --- Title generation ---
 
+/** A title is one short Haiku turn that needs no tool, no skill and no MCP
+ *  server: the CLI is told so, or it connects every server the user has
+ *  configured and offers every skill before it can answer — a second full
+ *  boot beside the session the reader is actually waiting on. The user's
+ *  settings stay in force (an auth helper lives there); the prompt goes on
+ *  stdin, since `--tools` is variadic and would swallow a positional one. */
+export const TITLE_CLI_ARGS = [
+  '-p',
+  '--model',
+  'haiku',
+  '--strict-mcp-config',
+  '--mcp-config',
+  '{"mcpServers":{}}',
+  '--disable-slash-commands',
+  '--tools',
+  ''
+]
+
 function generateTitle(sessionId: string, userMessage: string): Promise<string> {
   return new Promise((resolve, reject) => {
     titleQueue.push({ sessionId, userMessage, resolve, reject })
@@ -313,7 +331,7 @@ ${userMessage}`
   return new Promise<string>((resolve, reject) => {
     const child = execFile(
       'claude',
-      ['-p', '--model', 'haiku'],
+      TITLE_CLI_ARGS,
       { env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: 15000 },
       (err, stdout, stderr) => {
         if (err) {

@@ -103,8 +103,17 @@ and awaits its standard `spawn()`.
 The PTY path still prepares synchronously, starts on the first resize, and keeps
 tmux adoption unchanged; only its IPC caller awaits the returned session.
 PTY and opt-in echo remain available. An events session does not create a PTY or
-tmux session. A Claude handle starts its pipe process on the first user input,
-so listeners installed before subscribe/write see the initial metadata too.
+tmux session. A Claude handle starts its pipe process at `ready()`, the moment
+a consumer is bound (or on the first input, the models/commands menus or a
+model switch, whichever comes first), so the CLI's boot — login shell, plugins,
+MCP servers, seconds on a loaded setup — overlaps the reader's typing instead
+of following their Enter; the init frame only follows the first message, so no
+listener misses it. The process starts directly when `findExecutable` places
+the command on the cached login environment's PATH (`src/main/shell-launch.ts`)
+and through the login-shell wrapper only when it cannot, since an events
+session has no terminal for the user's shell to own and the wrapper cost a
+zprofile on every launch. A user message marks the session `working` at once,
+the first one included; the CLI's init frame used to be the first word.
 
 `SessionInput` accepts `user_message`, `permission_response { id, optionId }`,
 and `interrupt`. Raw bytes are rejected by Claude. The shared launch argv builder,

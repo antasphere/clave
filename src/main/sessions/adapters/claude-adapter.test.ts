@@ -3,8 +3,18 @@ import { PassThrough } from 'node:stream'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
-const mock = vi.hoisted(() => ({ spawn: vi.fn(), token: vi.fn(() => 'secret-account-token') }))
+const mock = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  token: vi.fn(() => 'secret-account-token'),
+  find: vi.fn((): string | null => null)
+}))
 vi.mock('node:child_process', () => ({ spawn: mock.spawn }))
+// The binary is nowhere on the test PATH unless a case says so: the launch
+// then takes the login-shell wrapper, which is what most cases exercise.
+vi.mock('../../shell-launch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shell-launch')>()),
+  findExecutable: mock.find
+}))
 vi.mock('../../mcp/mcp-runtime', () => ({
   getMcpRuntime: () => null,
   deleteSessionMcpConfig: vi.fn()
@@ -349,7 +359,10 @@ it('sends the configured initial prompt only on ready and refuses shell commands
   expect(child.stdin.read().toString()).toBe(
     JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } }) + '\n'
   )
-  expect(events.some((event) => event.type === 'state_change')).toBe(false)
+  // The prompt marks the session working at once, not at the init frame.
+  expect(events.filter((event) => event.type === 'state_change')).toEqual([
+    { type: 'state_change', state: 'working' }
+  ])
   child.stdout.write(
     JSON.stringify({ type: 'system', subtype: 'init', session_id: 'provider-id', model: 'opus' }) +
       '\n'
@@ -717,6 +730,60 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     await adapter.kill(handle)
   }
 )
+it('starts the process at ready so its boot overlaps the typing, and once only', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  expect(mock.spawn).not.toHaveBeenCalled()
+  adapter.ready(handle)
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // Booting is silent: the model announcement, and no turn, no state.
+  expect(events).toEqual([{ type: 'session_meta', model: null, providerSessionId: null }])
+  expect(child.stdin.read()).toBeNull()
+  adapter.ready(handle)
+  adapter.write(handle, { type: 'user_message', text: 'Hello' })
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // The first message is working before the CLI has said a word.
+  expect(events.slice(1)).toEqual([
+    { type: 'user_message', text: 'Hello' },
+    { type: 'state_change', state: 'working' }
+  ])
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('starts the binary directly when the login PATH places it, wrapper otherwise', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  mock.find.mockReturnValueOnce('/resolved/bin/claude')
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, { claudeSessionId: 'minted-id' })
+  const handle = await adapter.spawn({ ...spec, options: { model: 'sonnet' } })
+  adapter.ready(handle)
+  expect(mock.find).toHaveBeenCalledWith('claude', '/test/bin')
+  const [file, args, options] = mock.spawn.mock.calls[0]
+  expect(file).toBe('/resolved/bin/claude')
+  // The argv the wrapper would have quoted, minus the command, unquoted.
+  expect(args.slice(0, 5)).toEqual(['--debug', '--session-id', 'minted-id', '--model', 'sonnet'])
+  expect(args).toContain('--permission-prompt-tool')
+  expect(args).not.toContain('claude')
+  expect(args.some((a: string) => a.includes("'"))).toBe(false)
+  expect(options.env.PATH).toBe('/test/bin')
+  expect(options.env.CLAVE_SESSION_ID).toBe(spec.id)
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
 it('asks AskUserQuestion as questions and answers with the reader choices', () => {
   const input = {
     questions: [

@@ -24,7 +24,7 @@ import type {
   SpawnSpec,
   Unsubscribe
 } from '../adapter'
-import { resolvePosixShellLaunch } from '../../shell-launch'
+import { findExecutable, resolvePosixShellLaunch } from '../../shell-launch'
 import { launchProfileManager } from '../../launch-profile-manager'
 import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../../mcp/mcp-runtime'
 import {
@@ -535,7 +535,8 @@ export class ClaudeAdapter implements SessionAdapter {
           }
         }
       },
-      // Start on first input, so subscribe-before-write cannot lose init frames.
+      // Started at ready (a consumer is bound) or by the first input, whichever
+      // comes first; either way no init frame can precede a listener.
       start: () => {
         const mcpConfigPath = getMcpRuntime() ? writeSessionMcpConfig(spec.id) : undefined
         const argv = buildAgentArgv({
@@ -561,19 +562,22 @@ export class ClaudeAdapter implements SessionAdapter {
           'stdio'
         )
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
-        const launch = resolvePosixShellLaunch(
-          getUserShell(),
-          `exec ${argv.map(shellSingleQuote).join(' ')}`
-        )
+        const env: Record<string, string> = {
+          ...buildSpawnEnv(getLoginShellEnv(), {
+            configDir: context.configDir,
+            oauthToken: accountTokenForSpawn('claude', context.claudeProfileId)
+          }),
+          CLAVE_SESSION_ID: spec.id
+        }
+        // The binary found on the login environment's own PATH starts directly;
+        // the login-shell wrapper is only for a command that PATH cannot place.
+        const executable = findExecutable(argv[0], env.PATH)
+        const launch = executable
+          ? { file: executable, args: argv.slice(1) }
+          : resolvePosixShellLaunch(getUserShell(), `exec ${argv.map(shellSingleQuote).join(' ')}`)
         const child = spawn(launch.file, launch.args, {
           cwd: spec.cwd,
-          env: {
-            ...buildSpawnEnv(getLoginShellEnv(), {
-              configDir: context.configDir,
-              oauthToken: accountTokenForSpawn('claude', context.claudeProfileId)
-            }),
-            CLAVE_SESSION_ID: spec.id
-          },
+          env,
           stdio: 'pipe',
           detached: process.platform !== 'win32'
         })
@@ -646,6 +650,12 @@ export class ClaudeAdapter implements SessionAdapter {
         })
       }
     }
+    // The process starts here, the moment a consumer is bound, so its boot
+    // (login shell, CLI, plugins, MCP servers: seconds) overlaps the reader's
+    // typing instead of following their Enter. Nothing is lost by it: the
+    // CLI's init frame only follows the first message. A start that throws
+    // leaves readiness unconsumed, so the next subscribe retries it.
+    live.process ??= live.start()
     const initialPrompt = live.initialPrompt
     if (initialPrompt !== undefined)
       this.write(handle, { type: 'user_message', text: initialPrompt })
@@ -671,8 +681,11 @@ export class ClaudeAdapter implements SessionAdapter {
     if (input.type === 'user_message') {
       live.process ??= live.start()
       live.emit(userMessageEvent(input))
-      // A queued prompt must not hide a permission that still needs an answer.
-      if (live.initialized && !live.translator.permissions.size)
+      // The pane works from the moment a message is sent, the first one
+      // included: before this the CLI's init frame, seconds after the first
+      // Enter, was the first word that anything was happening. A queued
+      // prompt must not hide a permission that still needs an answer.
+      if (!live.translator.permissions.size)
         live.emitter.emit('stream', {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }
