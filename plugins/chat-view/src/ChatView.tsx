@@ -31,6 +31,8 @@ import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
+import { useTranscriptEnd } from './transcript'
+import { JumpToEnd } from './JumpToEnd'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -216,8 +218,10 @@ function SlashMenu({
   )
 }
 // Only keep the transcript pinned to its end while the reader is already
-// there; a reader who scrolled up to re-read is never yanked back down.
+// there; a reader who scrolled up to re-read is never yanked back down
+// (`useTranscriptEnd`).
 const STICK_THRESHOLD = 80
+const stickSlack = (): number => STICK_THRESHOLD
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
 // The provider reports a full id (claude-opus-5-20260301); the menu lists the
 // family (claude-opus-5). Either being a prefix of the other is the same model.
@@ -347,8 +351,6 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const [pending, setPending] = useState<string[]>([])
   // The /resume picker, open in the dock above the composer.
   const [resuming, setResuming] = useState(false)
-  const scroll = useRef<HTMLDivElement>(null)
-  const stuck = useRef(true)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
   const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
@@ -401,10 +403,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const closed = !ready || state === 'ended'
   useComposerFocus(session.id, !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
-  useEffect(() => {
-    const el = scroll.current
-    if (el && stuck.current) el.scrollTop = el.scrollHeight
-  }, [conversation.entries])
+  const transcript = useTranscriptEnd(conversation.entries, stickSlack)
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
   }
@@ -433,7 +432,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     const text = draft
     const files = attachments
     setSending(true)
-    stuck.current = true
+    transcript.stick()
     try {
       await write({
         type: 'user_message',
@@ -701,43 +700,39 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
           <span>They stay in the composer to review before you send.</span>
         </div>
       )}
-      <div
-        ref={scroll}
-        className="chat-scroll"
-        onScroll={(event) => {
-          const el = event.currentTarget
-          stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
-        }}
-      >
-        <div className="chat-column" role="log" aria-label="Conversation">
-          {conversation.entries.length === 0 && state !== 'ended' && (
-            <div className="chat-empty">
-              <div className="chat-empty-icon">
-                <ChatBubbleLeftRightIcon />
+      <div className="chat-transcript">
+        <div ref={transcript.scroll} className="chat-scroll">
+          <div className="chat-column" role="log" aria-label="Conversation">
+            {conversation.entries.length === 0 && state !== 'ended' && (
+              <div className="chat-empty">
+                <div className="chat-empty-icon">
+                  <ChatBubbleLeftRightIcon />
+                </div>
+                <div>
+                  <h2>Start a conversation</h2>
+                  <p>Ask a question or describe what you want to build.</p>
+                </div>
               </div>
-              <div>
-                <h2>Start a conversation</h2>
-                <p>Ask a question or describe what you want to build.</p>
-              </div>
-            </div>
-          )}
-          {/* The index is the block's own, not a lookup: indexOf inside a map is
+            )}
+            {/* The index is the block's own, not a lookup: indexOf inside a map is
               quadratic, and a long transcript pays it on every stream event. */}
-          {blocks.map((block, index) =>
-            block.kind === 'tool-group' ? (
-              <ToolGroup key={`tools-${block.id}`} group={block} />
-            ) : (
-              renderEntry(block, index)
-            )
-          )}
-          {showMark && <ProviderMark provider={session.provider} />}
-          {state === 'ended' && (
-            <div className="chat-notice" role="status">
-              Session ended
-              {conversation.exitCode !== undefined ? ` (exit ${conversation.exitCode})` : ''}
-            </div>
-          )}
+            {blocks.map((block, index) =>
+              block.kind === 'tool-group' ? (
+                <ToolGroup key={`tools-${block.id}`} group={block} />
+              ) : (
+                renderEntry(block, index)
+              )
+            )}
+            {showMark && <ProviderMark provider={session.provider} />}
+            {state === 'ended' && (
+              <div className="chat-notice" role="status">
+                Session ended
+                {conversation.exitCode !== undefined ? ` (exit ${conversation.exitCode})` : ''}
+              </div>
+            )}
+          </div>
         </div>
+        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
         {resuming && (

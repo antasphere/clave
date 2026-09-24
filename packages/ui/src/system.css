@@ -176,7 +176,8 @@ body,
 .settings-row-action:focus-visible,
 .git-tree-row:focus-visible,
 .git-sync-badge:focus-visible,
-.panel-path:focus-visible {
+.panel-path:focus-visible,
+.chat-jump-end:focus-visible {
   outline: 1.5px solid var(--color-accent);
   outline-offset: -1.5px;
 }
@@ -2439,11 +2440,54 @@ button.extension-card:hover {
 }
 
 /* The transcript */
+.chat-transcript {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .chat-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* The way back down. The transcript follows the stream only while the reader
+   is at its end (`useTranscriptEnd`); one who scrolled up to re-read is left
+   there, and this control sits over the transcript's foot for as long as the
+   end is out of view. Absolute to .chat-transcript, not to the scroller, so
+   it stays put while the text moves under it; centred by its margins rather
+   than a transform, which the entrance animation would own. The composer's
+   material at a control's size, and a pill because it carries one glyph. */
+.chat-jump-end {
+  position: absolute;
+  bottom: calc(var(--spacing) * 3);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  margin-inline: auto;
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-raised);
+  box-shadow: var(--overlay-shadow);
+  color: var(--text-secondary);
+  transition:
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.chat-jump-end:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+.chat-jump-end svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
 }
 .chat-column {
   display: flex;

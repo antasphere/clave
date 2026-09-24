@@ -16,6 +16,8 @@ import {
 } from './tools'
 import type { ChatViewProps } from './ChatView'
 import { useComposerFocus } from './focus'
+import { useTranscriptEnd } from './transcript'
+import { JumpToEnd } from './JumpToEnd'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
@@ -59,6 +61,9 @@ function toolLine(tools: Extract<Block, { kind: 'tool-group' }>['tools']): {
   const suffix = status === 'running' ? ' — running…' : failures > 0 ? ` — ${failures} failed` : ''
   return { role: 'Tools', text: `${summary}${suffix}` }
 }
+// A reader less than a screen from the end is still following the stream.
+const screenSlack = (el: HTMLElement): number => el.clientHeight
+
 export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
   const log = useSessionLogValue(session.id)
   const conversation = useMemo(
@@ -73,19 +78,14 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState('')
-  const scroll = useRef<HTMLDivElement>(null)
-  const stuck = useRef(true)
+  const transcript = useTranscriptEnd(conversation.entries, screenSlack)
   const field = useRef<HTMLInputElement>(null)
   useComposerFocus(session.id, log.ready && state !== 'ended', field)
-  useEffect(() => {
-    const el = scroll.current
-    if (el && stuck.current) el.scrollTop = el.scrollHeight
-  }, [conversation.entries])
   const send = async (): Promise<void> => {
     if (!log.ready || sending || state === 'ended' || !draft.trim()) return
     const text = draft
     setSending(true)
-    stuck.current = true
+    transcript.stick()
     try {
       const input: SessionInput = { type: 'user_message', text }
       await window.electronAPI.sessionsWrite(session.id, input)
@@ -99,45 +99,41 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
   }
   return (
     <div className="chat-view" data-view="compact">
-      <div
-        ref={scroll}
-        className="chat-scroll"
-        onScroll={(event) => {
-          const el = event.currentTarget
-          stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight
-        }}
-      >
-        {conversation.entries.length === 0 ? (
-          <div className="chat-empty">
-            <span className="chat-empty-icon">
-              <ChatBubbleLeftRightIcon />
-            </span>
-            <h2>Nothing yet</h2>
-            <p>This session has said nothing so far.</p>
-          </div>
-        ) : (
-          <ol className="chat-column" aria-label="Conversation, compact">
-            {groupEntries(visibleEntries(conversation.entries)).map((block, index) => {
-              const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
-              return (
-                <li
-                  key={block.kind === 'tool-group' ? `tools-${block.id}` : index}
-                  className="flex items-baseline gap-2 min-w-0"
-                  data-kind={block.kind}
-                  data-state={block.kind === 'tool-group' ? groupStatus(block.tools) : undefined}
-                  data-failures={
-                    block.kind === 'tool-group' ? failureCount(block.tools) : undefined
-                  }
-                >
-                  <span className="text-text-tertiary text-xs shrink-0">{line.role}</span>
-                  <span className="truncate" title={line.text}>
-                    {line.text.replace(/\s+/g, ' ').trim()}
-                  </span>
-                </li>
-              )
-            })}
-          </ol>
-        )}
+      <div className="chat-transcript">
+        <div ref={transcript.scroll} className="chat-scroll">
+          {conversation.entries.length === 0 ? (
+            <div className="chat-empty">
+              <span className="chat-empty-icon">
+                <ChatBubbleLeftRightIcon />
+              </span>
+              <h2>Nothing yet</h2>
+              <p>This session has said nothing so far.</p>
+            </div>
+          ) : (
+            <ol className="chat-column" aria-label="Conversation, compact">
+              {groupEntries(visibleEntries(conversation.entries)).map((block, index) => {
+                const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
+                return (
+                  <li
+                    key={block.kind === 'tool-group' ? `tools-${block.id}` : index}
+                    className="flex items-baseline gap-2 min-w-0"
+                    data-kind={block.kind}
+                    data-state={block.kind === 'tool-group' ? groupStatus(block.tools) : undefined}
+                    data-failures={
+                      block.kind === 'tool-group' ? failureCount(block.tools) : undefined
+                    }
+                  >
+                    <span className="text-text-tertiary text-xs shrink-0">{line.role}</span>
+                    <span className="truncate" title={line.text}>
+                      {line.text.replace(/\s+/g, ' ').trim()}
+                    </span>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </div>
+        {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
         {failure && <p className="text-text-tertiary text-xs">{failure}</p>}
