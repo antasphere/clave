@@ -11,11 +11,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('open-session-codex-yolo')
-const ROOT = '/tmp/clave-e2e-open-session-codex-yolo-root'
+const ROOT = fixturePath('open-session-codex-yolo-root')
 const RECORDER = `${ROOT}/fake-codex.sh`
 const RECORDED = `${ROOT}/fake-codex.argv`
 const WS = {
