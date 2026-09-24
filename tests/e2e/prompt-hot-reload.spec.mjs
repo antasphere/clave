@@ -25,12 +25,13 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn
+  spyPtySpawn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('prompt-hot-reload')
-const ROOT = '/tmp/clave-e2e-hotreload-root'
+const ROOT = fixturePath('hotreload-root')
 const CLAVE = `${ROOT}/lane.clave`
 const BEFORE = { name: 'Lane Before', prompt: 'HOTRELOAD-A the original brief' }
 const AFTER = { name: 'Lane After', prompt: 'HOTRELOAD-B the edited brief' }

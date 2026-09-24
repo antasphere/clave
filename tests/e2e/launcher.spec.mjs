@@ -13,13 +13,14 @@ import {
   stubFolderDialog,
   sidebarRows,
   agentButtonLabel,
-  selectBuiltIn
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('launcher')
-const ROOT_A = '/tmp/clave-e2e-root-a'
-const ROOT_B = '/tmp/clave-e2e-root-b'
+const ROOT_A = fixturePath('root-a')
+const ROOT_B = fixturePath('root-b')
 const WS_A = {
   id: 'aaaaaaaa-0000-4000-8000-00000000000a',
   name: 'Alpha',

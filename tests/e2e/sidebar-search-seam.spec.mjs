@@ -20,11 +20,18 @@
  *    seam is a fact about whether the list fits, so the test that means
  *    anything is making it stop fitting and watching the line arrive.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('sidebar-search-seam')
-const ROOT = '/tmp/clave-e2e-sidebar-seam-root'
+const ROOT = fixturePath('sidebar-seam-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'bbbbbbbb-0000-4000-8000-00000000000b',

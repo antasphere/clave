@@ -27,15 +27,16 @@ import {
   identityOf,
   killLeakedE2eTmux,
   persistedWindows,
-  windowLayout
+  windowLayout,
+  fixturePath
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('multi-window-migration')
-const ROOT_A = '/tmp/clave-e2e-mw-mig-a'
-const ROOT_B = '/tmp/clave-e2e-mw-mig-b'
+const ROOT_A = fixturePath('mw-mig-a')
+const ROOT_B = fixturePath('mw-mig-b')
 const WS_A = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000a2',
   name: 'MigA',

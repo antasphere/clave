@@ -21,7 +21,14 @@
  * repo is over in a few hundred milliseconds, and a single late query would
  * find an empty bar and call it a pass.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
@@ -29,8 +36,8 @@ import path from 'node:path'
 const DIR = userDataDir('git-batch-progress')
 // /private/tmp, not /tmp: git resolves the symlink, and a repo root that
 // disagrees with the discovered path makes every repo look nested.
-const ROOT = '/private/tmp/clave-e2e-git-batch-root'
-const ORIGINS = '/private/tmp/clave-e2e-git-batch-origins'
+const ROOT = fixturePath('git-batch-root', { real: true })
+const ORIGINS = fixturePath('git-batch-origins', { real: true })
 // Over the default live-poll limit of 50, so the panel pauses: no background
 // fetch, and therefore no badge nobody asked for.
 const PADDING = 48

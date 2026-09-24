@@ -8,8 +8,16 @@
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
+
+// Every run gets its own fixture namespace (PRDCT-2615). Set before any spec
+// is imported, because the specs build their fixture paths at module load.
+// One given in the environment wins; otherwise the checkout names the run, so
+// two worktrees running the suite at once never share a /tmp folder.
+if (!process.env[NAMESPACE_ENV] || process.env[NAMESPACE_ENV].trim() === '')
+  process.env[NAMESPACE_ENV] = defaultNamespace(path.resolve(DIR, '..', '..'))
 const only = process.argv[2]
 const GREEN = '\u001b[32m'
 const RED = '\u001b[31m'
@@ -49,6 +57,8 @@ if (specs.length === 0) {
   console.error(only ? `No spec matches "${only}"` : 'No specs found')
   process.exit(1)
 }
+
+console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
 
 let failed = 0
 let passed = 0

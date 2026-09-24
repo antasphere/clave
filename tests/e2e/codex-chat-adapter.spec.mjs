@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
+import { REPO, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
-const ROOT = `/tmp/clave-e2e-codex-chat-${process.pid}`
+const ROOT = fixturePath(`codex-chat-${process.pid}`)
 const DIR = `${ROOT}/data`
 const BIN = `${ROOT}/bin`
 const LOG = `${ROOT}/rpc.ndjson`

@@ -30,12 +30,13 @@ import {
   seedTrustedRoots,
   spawnAgentTabIn,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('density')
-const ROOT = '/tmp/clave-e2e-density-root'
+const ROOT = fixturePath('density-root')
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',
   name: 'Density',

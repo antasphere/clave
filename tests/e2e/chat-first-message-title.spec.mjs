@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { sidebarRows, until } from './harness.mjs'
+import { sidebarRows, until, fixturePath } from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
 // A chat tab is named by its first message. A terminal tab has always been:
@@ -11,7 +11,7 @@ import { openChat } from './chat-view.spec.mjs'
 // on the PATH, so the assertion is on what the stub was asked and what the
 // sidebar shows, never on a model's answer.
 
-const BIN = '/tmp/clave-e2e-chat-title-bin'
+const BIN = fixturePath('chat-title-bin')
 const LOG = `${BIN}/claude-calls.ndjson`
 const TITLE = 'follow the first message'
 const calls = () =>

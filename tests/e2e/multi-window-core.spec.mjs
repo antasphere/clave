@@ -44,14 +44,15 @@ import {
   tmuxSessionAlive,
   until,
   persistedWindows,
-  windowLayout
+  windowLayout,
+  fixturePath
 } from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('multi-window-core')
-const ROOT_A = '/tmp/clave-e2e-mw-core-a'
-const ROOT_B = '/tmp/clave-e2e-mw-core-b'
+const ROOT_A = fixturePath('mw-core-a')
+const ROOT_B = fixturePath('mw-core-b')
 const ws = (letter, root) => ({
   id: `${letter}${letter}${letter}${letter}${letter}${letter}${letter}${letter}-0000-4000-8000-0000000000${letter}1`,
   name: `Core${letter.toUpperCase()}`,

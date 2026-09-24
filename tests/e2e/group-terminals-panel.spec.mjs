@@ -12,11 +12,17 @@
  * both are things you only notice by looking at the row, and both are one
  * prop away from silently going back to what they were.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-terminals-panel')
-const ROOT = '/tmp/clave-e2e-terminals-panel-root'
+const ROOT = fixturePath('terminals-panel-root')
 const CLAVE = `${ROOT}/many.clave`
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',

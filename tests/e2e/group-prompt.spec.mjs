@@ -19,12 +19,13 @@ import {
   seedTrustedRoots,
   userDataDir,
   spyPtySpawn,
-  selectBuiltIn
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-prompt')
-const ROOT = '/tmp/clave-e2e-group-root'
+const ROOT = fixturePath('group-root')
 const CLAVE = `${ROOT}/lane.clave`
 const MARKER = 'e2e-group-brief-marker'
 const WS = {

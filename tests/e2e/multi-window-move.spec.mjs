@@ -27,15 +27,16 @@ import {
   killLeakedE2eTmux,
   until,
   tmuxSessionAlive,
-  windowLayout
+  windowLayout,
+  fixturePath
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('multi-window-move')
-const ROOT_A = '/tmp/clave-e2e-mw-move-a'
-const ROOT_B = '/tmp/clave-e2e-mw-move-b'
+const ROOT_A = fixturePath('mw-move-a')
+const ROOT_B = fixturePath('mw-move-b')
 const WS_A = { id: 'aaaaaaaa-0000-4000-8000-0000000000e1', name: 'MoveA', rootDir: ROOT_A, profileFile: null, createdAt: 1 }
 const WS_B = { id: 'bbbbbbbb-0000-4000-8000-0000000000e2', name: 'MoveB', rootDir: ROOT_B, profileFile: null, createdAt: 2 }
 

@@ -17,7 +17,13 @@
  * `/private/tmp` rather than `/tmp`, so git's resolved repo root matches the
  * discovered path (the symlink otherwise reparents every repo).
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
@@ -25,7 +31,7 @@ import path from 'node:path'
 // The user-data dir and the fixture must not be the same folder: /tmp is a
 // symlink to /private/tmp, so two names that look distinct can land on one.
 const DIR = userDataDir('tree-separators-data')
-const ROOT = '/private/tmp/clave-e2e-tree-rules'
+const ROOT = fixturePath('tree-rules', { real: true })
 const REPO = path.join(ROOT, 'app')
 // A second repo, so the repo TREE has a pair of rows to rule as well — with one
 // repo it draws no rule at all and the "every tree" claim would go unchecked.

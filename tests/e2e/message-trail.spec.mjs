@@ -17,14 +17,15 @@ import {
   userDataDir,
   callMcp,
   until,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath
 } from './harness.mjs'
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('message-trail')
-const ROOT = '/tmp/clave-e2e-trail-root'
-const TRANSCRIPTS = '/tmp/clave-e2e-trail-transcripts'
+const ROOT = fixturePath('trail-root')
+const TRANSCRIPTS = fixturePath('trail-transcripts')
 const STEM = 'cc-trail-0001'
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',

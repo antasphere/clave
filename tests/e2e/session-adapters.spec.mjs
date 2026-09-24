@@ -2,10 +2,18 @@ import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, callMcp, until, userDataDir } from './harness.mjs'
+import {
+  REPO,
+  seedWorkspaces,
+  seedTrustedRoots,
+  callMcp,
+  until,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 
 const DIR = userDataDir('session-adapters')
-const ROOT = '/tmp/clave-e2e-session-adapters-root'
+const ROOT = fixturePath('session-adapters-root')
 
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })

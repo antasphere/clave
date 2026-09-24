@@ -6,11 +6,12 @@ import {
   userDataDir,
   callMcp,
   until,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('codex-glow')
-const ROOT = '/tmp/clave-e2e-codex-glow-root'
+const ROOT = fixturePath('codex-glow-root')
 const SCRIPT = `${ROOT}/titles.py`
 const ARGS = `${ROOT}/argv.json`
 const WS = { id: 'glow-workspace', name: 'Glow', rootDir: ROOT, profileFile: null, createdAt: 1 }

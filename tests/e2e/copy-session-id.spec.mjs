@@ -10,11 +10,11 @@
  * The assertions read the MAIN process clipboard, so they see what landed on
  * the pasteboard rather than what the renderer believes it wrote.
  */
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 import { mkdirSync, rmSync } from 'node:fs'
 
 const DIR = userDataDir('copy-session-id')
-const ROOT = '/tmp/clave-e2e-root-copy-session-id'
+const ROOT = fixturePath('root-copy-session-id')
 const WS = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000e2',
   name: 'CopyId',

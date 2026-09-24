@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO, launchApp, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
+import {
+  REPO,
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  until,
+  fixturePath
+} from './harness.mjs'
 
 export async function run(t) {
-  const root = `/tmp/clave-chat-profiles-${process.pid}`
+  const root = fixturePath(`chat-profiles-${process.pid}`)
   const data = `${root}/data`
   const bin = `${root}/bin`
   const literal = "account's $(echo unexpected); with spaces"

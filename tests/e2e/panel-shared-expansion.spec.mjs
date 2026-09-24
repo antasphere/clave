@@ -36,14 +36,15 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  stubFolderDialog
+  stubFolderDialog,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const DIR = userDataDir('panel-shared-expansion')
-const ROOT = '/private/tmp/clave-e2e-panel-shared-expansion-root'
+const ROOT = fixturePath('panel-shared-expansion-root', { real: true })
 const WS = {
   id: 'ffffffff-0000-4000-8000-00000000000f',
   name: 'Shared',

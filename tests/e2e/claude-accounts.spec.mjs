@@ -17,11 +17,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('claude-accounts')
-const ROOT = '/tmp/clave-e2e-claude-accounts-root'
+const ROOT = fixturePath('claude-accounts-root')
 const WS = { id: 'accounts-ws', name: 'Accounts', rootDir: ROOT, profileFile: null, createdAt: 1 }
 const WORK_TOKEN = 'sk-ant-oat01-work-token-for-the-e2e-run-0123456789'
 const PLAY_TOKEN = 'sk-ant-oat01-play-token-for-the-e2e-run-0123456789'

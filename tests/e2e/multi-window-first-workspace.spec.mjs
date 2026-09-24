@@ -25,14 +25,15 @@ import {
   callMcp,
   until,
   killLeakedE2eTmux,
-  windowLayout
+  windowLayout,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('multi-window-first-workspace')
 // The workspace root, and a session cwd OUTSIDE it (so no cwd placement).
-const ROOT_W = '/tmp/clave-e2e-firstws-w'
-const ROOT_S = '/tmp/clave-e2e-firstws-s'
+const ROOT_W = fixturePath('firstws-w')
+const ROOT_S = fixturePath('firstws-s')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const groupNames = (l) => (l?.groups ?? []).map((g) => g.name).sort()

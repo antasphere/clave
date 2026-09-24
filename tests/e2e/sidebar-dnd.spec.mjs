@@ -15,11 +15,18 @@
  *      and matched an invisible child first, so a drop aimed at the group under
  *      a collapsed one silently landed inside the collapsed one.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('sidebar-dnd')
-const ROOT = '/tmp/clave-e2e-sidebar-dnd-root'
+const ROOT = fixturePath('sidebar-dnd-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',

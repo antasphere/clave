@@ -39,14 +39,15 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  stubFolderDialog
+  stubFolderDialog,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const DIR = userDataDir('side-panel')
-const ROOT = '/private/tmp/clave-e2e-side-panel-root'
+const ROOT = fixturePath('side-panel-root', { real: true })
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',
   name: 'Panel',
@@ -70,10 +71,10 @@ const REPOS = [
 // Bare inits: the note is about how many repos there are, not what is in them.
 // Bare remotes for the one repo that must sit BEHIND its upstream — outside
 // ROOT so the panel does not discover them as repos of their own.
-const ORIGINS = '/private/tmp/clave-e2e-side-panel-origins'
+const ORIGINS = fixturePath('side-panel-origins', { real: true })
 const BEHIND_REPO = 'alpha-app'
 
-const BIG_ROOT = '/private/tmp/clave-e2e-side-panel-big'
+const BIG_ROOT = fixturePath('side-panel-big', { real: true })
 const BIG_COUNT = 51
 
 function seedBigRoot() {

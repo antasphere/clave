@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { until } from './harness.mjs'
+import { until, fixturePath } from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
 /* Files into the chat composer: dropped on the pane, pasted, or picked with
@@ -35,7 +35,7 @@ async function dragFiles(win, selector, type, files) {
 
 export async function run(t) {
   const { app, win, record, close } = await openChat('chat-attachments')
-  const root = '/tmp/clave-e2e-chat-attachments-root'
+  const root = fixturePath('chat-attachments-root')
   try {
     await app.evaluate(({ ipcMain }) => {
       const original = ipcMain._invokeHandlers.get('sessions:write')

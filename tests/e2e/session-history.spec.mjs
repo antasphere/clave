@@ -29,15 +29,17 @@ import {
   callMcp,
   spyPtySpawn,
   until,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('session-history')
-const ROOT = '/tmp/clave-e2e-history-root'
-const TRANSCRIPTS = '/tmp/clave-e2e-history-transcripts'
-const CODEX = '/tmp/clave-e2e-history-codex'
+const ROOT = fixturePath('history-root')
+const TRANSCRIPTS = fixturePath('history-transcripts')
+const CODEX = fixturePath('history-codex')
+const FOREIGN = fixturePath('foreign-root')
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000000e',
   name: 'History',
@@ -180,12 +182,12 @@ export async function run(t) {
       { type: 'last-prompt', lastPrompt: 'Ran from a plain terminal' }
     ])
   )
-  const foreignDir = path.join(TRANSCRIPTS, projectDir('/tmp/clave-e2e-foreign-root'))
+  const foreignDir = path.join(TRANSCRIPTS, projectDir(FOREIGN))
   mkdirSync(foreignDir, { recursive: true })
   writeFileSync(
     path.join(foreignDir, 'cc-foreign.jsonl'),
     transcript([
-      { type: 'user', timestamp: '2026-08-24T08:00:00.000Z', cwd: '/tmp/clave-e2e-foreign-root', message: { content: 'Foreign workspace' } },
+      { type: 'user', timestamp: '2026-08-24T08:00:00.000Z', cwd: FOREIGN, message: { content: 'Foreign workspace' } },
       { type: 'ai-title', aiTitle: 'Foreign conversation' },
       { type: 'last-prompt', lastPrompt: 'Foreign workspace' }
     ])
@@ -271,7 +273,7 @@ export async function run(t) {
   writeFileSync(
     path.join(codexDay, 'rollout-2026-08-25T08-10-00-cx-foreign.jsonl'),
     transcript([
-      codexMeta({ id: 'cx-foreign', cwd: '/tmp/clave-e2e-foreign-root' }),
+      codexMeta({ id: 'cx-foreign', cwd: FOREIGN }),
       codexUser('foreign codex thread')
     ])
   )

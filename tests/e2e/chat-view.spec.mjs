@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
+import { REPO, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 export const TOOL_RESULT = 'chat-result: verified payload 2537'
 
@@ -16,7 +16,7 @@ export async function openChat(
   ready = '[data-testid="chat-view"] textarea:not(:disabled)',
   env = {}
 ) {
-  const dir = `/tmp/clave-e2e-${suffix}`
+  const dir = fixturePath(`${suffix}`)
   const root = `${dir}-root`
   mkdirSync(root, { recursive: true })
   seedWorkspaces(dir, {

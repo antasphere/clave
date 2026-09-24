@@ -7,10 +7,10 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { REPO, until } from './harness.mjs'
+import { REPO, until, fixturePath } from './harness.mjs'
 import { openChat, inject } from './chat-view.spec.mjs'
 
-const BIN = '/tmp/clave-e2e-github-pull-bin'
+const BIN = fixturePath('github-pull-bin')
 const CALLS = `${BIN}/gh-calls.jsonl`
 const POSTED = `${BIN}/gh-posted.json`
 const FAIL = `${BIN}/gh-fail`

@@ -8,15 +8,15 @@
 // tooltip, and popover teleported in, and nothing failed. These assertions
 // read the computed animation off the live surfaces, so removing a keyframe or
 // re-introducing the dead classes goes red instead of silently shipping.
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 
 export async function run(t) {
   const dir = userDataDir('overlays')
   seedWorkspaces(dir, {
     fresh: true,
     workspaces: [
-      { id: 'ws-a', name: 'Alpha', rootDir: '/tmp/clave-e2e-overlays-ws', profileFile: null, createdAt: 1 },
-      { id: 'ws-b', name: 'Beta', rootDir: '/tmp/clave-e2e-overlays-ws2', profileFile: null, createdAt: 2 }
+      { id: 'ws-a', name: 'Alpha', rootDir: fixturePath('overlays-ws'), profileFile: null, createdAt: 1 },
+      { id: 'ws-b', name: 'Beta', rootDir: fixturePath('overlays-ws2'), profileFile: null, createdAt: 2 }
     ],
     activeWorkspaceId: 'ws-a'
   })

@@ -28,12 +28,13 @@ import {
   seedTrustedRoots,
   userDataDir,
   spyPtySpawn,
-  selectBuiltIn
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-session-prompt')
-const ROOT = '/tmp/clave-e2e-session-prompt-root'
+const ROOT = fixturePath('session-prompt-root')
 const PROJECT = `${ROOT}/labs/widget`
 const CLAVE = `${ROOT}/project.clave`
 const MARKER = 'e2e-session-brief-marker'

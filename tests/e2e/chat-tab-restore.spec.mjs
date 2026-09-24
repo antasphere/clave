@@ -24,11 +24,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('chat-tab-restore')
-const ROOT = '/tmp/clave-e2e-chat-restore-root'
+const ROOT = fixturePath('chat-restore-root')
 const TRANSCRIPTS = `${ROOT}/transcripts`
 const ARGV_LOG = `${ROOT}/argv.jsonl`
 const FIRST_PROMPT = 'first launch prompt'

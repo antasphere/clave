@@ -8,10 +8,14 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 const DIR = userDataDir('claude-chat-adapter')
-const ROOT = '/tmp/clave-e2e-claude-chat-root'
+const ROOT = fixturePath('claude-chat-root')
+// The account's config dir: a value the app stores and hands to the spawn,
+// asserted on below, so it goes through the namespace like every fixture.
+const ACCOUNT_DIR = fixturePath('chat-account')
 const TOKEN = 'sk-ant-oat01-claude-chat-fixture-token-0123456789'
 export async function run(t) {
   rmSync(ROOT, { recursive: true, force: true })
@@ -68,7 +72,7 @@ setInterval(()=>{},1000);
   try {
     // Create the account in main. Track all outbound IPC AFTER storing the token;
     // no renderer input or process-output payload is allowed to carry it.
-    await app.evaluate(async ({ ipcMain, BrowserWindow }, token) => {
+    await app.evaluate(async ({ ipcMain, BrowserWindow }, { token, configDir }) => {
       globalThis.fetch = async () =>
         new Response(JSON.stringify({ type: 'message', content: [] }), {
           status: 200,
@@ -81,7 +85,7 @@ setInterval(()=>{},1000);
       const handlers = ipcMain._invokeHandlers
       const account = await handlers.get('claude-accounts:add')(
         {},
-        { label: 'Fixture account', configDir: '/tmp/clave-chat-account' }
+        { label: 'Fixture account', configDir }
       )
       await handlers.get('claude-accounts:set-token')({}, account.id, token)
       const original = handlers.get('pty:spawn')
@@ -89,7 +93,7 @@ setInterval(()=>{},1000);
         original(event, cwd, {
           ...options,
           claudeProfileId: account.id,
-          configDir: '/tmp/clave-chat-account'
+          configDir
         })
       )
       globalThis.__chatLeaks = []
@@ -106,7 +110,7 @@ setInterval(()=>{},1000);
           if (JSON.stringify(result)?.includes(token)) globalThis.__chatLeaks.push(channel)
           return result
         })
-    }, TOKEN)
+    }, { token: TOKEN, configDir: ACCOUNT_DIR })
     const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
     assert.ok(
       profiles.customProfiles.some((p) => p.id === 'claude-chat' && p.name === 'Claude (chat)')
@@ -157,7 +161,7 @@ setInterval(()=>{},1000);
     )
     const processInfo = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8'))
     assert.equal(processInfo.token, TOKEN)
-    assert.equal(processInfo.configDir, '/tmp/clave-chat-account')
+    assert.equal(processInfo.configDir, ACCOUNT_DIR)
     assert.ok(processInfo.argv.includes('--settings'))
     assert.ok(processInfo.argv.includes('--session-id'))
     assert.ok(processInfo.argv.includes('--permission-prompt-tool'))

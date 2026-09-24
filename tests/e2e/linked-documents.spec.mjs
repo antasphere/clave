@@ -10,10 +10,11 @@ import {
   spawnAgentTabIn,
   toolPayload,
   toolErrored,
-  callMcp
+  callMcp,
+  fixturePath
 } from './harness.mjs'
 const DIR = userDataDir('linked-documents')
-const ROOT = '/tmp/clave-e2e-linked-documents-root'
+const ROOT = fixturePath('linked-documents-root')
 const WS = {
   id: 'aaaa0000-0000-4000-8000-000000000021',
   name: 'Linked documents',
@@ -108,7 +109,7 @@ export async function run(t) {
     await win.keyboard.press('Meta+End')
     await win.keyboard.type(' Final character Z')
     if (process.env.CLAVE_LINKED_CAPTURE)
-      await win.screenshot({ path: '/tmp/clave-linked-markdown.png' })
+      await win.screenshot({ path: fixturePath('linked-markdown.png') })
     const immediate = toolPayload(await client.call('clave_side_panel', { action: 'read' }))
     t.check(
       'immediate agent handoff flushes final typed character',
@@ -269,7 +270,7 @@ export async function run(t) {
       await signaturePreview.locator('img').evaluate((img) => img.complete && img.naturalWidth > 0)
     )
     if (process.env.CLAVE_LINKED_CAPTURE)
-      await win.screenshot({ path: '/tmp/clave-linked-email.png' })
+      await win.screenshot({ path: fixturePath('linked-email.png') })
     const prepared = await client.call('clave_side_panel', {
       action: 'prepare',
       revision: final.revision

@@ -31,14 +31,15 @@ import {
   spawnAgentTabIn,
   toolPayload,
   toolErrored,
-  until
+  until,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('multi-window-routing')
-const ROOT_A = '/tmp/clave-e2e-mw-route-a'
-const ROOT_B = '/tmp/clave-e2e-mw-route-b'
-const ROOT_C = '/tmp/clave-e2e-mw-route-c'
+const ROOT_A = fixturePath('mw-route-a')
+const ROOT_B = fixturePath('mw-route-b')
+const ROOT_C = fixturePath('mw-route-c')
 const WS_A = { id: 'aaaaaaaa-0000-4000-8000-0000000000f1', name: 'RouteA', rootDir: ROOT_A, profileFile: null, createdAt: 1 }
 const WS_B = { id: 'bbbbbbbb-0000-4000-8000-0000000000f2', name: 'RouteB', rootDir: ROOT_B, profileFile: null, createdAt: 2 }
 const WS_C = { id: 'cccccccc-0000-4000-8000-0000000000f3', name: 'RouteC', rootDir: ROOT_C, profileFile: null, createdAt: 3 }

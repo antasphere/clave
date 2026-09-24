@@ -24,13 +24,14 @@ import {
   userDataDir,
   openWindow,
   windows as allWindows,
-  until
+  until,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('no-activate')
-const ROOT_A = '/tmp/clave-e2e-no-activate-a'
-const ROOT_B = '/tmp/clave-e2e-no-activate-b'
+const ROOT_A = fixturePath('no-activate-a')
+const ROOT_B = fixturePath('no-activate-b')
 const WS_A = {
   id: 'cccccccc-0000-4000-8000-00000000000c',
   name: 'NoActivateA',

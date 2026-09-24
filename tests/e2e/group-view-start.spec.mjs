@@ -33,13 +33,14 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
 const DIR = userDataDir('group-view-start')
-const ROOT = '/tmp/clave-e2e-group-view-start-root'
+const ROOT = fixturePath('group-view-start-root')
 const CLAVE = `${ROOT}/boards.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',

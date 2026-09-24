@@ -24,11 +24,17 @@
  *    surface the line lands, and a token swap that keeps the number but changes
  *    the surface would pass a string comparison and fail the eye.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('sidebar-whats-new')
-const ROOT = '/tmp/clave-e2e-whats-new-root'
+const ROOT = fixturePath('whats-new-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',

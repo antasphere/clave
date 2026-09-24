@@ -28,13 +28,14 @@ import {
   persistedWindows,
   windowLayout,
   until,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('hidden-session-restore')
-const ROOT = '/tmp/clave-e2e-hidden-root'
+const ROOT = fixturePath('hidden-root')
 const CLAVE = `${ROOT}/toolbar.clave`
 const TOOLBAR_CMD = 'sleep 901'
 const WS = {

@@ -11,7 +11,7 @@
  * or provenance, and a sanitize bypass. The nonexistent-target check is the
  * positive control that non-self dispatch still errors.
  */
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -39,7 +39,7 @@ function killLeakedE2eTmux() {
 }
 
 const DIR = userDataDir('self-checkpoint')
-const ROOT = '/tmp/clave-e2e-root-checkpoint'
+const ROOT = fixturePath('root-checkpoint')
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',
   name: 'Checkpoint',

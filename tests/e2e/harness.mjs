@@ -10,6 +10,12 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fixturePath, fixtureRoot } from './namespace.mjs'
+
+// Where a run keeps its fixtures (PRDCT-2615): every path a spec seeds goes
+// through `fixturePath`, so a CLAVE_E2E_NS set by the runner moves the whole
+// run under /tmp/<namespace>/ and two worktrees never share a folder.
+export { fixturePath, fixtureRoot }
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ELECTRON_BIN = path.join(
@@ -17,9 +23,10 @@ const ELECTRON_BIN = path.join(
   'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
 )
 
-/** A user-data dir of this spec's own, so specs never collide. */
+/** A user-data dir of this spec's own, so specs never collide — and, under
+ *  the run's namespace, so two runs never collide either. */
 export function userDataDir(name) {
-  return `/tmp/clave-e2e-${name}`
+  return fixturePath(name)
 }
 
 /** Seed the workspace registry the app boots from. Without this the app starts

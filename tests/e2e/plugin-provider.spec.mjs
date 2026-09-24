@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, until } from './harness.mjs'
+import { REPO, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 /**
  * The bundled `plugins/echo-provider` drives a real session end to end: the
@@ -78,7 +78,7 @@ const chatView = (win) => win.locator('[data-testid="chat-view"]')
 export async function run(t) {
   // Per run, not shared: a fixed path here collided with another lane's suite and
   // cost the verifier a red round on a check that passes alone.
-  const dir = `/tmp/clave-e2e-plugin-provider-${process.pid}`
+  const dir = fixturePath(`plugin-provider-${process.pid}`)
   const { app, win, root } = await open(dir)
   try {
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')

@@ -21,10 +21,18 @@
  * nothing, or a group missing after the restart.
  */
 import { mkdirSync } from 'node:fs'
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp, until } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  until,
+  fixturePath
+} from './harness.mjs'
 
 const DIR = userDataDir('empty-group')
-const ROOT = '/tmp/clave-e2e-empty-group-root'
+const ROOT = fixturePath('empty-group-root')
 const WS = {
   id: 'abababab-0000-4000-8000-00000000000a',
   name: 'Empty',

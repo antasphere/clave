@@ -16,13 +16,20 @@
  * `/private/tmp` rather than `/tmp`, so git's resolved repo root matches the
  * discovered path (the symlink otherwise reparents every repo).
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, until } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  until,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const DIR = userDataDir('git-worktree-rows-data')
-const ROOT = '/private/tmp/clave-e2e-worktree-rows'
+const ROOT = fixturePath('worktree-rows', { real: true })
 const APP = path.join(ROOT, 'app')
 const WT = path.join(ROOT, 'wt-feature')
 // A long name on a row with four badges (base, count, unpublished, changes):

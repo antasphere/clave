@@ -40,11 +40,17 @@
  *  6. The badge is ABSENT, not empty, when the release carried no notes. A
  *     control opening onto blank space reads as a broken one.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('announcement-disclosure')
-const ROOT = '/tmp/clave-e2e-disclosure-root'
+const ROOT = fixturePath('disclosure-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',

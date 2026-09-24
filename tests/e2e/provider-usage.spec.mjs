@@ -5,11 +5,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('provider-usage')
-const ROOT = '/tmp/clave-e2e-provider-usage-root'
+const ROOT = fixturePath('provider-usage-root')
 const WS = { id: 'usage-workspace', name: 'Usage', rootDir: ROOT, profileFile: null, createdAt: 1 }
 
 export async function run(t) {

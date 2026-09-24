@@ -10,11 +10,17 @@
  * Asserted on the panel's measured height, not on the absence of a string: a
  * placeholder that comes back under a new class name has to fail this.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('switcher-collapse')
-const ROOT = '/tmp/clave-e2e-switcher-collapse-root'
+const ROOT = fixturePath('switcher-collapse-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',

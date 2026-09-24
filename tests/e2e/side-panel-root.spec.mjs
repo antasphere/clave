@@ -28,13 +28,14 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  callMcp
+  callMcp,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('side-panel-root')
-const ROOT = '/private/tmp/clave-e2e-side-panel-root-scope'
+const ROOT = fixturePath('side-panel-root-scope', { real: true })
 const APPS = path.join(ROOT, 'apps')
 const ONE = path.join(APPS, 'one')
 const TWO = path.join(APPS, 'two')
