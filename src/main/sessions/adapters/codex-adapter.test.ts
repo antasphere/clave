@@ -162,6 +162,37 @@ function fake(): {
   return { adapter: new CodexAdapter(connect), connection, connect, callback: () => callbacks }
 }
 describe('Codex adapter lifecycle', () => {
+  it('keeps each configured launch profile through deferred startup', async () => {
+    const { adapter, connect } = fake()
+    const profile = {
+      id: 'work',
+      name: 'Work',
+      family: 'codex' as const,
+      command: ['wrapper', 'codex'],
+      additionalArgs: ['--profile', 'work']
+    }
+    adapter.configure(spec.id, profile)
+    const handle = await adapter.spawn(spec)
+    profile.command[0] = 'changed-after-launch'
+    expect(connect).not.toHaveBeenCalled()
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    expect(connect).toHaveBeenCalledWith(
+      spec.cwd,
+      expect.any(Object),
+      expect.objectContaining({
+        command: ['wrapper', 'codex'],
+        additionalArgs: ['--profile', 'work']
+      })
+    )
+    await adapter.kill(handle)
+    const next = await adapter.spawn(spec)
+    adapter.write(next, { type: 'user_message', text: 'hello' })
+    await tick()
+    expect(connect).toHaveBeenLastCalledWith(spec.cwd, expect.any(Object), undefined)
+    await adapter.kill(next)
+  })
+
   it('defers startup for subscribers, sends model/resume safely, interrupts, and exits in order', async () => {
     const { adapter, connection, connect } = fake()
     const handle = await adapter.spawn({

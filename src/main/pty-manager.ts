@@ -21,7 +21,8 @@ const claudeAdapter = new ClaudeAdapter()
 sessionManager.registerAdapter(ptyAdapter)
 sessionManager.registerAdapter(echoAdapter)
 sessionManager.registerAdapter(claudeAdapter)
-sessionManager.registerAdapter(new CodexAdapter())
+const codexAdapter = new CodexAdapter()
+sessionManager.registerAdapter(codexAdapter)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -45,7 +46,7 @@ class PtyManager {
     const echo = isEchoLaunchProfile(profileId)
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const events = eventsProfile(profileId)
-    if (events?.id === 'claude-chat' && process.platform === 'win32')
+    if (events?.adapterId === 'claude-chat' && process.platform === 'win32')
       throw new Error('Claude chat sessions are not supported on Windows')
     const adapter = events
       ? sessionManager.getAdapter(events.adapterId)
@@ -108,7 +109,17 @@ class PtyManager {
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
       session.claudeSessionId = options?.resumeSessionId ?? options?.claudeSessionId ?? randomUUID()
-      claudeAdapter.configure(session.id, { ...options, claudeSessionId: session.claudeSessionId })
+      claudeAdapter.configure(session.id, {
+        ...options,
+        launchProfileId: profileId,
+        claudeSessionId: session.claudeSessionId
+      })
+    }
+    if (isEvents && adapter.id === 'codex-chat') {
+      codexAdapter.configure(
+        session.id,
+        launchProfileManager.resolve('codex', options?.workspaceId, profileId)
+      )
     }
     const handle = isEvents
       ? await adapter.spawn({

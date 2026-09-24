@@ -61,9 +61,16 @@ closed session ids in memory. No capture write waits on a timer.
 
 ## Claude conversations (wave 2)
 
-The launcher lists **Claude (chat)** (`claude-chat`); **Codex (chat)** is declared
-but is listed only once `codex-chat` registers. Events profiles carry `adapterId`;
-the facade resolves the registered adapter and awaits its standard `spawn()`.
+The launcher lists **Claude (chat)** (`claude-chat`) and **Codex (chat)**
+(`codex-chat`) when their adapters are available. Saved Claude and Codex launch
+profiles also offer a chat choice, such as **Work (chat)**. These choices use the
+saved command and arguments, including wrappers, and can be selected as global
+or workspace defaults. They are derived from the saved profile, so editing it
+updates both choices; deleting it clears either default. Their stable ids are
+`chat:<family>:<profile id>`, and a stale chat id fails instead of launching a
+different command. Claude chat restore keeps this id and the account selection.
+Events profiles carry `adapterId`. The facade resolves the registered adapter
+and awaits its standard `spawn()`.
 The PTY path still prepares synchronously, starts on the first resize, and keeps
 tmux adoption unchanged; only its IPC caller awaits the returned session.
 PTY and opt-in echo remain available. An events session does not create a PTY or

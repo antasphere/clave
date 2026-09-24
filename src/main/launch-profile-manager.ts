@@ -3,6 +3,7 @@ import * as path from 'path'
 import { app } from 'electron'
 import {
   DEFAULT_LAUNCH_PROFILE_PREFERENCES,
+  chatProfileSource,
   resolveLaunchProfile,
   sanitizeLaunchProfilePreferences,
   type LaunchProfile,
@@ -63,22 +64,48 @@ function pluginProfiles(): EventsLaunchProfile[] {
  * the spawn resolves the adapter, which then refuses the launch by name.
  */
 export function eventsProfile(id?: string | null): EventsLaunchProfile | undefined {
+  const source = chatProfileSource(id)
+  if (source) {
+    const template = CHAT_PROFILES.find((p) => p.family === source.family)!
+    return { ...template, id: id!, sourceProfileId: source.id }
+  }
   return CHAT_PROFILES.find((p) => p.id === id) ?? pluginProfiles().find((p) => p.id === id)
 }
 
 /** The events profiles the launcher offers: built-ins with a live adapter, plugins that are enabled. */
-function offeredChatProfiles(): EventsLaunchProfile[] {
+function offeredChatProfiles(customProfiles: LaunchProfile[] = []): EventsLaunchProfile[] {
   const enabled = new Set(
     pluginAdapterProfiles()
       .filter((profile) => profile.enabled)
       .map((profile) => profile.id)
   )
+  const builtIns = CHAT_PROFILES.filter(
+    (p) =>
+      (p.id !== 'claude-chat' || process.platform !== 'win32') &&
+      sessionManager.getAdapter(p.adapterId)
+  )
   return [
-    ...CHAT_PROFILES.filter(
-      (p) =>
-        (p.id !== 'claude-chat' || process.platform !== 'win32') &&
-        sessionManager.getAdapter(p.adapterId)
-    ),
+    ...builtIns,
+    ...customProfiles.flatMap((profile): EventsLaunchProfile[] => {
+      const template = builtIns.find((p) => p.family === profile.family)
+      if (
+        !template ||
+        profile.builtIn ||
+        eventsProfile(profile.id) ||
+        profile.id === 'dev-echo-adapter'
+      )
+        return []
+      return [
+        {
+          ...profile,
+          id: `chat:${profile.family}:${profile.id}`,
+          name: `${profile.name} (chat)`,
+          sourceProfileId: profile.id,
+          adapterId: template.adapterId,
+          viewId: template.viewId
+        }
+      ]
+    }),
     ...pluginProfiles().filter((p) => enabled.has(p.id))
   ]
 }
@@ -116,7 +143,7 @@ export class LaunchProfileManager {
       (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) preferences.customProfiles.push(DEV_ECHO_PROFILE)
-    preferences.customProfiles.push(...offeredChatProfiles())
+    preferences.customProfiles.push(...offeredChatProfiles(preferences.customProfiles))
     return preferences
   }
 
@@ -145,16 +172,18 @@ export class LaunchProfileManager {
   }
 
   delete(profileId: string): LaunchProfilePreferences {
+    const belongsToProfile = (id: string): boolean =>
+      id === profileId || chatProfileSource(id)?.id === profileId
     const customProfiles = this.preferences.customProfiles.filter(
       (profile) => profile.id !== profileId
     )
     const globalDefaults = Object.fromEntries(
-      Object.entries(this.preferences.globalDefaults).filter(([, id]) => id !== profileId)
+      Object.entries(this.preferences.globalDefaults).filter(([, id]) => !belongsToProfile(id))
     ) as LaunchProfilePreferences['globalDefaults']
     const workspaceOverrides = Object.fromEntries(
       Object.entries(this.preferences.workspaceOverrides).map(([workspaceId, defaults]) => [
         workspaceId,
-        Object.fromEntries(Object.entries(defaults).filter(([, id]) => id !== profileId))
+        Object.fromEntries(Object.entries(defaults).filter(([, id]) => !belongsToProfile(id)))
       ])
     )
     this.preferences = { version: 1, customProfiles, globalDefaults, workspaceOverrides }
@@ -198,7 +227,7 @@ export class LaunchProfileManager {
       (profile) => profile.id !== 'dev-echo-adapter' && !eventsProfile(profile.id)
     )
     if (echoEnabled) customProfiles.push(DEV_ECHO_PROFILE)
-    customProfiles.push(...offeredChatProfiles())
+    customProfiles.push(...offeredChatProfiles(customProfiles))
     const resolved = resolveLaunchProfile(
       { ...this.preferences, customProfiles },
       family,
@@ -212,6 +241,8 @@ export class LaunchProfileManager {
     // default is the common case, and it is not passed an explicit id.
     const asked = this.requestedId(family, workspaceId, profileId)
     if (asked && resolved.id !== asked) {
+      if (chatProfileSource(asked))
+        throw new Error('Chat launch profile no longer exists or is unavailable')
       const refusal = unavailablePluginAdapter(asked)
       if (refusal) throw new Error(refusal)
     }

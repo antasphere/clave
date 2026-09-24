@@ -122,7 +122,16 @@ export async function run(t) {
     let launched = await launchApp(DIR, { env })
     app = launched.app
     let win = launched.win
-    await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'claude-chat'))
+    await win.evaluate(async (command) => {
+      await window.electronAPI.launchProfileUpsert({
+        id: 'restore-profile',
+        name: 'Restore profile',
+        family: 'claude',
+        command: [command],
+        additionalArgs: ['--profile', 'restored account']
+      })
+      await window.electronAPI.launchProfileSetGlobal('claude', 'chat:claude:restore-profile')
+    }, `${ROOT}/bin/claude`)
     await win.reload()
     await win.locator('.launcher-split .launcher-btn').waitFor()
     await win.click('.launcher-split .launcher-btn')
@@ -175,7 +184,7 @@ export async function run(t) {
       "launch 1: the record is the chat adapter's, carrying the tab's Claude session id",
       record?.adapterId === 'claude-chat' &&
         record?.transport === 'events' &&
-        record?.launchProfileId === 'claude-chat' &&
+        record?.launchProfileId === 'chat:claude:restore-profile' &&
         record?.claudeSessionId === claudeSessionId,
       record
     )
@@ -231,6 +240,11 @@ export async function run(t) {
     const resumed = launches().at(-1)
     if (resumed) pids.add(resumed.pid)
     t.check('launch 2: the restored tab started the CLI on its first message', !!started)
+    t.equal(
+      'launch 2: the saved launch profile arguments reach the restored process',
+      argAfter(resumed?.argv ?? [], '--profile'),
+      'restored account'
+    )
     t.check(
       'launch 2: the CLI was launched with --resume <claudeSessionId>',
       !!started && argAfter(resumed.argv, '--resume') === claudeSessionId,

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import type { LaunchProfile } from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
   type SessionInput,
@@ -243,6 +244,7 @@ export class CodexTranslator {
 
 interface HandleState {
   spec: SpawnSpec
+  profile?: LaunchProfile
   /** A model chosen after launch; every later turn/start carries it. */
   model?: string | null
   emitter: EventEmitter
@@ -259,24 +261,32 @@ export class CodexAdapter implements SessionAdapter {
   readonly provider = 'codex'
   readonly transports = ['events'] as const
   private handles = new Map<string, HandleState>()
+  private profiles = new Map<string, LaunchProfile>()
   constructor(
     private connect: (
       cwd: string,
-      callbacks: CodexCallbacks
+      callbacks: CodexCallbacks,
+      profile?: LaunchProfile
     ) => CodexConnection = spawnCodexAppServer
   ) {}
+
+  configure(id: string, profile: LaunchProfile): void {
+    this.profiles.set(id, structuredClone(profile))
+  }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
     if (this.handles.has(spec.id)) throw new Error(`Codex session already exists: ${spec.id}`)
     const emitter = new EventEmitter()
     const state: HandleState = {
       spec,
+      profile: this.profiles.get(spec.id),
       emitter,
       translator: new CodexTranslator((event) => emitter.emit('stream', { kind: 'event', event })),
       sending: false,
       ended: false,
       closing: false
     }
+    this.profiles.delete(spec.id)
     this.handles.set(spec.id, state)
     return { id: spec.id }
   }
@@ -401,27 +411,31 @@ export class CodexAdapter implements SessionAdapter {
       const permissionMode = text(options.permissionMode) || 'on-request'
       if (!['on-request', 'never'].includes(permissionMode))
         throw new Error(`Unsupported Codex permissionMode: ${permissionMode}`)
-      state.connection = this.connect(state.spec.cwd, {
-        notification: (frame) => {
-          if (!state.ended) state.translator.notification(frame)
+      state.connection = this.connect(
+        state.spec.cwd,
+        {
+          notification: (frame) => {
+            if (!state.ended) state.translator.notification(frame)
+          },
+          request: (frame) => {
+            if (!state.ended && !state.translator.request(frame))
+              state.connection!.reject(frame.id, `Unsupported request: ${frame.method}`)
+          },
+          error: (error) => this.error(state, error, true),
+          exit: (code, stderr) => {
+            if (code !== 0 && !state.closing)
+              this.error(
+                state,
+                new Error(
+                  `Codex app-server exited with code ${code}${stderr?.trim() ? `: ${stderr.trim()}` : ''}`
+                ),
+                true
+              )
+            this.finish(state, code)
+          }
         },
-        request: (frame) => {
-          if (!state.ended && !state.translator.request(frame))
-            state.connection!.reject(frame.id, `Unsupported request: ${frame.method}`)
-        },
-        error: (error) => this.error(state, error, true),
-        exit: (code, stderr) => {
-          if (code !== 0 && !state.closing)
-            this.error(
-              state,
-              new Error(
-                `Codex app-server exited with code ${code}${stderr?.trim() ? `: ${stderr.trim()}` : ''}`
-              ),
-              true
-            )
-          this.finish(state, code)
-        }
-      })
+        state.profile
+      )
       await state.connection.request('initialize', {
         clientInfo: { name: 'clave_chat', title: 'Clave', version: '1.0.0' }
       })

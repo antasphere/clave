@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { resolvePosixShellLaunch } from '../../shell-launch'
+import type { LaunchProfile } from '../../../shared/agent-launch'
 
 export type RpcId = number | string
 export interface RpcNotification {
@@ -188,17 +189,30 @@ export class CodexAppServer implements CodexConnection {
   }
 }
 
-export function spawnCodexAppServer(cwd: string, callbacks: CodexCallbacks): CodexConnection {
+export function spawnCodexAppServer(
+  cwd: string,
+  callbacks: CodexCallbacks,
+  profile?: LaunchProfile
+): CodexConnection {
+  const argv = [
+    ...(profile?.command ?? ['codex']),
+    ...(profile?.additionalArgs ?? []),
+    'app-server'
+  ]
+  const windowsDefault = process.platform === 'win32' && argv[0] === 'codex'
   const launch =
     process.platform === 'win32'
-      ? { file: 'codex.cmd', args: ['app-server'] }
-      : resolvePosixShellLaunch(process.env.SHELL || '/bin/zsh', 'exec codex app-server')
+      ? { file: windowsDefault ? 'codex.cmd' : argv[0], args: argv.slice(1) }
+      : resolvePosixShellLaunch(
+          process.env.SHELL || '/bin/zsh',
+          `exec ${argv.map((arg) => "'" + arg.replace(/'/g, "'\\''") + "'").join(' ')}`
+        )
   return new CodexAppServer(
     spawn(launch.file, launch.args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      shell: process.platform === 'win32'
+      shell: windowsDefault
     }),
     callbacks
   )

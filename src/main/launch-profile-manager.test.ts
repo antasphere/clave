@@ -26,6 +26,59 @@ function withManager(test: (manager: LaunchProfileManager, filePath: string) => 
 }
 
 describe('LaunchProfileManager', () => {
+  it.each(['claude', 'codex'] as const)(
+    'offers a %s chat variant using the saved command and arguments',
+    (family) => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(new EchoAdapter())
+      try {
+        Object.defineProperty(process, 'platform', { value: 'darwin' })
+        withManager((manager, filePath) => {
+          const profile = {
+            id: 'work',
+            name: 'Work',
+            family,
+            command: ['wrapper', 'arg with spaces', family],
+            additionalArgs: ['--profile', 'work']
+          }
+          manager.upsert(profile)
+          const id = `chat:${family}:work`
+          expect(manager.getPreferences().customProfiles).toContainEqual(
+            expect.objectContaining({
+              ...profile,
+              id,
+              name: 'Work (chat)',
+              sourceProfileId: 'work'
+            })
+          )
+          expect(manager.resolve(family, null, id).command).toEqual(profile.command)
+          expect(manager.resolve(family, null, id).additionalArgs).toEqual(profile.additionalArgs)
+          expect(eventsProfile(id)?.adapterId).toBe(`${family}-chat`)
+          expect(defaultViewFor(id)).toBe('clave.chat-view/chat')
+          manager.setGlobalDefault(family, id)
+          manager.setWorkspaceDefault('workspace', family, id)
+          const reloaded = new LaunchProfileManager(filePath)
+          expect(reloaded.resolve(family, 'workspace').id).toBe(id)
+          // A preferences round trip must not persist synthetic profile copies.
+          reloaded.replace(reloaded.getPreferences())
+          const stored = JSON.parse(fs.readFileSync(filePath, 'utf8')).customProfiles
+          expect(stored).toContainEqual(profile)
+          expect(stored.some((item: { id: string }) => item.id === id)).toBe(false)
+          expect(reloaded.resolve(family, 'workspace').id).toBe(id)
+          reloaded.upsert({ ...profile, command: ['updated', family] })
+          expect(reloaded.resolve(family, 'workspace').command).toEqual(['updated', family])
+          const preferences = reloaded.delete('work')
+          expect(preferences.globalDefaults[family]).toBeUndefined()
+          expect(preferences.workspaceOverrides.workspace[family]).toBeUndefined()
+          expect(() => reloaded.resolve(family, null, id)).toThrow(/no longer exists/)
+        })
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+        lookup.mockRestore()
+      }
+    }
+  )
+
   it('persists custom profiles with global and workspace defaults', () => {
     withManager((manager, filePath) => {
       manager.upsert({

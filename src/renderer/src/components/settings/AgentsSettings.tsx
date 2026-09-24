@@ -294,35 +294,37 @@ export function AgentsSettings(): React.JSX.Element {
                   />
                 </SettingsRow>
               )}
-              {profiles.map((profile) => (
-                <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
-                  <div className="min-w-0">
-                    <div className="settings-row-title truncate">{profile.name}</div>
-                    <div className="settings-row-description font-mono truncate">
-                      {profile.command.join(' ')}
+              {profiles
+                .filter((profile) => !profile.sourceProfileId)
+                .map((profile) => (
+                  <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
+                    <div className="min-w-0">
+                      <div className="settings-row-title truncate">{profile.name}</div>
+                      <div className="settings-row-description font-mono truncate">
+                        {profile.command.join(' ')}
+                      </div>
+                    </div>
+                    <div className="settings-row-controls">
+                      {profile.builtIn ? (
+                        <span className="badge badge-muted">Built in</span>
+                      ) : (
+                        <>
+                          <button className="btn-secondary" onClick={() => setEditing(profile)}>
+                            Edit
+                          </button>
+                          <button
+                            className="btn-icon btn-icon-sm btn-icon--danger"
+                            onClick={() => void deleteLaunchProfile(profile.id)}
+                            title="Delete profile"
+                            aria-label={`Delete profile ${profile.name}`}
+                          >
+                            <TrashIcon className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <div className="settings-row-controls">
-                    {profile.builtIn ? (
-                      <span className="badge badge-muted">Built in</span>
-                    ) : (
-                      <>
-                        <button className="btn-secondary" onClick={() => setEditing(profile)}>
-                          Edit
-                        </button>
-                        <button
-                          className="btn-icon btn-icon-sm btn-icon--danger"
-                          onClick={() => void deleteLaunchProfile(profile.id)}
-                          title="Delete profile"
-                          aria-label={`Delete profile ${profile.name}`}
-                        >
-                          <TrashIcon className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+                ))}
               <button
                 className="settings-row-action"
                 onClick={() =>
