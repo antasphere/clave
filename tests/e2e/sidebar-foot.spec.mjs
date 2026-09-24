@@ -18,11 +18,18 @@
  *    leaves the default palette, which is indistinguishable from a user who
  *    never chose one.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, until, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  until,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('sidebar-foot')
-const ROOT = '/tmp/clave-e2e-foot-root'
+const ROOT = fixturePath('foot-root')
 const WS = {
   id: 'ffffffff-0000-4000-8000-00000000000f',
   name: 'Foot',
@@ -32,22 +39,52 @@ const WS = {
 }
 
 /** Read a canvas back as a coarse signature: how many distinct colours it
- *  holds, and whether any pixel is opaque at all. A field that failed to paint
- *  scores 0 opaque pixels; a flat fill scores 1 colour. */
+ *  holds, whether any pixel is opaque at all, and a digest of the WHOLE
+ *  picture (every quantised colour it holds, plus its mean). A field that
+ *  failed to paint scores 0 opaque pixels; a flat fill scores 1 colour; two
+ *  paints of different palettes score different digests.
+ *
+ *  The digest is what the repaint check compares. It used to compare one
+ *  pixel, the top-left corner, and two palettes can legitimately paint that
+ *  corner the same: groundLift washes the app's own surface over the gradient
+ *  before the grain lands, so the corner is the ground's colour under both
+ *  (PRDCT-2622: {"before":"237,242,245","after":"237,242,245"} on a real
+ *  repaint). A whole-canvas digest cannot be fooled by a shared corner. */
 const CANVAS_STATS = (sel) => {
   const el = document.querySelector(sel)
   if (!el) return null
   const ctx = el.getContext('2d')
   const { width: w, height: h } = el
-  if (!w || !h) return { colours: 0, opaque: 0, w, h }
+  if (!w || !h) return { colours: 0, opaque: 0, w, h, digest: null }
   const d = ctx.getImageData(0, 0, w, h).data
   const seen = new Set()
   let opaque = 0
+  let r = 0
+  let g = 0
+  let b = 0
   for (let i = 0; i < d.length; i += 4) {
     if (d[i + 3] > 8) opaque++
     seen.add((d[i] >> 3) + ',' + (d[i + 1] >> 3) + ',' + (d[i + 2] >> 3))
+    r += d[i]
+    g += d[i + 1]
+    b += d[i + 2]
   }
-  return { colours: seen.size, opaque, w, h, sample: `${d[0]},${d[1]},${d[2]}` }
+  const px = d.length / 4
+  // FNV-1a over the sorted colour set and the mean: a short, stable digest.
+  let hash = 0x811c9dc5
+  const text =
+    [...seen].sort().join(';') +
+    '|' +
+    Math.round(r / px) +
+    ',' +
+    Math.round(g / px) +
+    ',' +
+    Math.round(b / px)
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return { colours: seen.size, opaque, w, h, digest: hash.toString(16).padStart(8, '0') }
 }
 
 export async function run(t) {
@@ -538,14 +575,55 @@ export async function run(t) {
     // The settings view replaces the sidebar, so the foot panel is out of the
     // DOM while the picker is open: the repaint is read on the profile card's
     // own avatar, which is the same component on the same store.
-    const AVATAR = '.settings-card canvas'
-    const before = await win.evaluate(CANVAS_STATS, AVATAR)
+    //
+    // Three ways this check used to be wrong, each fixed here (PRDCT-2622):
+    // a fixed 600 ms sleep (the field skips its paint while the canvas has no
+    // layout and repaints on the next resize, which can land after the sleep),
+    // one corner pixel (see CANVAS_STATS), and a missing or unsized canvas
+    // read as "no repaint" instead of as its own failure. Now: the canvas
+    // must be painted BEFORE the pick, the repaint is polled for up to five
+    // seconds, and the whole picture is what must change.
+    //
+    // And a fourth: '.settings-card canvas' matched the FIRST canvas in the
+    // card, which is the picker's first swatch (Glacier, in a .avatar-cell
+    // inside its button), not the avatar. The avatar is the one canvas in the
+    // card that sits in no swatch cell, so that is what is read; the count is
+    // asserted so a second such canvas cannot silently take its place.
+    const AVATAR = '.settings-card :not(.avatar-cell) > canvas'
+    t.equal(
+      'the card has exactly one avatar canvas outside the swatches',
+      await win.evaluate((sel) => document.querySelectorAll(sel).length, AVATAR),
+      1
+    )
+    const painted = (s) => !!s && s.w > 1 && s.h > 1 && s.opaque > 0 && !!s.digest
+    // The card's avatar mounts with the settings view and paints on its first
+    // layout, not on mount: read too early, it is a 300×150 default canvas with
+    // no opaque pixel, and the old check passed on exactly that (its "before"
+    // was the unpainted canvas, so any paint at all counted as a repaint).
+    const before = await until(
+      async () => {
+        const now = await win.evaluate(CANVAS_STATS, AVATAR)
+        return painted(now) ? now : null
+      },
+      { tries: 20, gapMs: 250 }
+    )
+    t.check(
+      'the avatar is painted before a palette is picked',
+      before !== null,
+      before ?? (await win.evaluate(CANVAS_STATS, AVATAR))
+    )
     await win.click('button[title="Aurora"]')
-    await new Promise((r) => setTimeout(r, 600))
-    const after = await win.evaluate(CANVAS_STATS, AVATAR)
-    t.check('picking a palette repaints the avatar', before?.sample !== after?.sample, {
-      before: before?.sample,
-      after: after?.sample
+    const after = await until(
+      async () => {
+        const now = await win.evaluate(CANVAS_STATS, AVATAR)
+        return painted(now) && now.digest !== before?.digest ? now : null
+      },
+      { tries: 20, gapMs: 250 }
+    )
+    t.check('picking a palette repaints the avatar', before !== null && after !== null, {
+      before,
+      // On failure, what the canvas held when the deadline passed.
+      after: after ?? (await win.evaluate(CANVAS_STATS, AVATAR))
     })
     t.equal(
       'and the choice is saved',
@@ -558,11 +636,17 @@ export async function run(t) {
       () => JSON.parse(localStorage.getItem('clave-user-profile') ?? '{}').avatarSeed
     )
     await win.click('button[title="Draw the field again"]')
-    await new Promise((r) => setTimeout(r, 600))
-    const seedAfter = await win.evaluate(
-      () => JSON.parse(localStorage.getItem('clave-user-profile') ?? '{}').avatarSeed
+    // Polled, not slept: the same fixed-wait class as the repaint above.
+    const seedAfter = await until(
+      async () => {
+        const seed = await win.evaluate(
+          () => JSON.parse(localStorage.getItem('clave-user-profile') ?? '{}').avatarSeed
+        )
+        return seed !== seedBefore ? seed : null
+      },
+      { tries: 20, gapMs: 250 }
     )
-    t.check('redrawing draws a different field', seedBefore !== seedAfter, {
+    t.check('redrawing draws a different field', seedAfter !== null && seedBefore !== seedAfter, {
       seedBefore,
       seedAfter
     })
