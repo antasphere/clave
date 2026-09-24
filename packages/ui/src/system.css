@@ -1390,6 +1390,9 @@ body,
   .group-switcher-wrap {
     transition: none;
   }
+  .chat-prompt-page {
+    animation: scrim-in 100ms ease-out;
+  }
 }
 
 /* ── Buttons ── */
@@ -3087,6 +3090,30 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-title {
   color: var(--text-primary);
   font-weight: 500;
+}
+/* One question's page. Each step comes in from the right, the swipe that
+   carries the reader through the questions; Back reverses it. Small enough
+   to be felt rather than watched. */
+@keyframes chat-prompt-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--spacing) * 3));
+  }
+}
+@keyframes chat-prompt-page-back {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--spacing) * -3));
+  }
+}
+.chat-prompt-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  animation: chat-prompt-page-in 180ms var(--ease-out-expo);
+}
+.chat-prompt-page[data-direction='back'] {
+  animation-name: chat-prompt-page-back;
 }
 .chat-prompt-target {
   margin-top: calc(var(--spacing) * -1);

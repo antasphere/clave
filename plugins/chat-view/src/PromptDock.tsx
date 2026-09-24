@@ -211,6 +211,8 @@ function QuestionPrompt({
     { question: request.description, options: request.options.map((o) => ({ label: o.label })) }
   ]
   const [step, setStep] = useState(0)
+  // Which way the page came in: forward swipes from the right, Back from the left.
+  const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [replies, setReplies] = useState<Record<number, Reply>>({})
   const otherInput = useRef<HTMLInputElement>(null)
   const question = questions[step]
@@ -219,31 +221,48 @@ function QuestionPrompt({
   const answered = replyText(reply) !== ''
   const skip = request.options.find((o) => isDeny(o.id))
   const set = (next: Reply): void => setReplies((all) => ({ ...all, [step]: next }))
-  const pick = (label: string): void =>
-    set(
-      question.multiSelect
-        ? {
-            ...reply,
-            picked: reply.picked.includes(label)
-              ? reply.picked.filter((l) => l !== label)
-              : [...reply.picked, label]
-          }
-        : { picked: [label], other: null }
-    )
-  const submit = (): void => {
-    if (busy || !answered) return
-    if (!last) return setStep(step + 1)
+  /** Move on with the replies given: the next question, or the answer itself
+   *  on the last one. Takes the replies as an argument because a single choice
+   *  moves on in the same click that picks it, before state has caught up. */
+  const advance = (all: Record<number, Reply>): void => {
+    if (busy || replyText(all[step]) === '') return
+    if (!last) {
+      setDirection('forward')
+      setStep(step + 1)
+      return
+    }
     if (!structured) {
-      const option = request.options.find((o) => o.label === reply.picked[0])
+      const option = request.options.find((o) => o.label === all[step]?.picked[0])
       if (option) onAnswer(request.id, option.id)
       return
     }
     const answers: Record<string, string> = {}
     questions.forEach((q, i) => {
-      const text = replyText(replies[i])
+      const text = replyText(all[i])
       if (text) answers[q.question] = text
     })
     onAnswer(request.id, 'answer', answers)
+  }
+  const submit = (): void => advance(replies)
+  /* A multi-select toggles and waits for Next; a single choice IS the answer,
+     so picking it moves on at once — no second click on Submit. */
+  const pick = (label: string): void => {
+    if (question.multiSelect) {
+      set({
+        ...reply,
+        picked: reply.picked.includes(label)
+          ? reply.picked.filter((l) => l !== label)
+          : [...reply.picked, label]
+      })
+      return
+    }
+    const next = { ...replies, [step]: { picked: [label], other: null } }
+    setReplies(next)
+    advance(next)
+  }
+  const back = (): void => {
+    setDirection('back')
+    setStep(step - 1)
   }
   const choices = question.options.length
   const body = useFocusOnArrival()
@@ -278,88 +297,85 @@ function QuestionPrompt({
         }
       }}
     >
-      <div className="chat-prompt-head">
-        {questions.length > 1 && (
-          <span className="chat-prompt-step">
-            {step + 1}/{questions.length}
-          </span>
-        )}
-        <span className="chat-prompt-title">{question.question}</span>
-        {skip && (
-          <button
-            type="button"
-            className="chat-turn-copy"
-            aria-label="Skip the question"
-            title="Skip (Esc)"
-            disabled={busy}
-            onClick={() => onAnswer(request.id, skip.id)}
-          >
-            <XMarkIcon />
-          </button>
-        )}
-      </div>
-      <div
-        className="chat-prompt-options"
-        role={question.multiSelect ? 'group' : 'radiogroup'}
-        aria-label={question.header ?? question.question}
-      >
-        {question.options.map((option, index) => {
-          const selected = reply.picked.includes(option.label)
-          return (
+      <div key={step} className="chat-prompt-page" data-direction={direction}>
+        <div className="chat-prompt-head">
+          {questions.length > 1 && (
+            <span className="chat-prompt-step">
+              {step + 1}/{questions.length}
+            </span>
+          )}
+          <span className="chat-prompt-title">{question.question}</span>
+          {skip && (
             <button
-              key={option.label}
               type="button"
-              role={question.multiSelect ? 'checkbox' : 'radio'}
-              aria-checked={selected}
-              className="chat-prompt-option"
-              data-selected={selected ? 'true' : undefined}
+              className="chat-turn-copy"
+              aria-label="Skip the question"
+              title="Skip (Esc)"
               disabled={busy}
-              onClick={() => pick(option.label)}
+              onClick={() => onAnswer(request.id, skip.id)}
+            >
+              <XMarkIcon />
+            </button>
+          )}
+        </div>
+        <div
+          className="chat-prompt-options"
+          role={question.multiSelect ? 'group' : 'radiogroup'}
+          aria-label={question.header ?? question.question}
+        >
+          {question.options.map((option, index) => {
+            const selected = reply.picked.includes(option.label)
+            return (
+              <button
+                key={option.label}
+                type="button"
+                role={question.multiSelect ? 'checkbox' : 'radio'}
+                aria-checked={selected}
+                className="chat-prompt-option"
+                data-selected={selected ? 'true' : undefined}
+                disabled={busy}
+                onClick={() => pick(option.label)}
+              >
+                <span className="chat-prompt-option-text">
+                  <span className="chat-prompt-option-label">{option.label}</span>
+                  {option.description && (
+                    <span className="chat-prompt-option-hint">{option.description}</span>
+                  )}
+                </span>
+                {selected ? <CheckIcon className="chat-prompt-check" /> : <Key>{index + 1}</Key>}
+              </button>
+            )
+          })}
+          {structured && (
+            <label
+              className="chat-prompt-option"
+              data-selected={reply.other?.trim() ? 'true' : undefined}
             >
               <span className="chat-prompt-option-text">
-                <span className="chat-prompt-option-label">{option.label}</span>
-                {option.description && (
-                  <span className="chat-prompt-option-hint">{option.description}</span>
-                )}
+                <span className="chat-prompt-option-label">Other</span>
+                <input
+                  ref={otherInput}
+                  className="chat-prompt-other"
+                  placeholder="Type your own answer"
+                  value={reply.other ?? ''}
+                  disabled={busy}
+                  onChange={(event) =>
+                    set({
+                      picked: question.multiSelect ? reply.picked : [],
+                      other: event.target.value
+                    })
+                  }
+                />
               </span>
-              {selected ? <CheckIcon className="chat-prompt-check" /> : <Key>{index + 1}</Key>}
-            </button>
-          )
-        })}
-        {structured && (
-          <label
-            className="chat-prompt-option"
-            data-selected={reply.other?.trim() ? 'true' : undefined}
-          >
-            <span className="chat-prompt-option-text">
-              <span className="chat-prompt-option-label">Other</span>
-              <input
-                ref={otherInput}
-                className="chat-prompt-other"
-                placeholder="Type your own answer"
-                value={reply.other ?? ''}
-                disabled={busy}
-                onChange={(event) =>
-                  set({
-                    picked: question.multiSelect ? reply.picked : [],
-                    other: event.target.value
-                  })
-                }
-              />
-            </span>
-            <Key>{choices + 1}</Key>
-          </label>
-        )}
+              <Key>{choices + 1}</Key>
+            </label>
+          )}
+        </div>
       </div>
       <div className="chat-prompt-actions">
         <span className="chat-prompt-spacer" />
         {step > 0 && (
-          <button
-            type="button"
-            className="chat-prompt-btn"
-            disabled={busy}
-            onClick={() => setStep(step - 1)}
-          >
+          <button type="button" className="chat-prompt-btn" disabled={busy} onClick={back}>
             Back
           </button>
         )}

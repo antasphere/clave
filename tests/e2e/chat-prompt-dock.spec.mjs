@@ -61,18 +61,26 @@ export async function run(t) {
     assert.equal(await view.getByRole('button', { name: /Allow/ }).count(), 0)
     const next = dock.getByRole('button', { name: 'Next', exact: true })
     assert.equal(await next.isDisabled(), true, 'nothing chosen, nothing to send')
+    // A single choice is the answer: one click moves on, no Next to press.
     await dock.getByRole('radio', { name: /Draft only/ }).click()
+    await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
+    // The page that came in is the one that swipes, from the right.
+    assert.equal(await dock.locator('.chat-prompt-page').getAttribute('data-direction'), 'forward')
+    // Back keeps the choice and reverses the swipe; the choice again moves on.
+    await dock.getByRole('button', { name: 'Back', exact: true }).click()
+    await dock.locator('.chat-prompt-step').filter({ hasText: '1/2' }).waitFor()
+    assert.equal(await dock.locator('.chat-prompt-page').getAttribute('data-direction'), 'back')
     assert.equal(
       await dock.getByRole('radio', { name: /Draft only/ }).getAttribute('aria-checked'),
       'true'
     )
-    await next.click()
-    t.check('a question docks with its options and needs a choice before it moves on', true)
+    await dock.getByRole('radio', { name: /Draft only/ }).click()
+    t.check('a question docks with its options and one choice moves it on at once', true)
 
     // The second question is multi-select, answered by digit keys and own words.
     await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
     await dock.getByRole('checkbox', { name: /Romain/ }).waitFor()
-    // The first question's Next kept focus in the dock, so a digit picks at once.
+    // Moving on kept focus in the dock, so a digit picks at once.
     await win.keyboard.press('2')
     assert.ok(
       await until(
