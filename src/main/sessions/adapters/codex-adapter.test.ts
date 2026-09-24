@@ -162,6 +162,38 @@ function fake(): {
   return { adapter: new CodexAdapter(connect), connection, connect, callback: () => callbacks }
 }
 describe('Codex adapter lifecycle', () => {
+  it('sends attached images as image input items and streams the message without them', async () => {
+    const { adapter, connection } = fake()
+    expect(adapter.images).toBe(true)
+    const handle = await adapter.spawn(spec)
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (e) => events.push(e))
+    const shot = {
+      id: 'shot',
+      path: '/pictures/shot.png',
+      name: 'shot.png',
+      mimeType: 'image/png',
+      size: 3,
+      delivery: 'image' as const
+    }
+    adapter.write(handle, {
+      type: 'user_message',
+      text: '',
+      attachments: [shot],
+      prepared: { text: '', images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AQID' }] }
+    })
+    await tick()
+    expect(connection.request).toHaveBeenCalledWith('turn/start', {
+      threadId: 'thread',
+      input: [{ type: 'image', url: 'data:image/png;base64,AQID' }]
+    })
+    expect(events[0]).toEqual({
+      kind: 'event',
+      event: { type: 'user_message', text: '', attachments: [shot] }
+    })
+    expect(JSON.stringify(events)).not.toContain('AQID')
+    await adapter.kill(handle)
+  })
   it('keeps each configured launch profile through deferred startup', async () => {
     const { adapter, connect } = fake()
     const profile = {

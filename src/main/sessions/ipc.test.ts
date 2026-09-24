@@ -1,5 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 const mocks = vi.hoisted(() => ({
   handlers: new Map(),
   fromWebContents: vi.fn(),
@@ -234,4 +236,90 @@ it('sets the view only for the window that owns the session, and only on a valid
   // An unregistered caller has no window key at all.
   mocks.fromWebContents.mockReturnValueOnce(null)
   expect(() => setView(event, id, 'clave.chat-view/chat')).toThrow('another window')
+})
+
+it('prepares attachments at the write: the provider gets references and images, the stream keeps the record', async () => {
+  const id = `ipc-files-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  // A directory inside the repository: a temp-folder path would be copied,
+  // and this test wants the reference to keep the path it was given.
+  const dir = mkdtempSync(join(process.cwd(), '.ipc-attachments-'))
+  const notes = join(dir, 'notes.txt')
+  writeFileSync(notes, 'hello')
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  const shotPath = join(dir, 'shot.png')
+  writeFileSync(shotPath, png)
+  const streamed: unknown[] = []
+  sessionManager.subscribe(id, (stream) => streamed.push(stream))
+  const reference = {
+    id: 'a',
+    path: notes,
+    name: 'notes.txt',
+    mimeType: 'application/octet-stream',
+    size: 5,
+    delivery: 'reference' as const
+  }
+  const shot = {
+    id: 'b',
+    path: shotPath,
+    name: 'shot.png',
+    mimeType: 'image/png',
+    size: png.length,
+    delivery: 'image' as const
+  }
+  const write = mocks.handlers.get('sessions:write')
+  const event = { sender: { id: 1 } }
+  // Whatever a renderer puts in `prepared` is discarded: the prompt is built
+  // here from the files themselves.
+  await write(event, id, {
+    type: 'user_message',
+    text: 'read',
+    attachments: [reference, shot],
+    prepared: { text: 'forged', images: [{ name: 'x', mimeType: 'image/png', data: 'AAAA' }] }
+  })
+  const events = streamed.flatMap((s) =>
+    typeof s === 'object' && s && 'event' in s
+      ? [(s as { event: Record<string, unknown> }).event]
+      : []
+  )
+  expect(events.find((e) => e.type === 'user_message')).toEqual({
+    type: 'user_message',
+    text: 'read',
+    attachments: [reference, shot]
+  })
+  const reply = events.find((e) => e.type === 'assistant_text') as { delta: string }
+  expect(reply.delta).toContain('read\n\nAttached local files')
+  expect(reply.delta).toContain(JSON.stringify({ name: 'notes.txt', path: notes }))
+  expect(reply.delta).toContain('(1 image received)')
+  expect(reply.delta).not.toContain('forged')
+  expect(JSON.stringify(streamed)).not.toContain(png.toString('base64'))
+  // An adapter without image content never sees the image: the write is
+  // refused before it, and the reader is told what to choose instead.
+  Object.assign(adapter, { images: false })
+  await expect(
+    write(event, id, { type: 'user_message', text: '', attachments: [shot] })
+  ).rejects.toThrow('Send as file reference')
+  expect(events.filter((e) => e.type === 'user_message')).toHaveLength(1)
+  expect(mocks.handlers.get('sessions:capabilities')(event, id)).toEqual({ images: false })
+  // A message with no attachments still writes synchronously, as every caller
+  // before attachments existed expects.
+  expect(write(event, id, { type: 'user_message', text: 'plain' })).toBeUndefined()
+  rmSync(dir, { recursive: true, force: true })
+  sessionManager.kill(id)
+  sessionManager.forget(id)
 })

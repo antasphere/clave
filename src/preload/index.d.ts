@@ -6,6 +6,7 @@ import type {
   ModelOption,
   CommandOption
 } from '../shared/session-model'
+import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
 export interface SessionIPC {
@@ -13,6 +14,7 @@ export interface SessionIPC {
   'sessions:subscribe': { args: [sessionId: string]; result: Session }
   'sessions:unsubscribe': { args: [sessionId: string]; result: void }
   'sessions:write': { args: [sessionId: string, input: Uint8Array | SessionInput]; result: void }
+  'sessions:capabilities': { args: [sessionId: string]; result: { images: boolean } }
 }
 export interface SessionIPCEvents {
   [channel: `sessions:stream:${string}`]: SessionStream
@@ -515,6 +517,13 @@ export interface ElectronAPI {
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
+  sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
+  sessionsFiles: {
+    prepare(sessionId: string, source: AttachmentSource): Promise<Attachment>
+    pick(): Promise<string[]>
+    preview(file: Attachment): Promise<AttachmentPreview>
+    open(file: Attachment): Promise<void>
+  }
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
 

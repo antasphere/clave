@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { StringDecoder } from 'node:string_decoder'
 import type { SessionAdapter, SessionAdapterEvents, SessionHandle, SpawnSpec } from '../adapter'
-import type { UserMessage } from '../../../shared/session-model'
+import { providerPrompt, type UserMessageInput } from '../../../shared/session-model'
 import { ptyBackend, type PtySpawnOptions, type PtySession } from './pty-backend'
 
 /** The existing launch-profile / tmux engine, with a multicast stream boundary.
@@ -60,11 +60,11 @@ export class PtyAdapter implements SessionAdapter {
     return session
   }
 
-  write(handle: SessionHandle, input: Uint8Array | UserMessage): void {
+  write(handle: SessionHandle, input: Uint8Array | UserMessageInput): void {
     const text =
       input instanceof Uint8Array
         ? (this.decoders.get(handle.id)?.write(Buffer.from(input)) ?? '')
-        : input.text + '\r'
+        : providerPrompt(input).text + '\r'
     if (text) ptyBackend.write(handle.id, text)
   }
 

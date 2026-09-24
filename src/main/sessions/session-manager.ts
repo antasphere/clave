@@ -148,6 +148,11 @@ export class SessionManager {
     const entry = this.require(id)
     return entry.adapter.models ? entry.adapter.models(entry.handle) : []
   }
+  /** What the session's adapter can take beyond text. */
+  capabilities(id: string): { images: boolean } {
+    const entry = this.require(id)
+    return { images: entry.adapter.images === true }
+  }
   async commands(id: string): Promise<CommandOption[]> {
     const entry = this.require(id)
     return entry.adapter.commands ? entry.adapter.commands(entry.handle) : []

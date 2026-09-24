@@ -31,7 +31,12 @@ function reduceLog(events: LoggedEvent[], initialState: Conversation['state']): 
 function lineOf(entry: Exclude<Block, { kind: 'tool-group' }>): { role: string; text: string } {
   switch (entry.kind) {
     case 'user':
-      return { role: 'You', text: entry.text }
+      return {
+        role: 'You',
+        text: entry.attachments?.length
+          ? `${entry.text} [${entry.attachments.map((f) => f.name).join(', ')}]`.trim()
+          : entry.text
+      }
     case 'assistant':
       return { role: 'Agent', text: entry.text }
     case 'permission':

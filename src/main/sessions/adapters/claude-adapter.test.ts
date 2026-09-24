@@ -876,3 +876,69 @@ it('offers the host /resume before the commands the CLI lists at initialize', as
   child.emit('close', 0)
   await adapter.kill(handle)
 })
+
+it('sends attached images as content blocks and streams the message without them', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  expect(adapter.images).toBe(true)
+  const handle = await adapter.spawn(spec)
+  const streamed: SessionEvent[] = []
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') streamed.push(s.event)
+  })
+  const shot = {
+    id: 'shot',
+    path: '/pictures/shot.png',
+    name: 'shot.png',
+    mimeType: 'image/png',
+    size: 3,
+    delivery: 'image' as const
+  }
+  adapter.write(handle, {
+    type: 'user_message',
+    text: 'What is this?',
+    attachments: [shot],
+    prepared: {
+      text: 'What is this?',
+      images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AQID' }]
+    }
+  })
+  const input = JSON.parse(child.stdin.read().toString().trim())
+  expect(input).toEqual({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'What is this?' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } }
+      ]
+    }
+  })
+  expect(streamed.find((e) => e.type === 'user_message')).toEqual({
+    type: 'user_message',
+    text: 'What is this?',
+    attachments: [shot]
+  })
+  expect(JSON.stringify(streamed)).not.toContain('AQID')
+  // References travel inside the prepared text, as a plain string prompt.
+  adapter.write(handle, {
+    type: 'user_message',
+    text: 'read it',
+    attachments: [{ ...shot, delivery: 'reference' }],
+    prepared: {
+      text: 'read it\n\nAttached local files:\n{"path":"/pictures/shot.png"}',
+      images: []
+    }
+  })
+  expect(JSON.parse(child.stdin.read().toString().trim()).message.content).toBe(
+    'read it\n\nAttached local files:\n{"path":"/pictures/shot.png"}'
+  )
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})

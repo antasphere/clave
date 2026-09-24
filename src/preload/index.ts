@@ -6,6 +6,7 @@ import type {
   ModelOption,
   CommandOption
 } from '../shared/session-model'
+import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
@@ -56,6 +57,19 @@ const electronAPI = {
   sessionsModels: (id: string): Promise<ModelOption[]> => ipcRenderer.invoke('sessions:models', id),
   sessionsCommands: (id: string): Promise<CommandOption[]> =>
     ipcRenderer.invoke('sessions:commands', id),
+  sessionsCapabilities: (id: string): Promise<{ images: boolean }> =>
+    ipcRenderer.invoke('sessions:capabilities', id),
+  // The composer's files: prepared into a session's attachment records here,
+  // read again in main when the message is sent.
+  sessionsFiles: {
+    prepare: (sessionId: string, source: AttachmentSource): Promise<Attachment> =>
+      ipcRenderer.invoke('sessions:files', { type: 'prepare', sessionId, source }),
+    pick: (): Promise<string[]> => ipcRenderer.invoke('sessions:files', { type: 'pick' }),
+    preview: (file: Attachment): Promise<AttachmentPreview> =>
+      ipcRenderer.invoke('sessions:files', { type: 'preview', file }),
+    open: (file: Attachment): Promise<void> =>
+      ipcRenderer.invoke('sessions:files', { type: 'open', file })
+  },
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
     createIpcListener(`sessions:stream:${id}`, callback),
   onSessionStreamExit: (id: string, callback: (code: number) => void) =>

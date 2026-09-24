@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import {
   SessionInputSchema,
+  userMessageEvent,
+  providerPrompt,
   type CommandOption,
   type ModelOption,
   type SessionInput
@@ -28,6 +30,7 @@ export class EchoAdapter implements SessionAdapter {
   readonly id = 'echo'
   readonly provider = 'echo'
   readonly transports = ['events'] as const
+  readonly images = true
   private handles = new Map<string, EventEmitter>()
   private sequence = 0
 
@@ -75,17 +78,25 @@ export class EchoAdapter implements SessionAdapter {
       emitter.emit('stream', { kind: 'event', event })
     }
     if (value.type === 'set_model') {
-      emit({ type: 'session_meta', model: value.model ?? ECHO_MODELS[0].id, providerSessionId: null })
+      emit({
+        type: 'session_meta',
+        model: value.model ?? ECHO_MODELS[0].id,
+        providerSessionId: null
+      })
       return
     }
     if (value.type !== 'user_message') return
-    const message = value
+    const message = userMessageEvent(value)
     emit(message)
     emitter.emit('state', 'working')
-    emit({ type: 'assistant_text', delta: message.text, final: true })
+    const prompt = providerPrompt(value)
+    const reply = prompt.images.length
+      ? `${prompt.text}\n(${prompt.images.length} image${prompt.images.length === 1 ? '' : 's'} received)`
+      : prompt.text
+    emit({ type: 'assistant_text', delta: reply, final: true })
     const id = `${handle.id}:echo:${++this.sequence}`
-    emit({ type: 'tool_call', id, name: 'echo', input: { text: message.text } })
-    emit({ type: 'tool_result', id, output: message.text })
+    emit({ type: 'tool_call', id, name: 'echo', input: { text: prompt.text } })
+    emit({ type: 'tool_result', id, output: prompt.text })
     emitter.emit('state', 'done')
   }
 

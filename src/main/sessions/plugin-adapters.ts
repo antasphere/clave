@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import {
   SessionEventSchema,
   SessionInputSchema,
+  providerPrompt,
   type CommandOption,
   type ModelOption,
   type SessionEvent,
@@ -203,7 +204,7 @@ class PluginSessionAdapter implements SessionAdapter {
     if (!instance) throw new Error(`${this.id} has not started`)
     switch (value.type) {
       case 'user_message':
-        this.call(live, () => instance.send(value.text))
+        this.call(live, () => instance.send(providerPrompt(value).text))
         return
       case 'interrupt':
         this.call(live, () => instance.interrupt())

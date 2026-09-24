@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { sessionManager } from './session-manager'
 import { SessionInputSchema } from '../../shared/session-model'
+import { preparePrompt } from './attachments'
 import { windowRegistry } from '../window-registry'
 
 let registered = false
@@ -88,7 +89,26 @@ export function registerSessionIpc(): void {
     const key = win && windowRegistry.getKeyForWindow(win.id)
     if (!key || sessionManager.get(id)?.windowKey !== key)
       throw new Error('Session belongs to another window')
-    sessionManager.write(id, input instanceof Uint8Array ? input : SessionInputSchema.parse(input))
+    if (input instanceof Uint8Array) return sessionManager.write(id, input)
+    const value = SessionInputSchema.parse(input)
+    if (value.type !== 'user_message') return sessionManager.write(id, value)
+    // A user message's prepared prompt is main's to build, from the attachment
+    // records and the files they name, never the renderer's to supply: the
+    // files are read here, at send time, against the adapter's capabilities,
+    // and a failure rejects the write so the composer keeps its draft.
+    const attachments = value.attachments?.length ? value.attachments : undefined
+    if (!attachments) return sessionManager.write(id, { type: 'user_message', text: value.text })
+    return preparePrompt(value.text, attachments, sessionManager.capabilities(id).images).then(
+      (prepared) =>
+        sessionManager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
+    )
+  })
+  ipcMain.handle('sessions:capabilities', (event, id: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const key = win && windowRegistry.getKeyForWindow(win.id)
+    if (!key || sessionManager.get(id)?.windowKey !== key)
+      throw new Error('Session belongs to another window')
+    return sessionManager.capabilities(id)
   })
   ipcMain.handle('sessions:models', (event, id: string) => {
     const win = BrowserWindow.fromWebContents(event.sender)

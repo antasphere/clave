@@ -16,6 +16,7 @@ import { registerAgentHandlers } from './agent-handlers'
 import { registerClaveFileHandlers } from './clave-file-handlers'
 import { registerSessionExportHandlers } from './session-export-handlers'
 import { registerDroppedFileHandlers } from './dropped-file-handlers'
+import { registerAttachmentHandlers } from './attachment-handlers'
 import { registerSidebarLayoutHandlers } from './sidebar-layout-handlers'
 import { registerSecretHandlers } from './secret-handlers'
 import { registerCopyOfferHandlers } from './copy-offer-handlers'
@@ -48,6 +49,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerClaveFileHandlers()
   registerSessionExportHandlers()
   registerDroppedFileHandlers()
+  registerAttachmentHandlers()
   registerSidebarLayoutHandlers()
   registerSecretHandlers()
   registerCopyOfferHandlers()

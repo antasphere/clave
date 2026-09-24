@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events'
 import type { LaunchProfile } from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
+  userMessageEvent,
+  providerPrompt,
+  type PreparedPrompt,
   type SessionInput,
   type SessionEvent,
   type ModelOption,
@@ -260,6 +263,7 @@ export class CodexAdapter implements SessionAdapter {
   readonly id = 'codex-chat'
   readonly provider = 'codex'
   readonly transports = ['events'] as const
+  readonly images = true
   private handles = new Map<string, HandleState>()
   private profiles = new Map<string, LaunchProfile>()
   constructor(
@@ -327,8 +331,8 @@ export class CodexAdapter implements SessionAdapter {
     if (state.sending || state.translator.turnId)
       throw new Error('Codex already has an active turn')
     state.sending = true
-    state.emitter.emit('stream', { kind: 'event', event: value })
-    state.turnRequest = this.sendTurn(state, value.text)
+    state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
+    state.turnRequest = this.sendTurn(state, providerPrompt(value))
       .catch((error) => this.error(state, error, !state.translator.threadId))
       .finally(() => {
         state.sending = false
@@ -388,12 +392,20 @@ export class CodexAdapter implements SessionAdapter {
       })
     })
   }
-  private async sendTurn(state: HandleState, message: string): Promise<void> {
+  private async sendTurn(state: HandleState, prompt: PreparedPrompt): Promise<void> {
     await this.start(state)
     if (state.ended) return
+    // Images are input items of their own, as a data URL, the way the
+    // app-server's turn/start takes them.
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
-      input: [{ type: 'text', text: message, text_elements: [] }],
+      input: [
+        ...(prompt.text ? [{ type: 'text', text: prompt.text, text_elements: [] }] : []),
+        ...prompt.images.map((image) => ({
+          type: 'image',
+          url: `data:${image.mimeType};base64,${image.data}`
+        }))
+      ],
       ...(state.model ? { model: state.model } : {})
     })
     const turn = object(object(result).turn)

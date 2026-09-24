@@ -24,6 +24,9 @@ export interface SessionAdapter {
   readonly id: string
   readonly provider: string
   readonly transports: readonly Transport[]
+  /** True when the adapter hands the provider image content directly; absent
+   *  or false, an attached image can only go as a file reference. */
+  readonly images?: boolean
   spawn(spec: SpawnSpec): Promise<SessionHandle>
   attach(sessionId: string): Promise<SessionHandle>
   /** Called after consumer listeners are bound; completed once, retried if it throws. */

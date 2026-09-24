@@ -54,6 +54,30 @@ describe('conversation stream', () => {
     expect(reduceConversation(state, { exit: 7 })).toMatchObject({ state: 'ended', exitCode: 7 })
     expect(run([{ type: 'error', message: 'fatal', fatal: true }]).state).toBe('ended')
   })
+  it('keeps what a user message attached, and adds nothing to one that attached nothing', () => {
+    const shot = {
+      id: 'shot',
+      path: '/pictures/shot.png',
+      name: 'shot.png',
+      mimeType: 'image/png',
+      size: 3,
+      delivery: 'image' as const
+    }
+    const state = run([
+      { type: 'user_message', text: '', attachments: [shot] },
+      { type: 'user_message', text: 'plain' },
+      { type: 'user_message', text: 'empty list', attachments: [] }
+    ])
+    expect(state.entries[0]).toEqual({
+      kind: 'user',
+      text: '',
+      final: true,
+      at: 1,
+      attachments: [shot]
+    })
+    expect(state.entries[1]).toEqual({ kind: 'user', text: 'plain', final: true, at: 1 })
+    expect('attachments' in state.entries[2]).toBe(false)
+  })
   it('marks a request answered elsewhere when the kernel leaves blocked without this view', () => {
     const request = {
       type: 'permission_request' as const,

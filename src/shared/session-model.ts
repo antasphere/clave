@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AttachmentsSchema, ProviderImageSchema } from './attachments'
 
 export const AgentStateSchema = z.enum(['idle', 'working', 'blocked', 'done', 'ended'])
 export type AgentState = z.infer<typeof AgentStateSchema>
@@ -23,8 +24,43 @@ export const SessionSchema = z.object({
 })
 export type Session = z.infer<typeof SessionSchema>
 
-export const UserMessageSchema = z.object({ type: z.literal('user_message'), text: z.string() })
+export const UserMessageSchema = z.object({
+  type: z.literal('user_message'),
+  text: z.string(),
+  /** The files the reader attached, as the transcript shows them: names,
+   *  paths and how each was delivered — never their bytes. */
+  attachments: AttachmentsSchema.optional()
+})
 export type UserMessage = z.infer<typeof UserMessageSchema>
+/** What the provider is handed once main has prepared the attachments: the
+ *  text with the file references appended, and the images as base64. Main's
+ *  own — the session IPC discards whatever a renderer puts here and prepares
+ *  from the attachments itself, so a renderer cannot send a byte it did not
+ *  first attach by path. Absent, the provider gets the text as written. */
+export const PreparedPromptSchema = z.object({
+  text: z.string(),
+  images: z.array(ProviderImageSchema)
+})
+export type PreparedPrompt = z.infer<typeof PreparedPromptSchema>
+export const UserMessageInputSchema = UserMessageSchema.extend({
+  prepared: PreparedPromptSchema.optional()
+})
+export type UserMessageInput = z.infer<typeof UserMessageInputSchema>
+/** The event a user message becomes on the stream: the message as written,
+ *  without the prepared prompt — the transcript shows what the reader said and
+ *  attached, and base64 image payloads have no place in a renderer's log. */
+export function userMessageEvent(input: UserMessageInput): UserMessage {
+  return {
+    type: 'user_message',
+    text: input.text,
+    ...(input.attachments?.length ? { attachments: input.attachments } : {})
+  }
+}
+/** What the provider receives for a user message: the prepared prompt when
+ *  main built one, else the text as written. */
+export function providerPrompt(input: UserMessageInput): PreparedPrompt {
+  return input.prepared ?? { text: input.text, images: [] }
+}
 export const PermissionResponseSchema = z.object({
   type: z.literal('permission_response'),
   id: z.string(),
@@ -49,7 +85,7 @@ export const AgentQuestionSchema = z.object({
 })
 export type AgentQuestion = z.infer<typeof AgentQuestionSchema>
 export const SessionInputSchema = z.discriminatedUnion('type', [
-  UserMessageSchema,
+  UserMessageInputSchema,
   PermissionResponseSchema,
   InterruptSchema,
   SetModelSchema

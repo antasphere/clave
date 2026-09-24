@@ -38,6 +38,35 @@ write. Listener exceptions are isolated so a failed consumer cannot interrupt
 another view or process cleanup. `forget` removes the registry entry after a
 compatibility close or detach, allowing the same id to be adopted in a new window.
 
+## Attachments
+
+A `user_message` may carry `attachments`: records (id, path, name, MIME type,
+size, delivery) of files the reader attached, never their bytes. The composer
+obtains a record through `sessions:files` (`prepare`), which validates the
+file, copies it out of an OS temp folder into
+`<userData>/session-attachments/<sessionId>/` (a macOS screenshot preview is
+gone before the agent reads it) and writes a pasted image there from its bytes,
+named by its magic number rather than by the clipboard. The same channel offers
+the native picker, a preview and open-in-app for a chip.
+
+Sending is the ordinary `sessions:write`. For a message with attachments the
+handler builds the prepared prompt in main — every file is stat'ed and read
+again at send time, against the adapter's `images` capability
+(`sessions:capabilities`) — and hands the adapter the message with a `prepared`
+field: the text with one JSON line per reference appended under "Attached local
+files", and the images as base64. Whatever a renderer put in `prepared` is
+discarded. Adapters call `providerPrompt(input)` for what to send (Claude:
+image content blocks in stream-json; Codex: `image` input items as data URLs;
+echo: appends "(N images received)"; PTY and plugin providers: the text) and
+`userMessageEvent(input)` for what to stream, which is the message as written,
+attachments included and `prepared` dropped, so no image payload reaches a
+renderer's log. An image for an adapter without the capability is refused at
+the write with the reader's remedy in the message; the fallback to a reference
+is the reader's explicit choice in the composer, never automatic. Limits:
+10 files, 5 MiB per image, 20 MiB of images per message
+(`src/shared/attachments.ts`). A resumed Claude transcript replays the text of
+a past message; its image content has no path and is not replayed as chips.
+
 ## Echo fixture
 
 Launch Electron with `--dev-echo-adapter`; the existing Claude launch-profile

@@ -1,9 +1,11 @@
 import type { AgentState, SessionEvent } from '../../../src/shared/session-model'
+import type { Attachment } from '../../../src/shared/attachments'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
 export type Entry =
-  | { kind: 'user' | 'assistant'; text: string; final: boolean; at: number }
+  | { kind: 'user'; text: string; final: boolean; at: number; attachments?: Attachment[] }
+  | { kind: 'assistant'; text: string; final: boolean; at: number }
   | {
       kind: 'tool'
       id: string
@@ -94,7 +96,13 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   const entries = [...state.entries]
   switch (event.type) {
     case 'user_message':
-      entries.push({ kind: 'user', text: event.text, final: true, at })
+      entries.push({
+        kind: 'user',
+        text: event.text,
+        final: true,
+        at,
+        ...(event.attachments?.length ? { attachments: event.attachments } : {})
+      })
       break
     case 'assistant_text': {
       const last = entries.at(-1)

@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   SessionInputSchema,
+  userMessageEvent,
+  providerPrompt,
   AgentQuestionSchema,
   type SessionInput,
   type SessionEvent,
@@ -452,6 +454,7 @@ export class ClaudeAdapter implements SessionAdapter {
   readonly id = 'claude-chat'
   readonly provider = 'claude'
   readonly transports = ['events'] as const
+  readonly images = true
   private handles = new Map<string, Live>()
   private contexts = new Map<string, PtySpawnOptions>()
   private cwds = new Map<string, string>()
@@ -667,14 +670,27 @@ export class ClaudeAdapter implements SessionAdapter {
     }
     if (input.type === 'user_message') {
       live.process ??= live.start()
-      live.emit(input)
+      live.emit(userMessageEvent(input))
       // A queued prompt must not hide a permission that still needs an answer.
       if (live.initialized && !live.translator.permissions.size)
         live.emitter.emit('stream', {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }
         })
-      send({ type: 'user', message: { role: 'user', content: input.text } })
+      // Attached images ride as image content blocks beside the text, the
+      // shape the SDK's stream-json input takes; a message without any keeps
+      // the plain string the fixtures were recorded with.
+      const prompt = providerPrompt(input)
+      const content = prompt.images.length
+        ? [
+            ...(prompt.text ? [{ type: 'text', text: prompt.text }] : []),
+            ...prompt.images.map((image) => ({
+              type: 'image',
+              source: { type: 'base64', media_type: image.mimeType, data: image.data }
+            }))
+          ]
+        : prompt.text
+      send({ type: 'user', message: { role: 'user', content } })
     } else if (input.type === 'permission_response') {
       send(live.translator.response(input.id, input.optionId, input.answers))
       if (!live.translator.permissions.size)

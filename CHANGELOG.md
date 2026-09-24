@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+### Added
+- **Files on a chat message** — drop a file anywhere on a chat tab, paste a screenshot into the composer, or pick files with the paperclip, and each becomes a chip above the textarea to preview or remove before sending. Images go to Claude and Codex as image content, so a screenshot is seen rather than read off disk; anything else goes as a file reference, its path appended to the message for the agent to open with its own tools. The chip says which, and where an adapter cannot take an image directly the reader chooses **Send as file reference** rather than the app deciding quietly. A pasted screenshot and any file dragged out of a temp folder are copied under the app's profile first, since macOS deletes an unsaved screenshot preview the moment it commits. The bytes never pass through the renderer: the main process reads each file when the message is sent, checks it against the adapter's capabilities, and streams the transcript the message as written, attachments named and no image payload in it. Ten files per message, 5 MiB per image, 20 MiB of images in one message. Paths dragged from Clave's own file and git panels still land at the caret as text.
+
 ## [1.89.0] — 2026-09-14
 
 ### Added

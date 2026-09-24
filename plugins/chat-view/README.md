@@ -87,3 +87,17 @@ app. Scope every locator in that file to `[data-testid="chat-view"]` — two vie
 mounted per session since PRDCT-2610, and an unscoped `.chat-view` killed the second
 half of the script for a whole wave without anyone noticing.
 Screenshot bytes are temporary and no baselines are committed.
+
+## Files on a message
+
+A file dropped anywhere on the pane, pasted into the composer, or picked with
+the paperclip becomes a chip above the textarea (`src/Attachments.tsx`): it can
+be previewed, removed, or — when it is an image the adapter cannot take as image
+content — sent as a file reference instead, on the reader's say-so. Chips are
+attachment records from `sessions:files`; the bytes are read by main when the
+message is sent (`src/main/sessions/README.md`, "Attachments"). A sent turn
+shows the same chips as its record. The paths Clave's own file and git panels
+drag as text still land at the caret, since a dragged folder is a path to talk
+about, not a file to attach. `tests/e2e/chat-attachments.spec.mjs` drives all
+of it through the real write IPC and reads the provider's side off the echo
+adapter's reply.

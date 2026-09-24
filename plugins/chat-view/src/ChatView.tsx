@@ -8,7 +8,9 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ClipboardDocumentIcon,
-  StopIcon
+  PaperClipIcon,
+  StopIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 import type {
   Session,
@@ -27,6 +29,15 @@ import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
+import { Attachments } from './Attachments'
+import {
+  attachmentIssue,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  MAX_TOTAL_IMAGE_BYTES,
+  type Attachment,
+  type AttachmentSource
+} from '../../../src/shared/attachments'
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
 
@@ -34,6 +45,18 @@ export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
 }
+/** A file on its way into the composer: named at once, a chip once main has
+ *  prepared it, an error in its place when main refused it. */
+interface Preparation {
+  id: string
+  name: string
+  error?: string
+}
+/** What a drag carries: files from a file manager or another app, or the
+ *  paths Clave's own file and git panels write as text. */
+const filesDrag = (dt: DataTransfer): boolean =>
+  dt.types.includes('Files') || dt.types.includes('text/uri-list')
+const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
 function whenLabel(at: number, now = Date.now()): string {
@@ -316,8 +339,15 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   })
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [preparations, setPreparations] = useState<Preparation[]>([])
+  const [imagesSupported, setImagesSupported] = useState(false)
   const [sending, setSending] = useState(false)
-  const [dragging, setDragging] = useState(false)
+  // A files drag over the pane, for the overlay; a paths drag over the composer.
+  const [dragging, setDragging] = useState<'files' | 'paths' | null>(null)
+  const dragDepth = useRef(0)
+  // Preparations the reader removed before main answered; their file is dropped on arrival.
+  const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
   // The /resume picker, open in the dock above the composer.
   const [resuming, setResuming] = useState(false)
@@ -325,7 +355,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const stuck = useRef(true)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
-  const lastSent = useRef<string | null>(null)
+  const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
   // The slash menu's key handler while it is open; the textarea defers to it.
   const slashKeys = useRef<((event: React.KeyboardEvent) => boolean) | null>(null)
   const bindSlashKeys = useCallback(
@@ -349,6 +379,15 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         if (live) setReady(true)
       })
       .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
+    // Whether an attached image can go as image content is the adapter's
+    // word; until it arrives the composer assumes not, which only ever asks
+    // the reader one more question, never sends a byte the adapter refuses.
+    void window.electronAPI
+      .sessionsCapabilities(session.id)
+      .then((capabilities) => {
+        if (live) setImagesSupported(capabilities.images)
+      })
+      .catch(() => {})
     return () => {
       live = false
       stop()
@@ -363,6 +402,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
      or one another consumer of this window answered, would leave this pane
      blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
+  const closed = !ready || state === 'ended'
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   useEffect(() => {
     const el = scroll.current
@@ -380,16 +420,32 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     setDraft('')
     setResuming(true)
   }
+  // A message can go while files are still being prepared or one still
+  // needs the reader's call on how to send it: neither, until they are settled.
+  const filesBlocked =
+    preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
+  const hasDraft = !!draft.trim() || attachments.length > 0
   const send = async (): Promise<void> => {
-    if (!ready || sending || state === 'ended' || !draft.trim()) return
+    if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     if (canResume && /^\/resume\s*$/.test(draft.trim())) return openResume()
+    const imageBytes = attachments
+      .filter((file) => file.delivery === 'image')
+      .reduce((sum, file) => sum + file.size, 0)
+    if (imageBytes > MAX_TOTAL_IMAGE_BYTES)
+      return report('Images in one message must total 20 MiB or less.')
     const text = draft
+    const files = attachments
     setSending(true)
     stuck.current = true
     try {
-      await write({ type: 'user_message', text })
-      lastSent.current = text
+      await write({
+        type: 'user_message',
+        text,
+        ...(files.length ? { attachments: files } : {})
+      })
+      lastSent.current = { text, attachments: files }
       setDraft((current) => (current === text ? '' : current))
+      setAttachments((current) => (current === files ? [] : current))
     } catch (error) {
       report(error)
     } finally {
@@ -417,9 +473,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     if (entry.kind === 'user')
       return (
         <div key={index} className="chat-turn-wrap" data-side="end">
-          <article className="chat-turn" data-role="user">
-            {entry.text.replace(/\s+$/, '')}
-          </article>
+          <Attachments files={entry.attachments ?? []} />
+          {entry.text.trim() !== '' && (
+            <article className="chat-turn" data-role="user">
+              {entry.text.replace(/\s+$/, '')}
+            </article>
+          )}
           <TurnMeta at={entry.at} text={entry.text} />
         </div>
       )
@@ -467,13 +526,79 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // new is already being typed there.
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
-    const text = lastSent.current
-    if (text) setDraft((current) => (current.trim() ? current : text))
+    const last = lastSent.current
+    if (last && !draft.trim() && !attachments.length) {
+      setDraft(last.text)
+      setAttachments(last.attachments)
+    }
     textarea.current?.focus()
   }
-  // A dropped file lands as its path at the caret, the way the TUI pastes it:
-  // quoted only when needed, a space after, transient sources persisted first
-  // (a macOS screenshot preview is gone before the agent reads it).
+  /* Files into the composer, from a drop, a paste or the picker. Each is
+     named at once as a chip in preparation, then handed to main to validate,
+     copy out of a temp folder if it lives in one, and type; the record main
+     returns becomes the attachment. A file the renderer holds only as bytes
+     (a pasted screenshot has no path) is sent as bytes and written by main. */
+  const addFiles = async (sources: (File | string)[]): Promise<void> => {
+    if (closed) return
+    const queued: { source: File | string; key: string }[] = []
+    let room = MAX_ATTACHMENTS - attachments.length - preparations.length
+    for (const source of sources) {
+      if (room-- <= 0) {
+        report(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
+        break
+      }
+      const name =
+        (typeof source === 'string' ? source.split(/[\\/]/).pop() : source.name) || 'Pasted image'
+      queued.push({ source, key: crypto.randomUUID() })
+      setPreparations((current) => [...current, { id: queued.at(-1)!.key, name }])
+    }
+    for (const { source, key } of queued) {
+      if (withdrawn.current.has(key)) continue
+      try {
+        let value: AttachmentSource
+        if (typeof source === 'string') value = { path: source }
+        else {
+          const path = window.electronAPI.getPathForFile(source)
+          if (path) value = { path }
+          else {
+            if (source.size > MAX_IMAGE_BYTES)
+              throw new Error('Pasted images must be 5 MiB or smaller.')
+            value = {
+              name: source.name || 'Pasted image.png',
+              bytes: new Uint8Array(await source.arrayBuffer())
+            }
+          }
+        }
+        const file = await window.electronAPI.sessionsFiles.prepare(session.id, value)
+        if (withdrawn.current.has(key)) continue
+        setAttachments((current) =>
+          current.some((f) => f.path === file.path) ? current : [...current, file]
+        )
+        setPreparations((current) => current.filter((p) => p.id !== key))
+      } catch (failure) {
+        if (withdrawn.current.has(key)) continue
+        setPreparations((current) =>
+          current.map((p) => (p.id === key ? { ...p, error: String(failure) } : p))
+        )
+      }
+    }
+    for (const { key } of queued) withdrawn.current.delete(key)
+    textarea.current?.focus({ preventScroll: true })
+  }
+  const withdraw = (key: string): void => {
+    withdrawn.current.add(key)
+    setPreparations((current) => current.filter((p) => p.id !== key))
+  }
+  /* A drop on the pane. Files and file URLs become attachments; the paths
+     Clave's own file and git panels drag as text land at the caret, the way
+     the TUI pastes them (quoted only when needed, a space after), because a
+     dragged folder is a path to talk about, not a file to attach. */
+  const drop = (dt: DataTransfer): void => {
+    if (filesDrag(dt)) {
+      const files = Array.from(dt.files)
+      void addFiles(files.length ? files : pathsFromDataTransfer(dt))
+    } else if (pathsDrag(dt)) void dropPaths(pathsFromDataTransfer(dt))
+  }
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
     const stable = (
@@ -490,7 +615,6 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       el?.setSelectionRange(start + insert.length, start + insert.length)
     })
   }
-  const closed = !ready || state === 'ended'
   // What the agent waits on, oldest first: the dock shows the head of it.
   const waitingOn = conversation.entries.flatMap((e) =>
     e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request] : []
@@ -551,7 +675,35 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
           takeBack()
         }
       }}
+      onDragEnter={(event) => {
+        if (closed || !(filesDrag(event.dataTransfer) || pathsDrag(event.dataTransfer))) return
+        event.preventDefault()
+        dragDepth.current += 1
+        setDragging(filesDrag(event.dataTransfer) ? 'files' : 'paths')
+      }}
+      onDragOver={(event) => {
+        if (!(filesDrag(event.dataTransfer) || pathsDrag(event.dataTransfer))) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = closed ? 'none' : 'copy'
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (!dragDepth.current) setDragging(null)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        dragDepth.current = 0
+        setDragging(null)
+        if (!closed) drop(event.dataTransfer)
+      }}
     >
+      {dragging === 'files' && (
+        <div className="chat-drop-overlay" role="status">
+          <PaperClipIcon />
+          <strong>Add files to the message</strong>
+          <span>They stay in the composer to review before you send.</span>
+        </div>
+      )}
       <div
         ref={scroll}
         className="chat-scroll"
@@ -624,22 +776,46 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         )}
         <form
           className="chat-composer"
-          data-dragging={dragging}
+          data-dragging={dragging === 'paths' ? 'true' : undefined}
           onSubmit={(event) => {
             event.preventDefault()
             void send()
           }}
-          onDragOver={(event) => {
-            event.preventDefault()
-            setDragging(true)
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault()
-            setDragging(false)
-            void dropPaths(pathsFromDataTransfer(event.dataTransfer))
-          }}
         >
+          {(attachments.length > 0 || preparations.length > 0) && (
+            <div className="chat-composer-files">
+              <Attachments
+                files={attachments}
+                imagesSupported={imagesSupported}
+                onChange={setAttachments}
+              />
+              {preparations.length > 0 && (
+                <ul className="chat-attachments" aria-label="Preparing files">
+                  {preparations.map((item) => (
+                    <li
+                      key={item.id}
+                      className="chat-attachment"
+                      data-issue={item.error ? 'true' : undefined}
+                    >
+                      <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
+                        <span className="chat-attachment-name">{item.name}</span>
+                        <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="chat-turn-copy"
+                        aria-label={`Remove ${item.name}`}
+                        title="Remove"
+                        onClick={() => withdraw(item.id)}
+                      >
+                        <XMarkIcon />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <textarea
             ref={textarea}
             rows={1}
@@ -648,6 +824,13 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             value={draft}
             disabled={closed}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              // A pasted screenshot is a file on the clipboard; text pastes as text.
+              const files = Array.from(event.clipboardData.files)
+              if (!files.length) return
+              event.preventDefault()
+              void addFiles(files)
+            }}
             onKeyDown={(event) => {
               if (slashOpen && slashKeys.current?.(event)) {
                 event.preventDefault()
@@ -677,14 +860,29 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               className="chat-send"
               aria-label="Send message"
               title="Send (Enter)"
-              disabled={closed || sending || !draft.trim()}
+              disabled={closed || sending || !hasDraft || filesBlocked}
             >
               <ArrowUpIcon />
             </button>
           )}
         </form>
         <div className="chat-composer-footer">
-          <span>
+          <span className="chat-composer-hint">
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Add files"
+              title="Add files"
+              disabled={closed}
+              onClick={() =>
+                void window.electronAPI.sessionsFiles
+                  .pick()
+                  .then((paths) => addFiles(paths))
+                  .catch(report)
+              }
+            >
+              <PaperClipIcon />
+            </button>
             {state === 'working'
               ? 'Esc to interrupt and take the message back'
               : 'Enter to send · Shift+Enter for a new line'}
