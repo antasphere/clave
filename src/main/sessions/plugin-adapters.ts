@@ -47,6 +47,7 @@ export interface PluginAdapterInstance {
     id: string
     optionId: string
     answers?: Record<string, string>
+    notes?: Record<string, string>
   }): void | Promise<void>
   dispose(): void | Promise<void>
   models?(): ModelOption[] | Promise<ModelOption[]>
@@ -218,7 +219,8 @@ class PluginSessionAdapter implements SessionAdapter {
           instance.respond({
             id,
             optionId: value.optionId,
-            ...(value.answers ? { answers: value.answers } : {})
+            ...(value.answers ? { answers: value.answers } : {}),
+            ...(value.notes ? { notes: value.notes } : {})
           })
         )
         return

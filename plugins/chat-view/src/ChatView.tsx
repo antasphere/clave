@@ -457,12 +457,19 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const answer = async (
     id: string,
     optionId: string,
-    answers?: Record<string, string>
+    answers?: Record<string, string>,
+    notes?: Record<string, string>
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {
-      await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      dispatch({ answer: id, optionId, answers })
+      await write({
+        type: 'permission_response',
+        id,
+        optionId,
+        ...(answers ? { answers } : {}),
+        ...(notes ? { notes } : {})
+      })
+      dispatch({ answer: id, optionId, answers, notes })
       textarea.current?.focus()
     } catch (error) {
       report(error)
@@ -768,7 +775,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
           requests={resuming ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
-          onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
+          onAnswer={(id, optionId, answers, notes) => void answer(id, optionId, answers, notes)}
         />
         {slashOpen && (
           <div className="chat-slash-anchor">

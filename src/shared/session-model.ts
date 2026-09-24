@@ -67,7 +67,10 @@ export const PermissionResponseSchema = z.object({
   optionId: z.string(),
   /** A request carrying `questions`: question text → the chosen label(s),
    *  several joined by ", ", or the reader's own words. */
-  answers: z.record(z.string(), z.string()).optional()
+  answers: z.record(z.string(), z.string()).optional(),
+  /** A note the reader attached to a choice: question text → their words.
+   *  Reaches Claude as the tool's own `annotations[question].notes`. */
+  notes: z.record(z.string(), z.string()).optional()
 })
 export const InterruptSchema = z.object({ type: z.literal('interrupt') })
 /** Switch the session's model; null asks the provider for its own default. */

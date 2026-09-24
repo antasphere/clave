@@ -501,7 +501,12 @@ export class ClaudeStreamTranslator {
     this.finished = true
     this.emit({ type: 'assistant_text', delta: '', final: true })
   }
-  response(id: string, optionId: string, answers?: Record<string, string>): unknown {
+  response(
+    id: string,
+    optionId: string,
+    answers?: Record<string, string>,
+    notes?: Record<string, string>
+  ): unknown {
     const pending = this.permissions.get(id)
     if (!pending) throw new Error(`Unknown Claude permission request: ${id}`)
     const question = this.questionRequests.has(id)
@@ -523,7 +528,22 @@ export class ClaudeStreamTranslator {
         response: {
           subtype: 'success',
           request_id: id,
-          response: { behavior: 'allow', updatedInput: { ...object.parse(pending.input), answers } }
+          response: {
+            behavior: 'allow',
+            updatedInput: {
+              ...object.parse(pending.input),
+              answers,
+              // A note on a choice rides as the tool's own annotation: the CLI
+              // renders it to the model as `"question"="label" notes: …`.
+              ...(notes && Object.keys(notes).length
+                ? {
+                    annotations: Object.fromEntries(
+                      Object.entries(notes).map(([question, text]) => [question, { notes: text }])
+                    )
+                  }
+                : {})
+            }
+          }
         }
       }
     return {
@@ -823,7 +843,7 @@ export class ClaudeAdapter implements SessionAdapter {
         : prompt.text
       send({ type: 'user', message: { role: 'user', content } })
     } else if (input.type === 'permission_response') {
-      send(live.translator.response(input.id, input.optionId, input.answers))
+      send(live.translator.response(input.id, input.optionId, input.answers, input.notes))
       if (!live.translator.permissions.size)
         live.emitter.emit('stream', {
           kind: 'event',

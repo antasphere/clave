@@ -36,6 +36,8 @@ export type Entry =
       answer?: string
       /** What the reader chose, for a request that asked questions. */
       answers?: Record<string, string>
+      /** The note they attached to a choice, by question. */
+      notes?: Record<string, string>
       /* The kernel left blocked while this request was still open, so the
          adapter is no longer holding it: it abandoned the request (Claude's
          `control_cancel_request` and the end-of-turn `result` both drop their
@@ -57,14 +59,24 @@ export interface Conversation {
 export const emptyConversation: Conversation = { entries: [], state: 'idle', model: null }
 export type Action =
   | { event: ChatEvent; at?: number }
-  | { answer: string; optionId: string; answers?: Record<string, string> }
+  | {
+      answer: string
+      optionId: string
+      answers?: Record<string, string>
+      notes?: Record<string, string>
+    }
   | { exit: number }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
   if ('answer' in action) {
     const entries = state.entries.map((e) =>
       e.kind === 'permission' && e.request.id === action.answer
-        ? { ...e, answer: action.optionId, ...(action.answers ? { answers: action.answers } : {}) }
+        ? {
+            ...e,
+            answer: action.optionId,
+            ...(action.answers ? { answers: action.answers } : {}),
+            ...(action.notes ? { notes: action.notes } : {})
+          }
         : e
     )
     const waiting = entries.some(

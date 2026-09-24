@@ -61,8 +61,19 @@ export async function run(t) {
     assert.equal(await view.getByRole('button', { name: /Allow/ }).count(), 0)
     const next = dock.getByRole('button', { name: 'Next', exact: true })
     assert.equal(await next.isDisabled(), true, 'nothing chosen, nothing to send')
-    // A single choice is the answer: one click moves on, no Next to press.
-    await dock.getByRole('radio', { name: /Draft only/ }).click()
+    // Picked "with a note", the choice stays and the note field takes focus:
+    // the field that was Other becomes the note on the choice, and Enter
+    // moves on with both.
+    await dock.getByRole('button', { name: 'Pick "Draft only" with a note' }).click()
+    assert.equal(
+      await dock.getByRole('radio', { name: /Draft only/ }).getAttribute('aria-checked'),
+      'true'
+    )
+    assert.equal(await dock.locator('.chat-prompt-step').innerText(), '1/2', 'it stays')
+    const note = dock.getByPlaceholder('Add a note to your choice')
+    await until(() => note.evaluate((el) => el === document.activeElement))
+    await win.keyboard.type('cc the client')
+    await win.keyboard.press('Enter')
     await dock.locator('.chat-prompt-step').filter({ hasText: '2/2' }).waitFor()
     // The page that came in is the one that swipes, from the right.
     assert.equal(await dock.locator('.chat-prompt-page').getAttribute('data-direction'), 'forward')
@@ -74,6 +85,8 @@ export async function run(t) {
       await dock.getByRole('radio', { name: /Draft only/ }).getAttribute('aria-checked'),
       'true'
     )
+    assert.equal(await note.inputValue(), 'cc the client', 'the note came back with it')
+    // A single choice is the answer: one click moves on, no Next to press.
     await dock.getByRole('radio', { name: /Draft only/ }).click()
     t.check('a question docks with its options and one choice moves it on at once', true)
 
@@ -90,8 +103,11 @@ export async function run(t) {
       ),
       'the digit key picks the second option'
     )
+    // With nothing picked the field is the reader's own answer; once something
+    // is, the same field is a note on the choice.
+    assert.equal(await dock.getByPlaceholder('Type your own answer').count(), 0)
     await dock.getByRole('checkbox', { name: /Romain/ }).click()
-    await dock.getByPlaceholder('Type your own answer').fill('the client')
+    await dock.getByPlaceholder('Add a note to your choice').fill('the client too')
     await dock.getByRole('button', { name: 'Submit', exact: true }).click()
     await until(async () => (await writes()).length === 1)
     assert.deepEqual((await writes())[0], {
@@ -100,15 +116,22 @@ export async function run(t) {
       optionId: 'answer',
       answers: {
         'Send now or draft?': 'Draft only',
-        'Who else to copy?': 'Valentin, Romain, the client'
+        'Who else to copy?': 'Valentin, Romain'
+      },
+      notes: {
+        'Send now or draft?': 'cc the client',
+        'Who else to copy?': 'the client too'
       }
     })
-    t.check('the answers cross the write IPC keyed by question, choices and own words joined', true)
+    t.check('the answers cross the write IPC keyed by question, with the notes beside them', true)
 
     await until(async () => (await view.locator('.chat-prompt').count()) === 0)
     const row = view.locator('.chat-permission-row[data-kind="question"]')
     assert.match(await row.innerText(), /Answered/)
-    assert.match(await row.innerText(), /Draft only; Valentin, Romain, the client/)
+    assert.match(
+      await row.innerText(),
+      /Draft only \(cc the client\); Valentin, Romain \(the client too\)/
+    )
     t.check('an answered question leaves the dock and records its answer in the transcript', true)
 
     // A tool permission answers from the keyboard: Escape denies.

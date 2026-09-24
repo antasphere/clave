@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ChatBubbleBottomCenterTextIcon,
   CheckIcon,
   ChevronRightIcon,
   QuestionMarkCircleIcon,
@@ -17,7 +18,12 @@ import { ChatCode } from './code'
    the record of what was asked and what the reader said. */
 
 type PermissionEntry = Extract<Entry, { kind: 'permission' }>
-export type Answer = (id: string, optionId: string, answers?: Record<string, string>) => void
+export type Answer = (
+  id: string,
+  optionId: string,
+  answers?: Record<string, string>,
+  notes?: Record<string, string>
+) => void
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
 const isDeny = (id: string): boolean => /deny|decline|cancel|reject|abort/i.test(id)
@@ -186,13 +192,18 @@ function PermissionPrompt({
   )
 }
 
-/** The reader's reply to one question: the labels picked, or their own words. */
+/** The reader's reply to one question: the labels picked, and their own
+ *  words — the answer itself while nothing is picked, a note on the choice
+ *  once something is. */
 interface Reply {
   picked: string[]
-  other: string | null
+  text: string | null
 }
+const ownWords = (reply: Reply | undefined): string => reply?.text?.trim() ?? ''
 const replyText = (reply: Reply | undefined): string =>
-  reply ? [...reply.picked, ...(reply.other?.trim() ? [reply.other.trim()] : [])].join(', ') : ''
+  reply?.picked.length ? reply.picked.join(', ') : ownWords(reply)
+const replyNote = (reply: Reply | undefined): string =>
+  reply?.picked.length ? ownWords(reply) : ''
 
 function QuestionPrompt({
   request,
@@ -216,7 +227,7 @@ function QuestionPrompt({
   const [replies, setReplies] = useState<Record<number, Reply>>({})
   const otherInput = useRef<HTMLInputElement>(null)
   const question = questions[step]
-  const reply = replies[step] ?? { picked: [], other: null }
+  const reply = replies[step] ?? { picked: [], text: null }
   const last = step === questions.length - 1
   const answered = replyText(reply) !== ''
   const skip = request.options.find((o) => isDeny(o.id))
@@ -237,16 +248,20 @@ function QuestionPrompt({
       return
     }
     const answers: Record<string, string> = {}
+    const notes: Record<string, string> = {}
     questions.forEach((q, i) => {
       const text = replyText(all[i])
       if (text) answers[q.question] = text
+      const note = replyNote(all[i])
+      if (note) notes[q.question] = note
     })
-    onAnswer(request.id, 'answer', answers)
+    onAnswer(request.id, 'answer', answers, Object.keys(notes).length ? notes : undefined)
   }
   const submit = (): void => advance(replies)
   /* A multi-select toggles and waits for Next; a single choice IS the answer,
-     so picking it moves on at once — no second click on Submit. */
-  const pick = (label: string): void => {
+     so picking it moves on at once — no second click on Submit. Picked "with a
+     note" it stays, the note field takes focus, and Enter moves on. */
+  const pick = (label: string, withNote = false): void => {
     if (question.multiSelect) {
       set({
         ...reply,
@@ -254,11 +269,13 @@ function QuestionPrompt({
           ? reply.picked.filter((l) => l !== label)
           : [...reply.picked, label]
       })
+      if (withNote) otherInput.current?.focus()
       return
     }
-    const next = { ...replies, [step]: { picked: [label], other: null } }
+    const next = { ...replies, [step]: { picked: [label], text: reply.text } }
     setReplies(next)
-    advance(next)
+    if (withNote) otherInput.current?.focus()
+    else advance(next)
   }
   const back = (): void => {
     setDirection('back')
@@ -276,9 +293,14 @@ function QuestionPrompt({
       className="chat-prompt-body"
       onKeyDown={(event) => {
         if (busy || event.target === otherInput.current) {
+          const n = Number(event.key)
           if (event.key === 'Enter') {
             event.preventDefault()
             submit()
+          } else if (!busy && event.metaKey && Number.isInteger(n) && n >= 1 && n <= choices) {
+            // ⌘digit from the note field: pick that option, the note with it.
+            event.preventDefault()
+            pick(question.options[n - 1].label)
           }
           return
         }
@@ -326,49 +348,64 @@ function QuestionPrompt({
           {question.options.map((option, index) => {
             const selected = reply.picked.includes(option.label)
             return (
-              <button
-                key={option.label}
-                type="button"
-                role={question.multiSelect ? 'checkbox' : 'radio'}
-                aria-checked={selected}
-                className="chat-prompt-option"
-                data-selected={selected ? 'true' : undefined}
-                disabled={busy}
-                onClick={() => pick(option.label)}
-              >
-                <span className="chat-prompt-option-text">
-                  <span className="chat-prompt-option-label">{option.label}</span>
-                  {option.description && (
-                    <span className="chat-prompt-option-hint">{option.description}</span>
-                  )}
-                </span>
-                {selected ? <CheckIcon className="chat-prompt-check" /> : <Key>{index + 1}</Key>}
-              </button>
+              <div key={option.label} className="chat-prompt-option-row">
+                <button
+                  type="button"
+                  role={question.multiSelect ? 'checkbox' : 'radio'}
+                  aria-checked={selected}
+                  className="chat-prompt-option"
+                  data-selected={selected ? 'true' : undefined}
+                  disabled={busy}
+                  onClick={() => pick(option.label)}
+                >
+                  <span className="chat-prompt-option-text">
+                    <span className="chat-prompt-option-label">{option.label}</span>
+                    {option.description && (
+                      <span className="chat-prompt-option-hint">{option.description}</span>
+                    )}
+                  </span>
+                  {selected ? <CheckIcon className="chat-prompt-check" /> : <Key>{index + 1}</Key>}
+                </button>
+                {structured && (
+                  <button
+                    type="button"
+                    className="chat-turn-copy chat-prompt-option-note"
+                    aria-label={`Pick "${option.label}" with a note`}
+                    title={`Pick with a note (⌘${index + 1} from the note field)`}
+                    disabled={busy}
+                    onClick={() => pick(option.label, true)}
+                  >
+                    <ChatBubbleBottomCenterTextIcon />
+                  </button>
+                )}
+              </div>
             )
           })}
           {structured && (
-            <label
-              className="chat-prompt-option"
-              data-selected={reply.other?.trim() ? 'true' : undefined}
-            >
-              <span className="chat-prompt-option-text">
-                <span className="chat-prompt-option-label">Other</span>
-                <input
-                  ref={otherInput}
-                  className="chat-prompt-other"
-                  placeholder="Type your own answer"
-                  value={reply.other ?? ''}
-                  disabled={busy}
-                  onChange={(event) =>
-                    set({
-                      picked: question.multiSelect ? reply.picked : [],
-                      other: event.target.value
-                    })
-                  }
-                />
-              </span>
-              <Key>{choices + 1}</Key>
-            </label>
+            <div className="chat-prompt-option-row">
+              <label
+                className="chat-prompt-option"
+                data-selected={ownWords(reply) ? 'true' : undefined}
+              >
+                <span className="chat-prompt-option-text">
+                  <span className="chat-prompt-option-label">
+                    {reply.picked.length ? 'Note on your choice' : 'Other'}
+                  </span>
+                  <input
+                    ref={otherInput}
+                    className="chat-prompt-other"
+                    placeholder={
+                      reply.picked.length ? 'Add a note to your choice' : 'Type your own answer'
+                    }
+                    value={reply.text ?? ''}
+                    disabled={busy}
+                    onChange={(event) => set({ ...reply, text: event.target.value })}
+                  />
+                </span>
+                <Key>{choices + 1}</Key>
+              </label>
+              <span className="chat-prompt-option-note" data-blank="true" aria-hidden="true" />
+            </div>
           )}
         </div>
       </div>
@@ -466,7 +503,11 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
     : request.toolName
       ? [request.toolName, target].filter(Boolean).join(' ')
       : request.description
-  const answers = entry.answers ? Object.values(entry.answers).join('; ') : null
+  const answers = entry.answers
+    ? Object.entries(entry.answers)
+        .map(([q, a]) => (entry.notes?.[q] ? `${a} (${entry.notes[q]})` : a))
+        .join('; ')
+    : null
   const status = entry.answeredElsewhere
     ? 'No longer awaiting an answer'
     : !entry.answer

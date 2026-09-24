@@ -3156,6 +3156,35 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   display: flex;
   flex-direction: column;
 }
+/* An option and, beside it, the way to pick it with a note: an icon that
+   shows on hover or focus and never moves the option. The Other row keeps
+   a blank of the same width so the options line up. */
+.chat-prompt-option-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.chat-prompt-option-row + .chat-prompt-option-row {
+  margin-top: var(--row-gap);
+}
+.chat-prompt-option-row > .chat-prompt-option {
+  flex: 1;
+  min-width: 0;
+}
+.chat-prompt-option-note {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--default-transition-duration);
+}
+.chat-prompt-option-note[data-blank] {
+  width: calc(var(--spacing) * 4);
+  visibility: hidden;
+}
+.chat-prompt-option-row:hover .chat-prompt-option-note,
+.chat-prompt-option-row:focus-within .chat-prompt-option-note,
+.chat-prompt-option-note:focus-visible {
+  opacity: 1;
+}
 .chat-prompt-option {
   display: flex;
   align-items: center;

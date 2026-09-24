@@ -826,6 +826,30 @@ it('asks AskUserQuestion as questions and answers with the reader choices', () =
       }
     }
   })
+  // A note on the choice rides as the tool's own annotation, the shape the
+  // CLI renders as `"…"="Blue" notes: …`; no note, no annotations key.
+  feed({
+    type: 'control_request',
+    request_id: 'q3',
+    request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input }
+  })
+  expect(
+    translator.response(
+      'q3',
+      'answer',
+      { 'Which color do you prefer?': 'Blue' },
+      { 'Which color do you prefer?': 'but a darker shade' }
+    )
+  ).toMatchObject({
+    response: {
+      response: {
+        updatedInput: {
+          answers: { 'Which color do you prefer?': 'Blue' },
+          annotations: { 'Which color do you prefer?': { notes: 'but a darker shade' } }
+        }
+      }
+    }
+  })
   // Skipping tells the model the reader chose not to answer.
   feed({
     type: 'control_request',
