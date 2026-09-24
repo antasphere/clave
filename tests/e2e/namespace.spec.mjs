@@ -15,7 +15,7 @@ import {
   fixtureRoot,
   namespaceOf
 } from './namespace.mjs'
-import { userDataDir } from './harness.mjs'
+import { killLeakedE2eTmux, tmuxSessionAlive, userDataDir } from './harness.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -98,6 +98,42 @@ export async function run(t) {
       userDataDir('probe').startsWith(`${fixtureRoot()}/clave-e2e-`),
       { dir: userDataDir('probe'), root: fixtureRoot() }
     )
+
+    // ── the leaked-session cleanup stays inside its own run ──
+    // Two runs at once: each kills what IT leaked and nothing of the other's.
+    // The tmux name carries the cwd's basename, not the namespace, so the
+    // start path is what scopes it. Real sessions on the app's own socket,
+    // named for fixture roots, started under the two probe namespaces above.
+    const sA = `clave-e2e-probe-a-${process.pid}`
+    const sB = `clave-e2e-probe-b-${process.pid}`
+    const tmux = (...args) => execFileSync('tmux', ['-L', 'clave', ...args], { stdio: 'ignore' })
+    const startBoth = () => {
+      tmux('new-session', '-d', '-s', sA, '-c', a, 'sleep', '60')
+      tmux('new-session', '-d', '-s', sB, '-c', b, 'sleep', '60')
+    }
+    try {
+      startBoth()
+      t.check('two fixture sessions are alive', tmuxSessionAlive(sA) && tmuxSessionAlive(sB))
+      killLeakedE2eTmux({ env: { [NAMESPACE_ENV]: nsA } })
+      t.check("cleanup under namespace A kills A's session", !tmuxSessionAlive(sA))
+      t.check("and leaves B's alive", tmuxSessionAlive(sB))
+      killLeakedE2eTmux({ env: { [NAMESPACE_ENV]: nsB } })
+      t.check("cleanup under namespace B kills B's", !tmuxSessionAlive(sB))
+      startBoth()
+      killLeakedE2eTmux({ env: {} })
+      t.check(
+        'without a namespace the cleanup takes every fixture session, as before',
+        !tmuxSessionAlive(sA) && !tmuxSessionAlive(sB)
+      )
+    } finally {
+      for (const n of [sA, sB]) {
+        try {
+          tmux('kill-session', '-t', `=${n}`)
+        } catch {
+          // already gone
+        }
+      }
+    }
   } finally {
     rmSync(`/tmp/${nsA}`, { recursive: true, force: true })
     rmSync(`/tmp/${nsB}`, { recursive: true, force: true })

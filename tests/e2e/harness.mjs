@@ -236,20 +236,33 @@ export async function closeWindow(app, page) {
  * The PTYs live on the SHARED tmux socket ('clave', a fixed constant), so
  * `--user-data-dir` isolation stops at userData: a spawned tab's tmux session
  * and its live process survive `app.close()`. Kill ONLY sessions named for
- * e2e fixture roots ('clave-e2e' is the harness's own prefix) — never
- * anything of the user's, and never with pkill.
+ * e2e fixture roots ('clave-e2e' is the harness's own prefix) AND started
+ * under THIS run's fixture root — never anything of the user's, never another
+ * run's (a namespace is not in the tmux name, which the app builds from the
+ * cwd's basename, so the session's start path is what tells two runs apart;
+ * without a namespace the root is /tmp and every fixture session matches, as
+ * before), and never with pkill.
  */
-export function killLeakedE2eTmux() {
+export function killLeakedE2eTmux({ env = process.env } = {}) {
+  const roots = [fixtureRoot({ env }), fixtureRoot({ env, real: true })]
+  const underRoot = (p) => roots.some((r) => p === r || p.startsWith(r + '/'))
   try {
-    const names = execFileSync('tmux', ['-L', 'clave', 'list-sessions', '-F', '#{session_name}'], {
-      encoding: 'utf-8'
-    })
+    const rows = execFileSync(
+      'tmux',
+      // A pipe, not a tab: tmux prints a control character in a format as '_'.
+      // The app's session names are [A-Za-z0-9_-], so the first pipe is the cut.
+      ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
+      { encoding: 'utf-8' }
+    )
       .split('\n')
       .filter(Boolean)
-    for (const n of names) {
+    for (const row of rows) {
+      const cut = row.indexOf('|')
+      const n = cut < 0 ? row : row.slice(0, cut)
+      const startPath = cut < 0 ? '' : row.slice(cut + 1)
+      if (!n.includes('clave-e2e') || !underRoot(startPath)) continue
       // `=name` is an EXACT target: never a prefix or a glob match.
-      if (n.includes('clave-e2e'))
-        execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`])
+      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`])
     }
   } catch {
     // No tmux server = nothing leaked.
