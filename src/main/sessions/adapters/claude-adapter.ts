@@ -14,6 +14,7 @@ import {
   type CommandOption
 } from '../../../shared/session-model'
 import { buildAgentArgv } from '../../../shared/agent-launch'
+import { isValidModelName } from '../../../shared/model-name'
 import type {
   SessionAdapter,
   SessionAdapterEvents,
@@ -32,7 +33,6 @@ import {
   buildClaudeHookSettingsArg,
   shellSingleQuote,
   isValidClaudeSessionId,
-  isValidModelName,
   type PtySpawnOptions
 } from './pty-backend'
 import { NdjsonLines } from './ndjson'
@@ -655,6 +655,8 @@ export class ClaudeAdapter implements SessionAdapter {
     const input = SessionInputSchema.parse(raw)
     const live = this.live(handle)
     if (live.ended) throw new Error('Claude session has ended')
+    if (input.type === 'set_model' && input.model !== null && !isValidModelName(input.model))
+      throw new Error('Invalid model name')
     // A model can be chosen before the first message, as /model can in the
     // TUI: the switch starts the process, which accepts it before any turn.
     if (input.type === 'set_model') live.process ??= live.start()
@@ -681,8 +683,6 @@ export class ClaudeAdapter implements SessionAdapter {
           event: { type: 'state_change', state: 'working' }
         })
     } else if (input.type === 'set_model') {
-      if (input.model !== null && !isValidModelName(input.model))
-        throw new Error('Invalid model name')
       const requestId = randomUUID()
       live.translator.modelRequests.set(requestId, input.model)
       send({

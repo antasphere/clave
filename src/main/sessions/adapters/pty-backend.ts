@@ -14,6 +14,7 @@ import { launchProfileManager } from '../../launch-profile-manager'
 import { claudeAccountsManager } from '../../claude-accounts'
 import { resolvePosixShellLaunch } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
+import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
 import {
   buildAgentArgv,
@@ -37,22 +38,6 @@ export function shellSingleQuote(s: string): string {
  */
 export function isValidClaudeSessionId(id: string): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(id)
-}
-
-/**
- * Model names are interpolated into the same shell command string as session
- * ids (same poisoned-sidecar risk), so restrict them to the alphabet real
- * model refs use: aliases ("opus"), full ids ("claude-fable-5"), and
- * provider-prefixed ids with dots, slashes, or colons (Bedrock/Vertex).
- */
-export function isValidModelName(model: string): boolean {
-  // No `..` segment and no leading/trailing separator: keeps the value a
-  // model-ref shape and not a path-traversal-looking string, even though it is
-  // only ever handed to the CLI as a --model/-m value (and single-quoted on
-  // POSIX). Hygiene, not the injection guard — the alphabet + no-leading-dash
-  // rule is what blocks flag smuggling and shell metacharacters.
-  if (model.includes('..')) return false
-  return /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,198}[A-Za-z0-9]$|^[A-Za-z0-9]$/.test(model)
 }
 
 /** Pi accepts model patterns in addition to ids. Keep the field free-form as

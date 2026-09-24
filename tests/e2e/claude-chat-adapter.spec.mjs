@@ -46,6 +46,11 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  fs.appendFileSync(${JSON.stringify(`${ROOT}/input.ndjson`)}, line+'\\n'); const input=JSON.parse(line);
  if(input.type==='user') { if(input.message.content==='configured first prompt') frames[0].session_id='provider-diverged'; emit(frames[0]); setTimeout(()=>frames.slice(1,split+1).forEach(emit),350); }
  if(input.type==='control_response') setTimeout(()=>frames.slice(split+1).forEach(emit),350);
+ if(input.type==='control_request' && input.request.subtype==='initialize') emit({type:'control_response',response:{subtype:'success',request_id:input.request_id,response:{models:[
+   {value:'fable',displayName:'Fable'},
+   {value:'opus[1m]',displayName:'Opus (1M context)',resolvedModel:'claude-opus-5-5[1m]'}
+ ]}}});
+ if(input.type==='control_request' && input.request.subtype==='set_model') emit({type:'control_response',response:{subtype:'success',request_id:input.request_id}});
 });
 setInterval(()=>{},1000);
 `,
@@ -248,6 +253,32 @@ setInterval(()=>{},1000);
     assert.ok(!JSON.stringify({ session, events }).includes(TOKEN))
     t.check(
       'launcher, stream order, permission round trip, sidebar, capture and token isolation',
+      true
+    )
+    // The real menu must send the CLI's exact model id through the real validator.
+    for (const [label, id] of [
+      ['Fable', 'fable'],
+      ['Opus (1M context)', 'opus[1m]']
+    ]) {
+      await win.getByRole('button', { name: 'Model', exact: true }).click()
+      const menu = win.locator('.chat-model-menu[role="menu"]')
+      await menu.waitFor()
+      await menu.getByText(label, { exact: true }).click()
+      await menu.waitFor({ state: 'hidden' })
+      await win.locator('.chat-model-trigger').filter({ hasText: label }).waitFor()
+      const received = readFileSync(`${ROOT}/input.ndjson`, 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse)
+      assert.ok(
+        received.some(
+          (frame) => frame.request?.subtype === 'set_model' && frame.request.model === id
+        )
+      )
+      assert.equal(await win.getByRole('alert').count(), 0)
+    }
+    t.check(
+      'switching from Fable to Opus 5.5 with 1M context reaches the CLI and updates the model chip',
       true
     )
     await bounded(

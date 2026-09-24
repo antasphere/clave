@@ -31,8 +31,7 @@ vi.mock('./pty-backend', () => ({
   getUserShell: () => '/bin/zsh',
   buildClaudeHookSettingsArg: (id) => JSON.stringify({ hooks: id }),
   shellSingleQuote: (s) => `'${s.replace(/'/g, `'\\''`)}'`,
-  isValidClaudeSessionId: (s) => /^[\w-]+$/.test(s),
-  isValidModelName: (s) => !s.startsWith('-')
+  isValidClaudeSessionId: (s) => /^[\w-]+$/.test(s)
 }))
 import { ClaudeAdapter, ClaudeStreamTranslator, HOST_COMMANDS } from './claude-adapter'
 import { NdjsonLines } from './ndjson'
@@ -173,7 +172,7 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   adapter.configure(spec.id, { configDir: '/account', claudeProfileId: 'account-id' })
   const handle = await adapter.spawn({
     ...spec,
-    options: { resume: 'resume-id', model: 'opus', permissionMode: 'manual' }
+    options: { resume: 'resume-id', model: 'opus[1m]', permissionMode: 'manual' }
   })
   expect(await adapter.attach(spec.id)).toBe(handle)
   adapter.on(handle, 'stream', (s) => {
@@ -188,6 +187,7 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   const command = mock.spawn.mock.calls[0][1][2]
   expect(command).toContain("'--resume' 'resume-id'")
   expect(command).not.toContain('--session-id')
+  expect(command).toContain("'--model' 'opus[1m]'")
   expect(command).toContain("'--permission-mode' 'manual'")
   expect(command).toContain("'--settings'")
   expect(command).toContain("'--debug'")
@@ -673,43 +673,50 @@ it('lists the models the CLI itself offers, starting a session that has not spok
   await expect(adapter.models(handle)).rejects.toThrow(/ended/)
   await adapter.kill(handle)
 })
-it('switches the model before the first message, as /model does in the TUI', async () => {
-  const child = Object.assign(new EventEmitter(), {
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
-    stderr: new PassThrough()
-  })
-  mock.spawn.mockReturnValue(child)
-  const adapter = new ClaudeAdapter()
-  const handle = await adapter.spawn(spec)
-  adapter.on(handle, 'stream', (s) => {
-    if (s.kind === 'event') events.push(s.event)
-  })
-  expect(() => adapter.write(handle, { type: 'interrupt' })).toThrow(/not started/)
-  adapter.write(handle, { type: 'set_model', model: 'sonnet' })
-  expect(mock.spawn).toHaveBeenCalledTimes(1)
-  const request = JSON.parse(child.stdin.read().toString())
-  expect(request).toMatchObject({
-    type: 'control_request',
-    request: { subtype: 'set_model', model: 'sonnet' }
-  })
-  child.stdout.write(
-    JSON.stringify({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: request.request_id }
-    }) + '\n'
-  )
-  expect(events.at(-1)).toEqual({ type: 'session_meta', model: 'sonnet', providerSessionId: null })
-  // The first message then goes to the same process.
-  adapter.write(handle, { type: 'user_message', text: 'Hello' })
-  expect(mock.spawn).toHaveBeenCalledTimes(1)
-  expect(JSON.parse(child.stdin.read().toString())).toEqual({
-    type: 'user',
-    message: { role: 'user', content: 'Hello' }
-  })
-  child.emit('close', 0)
-  await adapter.kill(handle)
-})
+it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
+  'switches to %s before the first message using the real model validator',
+  async (model) => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    expect(() => adapter.write(handle, { type: 'interrupt' })).toThrow(/not started/)
+    expect(() => adapter.write(handle, { type: 'set_model', model: 'opus[1m];echo bad' })).toThrow(
+      'Invalid model name'
+    )
+    expect(mock.spawn).not.toHaveBeenCalled()
+    adapter.write(handle, { type: 'set_model', model })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    const request = JSON.parse(child.stdin.read().toString())
+    expect(request).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'set_model', model }
+    })
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: request.request_id }
+      }) + '\n'
+    )
+    expect(events.at(-1)).toEqual({ type: 'session_meta', model, providerSessionId: null })
+    // The first message then goes to the same process.
+    adapter.write(handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(child.stdin.read().toString())).toEqual({
+      type: 'user',
+      message: { role: 'user', content: 'Hello' }
+    })
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  }
+)
 it('asks AskUserQuestion as questions and answers with the reader choices', () => {
   const input = {
     questions: [
