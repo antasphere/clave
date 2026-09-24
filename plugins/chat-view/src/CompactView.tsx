@@ -16,6 +16,7 @@ import {
 } from './tools'
 import type { ChatViewProps } from './ChatView'
 import { useComposerFocus } from './focus'
+import { useSessionDraft } from '../../../src/renderer/src/views/draft-store'
 import { useTranscriptEnd } from './transcript'
 import { JumpToEnd } from './JumpToEnd'
 
@@ -75,7 +76,7 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
   const state =
     exited || conversation.state === 'ended' ? 'ended' : waiting ? 'blocked' : conversation.state
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useSessionDraft(session.id)
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState('')
   const transcript = useTranscriptEnd(conversation.entries, screenSlack)

@@ -15,6 +15,7 @@ import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
 import { useSessionLog } from './conversation-store'
+import { clearSessionDraft } from './draft-store'
 import { PluginViewSurface } from './PluginViewSurface'
 import { availableViews, resolveView, type AvailableView } from './resolution'
 import { emitTabClosed } from '../lib/exchange-capture'
@@ -208,6 +209,7 @@ export function RegisteredSessionView({
       // The provider may already have exited, as in the terminal header.
     }
     useViewSessionStore.getState().removeSession(sessionId)
+    clearSessionDraft(sessionId)
     setShowConfirm(false)
   }
   // v1 describes exactly one transport. A future dual-transport record can pass

@@ -10,9 +10,16 @@ spawn or by the picker in the pane header, and `sessions:set-view` writes it in
 main. Resolution never fails — the session's own choice, else the first view
 that renders its transport, else the terminal — so disabling a plugin or
 dropping a view from a manifest can never strand a session on a dead view.
-Only active, enabled bundled plugins with session read/write grants and a matching
-manifest view contribution mount. Disabling the plugin or failure of its utility
-process falls back to the terminal. A React render failure is caught by the host error boundary and shows
+Only enabled bundled plugins with session read/write grants and a matching
+manifest view contribution mount, whether their utility process is active or still
+starting: the view is the renderer's own code, and every plugin restarts on a
+reload (a plugin linked, a linked plugin's files changed), so requiring `active`
+swapped the pane for the terminal for about a hundred milliseconds each time and
+unmounted the composer under the reader's keystroke (PRDCT-2620). Disabling the
+plugin or failure of its utility process falls back to the terminal. What the
+reader has typed and not sent is the host's, per session, in `draft-store.ts`,
+so a composer that does come back (the chat plugin switched off and on again)
+finds its text. A React render failure is caught by the host error boundary and shows
 an error card; it does not switch views. PTY sessions retain their existing
 terminal implementation.
 

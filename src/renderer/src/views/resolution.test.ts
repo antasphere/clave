@@ -52,6 +52,20 @@ describe('view resolution', () => {
   it('falls back to the first matching view when the session names none', () => {
     expect(resolveView(session(), [plugin()], both)).toBe('clave.chat-view/chat')
   })
+  it('keeps a native view available while its plugin restarts', () => {
+    // Every plugin reads as starting for a moment on a reload; the view is the
+    // renderer's own code and must not leave the pane (PRDCT-2620).
+    expect(resolveView(session(), [plugin({ status: 'starting' })], both)).toBe(
+      'clave.chat-view/chat'
+    )
+  })
+  it('falls back to the terminal for a plugin that is disabled or failed', () => {
+    expect(resolveView(session(), [plugin({ status: 'disabled', enabled: false })], both)).toBe(
+      undefined
+    )
+    expect(resolveView(session(), [plugin({ status: 'error' })], both)).toBe(undefined)
+    expect(resolveView(session(), [plugin({ error: 'Plugin exited (1)' })], both)).toBe(undefined)
+  })
   it('falls back rather than stranding a session on a view that is gone', () => {
     const manifest = {
       id: 'clave.chat-view',

@@ -13,12 +13,20 @@ export interface AvailableView {
 /** A NATIVE view is the host's own code, so the bar is the one wave 2 set for
  *  the single view there was: bundled with the app, enabled, running, granted
  *  both session permissions. A plugin the user linked cannot ship code into the
- *  renderer. */
+ *  renderer.
+ *
+ *  Running means active OR starting. The view is compiled into the renderer and
+ *  needs nothing from the plugin's utility process, and that process restarts
+ *  whenever any plugin is reloaded (one linked, a linked one's files changed):
+ *  every plugin reads as starting for about a hundred milliseconds. Requiring
+ *  active swapped the pane for the terminal on each of those and unmounted the
+ *  composer under the reader's keystroke (PRDCT-2620). A plugin that failed
+ *  (status error, or an error on the record) still falls back. */
 function eligibleNative(plugin: PluginRecord): boolean {
   return (
     plugin.source === 'bundled' &&
     plugin.enabled &&
-    plugin.status === 'active' &&
+    (plugin.status === 'active' || plugin.status === 'starting') &&
     !plugin.error &&
     plugin.permissionsGranted.includes('sessions.read') &&
     plugin.permissionsGranted.includes('sessions.write') &&
