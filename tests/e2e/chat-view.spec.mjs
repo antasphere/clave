@@ -236,7 +236,10 @@ export async function run(t) {
     await elsewhere.waitFor()
     assert.match(await elsewhere.innerText(), /No longer awaiting an answer/)
     // The dock leaves with it: no button is left that could answer the request.
-    await until(async () => (await win.locator('.chat-prompt').count()) === 0)
+    assert.ok(
+      await until(async () => (await win.locator('.chat-prompt').count()) === 0),
+      'the dock must leave once the request was answered elsewhere'
+    )
     for (const label of ['Allow once', 'Deny'])
       assert.equal(
         await win.getByRole('button', { name: label, exact: true }).count(),
@@ -274,6 +277,16 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Copy message', exact: true }).first().click()
     assert.equal(await win.evaluate(() => navigator.clipboard.readText()), '/help\n')
     t.check('the working mark shows before text; a turn copies itself from its meta line', true)
+    // The mark is the agent at work: it leaves the moment the turn ends and
+    // returns with the next one, rather than resting under the answer.
+    await inject(app, record.id, [{ type: 'state_change', state: 'done' }])
+    assert.ok(
+      await until(async () => (await win.locator('.chat-provider-mark').count()) === 0),
+      'the mark must leave when the agent stops'
+    )
+    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await win.locator('.chat-provider-mark[data-state="working"]').waitFor()
+    t.check('the mark leaves when the agent stops and returns when it works again', true)
     assert.equal(await waitingDot.count(), 1, 'view-only answers cannot clear kernel blocked state')
     await kernelState(app, record.id, 'working')
     assert.ok(await until(async () => (await waitingDot.count()) === 0))
@@ -311,7 +324,10 @@ export async function run(t) {
         new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
       )
     })
-    await until(async () => (await input.inputValue()) !== '')
+    assert.ok(
+      await until(async () => (await input.inputValue()) !== ''),
+      'the dropped paths must reach the composer'
+    )
     assert.equal(
       await input.inputValue(),
       "'/Users/example/notes/a b.txt' /Users/example/src/c.ts "

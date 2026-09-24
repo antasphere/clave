@@ -95,16 +95,11 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
     </div>
   )
 }
-/** The provider's mark at the end of the transcript: breathing while the agent
- *  works (from the moment it starts, before any text), resting fully opaque
- *  under the finished answer. */
-function ProviderMark({
-  provider,
-  working
-}: {
-  provider: string
-  working: boolean
-}): React.JSX.Element {
+/** The provider's mark at the end of the transcript, breathing while the
+ *  agent works — from the moment it starts, before any text — and gone the
+ *  moment it stops. A finished answer stands on its own; a logo resting under
+ *  every reply read as the transcript's own decoration rather than a sign. */
+function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
   const Logo =
     provider === 'claude'
       ? ClaudeLogo
@@ -117,9 +112,9 @@ function ProviderMark({
     <div
       className="chat-provider-mark"
       data-provider={provider}
-      data-state={working ? 'working' : 'done'}
+      data-state="working"
       role="status"
-      aria-label={working ? `${provider} is working` : `${provider} finished`}
+      aria-label={`${provider} is working`}
     >
       {Logo ? <Logo /> : <span className="chat-provider-mark-dot" />}
     </div>
@@ -663,8 +658,8 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // through the same two functions, so a run breaks in the same place in each.
   const visible = visibleEntries(conversation.entries)
   const blocks = groupEntries(visible)
-  const lastVisible = visible.at(-1)
-  const showMark = state === 'working' || (!!lastVisible && lastVisible.kind !== 'user')
+  // The mark is the agent at work, nothing else: it leaves with the state.
+  const showMark = state === 'working'
   return (
     <div
       className="chat-view"
@@ -733,7 +728,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               renderEntry(block, index)
             )
           )}
-          {showMark && <ProviderMark provider={session.provider} working={state === 'working'} />}
+          {showMark && <ProviderMark provider={session.provider} />}
           {state === 'ended' && (
             <div className="chat-notice" role="status">
               Session ended

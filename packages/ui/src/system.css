@@ -2530,10 +2530,10 @@ button.extension-card:hover {
   height: var(--chat-glyph);
 }
 
-/* The provider's mark closes the transcript: it breathes while the agent
-   works, from the first moment and wherever the end currently is, and rests
-   fully opaque under the finished answer. Claude keeps its colour; the others
-   are drawn in ink. */
+/* The provider's mark: the agent at work, at the end of the transcript. It
+   breathes while the agent works, from the first moment and wherever the end
+   currently is, and is gone the moment the agent stops — a finished answer
+   stands on its own. Claude keeps its colour; the others are drawn in ink. */
 .chat-provider-mark {
   align-self: flex-start;
   display: flex;

@@ -58,7 +58,10 @@ export async function run(t) {
     assert.match(await win.locator('.chat-drop-overlay').innerText(), /Add files to the message/)
     assert.equal(await send.isDisabled(), true, 'nothing to send yet')
     await dragFiles(win, pane, 'drop', { 'shot.png': PNG })
-    await until(async () => (await win.locator('.chat-drop-overlay').count()) === 0)
+    assert.ok(
+      await until(async () => (await win.locator('.chat-drop-overlay').count()) === 0),
+      'the overlay must leave on drop'
+    )
     // The placeholder ("Preparing…") wears the same class as the chip that
     // replaces it; the chip is the one that names its delivery.
     const shotChip = composerChips.filter({ hasText: 'shot.png' }).filter({ hasText: 'Image ·' })
@@ -73,7 +76,10 @@ export async function run(t) {
     //    bytes; the echo reply says the provider received the image content.
     assert.equal(await send.isDisabled(), false, 'an attachment alone can be sent')
     await send.click()
-    await until(async () => (await userMessages()).length === 1)
+    assert.ok(
+      await until(async () => (await userMessages()).length === 1),
+      'the image-only message must cross the write IPC'
+    )
     const [imageWrite] = await userMessages()
     assert.equal(imageWrite.text, '')
     assert.equal(imageWrite.attachments.length, 1)
@@ -96,7 +102,10 @@ export async function run(t) {
       .locator('.chat-turn[data-role="assistant"]')
       .filter({ hasText: '(1 image received)' })
       .waitFor()
-    await until(async () => (await composerChips.count()) === 0)
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 0),
+      'the composer must clear its chips with the send'
+    )
     t.check(
       'an image-only message sends; main reads the bytes and the provider receives them',
       true
@@ -125,7 +134,10 @@ export async function run(t) {
     await notesChip.waitFor()
     await input.fill('read this')
     await input.press('Enter')
-    await until(async () => (await userMessages()).length === 2)
+    assert.ok(
+      await until(async () => (await userMessages()).length === 2),
+      'the reference message must cross the write IPC'
+    )
     const referenceWrite = (await userMessages())[1]
     assert.equal(referenceWrite.text, 'read this')
     assert.equal(referenceWrite.attachments[0].delivery, 'reference')
@@ -151,9 +163,15 @@ export async function run(t) {
     const pasted = composerChips.filter({ hasText: 'image.png' }).filter({ hasText: 'Image ·' })
     await pasted.waitFor()
     assert.equal(await input.inputValue(), '', 'a file paste types nothing')
-    await until(async () => !(await send.isDisabled()))
+    assert.ok(
+      await until(async () => !(await send.isDisabled())),
+      'a pasted image alone must enable send'
+    )
     await pasted.getByRole('button', { name: 'Remove image.png', exact: true }).click()
-    await until(async () => (await composerChips.count()) === 0)
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 0),
+      'removing the only chip must empty the composer'
+    )
     assert.equal(await send.isDisabled(), true)
     t.check('a pasted image is a chip that can be removed, and send follows', true)
 
@@ -171,7 +189,10 @@ export async function run(t) {
       )
     }, many)
     await win.getByRole('button', { name: 'Add files', exact: true }).click()
-    await until(async () => (await composerChips.count()) === 10)
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 10),
+      'the picker must fill the cap'
+    )
     await win.getByRole('alert').filter({ hasText: 'Attach up to 10 files' }).waitFor()
     assert.equal(await composerChips.filter({ hasText: 'pick-10.txt' }).count(), 0)
     t.check('the paperclip picks files, and the cap holds at ten with a visible reason', true)
@@ -186,7 +207,10 @@ export async function run(t) {
         .querySelector(selector)
         .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
     }, pane)
-    await until(async () => (await input.inputValue()) !== '')
+    assert.ok(
+      await until(async () => (await input.inputValue()) !== ''),
+      'the dropped paths must reach the composer'
+    )
     assert.equal(await input.inputValue(), "'/Users/example/src dir' /Users/example/src/c.ts ")
     assert.equal(await composerChips.count(), 10, 'a text drop attaches nothing')
     t.check('paths dragged from the file and git panels still paste at the caret', true)
