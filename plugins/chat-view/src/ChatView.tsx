@@ -23,6 +23,7 @@ import { emptyConversation, reduceConversation, type Entry } from './reducer'
 import { groupEntries, visibleEntries } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
+import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
@@ -847,6 +848,22 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 void send()
+              } else if (
+                event.key === 'Enter' &&
+                event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                // A new line inside a list item carries the list on.
+                const el = event.currentTarget
+                const next = continueList(el.value, el.selectionStart, el.selectionEnd)
+                if (!next) return
+                event.preventDefault()
+                // The DOM first, caret included, so the next keystroke lands
+                // in the right place even before React has re-rendered; the
+                // draft then matches the field and React leaves it alone.
+                el.value = next.text
+                el.setSelectionRange(next.caret, next.caret)
+                setDraft(next.text)
               }
             }}
           />
