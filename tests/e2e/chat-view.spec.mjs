@@ -85,6 +85,19 @@ export async function run(t) {
     assert.equal(await win.getByLabel('Chat view', { exact: true }).count(), 1)
     assert.ok(await win.getByLabel('Show terminal', { exact: true }).isDisabled())
     t.check('events session mounts chat, badge and explained disabled terminal toggle', true)
+    // The tab was just opened from the launcher and nothing has been clicked
+    // since: the caret must already be in the composer. `openChat` waited for
+    // the field to be enabled, which is what the focus itself waits on.
+    const composerFocused = () =>
+      win.evaluate(() => {
+        const el = document.activeElement
+        return el?.tagName === 'TEXTAREA' && !!el.closest('[data-testid="chat-view"]')
+      })
+    t.check(
+      'a new chat tab opens with its composer focused',
+      await until(composerFocused),
+      await win.evaluate(() => document.activeElement?.outerHTML.slice(0, 160) ?? 'nothing')
+    )
     const input = win.getByRole('textbox', { name: 'Message', exact: true })
     await input.fill('/help')
     await input.press('Shift+Enter')

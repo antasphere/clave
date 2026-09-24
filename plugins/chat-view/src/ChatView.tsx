@@ -30,6 +30,7 @@ import { useViewSessionStore } from '../../../src/renderer/src/views/session-sto
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
+import { useComposerFocus } from './focus'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -398,6 +399,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
      blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
   const closed = !ready || state === 'ended'
+  useComposerFocus(session.id, !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   useEffect(() => {
     const el = scroll.current

@@ -15,6 +15,7 @@ import {
   type Block
 } from './tools'
 import type { ChatViewProps } from './ChatView'
+import { useComposerFocus } from './focus'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
@@ -74,6 +75,8 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
   const [failure, setFailure] = useState('')
   const scroll = useRef<HTMLDivElement>(null)
   const stuck = useRef(true)
+  const field = useRef<HTMLInputElement>(null)
+  useComposerFocus(session.id, log.ready && state !== 'ended', field)
   useEffect(() => {
     const el = scroll.current
     if (el && stuck.current) el.scrollTop = el.scrollHeight
@@ -144,6 +147,7 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
             end-to-end spec went red. The field carries its own frame. */}
         <div className="flex items-center gap-2">
           <input
+            ref={field}
             className="input-field"
             value={draft}
             placeholder={state === 'ended' ? 'Session ended' : 'Message'}

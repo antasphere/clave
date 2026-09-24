@@ -21,6 +21,14 @@ tools by id (including an early result), and retains permission answers. Permiss
 buttons disable only after an acknowledged write; failures remain visible and can
 be retried. Session exit disables the composer.
 
+The composer takes the caret the moment it can accept input and this session is
+the focused one (`src/focus.ts`, both views): a new tab opens ready to type, the
+way a terminal tab focuses its xterm. The gate on "enabled" matters — the field is
+disabled until the subscription resolves, and a disabled field swallows a focus
+call — and the linked-document panel keeps its editor's caret. The hidden view's
+call is a no-op, since a field in a hidden slot cannot be focused. Making the hook
+return early turns `chat-view`'s "opens with its composer focused" red.
+
 The pane's header state is the kernel record the session stream carries, never a
 tally of what this view answered: a request the adapter no longer holds — it
 abandoned it, or another consumer of the same window answered it through
