@@ -28,7 +28,8 @@ import {
   until,
   tmuxSessionAlive,
   windowLayout,
-  fixturePath
+  fixturePath,
+  fixtureTmuxName
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -41,10 +42,10 @@ const WS_A = { id: 'aaaaaaaa-0000-4000-8000-0000000000e1', name: 'MoveA', rootDi
 const WS_B = { id: 'bbbbbbbb-0000-4000-8000-0000000000e2', name: 'MoveB', rootDir: ROOT_B, profileFile: null, createdAt: 2 }
 
 const MARKER = 'MOVE-MARKER-9271'
-const SESS = { id: '77777777-0000-4000-8000-000000000077', tmux: 'clave-e2e-move-b', cwd: ROOT_B, workspaceId: WS_B.id }
+const SESS = { id: '77777777-0000-4000-8000-000000000077', tmux: fixtureTmuxName('move-b'), cwd: ROOT_B, workspaceId: WS_B.id }
 // A record stamped with the key of a window that no longer exists (a crash
 // with two windows open, say): the orphan rung the primary must take.
-const DEAD = { id: '66666666-0000-4000-8000-000000000066', tmux: 'clave-e2e-move-dead', cwd: ROOT_A, workspaceId: WS_A.id, windowKey: 'dead-window-key-0000' }
+const DEAD = { id: '66666666-0000-4000-8000-000000000066', tmux: fixtureTmuxName('move-dead'), cwd: ROOT_A, workspaceId: WS_A.id, windowKey: 'dead-window-key-0000' }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const idsIn = (list) => (list?.sessions ?? []).map((s) => s.id)

@@ -34,7 +34,8 @@ import {
   userDataDir,
   callMcp,
   killLeakedE2eTmux,
-  fixturePath
+  fixturePath,
+  freePorts
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -49,9 +50,9 @@ const WS = {
   profileFile: CLAVE,
   createdAt: 1
 }
-const FAST_PORT = 47901
-const SLOW_PORT = 47902
-const MANUAL_PORT = 47903
+// Asked of the OS, not fixed: a second run at once would otherwise find its
+// board already served by the first run's server.
+const [FAST_PORT, SLOW_PORT, MANUAL_PORT] = await freePorts(3)
 const SLOW_DELAY_S = 75
 // tmux names carry the cwd's basename cut to 24 characters.
 const FIXTURE_TMUX_MARK = 'clave-e2e-group-view'

@@ -28,7 +28,8 @@ import {
   killLeakedE2eTmux,
   persistedWindows,
   windowLayout,
-  fixturePath
+  fixturePath,
+  fixtureTmuxName
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -53,11 +54,11 @@ const WS_B = {
 }
 
 const SESS = {
-  a: { id: '11111111-0000-4000-8000-000000000001', tmux: 'clave-e2e-mig-a', cwd: ROOT_A, workspaceId: WS_A.id },
-  b: { id: '22222222-0000-4000-8000-000000000002', tmux: 'clave-e2e-mig-b', cwd: ROOT_B, workspaceId: WS_B.id },
-  c: { id: '33333333-0000-4000-8000-000000000003', tmux: 'clave-e2e-mig-c', cwd: ROOT_A, workspaceId: undefined },
-  x: { id: '44444444-0000-4000-8000-000000000004', tmux: 'clave-e2e-mig-x', cwd: ROOT_B, workspaceId: WS_B.id },
-  p: { id: '55555555-0000-4000-8000-000000000005', tmux: 'clave-e2e-mig-p', cwd: ROOT_B, workspaceId: WS_B.id }
+  a: { id: '11111111-0000-4000-8000-000000000001', tmux: fixtureTmuxName('mig-a'), cwd: ROOT_A, workspaceId: WS_A.id },
+  b: { id: '22222222-0000-4000-8000-000000000002', tmux: fixtureTmuxName('mig-b'), cwd: ROOT_B, workspaceId: WS_B.id },
+  c: { id: '33333333-0000-4000-8000-000000000003', tmux: fixtureTmuxName('mig-c'), cwd: ROOT_A, workspaceId: undefined },
+  x: { id: '44444444-0000-4000-8000-000000000004', tmux: fixtureTmuxName('mig-x'), cwd: ROOT_B, workspaceId: WS_B.id },
+  p: { id: '55555555-0000-4000-8000-000000000005', tmux: fixtureTmuxName('mig-p'), cwd: ROOT_B, workspaceId: WS_B.id }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
