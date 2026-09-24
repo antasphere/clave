@@ -17,7 +17,13 @@ import {
   fixtureTmuxName,
   namespaceOf
 } from './namespace.mjs'
-import { killLeakedE2eTmux, leakedE2eSessions, tmuxSessionAlive, userDataDir } from './harness.mjs'
+import {
+  finishRun,
+  killLeakedE2eTmux,
+  leakedE2eSessions,
+  tmuxSessionAlive,
+  userDataDir
+} from './harness.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -42,6 +48,8 @@ function runWithNamespace(ns, marker) {
 export async function run(t) {
   const nsA = `ns-probe-a-${process.pid}`
   const nsB = `ns-probe-b-${process.pid}`
+  const nsFin = `clave-e2e-probe-fin-${process.pid}`
+  const sFin = `clave-e2e-probe-fin-${process.pid}`
   try {
     // ── two runs, two namespaces, two directories ──
     const a = runWithNamespace(nsA, 'run A')
@@ -155,8 +163,26 @@ export async function run(t) {
       t.check("and leaves B's alive", tmuxSessionAlive(sB))
       killLeakedE2eTmux({ env: { [NAMESPACE_ENV]: nsB } })
       t.check("cleanup under namespace B kills B's", !tmuxSessionAlive(sB))
+
+      // ── the end of a run: sweep, then the folder only when green and ours ──
+      const fin = { [NAMESPACE_ENV]: nsFin }
+      const finRoot = fixturePath('probe-root', { env: fin })
+      mkdirSync(finRoot, { recursive: true })
+      writeFileSync(path.join(finRoot, 'marker'), 'fin')
+      tmux('new-session', '-d', '-s', sFin, '-c', finRoot, 'sleep', '60')
+      t.equal('a red run keeps its folder', finishRun({ failed: 1, env: fin }), false)
+      t.check('and still sweeps its sessions', !tmuxSessionAlive(sFin))
+      t.check('the folder is there to be read', existsSync(path.join(finRoot, 'marker')))
+      t.equal('a green run removes its folder', finishRun({ failed: 0, env: fin }), true)
+      t.check('and the folder is gone', !existsSync(fixtureRoot({ env: fin })))
+      t.equal(
+        'a green run never removes a folder the suite does not name as its own',
+        finishRun({ failed: 0, env: { [NAMESPACE_ENV]: nsA } }),
+        false
+      )
+      t.check("and namespace A's folder is still there", existsSync(a), a)
     } finally {
-      for (const n of [sA, sB]) {
+      for (const n of [sA, sB, sFin]) {
         try {
           tmux('kill-session', '-t', `=${n}`)
         } catch {
@@ -167,8 +193,6 @@ export async function run(t) {
   } finally {
     rmSync(`/tmp/${nsA}`, { recursive: true, force: true })
     rmSync(`/tmp/${nsB}`, { recursive: true, force: true })
+    rmSync(`/tmp/${nsFin}`, { recursive: true, force: true })
   }
-  // Silence the linter about the imports a future check may want.
-  void mkdirSync
-  void writeFileSync
 }

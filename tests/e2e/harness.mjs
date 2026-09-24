@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
-import { fixturePath, fixtureRoot, fixtureTmuxName } from './namespace.mjs'
+import { fixturePath, fixtureRoot, fixtureTmuxName, namespaceOf } from './namespace.mjs'
 
 // Where a run keeps its fixtures (PRDCT-2615): every path a spec seeds goes
 // through `fixturePath`, so a CLAVE_E2E_NS set by the runner moves the whole
@@ -286,6 +286,19 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
       // Gone between the list and the kill.
     }
   }
+}
+
+/** The end of a run (run.mjs): sweep this run's leaked sessions, and after a
+ *  green run remove its fixture folder — a red one keeps it to be read. Only
+ *  a folder named as the suite's own (`clave-e2e-`, what defaultNamespace
+ *  gives) is ever removed: CLAVE_E2E_NS is free text, and a green run must not
+ *  delete whatever /tmp folder a typo happens to name (`tmux-501` is the tmux
+ *  socket directory). Returns whether the folder was removed. */
+export function finishRun({ failed, env = process.env }) {
+  killLeakedE2eTmux({ env })
+  if (failed !== 0 || !namespaceOf(env).startsWith('clave-e2e-')) return false
+  rmSync(fixtureRoot({ env }), { recursive: true, force: true })
+  return true
 }
 
 /** Which rows of `list-sessions -F '#{session_name}|#{session_path}'` are

@@ -5,11 +5,11 @@
 // JSON and exits 0 whatever happened is a probe, not a check — it verifies
 // nothing the moment nobody is reading the output. Every spec here asserts, and
 // a failed assertion fails the run.
-import { readdirSync, rmSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
-import { killLeakedE2eTmux } from './harness.mjs'
+import { finishRun, killLeakedE2eTmux } from './harness.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -91,9 +91,7 @@ for (const file of specs) {
   failed += t.results.filter((r) => !r.ok).length
 }
 
-killLeakedE2eTmux()
-// The fixture folder goes with a green run; a red one keeps it to be read.
-if (failed === 0) rmSync(fixtureRoot(), { recursive: true, force: true })
+finishRun({ failed })
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

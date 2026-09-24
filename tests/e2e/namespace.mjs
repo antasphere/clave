@@ -11,6 +11,10 @@
 // fixtures, or its tmux cleanup, reach into /tmp at large: an un-namespaced
 // mode was exactly what let one run's cleanup kill another run's live tabs.
 //
+// The namespace is the unit of isolation: one run per namespace at a time.
+// Two runs from one checkout share its default and sweep each other's
+// sessions, so give each its own: `CLAVE_E2E_NS=<name> node tests/e2e/run.mjs`.
+//
 // No import from harness.mjs here, on purpose: the harness pulls in
 // playwright-core, and this module is what a plain node test can exercise.
 import { createHash } from 'node:crypto'
