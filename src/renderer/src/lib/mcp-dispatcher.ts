@@ -30,6 +30,7 @@ import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
+import { resolveSpawnModes } from './open-session-modes'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -382,16 +383,12 @@ export async function openSessionProgrammatically(payload: {
     : (targetGroup?.workspaceId ?? workspaceForSpawn(undefined, payload.callerSessionId))
 
   const mode = payload.mode ?? 'claude'
-  const claudeMode = mode === 'claude'
-  // 'gemini' is accepted as a deprecated alias for the retired Gemini CLI.
-  const antigravityMode = mode === 'antigravity' || mode === 'gemini'
-  const codexMode = mode === 'codex'
-  const piMode = mode === 'pi'
-  // --dangerously-skip-permissions is a claude flag; other providers ignore it.
-  const dangerousMode = claudeMode && payload.dangerous === true
-  // model maps to claude --model / codex -m; antigravity and terminals have no flag.
-  const model = (claudeMode || codexMode || piMode) && payload.model ? payload.model : undefined
-  const family = mode === 'gemini' ? 'antigravity' : mode === 'terminal' ? null : mode
+  // Which CLI starts and which flags it takes, decided in `open-session-modes`
+  // where a unit test reaches it. The skip-approvals flag used to stop here
+  // for every agent but Claude, while the spawn already turned it into Codex's
+  // --yolo for the launcher's own Cmd+Y (PRDCT-2528).
+  const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
+    resolveSpawnModes(payload)
   const launchProfileId =
     family && payload.profile
       ? profilesFor(family).find(

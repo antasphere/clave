@@ -458,7 +458,9 @@ function buildServer(callerSessionId: string | undefined): McpServer {
         dangerous: z
           .boolean()
           .optional()
-          .describe('Start claude with --dangerously-skip-permissions (claude mode only)'),
+          .describe(
+            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo. Ignored for antigravity, pi and terminal.'
+          ),
         model: z
           .string()
           .min(1)
