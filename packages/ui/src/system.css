@@ -2523,6 +2523,22 @@ button.extension-card:hover {
   align-self: stretch;
   padding: 0 var(--spacing);
 }
+/* A message whose turn the reader stopped: the agent never finished with it,
+   so it steps back — tertiary ink on a surface faded to a hairline — and says
+   so in one word underneath, in the flow so the hover meta lands below it. */
+.chat-turn[data-role='user'][data-interrupted='true'] {
+  color: var(--text-tertiary);
+  background-color: transparent;
+  border: thin solid var(--border-subtle-color);
+}
+.chat-turn-wrap[data-interrupted='true'] .chat-attachments {
+  opacity: 0.5;
+}
+.chat-turn-note {
+  padding: var(--spacing) var(--spacing) 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
 
 /* On approach, a turn shows when it was said and a copy of it: a hover-revealed
    line that lives in the column's gap under the message — out of the flow, so

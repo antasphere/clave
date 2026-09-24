@@ -4,7 +4,18 @@ import type { Attachment } from '../../../src/shared/attachments'
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
 export type Entry =
-  | { kind: 'user'; text: string; final: boolean; at: number; attachments?: Attachment[] }
+  | {
+      kind: 'user'
+      text: string
+      final: boolean
+      at: number
+      attachments?: Attachment[]
+      /* The reader stopped the turn this message started, so the agent never
+         finished with it: the row reads muted, and the text is back in the
+         composer when Escape did the stopping. The adapter's word
+         (`turn_interrupted`), never inferred from an error. */
+      interrupted?: boolean
+    }
   | { kind: 'assistant'; text: string; final: boolean; at: number }
   | {
       kind: 'tool'
@@ -140,6 +151,17 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     case 'error':
       entries.push({ kind: 'error', message: event.message, at })
       return { ...state, entries, state: event.fatal ? 'ended' : state.state }
+    case 'turn_interrupted': {
+      // The message that started the turn is the last one the reader sent;
+      // an answer still streaming when the stop landed is closed as it stands.
+      const started = entries.findLastIndex((e) => e.kind === 'user')
+      const message = started >= 0 ? entries[started] : undefined
+      if (message?.kind === 'user') entries[started] = { ...message, interrupted: true }
+      const open = entries.findLastIndex((e) => e.kind === 'assistant' && !e.final)
+      const answer = open >= 0 ? entries[open] : undefined
+      if (answer?.kind === 'assistant') entries[open] = { ...answer, final: true }
+      break
+    }
     case 'provider_event':
       // The provider's own wire format is the adapter's business, not the
       // reader's: nothing of it reaches the transcript.

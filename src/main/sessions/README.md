@@ -131,7 +131,14 @@ permission turn verifies the control-request/response round trip. Choices are
 `allow-once`, `deny`, and `allow-always` only when the request has actual
 `permission_suggestions`; the last applies exactly those updates (which may be
 session-scoped), never an invented blanket permission. Interrupt is a
-`control_request` with `request: { subtype: 'interrupt' }`, not a signal.
+`control_request` with `request: { subtype: 'interrupt' }`, not a signal. The
+result that closes an interrupted turn says `is_error` with no text; the adapter
+reports it as `turn_interrupted` rather than an error when it sent the interrupt
+itself or the CLI wrote its own `[Request interrupted by user]` acknowledgement
+(a user text block), and the word is withdrawn by the next user message so a
+later failure still reads as one. A replayed transcript maps that
+acknowledgement the same way instead of showing it as something the reader
+typed. Codex reports a `turn/completed` whose status is `interrupted` alike.
 Unknown frames and complete message metadata remain `provider_event`; malformed
 frames produce nonfatal errors. Text snapshots do not duplicate partial text.
 A final empty text event closes each assistant message. Result usage/cost remains

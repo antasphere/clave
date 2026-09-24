@@ -39,8 +39,14 @@ describe('Codex translation', () => {
         expect(added).toEqual([{ type: 'assistant_text', delta: frame.params.delta, final: false }])
       if (frame.method === 'item/completed' && frame.params.item.type === 'agentMessage')
         expect(added).toEqual([{ type: 'assistant_text', delta: '', final: true }])
-      if (frame.method === 'turn/completed')
+      if (frame.method === 'turn/completed') {
         expect(added.at(-1)).toEqual({ type: 'state_change', state: 'done' })
+        // The recorded interrupted turn is the reader's stop, not a failure.
+        expect(added.some((e) => e.type === 'turn_interrupted')).toBe(
+          frame.params.turn.status === 'interrupted'
+        )
+        expect(added.some((e) => e.type === 'error')).toBe(false)
+      }
       if (frame.method === 'turn/started')
         expect(added).toEqual([{ type: 'state_change', state: 'working' }])
     }
@@ -417,6 +423,15 @@ it.each(['execCommandApproval', 'applyPatchApproval'])(
   }
 )
 
+it('reports an interrupted turn as interrupted even when Codex attaches an error to it', () => {
+  const events: SessionEvent[] = []
+  const translator = new CodexTranslator((e) => events.push(e))
+  translator.notification({
+    method: 'turn/completed',
+    params: { turn: { id: 't', status: 'interrupted', error: { message: 'Turn interrupted' } } }
+  })
+  expect(events).toEqual([{ type: 'turn_interrupted' }, { type: 'state_change', state: 'done' }])
+})
 it('expires legacy approvals with the active turn even without a turnId field', () => {
   const translator = new CodexTranslator(() => {})
   translator.turnId = 'active'

@@ -73,6 +73,12 @@ export const HOST_COMMANDS: CommandOption[] = [
 /** What a transcript's human line says, the way the reader typed it: a slash
  *  command as "/name args", the CLI's own wrappers (command output, caveats,
  *  reminders) as nothing. */
+/** The CLI's own acknowledgement of an interrupt, written into the
+ *  conversation as a user text block: "[Request interrupted by user]", or
+ *  "[Request interrupted by user for tool use]" when a tool was running. */
+function isInterruptNotice(text: unknown): boolean {
+  return typeof text === 'string' && /^\[Request interrupted by user/.test(text.trim())
+}
 function spokenText(text: string): string {
   const command = /<command-name>([^<]*)<\/command-name>/.exec(text)
   if (command) {
@@ -113,6 +119,11 @@ export class ClaudeStreamTranslator {
   private streamed = false
   private finished = false
   private tools = new Set<string>()
+  /** The turn in flight was stopped by the reader: set when the adapter sends
+   *  the interrupt and when the CLI writes its own "[Request interrupted by
+   *  user]" acknowledgement, consumed by the result that closes the turn.
+   *  That result says `is_error` with no text, which read as a failure. */
+  interrupted = false
   constructor(private readonly emit: (event: SessionEvent) => void) {}
   /** A control_response answering one of our initialize requests; false for any other. */
   private listRequest(p: Record<string, unknown>): boolean {
@@ -175,12 +186,15 @@ export class ClaudeStreamTranslator {
       const content = object.safeParse(frame.message).data?.content
       if (frame.type === 'user') {
         if (typeof content === 'string') {
-          const text = spokenText(content)
-          if (text) this.emit({ type: 'user_message', text })
+          if (isInterruptNotice(content)) this.emit({ type: 'turn_interrupted' })
+          else if (spokenText(content))
+            this.emit({ type: 'user_message', text: spokenText(content) })
           continue
         }
         for (const item of z.array(block).catch([]).parse(content)) {
-          if (item.type === 'tool_result' && typeof item.tool_use_id === 'string') {
+          if (item.type === 'text' && isInterruptNotice(item.text)) {
+            this.emit({ type: 'turn_interrupted' })
+          } else if (item.type === 'tool_result' && typeof item.tool_use_id === 'string') {
             open.delete(item.tool_use_id)
             this.emit({
               type: 'tool_result',
@@ -258,7 +272,9 @@ export class ClaudeStreamTranslator {
       }
       const message = z.object({ content: z.array(object) }).parse(p.message)
       for (const block of message.content) {
-        if (block.type === 'text' && p.type === 'assistant' && !this.streamed) {
+        if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
+          this.interrupted = true
+        } else if (block.type === 'text' && p.type === 'assistant' && !this.streamed) {
           this.emit({ type: 'assistant_text', delta: z.string().parse(block.text), final: false })
         } else if (block.type === 'tool_use') {
           const tool = z
@@ -368,12 +384,14 @@ export class ClaudeStreamTranslator {
       this.permissions.clear()
       this.questionRequests.clear()
       this.tools.clear()
-      if (p.is_error)
+      if (p.is_error && this.interrupted) this.emit({ type: 'turn_interrupted' })
+      else if (p.is_error)
         this.emit({
           type: 'error',
           message: typeof p.result === 'string' ? p.result : 'Claude turn failed',
           fatal: false
         })
+      this.interrupted = false
       fallback()
       this.emit({ type: 'state_change', state: 'done' })
       this.streamed = false
@@ -680,6 +698,7 @@ export class ClaudeAdapter implements SessionAdapter {
     }
     if (input.type === 'user_message') {
       live.process ??= live.start()
+      live.translator.interrupted = false
       live.emit(userMessageEvent(input))
       // The pane works from the moment a message is sent, the first one
       // included: before this the CLI's init frame, seconds after the first
@@ -719,8 +738,10 @@ export class ClaudeAdapter implements SessionAdapter {
         request_id: requestId,
         request: { subtype: 'set_model', model: input.model }
       })
-    } else
+    } else {
+      live.translator.interrupted = true
       send({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } })
+    }
   }
   /** The commands the CLI offers this folder (skills included, with what each
    *  does), asked of the session's own process like the models, so a first

@@ -35,7 +35,7 @@ function lineOf(entry: Exclude<Block, { kind: 'tool-group' }>): { role: string; 
   switch (entry.kind) {
     case 'user':
       return {
-        role: 'You',
+        role: entry.interrupted ? 'You · interrupted' : 'You',
         text: entry.attachments?.length
           ? `${entry.text} [${entry.attachments.map((f) => f.name).join(', ')}]`.trim()
           : entry.text

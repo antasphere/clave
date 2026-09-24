@@ -143,6 +143,10 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     providerSessionId: z.string().nullable()
   }),
   z.object({ type: z.literal('error'), message: z.string(), fatal: z.boolean() }),
+  /* The turn the reader's `interrupt` stopped ended there: the provider's word
+     that it was cut short, never a failure. A view mutes the message that
+     started it rather than raising an error card over it. */
+  z.object({ type: z.literal('turn_interrupted') }),
   z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() })
 ])
 export type SessionEvent = z.infer<typeof SessionEventSchema>

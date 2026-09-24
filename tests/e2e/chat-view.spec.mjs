@@ -330,6 +330,20 @@ export async function run(t) {
     assert.equal(await input.inputValue(), '/help\n')
     await input.fill('')
     t.check('Escape interrupts the turn and hands the last message back to the composer', true)
+    // The adapter's word that the turn was stopped: the message that started
+    // it steps back, says so underneath, and no error card is raised over it.
+    const pane = win.locator('[data-testid="chat-view"]')
+    const sent = pane.locator('.chat-turn-wrap[data-side="end"]').last()
+    await inject(app, record.id, [{ type: 'turn_interrupted' }])
+    await sent.locator('.chat-turn[data-role="user"][data-interrupted="true"]').waitFor()
+    assert.equal(await sent.locator('.chat-turn-note').innerText(), 'Interrupted')
+    assert.equal(
+      await pane.locator('.chat-turn[data-role="user"][data-interrupted="true"]').count(),
+      1,
+      'only the message whose turn was stopped is muted'
+    )
+    assert.equal(await win.getByRole('alert').count(), 0, 'an interrupted turn is not an error')
+    t.check('an interrupted turn mutes the message that started it and raises no error', true)
     // A drag from Clave's own file or git panel carries newline-separated
     // absolute paths as text/plain; the composer takes them at the caret.
     await win.locator('.chat-composer').evaluate((form) => {

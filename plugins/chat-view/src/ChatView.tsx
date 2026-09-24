@@ -468,13 +468,23 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const renderEntry = (entry: Entry, index: number): React.JSX.Element | null => {
     if (entry.kind === 'user')
       return (
-        <div key={index} className="chat-turn-wrap" data-side="end">
+        <div
+          key={index}
+          className="chat-turn-wrap"
+          data-side="end"
+          data-interrupted={entry.interrupted ? 'true' : undefined}
+        >
           <Attachments files={entry.attachments ?? []} />
           {entry.text.trim() !== '' && (
-            <article className="chat-turn" data-role="user">
+            <article
+              className="chat-turn"
+              data-role="user"
+              data-interrupted={entry.interrupted ? 'true' : undefined}
+            >
               {entry.text.replace(/\s+$/, '')}
             </article>
           )}
+          {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
           <TurnMeta at={entry.at} text={entry.text} />
         </div>
       )

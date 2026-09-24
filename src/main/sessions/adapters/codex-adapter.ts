@@ -139,7 +139,8 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
-        if (turn.error)
+        if (turn.status === 'interrupted') this.emit({ type: 'turn_interrupted' })
+        else if (turn.error)
           this.emit({
             type: 'error',
             message: text(object(turn.error).message) || 'Codex turn failed',

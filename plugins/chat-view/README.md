@@ -21,6 +21,14 @@ tools by id (including an early result), and retains permission answers. Permiss
 buttons disable only after an acknowledged write; failures remain visible and can
 be retried. Session exit disables the composer.
 
+A turn the reader stopped (the Stop button or Escape) arrives as
+`turn_interrupted`, the adapter's word, never a guess read off an error: the
+reducer marks the last user entry `interrupted`, the row reads muted with
+"Interrupted" under it, an answer still streaming is closed as it stands, and no
+error card is raised — Claude closes such a turn with an `is_error` result that
+carries no text, which used to read as "Claude turn failed" under the message.
+Compact says "You · interrupted" on the line.
+
 The composer takes the caret the moment it can accept input and this session is
 the focused one (`src/focus.ts`, both views): a new tab opens ready to type, the
 way a terminal tab focuses its xterm. The gate on "enabled" matters — the field is

@@ -893,7 +893,15 @@ it('replays a resumed transcript as the events a live turn would have produced',
       message: { content: [{ type: 'text', text: 'subagent' }] }
     },
     'not json',
-    { type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } }
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } },
+    {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }
+    },
+    {
+      type: 'user',
+      message: { role: 'user', content: '[Request interrupted by user for tool use]' }
+    }
   ].map((line) => (typeof line === 'string' ? line : JSON.stringify(line)))
   translator.replay(lines)
   expect(events).toEqual([
@@ -904,10 +912,85 @@ it('replays a resumed transcript as the events a live turn would have produced',
     { type: 'tool_call', id: 't2', name: 'Read', input: { file_path: '/x' } },
     { type: 'tool_result', id: 't1', output: 'a\nb', error: true },
     { type: 'assistant_text', delta: 'Done.', final: true },
+    // The CLI's interrupt acknowledgements, in either shape: the turn they
+    // closed reads interrupted, never as a message the reader typed.
+    { type: 'turn_interrupted' },
+    { type: 'turn_interrupted' },
     // Never answered in the transcript: closed rather than left running.
     { type: 'tool_result', id: 't2', output: undefined }
   ])
   for (const event of events) expect(SessionEventSchema.safeParse(event).success).toBe(true)
+})
+it('reports an interrupted turn as interrupted, not as a failed one', () => {
+  // Recorded 2026-09-24 from Claude Code with `--model haiku`: an interrupt
+  // control_request mid-answer. The CLI acknowledges the interrupt as a user
+  // text block, then closes the turn with an is_error result carrying no text.
+  const interruptedResult = {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    terminal_reason: 'aborted_streaming',
+    errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null'],
+    duration_ms: 5235,
+    num_turns: 2,
+    session_id: 's'
+  }
+  feed({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: '1\n2\n3' }] }
+  })
+  feed({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }
+  })
+  feed(interruptedResult)
+  expect(events.filter((e) => e.type === 'error')).toEqual([])
+  expect(events.filter((e) => e.type === 'user_message')).toEqual([])
+  expect(events.slice(-3)).toEqual([
+    { type: 'turn_interrupted' },
+    { type: 'provider_event', provider: 'claude', payload: interruptedResult },
+    { type: 'state_change', state: 'done' }
+  ])
+  // The acknowledgement is consumed by that result: the next failure is a failure.
+  events.length = 0
+  feed({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's' })
+  expect(events.filter((e) => e.type === 'error')).toEqual([
+    { type: 'error', message: 'Claude turn failed', fatal: false }
+  ])
+  expect(events.some((e) => e.type === 'turn_interrupted')).toBe(false)
+})
+it("takes the adapter's own interrupt as the word too, until the next message", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  const streamed: SessionEvent[] = []
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') streamed.push(s.event)
+  })
+  adapter.write(handle, { type: 'user_message', text: 'count' })
+  adapter.write(handle, { type: 'interrupt' })
+  // A CLI that never writes the acknowledgement still closes the turn as an error.
+  child.stdout.write(
+    `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true })}\n`
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(streamed.some((e) => e.type === 'turn_interrupted')).toBe(true)
+  expect(streamed.some((e) => e.type === 'error')).toBe(false)
+  // A new message withdraws the word: its own failure reads as one.
+  adapter.write(handle, { type: 'user_message', text: 'again' })
+  child.stdout.write(
+    `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true })}\n`
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(streamed.filter((e) => e.type === 'turn_interrupted')).toHaveLength(1)
+  expect(streamed.filter((e) => e.type === 'error')).toEqual([
+    { type: 'error', message: 'Claude turn failed', fatal: false }
+  ])
 })
 it('offers the host /resume before the commands the CLI lists at initialize', async () => {
   const child = Object.assign(new EventEmitter(), {

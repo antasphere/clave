@@ -171,6 +171,28 @@ describe('conversation stream', () => {
     expect(state.entries[0]).toMatchObject({ answer: 'yes' })
     expect(elsewhere(state.entries[0])).toBe(undefined)
   })
+  it('mutes the message whose turn was interrupted and closes the answer as it stands', () => {
+    const state = run([
+      { type: 'user_message', text: 'first' },
+      { type: 'assistant_text', delta: 'done', final: true },
+      { type: 'user_message', text: 'count to 400' },
+      { type: 'assistant_text', delta: '1\n2\n3', final: false },
+      { type: 'turn_interrupted' },
+      { type: 'state_change', state: 'done' }
+    ])
+    expect(state.entries.map((e) => e.kind)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(state.entries[0]).toMatchObject({ text: 'first' })
+    expect(state.entries[0]).not.toHaveProperty('interrupted')
+    expect(state.entries[2]).toMatchObject({ text: 'count to 400', interrupted: true })
+    expect(state.entries[3]).toMatchObject({ text: '1\n2\n3', final: true })
+    expect(state.entries.some((e) => e.kind === 'error')).toBe(false)
+    expect(state.state).toBe('done')
+  })
+  it('an interruption with no message to mute changes nothing', () => {
+    const state = run([{ type: 'assistant_text', delta: 'hello', final: true }])
+    const next = reduceConversation(state, { event: { type: 'turn_interrupted' } })
+    expect(next.entries).toEqual(state.entries)
+  })
   it('keeps the entries array when a state_change changes nothing in it', () => {
     const state = run([
       { type: 'assistant_text', delta: 'hello', final: true },
