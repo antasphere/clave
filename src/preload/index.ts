@@ -4,7 +4,8 @@ import type {
   SessionInput,
   SessionEvent,
   ModelOption,
-  CommandOption
+  CommandOption,
+  HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
@@ -60,6 +61,8 @@ const electronAPI = {
     ipcRenderer.invoke('sessions:commands', id),
   sessionsCapabilities: (id: string): Promise<{ images: boolean }> =>
     ipcRenderer.invoke('sessions:capabilities', id),
+  sessionsHistory: (id: string, before?: number, limit?: number): Promise<HistoryPage> =>
+    ipcRenderer.invoke('sessions:history', id, before, limit),
   // The composer's files: prepared into a session's attachment records here,
   // read again in main when the message is sent.
   sessionsFiles: {

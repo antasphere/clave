@@ -8,6 +8,20 @@ and reduces it with the same `reducer.ts`, so it shows the whole conversation
 however late it is opened; chat still keeps its own reducer and subscription, and
 moves onto the log once PRDCT-2549 has merged (PRDCT-2616).
 
+A resumed conversation opens on its end: both views read its past from main a
+page at a time (`sessions:history`, `src/main/sessions/README.md`), the newest
+first, and ask for the page before only when the reader is within a screen and a
+half of the top (`src/earlier.ts`), so a steady scroll up rarely meets a top that
+is still loading. The page goes in front in one dispatch, and the transcript
+restores the reader's distance from the bottom in the layout of the same commit
+(`useTranscriptEnd`'s `hold`), so nothing moves on screen. Rows are keyed by the
+entry's ordinal (`Conversation.first`), never by position, so a page in front
+shifts no key; and each row is memoised on its entry, so a streamed delta
+re-renders the answer it grows and a keystroke in the composer re-renders no
+turn at all. A loader pill (`.chat-earlier`) shows over the transcript's head
+only when a page takes longer than a beat. The empty state waits for the first
+page, so a long conversation never flashes "Start a conversation" on its way in.
+
 The compact composer deliberately does NOT wear the `chat-composer` class: both
 views are mounted at once, and one class on two elements is a strict locator
 resolving to two — which is exactly how this plugin's own end-to-end spec went

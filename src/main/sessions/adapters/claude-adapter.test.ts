@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
 const mock = vi.hoisted(() => ({
@@ -903,8 +905,10 @@ it('replays a resumed transcript as the events a live turn would have produced',
       message: { role: 'user', content: '[Request interrupted by user for tool use]' }
     }
   ].map((line) => (typeof line === 'string' ? line : JSON.stringify(line)))
-  translator.replay(lines)
-  expect(events).toEqual([
+  const replayed = translator.replay(lines).map((item) => item.event)
+  // The past is returned for a view to page through, never streamed.
+  expect(events).toEqual([])
+  expect(replayed).toEqual([
     { type: 'user_message', text: '/exos:lane clave 2527' },
     { type: 'user_message', text: 'Fix the capture scan' },
     { type: 'assistant_text', delta: 'Looking.', final: true },
@@ -919,7 +923,81 @@ it('replays a resumed transcript as the events a live turn would have produced',
     // Never answered in the transcript: closed rather than left running.
     { type: 'tool_result', id: 't2', output: undefined }
   ])
-  for (const event of events) expect(SessionEventSchema.safeParse(event).success).toBe(true)
+  for (const event of replayed) expect(SessionEventSchema.safeParse(event).success).toBe(true)
+})
+it('dates each replayed event by its transcript line, and closes a dead call at the next message', () => {
+  const at = (iso: string): number => Date.parse(iso)
+  const items = translator.replay(
+    [
+      {
+        type: 'user',
+        timestamp: '2026-09-01T10:00:00.000Z',
+        message: { role: 'user', content: 'first' }
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-09-01T10:00:05.000Z',
+        message: { content: [{ type: 'tool_use', id: 'lost', name: 'Bash', input: {} }] }
+      },
+      // No timestamp: the event goes undated rather than dated wrongly.
+      { type: 'user', message: { role: 'user', content: 'second' } }
+    ].map((line) => JSON.stringify(line))
+  )
+  expect(items).toEqual([
+    { event: { type: 'user_message', text: 'first' }, at: at('2026-09-01T10:00:00.000Z') },
+    {
+      event: { type: 'tool_call', id: 'lost', name: 'Bash', input: {} },
+      at: at('2026-09-01T10:00:05.000Z')
+    },
+    // Closed before the reader spoke again, not at the transcript's end, so the
+    // call never ties every later turn to it and a page may begin at each.
+    { event: { type: 'tool_result', id: 'lost', output: undefined } },
+    { event: { type: 'user_message', text: 'second' } }
+  ])
+})
+it('keeps a resumed past in main for the view to page, and streams none of it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'clave-history-'))
+  vi.stubEnv('CLAVE_TRANSCRIPTS_ROOT', root)
+  mkdirSync(join(root, '-tmp'))
+  const turns = Array.from({ length: 3 }, (_, i) => [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `question ${i}` } }),
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: `answer ${i}` }] }
+    })
+  ]).flat()
+  writeFileSync(join(root, '-tmp', 'resume-id.jsonl'), turns.join('\n'))
+  mock.spawn.mockReturnValue(
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn()
+    })
+  )
+  try {
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, options: { resume: 'resume-id' } })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    adapter.ready(handle)
+    expect(events.map((e) => e.type)).toEqual(['session_meta'])
+    const history = adapter.history(handle)
+    expect(history.map((item) => item.event)).toEqual(
+      [0, 1, 2].flatMap((i) => [
+        { type: 'user_message', text: `question ${i}` },
+        { type: 'assistant_text', delta: `answer ${i}`, final: true }
+      ])
+    )
+    // Read once, at readiness: every later ask is served from main, even once
+    // the file is gone.
+    rmSync(join(root, '-tmp', 'resume-id.jsonl'))
+    expect(adapter.history(handle)).toBe(history)
+  } finally {
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 it('reports an interrupted turn as interrupted, not as a failed one', () => {
   // Recorded 2026-09-24 from Claude Code with `--model haiku`: an interrupt

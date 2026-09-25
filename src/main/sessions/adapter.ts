@@ -5,7 +5,8 @@ import type {
   Transport,
   SessionInput,
   ModelOption,
-  CommandOption
+  CommandOption,
+  HistoryItem
 } from '../../shared/session-model'
 
 export type SpawnSpec = Session & { options?: unknown }
@@ -34,6 +35,9 @@ export interface SessionAdapter {
   write(handle: SessionHandle, input: Uint8Array | SessionInput): void
   /** The models this session may switch to; absent when the provider has none to offer. */
   models?(handle: SessionHandle): Promise<ModelOption[]>
+  /** A resumed conversation's past, oldest first, which the manager hands to a
+   *  view a page at a time; absent when the adapter replays nothing. */
+  history?(handle: SessionHandle): HistoryItem[]
   /** The commands the composer offers under "/"; absent when the provider has none. */
   commands?(handle: SessionHandle): Promise<CommandOption[]>
   resize?(handle: SessionHandle, cols: number, rows: number): void

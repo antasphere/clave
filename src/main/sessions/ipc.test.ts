@@ -408,3 +408,39 @@ it('keeps the built-in CLIs raw frames in main and passes everything else to the
   sessionManager.kill(id)
   sessionManager.forget(id)
 })
+it("pages a session's past to the window that owns it, newest first, and to no other", () => {
+  const id = `ipc-${++sequence}`
+  const adapter = Object.assign(new EchoAdapter(), {
+    history: () =>
+      Array.from({ length: 500 }, (_, n) => ({
+        event: { type: 'user_message' as const, text: `m${n}` },
+        at: n
+      }))
+  })
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const event = { sender: { id: sequence } }
+  const history = mocks.handlers.get('sessions:history')
+  const newest = history(event, id)
+  expect(newest.items.at(-1)).toEqual({ event: { type: 'user_message', text: 'm499' }, at: 499 })
+  expect(newest.before).toBe(500 - newest.items.length)
+  const older = history(event, id, newest.before, 10)
+  expect(older.items.map((item: { at: number }) => item.at)).toEqual(
+    Array.from({ length: 10 }, (_, i) => newest.before - 10 + i)
+  )
+  // A cursor or a size that is not a count is ignored, never trusted.
+  expect(history(event, id, 'x', -3)).toEqual(newest)
+  mocks.keyForWindow.mockReturnValue('other-window')
+  expect(() => history(event, id)).toThrow('another window')
+  mocks.keyForWindow.mockReturnValue('window')
+})

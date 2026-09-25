@@ -39,6 +39,13 @@ describe('SessionManager', () => {
     expect(manager.get('a')?.title).toBe('Moved')
   })
 
+  it('has no past to page for an adapter that replays none', async () => {
+    const { manager } = fixture()
+    await manager.create(session('a'))
+    expect(manager.history('a')).toEqual({ items: [], before: null })
+    expect(() => manager.history('absent')).toThrow('Unknown session')
+  })
+
   it('carries the chosen view on the record, and refuses an id that is not one', async () => {
     const { manager } = fixture()
     await manager.create(session('a'))

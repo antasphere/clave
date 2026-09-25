@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -20,7 +20,7 @@ import type {
   CommandOption
 } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
-import { groupEntries, visibleEntries } from './tools'
+import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
@@ -35,6 +35,8 @@ import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
 import { JumpToEnd } from './JumpToEnd'
+import { useEarlier, type EarlierPage } from './earlier'
+import { EarlierLoading } from './EarlierLoading'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -336,12 +338,99 @@ function ModelMenu({
     </DropdownMenu.Root>
   )
 }
+/** One turn of the transcript. Memoised on the entry itself, which the
+ *  reducer replaces only when that entry changes: a streamed delta re-renders
+ *  the answer it grows and nothing above it, and a keystroke in the composer
+ *  re-renders no turn at all. A long conversation used to re-parse the
+ *  markdown of every answer it held on each of those. */
+const EntryRow = memo(function EntryRow({
+  entry,
+  onError
+}: {
+  entry: Entry
+  onError: (error: unknown) => void
+}): React.JSX.Element | null {
+  if (entry.kind === 'user')
+    return (
+      <div
+        className="chat-turn-wrap"
+        data-side="end"
+        data-interrupted={entry.interrupted ? 'true' : undefined}
+      >
+        <Attachments files={entry.attachments ?? []} />
+        {entry.text.trim() !== '' && (
+          <article
+            className="chat-turn"
+            data-role="user"
+            data-interrupted={entry.interrupted ? 'true' : undefined}
+          >
+            {entry.text.replace(/\s+$/, '')}
+          </article>
+        )}
+        {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
+        <TurnMeta at={entry.at} text={entry.text} />
+      </div>
+    )
+  if (entry.kind === 'assistant')
+    return (
+      <div className="chat-turn-wrap" data-side="start">
+        <article className="chat-turn chat-prose" data-role="assistant">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              code: ChatCode,
+              a: ({ href, children }) =>
+                href && /^(https?:|mailto:)/i.test(href) ? (
+                  <a
+                    href={href}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      void openLink(href, { external: wantsExternal(event) }).catch(onError)
+                    }}
+                  >
+                    {children}
+                  </a>
+                ) : (
+                  <span>{children}</span>
+                )
+            }}
+          >
+            {entry.text}
+          </ReactMarkdown>
+        </article>
+        <TurnMeta at={entry.at} text={entry.text} />
+      </div>
+    )
+  if (entry.kind === 'permission') return <PermissionRow entry={entry} />
+  if (entry.kind === 'error')
+    return (
+      <div className="chat-notice" data-tone="error" role="alert">
+        {entry.message}
+      </div>
+    )
+  return null
+})
+/** A run of tools, re-rendered only when one of its calls changed: the run is
+ *  rebuilt by `groupEntries` on every render, its calls are not. */
+const ToolRow = memo(
+  ToolGroup,
+  (a: { group: ToolRun }, b: { group: ToolRun }) =>
+    a.group.id === b.group.id &&
+    a.group.tools.length === b.group.tools.length &&
+    a.group.tools.every((tool, i) => tool === b.group.tools[i])
+)
 export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
   })
   const [ready, setReady] = useState(false)
+  // A resumed conversation's past lives in main and arrives a page at a time,
+  // the newest first: `before` is what to ask for next, null once nothing is
+  // older; `pastRead` holds the empty state back until the first answer, so a
+  // long conversation never flashes "Start a conversation" on its way in.
+  const [before, setBefore] = useState<number | null>(null)
+  const [pastRead, setPastRead] = useState(false)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
@@ -381,6 +470,20 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       .sessionsSubscribe(session.id)
       .then(() => {
         if (live) setReady(true)
+        // Asked once subscribed, when the adapter has read the transcript;
+        // whatever streamed meanwhile is newer and stays after it. A host
+        // without the call rejects inside the chain and shows no past.
+        return Promise.resolve()
+          .then(() => window.electronAPI.sessionsHistory(session.id))
+          .then((page) => {
+            if (!live) return
+            dispatch({ prepend: page.items })
+            setBefore(page.before)
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (live) setPastRead(true)
+          })
       })
       .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
     // Whether an attached image can go as image content is the adapter's
@@ -410,11 +513,23 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   useComposerFocus(session.id, !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
   const transcript = useTranscriptEnd(conversation.entries, stickSlack)
+  const fetchEarlier = useCallback<EarlierPage>(async () => {
+    if (before === null) return null
+    const page = await window.electronAPI.sessionsHistory(session.id, before)
+    return () => {
+      dispatch({ prepend: page.items })
+      setBefore(page.before)
+    }
+  }, [session.id, before])
+  const earlier = useEarlier(transcript, before !== null, fetchEarlier, conversation.entries)
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
   }
-  const report = (error: unknown): void =>
-    dispatch({ event: { type: 'error', message: String(error), fatal: false } })
+  const report = useCallback(
+    (error: unknown): void =>
+      dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
+    []
+  )
   // /resume is the host's, as in the TUI: it opens the picker rather than
   // reaching the agent, typed whole or taken from the slash menu.
   const canResume = session.provider === 'claude'
@@ -470,68 +585,6 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     } finally {
       setPending((current) => current.filter((value) => value !== id))
     }
-  }
-  const renderEntry = (entry: Entry, index: number): React.JSX.Element | null => {
-    if (entry.kind === 'user')
-      return (
-        <div
-          key={index}
-          className="chat-turn-wrap"
-          data-side="end"
-          data-interrupted={entry.interrupted ? 'true' : undefined}
-        >
-          <Attachments files={entry.attachments ?? []} />
-          {entry.text.trim() !== '' && (
-            <article
-              className="chat-turn"
-              data-role="user"
-              data-interrupted={entry.interrupted ? 'true' : undefined}
-            >
-              {entry.text.replace(/\s+$/, '')}
-            </article>
-          )}
-          {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
-          <TurnMeta at={entry.at} text={entry.text} />
-        </div>
-      )
-    if (entry.kind === 'assistant')
-      return (
-        <div key={index} className="chat-turn-wrap" data-side="start">
-          <article className="chat-turn chat-prose" data-role="assistant">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code: ChatCode,
-                a: ({ href, children }) =>
-                  href && /^(https?:|mailto:)/i.test(href) ? (
-                    <a
-                      href={href}
-                      onClick={(event) => {
-                        event.preventDefault()
-                        void openLink(href, { external: wantsExternal(event) }).catch(report)
-                      }}
-                    >
-                      {children}
-                    </a>
-                  ) : (
-                    <span>{children}</span>
-                  )
-              }}
-            >
-              {entry.text}
-            </ReactMarkdown>
-          </article>
-          <TurnMeta at={entry.at} text={entry.text} />
-        </div>
-      )
-    if (entry.kind === 'permission') return <PermissionRow key={index} entry={entry} />
-    if (entry.kind === 'error')
-      return (
-        <div key={index} className="chat-notice" data-tone="error" role="alert">
-          {entry.message}
-        </div>
-      )
-    return null
   }
   // Escape while the agent works is the TUI's gesture: stop the turn and hand
   // the message back to the composer to edit and resend, unless something
@@ -673,8 +726,18 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // Empty assistant turns (a closing frame that opened nothing) do not render;
   // consecutive tool calls fold into one row. Both views filter and group
   // through the same two functions, so a run breaks in the same place in each.
-  const visible = visibleEntries(conversation.entries)
-  const blocks = groupEntries(visible)
+  // Keyed by each entry's ordinal (`Conversation.first`), never by position:
+  // a page of the past arriving in front must not shift a key, or every turn
+  // below it would render as another and the column's arrival would replay on
+  // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const blocks = useMemo(() => {
+    const ordinal = new Map<Entry, number>()
+    conversation.entries.forEach((entry, i) => ordinal.set(entry, conversation.first + i))
+    return groupEntries(visibleEntries(conversation.entries)).map((block) => ({
+      block,
+      key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
+    }))
+  }, [conversation.entries, conversation.first])
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   return (
@@ -719,7 +782,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
-            {conversation.entries.length === 0 && state !== 'ended' && (
+            {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
                   <ChatBubbleLeftRightIcon />
@@ -730,13 +793,11 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
                 </div>
               </div>
             )}
-            {/* The index is the block's own, not a lookup: indexOf inside a map is
-              quadratic, and a long transcript pays it on every stream event. */}
-            {blocks.map((block, index) =>
+            {blocks.map(({ block, key }) =>
               block.kind === 'tool-group' ? (
-                <ToolGroup key={`tools-${block.id}`} group={block} />
+                <ToolRow key={key} group={block} />
               ) : (
-                renderEntry(block, index)
+                <EntryRow key={key} entry={block} onError={report} />
               )
             )}
             {showMark && <ProviderMark provider={session.provider} />}
@@ -748,6 +809,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             )}
           </div>
         </div>
+        {earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
