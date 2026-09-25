@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { BackgroundTask, SessionEvent } from '../../../shared/session-model'
+import type { BackgroundTask, HistoryItem, SessionEvent } from '../../../shared/session-model'
 
 /** One event as it arrived, with the moment it did: a view that groups turns by
  *  time needs the arrival, and the transport carries none. */
@@ -15,6 +15,13 @@ export interface LoggedEvent {
  *  a switch, because the log outlives every view. */
 export interface SessionLog {
   events: LoggedEvent[]
+  /** The conversation's past before this subscription, oldest first: the
+   *  pages of `sessions:history` read so far. Kept apart from `events` because
+   *  it grows at the front, and a view keys its rows from the end of it. */
+  past: HistoryItem[]
+  /** What to ask for the page older than `past`; null once nothing is older,
+   *  undefined until the first page has been read. */
+  before?: number | null
   /** Set once the subscription is acknowledged; a view waits for it before writing. */
   ready: boolean
   /** The provider's exit code, once it has exited. */
@@ -25,7 +32,7 @@ export interface SessionLog {
    *  scans the log for it: that scan ran on every event of every session. */
   background?: BackgroundTask[]
 }
-const empty: SessionLog = { events: [], ready: false }
+const empty: SessionLog = { events: [], past: [], ready: false }
 interface ConversationState {
   logs: Record<string, SessionLog>
 }
@@ -77,7 +84,19 @@ function attach(sessionId: string): void {
   void window.electronAPI
     .sessionsSubscribe(sessionId)
     .then(() => {
-      if (!disposed) patch(sessionId, (log) => ({ ...log, ready: true }))
+      if (disposed) return
+      patch(sessionId, (log) => ({ ...log, ready: true }))
+      // Only the newest page: a view asks for more as its reader scrolls up
+      // (`loadEarlierLog`). A host without the call leaves the past empty.
+      return Promise.resolve()
+        .then(() => window.electronAPI.sessionsHistory(sessionId))
+        .then((page) => {
+          if (!disposed)
+            patch(sessionId, (log) => ({ ...log, past: page.items, before: page.before }))
+        })
+        .catch(() => {
+          if (!disposed) patch(sessionId, (log) => ({ ...log, before: null }))
+        })
     })
     .catch((error: unknown) => {
       if (!disposed) patch(sessionId, (log) => ({ ...log, error: String(error) }))
@@ -100,12 +119,26 @@ function detach(sessionId: string): void {
   attachments.delete(sessionId)
   live.release()
   // The log is dropped with the last consumer: the pane is gone, and a session
-  // reopened later is a fresh subscription the provider replays into.
+  // reopened later is a fresh subscription that reads its past from main again.
   useConversationStore.setState((state) => {
     const logs = { ...state.logs }
     delete logs[sessionId]
     return { logs }
   })
+}
+/** Read the page of the past before the oldest one held, into the front of
+ *  `past`. Resolves to what puts it there, or null when nothing is older. */
+export async function loadEarlierLog(sessionId: string): Promise<(() => void) | null> {
+  const before = useConversationStore.getState().logs[sessionId]?.before
+  if (before === null || before === undefined) return null
+  const page = await window.electronAPI.sessionsHistory(sessionId, before)
+  return () =>
+    patch(sessionId, (log) =>
+      // A log dropped or reset meanwhile is not this page's to extend.
+      log.before === before
+        ? { ...log, past: [...page.items, ...log.past], before: page.before }
+        : log
+    )
 }
 /** Keep the session's log alive for as long as this component is mounted, and
  *  read it. The host mounts this for the pane's lifetime, so the log spans

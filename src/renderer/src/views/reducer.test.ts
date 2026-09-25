@@ -224,4 +224,28 @@ describe('conversation stream', () => {
     expect(state.entries[0]).toMatchObject({ answeredElsewhere: true })
     expect(state.entries[1]).toMatchObject({ answer: 'yes' })
   })
+  it('puts a page of the past in front without moving a key already given', () => {
+    const past: ChatEvent[] = [
+      { type: 'user_message', text: 'old question' },
+      { type: 'tool_call', id: 't', name: 'Read', input: {} },
+      { type: 'tool_result', id: 't', output: 'ok' },
+      { type: 'assistant_text', delta: 'old answer', final: true }
+    ]
+    const live = run([{ type: 'user_message', text: 'new question' }])
+    const keyOf = (c: Conversation, text: string): number =>
+      c.first + c.entries.findIndex((e) => e.kind === 'user' && e.text === text)
+    const before = keyOf(live, 'new question')
+    const merged = reduceConversation(live, {
+      prepend: past.map((event, i) => ({ event, at: 100 + i }))
+    })
+    // The same entries as reading the whole conversation in order, each of
+    // the past dated by its transcript line, and the live one keeps its key.
+    const whole = run([...past, { type: 'user_message', text: 'new question' }])
+    const undated = (c: Conversation): unknown[] => c.entries.map((e) => ({ ...e, at: 0 }))
+    expect(undated(merged)).toEqual(undated(whole))
+    expect(merged.entries.map((e) => e.at)).toEqual([100, 101, 103, 1])
+    expect(keyOf(merged, 'new question')).toBe(before)
+    expect(merged.first).toBe(live.first - 3)
+    expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
+  })
 })

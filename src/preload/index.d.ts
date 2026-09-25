@@ -4,7 +4,8 @@ import type {
   SessionInput,
   SessionEvent,
   ModelOption,
-  CommandOption
+  CommandOption,
+  HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import type {
@@ -23,6 +24,10 @@ export interface SessionIPC {
   'sessions:unsubscribe': { args: [sessionId: string]; result: void }
   'sessions:write': { args: [sessionId: string, input: Uint8Array | SessionInput]; result: void }
   'sessions:capabilities': { args: [sessionId: string]; result: { images: boolean } }
+  'sessions:history': {
+    args: [sessionId: string, before?: number, limit?: number]
+    result: HistoryPage
+  }
 }
 export interface SessionIPCEvents {
   [channel: `sessions:stream:${string}`]: SessionStream
@@ -558,6 +563,9 @@ export interface ElectronAPI {
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
   sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
+  /** A resumed conversation's past: the page ending at `before` (the end when
+   *  absent), oldest first, with what to ask for the page older than it. */
+  sessionsHistory: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
   sessionsFiles: {
     prepare(sessionId: string, source: AttachmentSource): Promise<Attachment>
     pick(): Promise<string[]>

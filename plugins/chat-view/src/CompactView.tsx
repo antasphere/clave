@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline'
 import type { SessionInput } from '../../../src/shared/session-model'
 import {
+  loadEarlierLog,
   useSessionLogValue,
   type LoggedEvent
 } from '../../../src/renderer/src/views/conversation-store'
+import type { HistoryItem } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Conversation } from './reducer'
 import {
   failureCount,
@@ -19,13 +21,22 @@ import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
 import { JumpToEnd } from './JumpToEnd'
+import { useEarlier } from './earlier'
+import { EarlierLoading } from './EarlierLoading'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
  *  proof that two views of one plugin read one session — the host keeps the
  *  log, each view reduces it its own way. */
-function reduceLog(events: LoggedEvent[], initialState: Conversation['state']): Conversation {
-  return events.reduce(reduceConversation, { ...emptyConversation, state: initialState })
+function reduceLog(
+  past: HistoryItem[],
+  events: LoggedEvent[],
+  initialState: Conversation['state']
+): Conversation {
+  const live = events.reduce(reduceConversation, { ...emptyConversation, state: initialState })
+  // The past goes in front of what streamed since, so a row's key
+  // (`first + index`) holds as older pages arrive.
+  return reduceConversation(live, { prepend: past })
 }
 /** What a row says about a turn, in the fewest words that still identify it.
  *  A run of tools is ONE row here as it is in the conversation view — the same
@@ -68,9 +79,16 @@ const screenSlack = (el: HTMLElement): number => el.clientHeight
 export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
   const log = useSessionLogValue(session.id)
   const conversation = useMemo(
-    () => reduceLog(log.events, session.state),
-    [log.events, session.state]
+    () => reduceLog(log.past, log.events, session.state),
+    [log.past, log.events, session.state]
   )
+  // Each row keyed by its entry's ordinal, as in the conversation view, so a
+  // page of the past arriving in front shifts no key.
+  const ordinal = useMemo(() => {
+    const map = new Map<unknown, number>()
+    conversation.entries.forEach((entry, i) => map.set(entry, conversation.first + i))
+    return map
+  }, [conversation])
   const waiting = conversation.entries.some((e) => e.kind === 'permission' && !e.answer)
   const exited = log.exitCode !== undefined
   const state =
@@ -80,6 +98,8 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState('')
   const transcript = useTranscriptEnd(conversation.entries, screenSlack)
+  const fetchEarlier = useCallback(() => loadEarlierLog(session.id), [session.id])
+  const earlier = useEarlier(transcript, !!log.before, fetchEarlier, conversation.entries)
   const field = useRef<HTMLInputElement>(null)
   useComposerFocus(session.id, log.ready && state !== 'ended', field)
   const send = async (): Promise<void> => {
@@ -103,20 +123,27 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           {conversation.entries.length === 0 ? (
-            <div className="chat-empty">
-              <span className="chat-empty-icon">
-                <ChatBubbleLeftRightIcon />
-              </span>
-              <h2>Nothing yet</h2>
-              <p>This session has said nothing so far.</p>
-            </div>
+            // Nothing is said to be empty before the past has been read.
+            log.before !== undefined && (
+              <div className="chat-empty">
+                <span className="chat-empty-icon">
+                  <ChatBubbleLeftRightIcon />
+                </span>
+                <h2>Nothing yet</h2>
+                <p>This session has said nothing so far.</p>
+              </div>
+            )
           ) : (
             <ol className="chat-column" aria-label="Conversation, compact">
-              {groupEntries(visibleEntries(conversation.entries)).map((block, index) => {
+              {groupEntries(visibleEntries(conversation.entries)).map((block) => {
                 const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
                 return (
                   <li
-                    key={block.kind === 'tool-group' ? `tools-${block.id}` : index}
+                    key={
+                      block.kind === 'tool-group'
+                        ? `tools-${block.id}`
+                        : `entry-${ordinal.get(block)}`
+                    }
                     className="flex items-baseline gap-2 min-w-0"
                     data-kind={block.kind}
                     data-state={block.kind === 'tool-group' ? groupStatus(block.tools) : undefined}
@@ -134,6 +161,7 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
             </ol>
           )}
         </div>
+        {earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">

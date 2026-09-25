@@ -1,4 +1,4 @@
-import type { AgentState, SessionEvent } from '../../../src/shared/session-model'
+import type { AgentState, HistoryItem, SessionEvent } from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
 
 export type ChatEvent = SessionEvent
@@ -50,17 +50,31 @@ export type Entry =
   | { kind: 'error'; message: string; at: number }
 export interface Conversation {
   entries: Entry[]
+  /** The ordinal of `entries[0]`: an entry's `first + index` is its own for
+   *  good, the key a view renders it under. Only a page of the past moves it,
+   *  down by the entries put in front, so no entry already on screen changes
+   *  key — as it would under a plain index, remounting the transcript. */
+  first: number
   state: AgentState
   model: string | null
   exitCode?: number
 }
-export const emptyConversation: Conversation = { entries: [], state: 'idle', model: null }
+export const emptyConversation: Conversation = { entries: [], first: 0, state: 'idle', model: null }
 export type Action =
   | { event: ChatEvent; at?: number }
   | { answer: string; optionId: string; answers?: Record<string, string> }
   | { exit: number }
+  /** A page of the conversation's past, oldest first, in front of what is here.
+   *  Main only cuts a page where nothing pairs across the cut (a tool call and
+   *  its result, an interrupt and its message), so it reduces on its own. */
+  | { prepend: HistoryItem[] }
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('prepend' in action) {
+    if (!action.prepend.length) return state
+    const past = action.prepend.reduce(reduceConversation, emptyConversation).entries
+    return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
+  }
   if ('answer' in action) {
     const entries = state.entries.map((e) =>
       e.kind === 'permission' && e.request.id === action.answer

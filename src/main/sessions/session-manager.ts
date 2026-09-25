@@ -5,8 +5,10 @@ import {
   type SessionStream,
   type SessionInput,
   type ModelOption,
-  type CommandOption
+  type CommandOption,
+  type HistoryPage
 } from '../../shared/session-model'
+import { pageHistory } from './history'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
 
 type Listener<T> = { callback: (value: T) => void; windowKey?: string }
@@ -156,6 +158,13 @@ export class SessionManager {
   async commands(id: string): Promise<CommandOption[]> {
     const entry = this.require(id)
     return entry.adapter.commands ? entry.adapter.commands(entry.handle) : []
+  }
+
+  /** The page of the session's past that ends at `before` (its end when
+   *  absent), about `limit` events long. */
+  history(id: string, before?: number, limit?: number): HistoryPage {
+    const entry = this.require(id)
+    return pageHistory(entry.adapter.history?.(entry.handle) ?? [], before, limit)
   }
 
   resize(id: string, cols: number, rows: number): void {

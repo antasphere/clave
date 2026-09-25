@@ -21,9 +21,10 @@ uses the existing adoption spawn options so the same tmux session is reattached 
   `sessions:stream:<id>` and `sessions:exit:<id>` for that WebContents.
 - `sessions:unsubscribe(id)` removes that consumer's notifications.
 - `sessions:write(id, input)` refuses sessions outside the caller’s window and accepts `Uint8Array` or a validated `SessionInput` (user message, permission response, interrupt).
+- `sessions:history(id, before?, limit?)` refuses sessions outside the caller’s window and returns a page of a resumed conversation's past (see below).
 
 The preload exposes `sessionsList`, `sessionsSubscribe`, `sessionsUnsubscribe`,
-`sessionsWrite`, `onSessionStream`, and `onSessionStreamExit` on `window.electronAPI`.
+`sessionsWrite`, `sessionsHistory`, `onSessionStream`, and `onSessionStreamExit` on `window.electronAPI`.
 Install notification listeners before invoking subscribe, and await subscription
 before writing. Each renderer view pairs its subscribe with unsubscribe and
 removes its own listeners; the preload reference-counts the underlying subscription
@@ -37,6 +38,33 @@ bind. The built-in PTY adapter starts on resize; echo emits only in response to
 write. Listener exceptions are isolated so a failed consumer cannot interrupt
 another view or process cleanup. `forget` removes the registry entry after a
 compatibility close or detach, allowing the same id to be adopted in a new window.
+
+## A resumed conversation's past
+
+A resumed session's past is not streamed. An adapter that has one implements
+optional `history(handle)`, returning it oldest first as `HistoryItem`s (an event
+and, when the transcript says, the moment it happened); the manager pages it
+(`history.ts`, `pageHistory`) and `sessions:history` hands a view one page at a
+time, the newest first, each with the cursor for the page before it. A view asks
+for the newest page once subscribed, paints it, and asks for more only as its
+reader scrolls up. The stream used to carry the whole transcript, one IPC message
+per event, and the view re-rendered on each: a long conversation visibly rebuilt
+itself turn by turn after every restart, and every turn of it ended up in the
+renderer twice (the chat view's reducer and the host log).
+
+A page begins at a turn when one begins within a further page's length, else at
+a step of the turn (one very long turn is paged by its steps), and never where
+the reducer pairs across the cut: between a tool call and its result, or inside
+a turn that ends in `turn_interrupted`, which marks the message that started it.
+So each page reduces on its own and goes in front of the next
+(`reduceConversation`'s `prepend`). Claude reads the transcript once, at
+readiness, before the process starts, and keeps it for the session's life, so a
+view that remounts asks again and gets the same past; it closes a call the
+transcript never answered when the reader next speaks, not at the transcript's
+end, or that one call would tie every later turn into one page.
+`history.test.ts` holds the cuts; `tests/e2e/chat-history-pages.spec.mjs` holds
+the view: a 600-turn restore opens on its end with a fraction of it rendered,
+scrolling up keeps the reader's place, and every turn arrives once, in order.
 
 ## Attachments
 

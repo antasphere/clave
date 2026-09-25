@@ -136,6 +136,18 @@ export function registerSessionIpc(): void {
       throw new Error('Session belongs to another window')
     return sessionManager.models(id)
   })
+  // A resumed conversation's past, a page at a time and newest first, so a
+  // view paints the end of a long conversation at once and reads further back
+  // only as the reader scrolls there.
+  ipcMain.handle('sessions:history', (event, id: string, before: unknown, limit: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const key = win && windowRegistry.getKeyForWindow(win.id)
+    if (!key || sessionManager.get(id)?.windowKey !== key)
+      throw new Error('Session belongs to another window')
+    const count = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+    return sessionManager.history(id, count(before), count(limit))
+  })
   ipcMain.handle('sessions:commands', (event, id: string) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const key = win && windowRegistry.getKeyForWindow(win.id)

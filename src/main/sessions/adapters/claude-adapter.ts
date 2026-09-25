@@ -13,6 +13,7 @@ import {
   type SessionInput,
   type SessionEvent,
   type BackgroundTask,
+  type HistoryItem,
   type ModelOption,
   type CommandOption
 } from '../../../shared/session-model'
@@ -243,13 +244,20 @@ export class ClaudeStreamTranslator {
       })
     return true
   }
-  /** A resumed conversation's past, replayed from its transcript as the events
-   *  a live turn would have produced: the CLI resumes it without repeating it,
-   *  so a view would otherwise open on an empty page. Subagent lines, meta
+  /** A resumed conversation's past, read from its transcript as the events a
+   *  live turn would have produced, each with the moment the transcript gives
+   *  it: the CLI resumes it without repeating it, so a view would otherwise
+   *  open on an empty page. Returned, never streamed: a view asks for it a page
+   *  at a time (`sessions:history`), the newest first. Subagent lines, meta
    *  lines and the CLI's own wrappers stay out; a call the transcript never
    *  answered is closed, not left spinning. */
-  replay(lines: Iterable<string>): void {
+  replay(lines: Iterable<string>): HistoryItem[] {
+    const items: HistoryItem[] = []
     const open = new Set<string>()
+    const close = (): void => {
+      for (const id of open) items.push({ event: { type: 'tool_result', id, output: undefined } })
+      open.clear()
+    }
     const block = z.object({ type: z.string() }).passthrough()
     for (const line of lines) {
       let frame: Record<string, unknown>
@@ -260,19 +268,27 @@ export class ClaudeStreamTranslator {
       }
       if (frame.isSidechain === true || frame.isMeta === true) continue
       const content = object.safeParse(frame.message).data?.content
+      const time = typeof frame.timestamp === 'string' ? Date.parse(frame.timestamp) : NaN
+      const push = (event: SessionEvent): void => {
+        // The reader spoke again: whatever the turn before left unanswered is
+        // over. Closed here rather than at the end of the transcript, so a
+        // call that never got its result does not tie every later turn to it
+        // and a page can still begin at each of them.
+        if (event.type === 'user_message') close()
+        items.push(Number.isFinite(time) ? { event, at: time } : { event })
+      }
       if (frame.type === 'user') {
         if (typeof content === 'string') {
-          if (isInterruptNotice(content)) this.emit({ type: 'turn_interrupted' })
-          else if (spokenText(content))
-            this.emit({ type: 'user_message', text: spokenText(content) })
+          if (isInterruptNotice(content)) push({ type: 'turn_interrupted' })
+          else if (spokenText(content)) push({ type: 'user_message', text: spokenText(content) })
           continue
         }
         for (const item of z.array(block).catch([]).parse(content)) {
           if (item.type === 'text' && isInterruptNotice(item.text)) {
-            this.emit({ type: 'turn_interrupted' })
+            push({ type: 'turn_interrupted' })
           } else if (item.type === 'tool_result' && typeof item.tool_use_id === 'string') {
             open.delete(item.tool_use_id)
-            this.emit({
+            push({
               type: 'tool_result',
               id: item.tool_use_id,
               output: item.content,
@@ -280,13 +296,13 @@ export class ClaudeStreamTranslator {
             })
           } else if (item.type === 'text' && typeof item.text === 'string') {
             const text = spokenText(item.text)
-            if (text) this.emit({ type: 'user_message', text })
+            if (text) push({ type: 'user_message', text })
           }
         }
       } else if (frame.type === 'assistant') {
         for (const item of z.array(block).catch([]).parse(content)) {
           if (item.type === 'text' && typeof item.text === 'string' && item.text.trim())
-            this.emit({ type: 'assistant_text', delta: item.text, final: true })
+            push({ type: 'assistant_text', delta: item.text, final: true })
           else if (
             item.type === 'tool_use' &&
             typeof item.id === 'string' &&
@@ -294,7 +310,7 @@ export class ClaudeStreamTranslator {
           ) {
             this.tools.add(item.id)
             open.add(item.id)
-            this.emit({
+            push({
               type: 'tool_call',
               id: item.id,
               name: typeof item.name === 'string' ? item.name : 'Tool',
@@ -304,7 +320,8 @@ export class ClaudeStreamTranslator {
         }
       }
     }
-    for (const id of open) this.emit({ type: 'tool_result', id, output: undefined })
+    close()
+    return items
   }
   line(line: string): void {
     try {
@@ -558,8 +575,10 @@ interface Live {
   ready: boolean
   initialPrompt?: string
   commandError?: string
-  /** The conversation this session resumes, replayed into the view once. */
-  resume?: { id: string; cwd: string; configDir?: string; replayed: boolean }
+  /** The conversation this session resumes. Its past is read from the
+   *  transcript once and kept here for as long as the session lives, so a
+   *  view asks for it a page at a time, and asks again after a remount. */
+  resume?: { id: string; cwd: string; configDir?: string; history?: HistoryItem[] }
   /** The model the session was launched on; the CLI's init frame refines it. */
   model: string | null
   emit: (event: SessionEvent) => void
@@ -627,7 +646,7 @@ export class ClaudeAdapter implements SessionAdapter {
       initialPrompt: context.initialPrompt,
       model: options.model ?? null,
       resume: options.resume
-        ? { id: options.resume, cwd: spec.cwd, configDir: context.configDir, replayed: false }
+        ? { id: options.resume, cwd: spec.cwd, configDir: context.configDir }
         : undefined,
       commandError:
         context.initialCommand !== undefined || context.autoExecute === true
@@ -754,19 +773,9 @@ export class ClaudeAdapter implements SessionAdapter {
       kind: 'event',
       event: { type: 'session_meta', model: live.model, providerSessionId: null }
     })
-    if (live.resume && !live.resume.replayed) {
-      live.resume.replayed = true
-      const path = findTranscript(live.resume.id, live.resume.cwd, live.resume.configDir)
-      try {
-        if (path) live.translator.replay(readFileSync(path, 'utf8').split('\n'))
-      } catch (error) {
-        live.emit({
-          type: 'error',
-          message: `Could not replay the conversation: ${String(error)}`,
-          fatal: false
-        })
-      }
-    }
+    // Read before the process starts, as the replay always was: the ids of
+    // the past's tool calls must be known before the CLI's first frame.
+    this.loadHistory(live)
     // The process starts here, the moment a consumer is bound, so its boot
     // (login shell, CLI, plugins, MCP servers: seconds) overlaps the reader's
     // typing instead of following their Enter. Nothing is lost by it: the
@@ -778,6 +787,27 @@ export class ClaudeAdapter implements SessionAdapter {
       this.write(handle, { type: 'user_message', text: initialPrompt })
     live.initialPrompt = undefined
     live.ready = true
+  }
+  /** The resumed conversation's past; empty for a fresh one. */
+  history(handle: SessionHandle): HistoryItem[] {
+    return this.loadHistory(this.live(handle))
+  }
+  private loadHistory(live: Live): HistoryItem[] {
+    const resume = live.resume
+    if (!resume) return []
+    if (resume.history) return resume.history
+    resume.history = []
+    const path = findTranscript(resume.id, resume.cwd, resume.configDir)
+    try {
+      if (path) resume.history = live.translator.replay(readFileSync(path, 'utf8').split('\n'))
+    } catch (error) {
+      live.emit({
+        type: 'error',
+        message: `Could not replay the conversation: ${String(error)}`,
+        fatal: false
+      })
+    }
+    return resume.history
   }
   write(handle: SessionHandle, raw: Uint8Array | SessionInput): void {
     if (raw instanceof Uint8Array)

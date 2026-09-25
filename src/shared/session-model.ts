@@ -167,6 +167,20 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('provider_event'), provider: z.string(), payload: z.unknown() })
 ])
 export type SessionEvent = z.infer<typeof SessionEventSchema>
+/** One event of a conversation's past, with the moment the transcript says it
+ *  happened when it says one. A resumed session keeps its past in main and a
+ *  view reads it a page at a time (`sessions:history`), newest first, rather
+ *  than taking the whole of it down the stream before the first paint. */
+export interface HistoryItem {
+  event: SessionEvent
+  at?: number
+}
+/** A page of that past, oldest first. `before` is what to ask for the page
+ *  older than this one, and null once there is nothing older. */
+export interface HistoryPage {
+  items: HistoryItem[]
+  before: number | null
+}
 export const SessionStreamSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pty'), data: z.instanceof(Uint8Array) }),
   z.object({ kind: z.literal('event'), event: SessionEventSchema })
