@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type KeyboardEvent, type SetStateAction } from 'react'
+import { useCallback, useRef, type KeyboardEvent, type SetStateAction } from 'react'
+import { useSessionDraft } from '../../../src/renderer/src/views/draft-store'
 import type { Entry } from './reducer'
 
 type Browsing = { messages: string[]; index: number }
@@ -38,17 +39,23 @@ export function recallMessage(
 
 /** Each composer browses a snapshot of its own session's sent text. Any edit
  * or programmatic draft replacement ends browsing; attachments stay untouched. */
-export function useMessageHistory(entries: Entry[]): {
+export function useMessageHistory(
+  sessionId: string,
+  entries: Entry[]
+): {
   draft: string
   setDraft: (value: SetStateAction<string>) => void
   recall: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => string | null
 } {
-  const [draft, setValue] = useState('')
+  const [draft, setValue] = useSessionDraft(sessionId)
   const browsing = useRef<Browsing | null>(null)
-  const setDraft = useCallback((value: SetStateAction<string>): void => {
-    browsing.current = null
-    setValue(value)
-  }, [])
+  const setDraft = useCallback(
+    (value: SetStateAction<string>): void => {
+      browsing.current = null
+      setValue(value)
+    },
+    [setValue]
+  )
   const recall = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): string | null => {
     const result = recallMessage(entries, browsing.current, draft, {
       key: event.key,

@@ -28,7 +28,6 @@ import { ResumePicker } from './ResumePicker'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
-import { useSessionDraft } from '../../../src/renderer/src/views/draft-store'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
@@ -345,8 +344,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const [ready, setReady] = useState(false)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
-  const [draft, setDraft] = useSessionDraft(session.id)
-  const { draft, setDraft, recall } = useMessageHistory(conversation.entries)
+  const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [preparations, setPreparations] = useState<Preparation[]>([])
   const [imagesSupported, setImagesSupported] = useState(false)

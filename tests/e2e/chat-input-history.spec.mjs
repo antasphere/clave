@@ -2,6 +2,16 @@ import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
 
+async function reloadChat(win, input) {
+  await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
+  await input.waitFor({ state: 'detached' })
+  await win.evaluate(() =>
+    window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
+  )
+  await input.waitFor()
+  assert.ok(await until(async () => await input.isEnabled()))
+}
+
 export async function run(t) {
   const fixture = await openChat('chat-input-history')
   const { app, win, record } = fixture
@@ -57,6 +67,19 @@ export async function run(t) {
     await input.press('ArrowUp')
     assert.equal(await input.inputValue(), 'Edited recalled message', 'slash recall keeps browsing')
     t.check('recalled slash commands do not trap arrows in the completion menu', true)
+    await reloadChat(win, input)
+    assert.equal(
+      await input.inputValue(),
+      'Edited recalled message',
+      'recalled text survives reload'
+    )
+    await input.press('ArrowDown')
+    assert.equal(
+      await input.inputValue(),
+      'Edited recalled message',
+      'reload ends history browsing'
+    )
+    t.check('a recalled chat draft survives its plugin restarting', true)
     await win.locator('.launcher-split .launcher-btn').click()
     const fresh = win.locator('[data-testid="chat-view"] textarea:visible')
     await fresh.waitFor()
@@ -82,6 +105,10 @@ export async function run(t) {
     await input.press('ArrowDown')
     assert.equal(await input.inputValue(), '')
     t.check('compact chat also recalls sent messages', true)
+    await input.press('ArrowUp')
+    await reloadChat(compact.win, input)
+    assert.equal(await input.inputValue(), 'Sent from compact', 'compact recall survives reload')
+    t.check('a recalled compact draft survives its plugin restarting', true)
   } finally {
     await compact.close()
   }
