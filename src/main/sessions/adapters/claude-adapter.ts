@@ -11,6 +11,7 @@ import {
   providerPrompt,
   AgentQuestionSchema,
   type SessionInput,
+  type UserMessageInput,
   type SessionEvent,
   type BackgroundTask,
   type HistoryItem,
@@ -574,6 +575,13 @@ interface Live {
   initialized: boolean
   ready: boolean
   initialPrompt?: string
+  /** A whole message to send at ready, attachments prepared: the prompt an
+   *  account's limit rejected, sent again on the account the tab moved to
+   *  (ADR 0002). Consumed once, like `initialPrompt`. */
+  initialInput?: UserMessageInput
+  /** The last message the reader sent, as the provider received it. What a
+   *  limit rejects is this one; the restart on the next account resends it. */
+  lastUserMessage?: UserMessageInput
   commandError?: string
   /** The conversation this session resumes. Its past is read from the
    *  transcript once and kept here for as long as the session lives, so a
@@ -596,6 +604,11 @@ export class ClaudeAdapter implements SessionAdapter {
   /** Main-only launch/account context; never part of the Session record or wire. */
   configure(id: string, context: PtySpawnOptions): void {
     this.contexts.set(id, context)
+  }
+  /** The last message the reader sent this session, prepared as the provider
+   *  got it; undefined before the first one or for a session not here. */
+  lastUserMessage(id: string): UserMessageInput | undefined {
+    return this.handles.get(id)?.lastUserMessage
   }
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
     if (process.platform === 'win32')
@@ -644,6 +657,7 @@ export class ClaudeAdapter implements SessionAdapter {
       initialized: false,
       ready: false,
       initialPrompt: context.initialPrompt,
+      initialInput: context.initialInput,
       model: options.model ?? null,
       resume: options.resume
         ? { id: options.resume, cwd: spec.cwd, configDir: context.configDir }
@@ -782,9 +796,12 @@ export class ClaudeAdapter implements SessionAdapter {
     // CLI's init frame only follows the first message. A start that throws
     // leaves readiness unconsumed, so the next subscribe retries it.
     live.process ??= live.start()
+    const initialInput = live.initialInput
     const initialPrompt = live.initialPrompt
-    if (initialPrompt !== undefined)
+    if (initialInput !== undefined) this.write(handle, initialInput)
+    else if (initialPrompt !== undefined)
       this.write(handle, { type: 'user_message', text: initialPrompt })
+    live.initialInput = undefined
     live.initialPrompt = undefined
     live.ready = true
   }
@@ -828,6 +845,7 @@ export class ClaudeAdapter implements SessionAdapter {
     if (input.type === 'user_message') {
       live.process ??= live.start()
       live.translator.interrupted = false
+      live.lastUserMessage = input
       live.emit(userMessageEvent(input))
       // The pane works from the moment a message is sent, the first one
       // included: before this the CLI's init frame, seconds after the first

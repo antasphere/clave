@@ -36,6 +36,42 @@ describe('providerEventReportsLimit', () => {
     expect(providerEventReportsLimit('claude', { type: 'system', subtype: 'init' })).toBe(false)
   })
 
+  it("reads the synthetic reply Claude writes in the model's place when the account is out", () => {
+    const synthetic = (text: string, model = '<synthetic>'): unknown => ({
+      type: 'assistant',
+      message: { model, role: 'assistant', content: [{ type: 'text', text }] }
+    })
+    // The reply of 2026-09-26: the CLI ended right after it, exit 143.
+    expect(
+      providerEventReportsLimit(
+        'claude',
+        synthetic(
+          "You're out of usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+        )
+      )
+    ).toBe(true)
+    expect(
+      providerEventReportsLimit(
+        'claude',
+        synthetic('Your organization is out of usage credits. Contact your admin to add more.')
+      )
+    ).toBe(true)
+    // A synthetic notice about something else, or a real model's reply that
+    // happens to discuss limits, is nothing.
+    expect(
+      providerEventReportsLimit('claude', synthetic('[Request interrupted by user]'))
+    ).toBe(false)
+    expect(
+      providerEventReportsLimit(
+        'claude',
+        synthetic("You're out of usage credits, it says here", 'claude-opus-5-5')
+      )
+    ).toBe(false)
+    expect(
+      providerEventReportsLimit('claude', { type: 'assistant', message: { model: '<synthetic>' } })
+    ).toBe(false)
+  })
+
   it("reads Codex's rate-limit update at the cap or with a reached type", () => {
     const frame = (rateLimits: unknown): unknown => ({
       method: 'account/rateLimits/updated',

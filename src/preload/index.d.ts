@@ -910,6 +910,8 @@ export interface ElectronAPI {
       claudeProfileLabel?: string
       codexAccountId?: string
       codexAccountLabel?: string
+      /** Send the message the limit rejected again on the new account. */
+      resendRejected?: boolean
     }
   ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>

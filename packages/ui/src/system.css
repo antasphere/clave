@@ -3441,6 +3441,19 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* The way on inside a notice: a verb in ink, underlined on hover, the same
+   weight as the notice so the line reads as one sentence. */
+.chat-notice-action {
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  cursor: pointer;
+}
+.chat-notice-action:hover {
+  text-decoration-color: currentColor;
+}
 .chat-notice[data-tone='error'] {
   align-self: stretch;
   padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5);

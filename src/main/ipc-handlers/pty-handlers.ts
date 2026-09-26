@@ -145,8 +145,14 @@ export function registerPtyHandlers(): void {
     if (win && !win.isDestroyed()) win.webContents.send('session:limit-reported', sessionId)
   })
 
+  // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
+  // renderer's spawn never carries one.
   ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) =>
-    spawnForWindow(BrowserWindow.fromWebContents(_event.sender), cwd, options)
+    spawnForWindow(
+      BrowserWindow.fromWebContents(_event.sender),
+      cwd,
+      options && { ...options, initialInput: undefined }
+    )
   )
 
   // A session moved to another account (ADR 0002): the process is stopped,
@@ -165,6 +171,7 @@ export function registerPtyHandlers(): void {
         claudeProfileLabel?: unknown
         codexAccountId?: unknown
         codexAccountLabel?: unknown
+        resendRejected?: unknown
       }
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
@@ -173,7 +180,8 @@ export function registerPtyHandlers(): void {
         claudeProfileId: str(overrides?.claudeProfileId),
         claudeProfileLabel: str(overrides?.claudeProfileLabel),
         codexAccountId: str(overrides?.codexAccountId),
-        codexAccountLabel: str(overrides?.codexAccountLabel)
+        codexAccountLabel: str(overrides?.codexAccountLabel),
+        resendRejected: overrides?.resendRejected === true
       })
       if (!plan) return { error: 'This session cannot be restarted from here.' }
       const record = ptyManager.getSessionRecord(id)
