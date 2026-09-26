@@ -379,6 +379,11 @@ const EntryRow = memo(function EntryRow({
             remarkPlugins={[remarkGfm]}
             components={{
               code: ChatCode,
+              table: ({ children }) => (
+                <div className="chat-table-scroll">
+                  <table>{children}</table>
+                </div>
+              ),
               a: ({ href, children }) =>
                 href && /^(https?:|mailto:)/i.test(href) ? (
                   <a
