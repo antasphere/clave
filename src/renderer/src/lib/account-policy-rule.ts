@@ -16,6 +16,11 @@ export interface DecideInput {
   restarting: boolean
   /** The account is exhausted per the poll, or the CLI reported it. */
   atLimit: boolean
+  /** The CLI's own word: its account rejected a turn. The one reason a tab
+   *  whose process has ended is brought back — the CLI in `-p` mode ends
+   *  right after its "out of credits" reply — where the poll's reading of an
+   *  account never revives a tab that died for a reason of its own. */
+  reported: boolean
   /** The agent is mid-turn: never moved now. */
   working: boolean
   mode: AccountSwitchMode
@@ -27,7 +32,8 @@ export interface DecideInput {
 }
 
 export function decideAccountAction(input: DecideInput): AccountAction {
-  if (!input.alive || input.pinned || input.restarting || !input.atLimit) return { kind: 'none' }
+  if (!input.alive && !input.reported) return { kind: 'none' }
+  if (input.pinned || input.restarting || !input.atLimit) return { kind: 'none' }
   if (!input.nextAccountId) return { kind: 'none' }
   if (input.mode === 'automatic' && !input.working) {
     return { kind: 'switch', accountId: input.nextAccountId }

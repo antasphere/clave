@@ -109,15 +109,56 @@ describe('the kernel-state binding', () => {
     expect(h.calls.setState).toEqual([])
   })
 
-  it('carries every word of the kernel vocabulary, ended as the alive flag', () => {
+  it('carries every word of the kernel vocabulary, ended as the alive flag', async () => {
     const h = harness()
     const dispose = bindKernelState('session-1', h.bridge, h.sink)
     for (const state of AgentStateSchema.options) h.emit(state)
     expect(h.calls.setState.map(([, state]) => state)).toEqual(
       AgentStateSchema.options.filter((state) => state !== 'ended')
     )
-    expect(h.calls.setAlive).toEqual([['session-1', false]])
+    await vi.waitFor(() => expect(h.calls.setAlive).toEqual([['session-1', false]]))
     dispose()
+  })
+
+  it('marks the tab dead on an ended the record confirms, or that has no record left', async () => {
+    const gone = harness({ list: [] })
+    const disposeGone = bindKernelState('session-1', gone.bridge, gone.sink)
+    gone.emit('ended')
+    await vi.waitFor(() => expect(gone.calls.setAlive).toEqual([['session-1', false]]))
+    disposeGone()
+    const ended = harness({ list: [record('ended')] })
+    const disposeEnded = bindKernelState('session-1', ended.bridge, ended.sink)
+    ended.emit('ended')
+    await vi.waitFor(() => expect(ended.calls.setAlive).toEqual([['session-1', false]]))
+    disposeEnded()
+  })
+
+  it('ignores an ended the record no longer confirms: a restart replaced the process', async () => {
+    // The old process's last word reached the window after the restart's
+    // reply (ADR 0002): the record under the id is the new, live session.
+    const h = harness({ list: [record('working')] })
+    const dispose = bindKernelState('session-1', h.bridge, h.sink)
+    h.emit('ended')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.calls.setAlive).toEqual([])
+    dispose()
+  })
+
+  it('never marks a tab dead from an ended confirmed after dispose', async () => {
+    let release = (): void => {}
+    const listDelay = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const h = harness({ list: [], listDelay })
+    const dispose = bindKernelState('session-1', h.bridge, h.sink)
+    h.emit('ended')
+    dispose()
+    release()
+    await listDelay
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.calls.setAlive).toEqual([])
   })
 
   it('drops a word the session model does not define', () => {
@@ -130,10 +171,12 @@ describe('the kernel-state binding', () => {
     dispose()
   })
 
-  it('leaves the alive flag alone when the session is already not alive', () => {
+  it('leaves the alive flag alone when the session is already not alive', async () => {
     const h = harness()
     const dispose = bindKernelState('session-1', h.bridge, { ...h.sink, isAlive: () => false })
     h.emit('ended')
+    await Promise.resolve()
+    await Promise.resolve()
     expect(h.calls.setAlive).toEqual([])
     dispose()
   })

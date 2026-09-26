@@ -22,6 +22,11 @@ export { decideAccountAction, type AccountAction, type DecideInput } from './acc
  *
  * What it never does: interrupt a working agent. A working tab in automatic
  * mode gets the proposal shown and is moved the moment it goes idle.
+ *
+ * A tab whose CLI reported the limit and then ended (Claude's `-p` mode
+ * ends right after its "out of credits" reply) is brought back the same
+ * way, on the next account, with the rejected message sent again; a tab
+ * that ended for any other reason is left as it is.
  */
 function isWorking(session: Session): boolean {
   return session.agentState === 'working' || session.activityStatus === 'active'
@@ -41,7 +46,8 @@ export function runAccountPolicy(): void {
   for (const session of store.sessions) {
     const provider = accountProviderOf(session)
     if (!provider) continue
-    const atLimit = session.limitReported === true || sessionAccountExhausted(session)
+    const reported = session.limitReported === true
+    const atLimit = reported || (session.alive && sessionAccountExhausted(session))
     // A proposal that no longer applies (the account recovered, the tab was
     // moved by hand) is taken down.
     if (!atLimit && session.accountProposal) {
@@ -53,7 +59,8 @@ export function runAccountPolicy(): void {
       pinned: session.accountPinned === true,
       restarting: session.restarting === true || switching.has(session.id),
       atLimit,
-      working: isWorking(session),
+      reported,
+      working: session.alive && isWorking(session),
       mode: effectiveSwitchMode(session),
       nextAccountId: nextAccountFor(session),
       proposedId: session.accountProposal?.accountId ?? null,
@@ -63,11 +70,19 @@ export function runAccountPolicy(): void {
       store.setAccountProposal(session.id, {
         accountId: action.accountId,
         label: labelOf(session, action.accountId),
-        reason: session.limitReported ? 'reported' : 'limit'
+        reason: reported ? 'reported' : 'limit'
       })
     } else if (action.kind === 'switch') {
       switching.add(session.id)
-      void switchSessionAccount(session.id, action.accountId).finally(() => {
+      // Named while it moves, so the header and the pane can say where to.
+      store.setAccountProposal(session.id, {
+        accountId: action.accountId,
+        label: labelOf(session, action.accountId),
+        reason: reported ? 'reported' : 'limit'
+      })
+      void switchSessionAccount(session.id, action.accountId, {
+        resendRejected: reported
+      }).finally(() => {
         switching.delete(session.id)
         const current = useSessionStore.getState()
         current.setAccountProposal(session.id, null)
@@ -84,7 +99,9 @@ export async function acceptAccountProposal(sessionId: string): Promise<void> {
   const target = session.accountProposal.accountId
   switching.add(sessionId)
   try {
-    await switchSessionAccount(sessionId, target)
+    await switchSessionAccount(sessionId, target, {
+      resendRejected: session.limitReported === true
+    })
   } finally {
     switching.delete(sessionId)
     const current = useSessionStore.getState()

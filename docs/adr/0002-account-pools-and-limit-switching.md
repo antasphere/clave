@@ -1,6 +1,6 @@
 # ADR 0002: account pools and limit-driven switching
 
-Status: accepted, 2026-09-25 (implemented in the same change)
+Status: accepted, 2026-09-25 (implemented in the same change); amended 2026-09-26 (a tab the limit ended is brought back)
 
 ## Context
 
@@ -68,6 +68,8 @@ The `.clave` schema gains an account field that names an account by label, or `a
 ### What shipped
 
 Everything above, in one change: the Accounts page with both login flows, the migration of config-dir accounts, the Codex per-account home, the exhaustion badge, the manual switch with resume (the tab's menu, `clave_switch_account`), the pool for new spawns, the `propose` and `automatic` modes (global, per workspace, per session), pins, the chat CLI's own limit reports as a trigger, and the `.clave` `account` field through all six mirrors.
+
+**Amendment, 2026-09-26 — the limit that ends the process.** "A session moves when its own CLI reports the limit" assumed the CLI stays up to be moved. Claude Code in `-p` mode does not: some limits (out of usage credits, the org's cap, the plan's usage limit) never come as a `rate_limit_event`; the CLI writes a synthetic reply in the model's place ("You're out of usage credits…", `message.model` = `<synthetic>`) and ends its process right after, and the policy, which only ever moved a live tab, left it on "Session ended (exit 143)" with the composer closed. Three things change. That synthetic reply counts as the CLI's report (`providerEventReportsLimit`). A tab that ended on the CLI's own report — never on the poll's reading alone — is restarted on the next account the same way a live one is moved, at once in automatic mode, on one click in the pane in propose mode, and the message the limit rejected is sent again on the new account, so the reader gets the answer they asked for; a move made by hand or by an agent never resends. And the pane's ended notice names the account that is out and the way on, instead of the exit code. Two consequences the fix surfaced: the renderer's `ended` word for a session is now confirmed against the session record before the tab is marked dead, because the state channel and a restart's reply are not ordered against each other and the old process's last word was landing on the new one; and the resend rides the restart as a main-only spawn field (`initialInput`) that a renderer's spawn never carries.
 
 Two places where the implementation reads the decisions narrowly. A pin and a session's own mode are session-lifetime, not on the record: a restart of the app brings the tab back unpinned, on the workspace's mode. A Codex TERMINAL's thread is found in the store by cwd and start time, so two Codex terminals opened in the same folder within seconds of each other may resume each other's thread; a chat tab knows its thread from the app-server and never has that ambiguity.
 

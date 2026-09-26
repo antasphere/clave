@@ -20,7 +20,7 @@ import {
   isEchoLaunchProfile,
   launchProfileManager
 } from './launch-profile-manager'
-import type { Session } from '../shared/session-model'
+import type { Session, UserMessageInput } from '../shared/session-model'
 
 // Keep all existing helper/type imports stable while the process engine lives
 // behind the adapter. No renderer PTY channel or spawn result changes.
@@ -35,16 +35,35 @@ sessionManager.registerAdapter(codexAdapter)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** The notices the CLI writes itself, in the model's place, when the account
+ *  cannot take the turn: out of credits, the cap of the org or the seat, the
+ *  usage limit of the plan. Read on a `<synthetic>` reply only. */
+const CLAUDE_LIMIT_NOTICE =
+  /out of usage credits|out of usage\b|usage credit cap|usage limit|hit your limit|limit reached/i
+
 /**
  * Whether a provider's own frame says the account is out (ADR 0002): Claude's
- * `rate_limit_event` with a rejected status, Codex's `account/rateLimits/updated`
- * at the cap or with a reached type. Pure, for the tests; every other frame is
- * nothing.
+ * `rate_limit_event` with a rejected status or the synthetic reply it writes
+ * in the model's place ("You're out of usage credits…") — the CLI in `-p`
+ * mode ends its process right after that reply, and the reply is the only
+ * word some limits get; Codex's `account/rateLimits/updated` at the cap or
+ * with a reached type. Pure, for the tests; every other frame is nothing.
  */
 export function providerEventReportsLimit(provider: string, payload: unknown): boolean {
   if (!payload || typeof payload !== 'object') return false
   const p = payload as Record<string, unknown>
   if (provider === 'claude') {
+    if (p.type === 'assistant') {
+      const message = p.message as Record<string, unknown> | undefined
+      if (message?.model !== '<synthetic>' || !Array.isArray(message.content)) return false
+      return message.content.some(
+        (block) =>
+          !!block &&
+          typeof block === 'object' &&
+          (block as Record<string, unknown>).type === 'text' &&
+          CLAUDE_LIMIT_NOTICE.test(String((block as Record<string, unknown>).text ?? ''))
+      )
+    }
     if (p.type !== 'rate_limit_event') return false
     const info = p.rate_limit_info as Record<string, unknown> | undefined
     return info?.status === 'rejected'
@@ -63,12 +82,14 @@ export function providerEventReportsLimit(provider: string, payload: unknown): b
   return false
 }
 
-/** What a restart on another account changes: the account fields only. */
+/** What a restart on another account changes: the account fields, and
+ *  whether the message the limit rejected goes again on the new account. */
 export interface RestartOverrides {
   claudeProfileId?: string
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
+  resendRejected?: boolean
 }
 
 class PtyManager {
@@ -80,6 +101,9 @@ class PtyManager {
   /** A Codex chat session's thread, from the app-server's own meta. */
   private codexThreads = new Map<string, string>()
   private limitListeners = new Set<(sessionId: string) => void>()
+  /** The message a chat session's account rejected, kept from the CLI's own
+   *  report to the restart that resends it on the next account. */
+  private rejected = new Map<string, UserMessageInput>()
 
   /** A chat session's CLI reported its account's limit (ADR 0002). */
   onLimitReported(listener: (sessionId: string) => void): () => void {
@@ -280,6 +304,8 @@ class PtyManager {
         stream.event.type === 'provider_event' &&
         providerEventReportsLimit(stream.event.provider, stream.event.payload)
       ) {
+        const last = claudeAdapter.lastUserMessage(id)
+        if (last) this.rejected.set(id, last)
         for (const listener of this.limitListeners) listener(id)
       }
       if (stream.kind === 'pty') onData(decoder.decode(stream.data, { stream: true }))
@@ -320,6 +346,7 @@ class PtyManager {
     if (killTmuxSession) {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
+      this.rejected.delete(id)
     }
     sessionManager.forget(id)
   }
@@ -359,6 +386,7 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
+    const { resendRejected, ...account } = overrides
     const options: PtySpawnOptions = {
       ...previous,
       adoptSessionId: id,
@@ -372,7 +400,10 @@ class PtyManager {
       initialPrompt: undefined,
       initialCommand: undefined,
       autoExecute: undefined,
-      ...overrides
+      // The message the limit rejected, when the move is the limit's doing:
+      // the reader asked once and gets the answer on the next account.
+      initialInput: resendRejected ? this.rejected.get(id) : undefined,
+      ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
   }

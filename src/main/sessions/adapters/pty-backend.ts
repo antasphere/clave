@@ -1,3 +1,4 @@
+import type { UserMessageInput } from '../../../shared/session-model'
 import { migrateSessionAdapterRecord } from '../../session-records-index'
 import * as pty from 'node-pty'
 import { execFile, execFileSync } from 'child_process'
@@ -645,6 +646,11 @@ export interface PtySpawnOptions {
    *  positional arg, agy -i). One-shot: not persisted to the tmux sidecar,
    *  so adoption re-spawns never re-submit it. */
   initialPrompt?: string
+  /** A whole first message for a chat session, attachments prepared: the
+   *  prompt an account's limit rejected, sent again on the account the tab
+   *  moved to (ADR 0002). Main's own — `pty:spawn` drops it, only a restart
+   *  built in main carries one. */
+  initialInput?: UserMessageInput
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new

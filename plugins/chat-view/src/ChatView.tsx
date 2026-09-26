@@ -28,6 +28,7 @@ import { ResumePicker } from './ResumePicker'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
+import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
@@ -807,10 +808,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             )}
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
-              <div className="chat-notice" role="status">
-                Session ended
-                {conversation.exitCode !== undefined ? ` (exit ${conversation.exitCode})` : ''}
-              </div>
+              <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />
             )}
           </div>
         </div>
@@ -989,6 +987,63 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
           />
         </div>
       </div>
+    </div>
+  )
+}
+
+
+/**
+ * Why the conversation stopped, and the way on. The CLI ends its process
+ * right after an "out of credits" reply (ADR 0002): that end is the account's,
+ * not the session's, so the notice names the account and the move — made
+ * already in automatic mode, one click away in propose mode, or nowhere to
+ * go — and never reads as a crash. Any other end is the plain exit.
+ */
+function EndedNotice({
+  sessionId,
+  exitCode
+}: {
+  sessionId: string
+  exitCode?: number
+}): React.JSX.Element {
+  const host = useViewSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  const limit = host?.limitReported === true
+  const proposal = host?.accountProposal ?? null
+  const account = host?.claudeProfileLabel ?? host?.codexAccountLabel ?? 'This account'
+  if (host?.restarting) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="moving">
+        {proposal ? `Moving to ${proposal.label}…` : 'Moving to another account…'}
+      </div>
+    )
+  }
+  if (limit && proposal) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="limit">
+        {account} is out of usage credits.{' '}
+        <button
+          type="button"
+          className="chat-notice-action"
+          onClick={() => void acceptAccountProposal(sessionId)}
+          data-chat-continue-on={proposal.accountId}
+        >
+          Continue on {proposal.label}
+        </button>
+      </div>
+    )
+  }
+  if (limit) {
+    return (
+      <div className="chat-notice" role="status" data-chat-ended="limit">
+        {account} is out of usage credits, and no other account has headroom. Add one in
+        Settings → Accounts to continue.
+      </div>
+    )
+  }
+  return (
+    <div className="chat-notice" role="status" data-chat-ended="exit">
+      Session ended
+      {exitCode !== undefined ? ` (exit ${exitCode})` : ''}
     </div>
   )
 }

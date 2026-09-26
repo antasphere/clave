@@ -556,6 +556,8 @@ const electronAPI = {
       claudeProfileLabel?: string
       codexAccountId?: string
       codexAccountLabel?: string
+      /** Send the message the limit rejected again on the new account. */
+      resendRejected?: boolean
     }
   ) => ipcRenderer.invoke('pty:restart', id, overrides),
   getPiUsage: (range: 'today' | '7d' | '30d' | 'all') => ipcRenderer.invoke('usage:get-pi', range),
