@@ -2838,15 +2838,27 @@ button.extension-card:hover {
 .chat-code-emphasis {
   font-style: italic;
 }
+/* A table sizes its columns from their content: each keeps its longest word
+   and the wordy ones give up the rest. That needs cells to break at words
+   only — the turn's `overflow-wrap: anywhere` counts toward min-content and
+   told the layout any column could shrink to one character, so a short price
+   column stacked digit over digit beside a wide prose one. A table still too
+   wide at its words scrolls sideways inside its own frame. */
+.chat-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .chat-prose table {
   border-collapse: collapse;
   font-size: var(--chat-code-size);
+  font-variant-numeric: tabular-nums;
 }
 .chat-prose th,
 .chat-prose td {
   padding: var(--spacing) calc(var(--spacing) * 2.5);
   border: thin solid var(--border-subtle-color);
   text-align: left;
+  overflow-wrap: break-word;
 }
 .chat-prose th {
   color: var(--text-secondary);
