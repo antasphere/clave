@@ -151,10 +151,13 @@ export interface SwitchResult {
  * Move a session to another account: main stops its process, spawns the
  * same thing again under the same id on the new account with the
  * conversation resumed, and the store remounts the pane on the answer.
+ * `resendRejected` sends the message the old account's limit rejected again
+ * on the new one — the move the limit itself caused, never a move by hand.
  */
 export async function switchSessionAccount(
   sessionId: string,
-  accountId: string
+  accountId: string,
+  options: { resendRejected?: boolean } = {}
 ): Promise<SwitchResult> {
   const store = useSessionStore.getState()
   const session = store.sessions.find((s) => s.id === sessionId)
@@ -173,9 +176,11 @@ export async function switchSessionAccount(
           return { claudeProfileId: profile.id, claudeProfileLabel: profile.label }
         })()
   store.setSessionRestarting(sessionId, true)
-  const result = await window.electronAPI.restartSession(sessionId, overrides).catch((err) => ({
-    error: err instanceof Error ? err.message : String(err)
-  }))
+  const result = await window.electronAPI
+    .restartSession(sessionId, { ...overrides, resendRejected: options.resendRejected === true })
+    .catch((err) => ({
+      error: err instanceof Error ? err.message : String(err)
+    }))
   if ('error' in result) {
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }

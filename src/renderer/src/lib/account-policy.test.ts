@@ -6,6 +6,7 @@ const base: DecideInput = {
   pinned: false,
   restarting: false,
   atLimit: true,
+  reported: false,
   working: false,
   mode: 'propose',
   nextAccountId: 'play',
@@ -27,6 +28,28 @@ describe('decideAccountAction', () => {
     expect(decideAccountAction({ ...base, mode: 'automatic', pinned: true })).toEqual({
       kind: 'none'
     })
+  })
+
+  it("brings back a tab that ended on the CLI's own report, and only on that", () => {
+    // The CLI reported the limit and ended: moved (automatic) or proposed.
+    expect(decideAccountAction({ ...base, alive: false, reported: true })).toEqual({
+      kind: 'propose',
+      accountId: 'play'
+    })
+    expect(
+      decideAccountAction({ ...base, alive: false, reported: true, mode: 'automatic' })
+    ).toEqual({ kind: 'switch', accountId: 'play' })
+    // The poll alone says the account is out: a dead tab stays dead.
+    expect(decideAccountAction({ ...base, alive: false, reported: false })).toEqual({
+      kind: 'none'
+    })
+    // A pin or nowhere to go still holds.
+    expect(decideAccountAction({ ...base, alive: false, reported: true, pinned: true })).toEqual({
+      kind: 'none'
+    })
+    expect(
+      decideAccountAction({ ...base, alive: false, reported: true, nextAccountId: null })
+    ).toEqual({ kind: 'none' })
   })
 
   it('does nothing when nowhere else has headroom', () => {
