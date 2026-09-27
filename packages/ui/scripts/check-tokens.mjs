@@ -56,90 +56,49 @@ assert(
 
 /* ── The density audit ───────────────────────────────────────────────────────
  *
- * Every metric the chrome is measured in is a calc() cut from --density, so one
- * Appearance slider resizes the whole control and frame spec together. Both
- * halves of that sentence fail SILENTLY when they stop being true, which is the
- * only reason this runs in CI rather than being eyeballed:
+ * Appearance → Density picks a preset: tokens.css holds Compact, and each block
+ * of density.css restates the tokens that differ as literals. Three things fail
+ * SILENTLY when they stop being true, so they are asserted:
  *
- *  - a token that stops deriving from --density keeps its default value, so the
- *    app looks perfect until someone moves the slider and one family of
- *    controls stays behind while the rest resize around it;
- *  - a component that restates a number the spec already owns (font-size: 13px
- *    instead of var(--control-text)) is invisible at the default stop — it IS
- *    13px there — and only shows as a label that will not shrink.
- *
- * Neither throws, neither warns, and neither shows up in a screenshot of the
- * default. So they are asserted.
+ *  - a preset naming a token tokens.css does not declare sets nothing anyone
+ *    reads — a typo'd name leaves that preset drawing Compact's value;
+ *  - a preset setting a DERIVED frame token breaks the concentric-corner
+ *    arithmetic tokens.css does from --frame-h, --frame-inset, --frame-radius;
+ *  - a preset token a skin can reach would let an installed skin override the
+ *    user's density, so every one is on the skins' excluded list.
  */
-/** token -> its declared value, across every block of tokens.css. The spec
- *  lives in @theme and the themes restate colours below it; a later block wins,
- *  which is the cascade's own answer and the one the browser will give. */
+/** token -> its declared value, across every block of tokens.css. */
 const values = new Map(
   [...css.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()])
 )
-
-/** Does this token reach --density, through however many var() hops? */
-const scales = (name, seen = new Set()) => {
-  if (name === '--density') return true
-  if (seen.has(name)) return false
-  seen.add(name)
-  const value = values.get(name)
-  if (value === undefined) return false
-  return [...value.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)].some((m) => scales(m[1], seen))
-}
-
-// The chrome's metrics: a stop on the slider must move every one of them.
-for (const name of [
-  '--control-h',
-  '--control-h-xs',
-  '--control-h-sm',
-  '--control-h-md',
-  '--control-h-lg',
-  '--control-px',
-  '--control-gap',
-  '--control-text',
-  '--control-icon',
-  '--control-radius',
-  '--frame-h',
-  '--frame-radius',
-  '--framed-control-h',
-  '--framed-control-radius',
-  '--framed-control-icon',
-  '--radius',
-  '--radius-sm',
-  '--radius-md',
-  '--radius-lg',
-  '--radius-xl',
-  '--radius-2xl',
-  '--radius-control',
-  '--surface-inset',
-  '--toolbar-h',
-  '--toolbar-row-h',
-  '--content-top-offset',
-  '--sidebar-row-h',
-  '--sidebar-row-px',
-  '--sidebar-tab-icon-size',
-  '--sidebar-gutter',
-  '--panel-row-h',
-  '--git-tree-row-h'
-]) {
-  assert(values.has(name), `${name} is no longer declared in tokens.css`)
-  assert(scales(name), `${name} does not derive from --density: the slider will not move it`)
-}
-
-// And the ones that must NOT move. A hairline is a hairline at every density,
-// a pill is a pill, and --row-gap is skinnable, so a var(--density) in it is
-// extracted into every bundled skin.json and then refused by validateTokens.
-for (const name of ['--frame-border', '--frame-inset', '--radius-full', '--row-gap']) {
-  assert(values.has(name), `${name} is no longer declared in tokens.css`)
-  assert(!scales(name), `${name} must not derive from --density`)
-}
-
-// --density is the user's, never a skin's: it is on the skins' excluded list
-// with the rest of the metrics, so an installed skin cannot reach it.
+const densityCss = read('../src/density.css').replace(/\/\*[\s\S]*?\*\//g, '')
+const presets = [...densityCss.matchAll(/data-density='([\w-]+)'\]\s*\{([^}]*)\}/g)]
 assert(
-  JSON.parse(read('../../skins/excluded-token-names.json')).includes('--density'),
-  '--density must stay on packages/skins/excluded-token-names.json'
+  JSON.stringify(presets.map((m) => m[1])) ===
+    JSON.stringify(['tight', 'balanced', 'comfortable', 'spacious']),
+  `density.css must hold tight, balanced, comfortable and spacious (compact is tokens.css), got ${presets.map((m) => m[1])}`
+)
+const excluded = JSON.parse(read('../../skins/excluded-token-names.json'))
+const DERIVED = ['--framed-control-h', '--framed-control-radius', '--toolbar-h', '--toolbar-row-h']
+for (const [, preset, body] of presets) {
+  for (const [, name] of body.matchAll(/(--[\w-]+)\s*:/g)) {
+    assert(
+      values.has(name),
+      `density.css ${preset} sets ${name}, which tokens.css does not declare`
+    )
+    assert(
+      !DERIVED.includes(name),
+      `density.css ${preset} sets ${name}: it is derived, set its inputs`
+    )
+    assert(
+      excluded.includes(name),
+      `${name} (density.css ${preset}) must be on packages/skins/excluded-token-names.json`
+    )
+  }
+}
+assert(
+  excluded.includes('--ui-text-offset'),
+  '--ui-text-offset must be on packages/skins/excluded-token-names.json'
 )
 
 /* No component may restate a number the spec already owns. Keyed by property,
@@ -173,7 +132,7 @@ SPEC_LITERALS['min-height'] = SPEC_LITERALS.height
  *    the control scale would make the picture of the app resize with the app.
  *  - .range-field's own track and thumb are declared as its custom properties
  *    at the top of the rule; the numbers there are the slider's anatomy. */
-const NOT_A_CONTROL = /^\.(theme-swatch|range-field|range-tick)/
+const NOT_A_CONTROL = /^\.(theme-swatch|range-field|range-tick|range-rail|range-dot|range-stepped)/
 for (const [, selector, body] of system.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   const name = selector.trim()
   if (NOT_A_CONTROL.test(name)) continue
@@ -182,7 +141,7 @@ for (const [, selector, body] of system.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     assert(
       !token,
       `${name} pins ${prop.trim()}: ${value.trim()}, a number the control spec owns — ` +
-        `use var(${token}) so it moves with --density`
+        `use var(${token}) so it follows the density presets`
     )
   }
 }
@@ -249,7 +208,7 @@ for (const file of walk(RENDERER)) {
     assert(
       line === -1,
       `${where}:${line + 1} pins ${literal}, ` +
-        `a number the control spec owns — use ${instead} so it moves with --density`
+        `a number the control spec owns — use ${instead} so it follows the density presets`
     )
   }
   source.split('\n').forEach((text, i) => {
@@ -260,7 +219,7 @@ for (const file of walk(RENDERER)) {
       assert(
         false,
         `${where}:${i + 1} pins h-${n}, a control height the spec owns — use ` +
-          `h-control-${CLASS_SUFFIX[n]} (height: var(${token})) so it moves with --density, ` +
+          `h-control-${CLASS_SUFFIX[n]} (height: var(${token})) so it follows the density presets, ` +
           `or pair it with w-${n} if it is an icon box rather than a control`
       )
     }
@@ -271,5 +230,5 @@ console.log(
   `All ${expected.length} baseline tokens resolve in all four themes (CodeMirror remains app-owned).`
 )
 console.log(
-  'The control and frame spec derives from --density; neither system.css nor the renderer bypasses it.'
+  'The density presets are declared, skin-proof and never set a derived token; neither system.css nor the renderer restates the spec.'
 )

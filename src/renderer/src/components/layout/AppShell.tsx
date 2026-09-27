@@ -10,7 +10,8 @@ import {
   enableSidebarPersistence
 } from '../../store/session-store'
 import type { SessionGroup, SettingsSection } from '../../store/session-store'
-import { treeRuleMultiplier, densityScale } from '../../store/session-types'
+import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
+import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
@@ -88,6 +89,8 @@ export function AppShell() {
   const setSidebarWidth = useSessionStore((s) => s.setSidebarWidth)
   const treeRuleIntensity = useSessionStore((s) => s.treeRuleIntensity)
   const density = useSessionStore((s) => s.density)
+  const textSize = useSessionStore((s) => s.textSize)
+  const uiFont = useSessionStore((s) => s.uiFont)
   const toggleFilePalette = useSessionStore((s) => s.toggleFilePalette)
   const fileTreeOpen = useSessionStore((s) => s.fileTreeOpen)
   const fileTreeWidth = useSessionStore((s) => s.fileTreeWidth)
@@ -501,19 +504,28 @@ export function AppShell() {
     )
   }, [treeRuleIntensity])
 
-  // How tight the chrome is drawn. Same mechanism as the rules above and for
-  // the same reason: the control and frame spec in tokens.css is written as
-  // calc(<base> * var(--density)), so one property on the root element resizes
-  // every control, frame, toolbar row and derived radius together and nothing
-  // downstream has to be told about it.
-  //
-  // It is set here rather than in applySkin() on purpose. This is the USER's
-  // setting, not the skin's — `--density` is on the skins' excluded list, so an
-  // installed skin cannot reach it, and writing it from the shell is what makes
-  // it survive a skin change instead of being wiped by the next applySkin().
+  // How tight the chrome is drawn, and how large its labels are. The density
+  // preset is an attribute packages/ui/src/density.css matches on; the text
+  // size is a px offset tokens.css adds to the label sizes. Both are the USER's
+  // settings, not the skin's, which is why they are written here rather than
+  // in applySkin(): a skin change never resets them.
   useEffect(() => {
-    document.documentElement.style.setProperty('--density', String(densityScale(density)))
+    document.documentElement.dataset.density = density
   }, [density])
+  useEffect(() => {
+    document.documentElement.style.setProperty('--ui-text-offset', `${textSizeOffset(textSize)}px`)
+  }, [textSize])
+  // The face goes on once it has loaded, so the chrome never flashes the
+  // fallback: until then the attribute keeps the previous font.
+  useEffect(() => {
+    let cancelled = false
+    void loadUiFont(uiFont).then(() => {
+      if (!cancelled) document.documentElement.dataset.uiFont = uiFont
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [uiFont])
 
   // Updater: subscribe to main's state and pull the current truth on mount.
   // The pull is the point — a push-only updater loses the "an update exists"

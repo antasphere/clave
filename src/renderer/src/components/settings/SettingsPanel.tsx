@@ -4,11 +4,13 @@ import { useState, useEffect, type ReactNode } from 'react'
 import {
   TREE_RULE_INTENSITIES,
   DENSITY_LEVELS,
+  TEXT_SIZE_LEVELS,
   PANEL_ROOTS,
   densityIndex,
   useSessionStore
 } from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
+import { UI_FONTS } from '../../lib/ui-font'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
 import { BrandField } from '../ui/BrandField'
@@ -300,24 +302,16 @@ function AppearanceSettings(): React.JSX.Element {
 }
 
 /**
- * How tight the app's chrome is drawn.
+ * How tight the app's chrome is drawn, and how large its labels are.
  *
- * One number behind it: the slider writes `--density` on the root element, and
- * the control and frame spec in tokens.css is a calc() cut from it, so every
- * control, frame, toolbar row and derived radius moves together. The middle
- * stop is the spec as it was set on 2026-09-21, which is why a user who never
- * comes here sees the app unchanged.
+ * Density picks one of five presets (`data-density` on the root element,
+ * resolved in packages/ui/src/density.css). Compact and Comfortable are two
+ * hand-tuned designs reproduced exactly; the other three are derived from
+ * them. It is a real range input: five ordered stops are a continuum, arrow
+ * keys and Home/End come free, and `aria-valuetext` carries the stop's name.
  *
- * It is a real range input rather than a fifth segmented control on this page,
- * and deliberately: five ordered stops are a continuum, arrow keys and
- * Home/End come free from the platform, and a screen reader is told it is a
- * slider without anything having to say so. The stop names are what a person
- * reads, so `aria-valuetext` carries the name rather than leaving a bare "3".
- *
- * There is no preview tile under it on purpose. The setting redraws the whole
- * window, this page included — the controls on this very card resize under the
- * user's hand — so a miniature beside the real thing would be the less honest
- * of the two.
+ * Text size is separate and additive: it moves every label by the same few
+ * px on top of the preset, so the presets keep their own sizes at Default.
  */
 function DensitySection(): React.JSX.Element {
   const density = useSessionStore((s) => s.density)
@@ -331,13 +325,25 @@ function DensitySection(): React.JSX.Element {
       description="How tight every control, bar and row is drawn, this page included."
     >
       <SettingsCard>
-        <SettingsRow label="Scale" description="Regular is the default.">
+        <SettingsRow label="Spacing" description="Comfortable is the default.">
           <span className="settings-row-value" data-testid="density-value">
             {level.label}
           </span>
         </SettingsRow>
         <div className="settings-row">
-          <div className="w-full flex flex-col gap-1">
+          <div
+            className="range-stepped w-full flex flex-col gap-1"
+            style={{ '--n': DENSITY_LEVELS.length - 1 } as React.CSSProperties}
+          >
+            <div className="range-rail" aria-hidden>
+              {DENSITY_LEVELS.map((stop, i) => (
+                <span
+                  key={stop.id}
+                  className="range-dot"
+                  style={{ '--i': i } as React.CSSProperties}
+                />
+              ))}
+            </div>
             <input
               type="range"
               className="range-field"
@@ -351,12 +357,13 @@ function DensitySection(): React.JSX.Element {
               onChange={(e) => setDensity(DENSITY_LEVELS[Number(e.target.value)].id)}
             />
             <div className="range-ticks" aria-hidden>
-              {DENSITY_LEVELS.map((stop) => (
+              {DENSITY_LEVELS.map((stop, i) => (
                 <span
                   key={stop.id}
                   className="range-tick"
                   data-active={stop.id === level.id}
                   data-density-tick={stop.id}
+                  style={{ '--i': i } as React.CSSProperties}
                 >
                   {stop.label}
                 </span>
@@ -364,8 +371,62 @@ function DensitySection(): React.JSX.Element {
             </div>
           </div>
         </div>
+        <TextSizeRow />
+        <FontRow />
       </SettingsCard>
     </SettingsSection>
+  )
+}
+
+function TextSizeRow(): React.JSX.Element {
+  const textSize = useSessionStore((s) => s.textSize)
+  const setTextSize = useSessionStore((s) => s.setTextSize)
+
+  return (
+    <SettingsRow label="Text size" description="Every label in the app, on top of the density.">
+      <div className="segmented" role="radiogroup" aria-label="Text size">
+        {TEXT_SIZE_LEVELS.map((level) => (
+          <button
+            key={level.id}
+            role="radio"
+            aria-checked={textSize === level.id}
+            onClick={() => setTextSize(level.id)}
+            data-active={textSize === level.id}
+            data-text-size={level.id}
+            className="segmented-item"
+          >
+            {level.label}
+          </button>
+        ))}
+      </div>
+    </SettingsRow>
+  )
+}
+
+function FontRow(): React.JSX.Element {
+  const uiFont = useSessionStore((s) => s.uiFont)
+  const setUiFont = useSessionStore((s) => s.setUiFont)
+  const fonts = UI_FONTS.filter((font) => font.available)
+  if (fonts.length < 2) return <></>
+
+  return (
+    <SettingsRow label="Font" description="The typeface of the app. The terminal keeps its own.">
+      <div className="segmented" role="radiogroup" aria-label="Font">
+        {fonts.map((font) => (
+          <button
+            key={font.id}
+            role="radio"
+            aria-checked={uiFont === font.id}
+            onClick={() => setUiFont(font.id)}
+            data-active={uiFont === font.id}
+            data-ui-font-option={font.id}
+            className="segmented-item"
+          >
+            {font.label}
+          </button>
+        ))}
+      </div>
+    </SettingsRow>
   )
 }
 
