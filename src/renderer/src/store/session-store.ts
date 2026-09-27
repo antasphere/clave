@@ -6,6 +6,7 @@ import type {
   Theme,
   AppIcon,
   Density,
+  TextSize,
   TreeRuleIntensity,
   PanelScope,
   ActivityStatus,
@@ -22,9 +23,16 @@ import type {
   ExtensionsSection,
   SessionType
 } from './session-types'
-import { PANEL_ROOTS, resolveDensity } from './session-types'
+import {
+  PANEL_ROOTS,
+  resolveDensity,
+  resolveTextSize,
+  DENSITY_STORAGE_KEY,
+  LEGACY_DENSITY_STORAGE_KEY
+} from './session-types'
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
+import { resolveUiFont, type UiFont } from '../lib/ui-font'
 import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
 import { moveLayoutItems } from '../lib/sidebar-layout-ops'
 import { withDirToggled } from '../lib/panel-expansion'
@@ -48,6 +56,7 @@ export type {
   SessionType,
   TreeRuleIntensity,
   Density,
+  TextSize,
   PanelScope
 }
 export {
@@ -59,9 +68,12 @@ export {
   DENSITY_LEVELS,
   DEFAULT_DENSITY,
   resolveDensity,
+  TEXT_SIZE_LEVELS,
+  DEFAULT_TEXT_SIZE,
+  resolveTextSize,
+  textSizeOffset,
   resolveColorHex,
   treeRuleMultiplier,
-  densityScale,
   densityIndex,
   panelRootLadder
 } from './session-types'
@@ -97,8 +109,12 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
-  /** How tight the chrome is drawn — the stop `--density` is written from. */
+  /** How tight the chrome is drawn — the preset written as `data-density`. */
   density: Density
+  /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
+  textSize: TextSize
+  /** The face the chrome is set in (`data-ui-font`). */
+  uiFont: UiFont
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -272,6 +288,8 @@ interface SessionState {
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
   setDensity: (density: Density) => void
+  setTextSize: (textSize: TextSize) => void
+  setUiFont: (uiFont: UiFont) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
@@ -588,7 +606,12 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
-  density: resolveDensity(localStorage.getItem('clave-density')),
+  density: resolveDensity(
+    localStorage.getItem(DENSITY_STORAGE_KEY),
+    localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
+  ),
+  textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
+  uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -1251,8 +1274,18 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   setDensity: (density) => {
-    localStorage.setItem('clave-density', density)
+    localStorage.setItem(DENSITY_STORAGE_KEY, density)
     set({ density })
+  },
+
+  setTextSize: (textSize) => {
+    localStorage.setItem('clave-text-size', textSize)
+    set({ textSize })
+  },
+
+  setUiFont: (uiFont) => {
+    localStorage.setItem('clave-ui-font', uiFont)
+    set({ uiFont })
   },
 
   setAppIcon: (appIcon) => {
@@ -1306,7 +1339,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   setAccountPinned: (id, pinned) =>
     set((state) => ({
       sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, accountPinned: pinned, ...(pinned ? { accountProposal: null } : {}) } : s
+        s.id === id
+          ? { ...s, accountPinned: pinned, ...(pinned ? { accountProposal: null } : {}) }
+          : s
       )
     })),
 

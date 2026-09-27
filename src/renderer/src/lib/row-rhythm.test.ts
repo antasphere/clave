@@ -31,7 +31,9 @@ const families = rules
         declares(r.body, 'background-color', /./)
     )
   )
-const rhythm = rules.filter((r) => declares(r.body, 'margin-top', /var\(--row-gap\)/))
+// Menus space their rows through --menu-row-gap, which is --row-gap except at
+// the density presets that stack menu rows flush (packages/ui/src/density.css).
+const rhythm = rules.filter((r) => declares(r.body, 'margin-top', /var\(--(?:menu-)?row-gap\)/))
 // Full-width with a hover fill, but never two in a row: one "add" action at the
 // foot of a card. Listing one here is a claim that it never stacks.
 const SOLITARY = ['btn-add', 'settings-row-action']

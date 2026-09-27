@@ -132,7 +132,11 @@ body,
   :is(.launcher-icon-btn, .launcher-caret, .panel-icon-btn, .btn-icon-md) {
   width: var(--framed-control-h);
 }
-:is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs)
+/* One glyph size in every framed icon button — Tight and Compact only. From
+   Balanced up the icons keep the size each component draws them at (16px, the
+   launcher's 12px caret), which is how Comfortable was tuned. */
+:root:is(:not([data-density]), [data-density='tight'], [data-density='compact'])
+  :is(.frame, .launcher-panel, .group-switcher-panel, .panel-bar, .panel-tabs)
   :is(.launcher-icon-btn, .launcher-caret, .panel-icon-btn, .btn-icon-md)
   > svg {
   width: var(--framed-control-icon);
@@ -192,7 +196,7 @@ body,
   height: var(--sidebar-row-h);
   padding: 0 var(--sidebar-row-px);
   border-radius: var(--control-radius);
-  font-size: var(--control-text);
+  font-size: var(--sidebar-item-font-size);
   font-weight: var(--font-weight-medium);
   text-align: left;
   transition:
@@ -293,7 +297,7 @@ body,
                               are chrome, not list, and a sidebar dragged narrow
                               squeezes this row first */
   border-radius: var(--radius-control);
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
   color: var(--sidebar-item-text);
@@ -517,7 +521,7 @@ body,
   background: transparent;
   border: none;
   outline: none;
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
 }
@@ -557,7 +561,7 @@ body,
   height: var(--control-h-md);
   padding: 0 var(--control-px); /* px-2 — see .launcher-btn */
   border-radius: var(--radius-control);
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
   color: var(--text-tertiary);
@@ -727,10 +731,9 @@ body,
 
 /* The identity row, tall enough to carry the avatar with air around it.
    The comment below is an ARITHMETIC, so it is now written as one: the row was
-   a frozen 2.5rem while the control it sits beside moved with --density, which
-   left the promised 4px of air at 8px on Compact and 0.25px on Spacious. The
-   avatar is a fixed 32px canvas (--control-h-lg's value at the default stop),
-   so the row follows the same token and keeps its air at every stop. */
+   a frozen 2.5rem while the control it sits beside could move. The avatar is
+   a fixed 32px canvas (--control-h-lg's value), so the row follows the same
+   token and keeps its air whatever that token is set to. */
 .sidebar-footer-row--user {
   height: calc(
     var(--control-h-lg) + 8px
@@ -951,9 +954,9 @@ body,
      path share a baseline. Centring a 10px capital on a 10px box against 12px
      lowercase on 16px put the two optical centres 2px apart, and the path read
      as sitting under the letter (2026-09-20). */
-  font-size: 11px;
+  font-size: var(--scope-glyph-size);
   font-weight: 600;
-  line-height: 16px;
+  line-height: var(--scope-glyph-line);
   letter-spacing: 0.02em;
 }
 
@@ -1241,7 +1244,7 @@ body,
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--control-gap);
+  gap: var(--menu-item-gap);
   width: 100%;
   min-height: var(--control-h-md);
   padding: 0.25rem var(--control-px);
@@ -1307,10 +1310,13 @@ body,
    drop-gap and badge wrappers) count through :has(). Adding a fill-row family
    means adding it to this selector — src/renderer/src/lib/row-rhythm.test.ts
    finds every full-width class with a hover fill and fails on one left out. */
-:is(.menu-item, :has(> .menu-item)) + :is(.menu-item, :has(> .menu-item)),
 :is(.sidebar-item, :has(> .sidebar-item)) + :is(.sidebar-item, :has(> .sidebar-item)),
 .chat-prompt-option + .chat-prompt-option {
   margin-top: var(--row-gap);
+}
+/* Menus read it through --menu-row-gap: Comfortable stacks its menu rows flush. */
+:is(.menu-item, :has(> .menu-item)) + :is(.menu-item, :has(> .menu-item)) {
+  margin-top: var(--menu-row-gap);
 }
 
 /* Hairline between menu sections, inset so it reads as a break in the list
@@ -1410,7 +1416,7 @@ body,
   /* A fixed-height control: a wrapped label spills out of its box. */
   white-space: nowrap;
   border-radius: var(--control-radius);
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-action-foreground);
   background-color: var(--color-action);
@@ -1442,7 +1448,7 @@ body,
   padding: 0 calc(var(--control-px) * 1.5);
   white-space: nowrap;
   border-radius: var(--control-radius);
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   background-color: var(--surface-raised);
@@ -1592,8 +1598,8 @@ body,
  * writes one of these instead of `text-[13px]` or `h-7`. The Tailwind literal
  * is not wrong at the default stop — it IS 13px there — which is exactly why it
  * is dangerous: it looks correct in every screenshot and then refuses to move
- * when the user changes the density, leaving a 31.5px row with a 13px name in
- * it. These classes are unlayered, so they win over the utility they replace.
+ * when the user changes the text size, leaving one label behind while every
+ * other one moves. These classes are unlayered, so they win over the utility they replace.
  *
  * `check-tokens.mjs` refuses the literals in both `system.css` and the renderer,
  * so the only way to write the spec's numbers is to reference the spec. */
@@ -1642,12 +1648,12 @@ body,
 .range-field::-webkit-slider-runnable-track {
   height: var(--range-track-h);
   border-radius: var(--radius-full);
-  background-color: var(--surface-200);
+  background-color: transparent;
 }
 .range-field::-moz-range-track {
   height: var(--range-track-h);
   border-radius: var(--radius-full);
-  background-color: var(--surface-200);
+  background-color: transparent;
 }
 .range-field::-webkit-slider-thumb {
   appearance: none;
@@ -1691,26 +1697,55 @@ body,
   border-radius: var(--radius-lg);
 }
 
-/* The stop names under a .range-field: one column per stop, so each name sits
-   under its own position on the track, with the first and last pulled to the
-   edges so they read as the ends of the range rather than as two more stops
-   inside it. */
+/* A stepped range: the track, a dot on every stop, and the stop names under
+   them. The input draws only its thumb; the track and the dots sit in
+   .range-rail behind it, so a dot shows wherever the thumb is not. Dots and
+   names are placed on the thumb's own positions: the thumb's centre travels
+   from half a thumb in from the left edge to half a thumb in from the right,
+   so the rail and the names are inset by exactly that much and a stop i of n
+   sits at i / (n - 1) of what is left. Equal columns put the inner names up
+   to a fifth of a column off their stops. The whole range is padded in so the
+   first and last names can centre on their stops too. */
+.range-stepped {
+  --range-thumb: var(--control-icon);
+  position: relative;
+  padding-inline: 1.25rem;
+}
+.range-stepped .range-field {
+  position: relative;
+  display: block;
+}
+.range-rail {
+  position: absolute;
+  inset-inline: calc(1.25rem + var(--range-thumb) / 2);
+  top: calc(var(--control-h) / 2 - 2px);
+  height: 4px;
+  border-radius: var(--radius-full);
+  background-color: var(--surface-200);
+  pointer-events: none;
+}
+.range-dot {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--i, 0) / var(--n, 1) * 100%);
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--text-tertiary);
+  translate: -50% -50%;
+}
 .range-ticks {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  width: 100%;
+  position: relative;
+  height: calc(var(--control-text) * 1.5);
+  margin-inline: calc(var(--range-thumb) / 2);
   font-size: var(--control-text);
   color: var(--text-tertiary);
 }
 .range-tick {
-  text-align: center;
-}
-.range-tick:first-child {
-  text-align: left;
-}
-.range-tick:last-child {
-  text-align: right;
+  position: absolute;
+  left: calc(var(--i, 0) / var(--n, 1) * 100%);
+  translate: -50% 0;
+  white-space: nowrap;
 }
 .range-tick[data-active='true'] {
   color: var(--text-primary);
@@ -1792,7 +1827,7 @@ body,
   border-radius: var(--control-radius);
   background-color: var(--surface-100);
   border: 1px solid var(--border-subtle-color);
-  font-size: var(--control-text);
+  font-size: var(--control-text-sm);
   color: var(--text-primary);
   outline: none;
   transition:

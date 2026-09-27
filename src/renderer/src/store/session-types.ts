@@ -37,60 +37,95 @@ export function treeRuleMultiplier(intensity: TreeRuleIntensity): number {
 }
 
 /**
- * How tight the app's chrome is drawn — the one number the control and frame
- * spec in `packages/ui/src/tokens.css` is cut from, written on the root element
- * as `--density`. Every control, frame, toolbar row and derived radius is a
- * `calc(<base> * var(--density))`, so these five stops move all of them at once
- * rather than one family at a time.
+ * How tight the app's chrome is drawn: one of five presets, written on the
+ * root element as `data-density` and resolved in
+ * `packages/ui/src/density.css`. Each preset is a table of literal values, not
+ * a multiplier — `compact` is the spec as set on 2026-09-21 and `comfortable`
+ * the chrome as tuned before it, both exactly, and no single ratio maps one
+ * onto the other. The three others are derived from those two.
  *
- * The range is not arbitrary. `regular` is 1: the spec exactly as the design
- * lead set it on 2026-09-21, so a user who never touches this slider sees the
- * file as it was written. `spacious` puts a control at 31.5px, which is the
- * 32px row the sidebar had before 2026-09-20 — the size the team asked for when
- * the new ratio read too small — and `compact` goes the same distance the other
- * way. A wider range than that is a different app, not a density setting.
- *
- * Ids are stored, not numbers, for the same reason as TREE_RULE_INTENSITIES
- * above: the scales are a design call and can be retuned without stranding what
- * is already in a user's localStorage.
+ * Ids are stored, not numbers, so a preset can be retuned without stranding
+ * what is already in a user's localStorage.
  */
 export const DENSITY_LEVELS = [
-  { id: 'compact', label: 'Compact', scale: 0.875 },
-  { id: 'snug', label: 'Snug', scale: 0.9375 },
-  { id: 'regular', label: 'Regular', scale: 1 },
-  { id: 'relaxed', label: 'Relaxed', scale: 1.0625 },
-  { id: 'spacious', label: 'Spacious', scale: 1.125 }
+  { id: 'tight', label: 'Tight' },
+  { id: 'compact', label: 'Compact' },
+  { id: 'balanced', label: 'Balanced' },
+  { id: 'comfortable', label: 'Comfortable' },
+  { id: 'spacious', label: 'Spacious' }
 ] as const
 
 export type Density = (typeof DENSITY_LEVELS)[number]['id']
 
-/** The stop the app opens at, and what an unknown id falls back to. */
-export const DEFAULT_DENSITY: Density = 'regular'
+/** The preset the app opens at, and what an unknown id falls back to. */
+export const DEFAULT_DENSITY: Density = 'comfortable'
 
-/** The scale a stop draws at; unknown ids fall back to the default's. */
-export function densityScale(density: Density): number {
-  return (
-    DENSITY_LEVELS.find((d) => d.id === density)?.scale ??
-    DENSITY_LEVELS.find((d) => d.id === DEFAULT_DENSITY)!.scale
-  )
+/** Where the preset is saved. A new key, because the old one (`clave-density`)
+ *  stored the 2026-09-21 multiplier stops, and its `compact` meant 0.875. */
+export const DENSITY_STORAGE_KEY = 'clave-density-preset'
+export const LEGACY_DENSITY_STORAGE_KEY = 'clave-density'
+
+/** A stop of the old multiplier slider → the preset that looks like it.
+ *  `regular` (scale 1) IS `compact`: the same spec, byte for byte. */
+const LEGACY_DENSITY: Record<string, Density> = {
+  compact: 'tight',
+  snug: 'tight',
+  regular: 'compact',
+  relaxed: 'balanced',
+  spacious: 'comfortable'
 }
 
 /**
- * The stop a saved string names, CHECKED against the table rather than cast to
- * it. This is what localStorage is read through, and the value ends up as a CSS
- * length multiplier: `--density: enormous` invalidates every calc() in the
- * control spec at once, and the engine's answer to that is to fall back to the
- * initial values in silence — no throw, no warning, nothing in the console.
- * Anything that is not one of the five stops is not a density.
+ * The preset a saved string names, CHECKED against the table rather than cast
+ * to it: the value ends up as an attribute a stylesheet matches on, and an id
+ * no block matches silently draws the Compact spec. `legacy` is the old
+ * multiplier key, read only when nothing was saved under the new one.
  */
-export function resolveDensity(saved: string | null): Density {
-  return DENSITY_LEVELS.some((level) => level.id === saved) ? (saved as Density) : DEFAULT_DENSITY
+export function resolveDensity(saved: string | null, legacy: string | null = null): Density {
+  if (DENSITY_LEVELS.some((level) => level.id === saved)) return saved as Density
+  if (
+    saved === null &&
+    legacy !== null &&
+    Object.prototype.hasOwnProperty.call(LEGACY_DENSITY, legacy)
+  ) {
+    return LEGACY_DENSITY[legacy]
+  }
+  return DEFAULT_DENSITY
 }
 
-/** The stop's position on the slider; an unknown id sits on the default. */
+/** The preset's position on the slider; an unknown id sits on the default. */
 export function densityIndex(density: Density): number {
   const i = DENSITY_LEVELS.findIndex((d) => d.id === density)
   return i === -1 ? DENSITY_LEVELS.findIndex((d) => d.id === DEFAULT_DENSITY) : i
+}
+
+/**
+ * Appearance → Text size: px added to the chrome's label sizes on top of the
+ * density preset, written as `--ui-text-offset`. Additive, so the presets'
+ * own sizes (12px bar labels at Comfortable, 13px at Compact) keep their
+ * relation to each other at every step. Capped at +2: the rows keep their
+ * height, and a Compact 24px control holds nothing larger than ~15px text.
+ */
+export const TEXT_SIZE_LEVELS = [
+  { id: 'smaller', label: 'Smaller', offset: -1 },
+  { id: 'default', label: 'Default', offset: 0 },
+  { id: 'larger', label: 'Larger', offset: 1 },
+  { id: 'largest', label: 'Largest', offset: 2 }
+] as const
+
+export type TextSize = (typeof TEXT_SIZE_LEVELS)[number]['id']
+
+export const DEFAULT_TEXT_SIZE: TextSize = 'default'
+
+export function resolveTextSize(saved: string | null): TextSize {
+  return TEXT_SIZE_LEVELS.some((level) => level.id === saved)
+    ? (saved as TextSize)
+    : DEFAULT_TEXT_SIZE
+}
+
+/** The px a text size adds; unknown ids add nothing. */
+export function textSizeOffset(size: TextSize): number {
+  return TEXT_SIZE_LEVELS.find((level) => level.id === size)?.offset ?? 0
 }
 
 /**
