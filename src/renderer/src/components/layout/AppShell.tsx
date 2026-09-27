@@ -11,6 +11,7 @@ import {
 } from '../../store/session-store'
 import type { SessionGroup, SettingsSection } from '../../store/session-store'
 import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
+import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
@@ -89,6 +90,7 @@ export function AppShell() {
   const treeRuleIntensity = useSessionStore((s) => s.treeRuleIntensity)
   const density = useSessionStore((s) => s.density)
   const textSize = useSessionStore((s) => s.textSize)
+  const uiFont = useSessionStore((s) => s.uiFont)
   const toggleFilePalette = useSessionStore((s) => s.toggleFilePalette)
   const fileTreeOpen = useSessionStore((s) => s.fileTreeOpen)
   const fileTreeWidth = useSessionStore((s) => s.fileTreeWidth)
@@ -513,6 +515,17 @@ export function AppShell() {
   useEffect(() => {
     document.documentElement.style.setProperty('--ui-text-offset', `${textSizeOffset(textSize)}px`)
   }, [textSize])
+  // The face goes on once it has loaded, so the chrome never flashes the
+  // fallback: until then the attribute keeps the previous font.
+  useEffect(() => {
+    let cancelled = false
+    void loadUiFont(uiFont).then(() => {
+      if (!cancelled) document.documentElement.dataset.uiFont = uiFont
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [uiFont])
 
   // Updater: subscribe to main's state and pull the current truth on mount.
   // The pull is the point — a push-only updater loses the "an update exists"

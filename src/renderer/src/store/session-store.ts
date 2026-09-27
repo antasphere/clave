@@ -32,6 +32,7 @@ import {
 } from './session-types'
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
+import { resolveUiFont, type UiFont } from '../lib/ui-font'
 import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
 import { moveLayoutItems } from '../lib/sidebar-layout-ops'
 import { withDirToggled } from '../lib/panel-expansion'
@@ -112,6 +113,8 @@ interface SessionState {
   density: Density
   /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
   textSize: TextSize
+  /** The face the chrome is set in (`data-ui-font`). */
+  uiFont: UiFont
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -286,6 +289,7 @@ interface SessionState {
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
+  setUiFont: (uiFont: UiFont) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
@@ -607,6 +611,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
   ),
   textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
+  uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -1276,6 +1281,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTextSize: (textSize) => {
     localStorage.setItem('clave-text-size', textSize)
     set({ textSize })
+  },
+
+  setUiFont: (uiFont) => {
+    localStorage.setItem('clave-ui-font', uiFont)
+    set({ uiFont })
   },
 
   setAppIcon: (appIcon) => {

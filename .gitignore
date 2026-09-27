@@ -44,3 +44,6 @@ assets/*.mp4
 # Native helper build artifact (built by scripts/build-native.sh)
 resources/native/mission-control-helper
 resources/native/haptic-helper
+
+# Fonts Clave may use but not redistribute — copied in by scripts/copy-private-fonts.mjs
+src/renderer/src/assets/fonts/private/

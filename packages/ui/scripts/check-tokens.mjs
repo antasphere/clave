@@ -132,7 +132,7 @@ SPEC_LITERALS['min-height'] = SPEC_LITERALS.height
  *    the control scale would make the picture of the app resize with the app.
  *  - .range-field's own track and thumb are declared as its custom properties
  *    at the top of the rule; the numbers there are the slider's anatomy. */
-const NOT_A_CONTROL = /^\.(theme-swatch|range-field|range-tick)/
+const NOT_A_CONTROL = /^\.(theme-swatch|range-field|range-tick|range-rail|range-dot|range-stepped)/
 for (const [, selector, body] of system.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   const name = selector.trim()
   if (NOT_A_CONTROL.test(name)) continue

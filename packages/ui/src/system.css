@@ -1648,12 +1648,12 @@ body,
 .range-field::-webkit-slider-runnable-track {
   height: var(--range-track-h);
   border-radius: var(--radius-full);
-  background-color: var(--surface-200);
+  background-color: transparent;
 }
 .range-field::-moz-range-track {
   height: var(--range-track-h);
   border-radius: var(--radius-full);
-  background-color: var(--surface-200);
+  background-color: transparent;
 }
 .range-field::-webkit-slider-thumb {
   appearance: none;
@@ -1697,26 +1697,55 @@ body,
   border-radius: var(--radius-lg);
 }
 
-/* The stop names under a .range-field: one column per stop, so each name sits
-   under its own position on the track, with the first and last pulled to the
-   edges so they read as the ends of the range rather than as two more stops
-   inside it. */
+/* A stepped range: the track, a dot on every stop, and the stop names under
+   them. The input draws only its thumb; the track and the dots sit in
+   .range-rail behind it, so a dot shows wherever the thumb is not. Dots and
+   names are placed on the thumb's own positions: the thumb's centre travels
+   from half a thumb in from the left edge to half a thumb in from the right,
+   so the rail and the names are inset by exactly that much and a stop i of n
+   sits at i / (n - 1) of what is left. Equal columns put the inner names up
+   to a fifth of a column off their stops. The whole range is padded in so the
+   first and last names can centre on their stops too. */
+.range-stepped {
+  --range-thumb: var(--control-icon);
+  position: relative;
+  padding-inline: 1.25rem;
+}
+.range-stepped .range-field {
+  position: relative;
+  display: block;
+}
+.range-rail {
+  position: absolute;
+  inset-inline: calc(1.25rem + var(--range-thumb) / 2);
+  top: calc(var(--control-h) / 2 - 2px);
+  height: 4px;
+  border-radius: var(--radius-full);
+  background-color: var(--surface-200);
+  pointer-events: none;
+}
+.range-dot {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--i, 0) / var(--n, 1) * 100%);
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--text-tertiary);
+  translate: -50% -50%;
+}
 .range-ticks {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  width: 100%;
+  position: relative;
+  height: calc(var(--control-text) * 1.5);
+  margin-inline: calc(var(--range-thumb) / 2);
   font-size: var(--control-text);
   color: var(--text-tertiary);
 }
 .range-tick {
-  text-align: center;
-}
-.range-tick:first-child {
-  text-align: left;
-}
-.range-tick:last-child {
-  text-align: right;
+  position: absolute;
+  left: calc(var(--i, 0) / var(--n, 1) * 100%);
+  translate: -50% 0;
+  white-space: nowrap;
 }
 .range-tick[data-active='true'] {
   color: var(--text-primary);

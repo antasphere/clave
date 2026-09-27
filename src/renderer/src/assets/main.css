@@ -3,6 +3,16 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
+/* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
+   the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
+   and the terminal keep their own face. */
+html[data-ui-font='synonym'] {
+  --font-sans: 'Synonym', 'Geist Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-weight-medium: 450;
+  font-weight: 450;
+  letter-spacing: -0.008em;
+}
+
 /* Feature-owned CodeMirror themes. The selection is each theme's accent blue
    restated as a literal, not a var(--accent) mix: lib/skin.ts snapshots these
    --cm-* values while the previous skin's tokens are still on the root, so a

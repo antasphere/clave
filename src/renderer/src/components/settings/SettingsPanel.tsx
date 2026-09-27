@@ -10,6 +10,7 @@ import {
   useSessionStore
 } from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
+import { UI_FONTS } from '../../lib/ui-font'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
 import { BrandField } from '../ui/BrandField'
@@ -330,7 +331,19 @@ function DensitySection(): React.JSX.Element {
           </span>
         </SettingsRow>
         <div className="settings-row">
-          <div className="w-full flex flex-col gap-1">
+          <div
+            className="range-stepped w-full flex flex-col gap-1"
+            style={{ '--n': DENSITY_LEVELS.length - 1 } as React.CSSProperties}
+          >
+            <div className="range-rail" aria-hidden>
+              {DENSITY_LEVELS.map((stop, i) => (
+                <span
+                  key={stop.id}
+                  className="range-dot"
+                  style={{ '--i': i } as React.CSSProperties}
+                />
+              ))}
+            </div>
             <input
               type="range"
               className="range-field"
@@ -344,12 +357,13 @@ function DensitySection(): React.JSX.Element {
               onChange={(e) => setDensity(DENSITY_LEVELS[Number(e.target.value)].id)}
             />
             <div className="range-ticks" aria-hidden>
-              {DENSITY_LEVELS.map((stop) => (
+              {DENSITY_LEVELS.map((stop, i) => (
                 <span
                   key={stop.id}
                   className="range-tick"
                   data-active={stop.id === level.id}
                   data-density-tick={stop.id}
+                  style={{ '--i': i } as React.CSSProperties}
                 >
                   {stop.label}
                 </span>
@@ -358,6 +372,7 @@ function DensitySection(): React.JSX.Element {
           </div>
         </div>
         <TextSizeRow />
+        <FontRow />
       </SettingsCard>
     </SettingsSection>
   )
@@ -381,6 +396,33 @@ function TextSizeRow(): React.JSX.Element {
             className="segmented-item"
           >
             {level.label}
+          </button>
+        ))}
+      </div>
+    </SettingsRow>
+  )
+}
+
+function FontRow(): React.JSX.Element {
+  const uiFont = useSessionStore((s) => s.uiFont)
+  const setUiFont = useSessionStore((s) => s.setUiFont)
+  const fonts = UI_FONTS.filter((font) => font.available)
+  if (fonts.length < 2) return <></>
+
+  return (
+    <SettingsRow label="Font" description="The typeface of the app. The terminal keeps its own.">
+      <div className="segmented" role="radiogroup" aria-label="Font">
+        {fonts.map((font) => (
+          <button
+            key={font.id}
+            role="radio"
+            aria-checked={uiFont === font.id}
+            onClick={() => setUiFont(font.id)}
+            data-active={uiFont === font.id}
+            data-ui-font-option={font.id}
+            className="segmented-item"
+          >
+            {font.label}
           </button>
         ))}
       </div>
