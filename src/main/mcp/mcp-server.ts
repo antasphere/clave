@@ -442,7 +442,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_session',
     {
       description:
-        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
+        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
       inputSchema: {
         cwd: z.string().describe('Absolute path of the working directory for the new session'),
         mode: z
@@ -456,6 +456,12 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .optional()
           .describe('Target group: a group id, an exact group name, or "mine"'),
         name: z.string().optional().describe('Display name for the new tab'),
+        chat: z
+          .boolean()
+          .optional()
+          .describe(
+            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Takes the place of profile — it is the "claude-chat" / "codex-chat" launch profile.'
+          ),
         dangerous: z
           .boolean()
           .optional()
@@ -475,7 +481,9 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .min(1)
           .max(128)
           .optional()
-          .describe('Named local launch profile id or name. Omit to use the workspace default.'),
+          .describe(
+            'Named local launch profile id or name. Omit to use the workspace default. For the chat view, use chat: true.'
+          ),
         account: z
           .string()
           .min(1)
