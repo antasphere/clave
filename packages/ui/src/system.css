@@ -2589,7 +2589,9 @@ button.extension-card:hover {
   max-width: var(--chat-column);
   min-height: 100%;
   margin: 0 auto;
-  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 6) calc(var(--spacing) * 3);
+  /* The foot holds the last turn's hover line the way the gap holds every
+     other's (one gap), plus the air a turn keeps from the composer. */
+  padding: calc(var(--spacing) * 6) calc(var(--spacing) * 6) calc(var(--spacing) * 10);
 }
 /* Arrival. A block the column gains — a turn, a run of tools, the mark, a
    notice — settles in over one transition from a hair below its place, so a
