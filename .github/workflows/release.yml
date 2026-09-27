@@ -83,6 +83,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Synonym (Appearance → Font) may ship inside the app but not sit in this
+      # public repository, so it arrives as a secret and is written into the
+      # git-ignored folder scripts/copy-private-fonts.mjs fills on a local build.
+      # Without the secret (a fork) the build simply offers Geist only.
+      - name: Private fonts
+        env:
+          SYNONYM_WOFF2_B64: ${{ secrets.SYNONYM_WOFF2_B64 }}
+        shell: bash
+        run: |
+          if [ -z "$SYNONYM_WOFF2_B64" ]; then
+            echo "::warning::SYNONYM_WOFF2_B64 is not set: this build offers Geist only"
+            exit 0
+          fi
+          mkdir -p src/renderer/src/assets/fonts/private
+          printf '%s' "$SYNONYM_WOFF2_B64" | base64 --decode > src/renderer/src/assets/fonts/private/Synonym-Variable.woff2
+          ls -l src/renderer/src/assets/fonts/private
+
       # prod is protected by the "prod is release-only" ruleset (repo admins +
       # deploy key bypass). GITHUB_TOKEN cannot push there, so the version-bump
       # commit goes over SSH with the release deploy key. Push-only: fetches
