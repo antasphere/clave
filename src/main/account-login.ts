@@ -49,17 +49,35 @@ const PTY_ROWS = 40
 const LOGIN_TIMEOUT_MS = 10 * 60_000
 /** How much stripped output is kept for the scans, oldest dropped first. */
 const OUTPUT_KEEP = 16 * 1024
-const CLAUDE_TOKEN_RE = /sk-ant-[A-Za-z0-9_-]{20,}/
+/** The token, and something after it. The scan runs on every chunk, so a
+ *  token cut by a chunk boundary looks like a shorter token until the rest
+ *  arrives: the read waits for the character that ends it (a newline, a
+ *  space, the next line's boundary) rather than take the buffer's end for
+ *  one. `findClaudeToken` on exit appends that newline itself. */
+const CLAUDE_TOKEN_RE = /sk-ant-[A-Za-z0-9_-]{20,}(?=[^A-Za-z0-9_-])/
 const URL_RE = /https?:\/\/[^\s'"<>)\]]+/g
 /** Claude Code's wording when the local callback did not happen. */
 const CLAUDE_CODE_PROMPT_RE = /paste (the )?code/i
 
 // eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\r/g
+const CSI_RE = /\x1b\[[0-9;?]*[ -/]*([@-~])/g
+// eslint-disable-next-line no-control-regex
+const OTHER_ESCAPE_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>78]/g
+/** The CSI final bytes that move the cursor or erase: where one line ends
+ *  and another starts, as far as the words are concerned. */
+const CURSOR_FINALS = 'ABCDEFGHJKSTdf'
 
-/** Terminal output as words: escapes and carriage returns gone. */
+/** Terminal output as words. Colours, titles and modes go; a cursor move,
+ *  an erase or a carriage return becomes a line break, because that is what
+ *  it was on screen. The CLI paints its frames line by line with cursor
+ *  moves rather than newlines (Ink), so dropping them ran the token into the
+ *  first word of the line under it — `…Store`, from "Store this token
+ *  securely" — and stored a credential the service refuses. */
 export function stripAnsi(text: string): string {
-  return text.replace(ANSI_RE, '')
+  return text
+    .replace(CSI_RE, (_match, final: string) => (CURSOR_FINALS.includes(final) ? '\n' : ''))
+    .replace(OTHER_ESCAPE_RE, '')
+    .replace(/\r\n?/g, '\n')
 }
 
 /** The link a login command printed: the first web address in its output.
@@ -207,6 +225,14 @@ class AccountLoginManager {
     if (!account || accountId === 'default') throw new Error('Add an account to log into.')
     const running = this.runningFor('claude', accountId)
     if (running) return running
+    const store = (live: LiveJob, token: string): void => {
+      try {
+        claudeAccountsManager.setToken(accountId, token)
+        live.finish('done')
+      } catch (error) {
+        live.finish('failed', error instanceof Error ? error.message : 'Could not store the token.')
+      }
+    }
     return this.startJob(
       'claude',
       accountId,
@@ -215,15 +241,7 @@ class AccountLoginManager {
       (live) => {
         const token = findClaudeToken(live.output)
         if (token) {
-          try {
-            claudeAccountsManager.setToken(accountId, token)
-            live.finish('done')
-          } catch (error) {
-            live.finish(
-              'failed',
-              error instanceof Error ? error.message : 'Could not store the token.'
-            )
-          }
+          store(live, token)
           return
         }
         if (!live.job.awaitingCode && CLAUDE_CODE_PROMPT_RE.test(live.output)) {
@@ -231,13 +249,20 @@ class AccountLoginManager {
           this.emit(live)
         }
       },
-      (live, code) =>
+      (live, code) => {
+        // The command is over, so the buffer's end is the token's end too.
+        const token = findClaudeToken(live.output + '\n')
+        if (token) {
+          store(live, token)
+          return
+        }
         live.finish(
           'failed',
           code === 0
             ? 'The command ended without printing a token.'
             : `claude setup-token exited with status ${code}.`
         )
+      }
     )
   }
 
