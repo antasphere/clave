@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSpawnModes } from './open-session-modes'
+import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 
 describe('clave_open_session spawn modes', () => {
   it('lets the skip-approvals flag through for codex, as the spawn turns it into --yolo', () => {
@@ -42,5 +42,32 @@ describe('clave_open_session spawn modes', () => {
     expect(resolveSpawnModes({ mode: 'pi', model: 'x' }).model).toBe('x')
     expect(resolveSpawnModes({ mode: 'antigravity', model: 'x' }).model).toBeUndefined()
     expect(resolveSpawnModes({ mode: 'terminal', model: 'x' }).model).toBeUndefined()
+  })
+})
+
+describe('clave_open_session chat view', () => {
+  it('opens claude and codex in their chat profiles', () => {
+    expect(resolveProfileRef({ chat: true })).toBe('claude-chat')
+    expect(resolveProfileRef({ mode: 'claude', chat: true })).toBe('claude-chat')
+    expect(resolveProfileRef({ mode: 'codex', chat: true })).toBe('codex-chat')
+  })
+  it('leaves the profile alone without chat', () => {
+    expect(resolveProfileRef({ mode: 'claude' })).toBeUndefined()
+    expect(resolveProfileRef({ mode: 'claude', chat: false, profile: 'mine' })).toBe('mine')
+  })
+  it('accepts the chat profile named alongside chat', () => {
+    expect(resolveProfileRef({ mode: 'codex', chat: true, profile: 'codex-chat' })).toBe(
+      'codex-chat'
+    )
+  })
+  it('refuses chat where there is no chat view, rather than opening a terminal', () => {
+    for (const mode of ['pi', 'antigravity', 'gemini', 'terminal'] as const) {
+      expect(() => resolveProfileRef({ mode, chat: true })).toThrow(/no chat view/)
+    }
+  })
+  it('refuses chat beside a different profile', () => {
+    expect(() => resolveProfileRef({ chat: true, profile: 'builtin-claude' })).toThrow(
+      /drop profile/
+    )
   })
 })
