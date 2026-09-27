@@ -47,3 +47,38 @@ export function resolveSpawnModes(payload: {
   const model = (claudeMode || codexMode || piMode) && payload.model ? payload.model : undefined
   return { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family }
 }
+
+/** The built-in launch profile that runs each family in Clave's chat view
+ *  (src/main/launch-profile-manager.ts, CHAT_PROFILES). */
+export const CHAT_PROFILE_IDS: Partial<Record<OpenSessionMode, string>> = {
+  claude: 'claude-chat',
+  codex: 'codex-chat'
+}
+
+/**
+ * The launch profile a `clave_open_session` call names, with `chat: true`
+ * turned into the family's chat profile. The chat view IS a launch profile,
+ * so before `chat` existed an agent could only reach it by knowing the
+ * profile's id — the tool never said so, and agents told the user it could
+ * not be done. Refuses what cannot be honoured rather than quietly opening a
+ * terminal: chat on a mode that has no chat view, or chat beside a profile
+ * that is not that chat profile.
+ */
+export function resolveProfileRef(payload: {
+  mode?: OpenSessionMode
+  chat?: boolean
+  profile?: string
+}): string | undefined {
+  if (!payload.chat) return payload.profile
+  const mode = payload.mode ?? 'claude'
+  const chatProfile = CHAT_PROFILE_IDS[mode]
+  if (!chatProfile) {
+    throw new Error(`chat: true needs mode "claude" or "codex"; "${mode}" has no chat view`)
+  }
+  if (payload.profile && payload.profile !== chatProfile) {
+    throw new Error(
+      `chat: true opens the "${chatProfile}" profile; drop profile "${payload.profile}" or chat`
+    )
+  }
+  return chatProfile
+}

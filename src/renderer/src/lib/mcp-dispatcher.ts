@@ -42,7 +42,7 @@ import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
-import { resolveSpawnModes } from './open-session-modes'
+import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -372,6 +372,8 @@ export async function openSessionProgrammatically(payload: {
   dangerous?: boolean
   model?: string
   profile?: string
+  /** Open claude / codex in Clave's chat view instead of the terminal. */
+  chat?: boolean
   /** The Claude account (id or label) the tab runs on; claude mode only. */
   account?: string
   provider?: string
@@ -401,16 +403,16 @@ export async function openSessionProgrammatically(payload: {
   // --yolo for the launcher's own Cmd+Y (PRDCT-2528).
   const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
     resolveSpawnModes(payload)
+  const profileRef = resolveProfileRef(payload)
   const launchProfileId =
-    family && payload.profile
+    family && profileRef
       ? profilesFor(family).find(
           (profile) =>
-            profile.id === payload.profile ||
-            profile.name.toLowerCase() === payload.profile!.toLowerCase()
+            profile.id === profileRef || profile.name.toLowerCase() === profileRef.toLowerCase()
         )?.id
       : undefined
-  if (payload.profile && family && !launchProfileId)
-    throw new Error(`Unknown ${family} launch profile "${payload.profile}"`)
+  if (profileRef && family && !launchProfileId)
+    throw new Error(`Unknown ${family} launch profile "${profileRef}"`)
   // The account: the one named, else the pool's pick from the one selected
   // in settings — the same rule the launcher applies, so an agent-opened tab
   // lands on the account the user would have got from the button. Claude and
