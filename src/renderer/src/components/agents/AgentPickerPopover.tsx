@@ -117,13 +117,13 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
   return createPortal(
     <div
       ref={menuRef}
-      className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col"
+      className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col p-1"
       style={{
         top: (anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
         left: anchorRef.current?.getBoundingClientRect().left ?? 0
       }}
     >
-      <div className="max-h-[50vh] overflow-y-auto p-1">
+      <div className="max-h-[50vh] overflow-y-auto">
       {locationGroups.map((group) => {
         return (
           <div key={group.locationId}>

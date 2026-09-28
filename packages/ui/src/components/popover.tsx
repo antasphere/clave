@@ -49,7 +49,7 @@ const PopoverContent = React.forwardRef<
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.96, y: -4 }}
                 transition={popoverTransition}
-                className={cn('menu-surface w-auto', className)}
+                className={cn('menu-surface w-auto p-1', className)}
               >
                 {children}
               </motion.div>
@@ -66,7 +66,7 @@ const PopoverContent = React.forwardRef<
         ref={ref}
         align={align}
         sideOffset={sideOffset}
-        className={cn('menu-surface menu-pop z-50 w-auto outline-none', className)}
+        className={cn('menu-surface menu-pop z-50 w-auto outline-none p-1', className)}
         {...props}
       >
         {children}

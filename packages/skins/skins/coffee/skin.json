@@ -20,6 +20,7 @@
   "--color-term-cwd": "oklch(0.64 0.11 205)",
   "--color-term-model": "oklch(0.62 0.2 300)",
   "--color-term-mode": "oklch(0.66 0.11 60)",
+  "--color-term-auto": "oklch(0.7 0.17 50)",
   "--color-git-worktree": "var(--git-worktree)",
   "--color-wellbeing-gentle": "oklch(0.5 0.12 85)",
   "--color-wellbeing-gentle-bg": "oklch(0.85 0.04 85)",

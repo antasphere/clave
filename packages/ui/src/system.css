@@ -4106,10 +4106,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     black calc(var(--spacing) * 3)
   );
 }
-/* The last turn sits close to the prompt: the column's foot keeps only the
-   room its hover line needs. */
+/* Room under the last turn, so the conversation can be scrolled up off the
+   prompt a little. */
 .terminal-view .chat-column {
-  padding-bottom: calc(var(--spacing) * 6);
+  padding-bottom: calc(var(--spacing) * 16);
 }
 .terminal-view .term-composer-wrap {
   padding-top: 0;
@@ -4245,15 +4245,37 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   align-items: center;
   gap: var(--spacing);
 }
+/* The permission mode reads by colour and glyph: the modes that ask stay
+   grey, plan is blue, auto orange, YOLO red. */
 .term-mode .chat-model-trigger {
-  color: var(--color-term-mode);
+  color: var(--text-secondary);
 }
 .term-mode .chat-model-trigger::before {
-  content: '▸▸';
   letter-spacing: calc(var(--spacing) / -4);
 }
+.term-mode[data-mode='acceptEdits'] .chat-model-trigger::before,
+.term-mode[data-mode='auto'] .chat-model-trigger::before {
+  content: '▸▸';
+}
+.term-mode[data-mode='plan'] .chat-model-trigger {
+  color: var(--color-status-working);
+}
+.term-mode[data-mode='plan'] .chat-model-trigger::before {
+  content: '∥';
+}
+.term-mode[data-mode='auto'] .chat-model-trigger {
+  color: var(--color-term-auto);
+}
 .term-mode[data-mode='bypassPermissions'] .chat-model-trigger {
-  color: var(--color-warning);
+  color: var(--color-destructive);
+}
+.term-mode[data-mode='bypassPermissions'] .chat-model-trigger::before {
+  content: '▸▸▸';
+}
+/* The bar's chips hold still under the finger: a press that shrinks the
+   trigger moves the edge its menu is anchored to as the menu opens. */
+.term-status .chat-model-trigger:active:not(:disabled) {
+  scale: none;
 }
 .term-status .chat-model-trigger:hover,
 .term-status .chat-model-trigger[data-state='open'] {

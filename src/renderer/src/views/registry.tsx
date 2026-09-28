@@ -108,7 +108,7 @@ function ViewPicker({
           side="bottom"
           align="end"
           sideOffset={6}
-          className="menu-surface menu-pop z-50"
+          className="menu-surface menu-pop z-50 min-w-[200px] p-1"
           aria-label="Views"
         >
           <DropdownMenu.Label className="menu-label">Read this session as</DropdownMenu.Label>

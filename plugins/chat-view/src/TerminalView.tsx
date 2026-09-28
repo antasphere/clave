@@ -16,6 +16,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type {
+  PermissionModeOption,
   SessionEvent,
   SessionInput,
   ModelOption,
@@ -303,7 +304,11 @@ function ModelMenu({
           title="Change model"
           disabled={disabled}
         >
-          <span className="chat-model-trigger-label">{current?.label ?? model ?? 'Default'}</span>
+          <span className="chat-model-trigger-label">
+            {/* The bar names the model; the menu keeps the provider's gloss
+                ("Default (recommended)"), the bar does not. */}
+            {(current?.label ?? model ?? 'Default').replace(/\s*\([^)]*\)\s*$/, '')}
+          </span>
           <ChevronDownIcon />
         </button>
       </DropdownMenu.Trigger>
@@ -429,6 +434,10 @@ const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
+/** The Terminal view's names for the permission modes where they differ
+ *  from the provider's: bypass is YOLO here, short and unmistakable. */
+const terminalModeLabel = (option: PermissionModeOption): string =>
+  option.id === 'bypassPermissions' ? 'YOLO' : option.label
 /** Where the reader's choice to pin questions is kept, across sessions. */
 const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
@@ -1039,11 +1048,11 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
                 mode={conversation.permissionMode.mode}
                 modes={conversation.permissionMode.modes}
                 disabled={closed}
+                label={terminalModeLabel}
                 onSelect={(id) =>
                   void write({ type: 'set_permission_mode', mode: id }).catch(report)
                 }
               />
-              <span className="term-dim">(shift+tab to cycle)</span>
             </span>
           )}
           <ContextMeter

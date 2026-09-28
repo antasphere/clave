@@ -10,11 +10,14 @@ export function PermissionModeMenu({
   mode,
   modes,
   disabled,
+  label = (option) => option.label,
   onSelect
 }: {
   mode: string
   modes: PermissionModeOption[]
   disabled: boolean
+  /** How a view names a mode, when not by the provider's own label. */
+  label?: (option: PermissionModeOption) => string
   onSelect: (id: string) => void
 }): React.JSX.Element {
   const current = modes.find((m) => m.id === mode)
@@ -29,7 +32,7 @@ export function PermissionModeMenu({
           data-mode={mode}
           disabled={disabled}
         >
-          <span className="chat-model-trigger-label">{current?.label ?? mode}</span>
+          <span className="chat-model-trigger-label">{current ? label(current) : mode}</span>
           <ChevronDownIcon />
         </button>
       </DropdownMenu.Trigger>
@@ -52,7 +55,7 @@ export function PermissionModeMenu({
                 onSelect={() => onSelect(option.id)}
               >
                 <span className="chat-model-option-text">
-                  <span className="truncate">{option.label}</span>
+                  <span className="truncate">{label(option)}</span>
                 </span>
                 {selected && <CheckIcon className="select-option-check" />}
               </DropdownMenu.Item>
