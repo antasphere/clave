@@ -29,7 +29,13 @@ const block = (selector: string, source = chat): string => {
   }
   throw new Error(`unterminated rule ${selector}`)
 }
-const ARRIVALS = ['.chat-column > *', '.chat-prompt', '.chat-composer-files .chat-attachment']
+const ARRIVALS = [
+  '.chat-column > *',
+  '.chat-row[data-arrive] > *',
+  '.chat-row[data-arrive] .term-turn > *',
+  '.chat-prompt',
+  '.chat-composer-files .chat-attachment'
+]
 const PRESSED = ['.chat-jump-end', '.chat-turn-copy', '.chat-composer-tool', '.chat-model-trigger']
 
 describe('chat motion', () => {

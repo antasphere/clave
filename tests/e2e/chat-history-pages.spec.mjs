@@ -13,6 +13,7 @@
  * the relaunch restores the tab on it. Nothing reaches Anthropic: `claude` is
  * a stub, and CLAVE_TRANSCRIPTS_ROOT points the lookup at a fixture dir.
  */
+import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -212,6 +213,16 @@ export async function run(t) {
       shown > 0 && shown < TURNS / 3,
       { shown, of: TURNS }
     )
+    // A page is 200 entries, a hundred turns; the rows are virtualised, so of
+    // those only the few near the viewport are in the document.
+    t.check('of the page read, only the turns near the viewport are mounted', shown < 20, {
+      shown
+    })
+    t.check(
+      'the past it opens on is not an arrival: no row plays the entrance',
+      (await view.locator('.chat-row[data-arrive]').count()) === 0,
+      await view.locator('.chat-row[data-arrive]').count()
+    )
     t.check(
       'the first turn is not rendered yet',
       !(await view.getByText('question 0', { exact: true }).count())
@@ -224,26 +235,40 @@ export async function run(t) {
     t.check('a replayed turn is dated by its transcript, not "just now"', meta !== 'just now', meta)
 
     // ── Scrolling up reads further back without moving the reader ──
-    const oldestText = await userTurns.first().innerText()
-    // Scrolled and measured in one task, before the scroll event can ask for a page.
-    const placed = await scroller.evaluate((el, text) => {
-      el.scrollTop = 0
-      const turn = [...el.querySelectorAll('.chat-turn[data-role="user"]')].find(
-        (node) => node.textContent === text
-      )
-      return turn.getBoundingClientRect().top
-    }, oldestText)
-    const grew = await until(async () => ((await userTurns.count()) > shown ? true : null))
-    t.check('scrolling to the top brings earlier turns in', !!grew, {
-      before: shown,
-      after: await userTurns.count()
+    // The rows are virtualised, so the turn the reader holds must already be
+    // mounted when the page is asked for: first a stop just short of the
+    // point where a page is asked (a screen and a half from the top), then,
+    // scrolled and measured in one task, a step into it, before the scroll
+    // event can ask for the page.
+    await scroller.evaluate((el) => {
+      el.scrollTop = el.clientHeight * 1.5 + 200
     })
-    const anchored = view.getByText(oldestText, { exact: true })
-    const stayed = await anchored.evaluate((el) => el.getBoundingClientRect().top)
+    await win.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+    )
+    const before = (await geometry()).height
+    const held = await scroller.evaluate((el) => {
+      el.scrollTop = el.clientHeight * 1.5 - 100
+      const edge = el.getBoundingClientRect()
+      const turn = [...el.querySelectorAll('.chat-turn[data-role="user"]')].find((node) => {
+        const box = node.getBoundingClientRect()
+        return box.top >= edge.top && box.bottom <= edge.bottom
+      })
+      return turn && { text: turn.textContent, top: turn.getBoundingClientRect().top }
+    })
+    assert.ok(held, 'a turn is in view where the page is asked for')
+    const grew = await until(async () => (await geometry()).height > before + 1000)
+    t.check('scrolling to the top brings earlier turns in', !!grew, {
+      before,
+      after: await geometry()
+    })
+    const stayed = await view
+      .getByText(held.text, { exact: true })
+      .evaluate((el) => el.getBoundingClientRect().top)
     t.check(
       'and the turn the reader was on stays where it was on screen',
-      Math.abs(stayed - placed) < 2,
-      { placed, stayed, geometry: await geometry() }
+      Math.abs(stayed - held.top) < 2,
+      { held, stayed, geometry: await geometry() }
     )
 
     // ── All the way back: every turn, once, in order ──
@@ -257,11 +282,25 @@ export async function run(t) {
       { tries: 120 }
     )
     t.check('the reader reaches the first turn by scrolling', !!complete)
-    const texts = await userTurns.allInnerTexts()
+    // Read back down a screen at a time: what each screen mounts, in order.
+    const texts = []
+    for (let guard = 0; guard < 2000; guard++) {
+      for (const text of await userTurns.allInnerTexts())
+        if (texts[texts.length - 1] !== text && !texts.includes(text)) texts.push(text)
+      const moved = await scroller.evaluate((el) => {
+        const from = el.scrollTop
+        el.scrollTop = from + el.clientHeight / 2
+        return el.scrollTop > from
+      })
+      if (!moved) break
+      await win.evaluate(
+        () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+      )
+    }
     t.check(
       'every turn is there once, in order',
       texts.length === TURNS && texts.every((text, n) => text === `question ${n}`),
-      { count: texts.length, head: texts.slice(0, 3) }
+      { count: texts.length, head: texts.slice(0, 3), tail: texts.slice(-3) }
     )
   } finally {
     if (app) await app.close()

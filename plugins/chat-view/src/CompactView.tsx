@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import type { CustomContainerComponentProps, CustomItemComponentProps } from 'virtua'
 import { ArrowUpIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline'
 import type { SessionInput } from '../../../src/shared/session-model'
 import {
@@ -23,6 +24,7 @@ import { useTranscriptEnd } from './transcript'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
+import { TranscriptRows } from './rows'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
@@ -73,6 +75,61 @@ function toolLine(tools: Extract<Block, { kind: 'tool-group' }>['tools']): {
   const suffix = status === 'running' ? ' — running…' : failures > 0 ? ` — ${failures} failed` : ''
   return { role: 'Tools', text: `${summary}${suffix}` }
 }
+interface Row {
+  key: string
+  block: Block
+  line: { role: string; text: string }
+}
+/** The rows the list shows, for its items: the virtualiser hands an item only
+ *  its index, and the item is the `<li>` that carries the row's kind and state. */
+const CompactRowsContext = createContext<readonly Row[]>([])
+function CompactList({ style, children, ref }: CustomContainerComponentProps): React.JSX.Element {
+  return (
+    <ol ref={ref} className="chat-rows" aria-label="Conversation, compact" style={style}>
+      {children}
+    </ol>
+  )
+}
+function CompactItem({ style, index, children, ref }: CustomItemComponentProps): React.JSX.Element {
+  const block = useContext(CompactRowsContext)[index]?.block
+  const tools = block?.kind === 'tool-group' ? block.tools : undefined
+  return (
+    <li
+      ref={ref}
+      style={style}
+      data-kind={block?.kind}
+      data-state={tools ? groupStatus(tools) : undefined}
+      data-failures={tools ? failureCount(tools) : undefined}
+    >
+      {children}
+    </li>
+  )
+}
+/** A line's own box inside its item: the virtualiser measures the item's
+ *  content, so the column's rhythm is this box's padding, never the item's. */
+function CompactLine({
+  row,
+  first,
+  arriving
+}: {
+  row: Row
+  first: boolean
+  arriving: boolean
+}): React.JSX.Element {
+  const [arrive] = useState(arriving)
+  return (
+    <div
+      className="chat-row flex items-baseline gap-2 min-w-0"
+      data-first={first ? 'true' : undefined}
+      data-arrive={arrive ? 'true' : undefined}
+    >
+      <span className="text-text-tertiary text-xs shrink-0">{row.line.role}</span>
+      <span className="truncate" title={row.line.text}>
+        {row.line.text.replace(/\s+/g, ' ').trim()}
+      </span>
+    </div>
+  )
+}
 // A reader less than a screen from the end is still following the stream.
 const screenSlack = (el: HTMLElement): number => el.clientHeight
 
@@ -89,6 +146,17 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
     conversation.entries.forEach((entry, i) => map.set(entry, conversation.first + i))
     return map
   }, [conversation])
+  const rows = useMemo(
+    () =>
+      groupEntries(visibleEntries(conversation.entries)).map(
+        (block): Row => ({
+          key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`,
+          block,
+          line: block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
+        })
+      ),
+    [conversation.entries, ordinal]
+  )
   const waiting = conversation.entries.some((e) => e.kind === 'permission' && !e.answer)
   const exited = log.exitCode !== undefined
   const state =
@@ -122,9 +190,9 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
     <div className="chat-view" data-view="compact">
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
-          {conversation.entries.length === 0 ? (
-            // Nothing is said to be empty before the past has been read.
-            log.before !== undefined && (
+          <div className="chat-column">
+            {/* Nothing is said to be empty before the past has been read. */}
+            {conversation.entries.length === 0 && log.before !== undefined && (
               <div className="chat-empty">
                 <span className="chat-empty-icon">
                   <ChatBubbleLeftRightIcon />
@@ -132,34 +200,23 @@ export function CompactView({ session, onState }: ChatViewProps): React.JSX.Elem
                 <h2>Nothing yet</h2>
                 <p>This session has said nothing so far.</p>
               </div>
-            )
-          ) : (
-            <ol className="chat-column" aria-label="Conversation, compact">
-              {groupEntries(visibleEntries(conversation.entries)).map((block) => {
-                const line = block.kind === 'tool-group' ? toolLine(block.tools) : lineOf(block)
-                return (
-                  <li
-                    key={
-                      block.kind === 'tool-group'
-                        ? `tools-${block.id}`
-                        : `entry-${ordinal.get(block)}`
-                    }
-                    className="flex items-baseline gap-2 min-w-0"
-                    data-kind={block.kind}
-                    data-state={block.kind === 'tool-group' ? groupStatus(block.tools) : undefined}
-                    data-failures={
-                      block.kind === 'tool-group' ? failureCount(block.tools) : undefined
-                    }
-                  >
-                    <span className="text-text-tertiary text-xs shrink-0">{line.role}</span>
-                    <span className="truncate" title={line.text}>
-                      {line.text.replace(/\s+/g, ' ').trim()}
-                    </span>
-                  </li>
-                )
-              })}
-            </ol>
-          )}
+            )}
+            {/* Mounted from the start, empty or not: what it gains is told apart
+                from what it opened on by the rows it rendered before. */}
+            <CompactRowsContext.Provider value={rows}>
+              <TranscriptRows
+                rows={rows}
+                settled={log.before !== undefined}
+                scroll={transcript.scroll}
+                as={CompactList}
+                item={CompactItem}
+              >
+                {(row, index, arriving) => (
+                  <CompactLine key={row.key} row={row} first={index === 0} arriving={arriving} />
+                )}
+              </TranscriptRows>
+            </CompactRowsContext.Provider>
+          </div>
         </div>
         {earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}

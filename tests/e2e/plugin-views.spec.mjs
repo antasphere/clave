@@ -16,7 +16,7 @@ const COMPACT = 'clave.chat-view/compact'
 /** Walk the menu to a label with the arrows, one press per poll so the
  *  highlight has settled before the next read — pressing faster than the menu
  *  updates overshoots and lands on a neighbour. */
-async function choose(win, picker, label) {
+export async function choose(win, picker, label) {
   const items = win.getByRole('menuitem')
   await picker.click()
   await items.first().waitFor()

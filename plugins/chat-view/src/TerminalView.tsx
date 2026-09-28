@@ -30,6 +30,7 @@ import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { useStickyQuestions } from './sticky-questions'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
+import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
@@ -44,6 +45,7 @@ import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
+import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
@@ -444,6 +446,41 @@ const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
 const INTERACTIVE =
   'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [contenteditable="true"]'
+type TurnRows = { key: string; block: Entry | ToolRun }[]
+/** One exchange as the virtualiser mounts it: the section stays whole inside
+ *  its row, so the pinned question stays sticky within its own exchange. An
+ *  exchange the column gained at its end arrives (`TranscriptRows`), and so
+ *  does every block that joins it while it stays mounted. */
+function TerminalTurn({
+  rows,
+  first,
+  arriving,
+  onError
+}: {
+  rows: TurnRows
+  first: boolean
+  arriving: boolean
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  const [arrive] = useState(arriving)
+  return (
+    <div
+      className="chat-row"
+      data-first={first ? 'true' : undefined}
+      data-arrive={arrive ? 'true' : undefined}
+    >
+      <section className="term-turn">
+        {rows.map(({ block, key }) =>
+          block.kind === 'tool-group' ? (
+            <ToolRow key={key} group={block} />
+          ) : (
+            <EntryRow key={key} entry={block} onError={onError} />
+          )
+        )}
+      </section>
+    </div>
+  )
+}
 export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
@@ -797,6 +834,8 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
     }
     return out
   }, [blocks])
+  // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
+  const [disclosure] = useState(() => new Map<string, boolean>())
   const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
   const togglePin = (): void =>
     setPinQuestions((value) => {
@@ -867,17 +906,21 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
                 </div>
               </div>
             )}
-            {turns.map((turn) => (
-              <section key={turn.key} className="term-turn">
-                {turn.rows.map(({ block, key }) =>
-                  block.kind === 'tool-group' ? (
-                    <ToolRow key={key} group={block} />
-                  ) : (
-                    <EntryRow key={key} entry={block} onError={report} />
-                  )
+            {/* Mounted from the start, empty or not: what it gains is told apart
+                from what it opened on by the rows it rendered before. */}
+            <ToolDisclosure.Provider value={disclosure}>
+              <TranscriptRows rows={turns} settled={pastRead} scroll={transcript.scroll}>
+                {(turn, index, arriving) => (
+                  <TerminalTurn
+                    key={turn.key}
+                    rows={turn.rows}
+                    first={index === 0}
+                    arriving={arriving}
+                    onError={report}
+                  />
                 )}
-              </section>
-            ))}
+              </TranscriptRows>
+            </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
               <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />

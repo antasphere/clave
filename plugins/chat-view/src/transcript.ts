@@ -35,10 +35,22 @@ export function useTranscriptEnd(
   const gliding = useRef(false)
   const held = useRef<number | null>(null)
   const [away, setAway] = useState(false)
+  const lastTop = useRef(0)
   const measure = useCallback(() => {
     const el = scroll.current
     if (!el) return
-    const next = el.scrollHeight - el.scrollTop - el.clientHeight < slack(el)
+    // Only the reader going up leaves the end. The virtualised rows grow to
+    // their measure after they mount, and the virtualiser moves the scroll to
+    // keep what is on screen in place: neither is the reader leaving, so a
+    // stuck transcript that finds itself short of its end goes back there.
+    const rose = el.scrollTop < lastTop.current
+    lastTop.current = el.scrollTop
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < slack(el)
+    if (stuck.current && !atEnd && !rose) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    const next = atEnd
     if (next === stuck.current) return
     stuck.current = next
     setAway(!next)
@@ -73,6 +85,10 @@ export function useTranscriptEnd(
     el.addEventListener('scroll', onScroll)
     el.addEventListener('scrollend', onScrollEnd)
     observer.observe(el)
+    // The content too: virtualised rows are laid out at an estimate and grow
+    // to their measure after they mount, a frame after the entries changed,
+    // and a stuck reader must follow that growth to the real end.
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
     return () => {
       el.removeEventListener('scroll', onScroll)
       el.removeEventListener('scrollend', onScrollEnd)
