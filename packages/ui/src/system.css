@@ -4097,29 +4097,19 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   top: calc(var(--spacing) * 3);
   z-index: 5;
 }
-/* The strip above a pinned question is the ground, not a window onto the
-   text scrolling under it. */
-.terminal-view[data-pin] .chat-transcript::before {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
-  z-index: 6;
-  height: calc(var(--spacing) * 3);
-  background-color: var(--surface-0);
-  pointer-events: none;
-}
-/* The transcript fades out into the prompt's upper rule rather than cutting
-   a line in half above it. */
-.terminal-view .chat-transcript::after {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  z-index: 6;
-  height: calc(var(--spacing) * 8);
-  background-image: linear-gradient(to bottom, transparent, var(--surface-0));
-  pointer-events: none;
+/* The transcript's own edges: nothing shows in the strip above a pinned
+   question, and the text fades out into the prompt's upper rule rather than
+   being cut above it. A mask on the scroller, not a band painted over it, so
+   the text itself goes and whatever lies behind shows as it is. */
+.terminal-view .chat-scroll {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent calc(var(--spacing) * 3),
+    black calc(var(--spacing) * 3),
+    black calc(100% - var(--spacing) * 6),
+    color-mix(in srgb, black 55%, transparent) calc(100% - var(--spacing) * 3.5),
+    transparent calc(100% - var(--spacing))
+  );
 }
 .terminal-view .term-composer-wrap {
   padding-top: 0;
@@ -4137,22 +4127,21 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
   cursor: pointer;
 }
-/* The folded box's bottom edge: the lines it folds away fade into it rather
-   than being cut, over twice the box's padding (sticky-questions.ts keeps
-   that much below the first line). The two gradients end on the box's own
-   colour: its tint over the ground. */
+/* The folded box's bottom edge: its padding in the box's own colour (its
+   tint over the ground), so the lines it folds away pass under the edge and
+   none of the next one shows, softened by a short fade on the band's top. */
 .terminal-view .chat-turn-wrap[data-folded]::after {
   content: '';
   position: absolute;
   inset-inline: 0;
   bottom: var(--fold, 0);
-  height: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 3.5);
   border: thin solid var(--border-subtle-color);
   border-top: 0;
   border-radius: 0 0 var(--radius-control) var(--radius-control);
-  background-image:
-    linear-gradient(to bottom, transparent, var(--surface-100)),
-    linear-gradient(to bottom, transparent, var(--surface-0));
+  background-color: var(--surface-0);
+  background-image: linear-gradient(var(--surface-100), var(--surface-100));
+  mask-image: linear-gradient(to bottom, transparent, black var(--spacing));
 }
 .terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
   display: none;

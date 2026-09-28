@@ -30,8 +30,9 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       rows().forEach(reset)
       return
     }
-    /** The row folded to one line: the message's padding, border and one line,
-     *  plus a padding's worth under it for the fade the fold edge draws. */
+    /** The row folded to one line: the message's padding, border and one line.
+     *  Its bottom padding is then the fold edge's solid band, so nothing of
+     *  the second line shows. */
     const oneLine = (row: HTMLElement): number => {
       const message = row.querySelector<HTMLElement>('.chat-turn[data-role="user"]')
       if (!message) return row.offsetHeight
@@ -39,7 +40,7 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       const px = (value: string): number => Number.parseFloat(value) || 0
       return (
         px(style.paddingTop) +
-        px(style.paddingBottom) * 2 +
+        px(style.paddingBottom) +
         px(style.borderTopWidth) +
         px(style.borderBottomWidth) +
         (px(style.lineHeight) || px(style.fontSize) * 1.5)
