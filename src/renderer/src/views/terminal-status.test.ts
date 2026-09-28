@@ -9,48 +9,30 @@ import {
 
 const run = (events: SessionEvent[], start: TerminalStatus = emptyStatus): TerminalStatus =>
   events.reduce((status, event) => reduceStatus(status, event, 1000), start)
-const claude = (payload: unknown): SessionEvent => ({
-  type: 'provider_event',
-  provider: 'claude',
-  payload
+const call = (id: string, name: string, input: unknown, parent?: string): SessionEvent => ({
+  type: 'tool_call',
+  id,
+  name,
+  input,
+  ...(parent ? { parent } : {})
 })
-const assistant = (parent: string | null, content: unknown[], usage?: object): SessionEvent =>
-  claude({ type: 'assistant', parent_tool_use_id: parent, message: { content, usage } })
 
-it('reads the context off the main thread and its window off the result', () => {
-  const status = run([
-    assistant(null, [], {
-      input_tokens: 2,
-      cache_read_input_tokens: 10_000,
-      cache_creation_input_tokens: 2_000,
-      output_tokens: 8
-    }),
-    // A subagent's own usage is its context, not the conversation's.
-    assistant('agent-1', [], { input_tokens: 90_000 }),
-    claude({
-      type: 'result',
-      modelUsage: {
-        'claude-opus-5[1m]': { contextWindow: 1_000_000 },
-        'claude-haiku-4-5': { contextWindow: 200_000 }
-      }
-    })
-  ])
-  expect(status.contextUsed).toBe(12_010)
-  expect(status.contextWindow).toBe(1_000_000)
+it('keeps the context the adapter reports, and a window once one is named', () => {
+  const early = run([{ type: 'context_usage', used: 12_010, window: null }])
+  expect([early.contextUsed, early.contextWindow]).toEqual([12_010, null])
+  const named = run([{ type: 'context_usage', used: 12_500, window: 1_000_000 }], early)
+  expect([named.contextUsed, named.contextWindow]).toEqual([12_500, 1_000_000])
+  // A later reading without a window keeps the one already known.
+  expect(run([{ type: 'context_usage', used: 13_000, window: null }], named).contextWindow).toBe(
+    1_000_000
+  )
 })
 
 it('stacks a subagent from its call, follows its own calls, and drops it on its result', () => {
   const started = run([
-    {
-      type: 'tool_call',
-      id: 'agent-1',
-      name: 'Agent',
-      input: { subagent_type: 'Explore', description: 'Find the reducer' }
-    },
-    assistant('agent-1', [
-      { type: 'tool_use', id: 't1', name: 'Grep', input: { pattern: 'reduce' } },
-      { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/repo/reducer.ts' } }
-    ])
+    call('agent-1', 'Agent', { subagent_type: 'Explore', description: 'Find the reducer' }),
+    call('t1', 'Grep', { pattern: 'reduce' }, 'agent-1'),
+    call('t2', 'Read', { file_path: '/repo/reducer.ts' }, 'agent-1')
   ])
   expect(started.agents).toEqual([
     {
@@ -83,7 +65,7 @@ it('keeps a background agent until the background list drops it, not past the tu
         { id: 'shell-1', kind: 'shell', description: 'npm run dev', startedAt: 600 }
       ]
     },
-    claude({ type: 'result', modelUsage: {} })
+    { type: 'state_change', state: 'done' }
   ])
   expect(launched.agents.map((a) => [a.id, a.background, a.startedAt])).toEqual([
     ['bg-call', true, 1000]
@@ -92,10 +74,7 @@ it('keeps a background agent until the background list drops it, not past the tu
 })
 
 it('clears what the turn waited on when the reader interrupts it', () => {
-  const status = run([
-    { type: 'tool_call', id: 'a', name: 'Task', input: { description: 'x' } },
-    { type: 'turn_interrupted' }
-  ])
+  const status = run([call('a', 'Task', { description: 'x' }), { type: 'turn_interrupted' }])
   expect(status.agents).toEqual([])
 })
 

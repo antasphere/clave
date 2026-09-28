@@ -10,6 +10,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ClipboardDocumentIcon,
+  MapPinIcon,
   PaperClipIcon,
   StopIcon,
   XMarkIcon
@@ -25,6 +26,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
+import { PinnedQuestion } from './PinnedQuestion'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -427,6 +429,11 @@ const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
+/** Where the reader's choice to pin questions is kept, across sessions. */
+const PIN_KEY = 'clave-terminal-pin-questions'
+/** What a click lands on when it means something other than "type here". */
+const INTERACTIVE =
+  'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [contenteditable="true"]'
 export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
@@ -494,6 +501,9 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             if (!live) return
             dispatch({ prepend: page.items })
             setBefore(page.before)
+            // The newest page holds the context as the conversation left it.
+            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+            if (usage) dispatchStatus(usage.event)
           })
           .catch(() => {})
           .finally(() => {
@@ -753,12 +763,41 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
   }, [conversation.entries, conversation.first])
+  // One section per exchange: the reader's message and everything answering
+  // it, so a pinned question is carried off by its own section's end.
+  const turns = useMemo(() => {
+    const out: { key: string; question: string | null; rows: typeof blocks }[] = []
+    for (const row of blocks) {
+      const opens = row.block.kind === 'user'
+      if (opens || !out.length)
+        out.push({
+          key: row.key,
+          question: row.block.kind === 'user' ? row.block.text : null,
+          rows: []
+        })
+      out[out.length - 1].rows.push(row)
+    }
+    return out
+  }, [blocks])
+  const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
+  const togglePin = (): void =>
+    setPinQuestions((value) => {
+      localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
+      return !value
+    })
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   return (
     <div
       className="chat-view terminal-view"
       data-testid="terminal-view"
+      onClick={(event) => {
+        // A click on nothing in particular goes to the prompt; one on anything
+        // that does something, or one that ends a text selection, does not.
+        if (closed || window.getSelection()?.toString()) return
+        if ((event.target as Element).closest(INTERACTIVE)) return
+        textarea.current?.focus()
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && state === 'working') {
           event.preventDefault()
@@ -808,13 +847,18 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
                 </div>
               </div>
             )}
-            {blocks.map(({ block, key }) =>
-              block.kind === 'tool-group' ? (
-                <ToolRow key={key} group={block} />
-              ) : (
-                <EntryRow key={key} entry={block} onError={report} />
-              )
-            )}
+            {turns.map((turn) => (
+              <section key={turn.key} className="term-turn">
+                {pinQuestions && turn.question?.trim() && <PinnedQuestion text={turn.question} />}
+                {turn.rows.map(({ block, key }) =>
+                  block.kind === 'tool-group' ? (
+                    <ToolRow key={key} group={block} />
+                  ) : (
+                    <EntryRow key={key} entry={block} onError={report} />
+                  )
+                )}
+              </section>
+            ))}
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
               <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />
@@ -983,62 +1027,72 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
           </button>
         </form>
         <div className="term-status">
-          <div className="term-status-line">
-            <span className="term-cwd" title={session.cwd}>
-              {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
-            </span>
-            <span className="term-model">
-              <ModelMenu
-                sessionId={session.id}
-                model={conversation.model}
+          <span className="term-cwd" title={session.cwd}>
+            {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
+          </span>
+          <span className="term-model">
+            <ModelMenu
+              sessionId={session.id}
+              model={conversation.model}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+            />
+          </span>
+          {conversation.permissionMode && (
+            <span className="term-mode" data-mode={conversation.permissionMode.mode}>
+              <PermissionModeMenu
+                mode={conversation.permissionMode.mode}
+                modes={conversation.permissionMode.modes}
                 disabled={closed}
-                onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
-              />
-            </span>
-            <ContextMeter used={status.contextUsed} window={status.contextWindow} />
-            <span className="term-status-end">
-              <button
-                type="button"
-                className="chat-composer-tool"
-                aria-label="Add files"
-                title="Add files"
-                disabled={closed}
-                onClick={() =>
-                  void window.electronAPI.sessionsFiles
-                    .pick()
-                    .then((paths) => addFiles(paths))
-                    .catch(report)
+                onSelect={(id) =>
+                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
                 }
-              >
-                <PaperClipIcon />
-              </button>
+              />
+              <span className="term-dim">(shift+tab to cycle)</span>
             </span>
-          </div>
-          <div className="term-status-line">
-            {conversation.permissionMode && (
-              <span className="term-mode" data-mode={conversation.permissionMode.mode}>
-                <PermissionModeMenu
-                  mode={conversation.permissionMode.mode}
-                  modes={conversation.permissionMode.modes}
-                  disabled={closed}
-                  onSelect={(id) =>
-                    void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                  }
-                />
-                <span className="term-dim">(shift+tab to cycle)</span>
-              </span>
-            )}
-            {status.agents.length > 0 && (
-              <span className="term-dim">
-                · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}
-              </span>
-            )}
-            <span className="term-status-end term-dim">
-              {state === 'working'
-                ? 'esc to interrupt'
-                : 'enter to send · shift+enter for a new line'}
+          )}
+          <ContextMeter
+            used={status.contextUsed}
+            window={
+              status.contextWindow ??
+              // The window is named by a turn's result; until one has come, a
+              // model the CLI calls "[1m]" says it for itself.
+              (conversation.model?.includes('[1m]') ? 1_000_000 : null)
+            }
+          />
+          {status.agents.length > 0 && (
+            <span className="term-dim">
+              · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}
             </span>
-          </div>
+          )}
+          <span className="term-status-end">
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Pin the question while its answer scrolls"
+              aria-pressed={pinQuestions}
+              title={pinQuestions ? 'Questions pinned while their answer scrolls' : 'Pin questions'}
+              data-active={pinQuestions || undefined}
+              onClick={() => togglePin()}
+            >
+              <MapPinIcon />
+            </button>
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Add files"
+              title="Add files"
+              disabled={closed}
+              onClick={() =>
+                void window.electronAPI.sessionsFiles
+                  .pick()
+                  .then((paths) => addFiles(paths))
+                  .catch(report)
+              }
+            >
+              <PaperClipIcon />
+            </button>
+          </span>
         </div>
         <SubAgentStack agents={status.agents} />
       </div>

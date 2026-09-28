@@ -68,6 +68,17 @@ const PERMISSION_MODES: PermissionModeOption[] = [
  *  switch otherwise, as the TUI leaves it out of its cycle. */
 const BYPASS_MODE: PermissionModeOption = { id: 'bypassPermissions', label: 'Bypass permissions' }
 const runningMode = (mode: string): string => (mode === 'manual' ? 'default' : mode)
+/** The tokens a call's context held: what it read, cached or not, and wrote. */
+function contextTokens(usage: unknown): number {
+  const u = object.safeParse(usage).data ?? {}
+  const n = (key: string): number => (typeof u[key] === 'number' ? (u[key] as number) : 0)
+  return (
+    n('input_tokens') +
+    n('cache_read_input_tokens') +
+    n('cache_creation_input_tokens') +
+    n('output_tokens')
+  )
+}
 
 /** One translator per process: partial messages and completed snapshots overlap. */
 /** The CLI only names its commands in the init frame, which only follows the
@@ -137,6 +148,13 @@ export class ClaudeStreamTranslator {
   readonly modeRequests = new Map<string, string>()
   /** What a `permission_mode` event offers; the adapter sets it at launch. */
   modes: PermissionModeOption[] = PERMISSION_MODES
+  /** The main thread's context after its last call, and the model's window. */
+  private contextUsed: number | null = null
+  private contextWindow: number | null = null
+  private publishUsage(): void {
+    if (this.contextUsed === null) return
+    this.emit({ type: 'context_usage', used: this.contextUsed, window: this.contextWindow })
+  }
   /** request_id → the caller waiting on an initialize control request's answer. */
   readonly listRequests = new Map<string, InitializeRequest>()
   private streamed = false
@@ -313,6 +331,7 @@ export class ClaudeStreamTranslator {
       open.clear()
     }
     const block = z.object({ type: z.string() }).passthrough()
+    let used = 0
     for (const line of lines) {
       let frame: Record<string, unknown>
       try {
@@ -372,6 +391,13 @@ export class ClaudeStreamTranslator {
             })
           }
         }
+        // The context as it stood, so a resumed session's meter is not blank
+        // until its next answer. The window is only in a live turn's result.
+        const tokens = contextTokens(object.safeParse(frame.message).data?.usage)
+        if (tokens > 0 && tokens !== used) {
+          used = tokens
+          push({ type: 'context_usage', used, window: null })
+        }
       }
     }
     close()
@@ -427,6 +453,9 @@ export class ClaudeStreamTranslator {
         return
       }
       const message = z.object({ content: z.array(object) }).parse(p.message)
+      // A subagent's frames name the call that started it; its usage is its
+      // own context, never the conversation's.
+      const parent = typeof p.parent_tool_use_id === 'string' ? p.parent_tool_use_id : undefined
       for (const block of message.content) {
         if (block.type === 'text' && p.type === 'user' && isInterruptNotice(block.text)) {
           this.interrupted = true
@@ -438,7 +467,7 @@ export class ClaudeStreamTranslator {
             .parse(block)
           if (!this.tools.has(tool.id)) {
             this.tools.add(tool.id)
-            this.emit({ type: 'tool_call', ...tool })
+            this.emit({ type: 'tool_call', ...tool, ...(parent ? { parent } : {}) })
           }
         } else if (block.type === 'tool_result') {
           this.noteOutputFile(z.string().parse(block.tool_use_id), block.content)
@@ -451,6 +480,14 @@ export class ClaudeStreamTranslator {
             output: block.content,
             error: z.boolean().optional().catch(undefined).parse(block.is_error)
           })
+        }
+      }
+      if (p.type === 'assistant' && !parent) {
+        // Every block of one message repeats its usage: announce a change only.
+        const used = contextTokens(object.safeParse(p.message).data?.usage)
+        if (used > 0 && used !== this.contextUsed) {
+          this.contextUsed = used
+          this.publishUsage()
         }
       }
       // Preserve usage, thinking, attachments, and unknown content without duplicate text.
@@ -552,6 +589,17 @@ export class ClaudeStreamTranslator {
           fatal: false
         })
       this.interrupted = false
+      // The result names the window of every model the turn used; subagents
+      // may run on a narrower one, so the conversation's is the widest.
+      const windows = Object.values(object.safeParse(p.modelUsage).data ?? {}).map((usage) => {
+        const w = object.safeParse(usage).data?.contextWindow
+        return typeof w === 'number' ? w : 0
+      })
+      const widest = Math.max(0, ...windows)
+      if (widest && widest !== this.contextWindow) {
+        this.contextWindow = widest
+        this.publishUsage()
+      }
       fallback()
       this.emit({ type: 'state_change', state: 'done' })
       this.streamed = false

@@ -4026,8 +4026,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    model, context, then the permission mode), and the running subagents
    stacked below it. The transcript keeps the chat's markdown and tool rows,
    a touch larger; the reader's turns sit at the left like everything else,
-   marked by a rule and a caret rather than a bubble. Everything is scoped to
-   .terminal-view, so Chat and Compact are untouched. */
+   boxed by a hairline and marked with a caret. Each exchange is a section,
+   so its question can stay pinned at the top while the answer scrolls under
+   it. Everything is scoped to .terminal-view, so Chat and Compact are
+   untouched. */
 .terminal-view {
   --chat-column: var(--container-6xl);
 }
@@ -4050,8 +4052,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   max-width: none;
   padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5) calc(var(--spacing) * 2.5)
     calc(var(--spacing) * 8);
+  border: thin solid var(--border-subtle-color);
   border-radius: var(--radius-control);
-  border-left: calc(var(--spacing) / 2) solid var(--color-accent);
   background-color: var(--surface-100);
   font-size: calc(var(--text-sm) + var(--spacing) / 4);
   font-weight: 500;
@@ -4063,10 +4065,92 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   left: calc(var(--spacing) * 3);
   top: calc(var(--spacing) * 2.5);
   font-family: var(--font-mono);
-  color: var(--color-accent);
+  color: var(--text-tertiary);
 }
-.terminal-view .chat-turn[data-role='user'][data-interrupted='true'] {
-  border-left-color: var(--border-subtle-color);
+
+/* An exchange: the question and everything answering it, spaced like the
+   column, and arriving the way the column's own blocks do. */
+.term-turn {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 5);
+}
+.term-turn > * {
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
+/* The pinned question: sticky and of no height, so it takes no room in the
+   flow (the negative margin gives back the gap it would open); its card hangs
+   below it over the transcript, and shows once the question has scrolled out. */
+.term-pin {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  margin-bottom: calc(var(--spacing) * -5);
+}
+.term-pin-card {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  width: 100%;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border: thin solid var(--border-subtle-color);
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  /* Opaque: the surface tint laid over the ground, since the answer scrolls
+     underneath and must not read through. */
+  background-color: var(--surface-0);
+  background-image: linear-gradient(var(--surface-100), var(--surface-100));
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-align: start;
+  opacity: 0;
+  translate: 0 calc(var(--spacing) * -1);
+  pointer-events: none;
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
+.term-pin[data-shown] .term-pin-card {
+  opacity: 1;
+  translate: none;
+  pointer-events: auto;
+}
+.term-pin-card:hover {
+  color: var(--text-primary);
+}
+.term-pin-card::before {
+  content: '❯';
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+.term-pin-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-pin-card[data-open] .term-pin-text {
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.term-pin-card svg {
+  flex-shrink: 0;
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  margin-top: calc(var(--spacing) / 2);
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.term-pin-card[data-open] svg {
+  rotate: 180deg;
 }
 
 /* The prompt: two rules, the caret, the field, the send button at the end. */
@@ -4126,22 +4210,20 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin: calc(var(--spacing) / 2) 0 0;
 }
 
-/* The status line under the prompt: two rows, colour-coded like the TUI's,
+/* The status line under the prompt: one row, colour-coded like the TUI's,
    the model and the mode clickable. */
 .term-status {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) / 2);
-  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) 0;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-.term-status-line {
   display: flex;
   align-items: center;
   gap: calc(var(--spacing) * 3);
   min-height: var(--control-h-sm);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
   white-space: nowrap;
+}
+.term-status .chat-composer-tool[data-active] {
+  color: var(--color-accent);
 }
 .term-status-end {
   display: inline-flex;

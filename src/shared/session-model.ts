@@ -138,7 +138,15 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
-  z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), input: z.unknown() }),
+  z.object({
+    type: z.literal('tool_call'),
+    id: z.string(),
+    name: z.string(),
+    input: z.unknown(),
+    /** The call that started the subagent making this one, when a subagent
+     *  made it (Claude's `parent_tool_use_id`); absent on the main thread. */
+    parent: z.string().optional()
+  }),
   /* `error` is the adapter's word that the tool FAILED, never the view's guess.
      Optional because an adapter that cannot tell says nothing, and an absent
      flag means "not known to have failed" rather than "succeeded". */
@@ -172,6 +180,15 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
+  /** How full the conversation's context is: the tokens its last call read
+   *  and wrote, and the model's window once the provider has named it. The
+   *  provider's raw frames stay in main, so this is the only way a view can
+   *  know it. */
+  z.object({
+    type: z.literal('context_usage'),
+    used: z.number(),
+    window: z.number().nullable()
+  }),
   /** The mode the session is in and the modes it may be switched to; sent at
    *  ready and again whenever the provider reports a change. A provider with
    *  no modes never sends it, and a view shows no switch. */

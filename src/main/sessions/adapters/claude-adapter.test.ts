@@ -1364,3 +1364,56 @@ it('empties the list when the CLI exits', () => {
   translator.clearBackground()
   expect(lastBackground()).toEqual([])
 })
+it('reports the context from the main thread and names the parent of a subagent call', () => {
+  const usage = { input_tokens: 2, cache_read_input_tokens: 10_000, output_tokens: 8 }
+  const main = (content: unknown[]): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { content, usage }
+  })
+  feed(main([{ type: 'text', text: 'Looking.' }]))
+  // Every block of one message repeats its usage: one announcement, not two.
+  feed(main([{ type: 'tool_use', id: 'agent-1', name: 'Agent', input: { description: 'x' } }]))
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      content: [{ type: 'tool_use', id: 'sub-1', name: 'Grep', input: { pattern: 'y' } }],
+      usage: { input_tokens: 90_000 }
+    }
+  })
+  feed({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    modelUsage: {
+      'claude-opus-5[1m]': { contextWindow: 1_000_000 },
+      'claude-haiku-4-5': { contextWindow: 200_000 }
+    }
+  })
+  expect(events.filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 10_010, window: null },
+    { type: 'context_usage', used: 10_010, window: 1_000_000 }
+  ])
+  const calls = events.filter((e) => e.type === 'tool_call')
+  expect(calls.map((e) => (e.type === 'tool_call' ? [e.id, e.parent] : null))).toEqual([
+    ['agent-1', undefined],
+    ['sub-1', 'agent-1']
+  ])
+})
+it('replays the context a resumed conversation stood at', () => {
+  const line = (usage: object): string =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'ok' }], usage }
+    })
+  const items = translator.replay([
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 4_000 })
+  ])
+  expect(items.map((i) => i.event).filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 1_005, window: null },
+    { type: 'context_usage', used: 4_005, window: null }
+  ])
+})
