@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
+import { choose } from './plugin-views.spec.mjs'
 
 /* A run of tool calls is ONE row between two messages. What this spec holds, in
    the real app, that a unit test cannot: the row renders, a click opens it, the
@@ -157,7 +158,11 @@ export async function run(t) {
     )
     t.check('a failure is counted from the adapter flag alone and never auto-expands', true)
 
-    // The compact view reads the same runs, one line each, no bodies.
+    // The compact view reads the same runs, one line each, no bodies. Its rows
+    // are virtualised like the conversation's: they are mounted once the view
+    // is on screen, so the reader switches to it first.
+    const picker = win.getByLabel('Change view', { exact: true })
+    await choose(win, picker, 'Compact')
     const compactRows = compact.locator('li[data-kind="tool-group"]')
     await until(async () => (await compactRows.count()) === 3)
     assert.equal(await compactRows.first().locator('span').first().innerText(), 'Tools')
@@ -170,6 +175,53 @@ export async function run(t) {
     assert.match(await compactRows.nth(2).innerText(), /1 failed/)
     assert.equal(await compact.locator('.chat-tool-item').count(), 0)
     t.check('the compact view groups the same runs as one line each, with no tool bodies', true)
+
+    // The rows are virtualised: a row scrolled far out of view leaves the
+    // document, and the reader's open rows must come back open. A <details>
+    // keeps its state in the DOM, so without the view's memory of it
+    // (ToolDisclosure) the first run returns closed.
+    await choose(win, picker, 'Chat')
+    const scroller = view.locator('.chat-scroll')
+    const opened = view.locator('.chat-tool-run[data-tools="5"]')
+    const filler = 'A long answer that pushes the first run far out of view. '.repeat(12)
+    await inject(
+      app,
+      record.id,
+      Array.from({ length: 40 }, (_, i) =>
+        i % 2 === 0
+          ? { type: 'user_message', text: `filler ${i}` }
+          : { type: 'assistant_text', delta: filler, final: true }
+      )
+    )
+    assert.ok(
+      await until(async () => (await opened.count()) === 0),
+      'the first run leaves the document once it is far out of view'
+    )
+    await scroller.evaluate((el) => {
+      el.scrollTop = 0
+    })
+    await opened.waitFor()
+    assert.equal(await opened.evaluate((el) => el.open), true, 'the opened run comes back open')
+    assert.equal(await opened.locator('.chat-tool-item').count(), 5)
+    const back = opened.locator('.chat-tool-item').first()
+    assert.equal(await back.evaluate((el) => el.open), true, 'and so does the call opened in it')
+    assert.match(await back.locator('.chat-tool-panel').innerText(), /first file/)
+    assert.equal(
+      await view
+        .locator('.chat-tool-run')
+        .nth(2)
+        .evaluate((el) => el.open),
+      false,
+      'a row never opened comes back closed'
+    )
+    t.check('an opened row scrolled out of the document comes back open', true)
+    // What the column gained plays its entrance on its first mount only: the
+    // run came back as a row scrolled into view, not as something new.
+    assert.equal(
+      await opened.evaluate((el) => el.closest('.chat-row').dataset.arrive ?? null),
+      null
+    )
+    t.check('a row scrolled back into view does not replay its entrance', true)
   } finally {
     await fixture.close()
   }

@@ -2644,6 +2644,33 @@ button.extension-card:hover {
     translate: 0 var(--spacing);
   }
 }
+/* The rows are virtualised (rows.tsx): only those near the viewport are in
+   the document, each in an item the virtualiser positions and measures by its
+   content box. So the column's gap is each row's own padding, never the
+   item's, and the entrance is a row's first mount of something the column
+   gained at its end (data-arrive) — a row scrolled back into view mounts
+   again and must not fade in again. The box of rows arrives once, as a
+   whole, with the column's other blocks. */
+.chat-rows {
+  flex-shrink: 0;
+}
+/* Out of the column's gap while it holds nothing, and so it arrives with its
+   first rows the way the column's other blocks do. */
+.chat-rows:empty {
+  display: none;
+}
+.chat-row:not([data-first]) {
+  padding-top: calc(var(--spacing) * 5);
+}
+.chat-row[data-arrive] > * {
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
 .chat-turn-wrap {
   position: relative;
   display: flex;
@@ -4093,11 +4120,15 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   gap: calc(var(--spacing) * 5);
 }
 /* A little more air between one exchange and the next: under the last answer,
-   over the next question. */
-.term-turn + .term-turn {
-  margin-top: calc(var(--spacing) * 4);
+   over the next question. Each exchange is one virtualised row. */
+.terminal-view .chat-row:not([data-first]) {
+  padding-top: calc(var(--spacing) * 9);
 }
-.term-turn > * {
+/* An arriving exchange enters by its blocks, not as a whole on top of them. */
+.chat-row[data-arrive] > .term-turn {
+  transition: none;
+}
+.chat-row[data-arrive] .term-turn > * {
   transition:
     opacity var(--default-transition-duration) var(--ease-out-expo),
     translate var(--default-transition-duration) var(--ease-out-expo);
@@ -4441,6 +4472,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
    appears from nothing reads as broken either way; the travel goes. */
 @media (prefers-reduced-motion: reduce) {
   .chat-column > *,
+  .chat-row[data-arrive] > *,
+  .chat-row[data-arrive] .term-turn > *,
   .chat-prompt,
   .chat-composer-files .chat-attachment,
   .chat-drop-overlay {

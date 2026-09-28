@@ -35,6 +35,7 @@ import {
   type ToolGroup as Group
 } from './tools'
 import { ChatCode } from './code'
+import { useDisclosure } from './disclosure'
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
 
@@ -217,14 +218,16 @@ function ToolLine({ tool }: { tool: ToolEntry }): React.JSX.Element {
 /** One call inside an opened run: a row of its own that opens to the panel.
  *  Uncontrolled and built on first open, for the same reasons as the run. */
 function ToolItem({ tool }: { tool: ToolEntry }): React.JSX.Element {
-  const [opened, setOpened] = useState(false)
+  const disclosure = useDisclosure(`tool-${tool.id}`)
+  const [opened, setOpened] = useState(disclosure.initial)
   const status = toolStatus(tool)
   return (
     <details
       className="chat-tool-item"
       data-state={status}
+      open={disclosure.initial}
       onToggle={(event) => {
-        if (event.currentTarget.open) setOpened(true)
+        if (disclosure.toggle(event)) setOpened(true)
       }}
     >
       <RowSummary kind={describeToolHead(tool).kind} status={status} hint={toolHint(tool)}>
@@ -249,16 +252,20 @@ export function ToolGroup({ group }: { group: Group }): React.JSX.Element {
   /* The bodies are built only once the reader has opened the row, and stay built
      after: a closed run of big outputs otherwise puts every byte in the document.
      The summary reads `describeToolHead` and never turns an output into text.
-     This reads `open` rather than setting it, so the row stays uncontrolled. */
-  const [opened, setOpened] = useState(false)
+     This reads `open` rather than setting it, so the row stays uncontrolled;
+     the one value it passes is the reader's own choice from before the row was
+     last unmounted, fixed at mount (`ToolDisclosure`). */
+  const disclosure = useDisclosure(`run-${group.id}`)
+  const [opened, setOpened] = useState(disclosure.initial)
   return (
     <details
       className="chat-tool-run"
       data-state={status}
       data-failures={failures}
       data-tools={group.tools.length}
+      open={disclosure.initial}
       onToggle={(event) => {
-        if (event.currentTarget.open) setOpened(true)
+        if (disclosure.toggle(event)) setOpened(true)
       }}
     >
       <RowSummary kind={groupKind(group.tools)} status={status} hint={groupHint(group.tools)}>
