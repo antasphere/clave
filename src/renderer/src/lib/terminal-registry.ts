@@ -2,7 +2,7 @@ import type { Terminal, ITheme } from '@xterm/xterm'
 
 /**
  * Live xterm instances by session id. TerminalGrid keeps every local tab's
- * terminal mounted (hidden ones get display:none), so this registry gives
+ * terminal mounted (hidden ones moved off screen, never display:none), so this registry gives
  * non-component code — the MCP dispatcher's clave_read_session — access to
  * any tab's rendered buffer without threading refs through the tree.
  */
@@ -30,6 +30,10 @@ declare global {
      *  --test-no-activate. */
     __claveTerminalTheme?: (sessionId: string) => ITheme | null
     __claveViewportY?: (sessionId: string) => number | null
+    /** E2E seam: select a few cells and clear them again, which makes xterm
+     *  repaint every row of the terminal through its selection path, the path
+     *  that runs when an agent's start clears a hidden tab's selection. */
+    __claveCycleTerminalSelection?: (sessionId: string) => boolean
   }
 }
 if (typeof window !== 'undefined') {
@@ -40,5 +44,12 @@ if (typeof window !== 'undefined') {
   window.__claveViewportY = (sessionId: string): number | null => {
     const t = terminals.get(sessionId)
     return t ? t.buffer.active.viewportY : null
+  }
+  window.__claveCycleTerminalSelection = (sessionId: string): boolean => {
+    const t = terminals.get(sessionId)
+    if (!t) return false
+    t.select(0, 0, 4)
+    t.clearSelection()
+    return true
   }
 }

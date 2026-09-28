@@ -59,7 +59,10 @@ export function useRemoteTerminal(shellId: string) {
 
     terminal.open(container)
 
-    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+    // A hidden tile keeps a real box (TerminalGrid hides it off screen), so
+    // only a selected one is fitted; the selection effect fits it when shown.
+    const selectedAtMount = useSessionStore.getState().selectedSessionIds.includes(shellId)
+    if (selectedAtMount && container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
     }
     terminalRef.current = terminal
@@ -262,6 +265,7 @@ export function useRemoteTerminal(shellId: string) {
       if (!entry) return
       const { width, height } = entry.contentRect
       if (width === 0 || height === 0) return
+      if (!isVisibleRef.current) return
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => {
         try {

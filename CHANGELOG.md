@@ -16,6 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ### Fixed
 
+- **Switching tabs no longer freezes the window while agents start** — with several sessions open, starting a couple of agents could lock the whole window for a minute or more, with no click getting through. A terminal tab you were not looking at repainted itself glyph by glyph, and each glyph forced a layout of the entire window because the hidden terminal measured every character as zero width and could never cache it. Hidden terminals now keep their real size off screen, so the widths are measured once and a repaint costs nothing noticeable. Settings, Agents, Extensions and plugin panels now cover the terminals instead of collapsing them, so leaving them no longer resizes every terminal either. A restored tab still starts nothing until you open it.
+
 - **A new chat tab opens ready to type** — the composer never took the caret, so every new chat session began with a click into the message field. It is focused as soon as it can accept input, and again whenever the tab becomes the focused one, the way a terminal tab focuses its terminal. The document panel keeps its own caret.
 
 ## [1.89.0] — 2026-09-14
