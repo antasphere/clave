@@ -2789,7 +2789,11 @@ button.extension-card:hover {
   background-color: currentColor;
 }
 
-/* Markdown, as the assistant writes it */
+/* Markdown, as the assistant writes it: a line a touch tighter than the
+   view's own 1.6, which read airy across a paragraph. */
+.chat-prose {
+  line-height: 1.5;
+}
 .chat-prose > * + * {
   margin-top: calc(var(--spacing) * 3);
 }
@@ -4059,7 +4063,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   background-color: var(--surface-100);
   font-size: var(--text-sm);
   font-weight: 450;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--text-primary);
 }
 /* The caret sits on the message's first line: a box one line tall at the
@@ -4071,7 +4075,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   top: calc(var(--spacing) * 2.5);
   display: flex;
   align-items: center;
-  height: calc(var(--text-sm) * 1.6);
+  height: calc(var(--text-sm) * 1.5);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-tertiary);
