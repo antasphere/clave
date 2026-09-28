@@ -14,6 +14,7 @@ import {
   PREVIEW_CHARS,
   PREVIEW_LINES,
   toolGroupSummary,
+  runTitle,
   toolPreview,
   safeJson,
   content,
@@ -371,5 +372,51 @@ describe('every external call says what kind it was', () => {
     expect(sectionLanguage('edit', { label: 'a.ts', text: '- a\n+ b' }, '')).toBe('diff')
     expect(sectionLanguage('read', { label: 'Content', text: 'x' }, '/src/a.tsx')).toBe('tsx')
     expect(sectionLanguage('read', { label: 'Content', text: 'x' }, '/Makefile')).toBeUndefined()
+  })
+})
+
+describe('runTitle', () => {
+  it('counts a lone call like any other', () => {
+    expect(runTitle([tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts' } })])).toBe(
+      'Read 1 file'
+    )
+    expect(runTitle([tool({ id: 'a', name: 'Edit', input: { file_path: '/x.ts' } })])).toBe(
+      'Edited 1 file'
+    )
+    expect(runTitle([tool({ id: 'a', name: 'Bash', input: { command: 'ls' } })])).toBe(
+      'Ran 1 command'
+    )
+  })
+  it('reads as one sentence, parts in the order their kind first appears', () => {
+    const tools = [
+      tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts' } }),
+      tool({ id: 'b', name: 'Bash', input: { command: 'ls' } }),
+      tool({ id: 'c', name: 'Read', input: { file_path: '/y.ts' } }),
+      tool({ id: 'd', name: 'Bash', input: { command: 'pwd' } }),
+      tool({ id: 'e', name: 'Grep', input: { pattern: 'x' } })
+    ]
+    expect(runTitle(tools)).toBe('Read 2 files, ran 2 commands, ran 1 search')
+  })
+  it('counts a file once however often it was touched, and calls when one named none', () => {
+    expect(
+      runTitle([
+        tool({ id: 'a', name: 'Edit', input: { file_path: '/x.ts' } }),
+        tool({ id: 'b', name: 'Edit', input: { file_path: '/x.ts' } })
+      ])
+    ).toBe('Edited 1 file')
+    expect(
+      runTitle([
+        tool({ id: 'a', name: 'Read', input: { file_path: '/x.ts' } }),
+        tool({ id: 'b', name: 'Read', input: {} })
+      ])
+    ).toBe('Read 2 times')
+  })
+  it('folds every other tool into one part', () => {
+    expect(
+      runTitle([
+        tool({ id: 'a', name: 'mcp__clave__clave_notify', input: {} }),
+        tool({ id: 'b', name: 'TodoWrite', input: {} })
+      ])
+    ).toBe('Used 2 tools')
   })
 })

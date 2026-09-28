@@ -1311,7 +1311,9 @@ body,
    means adding it to this selector — src/renderer/src/lib/row-rhythm.test.ts
    finds every full-width class with a hover fill and fails on one left out. */
 :is(.sidebar-item, :has(> .sidebar-item)) + :is(.sidebar-item, :has(> .sidebar-item)),
-.chat-prompt-option + .chat-prompt-option {
+.chat-prompt-option + .chat-prompt-option,
+.chat-prompt-choice + .chat-prompt-choice,
+.chat-prompt-choice + .chat-prompt-option {
   margin-top: var(--row-gap);
 }
 /* Menus read it through --menu-row-gap: Comfortable stacks its menu rows flush. */
@@ -3250,8 +3252,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-shrink: 0;
   padding: 0 calc(var(--spacing) * 1.5);
   border-radius: var(--radius-full);
-  background-color: color-mix(in oklch, var(--color-accent), transparent 85%);
-  color: var(--color-accent);
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
@@ -3295,9 +3297,14 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-prompt-option:hover {
   background-color: var(--surface-50);
 }
+.chat-prompt-option:focus-within {
+  border-color: var(--text-tertiary);
+}
+/* Picked: the ladder's selected step, a firmer neutral edge — no blue wash;
+   the box and the tick carry the choice. */
 .chat-prompt-option[data-selected='true'] {
-  border-color: var(--color-accent);
-  background-color: color-mix(in oklch, var(--color-accent), transparent 92%);
+  border-color: var(--text-tertiary);
+  background-color: var(--surface-100);
 }
 .chat-prompt-option:disabled {
   opacity: 0.4;
@@ -3321,21 +3328,150 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-shrink: 0;
   width: var(--chat-glyph);
   height: var(--chat-glyph);
-  color: var(--color-accent);
-}
-.chat-prompt-other {
-  height: var(--control-h-sm);
-  margin-top: calc(var(--spacing) * 0.5);
-  padding: 0 calc(var(--spacing) * 2);
-  border: thin solid var(--border-subtle-color);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-raised);
-  font-size: var(--text-xs);
   color: var(--text-primary);
 }
-.chat-prompt-other:focus {
+/* One option and what the reader adds to it: the option, a pencil on
+   approach that opens a note, and the note under it once opened. The pencil
+   sits in the option's own row, left of its key, so the option keeps room
+   for it. */
+.chat-prompt-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.chat-prompt-choice > .chat-prompt-option .chat-prompt-option-text {
+  margin-right: calc(var(--spacing) * 6);
+}
+.chat-prompt-note-btn {
+  position: absolute;
+  right: calc(var(--spacing) * 8.5);
+  top: calc(50% - var(--spacing) * 2.5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 5);
+  height: calc(var(--spacing) * 5);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition:
+    opacity var(--default-transition-duration),
+    color var(--default-transition-duration),
+    background-color var(--default-transition-duration);
+}
+.chat-prompt-note-btn svg {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+}
+.chat-prompt-choice:hover .chat-prompt-note-btn,
+.chat-prompt-note-btn:focus-visible {
+  opacity: 1;
+}
+.chat-prompt-note-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-100);
+}
+/* Under a multi-select option, the note starts where its label does, past the box. */
+.chat-prompt-choice[data-multi] .chat-prompt-note {
+  margin-left: calc(var(--spacing) * 8.5);
+}
+/* A multi-select's box: empty until picked, the accent's tick once it is. */
+.chat-prompt-box {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  border: thin solid var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--default-transition-duration),
+    border-color var(--default-transition-duration);
+}
+.chat-prompt-box svg {
+  width: calc(var(--spacing) * 3);
+  height: calc(var(--spacing) * 3);
+  stroke-width: 2.5;
+  color: var(--surface-0);
+}
+.chat-prompt-option[data-selected='true'] .chat-prompt-box {
+  border-color: var(--text-primary);
+  background-color: var(--text-primary);
+}
+.chat-prompt-hint {
+  margin-left: calc(var(--spacing) * 2);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+/* The Terminal view's composer is monospaced; what the agent asks is read,
+   not typed, and reads in the Chat view's face. */
+.term-composer-wrap .chat-prompt {
+  font-family: var(--font-sans);
+}
+
+/* The reader's own words. "Other" is a card whose body IS the field: no
+   inner box, the words sit under the label, and the card's edge firms up
+   while it has the caret. A note is the same field one level down: a soft
+   fill under its option, a step darker while it is written in. Both grow
+   with what is typed and wrap it, up to a few lines, then scroll. */
+.chat-prompt-other {
+  width: 100%;
+  min-height: 0;
+  max-height: calc(var(--spacing) * 32);
+  margin: calc(var(--spacing) * 0.5) 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-primary);
+  resize: none;
+  field-sizing: content;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   outline: none;
-  border-color: var(--color-accent);
+}
+.chat-prompt-other::placeholder {
+  color: var(--text-tertiary);
+}
+.chat-prompt-note {
+  width: auto;
+  margin: calc(var(--spacing) * 1.5) 0 0 calc(var(--spacing) * 2.5);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-100);
+  transition: background-color var(--default-transition-duration);
+}
+.chat-prompt-note:focus {
+  background-color: var(--surface-200);
+}
+/* The review before sending: each question, quiet, and what was said to it. */
+.chat-prompt-review {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.5);
+  margin: calc(var(--spacing) * 1) 0 0;
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-100);
+}
+.chat-prompt-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+}
+.chat-prompt-review dt {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-prompt-review dd {
+  margin: 0;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .chat-prompt-actions {
   display: flex;
@@ -3478,7 +3614,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 /* The transcript's record of a request: one muted row, like a tool call. */
 .chat-permission-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: calc(var(--spacing) * 2);
   min-width: 0;
   padding: calc(var(--spacing) * 0.75) 0;
@@ -3488,15 +3624,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-permission-row[data-state='waiting'] {
   color: var(--text-secondary);
 }
+/* The status, what was asked, and the reader's reply. The question keeps to
+   one line; the reply is the reader's own words at any length, so it wraps,
+   and moves under the question when the two do not fit on one line. */
 .chat-permission-row-text {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: calc(var(--spacing) * 1.5);
+  column-gap: calc(var(--spacing) * 1.5);
   min-width: 0;
 }
+.chat-permission-row-text .chat-tool-summary {
+  flex: 0 1 auto;
+}
 .chat-permission-row-answer {
-  flex-shrink: 0;
+  min-width: 0;
   color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Notices sit in the column's centre, small and grey; an error carries the
@@ -4150,14 +4295,39 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   top: calc(var(--spacing) * 3);
   z-index: 5;
 }
-/* The strip above a pinned question shows nothing: the transcript is cut
-   there, by a mask on the scroller rather than a band painted over it. */
-.terminal-view .chat-scroll {
-  mask-image: linear-gradient(
-    to bottom,
-    transparent calc(var(--spacing) * 3),
-    black calc(var(--spacing) * 3)
-  );
+/* A stuck question stands on the ground (sticky-questions.ts, data-stuck):
+   a backdrop from the top edge down to its fold, a little wider than the box,
+   so nothing scrolling under it shows above it, through its rounded corners
+   or along its border. It is the row's own, so it travels with the row: when
+   the next question pushes it out, both leave over the top edge. */
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-stuck]::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: calc(var(--spacing) * -3);
+  bottom: var(--fold, 0px);
+  inset-inline: calc(var(--spacing) * -3);
+  background-color: var(--surface-0);
+  pointer-events: none;
+}
+/* The room a question needs to be pushed by its FOLDED bottom: the sticky
+   clamp pushes on the row's layout box, which the fold leaves at full height,
+   so the section ends with a spacer as tall as the fold plus the gap
+   (--fold-space, set by sticky-questions.ts), and gives it back with an equal
+   negative margin: the next question does not move, and the browser's own
+   sticky pushes the folded question with the gap between them, smooth with
+   the scroll. The spacer's share of the section's gap is given back too, so
+   an exchange's item measures the same with the room or without it and the
+   virtualiser (rows.tsx) never sees it change. The last exchange mounted has
+   nothing to be pushed by and keeps none. */
+.terminal-view[data-pin] .chat-rows > :not(:last-child) .term-turn::after {
+  content: '';
+  flex: none;
+  height: var(--fold-space, 0px);
+  pointer-events: none;
+}
+.terminal-view[data-pin] .chat-rows > :not(:last-child) .term-turn {
+  margin-bottom: calc(-1 * (var(--spacing) * 5 + var(--fold-space, 0px)));
 }
 /* Room under the last turn, so the conversation can be scrolled up off the
    prompt a little. */
@@ -4176,20 +4346,92 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
+/* A long message stands at most --term-question-max tall (question-height.ts:
+   a share of the pane, the reader's to move) and scrolls inside past it, so a
+   pinned question never covers the answer and every line of it stays
+   readable. The grip on its bottom edge shows on a message long enough for
+   the cap to matter. */
+.term-question {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .term-question .chat-turn[data-role='user'] {
+  max-height: var(--term-question-max, 40vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.term-question-grip {
+  display: none;
+  position: absolute;
+  bottom: calc(var(--spacing) * -1);
+  left: 50%;
+  width: calc(var(--spacing) * 12);
+  height: calc(var(--spacing) * 2);
+  translate: -50% 0;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.term-question-grip::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--spacing) * 0.75) calc(var(--spacing) * 2);
+  border-radius: var(--radius-full);
+  background-color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity var(--default-transition-duration);
+}
+.terminal-view .chat-turn-wrap[data-tall] .term-question-grip {
+  display: block;
+}
+.terminal-view .chat-turn-wrap[data-tall]:hover .term-question-grip::before,
+.terminal-view .chat-turn-wrap[data-resizing] .term-question-grip::before {
+  opacity: 0.6;
+}
+.terminal-view .chat-turn-wrap[data-resizing] .term-question-grip::before {
+  opacity: 1;
+}
+/* Folded, everything under the fold line is cut, straight, the backdrop above
+   the row spared; the message's own corners are rounded at the cut by its own
+   clip, so the backdrop shows through them, as at a whole box's corners. */
 .terminal-view .chat-turn-wrap[data-folded] {
-  clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
+  clip-path: inset(
+    calc(var(--spacing) * -3 - 1px) calc(var(--spacing) * -3 - 1px) var(--fold, 0px)
+      calc(var(--spacing) * -3 - 1px)
+  );
   cursor: pointer;
 }
-/* The folded box's bottom edge: a tight foot in the box's own colour (its
-   tint over the ground), so the lines it folds away pass under a clean edge
-   and none of the next one shows. Its height is FOLDED_FOOT of the message's
-   bottom padding in sticky-questions.ts. */
-.terminal-view .chat-turn-wrap[data-folded]::after {
+.terminal-view
+  .chat-turn-wrap[data-side='end'][data-fold-cut]
+  .term-question
+  .chat-turn[data-role='user'] {
+  clip-path: inset(
+    0 0 var(--message-fold, 0px) 0 round 0 0 var(--radius-control) var(--radius-control)
+  );
+}
+/* Folded, the message is one line to click, not a box to scroll: the wheel
+   over it moves the transcript, and its grip is out of reach. */
+.terminal-view
+  .chat-turn-wrap[data-side='end'][data-folded]
+  .term-question
+  .chat-turn[data-role='user'] {
+  overflow-y: hidden;
+}
+.terminal-view .chat-turn-wrap[data-folded] .term-question-grip {
+  display: none;
+}
+/* The folded box's bottom edge when the fold cuts through its text: a tight
+   foot in the box's own colour (its tint over the ground), so the lines it
+   folds away pass under a clean edge and none of the next one shows. A
+   one-line message folds on its own bottom edge and needs none. */
+.terminal-view .chat-turn-wrap[data-folded][data-fold-cut]::after {
   content: '';
   position: absolute;
   inset-inline: 0;
   bottom: var(--fold, 0);
-  height: calc(var(--spacing) * 1.5 + var(--spacing) / 4);
+  /* The message's bottom padding and border: folded, the box is exactly as
+     tall as a one-line message's, its line centred the same way. */
+  height: calc(var(--spacing) * 2.5 + 1px);
   border: thin solid var(--border-subtle-color);
   border-top: 0;
   border-radius: 0 0 var(--radius-control) var(--radius-control);
@@ -4198,6 +4440,191 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
   display: none;
+}
+/* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
+   what was done, opening onto one row per call. The title has no kind icon,
+   only its chevron; the calls sit indented under it along a hairline, each
+   led by its kind. A run in flight shimmers in its words, never by swapping
+   a glyph. Both levels open and close by animating their height. */
+.terminal-view {
+  interpolate-size: allow-keywords;
+}
+.term-tools,
+.term-call {
+  align-self: stretch;
+  min-width: 0;
+  font-size: var(--chat-code-size);
+}
+.term-tools::details-content,
+.term-call::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition:
+    block-size var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    content-visibility var(--default-transition-duration) allow-discrete;
+}
+.term-tools[open]::details-content,
+.term-call[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+.term-tools-row,
+.term-call-row {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: calc(var(--spacing) * 0.75) 0;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--default-transition-duration);
+}
+.term-tools-row::-webkit-details-marker,
+.term-call-row::-webkit-details-marker {
+  display: none;
+}
+.term-tools-row:hover,
+.term-call-row:hover,
+.term-tools-row:focus-visible,
+.term-call-row:focus-visible {
+  outline: none;
+  color: var(--text-secondary);
+}
+.term-tools-chevron {
+  flex-shrink: 0;
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.term-tools[open] > .term-tools-row .term-tools-chevron {
+  rotate: 90deg;
+}
+.term-tools-title {
+  flex-shrink: 0;
+}
+.term-tools-failed {
+  flex-shrink: 0;
+  color: var(--color-destructive);
+}
+/* What the run waits on, while it waits: the call in flight, quieter than
+   the title, cut to the line. */
+.term-tools-now {
+  display: flex;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+.term-tools-now .term-call-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The calls, under the title's words: indented past the chevron and hung on
+   a hairline, so they read as the title's content rather than its peers. */
+.term-tools-body {
+  display: flex;
+  flex-direction: column;
+  margin: calc(var(--spacing) * 0.5) 0 calc(var(--spacing) * 1) calc(var(--chat-glyph) / 2 - 0.5px);
+  padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
+  border-left: thin solid var(--border-subtle-color);
+}
+.term-call-icon {
+  flex-shrink: 0;
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+}
+.term-call[data-state='failed'] .term-call-icon,
+.term-call[data-state='failed'] .term-call-note {
+  color: var(--color-destructive);
+}
+/* The way in: a chevron at the end of a call's row, shown on approach and
+   while open, turned down when it is. */
+.term-call-chevron {
+  flex-shrink: 0;
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  opacity: 0;
+  transition:
+    opacity var(--default-transition-duration),
+    rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.term-call-row:hover .term-call-chevron,
+.term-call-row:focus-visible .term-call-chevron,
+.term-call[open] > .term-call-row .term-call-chevron {
+  opacity: 1;
+}
+.term-call[open] > .term-call-row .term-call-chevron {
+  rotate: 90deg;
+}
+.term-call-text {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 1.5);
+  min-width: 0;
+}
+.term-call-verb {
+  flex-shrink: 0;
+}
+.term-call-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-call-note {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+}
+.term-call-body > .chat-tool-panel {
+  margin-left: calc(var(--chat-glyph) + var(--spacing) * 2);
+}
+/* In flight: a band of light passes along the words, left to right, the way
+   a line reads. The ink is the row's own; the band is a lighter mix of it. */
+.term-tools[data-state='running'] > .term-tools-row .term-tools-title,
+.term-tools[data-state='running'] > .term-tools-row .term-tools-now,
+.term-call[data-state='running'] .term-call-text {
+  /* Explicit ink: with the text's own colour cleared, currentColor would be
+     transparent too. */
+  background-image: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0 40%,
+    color-mix(in oklch, var(--text-tertiary) 20%, transparent) 50%,
+    var(--text-tertiary) 60% 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: term-shimmer 1.8s linear infinite;
+}
+@keyframes term-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-tools::details-content,
+  .term-call::details-content {
+    transition-property: opacity, content-visibility;
+  }
+  .term-tools[data-state='running'] > .term-tools-row .term-tools-title,
+  .term-tools[data-state='running'] > .term-tools-row .term-tools-now,
+  .term-call[data-state='running'] .term-call-text {
+    animation: none;
+    background-image: none;
+    color: inherit;
+    -webkit-text-fill-color: currentColor;
+  }
 }
 
 /* The prompt: two rules, the caret, the field, the send button at the end. */
