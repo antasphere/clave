@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
       spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
       kill: vi.fn(async () => undefined)
     },
+    codexConfigure: vi.fn(),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
     title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
     manager: {
@@ -64,7 +65,7 @@ vi.mock('./sessions/adapters/codex-adapter', () => ({
   CodexAdapter: class {
     id = 'codex-chat'
     provider = 'codex'
-    configure = vi.fn()
+    configure = mocks.codexConfigure
   }
 }))
 vi.mock('./sessions/adapters/echo-adapter', () => ({
@@ -132,7 +133,10 @@ describe('a Claude chat tab survives a restart', () => {
     expect(session.id).toBe(TAB)
     expect(session.claudeSessionId).toBe(CONVERSATION)
     expect(mocks.claude.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({ id: TAB, options: expect.objectContaining({ resume: CONVERSATION }) })
+      expect.objectContaining({
+        id: TAB,
+        options: expect.objectContaining({ resume: CONVERSATION })
+      })
     )
   })
 
@@ -190,7 +194,12 @@ describe('a chat tab is named by its first message', () => {
     // resolver is what turns this profile into the workspace's Claude.
     mocks.manager.getAdapter.mockImplementation((id: string) =>
       id === 'codex-chat'
-        ? { id: 'codex-chat', provider: 'codex', spawn: mocks.claude.spawn, kill: mocks.claude.kill }
+        ? {
+            id: 'codex-chat',
+            provider: 'codex',
+            spawn: mocks.claude.spawn,
+            kill: mocks.claude.kill
+          }
         : mocks.claude
     )
     const session = await ptyManager.spawn('/project', {
@@ -200,6 +209,41 @@ describe('a chat tab is named by its first message', () => {
     expect(mocks.title.scheduleChatTitle).toHaveBeenCalledWith(
       session.id,
       expect.objectContaining({ workspaceId: 'ws-1', launchProfileId: 'codex-chat' })
+    )
+  })
+
+  it('a launch prompt reaches a Codex chat tab as it reaches a Claude one', async () => {
+    // A workspace session's prompt used to be handed to the Claude adapter
+    // only; the Codex adapter got the profile and the environment and the
+    // prompt vanished, so a Codex tab opened empty where a Claude tab opened
+    // on the prompt's answer.
+    mocks.manager.getAdapter.mockImplementation((id: string) =>
+      id === 'codex-chat'
+        ? {
+            id: 'codex-chat',
+            provider: 'codex',
+            spawn: mocks.claude.spawn,
+            kill: mocks.claude.kill
+          }
+        : mocks.claude
+    )
+    const codex = await ptyManager.spawn('/project', {
+      launchProfileId: 'codex-chat',
+      initialPrompt: 'read the brief'
+    })
+    expect(mocks.codexConfigure).toHaveBeenCalledWith(
+      codex.id,
+      expect.anything(),
+      expect.anything(),
+      'read the brief'
+    )
+    const claude = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      initialPrompt: 'read the brief'
+    })
+    expect(mocks.claude.configure).toHaveBeenCalledWith(
+      claude.id,
+      expect.objectContaining({ initialPrompt: 'read the brief' })
     )
   })
 

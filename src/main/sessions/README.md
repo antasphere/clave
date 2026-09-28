@@ -193,8 +193,9 @@ user chose is never overwritten. `title-generator.test.ts`,
 
 An adapter may implement optional `ready(handle)`. The manager completes it at most
 once per session (failed calls may retry), from `sessions:subscribe` after that
-consumer's stream and exit notifications are bound. Claude sends a configured `initialPrompt` then, and
-reports `initialCommand` / `autoExecute` as unsupported error events; it never
+consumer's stream and exit notifications are bound. Claude and Codex send a configured `initialPrompt`
+then, as the conversation's first user message, consumed once (a restart or an account move never
+resends it); Claude also reports `initialCommand` / `autoExecute` as unsupported error events and never
 executes those shell commands. Other adapters need no readiness hook.
 
 For events sessions the stream exclusively owns state; hook files are still
