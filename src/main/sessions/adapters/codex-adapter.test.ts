@@ -268,6 +268,79 @@ describe('Codex adapter lifecycle', () => {
       0
     ])
   })
+  it('sends the configured initial prompt once, at ready, and never on a later spawn', async () => {
+    const { adapter, connection, connect } = fake()
+    const profile = {
+      id: 'default',
+      name: 'Default',
+      family: 'codex' as const,
+      command: ['codex'],
+      additionalArgs: []
+    }
+    adapter.configure(spec.id, profile, undefined, 'initial prompt')
+    const handle = await adapter.spawn(spec)
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (e) => events.push(e))
+    expect(connect).not.toHaveBeenCalled()
+    adapter.ready(handle)
+    adapter.ready(handle)
+    // The prompt is the reader's first message the moment the view is looking.
+    expect(events).toEqual([
+      { kind: 'event', event: { type: 'user_message', text: 'initial prompt' } }
+    ])
+    await tick()
+    const turns = (connection.request as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([method]) => method === 'turn/start'
+    )
+    expect(turns).toEqual([
+      [
+        'turn/start',
+        { threadId: 'thread', input: [{ type: 'text', text: 'initial prompt', text_elements: [] }] }
+      ]
+    ])
+    await adapter.kill(handle)
+    // The one-shot went with the context that carried it: a fresh spawn of
+    // the same id, configured without one, sends nothing on ready.
+    adapter.configure(spec.id, profile)
+    const next = await adapter.spawn(spec)
+    const later: unknown[] = []
+    adapter.on(next, 'stream', (e) => later.push(e))
+    adapter.ready(next)
+    await tick()
+    expect(
+      later.filter((e) => (e as { event: { type: string } }).event.type === 'user_message')
+    ).toEqual([])
+    expect(
+      (connection.request as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([method]) => method === 'turn/start'
+      )
+    ).toHaveLength(1)
+    await adapter.kill(next)
+  })
+  it('sends the initial prompt at ready even when the model picker started the thread first', async () => {
+    const { adapter, connection } = fake()
+    adapter.configure(
+      spec.id,
+      { id: 'd', name: 'D', family: 'codex' as const, command: ['codex'], additionalArgs: [] },
+      undefined,
+      'prompt'
+    )
+    const handle = await adapter.spawn(spec)
+    const events: unknown[] = []
+    adapter.on(handle, 'stream', (e) => events.push(e))
+    await adapter.models(handle)
+    adapter.ready(handle)
+    await tick()
+    expect(events).toContainEqual({
+      kind: 'event',
+      event: { type: 'user_message', text: 'prompt' }
+    })
+    expect(connection.request).toHaveBeenCalledWith('turn/start', {
+      threadId: 'thread',
+      input: [{ type: 'text', text: 'prompt', text_elements: [] }]
+    })
+    await adapter.kill(handle)
+  })
   it('does not spawn after a prepared session is killed', async () => {
     const { adapter, connect } = fake()
     const handle = await adapter.spawn(spec)

@@ -256,6 +256,10 @@ interface HandleState {
   translator: CodexTranslator
   connection?: CodexConnection
   ready?: Promise<void>
+  /** The launch's prompt, sent as the first message at ready and consumed
+   *  then, the way the Claude adapter does it: a restart or an account move
+   *  never resends it. */
+  initialPrompt?: string
   turnRequest?: Promise<void>
   sending: boolean
   ended: boolean
@@ -267,7 +271,10 @@ export class CodexAdapter implements SessionAdapter {
   readonly transports = ['events'] as const
   readonly images = true
   private handles = new Map<string, HandleState>()
-  private profiles = new Map<string, { profile: LaunchProfile; env?: Record<string, string> }>()
+  private profiles = new Map<
+    string,
+    { profile: LaunchProfile; env?: Record<string, string>; initialPrompt?: string }
+  >()
   constructor(
     private connect: (
       cwd: string,
@@ -278,10 +285,16 @@ export class CodexAdapter implements SessionAdapter {
   ) {}
 
   /** Main-only launch context: the profile and the environment the
-   *  app-server starts with (a Codex account's `CODEX_HOME`). Never part of
-   *  the Session record or the wire. */
-  configure(id: string, profile: LaunchProfile, env?: Record<string, string>): void {
-    this.profiles.set(id, { profile: structuredClone(profile), env })
+   *  app-server starts with (a Codex account's `CODEX_HOME`), and the
+   *  launch's prompt when it has one. Never part of the Session record or
+   *  the wire. */
+  configure(
+    id: string,
+    profile: LaunchProfile,
+    env?: Record<string, string>,
+    initialPrompt?: string
+  ): void {
+    this.profiles.set(id, { profile: structuredClone(profile), env, initialPrompt })
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -292,6 +305,7 @@ export class CodexAdapter implements SessionAdapter {
       spec,
       profile: context?.profile,
       env: context?.env,
+      initialPrompt: context?.initialPrompt,
       emitter,
       translator: new CodexTranslator((event) => emitter.emit('stream', { kind: 'event', event })),
       sending: false,
@@ -347,13 +361,23 @@ export class CodexAdapter implements SessionAdapter {
       })
   }
   /** Bring the thread up as soon as the view is looking, so thread/start's
-   *  reply names the model before the first message rather than after it. */
+   *  reply names the model before the first message rather than after it,
+   *  and send the launch's prompt as the first message, once. The prompt is
+   *  not gated on `state.ready`: the model picker may have started the thread
+   *  before any view subscribed, and the prompt still has to go. */
   ready(handle: SessionHandle): void {
     const state = this.require(handle)
-    if (state.ended || state.closing || state.ready) return
-    this.start(state).catch(() => {
-      // start() has already reported the failure on the stream.
-    })
+    if (state.ended || state.closing) return
+    if (!state.ready)
+      this.start(state).catch(() => {
+        // start() has already reported the failure on the stream.
+      })
+    const prompt = state.initialPrompt
+    if (prompt === undefined) return
+    // A write that throws (a turn already running) leaves the prompt for the
+    // manager's retry: only a readiness that succeeded consumes the one-shot.
+    this.write(handle, { type: 'user_message', text: prompt })
+    state.initialPrompt = undefined
   }
   /** The app-server's model/list, once the connection is up; a stub that never
    *  answers must not hang the picker, hence the deadline. */
