@@ -9,7 +9,8 @@
   "contributes": {
     "views": [
       { "id": "chat", "title": "Chat", "renders": ["events"] },
-      { "id": "compact", "title": "Compact", "renders": ["events"] }
+      { "id": "compact", "title": "Compact", "renders": ["events"] },
+      { "id": "terminal", "title": "Terminal", "renders": ["events"] }
     ]
   },
   "permissions": ["sessions.read", "sessions.write"]
