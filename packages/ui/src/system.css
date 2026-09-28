@@ -4073,8 +4073,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   align-items: center;
   height: calc(var(--text-sm) * 1.6);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--text-tertiary);
+  /* The fallback font that draws ❯ sits it a hair under the capitals'
+     middle; measured on the rendered pixels, this is the lift that centres
+     its ink on theirs. */
+  translate: 0 calc(var(--spacing) * -0.1875);
 }
 
 /* An exchange: the question and everything answering it, spaced like the
