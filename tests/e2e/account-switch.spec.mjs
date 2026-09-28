@@ -195,11 +195,29 @@ export async function run(t) {
       await header.getAttribute('data-account-header'),
       accounts.work
     )
-    const switchItem = win.locator('[role="menuitem"]', { hasText: 'Switch to Play' })
-    t.check('the menu offers the other account', (await switchItem.count()) === 1)
+    const switchEntry = win.locator('[role="menuitem"]', { hasText: 'Switch account' })
+    t.check('the menu offers one Switch account entry', (await switchEntry.count()) === 1)
     t.check(
-      'the menu does not offer the account the tab is on',
-      (await win.locator('[role="menuitem"]', { hasText: 'Switch to Work' }).count()) === 0
+      'the accounts are not listed in the menu itself',
+      (await win.locator('[role="menuitem"]', { hasText: 'Play' }).count()) === 0
+    )
+    await switchEntry.hover()
+    const submenu = win.locator('[role="menu"]').nth(1)
+    await submenu.waitFor()
+    const [menuBox, submenuBox] = await Promise.all([
+      win.locator('[role="menu"]').first().boundingBox(),
+      submenu.boundingBox()
+    ])
+    t.check(
+      'the submenu opens beside the menu, with a gap, never over it',
+      !!menuBox && !!submenuBox && submenuBox.x >= menuBox.x + menuBox.width + 4,
+      JSON.stringify({ menuBox, submenuBox })
+    )
+    const switchItem = submenu.locator('[role="menuitem"]', { hasText: 'Play' })
+    t.check('the submenu offers the other account', (await switchItem.count()) === 1)
+    t.check(
+      'the submenu does not offer the account the tab is on',
+      (await submenu.locator('[role="menuitem"]', { hasText: 'Work' }).count()) === 0
     )
     await switchItem.click()
     const after = await printed(onWork.sessionId, new RegExp(`TOKEN=${PLAY_TOKEN} MODE=`))
