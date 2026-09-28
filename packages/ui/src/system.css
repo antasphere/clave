@@ -4099,17 +4099,23 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 /* The transcript's own edges: nothing shows in the strip above a pinned
    question, and the text fades out into the prompt's upper rule rather than
-   being cut above it. A mask on the scroller, not a band painted over it, so
-   the text itself goes and whatever lies behind shows as it is. */
+   being cut above it: solid until just above the rule, then gone at it. A
+   mask on the scroller, not a band painted over it, so the text itself goes
+   and whatever lies behind shows as it is. */
 .terminal-view .chat-scroll {
   mask-image: linear-gradient(
     to bottom,
     transparent calc(var(--spacing) * 3),
     black calc(var(--spacing) * 3),
-    black calc(100% - var(--spacing) * 6),
-    color-mix(in srgb, black 55%, transparent) calc(100% - var(--spacing) * 3.5),
-    transparent calc(100% - var(--spacing))
+    black calc(100% - var(--spacing) * 4),
+    color-mix(in srgb, black 45%, transparent) calc(100% - var(--spacing) * 1.5),
+    transparent
   );
+}
+/* The last turn sits close to the prompt: the column's foot keeps only the
+   room its hover line needs, so the fade runs straight into the rule. */
+.terminal-view .chat-column {
+  padding-bottom: calc(var(--spacing) * 6);
 }
 .terminal-view .term-composer-wrap {
   padding-top: 0;
