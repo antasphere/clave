@@ -13,6 +13,11 @@ import { useEffect, type RefObject } from 'react'
  *  bottom, one pixel per pixel scrolled, down to one line. `--fold` carries
  *  how much is clipped; the stylesheet does the rest. Scrolling back unfolds
  *  it the same way, and a click on a folded question brings it back whole. */
+/** The share of the message's bottom padding a folded question keeps under
+ *  its line. The stylesheet's fold band is the same height (6px of 10px);
+ *  change them together. */
+const FOLDED_FOOT = 0.6
+
 export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enabled: boolean): void {
   useEffect(() => {
     const root = scroll.current
@@ -30,9 +35,9 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       rows().forEach(reset)
       return
     }
-    /** The row folded to one line: the message's padding, border and one line.
-     *  Its bottom padding is then the fold edge's solid band, so nothing of
-     *  the second line shows. */
+    /** The row folded to one line: the top padding, the line, and a tighter
+     *  foot than the box's own padding (FOLDED_FOOT of it), which the fold
+     *  edge's band fills, so nothing of the second line shows. */
     const oneLine = (row: HTMLElement): number => {
       const message = row.querySelector<HTMLElement>('.chat-turn[data-role="user"]')
       if (!message) return row.offsetHeight
@@ -40,7 +45,7 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       const px = (value: string): number => Number.parseFloat(value) || 0
       return (
         px(style.paddingTop) +
-        px(style.paddingBottom) +
+        px(style.paddingBottom) * FOLDED_FOOT +
         px(style.borderTopWidth) +
         px(style.borderBottomWidth) +
         (px(style.lineHeight) || px(style.fontSize) * 1.5)

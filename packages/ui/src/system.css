@@ -4097,23 +4097,17 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   top: calc(var(--spacing) * 3);
   z-index: 5;
 }
-/* The transcript's own edges: nothing shows in the strip above a pinned
-   question, and the text fades out into the prompt's upper rule rather than
-   being cut above it: solid until just above the rule, then gone at it. A
-   mask on the scroller, not a band painted over it, so the text itself goes
-   and whatever lies behind shows as it is. */
+/* The strip above a pinned question shows nothing: the transcript is cut
+   there, by a mask on the scroller rather than a band painted over it. */
 .terminal-view .chat-scroll {
   mask-image: linear-gradient(
     to bottom,
     transparent calc(var(--spacing) * 3),
-    black calc(var(--spacing) * 3),
-    black calc(100% - var(--spacing) * 4),
-    color-mix(in srgb, black 45%, transparent) calc(100% - var(--spacing) * 1.5),
-    transparent
+    black calc(var(--spacing) * 3)
   );
 }
 /* The last turn sits close to the prompt: the column's foot keeps only the
-   room its hover line needs, so the fade runs straight into the rule. */
+   room its hover line needs. */
 .terminal-view .chat-column {
   padding-bottom: calc(var(--spacing) * 6);
 }
@@ -4133,21 +4127,21 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
   cursor: pointer;
 }
-/* The folded box's bottom edge: its padding in the box's own colour (its
-   tint over the ground), so the lines it folds away pass under the edge and
-   none of the next one shows, softened by a short fade on the band's top. */
+/* The folded box's bottom edge: a tight foot in the box's own colour (its
+   tint over the ground), so the lines it folds away pass under a clean edge
+   and none of the next one shows. Its height is FOLDED_FOOT of the message's
+   bottom padding in sticky-questions.ts. */
 .terminal-view .chat-turn-wrap[data-folded]::after {
   content: '';
   position: absolute;
   inset-inline: 0;
   bottom: var(--fold, 0);
-  height: calc(var(--spacing) * 3.5);
+  height: calc(var(--spacing) * 1.5 + var(--spacing) / 4);
   border: thin solid var(--border-subtle-color);
   border-top: 0;
   border-radius: 0 0 var(--radius-control) var(--radius-control);
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
-  mask-image: linear-gradient(to bottom, transparent, black var(--spacing));
 }
 .terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
   display: none;
