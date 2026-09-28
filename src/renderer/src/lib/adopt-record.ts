@@ -69,7 +69,9 @@ async function spawnFromRecord(
           ? { resumeSessionId: s.claudeSessionId }
           : s.piMode && s.piSessionId
             ? { resumeSessionId: s.piSessionId }
-            : {}),
+            : s.codexMode && s.codexThreadId
+              ? { resumeSessionId: s.codexThreadId }
+              : {}),
       launchProfileId: s.launchProfileId,
       piProvider: s.piProvider,
       piThinking: s.piThinking,

@@ -429,6 +429,10 @@ export interface SessionRecord {
    *  `CODEX_HOME` points at. Absent = the machine's own `~/.codex`. */
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The thread a Codex chat tab resumes: the app-server's own id, from the
+   *  tab's first `session_meta`. Absent until the thread is up, and for every
+   *  other kind of session. */
+  codexThreadId?: string
   /** When the process was first started, carried across adoption: what a
    *  Codex terminal's thread is found by (the rollout it wrote after this). */
   startedAt?: number
@@ -1360,6 +1364,18 @@ export class PtyBackend {
     const meta = readSessionRecord(key)
     if (!meta || meta.claudeSessionId === claudeSessionId) return
     writeSessionRecord({ ...meta, claudeSessionId })
+  }
+
+  /** A Codex chat tab's thread, once the app-server has opened it — what the
+   *  next launch resumes. Mirrors setSessionClaudeSessionId: what is not in
+   *  the record does not survive a restart. */
+  setSessionCodexThreadId(id: string, threadId: string): void {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(threadId)) return
+    const key = this.recordKeyForSession(id)
+    if (!key) return
+    const meta = readSessionRecord(key)
+    if (!meta || meta.codexThreadId === threadId) return
+    writeSessionRecord({ ...meta, codexThreadId: threadId })
   }
 
   /** Re-home a record to another window WITHOUT touching the process — used

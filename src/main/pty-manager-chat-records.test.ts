@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
       setSessionViewRecord: vi.fn(),
       setSessionWorkspace: vi.fn(),
       setSessionClaudeSessionId: vi.fn(),
+      setSessionCodexThreadId: vi.fn(),
       getSessionRecord: vi.fn(() => null),
       tmuxNameOf: vi.fn(() => null),
       waitForTmuxSessionGone: vi.fn(async () => undefined),
@@ -30,6 +31,8 @@ const mocks = vi.hoisted(() => {
       kill: vi.fn(async () => undefined)
     },
     codexConfigure: vi.fn(),
+    hasCodexRollout: vi.fn<(threadId: string, root: string) => boolean>(() => true),
+    streams: new Map<string, (stream: unknown) => void>(),
     remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
     title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
@@ -40,7 +43,9 @@ const mocks = vi.hoisted(() => {
       get: vi.fn((id: string) => handles.get(id)),
       kill: vi.fn(async () => undefined),
       forget: vi.fn((id: string) => handles.delete(id)),
-      list: vi.fn(() => [...handles.values()])
+      list: vi.fn(() => [...handles.values()]),
+      subscribe: vi.fn(),
+      subscribeExit: vi.fn(() => () => undefined)
     }
   }
 })
@@ -50,6 +55,11 @@ vi.mock('./sessions/adapters/pty-backend', () => ({
   buildSpawnEnv: (base: Record<string, string>) => ({ ...base }),
   codexHomeForSpawn: () => undefined,
   getLoginShellEnv: () => ({})
+}))
+vi.mock('./session-history/codex', () => ({
+  codexRoot: () => '/codex/sessions',
+  findCodexThreadForSession: () => null,
+  hasCodexRollout: mocks.hasCodexRollout
 }))
 vi.mock('./sessions/adapters/pty-adapter', () => ({
   ptyAdapter: { id: 'pty', provider: 'terminal', prepare: vi.fn(), detach: vi.fn() }
@@ -97,6 +107,12 @@ beforeEach(() => {
   mocks.manager.getAdapter.mockReturnValue(mocks.claude)
   mocks.findTranscript.mockReturnValue('/transcripts/conversation.jsonl')
   mocks.remembered.mockReturnValue(undefined)
+  mocks.hasCodexRollout.mockReturnValue(true)
+  mocks.streams.clear()
+  mocks.manager.subscribe.mockImplementation((id: string, listener: (stream: unknown) => void) => {
+    mocks.streams.set(id, listener)
+    return () => mocks.streams.delete(id)
+  })
 })
 
 describe('a Claude chat tab survives a restart', () => {
@@ -164,6 +180,116 @@ describe('a Claude chat tab survives a restart', () => {
   it('drops the record on a real close and keeps it on quit', async () => {
     const closed = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     const kept = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+
+    await ptyManager.kill(closed.id)
+    await ptyManager.kill(kept.id, false)
+
+    expect(mocks.backend.discardSessionRecord).toHaveBeenCalledTimes(1)
+    expect(mocks.backend.discardSessionRecord).toHaveBeenCalledWith(closed.id)
+  })
+})
+
+// A Codex chat tab wrote no record, so it was gone at the next launch while
+// every Claude chat tab beside it came back: a workspace worked in Codex lost
+// all its tabs at every restart. The record is written at spawn, carries the
+// thread the app-server opened, and a restore resumes that thread — unless
+// the thread never got a message, which Codex cannot resume.
+describe('a Codex chat tab survives a restart', () => {
+  const THREAD = '01a0e825-64d8-7bf3-9bd4-5a09ab6e5e09'
+  const codexChat = {
+    id: 'codex-chat',
+    provider: 'codex',
+    spawn: mocks.claude.spawn,
+    kill: mocks.claude.kill
+  }
+  const spawned = (): { options: { resume?: string } } =>
+    mocks.claude.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { resume?: string } }
+
+  beforeEach(() => {
+    mocks.manager.getAdapter.mockImplementation((id: string) =>
+      id === 'codex-chat' ? codexChat : mocks.claude
+    )
+  })
+
+  it('writes its session record at spawn', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'codex-chat',
+      model: 'gpt-5.5',
+      dangerousMode: true,
+      codexAccountId: 'acct-2',
+      codexAccountLabel: 'Work',
+      workspaceId: 'ws-2',
+      windowKey: 'win'
+    })
+
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        adapterId: 'codex-chat',
+        transport: 'events',
+        codexMode: true,
+        claudeMode: false,
+        launchProfileId: 'codex-chat',
+        model: 'gpt-5.5',
+        dangerousMode: true,
+        codexAccountId: 'acct-2',
+        codexAccountLabel: 'Work',
+        workspaceId: 'ws-2',
+        windowKey: 'win',
+        cwd: '/project'
+      })
+    )
+  })
+
+  it('records the thread the app-server opened', async () => {
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
+    ptyManager.attachListeners(
+      session.id,
+      () => undefined,
+      () => undefined
+    )
+
+    mocks.streams.get(session.id)?.({
+      kind: 'event',
+      event: { type: 'session_meta', model: 'gpt-5.5', providerSessionId: THREAD }
+    })
+
+    expect(mocks.backend.setSessionCodexThreadId).toHaveBeenCalledWith(session.id, THREAD)
+  })
+
+  it('comes back under its own id, resuming its thread', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'codex-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: THREAD
+    })
+
+    expect(session.id).toBe(TAB)
+    expect(mocks.hasCodexRollout).toHaveBeenCalledWith(THREAD, '/codex/sessions')
+    expect(spawned().options.resume).toBe(THREAD)
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TAB, codexThreadId: THREAD })
+    )
+    expect(mocks.title.scheduleChatTitle).not.toHaveBeenCalled()
+  })
+
+  it('starts fresh under the same id when its thread never got a message', async () => {
+    mocks.hasCodexRollout.mockReturnValue(false)
+
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'codex-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: THREAD
+    })
+
+    expect(session.id).toBe(TAB)
+    expect(spawned().options.resume).toBeUndefined()
+    expect(mocks.title.scheduleChatTitle).toHaveBeenCalledWith(TAB, expect.anything())
+  })
+
+  it('drops the record on a real close and keeps it on quit', async () => {
+    const closed = await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
+    const kept = await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
 
     await ptyManager.kill(closed.id)
     await ptyManager.kill(kept.id, false)
