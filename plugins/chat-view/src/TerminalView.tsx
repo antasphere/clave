@@ -16,6 +16,8 @@ import {
 } from '@heroicons/react/24/outline'
 import type { SessionInput, ModelOption, CommandOption } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
+import { PermissionModeMenu } from './PermissionModeMenu'
+import { nextPermissionMode } from './permission-mode'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -908,6 +910,16 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
                 setSlashDismissed(recalled)
                 return
               }
+              // Shift+Tab cycles the permission mode, as it does in the TUI.
+              if (event.key === 'Tab' && event.shiftKey && conversation.permissionMode) {
+                event.preventDefault()
+                const next = nextPermissionMode(
+                  conversation.permissionMode.mode,
+                  conversation.permissionMode.modes
+                )
+                if (next) void write({ type: 'set_permission_mode', mode: next }).catch(report)
+                return
+              }
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 void send()
@@ -972,12 +984,24 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
               ? 'Esc to interrupt and take the message back'
               : 'Enter to send · Shift+Enter for a new line'}
           </span>
-          <ModelMenu
-            sessionId={session.id}
-            model={conversation.model}
-            disabled={closed}
-            onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
-          />
+          <div className="chat-composer-controls">
+            {conversation.permissionMode && (
+              <PermissionModeMenu
+                mode={conversation.permissionMode.mode}
+                modes={conversation.permissionMode.modes}
+                disabled={closed}
+                onSelect={(id) =>
+                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
+                }
+              />
+            )}
+            <ModelMenu
+              sessionId={session.id}
+              model={conversation.model}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -3865,6 +3865,18 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
 }
 
+/* The footer's right end: the permission-mode chip, then the model's. */
+.chat-composer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  min-width: 0;
+}
+/* Bypass reads as a warning while it is on: nothing asks before acting. */
+.chat-model-trigger[data-mode='bypassPermissions'] {
+  color: var(--color-warning);
+}
+
 /* The model picker: a quiet chip on the footer line that opens a menu ABOVE
    it, the menu's right edge on the chip's right edge (the chip sits at the
    column's end, so that is the edge the eye lines up). */

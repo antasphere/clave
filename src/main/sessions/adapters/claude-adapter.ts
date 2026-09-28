@@ -16,7 +16,8 @@ import {
   type BackgroundTask,
   type HistoryItem,
   type ModelOption,
-  type CommandOption
+  type CommandOption,
+  type PermissionModeOption
 } from '../../../shared/session-model'
 import { buildAgentArgv } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
@@ -52,6 +53,21 @@ const optionsSchema = z.object({
     .optional()
 })
 type Permission = { input: unknown; suggestions: unknown[] }
+/** The modes a running session can be switched between, in the order the
+ *  TUI's Shift+Tab cycles them. The CLI names the ask-every-time mode `manual`
+ *  on its command line and `default` once it runs; this file speaks the
+ *  running name. `auto` is offered and may be refused (it depends on the
+ *  model), and the refusal reaches the reader in the CLI's own words. */
+const PERMISSION_MODES: PermissionModeOption[] = [
+  { id: 'default', label: 'Manual' },
+  { id: 'acceptEdits', label: 'Accept edits' },
+  { id: 'plan', label: 'Plan' },
+  { id: 'auto', label: 'Auto' }
+]
+/** Bypass is only reachable in a session LAUNCHED on it: the CLI refuses the
+ *  switch otherwise, as the TUI leaves it out of its cycle. */
+const BYPASS_MODE: PermissionModeOption = { id: 'bypassPermissions', label: 'Bypass permissions' }
+const runningMode = (mode: string): string => (mode === 'manual' ? 'default' : mode)
 
 /** One translator per process: partial messages and completed snapshots overlap. */
 /** The CLI only names its commands in the init frame, which only follows the
@@ -117,6 +133,10 @@ export class ClaudeStreamTranslator {
   commands: string[] | null = null
   /** request_id → the model a set_model control request asked for. */
   readonly modelRequests = new Map<string, string | null>()
+  /** request_id → the mode a set_permission_mode control request asked for. */
+  readonly modeRequests = new Map<string, string>()
+  /** What a `permission_mode` event offers; the adapter sets it at launch. */
+  modes: PermissionModeOption[] = PERMISSION_MODES
   /** request_id → the caller waiting on an initialize control request's answer. */
   readonly listRequests = new Map<string, InitializeRequest>()
   private streamed = false
@@ -220,6 +240,39 @@ export class ClaudeStreamTranslator {
     if (response.data.subtype === 'success' && response.data.response)
       request.resolve(response.data.response)
     else request.reject(new Error(response.data.error ?? 'Claude did not answer initialize'))
+    return true
+  }
+  /** Tell the reader the mode the CLI is in now. */
+  publishMode(mode: string): void {
+    const id = runningMode(mode)
+    const modes = this.modes.some((m) => m.id === id)
+      ? this.modes
+      : [...this.modes, { id, label: id }]
+    this.emit({ type: 'permission_mode', mode: id, modes })
+  }
+  /** A control_response answering one of our set_permission_mode requests;
+   *  false for any other. The CLI refuses a mode it cannot enter (auto on a
+   *  model without it, bypass in a session not launched on it) with a reason
+   *  worth showing as it stands. */
+  private modeRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        error: z.string().optional(),
+        response: z.object({ mode: z.string() }).optional()
+      })
+      .safeParse(p.response)
+    if (!response.success || !this.modeRequests.has(response.data.request_id)) return false
+    const asked = this.modeRequests.get(response.data.request_id)!
+    this.modeRequests.delete(response.data.request_id)
+    if (response.data.subtype === 'success') this.publishMode(response.data.response?.mode ?? asked)
+    else
+      this.emit({
+        type: 'error',
+        message: response.data.error ?? `Claude refused to switch to ${asked}`,
+        fatal: false
+      })
     return true
   }
   /** A control_response answering one of our set_model requests; false for any other. */
@@ -342,7 +395,13 @@ export class ClaudeStreamTranslator {
         model: typeof p.model === 'string' ? p.model : null,
         providerSessionId: typeof p.session_id === 'string' ? p.session_id : null
       })
+      if (typeof p.permissionMode === 'string') this.publishMode(p.permissionMode)
       this.emit({ type: 'state_change', state: 'working' })
+    } else if (p.type === 'system' && p.subtype === 'status') {
+      // The CLI reports a mode change it made itself (leaving plan mode once
+      // the plan is approved) as it reports ours.
+      if (typeof p.permissionMode === 'string') this.publishMode(p.permissionMode)
+      fallback()
     } else if (p.type === 'system' && this.backgroundFrame(p)) {
       // Kept on the stream too: a view may still read the raw frame.
       fallback()
@@ -396,7 +455,10 @@ export class ClaudeStreamTranslator {
       }
       // Preserve usage, thinking, attachments, and unknown content without duplicate text.
       fallback()
-    } else if (p.type === 'control_response' && (this.modelRequest(p) || this.listRequest(p))) {
+    } else if (
+      p.type === 'control_response' &&
+      (this.modelRequest(p) || this.modeRequest(p) || this.listRequest(p))
+    ) {
       // Answered above: the switch took or the CLI said why not; the list arrived or did not.
     } else if (p.type === 'control_request' && object.parse(p.request).subtype === 'can_use_tool') {
       const r = z
@@ -589,6 +651,8 @@ interface Live {
   resume?: { id: string; cwd: string; configDir?: string; history?: HistoryItem[] }
   /** The model the session was launched on; the CLI's init frame refines it. */
   model: string | null
+  /** The permission mode the session is in, as the CLI last reported it. */
+  permissionMode: string
   emit: (event: SessionEvent) => void
   finish: (code: number) => void
 }
@@ -628,6 +692,7 @@ export class ClaudeAdapter implements SessionAdapter {
     )
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
+      if (event.type === 'permission_mode') live.permissionMode = event.mode
       if (event.type === 'session_meta') {
         live.initialized = true
         if (live.translator.commands) {
@@ -659,6 +724,7 @@ export class ClaudeAdapter implements SessionAdapter {
       initialPrompt: context.initialPrompt,
       initialInput: context.initialInput,
       model: options.model ?? null,
+      permissionMode: runningMode(options.permissionMode ?? 'default'),
       resume: options.resume
         ? { id: options.resume, cwd: spec.cwd, configDir: context.configDir }
         : undefined,
@@ -770,6 +836,8 @@ export class ClaudeAdapter implements SessionAdapter {
         return child
       }
     }
+    if (options.permissionMode === 'bypassPermissions')
+      live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
     this.handles.set(spec.id, live)
     return live.handle
   }
@@ -787,6 +855,8 @@ export class ClaudeAdapter implements SessionAdapter {
       kind: 'event',
       event: { type: 'session_meta', model: live.model, providerSessionId: null }
     })
+    // Its mode too, the launch's until the CLI reports one.
+    live.translator.publishMode(live.permissionMode)
     // Read before the process starts, as the replay always was: the ids of
     // the past's tool calls must be known before the CLI's first frame.
     this.loadHistory(live)
@@ -884,6 +954,17 @@ export class ClaudeAdapter implements SessionAdapter {
         type: 'control_request',
         request_id: requestId,
         request: { subtype: 'set_model', model: input.model }
+      })
+    } else if (input.type === 'set_permission_mode') {
+      const mode = runningMode(input.mode)
+      if (!live.translator.modes.some((m) => m.id === mode))
+        throw new Error(`Unknown permission mode: ${input.mode}`)
+      const requestId = randomUUID()
+      live.translator.modeRequests.set(requestId, mode)
+      send({
+        type: 'control_request',
+        request_id: requestId,
+        request: { subtype: 'set_permission_mode', mode }
       })
     } else {
       live.translator.interrupted = true

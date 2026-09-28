@@ -76,6 +76,16 @@ export const SetModelSchema = z.object({
   model: z.string().nullable()
 })
 export type SetModel = z.infer<typeof SetModelSchema>
+/** Switch how the agent asks before it acts (Claude's Shift+Tab cycle): one of
+ *  the ids the session's last `permission_mode` event offered. */
+export const SetPermissionModeSchema = z.object({
+  type: z.literal('set_permission_mode'),
+  mode: z.string()
+})
+/** One permission mode a session can be switched to, in the provider's own
+ *  vocabulary (`id`) and as the reader reads it (`label`). */
+export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.string() })
+export type PermissionModeOption = z.infer<typeof PermissionModeOptionSchema>
 /** One question an agent asks the reader mid-turn (Claude's AskUserQuestion). */
 export const AgentQuestionSchema = z.object({
   question: z.string(),
@@ -88,7 +98,8 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   UserMessageInputSchema,
   PermissionResponseSchema,
   InterruptSchema,
-  SetModelSchema
+  SetModelSchema,
+  SetPermissionModeSchema
 ])
 /** One model a provider offers a live session, as the view lists it. */
 export const ModelOptionSchema = z.object({
@@ -161,6 +172,14 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
+  /** The mode the session is in and the modes it may be switched to; sent at
+   *  ready and again whenever the provider reports a change. A provider with
+   *  no modes never sends it, and a view shows no switch. */
+  z.object({
+    type: z.literal('permission_mode'),
+    mode: z.string(),
+    modes: z.array(PermissionModeOptionSchema)
+  }),
   /* Everything still running in the background, whole, each time it changes:
      a snapshot replaces the last one, and an empty list means nothing is. */
   z.object({ type: z.literal('background_tasks'), tasks: z.array(BackgroundTaskSchema) }),

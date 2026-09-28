@@ -732,6 +732,110 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     await adapter.kill(handle)
   }
 )
+it('switches the permission mode the way Shift+Tab does, and says why the CLI refused', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'manual' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  // The launch's `manual` is the running `default`, and bypass is not offered
+  // to a session that was not launched on it.
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toEqual({
+    type: 'permission_mode',
+    mode: 'default',
+    modes: [
+      { id: 'default', label: 'Manual' },
+      { id: 'acceptEdits', label: 'Accept edits' },
+      { id: 'plan', label: 'Plan' },
+      { id: 'auto', label: 'Auto' }
+    ]
+  })
+  expect(() =>
+    adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  ).toThrow(/Unknown permission mode/)
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'plan' })
+  const request = JSON.parse(child.stdin.read().toString())
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'set_permission_mode', mode: 'plan' }
+  })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: request.request_id, response: { mode: 'plan' } }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toMatchObject({ type: 'permission_mode', mode: 'plan' })
+  // A refusal reaches the reader in the CLI's own words, and the mode stays.
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'auto' })
+  const auto = JSON.parse(child.stdin.read().toString())
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: auto.request_id,
+        error: 'Cannot set permission mode to auto: auto mode unavailable for this model'
+      }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({
+    type: 'error',
+    message: 'Cannot set permission mode to auto: auto mode unavailable for this model',
+    fatal: false
+  })
+  // A change the CLI makes itself (a plan approved) arrives as a status frame.
+  child.stdout.write(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode: 'acceptEdits'
+    }) + '\n'
+  )
+  expect(events.filter((e) => e.type === 'permission_mode').at(-1)).toMatchObject({
+    mode: 'acceptEdits'
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('offers bypass, and the way back to it, only to a session launched on it', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'bypassPermissions' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toMatchObject({ mode: 'bypassPermissions' })
+  expect(offered?.type === 'permission_mode' && offered.modes.map((m) => m.id)).toEqual([
+    'default',
+    'acceptEdits',
+    'plan',
+    'auto',
+    'bypassPermissions'
+  ])
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  expect(JSON.parse(child.stdin.read().toString())).toMatchObject({
+    request: { subtype: 'set_permission_mode', mode: 'bypassPermissions' }
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
 it('starts the process at ready so its boot overlaps the typing, and once only', async () => {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -747,14 +851,15 @@ it('starts the process at ready so its boot overlaps the typing, and once only',
   expect(mock.spawn).not.toHaveBeenCalled()
   adapter.ready(handle)
   expect(mock.spawn).toHaveBeenCalledTimes(1)
-  // Booting is silent: the model announcement, and no turn, no state.
-  expect(events).toEqual([{ type: 'session_meta', model: null, providerSessionId: null }])
+  // Booting is silent: the model and mode announcements, and no turn, no state.
+  expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
+  expect(events[0]).toEqual({ type: 'session_meta', model: null, providerSessionId: null })
   expect(child.stdin.read()).toBeNull()
   adapter.ready(handle)
   adapter.write(handle, { type: 'user_message', text: 'Hello' })
   expect(mock.spawn).toHaveBeenCalledTimes(1)
   // The first message is working before the CLI has said a word.
-  expect(events.slice(1)).toEqual([
+  expect(events.slice(2)).toEqual([
     { type: 'user_message', text: 'Hello' },
     { type: 'state_change', state: 'working' }
   ])
@@ -982,7 +1087,7 @@ it('keeps a resumed past in main for the view to page, and streams none of it', 
       if (s.kind === 'event') events.push(s.event)
     })
     adapter.ready(handle)
-    expect(events.map((e) => e.type)).toEqual(['session_meta'])
+    expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
     const history = adapter.history(handle)
     expect(history.map((item) => item.event)).toEqual(
       [0, 1, 2].flatMap((i) => [
