@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   CheckIcon,
   ChevronRightIcon,
+  PencilSquareIcon,
   QuestionMarkCircleIcon,
   ShieldCheckIcon,
   XMarkIcon
@@ -186,13 +187,24 @@ function PermissionPrompt({
   )
 }
 
-/** The reader's reply to one question: the labels picked, or their own words. */
+/** The reader's reply to one question: the labels picked, a note on any of
+ *  them, or their own words. A note travels with its option ("Lint — only the
+ *  changed files"), so the agent reads the choice and the remark together. */
 interface Reply {
   picked: string[]
   other: string | null
+  notes?: Record<string, string>
 }
 const replyText = (reply: Reply | undefined): string =>
-  reply ? [...reply.picked, ...(reply.other?.trim() ? [reply.other.trim()] : [])].join(', ') : ''
+  reply
+    ? [
+        ...reply.picked.map((label) => {
+          const note = reply.notes?.[label]?.trim()
+          return note ? `${label} — ${note}` : label
+        }),
+        ...(reply.other?.trim() ? [reply.other.trim()] : [])
+      ].join(', ')
+    : ''
 
 function QuestionPrompt({
   request,
@@ -214,9 +226,16 @@ function QuestionPrompt({
   // Which way the page came in: forward swipes from the right, Back from the left.
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [replies, setReplies] = useState<Record<number, Reply>>({})
-  const otherInput = useRef<HTMLInputElement>(null)
-  const question = questions[step]
+  const otherInput = useRef<HTMLTextAreaElement>(null)
+  // The note field to focus once it has rendered, by its option's label.
+  const [noteFocus, setNoteFocus] = useState<string | null>(null)
+  /* A question the agent asked in words ends on a review of every reply
+     before anything is sent: one step past the last question. A plugin's
+     question, whose choice IS the answer, is sent on the choice. */
+  const reviewing = !!structured && step === questions.length
+  const question = questions[Math.min(step, questions.length - 1)]
   const reply = replies[step] ?? { picked: [], other: null }
+  const notes = reply.notes ?? {}
   const last = step === questions.length - 1
   const answered = replyText(reply) !== ''
   const skip = request.options.find((o) => isDeny(o.id))
@@ -236,29 +255,61 @@ function QuestionPrompt({
       if (option) onAnswer(request.id, option.id)
       return
     }
+    setDirection('forward')
+    setStep(questions.length)
+  }
+  const submit = (): void => (reviewing ? send() : advance(replies))
+  /** The replies, sent: each question's text → what the reader said to it. */
+  const send = (): void => {
+    if (busy) return
     const answers: Record<string, string> = {}
     questions.forEach((q, i) => {
-      const text = replyText(all[i])
+      const text = replyText(replies[i])
       if (text) answers[q.question] = text
     })
     onAnswer(request.id, 'answer', answers)
   }
-  const submit = (): void => advance(replies)
   /* A multi-select toggles and waits for Next; a single choice IS the answer,
-     so picking it moves on at once — no second click on Submit. */
+     so picking it moves on at once — no second click on Submit — unless the
+     option carries a note being written, which is a reply still in the making. */
   const pick = (label: string): void => {
     if (question.multiSelect) {
-      set({
-        ...reply,
-        picked: reply.picked.includes(label)
-          ? reply.picked.filter((l) => l !== label)
-          : [...reply.picked, label]
-      })
+      // Unticking an option drops its note with it.
+      if (reply.picked.includes(label)) {
+        const rest = { ...notes }
+        delete rest[label]
+        set({ ...reply, picked: reply.picked.filter((l) => l !== label), notes: rest })
+      } else set({ ...reply, picked: [...reply.picked, label] })
       return
     }
-    const next = { ...replies, [step]: { picked: [label], other: null } }
+    const kept = notes[label] !== undefined ? { [label]: notes[label] } : {}
+    const next = { ...replies, [step]: { picked: [label], other: null, notes: kept } }
     setReplies(next)
-    advance(next)
+    if (notes[label] === undefined) advance(next)
+  }
+  /** Open a note on an option: it is picked with it, and the field takes the caret. */
+  const openNote = (label: string): void => {
+    const picked = question.multiSelect
+      ? reply.picked.includes(label)
+        ? reply.picked
+        : [...reply.picked, label]
+      : [label]
+    const kept = question.multiSelect ? notes : {}
+    set({
+      picked,
+      other: question.multiSelect ? reply.other : null,
+      notes: { ...kept, [label]: notes[label] ?? '' }
+    })
+    setNoteFocus(label)
+  }
+  const writeNote = (label: string, text: string): void =>
+    set({ ...reply, notes: { ...notes, [label]: text } })
+  /** A note left empty closes when the caret leaves it. */
+  const closeEmptyNote = (label: string): void => {
+    if (notes[label]?.trim()) return
+    const rest = { ...notes }
+    delete rest[label]
+    set({ ...reply, notes: rest })
   }
   const back = (): void => {
     setDirection('back')
@@ -275,14 +326,27 @@ function QuestionPrompt({
       tabIndex={-1}
       className="chat-prompt-body"
       onKeyDown={(event) => {
-        if (busy || event.target === otherInput.current) {
-          if (event.key === 'Enter') {
+        if (busy || event.target instanceof HTMLTextAreaElement) {
+          // In the reader's own words (Other, or a note), Enter submits the
+          // answer and Shift+Enter is a new line in it.
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault()
             submit()
           }
           return
         }
         const n = Number(event.key)
+        if (reviewing) {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            send()
+          } else if (event.key === 'Escape' && skip) {
+            event.preventDefault()
+            event.stopPropagation()
+            onAnswer(request.id, skip.id)
+          }
+          return
+        }
         if (Number.isInteger(n) && n >= 1 && n <= choices + (structured ? 1 : 0)) {
           event.preventDefault()
           if (n <= choices) pick(question.options[n - 1].label)
@@ -297,81 +361,152 @@ function QuestionPrompt({
         }
       }}
     >
-      <div key={step} className="chat-prompt-page" data-direction={direction}>
-        <div className="chat-prompt-head">
-          {questions.length > 1 && (
-            <span className="chat-prompt-step">
-              {step + 1}/{questions.length}
-            </span>
-          )}
-          <span className="chat-prompt-title">{question.question}</span>
-          {skip && (
-            <button
-              type="button"
-              className="chat-turn-copy"
-              aria-label="Skip the question"
-              title="Skip (Esc)"
-              disabled={busy}
-              onClick={() => onAnswer(request.id, skip.id)}
-            >
-              <XMarkIcon />
-            </button>
-          )}
+      {reviewing ? (
+        <div key="review" className="chat-prompt-page" data-direction={direction}>
+          <div className="chat-prompt-head">
+            <span className="chat-prompt-title">Review your answers</span>
+          </div>
+          <dl className="chat-prompt-review">
+            {questions.map((q, i) => (
+              <div key={q.question} className="chat-prompt-review-item">
+                <dt>{q.question}</dt>
+                <dd>{replyText(replies[i]) || 'No answer'}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
-        <div
-          className="chat-prompt-options"
-          role={question.multiSelect ? 'group' : 'radiogroup'}
-          aria-label={question.header ?? question.question}
-        >
-          {question.options.map((option, index) => {
-            const selected = reply.picked.includes(option.label)
-            return (
+      ) : (
+        <div key={step} className="chat-prompt-page" data-direction={direction}>
+          <div className="chat-prompt-head">
+            {questions.length > 1 && (
+              <span className="chat-prompt-step">
+                {step + 1}/{questions.length}
+              </span>
+            )}
+            <span className="chat-prompt-title">
+              {question.question}
+              {question.multiSelect && <span className="chat-prompt-hint">Choose any</span>}
+            </span>
+            {skip && (
               <button
-                key={option.label}
                 type="button"
-                role={question.multiSelect ? 'checkbox' : 'radio'}
-                aria-checked={selected}
-                className="chat-prompt-option"
-                data-selected={selected ? 'true' : undefined}
+                className="chat-turn-copy"
+                aria-label="Skip the question"
+                title="Skip (Esc)"
                 disabled={busy}
-                onClick={() => pick(option.label)}
+                onClick={() => onAnswer(request.id, skip.id)}
+              >
+                <XMarkIcon />
+              </button>
+            )}
+          </div>
+          <div
+            className="chat-prompt-options"
+            role={question.multiSelect ? 'group' : 'radiogroup'}
+            aria-label={question.header ?? question.question}
+          >
+            {question.options.map((option, index) => {
+              const selected = reply.picked.includes(option.label)
+              const note = notes[option.label]
+              return (
+                <div
+                  key={option.label}
+                  className="chat-prompt-choice"
+                  data-noted={note !== undefined ? 'true' : undefined}
+                  data-multi={question.multiSelect ? 'true' : undefined}
+                >
+                  <button
+                    type="button"
+                    role={question.multiSelect ? 'checkbox' : 'radio'}
+                    aria-checked={selected}
+                    className="chat-prompt-option"
+                    data-selected={selected ? 'true' : undefined}
+                    data-multi={question.multiSelect ? 'true' : undefined}
+                    disabled={busy}
+                    onClick={() => pick(option.label)}
+                  >
+                    {/* A multi-select says so before anything is picked: every
+                      option carries its box, empty or ticked. */}
+                    {question.multiSelect && (
+                      <span className="chat-prompt-box" aria-hidden="true">
+                        {selected && <CheckIcon />}
+                      </span>
+                    )}
+                    <span className="chat-prompt-option-text">
+                      <span className="chat-prompt-option-label">{option.label}</span>
+                      {option.description && (
+                        <span className="chat-prompt-option-hint">{option.description}</span>
+                      )}
+                    </span>
+                    {selected && !question.multiSelect ? (
+                      <CheckIcon className="chat-prompt-check" />
+                    ) : (
+                      <Key>{index + 1}</Key>
+                    )}
+                  </button>
+                  {structured && note === undefined && (
+                    <button
+                      type="button"
+                      className="chat-prompt-note-btn"
+                      aria-label={`Add a note to ${option.label}`}
+                      title="Add a note"
+                      disabled={busy}
+                      onClick={() => openNote(option.label)}
+                    >
+                      <PencilSquareIcon />
+                    </button>
+                  )}
+                  {structured && note !== undefined && (
+                    <textarea
+                      ref={(el) => {
+                        if (el && noteFocus === option.label) {
+                          el.focus()
+                          setNoteFocus(null)
+                        }
+                      }}
+                      rows={1}
+                      className="chat-prompt-other chat-prompt-note"
+                      aria-label={`Note on ${option.label}`}
+                      placeholder="Add a note to this answer"
+                      value={note}
+                      disabled={busy}
+                      onChange={(event) => writeNote(option.label, event.target.value)}
+                      onBlur={() => closeEmptyNote(option.label)}
+                    />
+                  )}
+                </div>
+              )
+            })}
+            {structured && (
+              <label
+                className="chat-prompt-option"
+                data-selected={reply.other?.trim() ? 'true' : undefined}
               >
                 <span className="chat-prompt-option-text">
-                  <span className="chat-prompt-option-label">{option.label}</span>
-                  {option.description && (
-                    <span className="chat-prompt-option-hint">{option.description}</span>
-                  )}
+                  <span className="chat-prompt-option-label">Other</span>
+                  {/* A field that grows with the answer and wraps it, never a
+                    single line running out of the card. */}
+                  <textarea
+                    ref={otherInput}
+                    rows={1}
+                    className="chat-prompt-other"
+                    placeholder="Type your own answer"
+                    value={reply.other ?? ''}
+                    disabled={busy}
+                    onChange={(event) =>
+                      set({
+                        picked: question.multiSelect ? reply.picked : [],
+                        other: event.target.value
+                      })
+                    }
+                  />
                 </span>
-                {selected ? <CheckIcon className="chat-prompt-check" /> : <Key>{index + 1}</Key>}
-              </button>
-            )
-          })}
-          {structured && (
-            <label
-              className="chat-prompt-option"
-              data-selected={reply.other?.trim() ? 'true' : undefined}
-            >
-              <span className="chat-prompt-option-text">
-                <span className="chat-prompt-option-label">Other</span>
-                <input
-                  ref={otherInput}
-                  className="chat-prompt-other"
-                  placeholder="Type your own answer"
-                  value={reply.other ?? ''}
-                  disabled={busy}
-                  onChange={(event) =>
-                    set({
-                      picked: question.multiSelect ? reply.picked : [],
-                      other: event.target.value
-                    })
-                  }
-                />
-              </span>
-              <Key>{choices + 1}</Key>
-            </label>
-          )}
+                <Key>{choices + 1}</Key>
+              </label>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <div className="chat-prompt-actions">
         <span className="chat-prompt-spacer" />
         {step > 0 && (
@@ -394,10 +529,10 @@ function QuestionPrompt({
           type="button"
           className="chat-prompt-btn"
           data-primary="true"
-          disabled={busy || !answered}
+          disabled={busy || (!reviewing && !answered)}
           onClick={submit}
         >
-          {last ? 'Submit' : 'Next'}
+          {reviewing ? 'Send' : !last ? 'Next' : structured ? 'Review' : 'Submit'}
           <Key>↩</Key>
         </button>
       </div>
@@ -467,21 +602,23 @@ export function PermissionRow({ entry }: { entry: PermissionEntry }): React.JSX.
       ? [request.toolName, target].filter(Boolean).join(' ')
       : request.description
   const answers = entry.answers ? Object.values(entry.answers).join('; ') : null
-  const status = entry.answeredElsewhere
-    ? 'No longer awaiting an answer'
-    : !entry.answer
-      ? question
-        ? 'Waiting for your answer'
-        : 'Waiting for your approval'
-      : question
-        ? isDeny(entry.answer)
-          ? 'Skipped'
-          : 'Answered'
-        : chosen
+  // An answer on the entry is the truth, whatever the kernel said meanwhile.
+  const status =
+    entry.answeredElsewhere && !entry.answer
+      ? 'No longer awaiting an answer'
+      : !entry.answer
+        ? question
+          ? 'Waiting for your answer'
+          : 'Waiting for your approval'
+        : question
+          ? isDeny(entry.answer)
+            ? 'Skipped'
+            : 'Answered'
+          : chosen
   return (
     <div
       className="chat-permission-row"
-      data-state={entry.answeredElsewhere ? 'elsewhere' : entry.answer ? 'answered' : 'waiting'}
+      data-state={entry.answer ? 'answered' : entry.answeredElsewhere ? 'elsewhere' : 'waiting'}
       data-kind={question ? 'question' : 'permission'}
       role="status"
     >

@@ -384,3 +384,51 @@ export function sectionLanguage(
 function extension(path: string): string | undefined {
   return /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase()
 }
+
+/** The Terminal view's title for a run, one sentence whatever its length:
+ *  "Read 1 file", "Read 2 files, ran 5 commands". Unlike `toolGroupSummary`, a
+ *  lone call is counted like any other, so a run of one and a run of ten read
+ *  and open the same way; the call itself is one level down. Parts come in the
+ *  order their kind first appears, every call of a kind counted in one part. */
+export function runTitle(tools: ToolEntry[]): string {
+  const counts = new Map<
+    string,
+    { kind: ToolKind; count: number; files: Set<string>; named: boolean }
+  >()
+  for (const tool of tools) {
+    const { kind, target } = describeToolHead(tool)
+    const entry = counts.get(kind) ?? { kind, count: 0, files: new Set<string>(), named: true }
+    entry.count += 1
+    if (target) entry.files.add(target)
+    else entry.named = false
+    counts.set(kind, entry)
+  }
+  const plural = (n: number, one: string, many = `${one}s`): string =>
+    `${n} ${n === 1 ? one : many}`
+  const parts = [...counts.values()].map(({ kind, count, files, named }) => {
+    // A file read or edited twice is still one file; a call that named no file
+    // makes the part count calls, so it never claims fewer files than there were.
+    const onFiles = (verb: string): string =>
+      named ? `${verb} ${plural(files.size, 'file')}` : `${verb} ${plural(count, 'time')}`
+    switch (kind) {
+      case 'read':
+        return onFiles('read')
+      case 'edit':
+        return onFiles('edited')
+      case 'command':
+        return `ran ${plural(count, 'command')}`
+      case 'search':
+        return `ran ${plural(count, 'search', 'searches')}`
+      case 'skill':
+        return `loaded ${plural(count, 'skill')}`
+      case 'web':
+        return `made ${plural(count, 'web request')}`
+      case 'agent':
+        return `ran ${plural(count, 'subagent')}`
+      default:
+        return `used ${plural(count, 'tool')}`
+    }
+  })
+  const sentence = parts.join(', ')
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1)
+}

@@ -86,6 +86,9 @@ vi.mock('./sessions/adapters/echo-adapter', () => ({
   }
 }))
 vi.mock('./sessions/chat-model-default', () => ({ rememberedChatModel: mocks.remembered }))
+vi.mock('./sessions/chat-view-default', () => ({
+  initialChatView: (profileDefault: string | undefined) => profileDefault
+}))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
 vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({

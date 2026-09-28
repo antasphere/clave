@@ -28,8 +28,9 @@ import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { useStickyQuestions } from './sticky-questions'
+import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
-import { ToolGroup } from './ToolGroup'
+import { TerminalTools } from './TerminalTools'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
@@ -372,13 +373,24 @@ const EntryRow = memo(function EntryRow({
       >
         <Attachments files={entry.attachments ?? []} />
         {entry.text.trim() !== '' && (
-          <article
-            className="chat-turn"
-            data-role="user"
-            data-interrupted={entry.interrupted ? 'true' : undefined}
-          >
-            {entry.text.replace(/\s+$/, '')}
-          </article>
+          // The message is capped in height and scrolls inside past it; the
+          // grip on its bottom edge moves the cap (question-height.ts).
+          <div className="term-question">
+            <article
+              className="chat-turn"
+              data-role="user"
+              data-interrupted={entry.interrupted ? 'true' : undefined}
+            >
+              {entry.text.replace(/\s+$/, '')}
+            </article>
+            <div
+              className="term-question-grip"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize long messages"
+              title="Drag to show more or less of long messages · double-click to reset"
+            />
+          </div>
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
         <TurnMeta at={entry.at} text={entry.text} />
@@ -428,11 +440,13 @@ const EntryRow = memo(function EntryRow({
     )
   return null
 })
-/** A run of tools, re-rendered only when one of its calls changed: the run is
- *  rebuilt by `groupEntries` on every render, its calls are not. */
+/** A run of tools, re-rendered only when one of its calls changed or it
+ *  stops or starts being the run in flight: the run is rebuilt by
+ *  `groupEntries` on every render, its calls are not. */
 const ToolRow = memo(
-  ToolGroup,
-  (a: { group: ToolRun }, b: { group: ToolRun }) =>
+  TerminalTools,
+  (a: { group: ToolRun; live: boolean }, b: { group: ToolRun; live: boolean }) =>
+    a.live === b.live &&
     a.group.id === b.group.id &&
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
@@ -445,7 +459,7 @@ const terminalModeLabel = (option: PermissionModeOption): string =>
 const PIN_KEY = 'clave-terminal-pin-questions'
 /** What a click lands on when it means something other than "type here". */
 const INTERACTIVE =
-  'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [contenteditable="true"]'
+  'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [role="separator"], [contenteditable="true"]'
 type TurnRows = { key: string; block: Entry | ToolRun }[]
 /** One exchange as the virtualiser mounts it: the section stays whole inside
  *  its row, so the pinned question stays sticky within its own exchange. An
@@ -455,11 +469,14 @@ function TerminalTurn({
   rows,
   first,
   arriving,
+  liveRun,
   onError
 }: {
   rows: TurnRows
   first: boolean
   arriving: boolean
+  /** The key of the run in flight, if it is in this exchange (`TerminalTools`). */
+  liveRun: string | undefined
   onError: (error: unknown) => void
 }): React.JSX.Element {
   const [arrive] = useState(arriving)
@@ -472,7 +489,7 @@ function TerminalTurn({
       <section className="term-turn">
         {rows.map(({ block, key }) =>
           block.kind === 'tool-group' ? (
-            <ToolRow key={key} group={block} />
+            <ToolRow key={key} group={block} live={key === liveRun} />
           ) : (
             <EntryRow key={key} entry={block} onError={onError} />
           )
@@ -842,9 +859,17 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
       localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
       return !value
     })
+  useQuestionHeight(transcript.scroll)
   useStickyQuestions(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
+  // The run in flight: the last one, while the turn it belongs to still runs
+  // (a permission it waits on included). Every other run is finished, result
+  // or not.
+  const liveRun =
+    state === 'working' || state === 'blocked'
+      ? blocks.findLast(({ block }) => block.kind === 'tool-group' || block.kind === 'user')?.key
+      : undefined
   return (
     <div
       className="chat-view terminal-view"
@@ -854,7 +879,10 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
         // A click on nothing in particular goes to the prompt; one on anything
         // that does something, or one that ends a text selection, does not.
         if (closed || window.getSelection()?.toString()) return
-        if ((event.target as Element).closest(INTERACTIVE)) return
+        // Nor one in the question dock: its keys (1-9, Enter, Esc) are the
+        // dock's while it is up, and a click on its words must not hand them
+        // to the prompt.
+        if ((event.target as Element).closest(`${INTERACTIVE}, .chat-prompt`)) return
         textarea.current?.focus()
       }}
       onKeyDown={(event) => {
@@ -916,6 +944,7 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
                     rows={turn.rows}
                     first={index === 0}
                     arriving={arriving}
+                    liveRun={liveRun}
                     onError={report}
                   />
                 )}

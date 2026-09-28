@@ -1,18 +1,10 @@
 import { useState } from 'react'
 import {
   ArrowPathIcon,
-  BookOpenIcon,
   CheckIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
-  CommandLineIcon,
-  CpuChipIcon,
-  DocumentTextIcon,
-  ExclamationTriangleIcon,
-  GlobeAltIcon,
-  MagnifyingGlassIcon,
-  PencilSquareIcon,
-  WrenchIcon
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
 import {
@@ -36,19 +28,9 @@ import {
 } from './tools'
 import { ChatCode } from './code'
 import { useDisclosure } from './disclosure'
+import { KIND_ICONS } from './tool-icons'
 
 const stringify = (value: unknown): string => (typeof value === 'string' ? value : safeJson(value))
-
-const KIND_ICONS: Record<ToolKind, typeof WrenchIcon> = {
-  read: DocumentTextIcon,
-  search: MagnifyingGlassIcon,
-  edit: PencilSquareIcon,
-  command: CommandLineIcon,
-  skill: BookOpenIcon,
-  web: GlobeAltIcon,
-  agent: CpuChipIcon,
-  other: WrenchIcon
-}
 
 /** The glyph a row opens with: what kind of call it was, until something is
  *  still running (a spinner) or failed (the warning), which the reader needs
@@ -154,7 +136,7 @@ function Preview({
 
 /** What one call actually did, the atomic view: a framed panel headed by its
  *  kind, the command or target as code, then what came back. */
-function ToolPanel({ tool }: { tool: ToolEntry }): React.JSX.Element {
+export function ToolPanel({ tool }: { tool: ToolEntry }): React.JSX.Element {
   const description = describeTool(tool)
   const { kind, target } = description
   const sections =
