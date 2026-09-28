@@ -76,6 +76,16 @@ export const SetModelSchema = z.object({
   model: z.string().nullable()
 })
 export type SetModel = z.infer<typeof SetModelSchema>
+/** Switch how the agent asks before it acts (Claude's Shift+Tab cycle): one of
+ *  the ids the session's last `permission_mode` event offered. */
+export const SetPermissionModeSchema = z.object({
+  type: z.literal('set_permission_mode'),
+  mode: z.string()
+})
+/** One permission mode a session can be switched to, in the provider's own
+ *  vocabulary (`id`) and as the reader reads it (`label`). */
+export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.string() })
+export type PermissionModeOption = z.infer<typeof PermissionModeOptionSchema>
 /** One question an agent asks the reader mid-turn (Claude's AskUserQuestion). */
 export const AgentQuestionSchema = z.object({
   question: z.string(),
@@ -88,7 +98,8 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   UserMessageInputSchema,
   PermissionResponseSchema,
   InterruptSchema,
-  SetModelSchema
+  SetModelSchema,
+  SetPermissionModeSchema
 ])
 /** One model a provider offers a live session, as the view lists it. */
 export const ModelOptionSchema = z.object({
@@ -127,7 +138,15 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
   UserMessageSchema,
   z.object({ type: z.literal('assistant_text'), delta: z.string(), final: z.boolean() }),
-  z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), input: z.unknown() }),
+  z.object({
+    type: z.literal('tool_call'),
+    id: z.string(),
+    name: z.string(),
+    input: z.unknown(),
+    /** The call that started the subagent making this one, when a subagent
+     *  made it (Claude's `parent_tool_use_id`); absent on the main thread. */
+    parent: z.string().optional()
+  }),
   /* `error` is the adapter's word that the tool FAILED, never the view's guess.
      Optional because an adapter that cannot tell says nothing, and an absent
      flag means "not known to have failed" rather than "succeeded". */
@@ -161,6 +180,26 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
+  /** How full the conversation's context is (or, with `parent`, a subagent's):
+   *  the tokens its last call read and wrote, and the model's window once the
+   *  provider has named it. The
+   *  provider's raw frames stay in main, so this is the only way a view can
+   *  know it. */
+  z.object({
+    type: z.literal('context_usage'),
+    used: z.number(),
+    window: z.number().nullable(),
+    /** A subagent's own context, named by the call that started it. */
+    parent: z.string().optional()
+  }),
+  /** The mode the session is in and the modes it may be switched to; sent at
+   *  ready and again whenever the provider reports a change. A provider with
+   *  no modes never sends it, and a view shows no switch. */
+  z.object({
+    type: z.literal('permission_mode'),
+    mode: z.string(),
+    modes: z.array(PermissionModeOptionSchema)
+  }),
   /* Everything still running in the background, whole, each time it changes:
      a snapshot replaces the last one, and an empty list means nothing is. */
   z.object({ type: z.literal('background_tasks'), tasks: z.array(BackgroundTaskSchema) }),

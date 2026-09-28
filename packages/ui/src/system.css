@@ -3865,6 +3865,18 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
 }
 
+/* The footer's right end: the permission-mode chip, then the model's. */
+.chat-composer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  min-width: 0;
+}
+/* Bypass reads as a warning while it is on: nothing asks before acting. */
+.chat-model-trigger[data-mode='bypassPermissions'] {
+  color: var(--color-warning);
+}
+
 /* The model picker: a quiet chip on the footer line that opens a menu ABOVE
    it, the menu's right edge on the chip's right edge (the chip sits at the
    column's end, so that is the edge the eye lines up). */
@@ -4007,6 +4019,402 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   height: calc(var(--spacing) * 3);
 }
 
+/* ── Terminal view ────────────────────────────────────────────────────────
+   The chat view's third reading, after Claude Code's TUI: a wider column, the
+   prompt between two rules with the send button kept at its right end, the
+   files above the upper rule, a status line under the lower one (folder,
+   model, context, then the permission mode), and the running subagents
+   stacked below it. The transcript keeps the chat's markdown and tool rows,
+   a touch larger; the reader's turns sit at the left like everything else,
+   boxed by a hairline and marked with a caret. Each exchange is a section,
+   so its question can stay pinned at the top while the answer scrolls under
+   it. Everything is scoped to .terminal-view, so Chat and Compact are
+   untouched. */
+.terminal-view {
+  --chat-column: var(--container-6xl);
+}
+.terminal-view .chat-prose {
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+}
+.terminal-view .chat-turn-wrap[data-side='end'] {
+  align-items: stretch;
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
+  justify-content: flex-start;
+  max-width: none;
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn-meta {
+  right: auto;
+  left: 0;
+}
+.terminal-view .chat-turn[data-role='user'] {
+  position: relative;
+  max-width: none;
+  padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3.5) calc(var(--spacing) * 2.5)
+    calc(var(--spacing) * 8);
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-control);
+  background-color: var(--surface-100);
+  font-size: calc(var(--text-sm) + var(--spacing) / 4);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.terminal-view .chat-turn[data-role='user']::before {
+  content: '❯';
+  position: absolute;
+  left: calc(var(--spacing) * 3);
+  top: calc(var(--spacing) * 2.5);
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+/* An exchange: the question and everything answering it, spaced like the
+   column, and arriving the way the column's own blocks do. */
+.term-turn {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 5);
+}
+.term-turn > * {
+  transition:
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--spacing);
+  }
+}
+/* The question stays pinned while its answer scrolls (sticky-questions.ts):
+   the message row itself is sticky within its section, and folds to its first
+   line by a clip from the bottom (--fold), so its place in the flow never
+   changes. Its files sit under the text, so they fold away first. The browser's scroll
+   anchoring is off here: it would chase the folding row. */
+.terminal-view[data-pin] .chat-scroll {
+  overflow-anchor: none;
+}
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'] {
+  position: sticky;
+  top: calc(var(--spacing) * 3);
+  z-index: 5;
+}
+/* The strip above a pinned question shows nothing: the transcript is cut
+   there, by a mask on the scroller rather than a band painted over it. */
+.terminal-view .chat-scroll {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent calc(var(--spacing) * 3),
+    black calc(var(--spacing) * 3)
+  );
+}
+/* Room under the last turn, so the conversation can be scrolled up off the
+   prompt a little. */
+.terminal-view .chat-column {
+  padding-bottom: calc(var(--spacing) * 16);
+}
+.terminal-view .term-composer-wrap {
+  padding-top: 0;
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
+  /* Opaque, since the answer scrolls under it: the tint over the ground. */
+  background-color: var(--surface-0);
+  background-image: linear-gradient(var(--surface-100), var(--surface-100));
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
+  order: 1;
+  margin: calc(var(--spacing) * 1.5) 0 0;
+}
+.terminal-view .chat-turn-wrap[data-folded] {
+  clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
+  cursor: pointer;
+}
+/* The folded box's bottom edge: a tight foot in the box's own colour (its
+   tint over the ground), so the lines it folds away pass under a clean edge
+   and none of the next one shows. Its height is FOLDED_FOOT of the message's
+   bottom padding in sticky-questions.ts. */
+.terminal-view .chat-turn-wrap[data-folded]::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--fold, 0);
+  height: calc(var(--spacing) * 1.5 + var(--spacing) / 4);
+  border: thin solid var(--border-subtle-color);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  background-color: var(--surface-0);
+  background-image: linear-gradient(var(--surface-100), var(--surface-100));
+}
+.terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
+  display: none;
+}
+
+/* The prompt: two rules, the caret, the field, the send button at the end. */
+.term-composer-wrap {
+  font-family: var(--font-mono);
+}
+.term-files {
+  padding: 0 0 calc(var(--spacing) * 2);
+}
+.term-prompt {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 2) 0;
+  border-top: thin solid var(--color-border);
+  border-bottom: thin solid var(--color-border);
+  transition: border-color var(--default-transition-duration);
+}
+.term-prompt:focus-within {
+  border-color: var(--text-tertiary);
+}
+.term-prompt[data-dragging='true'] {
+  border-color: var(--color-accent);
+}
+.term-caret {
+  flex-shrink: 0;
+  padding-top: calc(var(--spacing) * 1.25);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.term-prompt textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-h-md);
+  max-height: calc(var(--spacing) * 48);
+  padding: calc(var(--spacing) * 1.25) 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+  field-sizing: content;
+  overflow-y: auto;
+}
+.term-prompt textarea::placeholder {
+  color: var(--text-tertiary);
+}
+.term-prompt textarea:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.term-prompt .chat-send {
+  margin: calc(var(--spacing) / 2) 0 0;
+}
+
+/* The status line under the prompt: one row, colour-coded like the TUI's,
+   the model and the mode clickable. */
+.term-status {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  min-height: var(--control-h-sm);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.term-status .chat-composer-tool[data-active] {
+  color: var(--color-accent);
+}
+.term-status-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.term-dim {
+  color: var(--text-tertiary);
+}
+.term-cwd {
+  color: var(--color-term-cwd);
+}
+.term-status .chat-model-trigger {
+  padding: 0 var(--spacing);
+  font-family: inherit;
+}
+.term-model .chat-model-trigger {
+  color: var(--color-term-model);
+}
+.term-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+/* The permission mode reads by colour and glyph: the modes that ask stay
+   grey, plan is blue, auto orange, YOLO red. */
+.term-mode .chat-model-trigger {
+  color: var(--text-secondary);
+}
+.term-mode .chat-model-trigger::before {
+  letter-spacing: calc(var(--spacing) / -4);
+}
+.term-mode[data-mode='acceptEdits'] .chat-model-trigger::before,
+.term-mode[data-mode='auto'] .chat-model-trigger::before {
+  content: '▸▸';
+}
+.term-mode[data-mode='plan'] .chat-model-trigger {
+  color: var(--color-status-working);
+}
+.term-mode[data-mode='plan'] .chat-model-trigger::before {
+  content: '∥';
+}
+.term-mode[data-mode='auto'] .chat-model-trigger {
+  color: var(--color-term-auto);
+}
+.term-mode[data-mode='bypassPermissions'] .chat-model-trigger {
+  color: var(--color-destructive);
+}
+.term-mode[data-mode='bypassPermissions'] .chat-model-trigger::before {
+  content: '▸▸▸';
+}
+/* The bar's chips hold still under the finger: a press that shrinks the
+   trigger moves the edge its menu is anchored to as the menu opens. */
+.term-status .chat-model-trigger:active:not(:disabled) {
+  scale: none;
+}
+.term-status .chat-model-trigger:hover,
+.term-status .chat-model-trigger[data-state='open'] {
+  background-color: var(--surface-100);
+}
+
+/* Context: a hatched track and its fill, then the count. */
+.term-context {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.term-context-bar {
+  position: relative;
+  display: inline-block;
+  inline-size: calc(var(--spacing) * 32);
+  block-size: calc(var(--spacing) * 2.5);
+  overflow: hidden;
+  border-radius: calc(var(--spacing) / 2);
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklch, var(--color-term-model) 30%, transparent) 0 calc(var(--spacing) / 2),
+    transparent calc(var(--spacing) / 2) var(--spacing)
+  );
+}
+.term-context-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  background-color: var(--color-term-model);
+  transition: inline-size var(--default-transition-duration) var(--ease-out-expo);
+}
+.term-context-bar[data-level='mid'] .term-context-fill {
+  background-color: var(--color-warning);
+}
+.term-context-bar[data-level='high'] .term-context-fill {
+  background-color: var(--color-destructive);
+}
+
+/* The subagents, stacked under the status line while they run. Each row
+   folds open as its agent starts and shut as it ends (a grid track going
+   from 0fr to 1fr), and the stack's own rule and room go with its last row. */
+.term-agents {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: calc(var(--spacing) * 2);
+  padding-top: calc(var(--spacing) * 2);
+  border-top: thin dashed var(--border-subtle-color);
+  font-size: var(--text-xs);
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    padding-top: 0;
+    border-color: transparent;
+    opacity: 0;
+  }
+}
+.term-agents[data-empty] {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  padding-top: 0;
+  border-color: transparent;
+  opacity: 0;
+}
+.term-agents-list {
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 calc(var(--spacing) * 2);
+  list-style: none;
+}
+.term-agent {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.term-agent[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.term-agent-row {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) / 4) 0;
+  white-space: nowrap;
+}
+.term-agent-dot {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 1.5);
+  block-size: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: var(--color-status-working);
+  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+}
+.term-agent[data-background] .term-agent-dot {
+  background-color: var(--color-term-mode);
+}
+.term-agent-type {
+  flex-shrink: 0;
+  color: var(--color-term-model);
+}
+.term-agent-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.term-agent-action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+}
+.term-agent-action::before {
+  content: '⎿ ';
+}
+.term-agent-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
 /* Reduced motion, the conversation views: the fades stay, since a thing that
    appears from nothing reads as broken either way; the travel goes. */
 @media (prefers-reduced-motion: reduce) {
@@ -4027,7 +4435,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     animation-name: scrim-in;
   }
   .chat-turn-copy[data-copied='true'] svg,
-  .chat-send svg {
+  .chat-send svg,
+  .term-agent-dot {
     animation: none;
     transition-property: opacity;
   }

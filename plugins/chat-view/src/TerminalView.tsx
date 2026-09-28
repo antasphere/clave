@@ -1,3 +1,5 @@
+/** The Terminal view: a third reading of a session, started as a copy of
+ *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -8,20 +10,24 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ClipboardDocumentIcon,
+  MapPinIcon,
   PaperClipIcon,
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type {
-  Session,
+  PermissionModeOption,
+  SessionEvent,
   SessionInput,
-  AgentState,
   ModelOption,
   CommandOption
 } from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { nextPermissionMode } from './permission-mode'
+import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
+import { ContextMeter, SubAgentStack } from './TerminalStatus'
+import { useStickyQuestions } from './sticky-questions'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -51,11 +57,8 @@ import {
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import type { ChatViewProps } from './ChatView'
 
-export interface ChatViewProps {
-  session: Session
-  onState: (state: AgentState, model: string | null) => void
-}
 /** A file on its way into the composer: named at once, a chip once main has
  *  prepared it, an error in its place when main refused it. */
 interface Preparation {
@@ -301,7 +304,11 @@ function ModelMenu({
           title="Change model"
           disabled={disabled}
         >
-          <span className="chat-model-trigger-label">{current?.label ?? model ?? 'Default'}</span>
+          <span className="chat-model-trigger-label">
+            {/* The bar names the model; the menu keeps the provider's gloss
+                ("Default (recommended)"), the bar does not. */}
+            {(current?.label ?? model ?? 'Default').replace(/\s*\([^)]*\)\s*$/, '')}
+          </span>
           <ChevronDownIcon />
         </button>
       </DropdownMenu.Trigger>
@@ -427,11 +434,25 @@ const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
-export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
+/** The Terminal view's names for the permission modes where they differ
+ *  from the provider's: bypass is YOLO here, short and unmistakable. */
+const terminalModeLabel = (option: PermissionModeOption): string =>
+  option.id === 'bypassPermissions' ? 'YOLO' : option.label
+/** Where the reader's choice to pin questions is kept, across sessions. */
+const PIN_KEY = 'clave-terminal-pin-questions'
+/** What a click lands on when it means something other than "type here". */
+const INTERACTIVE =
+  'a, button, input, textarea, select, summary, label, [role="button"], [role="menuitem"], [role="menu"], [role="dialog"], [contenteditable="true"]'
+export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
   })
+  // The status line's own reading of the same stream: context and subagents.
+  const [status, dispatchStatus] = useReducer(
+    (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
+    emptyStatus
+  )
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -469,7 +490,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   useEffect(() => {
     let live = true
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
-      if (value.kind === 'event') dispatch({ event: value.event })
+      if (value.kind !== 'event') return
+      dispatch({ event: value.event })
+      dispatchStatus(value.event)
     })
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
       dispatch({ exit: code })
@@ -487,6 +510,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             if (!live) return
             dispatch({ prepend: page.items })
             setBefore(page.before)
+            // The newest page holds the context as the conversation left it.
+            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+            if (usage) dispatchStatus(usage.event)
           })
           .catch(() => {})
           .finally(() => {
@@ -746,12 +772,37 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
   }, [conversation.entries, conversation.first])
+  // One section per exchange: the reader's message and everything answering
+  // it, so a pinned question is carried off by its own section's end.
+  const turns = useMemo(() => {
+    const out: { key: string; rows: typeof blocks }[] = []
+    for (const row of blocks) {
+      if (row.block.kind === 'user' || !out.length) out.push({ key: row.key, rows: [] })
+      out[out.length - 1].rows.push(row)
+    }
+    return out
+  }, [blocks])
+  const [pinQuestions, setPinQuestions] = useState(() => localStorage.getItem(PIN_KEY) !== 'off')
+  const togglePin = (): void =>
+    setPinQuestions((value) => {
+      localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
+      return !value
+    })
+  useStickyQuestions(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   return (
     <div
-      className="chat-view"
-      data-testid="chat-view"
+      className="chat-view terminal-view"
+      data-testid="terminal-view"
+      data-pin={pinQuestions || undefined}
+      onClick={(event) => {
+        // A click on nothing in particular goes to the prompt; one on anything
+        // that does something, or one that ends a text selection, does not.
+        if (closed || window.getSelection()?.toString()) return
+        if ((event.target as Element).closest(INTERACTIVE)) return
+        textarea.current?.focus()
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && state === 'working') {
           event.preventDefault()
@@ -801,13 +852,17 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
                 </div>
               </div>
             )}
-            {blocks.map(({ block, key }) =>
-              block.kind === 'tool-group' ? (
-                <ToolRow key={key} group={block} />
-              ) : (
-                <EntryRow key={key} entry={block} onError={report} />
-              )
-            )}
+            {turns.map((turn) => (
+              <section key={turn.key} className="term-turn">
+                {turn.rows.map(({ block, key }) =>
+                  block.kind === 'tool-group' ? (
+                    <ToolRow key={key} group={block} />
+                  ) : (
+                    <EntryRow key={key} entry={block} onError={report} />
+                  )
+                )}
+              </section>
+            ))}
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
               <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />
@@ -817,7 +872,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         {earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
-      <div className="chat-composer-wrap">
+      <div className="chat-composer-wrap term-composer-wrap">
         {resuming && (
           <ResumePicker
             cwd={session.cwd}
@@ -849,53 +904,58 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             />
           </div>
         )}
+        {(attachments.length > 0 || preparations.length > 0) && (
+          <div className="chat-composer-files term-files">
+            <Attachments
+              files={attachments}
+              imagesSupported={imagesSupported}
+              onChange={setAttachments}
+            />
+            {preparations.length > 0 && (
+              <ul className="chat-attachments" aria-label="Preparing files">
+                {preparations.map((item) => (
+                  <li
+                    key={item.id}
+                    className="chat-attachment"
+                    data-issue={item.error ? 'true' : undefined}
+                  >
+                    <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
+                      <span className="chat-attachment-name">{item.name}</span>
+                      <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="chat-turn-copy"
+                      aria-label={`Remove ${item.name}`}
+                      title="Remove"
+                      onClick={() => withdraw(item.id)}
+                    >
+                      <XMarkIcon />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <form
-          className="chat-composer"
+          className="term-prompt"
           data-dragging={dragging === 'paths' ? 'true' : undefined}
           onSubmit={(event) => {
             event.preventDefault()
             void send()
           }}
         >
-          {(attachments.length > 0 || preparations.length > 0) && (
-            <div className="chat-composer-files">
-              <Attachments
-                files={attachments}
-                imagesSupported={imagesSupported}
-                onChange={setAttachments}
-              />
-              {preparations.length > 0 && (
-                <ul className="chat-attachments" aria-label="Preparing files">
-                  {preparations.map((item) => (
-                    <li
-                      key={item.id}
-                      className="chat-attachment"
-                      data-issue={item.error ? 'true' : undefined}
-                    >
-                      <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
-                        <span className="chat-attachment-name">{item.name}</span>
-                        <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
-                      </span>
-                      <button
-                        type="button"
-                        className="chat-turn-copy"
-                        aria-label={`Remove ${item.name}`}
-                        title="Remove"
-                        onClick={() => withdraw(item.id)}
-                      >
-                        <XMarkIcon />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+          <span className="term-caret" aria-hidden="true">
+            ❯
+          </span>
           <textarea
             ref={textarea}
             rows={1}
             aria-label="Message"
-            placeholder={state === 'ended' ? 'This session has ended' : 'Write a message…'}
+            placeholder={
+              state === 'ended' ? 'This session has ended' : 'Try "fix typecheck errors"'
+            }
             value={draft}
             disabled={closed}
             onChange={(event) => setDraft(event.target.value)}
@@ -970,8 +1030,57 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             <StopIcon data-glyph="stop" />
           </button>
         </form>
-        <div className="chat-composer-footer">
-          <span className="chat-composer-hint">
+        <div className="term-status">
+          <span className="term-cwd" title={session.cwd}>
+            {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
+          </span>
+          <span className="term-model">
+            <ModelMenu
+              sessionId={session.id}
+              model={conversation.model}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+            />
+          </span>
+          {conversation.permissionMode && (
+            <span className="term-mode" data-mode={conversation.permissionMode.mode}>
+              <PermissionModeMenu
+                mode={conversation.permissionMode.mode}
+                modes={conversation.permissionMode.modes}
+                disabled={closed}
+                label={terminalModeLabel}
+                onSelect={(id) =>
+                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
+                }
+              />
+            </span>
+          )}
+          <ContextMeter
+            used={status.contextUsed}
+            window={
+              status.contextWindow ??
+              // The window is named by a turn's result; until one has come, a
+              // model the CLI calls "[1m]" says it for itself.
+              (conversation.model?.includes('[1m]') ? 1_000_000 : null)
+            }
+          />
+          {status.agents.length > 0 && (
+            <span className="term-dim">
+              · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}
+            </span>
+          )}
+          <span className="term-status-end">
+            <button
+              type="button"
+              className="chat-composer-tool"
+              aria-label="Pin the question while its answer scrolls"
+              aria-pressed={pinQuestions}
+              title={pinQuestions ? 'Questions pinned while their answer scrolls' : 'Pin questions'}
+              data-active={pinQuestions || undefined}
+              onClick={() => togglePin()}
+            >
+              <MapPinIcon />
+            </button>
             <button
               type="button"
               className="chat-composer-tool"
@@ -987,29 +1096,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             >
               <PaperClipIcon />
             </button>
-            {state === 'working'
-              ? 'Esc to interrupt and take the message back'
-              : 'Enter to send · Shift+Enter for a new line'}
           </span>
-          <div className="chat-composer-controls">
-            {conversation.permissionMode && (
-              <PermissionModeMenu
-                mode={conversation.permissionMode.mode}
-                modes={conversation.permissionMode.modes}
-                disabled={closed}
-                onSelect={(id) =>
-                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                }
-              />
-            )}
-            <ModelMenu
-              sessionId={session.id}
-              model={conversation.model}
-              disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
-            />
-          </div>
         </div>
+        <SubAgentStack agents={status.agents} />
       </div>
     </div>
   )

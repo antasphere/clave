@@ -1,4 +1,9 @@
-import type { AgentState, HistoryItem, SessionEvent } from '../../../src/shared/session-model'
+import type {
+  AgentState,
+  HistoryItem,
+  PermissionModeOption,
+  SessionEvent
+} from '../../../src/shared/session-model'
 import type { Attachment } from '../../../src/shared/attachments'
 
 export type ChatEvent = SessionEvent
@@ -57,9 +62,18 @@ export interface Conversation {
   first: number
   state: AgentState
   model: string | null
+  /** The mode the agent asks in and the modes it can switch to; null for a
+   *  provider that has none, and the view shows no switch. */
+  permissionMode: { mode: string; modes: PermissionModeOption[] } | null
   exitCode?: number
 }
-export const emptyConversation: Conversation = { entries: [], first: 0, state: 'idle', model: null }
+export const emptyConversation: Conversation = {
+  entries: [],
+  first: 0,
+  state: 'idle',
+  model: null,
+  permissionMode: null
+}
 export type Action =
   | { event: ChatEvent; at?: number }
   | { answer: string; optionId: string; answers?: Record<string, string> }
@@ -162,6 +176,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       return { ...state, entries, state: 'blocked' }
     case 'session_meta':
       return { ...state, model: event.model }
+    case 'permission_mode':
+      return { ...state, permissionMode: { mode: event.mode, modes: event.modes } }
     case 'error':
       entries.push({ kind: 'error', message: event.message, at })
       return { ...state, entries, state: event.fatal ? 'ended' : state.state }

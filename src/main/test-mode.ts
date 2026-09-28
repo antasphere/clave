@@ -25,6 +25,12 @@
  */
 export const TEST_NO_ACTIVATE = process.argv.includes('--test-no-activate')
 
+/** True when the instance runs on a profile of its own (`--user-data-dir`, see
+ *  `user-data-override.ts`). The folders that are otherwise the machine's, the
+ *  `~/.clave` plugins and skins, follow the profile too, so a dev instance
+ *  beside the installed app never rewrites the installed app's plugin grants. */
+export const OWN_PROFILE = process.argv.some((arg) => arg.startsWith('--user-data-dir'))
+
 /**
  * `--test-version=<semver>`: the version the app REPORTS itself to be, for the
  * updater's channel logic only, and only under `--test-no-activate`.
