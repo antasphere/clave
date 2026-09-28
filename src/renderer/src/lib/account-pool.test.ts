@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isExhausted, pickAccount, switchTargets } from './account-pool'
+import { explicitAccountId, isExhausted, pickAccount, switchTargets } from './account-pool'
 import type { AccountUsageSummary } from '../store/usage-store'
 
 function used(
@@ -9,6 +9,17 @@ function used(
   return {
     status: 'ready',
     error: null,
+    windows: [
+      {
+        key: 'session',
+        label: 'Current session (5h)',
+        kind: 'session',
+        scope: null,
+        usedPercentage: percent,
+        resetsAt: null,
+        severity: null
+      }
+    ],
     tightest: {
       key: 'session',
       label: 'Current session (5h)',
@@ -33,6 +44,14 @@ const accounts = [
  * The rule that decides which subscription pays (ADR 0002). Every branch is
  * a wrong subscription when it is wrong, so each is pinned.
  */
+describe('explicitAccountId', () => {
+  it('keeps a named usable account even when its usage is exhausted', () => {
+    expect(explicitAccountId(accounts, 'work')).toBe('work')
+    expect(explicitAccountId(accounts, undefined)).toBeNull()
+    expect(explicitAccountId(accounts, 'dead')).toBeNull()
+  })
+})
+
 describe('isExhausted', () => {
   it('is about five percent left, or the service calling it critical', () => {
     expect(isExhausted(used(94))).toBe(false)
@@ -69,6 +88,34 @@ describe('pickAccount', () => {
     expect(pickAccount({ accounts, usage, preferredId: 'default', leavingId: 'team' })).toBe(
       'default'
     )
+  })
+
+  it("balances automatic switches using each account's 5-hour session headroom", () => {
+    const usage = {
+      work: {
+        ...used(20),
+        windows: [
+          used(20).tightest!,
+          { ...used(20).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 80 }
+        ]
+      },
+      team: {
+        ...used(60),
+        windows: [
+          used(60).tightest!,
+          { ...used(60).tightest!, key: 'weekly', kind: 'weekly_all', usedPercentage: 10 }
+        ]
+      }
+    }
+    expect(
+      pickAccount({
+        accounts,
+        usage,
+        preferredId: 'default',
+        leavingId: 'default',
+        preferSessionHeadroom: true
+      })
+    ).toBe('work')
   })
 
   it('takes a fallback only when every subscription account is out', () => {
