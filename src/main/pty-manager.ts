@@ -198,13 +198,16 @@ class PtyManager {
     }
     if (isEvents && adapter.id === 'codex-chat') {
       // The account's home reaches the app-server the way it reaches a
-      // Codex terminal: synced now, set on the process (ADR 0002).
+      // Codex terminal: synced now, set on the process (ADR 0002). The
+      // launch's prompt rides along as it does for Claude chat: a workspace
+      // session's prompt used to reach a Claude tab and never a Codex one.
       codexAdapter.configure(
         session.id,
         launchProfileManager.resolve('codex', options?.workspaceId, profileId),
         buildSpawnEnv(getLoginShellEnv(), {
           codexHome: codexHomeForSpawn('codex', options?.codexAccountId)
-        })
+        }),
+        options?.initialPrompt
       )
     }
     const handle = isEvents
