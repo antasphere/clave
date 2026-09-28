@@ -23,7 +23,9 @@ export async function run(t) {
     // same session behind it and scrolls on its own.
     const view = win.locator('[data-testid="chat-view"]')
     const scroller = view.locator('.chat-scroll')
-    const turns = view.locator('.chat-turn')
+    // The rows are virtualised: only turns near the viewport are in the
+    // document, so a turn is found by its text, never by its place in a list.
+    const turnAt = (n) => view.locator('.chat-turn').filter({ hasText: `Paragraph ${n}. ` })
     const button = view.getByRole('button', { name: 'Scroll to end', exact: true })
     const geometry = () =>
       scroller.evaluate((el) => ({
@@ -42,7 +44,7 @@ export async function run(t) {
       record.id,
       Array.from({ length: count }, (_, i) => turn(i))
     )
-    await turns.nth(count - 1).waitFor()
+    await turnAt(count - 1).waitFor()
     const filled = await until(async () => {
       const g = await geometry()
       return g.height > g.client * 2 ? g : null
@@ -61,8 +63,13 @@ export async function run(t) {
     await button.waitFor()
     t.check('scrolling up shows the way back down', true)
 
+    const before = (await geometry()).height
     await inject(app, record.id, [turn(count)])
-    await turns.nth(count).waitFor()
+    assert.ok(
+      await until(async () => (await geometry()).height > before),
+      'the new turn lands below the reader'
+    )
+    assert.equal(await turnAt(count).count(), 0, 'and out of view, so not mounted')
     assert.equal((await geometry()).top, 0, 'new text does not move a reader who scrolled up')
     assert.equal(await button.count(), 1, 'the control stays while the end is out of view')
     t.check('new text leaves a reader who scrolled up where they are', true)
@@ -75,7 +82,7 @@ export async function run(t) {
     )
 
     await inject(app, record.id, [turn(count + 1)])
-    await turns.nth(count + 1).waitFor()
+    await turnAt(count + 1).waitFor()
     t.check(
       'after the jump the transcript follows the stream again',
       await until(atEnd),

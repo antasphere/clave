@@ -24,6 +24,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { nextPermissionMode } from './permission-mode'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
+import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
@@ -38,6 +39,7 @@ import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
+import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
@@ -428,6 +430,36 @@ const ToolRow = memo(
     a.group.tools.length === b.group.tools.length &&
     a.group.tools.every((tool, i) => tool === b.group.tools[i])
 )
+/** One block of the transcript as the virtualiser mounts it: the row's own
+ *  box, which carries the column's rhythm (every row but the first keeps a gap
+ *  above it) and the entrance, played only if the row mounted as something the
+ *  column gained at its end (`TranscriptRows`), never on a later remount. */
+function TranscriptRow({
+  block,
+  first,
+  arriving,
+  onError
+}: {
+  block: Entry | ToolRun
+  first: boolean
+  arriving: boolean
+  onError: (error: unknown) => void
+}): React.JSX.Element {
+  const [arrive] = useState(arriving)
+  return (
+    <div
+      className="chat-row"
+      data-first={first ? 'true' : undefined}
+      data-arrive={arrive ? 'true' : undefined}
+    >
+      {block.kind === 'tool-group' ? (
+        <ToolRow group={block} />
+      ) : (
+        <EntryRow entry={block} onError={onError} />
+      )}
+    </div>
+  )
+}
 export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
@@ -760,6 +792,8 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
   }, [conversation.entries, conversation.first])
+  // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
+  const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   return (
@@ -815,13 +849,21 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
                 </div>
               </div>
             )}
-            {blocks.map(({ block, key }) =>
-              block.kind === 'tool-group' ? (
-                <ToolRow key={key} group={block} />
-              ) : (
-                <EntryRow key={key} entry={block} onError={report} />
-              )
-            )}
+            {/* Mounted from the start, empty or not: what it gains is told apart
+                from what it opened on by the rows it rendered before. */}
+            <ToolDisclosure.Provider value={disclosure}>
+              <TranscriptRows rows={blocks} settled={pastRead} scroll={transcript.scroll}>
+                {({ block, key }, index, arriving) => (
+                  <TranscriptRow
+                    key={key}
+                    block={block}
+                    first={index === 0}
+                    arriving={arriving}
+                    onError={report}
+                  />
+                )}
+              </TranscriptRows>
+            </ToolDisclosure.Provider>
             {showMark && <ProviderMark provider={session.provider} />}
             {state === 'ended' && (
               <EndedNotice sessionId={session.id} exitCode={conversation.exitCode} />
