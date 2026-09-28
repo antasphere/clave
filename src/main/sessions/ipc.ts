@@ -5,6 +5,7 @@ import { preparePrompt } from './attachments'
 import { windowRegistry } from '../window-registry'
 import * as titleGenerator from '../title-generator'
 import { rememberChatModel } from './chat-model-default'
+import { rememberChatView } from './chat-view-default'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -98,7 +99,9 @@ export function registerSessionIpc(): void {
     if (!key || sessionManager.get(id)?.windowKey !== key)
       throw new Error('Session belongs to another window')
     if (viewId !== null && typeof viewId !== 'string') throw new Error('Invalid view id')
-    return sessionManager.setView(id, viewId)
+    const updated = sessionManager.setView(id, viewId)
+    rememberChatView(viewId)
+    return updated
   })
   ipcMain.handle('sessions:write', (event, id: string, input: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)

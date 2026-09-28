@@ -15,6 +15,7 @@ import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import { rememberedChatModel } from './sessions/chat-model-default'
+import { initialChatView } from './sessions/chat-view-default'
 import {
   defaultViewFor,
   eventsProfile,
@@ -184,9 +185,9 @@ class PtyManager {
       createdAt: Date.now(),
       title: session.folderName,
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
-      // The profile's default view, when it names one; the pane's picker
-      // overwrites it on the record from there on.
-      viewId: defaultViewFor(profileId)
+      // The view the reader last picked, else the profile's default when it
+      // names one; the pane's picker overwrites it on the record from there on.
+      viewId: isEvents ? initialChatView(defaultViewFor(profileId)) : defaultViewFor(profileId)
     }
     // A restored chat tab that never got a message has an id but no
     // transcript (Claude) or rollout (Codex), and resuming it fails: it

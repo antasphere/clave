@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   fromWebContents: vi.fn(),
   keyForWindow: vi.fn(),
   notifyChatMessage: vi.fn(),
-  rememberChatModel: vi.fn()
+  rememberChatModel: vi.fn(),
+  rememberChatView: vi.fn()
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
@@ -16,6 +17,7 @@ vi.mock('electron', () => ({
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
 vi.mock('./chat-model-default', () => ({ rememberChatModel: mocks.rememberChatModel }))
+vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView }))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
@@ -228,6 +230,8 @@ it('sets the view only for the window that owns the session, and only on a valid
     viewId: 'clave.chat-view/compact'
   })
   expect(sessionManager.get(id)?.viewId).toBe('clave.chat-view/compact')
+  // The pick is what the next new chat opens in.
+  expect(mocks.rememberChatView).toHaveBeenLastCalledWith('clave.chat-view/compact')
   expect(() => setView(event, id, 'compact')).toThrow('Invalid view id')
   expect(() => setView(event, id, 42)).toThrow('Invalid view id')
   expect(setView(event, id, null).viewId).toBeUndefined()
@@ -236,6 +240,7 @@ it('sets the view only for the window that owns the session, and only on a valid
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => setView(event, id, 'clave.chat-view/chat')).toThrow('another window')
   expect(sessionManager.get(id)?.viewId).toBeUndefined()
+  expect(mocks.rememberChatView).not.toHaveBeenCalledWith('clave.chat-view/chat')
   mocks.keyForWindow.mockReturnValue('window')
   // An unregistered caller has no window key at all.
   mocks.fromWebContents.mockReturnValueOnce(null)
