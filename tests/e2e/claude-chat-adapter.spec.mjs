@@ -363,7 +363,17 @@ setInterval(()=>{},1000);
     assert.ok(secondRows.length)
     for (const row of secondRows) assert.equal(row.session.claudeSessionId, second.claudeSessionId)
     assert.notEqual(second.claudeSessionId, 'provider-diverged')
-    const secondPid = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8')).pid
+    const secondProcess = JSON.parse(readFileSync(`${ROOT}/process.json`, 'utf8'))
+    const secondPid = secondProcess.pid
+    // The composer's last pick is the next chat's default: the first chat
+    // launched on the CLI's own model, the second on the one picked above.
+    assert.ok(!processInfo.argv.includes('--model'), 'the first chat names no model')
+    assert.equal(
+      secondProcess.argv[secondProcess.argv.indexOf('--model') + 1],
+      'opus[1m]',
+      'a new chat starts on the model last picked in a composer'
+    )
+    t.check('a new chat starts on the model last picked in the composer', true)
     await bounded(app.close(), 'quit waits for killAll with inherited stdout')
     closed = true
     assert.throws(() => process.kill(secondPid, 0), /ESRCH/, 'quit waits for SIGKILL escalation')
