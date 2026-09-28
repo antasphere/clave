@@ -66,8 +66,14 @@ export function useTerminal(sessionId: string) {
 
     terminal.open(container)
 
+    // A hidden tile keeps a real box (TerminalGrid hides it off screen, never
+    // with display:none), so a size no longer means the tab is on screen. The
+    // grid is fitted, and with it the PTY started, only once the tab is
+    // selected: a restored tab nobody has opened yet starts nothing, as when
+    // a hidden tile had no size at all.
+    const selectedAtMount = useSessionStore.getState().selectedSessionIds.includes(sessionId)
     let hasFit = false
-    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+    if (selectedAtMount && container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
       hasFit = true
     }
@@ -348,6 +354,9 @@ export function useTerminal(sessionId: string) {
       if (!entry) return
       const { width, height } = entry.contentRect
       if (width === 0 || height === 0) return
+      // Hidden, the tile is sized to the whole pane rather than to its cell;
+      // the selection effect below fits it when it is shown again.
+      if (!isVisibleRef.current) return
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => {
         try {

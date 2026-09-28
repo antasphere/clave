@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type ComponentType } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRegistry } from './store'
+import { implemented, nativeViews } from './native-views'
+import { paneIsTerminal } from './pane-kind'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ChatBubbleLeftRightIcon,
@@ -9,9 +11,6 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type { AgentState } from '../../../shared/session-model'
-import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
-import { CompactView } from '../../../../plugins/chat-view/src/CompactView'
-import { TerminalView } from '../../../../plugins/chat-view/src/TerminalView'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
@@ -26,16 +25,6 @@ import { AccountProposal } from '../components/terminal/AccountProposal'
 import { useBackgroundTasks } from './background-tasks'
 import { BackgroundTasksChip } from './BackgroundTasksChip'
 
-/** Bundled native views, keyed by the id a session carries: `<pluginId>/<viewId>`.
- *  A plugin contributing several views has one entry per view, which is what
- *  lets the picker offer them and a session name one. */
-const nativeViews: Record<string, ComponentType<ChatViewProps>> = {
-  'clave.chat-view/chat': ChatView,
-  'clave.chat-view/compact': CompactView,
-  'clave.chat-view/terminal': TerminalView
-}
-/** What this build can mount, handed to the pure resolution in `resolution.ts`. */
-const implemented: ReadonlySet<string> = new Set(Object.keys(nativeViews))
 type DotStatus = 'working' | 'waiting' | 'background' | 'ready' | 'inactive'
 /** `background`: the turn is over but work it started still runs. */
 function dotStatus(state: string, background = 0): DotStatus {
@@ -232,7 +221,7 @@ export function RegisteredSessionView({
   const name = useViewSessionStore((s) => s.sessions.find((r) => r.id === sessionId)?.name)
   // The terminal is the fallback when nothing resolves — not when the resolved
   // view happens to be a surface one, which has no entry in the native map.
-  if (!session || session.transport === 'pty' || !viewId)
+  if (paneIsTerminal(registry, sessionId) || !session || !viewId)
     return <TerminalPanel sessionId={sessionId} />
   return (
     <section

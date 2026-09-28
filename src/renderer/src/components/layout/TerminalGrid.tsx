@@ -10,6 +10,7 @@ import {
 } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { RegisteredSessionView } from '../../views/registry'
+import { useViewPaneIds } from '../../views/pane-kind'
 import { RemoteTerminalPanel } from '../terminal/RemoteTerminalPanel'
 import { TerminalErrorBoundary } from '../terminal/TerminalErrorBoundary'
 import { FileViewer } from '../files/FileViewer'
@@ -50,8 +51,21 @@ function computeGridLayout(count: number): { cols: number; rows: number } {
   return { cols, rows }
 }
 
+/** How an unselected terminal tile hides: a real box over the pane, out of the
+ *  grid's flow, pushed past the pane's clipped edge. Never `display: none`;
+ *  the comment on the tile loop says why. */
+const HIDDEN_TERMINAL_TILE: React.CSSProperties = {
+  visibility: 'hidden',
+  pointerEvents: 'none',
+  position: 'absolute',
+  inset: 0,
+  transform: 'translateX(-200%)'
+}
+const HIDDEN_VIEW_TILE: React.CSSProperties = { display: 'none' }
+
 export function TerminalGrid(): React.JSX.Element {
   useViewRegistry()
+  const viewPaneIds = useViewPaneIds()
   const linked = useLinkedDocumentStore((s) => s.documents)
   useEffect(() => initLinkedDocuments(), [])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
@@ -288,15 +302,41 @@ export function TerminalGrid(): React.JSX.Element {
           // Agent sessions use AgentChatPanel via activeView, skip entirely
           if (session.sessionType === 'agent') return null
           const isSelected = selectedTerminalIds.includes(session.id)
+          // An unselected terminal is hidden WITHOUT `display: none`, and that
+          // is what keeps the window from freezing. xterm's DOM renderer
+          // measures each glyph once and caches the width, but only a width
+          // above zero: under `display: none` every glyph measures 0, nothing
+          // is cached, and each glyph of a repaint forces a layout of the whole
+          // window. A hidden terminal still repaints every row whenever its
+          // selection is cleared (an agent starting switches to the alternate
+          // screen and turns mouse reporting on), so 24 rows of glyphs cost
+          // seconds, and several agents starting at once froze the window for
+          // over a minute (profiled 2026-09-28: 98% of the freeze in that
+          // measure).
+          //
+          // So the tile keeps a real box, stretched over the pane and out of
+          // grid flow like a hidden file tab below, and is moved off screen:
+          // xterm's IntersectionObserver then sees it leave and pauses its
+          // rendering, as `display: none` did. `inert` keeps keystrokes and
+          // focus out of a terminal nobody is looking at.
+          //
+          // Only a TERMINAL pane pays for that box. A chat view holds no
+          // xterm, and a long conversation is thousands of elements: kept in
+          // layout it would be laid out again at every message it receives
+          // while hidden, so it keeps `display: none`.
+          const hiddenStyle = viewPaneIds.has(session.id) ? HIDDEN_VIEW_TILE : HIDDEN_TERMINAL_TILE
           return (
             <div
               key={session.id}
+              data-terminal-tile={session.id}
               className={
                 linkedActive
                   ? 'min-h-0 min-w-0 h-full overflow-hidden'
                   : 'min-h-0 min-w-0 h-full floating-card'
               }
-              style={{ display: isSelected ? undefined : 'none' }}
+              style={isSelected ? undefined : hiddenStyle}
+              inert={!isSelected}
+              aria-hidden={isSelected ? undefined : true}
             >
               <TerminalErrorBoundary sessionId={session.id}>
                 {(session.sessionType === 'remote-terminal' ||
