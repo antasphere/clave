@@ -26,6 +26,7 @@ The master key is a **Cmd** chord on purpose: Clave reads the key before the ter
 | Cmd+Shift+P | New Pi session |
 | Cmd+Option plus a launch shortcut | Choose the new session's folder |
 | Cmd+Backspace | Kill focused session |
+| Middle click on a sidebar tab | Kill that session |
 | Cmd+W | Close focused file tab, or the window when no file tab is focused |
 | Cmd+1–9 | Switch to session by index |
 | Cmd+Shift+] | Next session |
@@ -55,5 +56,13 @@ The master key is a **Cmd** chord on purpose: Clave reads the key before the ter
 | Cmd+Shift+Backspace | Reset all sessions after confirmation |
 | Cmd+Z | Undo the last sidebar change |
 | Cmd+Shift+N | New window |
+
+## Mouse buttons
+
+A binding can be a mouse button instead of keys: the middle button, or the back and forward buttons of a mouse that has them, with any modifiers. Record one in **Settings → Keymaps** by pressing the button on the binding. The left and right buttons are never bindable, since they select, drag and open menus.
+
+A session action bound to a mouse button acts on the sidebar tab you click, and does nothing elsewhere, so a middle click in a terminal never kills its session. Bound to keys, it acts on the focused session.
+
+**Archive and kill session** has no default binding. It asks a Claude Code tab to run `/exos:archive-session`, then to close its own tab once the archive is committed. A tab whose archive fails stays open with the reason. Other kinds of tab ignore it.
 
 Code editor, terminal editing, and standard macOS shortcuts are not managed by Clave's keymap editor.

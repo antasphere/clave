@@ -63,6 +63,7 @@ import { PluginToolbar } from '../plugins/PluginToolbar'
 import { PluginMainPanel } from '../plugins/PluginMainPanel'
 import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store'
 import { ConfirmDialog } from '@clave/ui/components'
+import { requestArchiveAndKill } from '../../lib/archive-session'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
@@ -440,8 +441,10 @@ export function AppShell() {
         if (sid && isFileTabId(sid)) removeFileTab(sid)
         else window.close()
       },
-      killFocusedSession: () => {
-        const sid = useSessionStore.getState().focusedSessionId
+      // Session actions: the row a mouse binding was clicked on, else the
+      // focused session (see `targetsSession` in shared/keymaps.ts).
+      killFocusedSession: (_event, target) => {
+        const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
         if (!sid) return
         if (isFileTabId(sid)) removeFileTab(sid)
         else {
@@ -451,6 +454,13 @@ export function AppShell() {
           void window.electronAPI.killSession(sid).catch(() => {})
           removeSession(sid)
         }
+      },
+      archiveAndKillSession: (_event, target) => {
+        const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
+        if (!sid || isFileTabId(sid)) return
+        void requestArchiveAndKill(sid).catch((error) =>
+          console.error('[keymaps] archive and kill failed', error)
+        )
       },
       previousWorkspace: () => cycleWorkspace(-1),
       nextWorkspace: () => cycleWorkspace(1),

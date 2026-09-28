@@ -14,6 +14,7 @@ import {
   canonicalizeBinding,
   formatKeyBinding,
   keyEventToChord,
+  mouseEventToChord,
   overridesFromResolved,
   parseKeymapOverrides,
   resolveKeymapConfig,
@@ -148,6 +149,28 @@ export function KeymapSettings(): React.JSX.Element {
     recordingTimer.current = setTimeout(() => finishRecording(next), KEYMAP_SEQUENCE_TIMEOUT_MS)
   }
 
+  // A mouse button is a whole binding on its own: it ends the recording at
+  // once, and it cannot follow the master key (a sequence is keys only).
+  const recordMouse = (event: React.MouseEvent, target: RecordingTarget): void => {
+    const chord = mouseEventToChord(event.nativeEvent)
+    if (!chord) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (target.master) {
+      clearRecordingTimer()
+      setRecording(null)
+      setErrors(['The master key must be a key, not a mouse button'])
+      return
+    }
+    if (target.steps.length > 0) {
+      clearRecordingTimer()
+      setRecording(null)
+      setErrors(['A mouse button cannot be part of a key sequence'])
+      return
+    }
+    finishRecording({ ...target, steps: [chord] })
+  }
+
   const startBinding = (actionId: KeymapActionId, index: number): void => {
     clearRecordingTimer()
     setRecording({ actionId, index, steps: [] })
@@ -278,6 +301,7 @@ export function KeymapSettings(): React.JSX.Element {
                   setRecording({ master: true, steps: [] })
                 }}
                 onKeyDown={(event) => recording?.master && recordKey(event, recording)}
+                onMouseUp={(event) => recording?.master && recordMouse(event, recording)}
                 className="keymap-binding"
               >
                 {recording?.master
@@ -301,7 +325,10 @@ export function KeymapSettings(): React.JSX.Element {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Bindings">
+      <SettingsSection
+        title="Bindings"
+        description="A binding is keys or a mouse button: middle click, back or forward, with any modifiers. A session action bound to a mouse button acts on the sidebar row you click; bound to keys, on the focused session."
+      >
         <div className="flex items-center gap-2 mb-2.5">
           <div className="search-field flex-1">
             <MagnifyingGlassIcon className="w-3.5 h-3.5" />
@@ -357,12 +384,15 @@ export function KeymapSettings(): React.JSX.Element {
                             onKeyDown={(event) =>
                               active && recording && recordKey(event, recording)
                             }
+                            onMouseUp={(event) =>
+                              active && recording && recordMouse(event, recording)
+                            }
                             className="keymap-binding"
                           >
                             {active
                               ? recording.steps.length > 0
                                 ? formatKeyBinding(recording.steps.join(' '), draft.masterKey)
-                                : 'Press keys…'
+                                : 'Press keys or a mouse button…'
                               : formatKeyBinding(binding, draft.masterKey)}
                           </button>
                           <button
@@ -381,11 +411,12 @@ export function KeymapSettings(): React.JSX.Element {
                         data-keymap-recorder
                         data-recording={`${action.id}-${bindings.length}`}
                         onKeyDown={(event) => recordKey(event, recording)}
+                        onMouseUp={(event) => recordMouse(event, recording)}
                         className="keymap-binding"
                       >
                         {recording.steps.length > 0
                           ? formatKeyBinding(recording.steps.join(' '), draft.masterKey)
-                          : 'Press keys…'}
+                          : 'Press keys or a mouse button…'}
                       </button>
                     )}
                     {bindings.length < MAX_BINDINGS_PER_ACTION && !adding && (
