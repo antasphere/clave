@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { attachSessionLog, useConversationStore, type SessionLog } from './conversation-store'
-import type { SessionStream } from '../../../shared/session-model'
+import type { Session, SessionStream } from '../../../shared/session-model'
 
 type StreamListener = (stream: SessionStream) => void
 const bridge = {
   streams: new Map<string, StreamListener[]>(),
   exits: new Map<string, ((code: number) => void)[]>(),
   subscribe: vi.fn(),
-  unsubscribe: vi.fn()
+  unsubscribe: vi.fn(),
+  /** Main's records, which confirm an end before the log takes it. */
+  records: [] as Pick<Session, 'id' | 'state'>[]
 }
 const electronAPI = {
   onSessionStream: (id: string, callback: StreamListener) => {
@@ -28,6 +30,7 @@ const electronAPI = {
         (bridge.exits.get(id) ?? []).filter((c) => c !== callback)
       )
   },
+  sessionsList: () => Promise.resolve(bridge.records),
   sessionsSubscribe: (id: string) => bridge.subscribe(id),
   sessionsUnsubscribe: (id: string) => bridge.unsubscribe(id)
 }
@@ -49,6 +52,7 @@ beforeEach(() => {
   bridge.exits.clear()
   bridge.subscribe.mockReset().mockResolvedValue({ id: 'session' })
   bridge.unsubscribe.mockReset().mockResolvedValue(undefined)
+  bridge.records = []
   useConversationStore.setState({ logs: {} })
   ;(globalThis as { window?: unknown }).window = { electronAPI }
 })
@@ -94,14 +98,29 @@ describe('the host-owned session log', () => {
   it('records the exit code and a subscription that never came up', async () => {
     attachSessionLog('a')
     await Promise.resolve()
+    bridge.records = [{ id: 'a', state: 'ended' }]
     for (const listener of bridge.exits.get('a') ?? []) listener(3)
-    expect(heldLog('a').exitCode).toBe(3)
+    await vi.waitFor(() => expect(heldLog('a').exitCode).toBe(3))
     bridge.subscribe.mockRejectedValueOnce(new Error('Unknown session'))
     attachSessionLog('b')
     await Promise.resolve()
     await Promise.resolve()
     expect(heldLog('b').error).toContain('Unknown session')
     expect(heldLog('b').ready).toBe(false)
+  })
+  it('drops the end of a process that a live one replaced under the same id', async () => {
+    // A tab moved to another account: the old process's end can arrive after
+    // the new process is up and on record.
+    attachSessionLog('moved')
+    await Promise.resolve()
+    bridge.records = [{ id: 'moved', state: 'idle' }]
+    for (const listener of bridge.exits.get('moved') ?? []) listener(1)
+    for (const listener of bridge.streams.get('moved') ?? [])
+      listener({ kind: 'event', event: { type: 'state_change', state: 'ended' } })
+    emit('moved', 'after the move')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(heldLog('moved').exitCode).toBeUndefined()
+    expect(heldLog('moved').events.map((e) => e.event.type)).toEqual(['user_message'])
   })
   it('holds nothing for a session with no event transport', () => {
     const release = attachSessionLog('')
