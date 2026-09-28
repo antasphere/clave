@@ -104,6 +104,7 @@ export function AppShell() {
   const filePaletteShortcut = useShortcutLabel('openFilePalette')
   const sidePanelShortcut = useShortcutLabel('toggleSidePanel')
   const pluginMainPanelOpen = usePluginMainPanelOpen()
+  const terminalsShown = activeView === 'terminals' && !pluginMainPanelOpen
 
   // Which session the user is looking at is a renderer fact; the plugin host needs it to
   // push `context.changed` to plugins holding sessions.read, so this window reports its own
@@ -801,41 +802,63 @@ export function AppShell() {
           </div>
         </div>
 
-        {/* A main-placement plugin panel takes the content column while it is open: it is
-            one of the places this column shows, like Settings or the mosaic. */}
-        <PluginMainPanel />
+        {/* The stage: the terminal grid is ALWAYS laid out here, at its real size,
+            and every other view the column shows (a main-placement plugin panel,
+            Settings, Agents, Extensions) is laid OVER it. Collapsing the grid
+            with `display: none` while one of those views was open gave every
+            terminal a zero width, and xterm's DOM renderer cannot cache a glyph
+            width of zero: each repaint of a terminal nobody could see forced a
+            full layout of the window per glyph, and agents starting behind
+            Settings froze the window for minutes (the tile loop in TerminalGrid
+            has the whole story). Covered rather than collapsed, the grid keeps
+            its box, so coming back also resizes no terminal and no PTY. */}
+        <div className="relative flex-1 min-h-0 flex">
+          {/* Terminal grid — each terminal is its own floating card */}
+          <div
+            className="flex-1 flex min-h-0"
+            style={terminalsShown ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
+            inert={!terminalsShown}
+            aria-hidden={terminalsShown ? undefined : true}
+          >
+            <TerminalGrid />
+          </div>
 
-        {/* Non-terminal views — single floating card */}
-        <div
-          className={cn(
-            'flex-1 min-h-0 floating-card',
-            activeView === 'terminals' || pluginMainPanelOpen ? 'hidden' : 'flex'
+          {/* A main-placement plugin panel takes the content column while it is
+              open: it is one of the places this column shows, like Settings or
+              the mosaic. */}
+          {pluginMainPanelOpen && (
+            <div className="absolute inset-0 flex flex-col">
+              <PluginMainPanel />
+            </div>
           )}
-        >
-          {/* view-fade-in re-fires each time a hidden panel is shown (display:none
-              kills the animation, re-display restarts it). Terminals stay instant. */}
-          <div
-            className={activeView === 'settings' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
-          >
-            <SettingsPanel />
-          </div>
-          <div className={activeView === 'agents' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}>
-            <AgentChatPanel />
-          </div>
-          <div
-            className={activeView === 'extensions' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
-          >
-            <ExtensionsPanel />
-          </div>
-        </div>
 
-        {/* Terminal grid — each terminal is its own floating card */}
-        <div
-          className={
-            activeView === 'terminals' && !pluginMainPanelOpen ? 'flex-1 flex min-h-0' : 'hidden'
-          }
-        >
-          <TerminalGrid />
+          {/* Non-terminal views — single floating card */}
+          <div
+            className={cn(
+              'absolute inset-0 min-h-0 floating-card',
+              activeView === 'terminals' || pluginMainPanelOpen ? 'hidden' : 'flex'
+            )}
+          >
+            {/* view-fade-in re-fires each time a hidden panel is shown (display:none
+                kills the animation, re-display restarts it). Terminals stay instant. */}
+            <div
+              className={activeView === 'settings' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
+            >
+              <SettingsPanel />
+            </div>
+            <div
+              className={activeView === 'agents' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
+            >
+              <AgentChatPanel />
+            </div>
+            <div
+              className={
+                activeView === 'extensions' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'
+              }
+            >
+              <ExtensionsPanel />
+            </div>
+          </div>
         </div>
       </div>
 
