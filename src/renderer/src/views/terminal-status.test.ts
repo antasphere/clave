@@ -32,7 +32,8 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
   const started = run([
     call('agent-1', 'Agent', { subagent_type: 'Explore', description: 'Find the reducer' }),
     call('t1', 'Grep', { pattern: 'reduce' }, 'agent-1'),
-    call('t2', 'Read', { file_path: '/repo/reducer.ts' }, 'agent-1')
+    call('t2', 'Read', { file_path: '/repo/reducer.ts' }, 'agent-1'),
+    { type: 'context_usage', used: 42_000, window: null, parent: 'agent-1' }
   ])
   expect(started.agents).toEqual([
     {
@@ -42,7 +43,8 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
       background: false,
       startedAt: 1000,
       lastAction: expect.stringContaining('reducer.ts'),
-      toolCount: 2
+      toolCount: 2,
+      contextUsed: 42_000
     }
   ])
   const done = run([{ type: 'tool_result', id: 'agent-1', output: 'found it' }], started)

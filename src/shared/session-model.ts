@@ -180,14 +180,17 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
      that it was cut short, never a failure. A view mutes the message that
      started it rather than raising an error card over it. */
   z.object({ type: z.literal('turn_interrupted') }),
-  /** How full the conversation's context is: the tokens its last call read
-   *  and wrote, and the model's window once the provider has named it. The
+  /** How full the conversation's context is (or, with `parent`, a subagent's):
+   *  the tokens its last call read and wrote, and the model's window once the
+   *  provider has named it. The
    *  provider's raw frames stay in main, so this is the only way a view can
    *  know it. */
   z.object({
     type: z.literal('context_usage'),
     used: z.number(),
-    window: z.number().nullable()
+    window: z.number().nullable(),
+    /** A subagent's own context, named by the call that started it. */
+    parent: z.string().optional()
   }),
   /** The mode the session is in and the modes it may be switched to; sent at
    *  ready and again whenever the provider reports a change. A provider with

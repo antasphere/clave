@@ -30,7 +30,8 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       rows().forEach(reset)
       return
     }
-    /** The row folded to one line: the message's padding, border and one line. */
+    /** The row folded to one line: the message's padding, border and one line,
+     *  plus a padding's worth under it for the fade the fold edge draws. */
     const oneLine = (row: HTMLElement): number => {
       const message = row.querySelector<HTMLElement>('.chat-turn[data-role="user"]')
       if (!message) return row.offsetHeight
@@ -38,7 +39,7 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       const px = (value: string): number => Number.parseFloat(value) || 0
       return (
         px(style.paddingTop) +
-        px(style.paddingBottom) +
+        px(style.paddingBottom) * 2 +
         px(style.borderTopWidth) +
         px(style.borderBottomWidth) +
         (px(style.lineHeight) || px(style.fontSize) * 1.5)
@@ -47,10 +48,12 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
     let frame = 0
     const update = (): void => {
       frame = 0
-      const top = root.getBoundingClientRect().top
+      const edge = root.getBoundingClientRect().top
       for (const row of rows()) {
         const section = row.parentElement
         if (!section) continue
+        // Where it sticks: the stylesheet's gap under the top edge.
+        const top = edge + (Number.parseFloat(getComputedStyle(row).top) || 0)
         const box = section.getBoundingClientRect()
         const past = top - box.top
         if (past <= 0 || box.bottom <= top) {
@@ -77,8 +80,9 @@ export function useStickyQuestions(scroll: RefObject<HTMLElement | null>, enable
       const section = row?.parentElement
       if (!row || !section) return
       event.stopPropagation()
+      const gap = Number.parseFloat(getComputedStyle(row).top) || 0
       root.scrollBy({
-        top: section.getBoundingClientRect().top - root.getBoundingClientRect().top,
+        top: section.getBoundingClientRect().top - root.getBoundingClientRect().top - gap,
         behavior: 'smooth'
       })
     }

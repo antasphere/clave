@@ -151,6 +151,8 @@ export class ClaudeStreamTranslator {
   /** The main thread's context after its last call, and the model's window. */
   private contextUsed: number | null = null
   private contextWindow: number | null = null
+  /** Each running subagent's own context, by the call that started it. */
+  private readonly subagentContext = new Map<string, number>()
   private publishUsage(): void {
     if (this.contextUsed === null) return
     this.emit({ type: 'context_usage', used: this.contextUsed, window: this.contextWindow })
@@ -482,12 +484,15 @@ export class ClaudeStreamTranslator {
           })
         }
       }
-      if (p.type === 'assistant' && !parent) {
+      if (p.type === 'assistant') {
         // Every block of one message repeats its usage: announce a change only.
         const used = contextTokens(object.safeParse(p.message).data?.usage)
-        if (used > 0 && used !== this.contextUsed) {
+        if (!parent && used > 0 && used !== this.contextUsed) {
           this.contextUsed = used
           this.publishUsage()
+        } else if (parent && used > 0 && used !== this.subagentContext.get(parent)) {
+          this.subagentContext.set(parent, used)
+          this.emit({ type: 'context_usage', used, window: null, parent })
         }
       }
       // Preserve usage, thinking, attachments, and unknown content without duplicate text.

@@ -18,6 +18,8 @@ export interface SubAgent {
   /** What it did last, as the transcript would name the call; null until it acts. */
   lastAction: string | null
   toolCount: number
+  /** Tokens in its own context after its last call; null until it has made one. */
+  contextUsed: number | null
 }
 export interface TerminalStatus {
   /** Tokens in the main conversation's context after its last call. */
@@ -26,7 +28,7 @@ export interface TerminalStatus {
   contextWindow: number | null
   agents: SubAgent[]
   /** Activity seen for a parent before the agent itself was known. */
-  activity: Record<string, { lastAction: string; toolCount: number }>
+  activity: Record<string, Partial<Pick<SubAgent, 'lastAction' | 'toolCount' | 'contextUsed'>>>
 }
 export const emptyStatus: TerminalStatus = {
   contextUsed: null,
@@ -63,7 +65,22 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,
-    toolCount: known?.toolCount ?? 0
+    toolCount: known?.toolCount ?? 0,
+    contextUsed: known?.contextUsed ?? null
+  }
+}
+/** Note what a subagent did, on the agent when it is listed and in the
+ *  activity record for when it is listed later. */
+function noteActivity(
+  status: TerminalStatus,
+  parent: string,
+  patch: TerminalStatus['activity'][string]
+): TerminalStatus {
+  const activity = { ...status.activity[parent], ...patch }
+  return {
+    ...status,
+    activity: { ...status.activity, [parent]: activity },
+    agents: status.agents.map((agent) => (agent.id === parent ? { ...agent, ...activity } : agent))
   }
 }
 
@@ -74,21 +91,12 @@ export function reduceStatus(
 ): TerminalStatus {
   switch (event.type) {
     case 'tool_call': {
-      if (event.parent) {
+      if (event.parent)
         // A subagent at work: what it did last, and how much it has done.
-        const previous = status.activity[event.parent]
-        const activity = {
+        return noteActivity(status, event.parent, {
           lastAction: actionOf(event.name, event.input),
-          toolCount: (previous?.toolCount ?? 0) + 1
-        }
-        return {
-          ...status,
-          activity: { ...status.activity, [event.parent]: activity },
-          agents: status.agents.map((agent) =>
-            agent.id === event.parent ? { ...agent, ...activity } : agent
-          )
-        }
-      }
+          toolCount: (status.activity[event.parent]?.toolCount ?? 0) + 1
+        })
       if (!isAgentTool(event.name) || status.agents.some((a) => a.id === event.id)) return status
       const input = record(event.input)
       const agent: SubAgent = {
@@ -98,7 +106,8 @@ export function reduceStatus(
         background: input.run_in_background === true,
         startedAt: now,
         lastAction: null,
-        toolCount: 0
+        toolCount: 0,
+        contextUsed: null
       }
       return { ...status, agents: [...status.agents, withActivity(agent, status)] }
     }
@@ -125,6 +134,7 @@ export function reduceStatus(
       }
     }
     case 'context_usage':
+      if (event.parent) return noteActivity(status, event.parent, { contextUsed: event.used })
       return {
         ...status,
         contextUsed: event.used,

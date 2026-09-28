@@ -4094,8 +4094,35 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'] {
   position: sticky;
-  top: 0;
+  top: calc(var(--spacing) * 3);
   z-index: 5;
+}
+/* The strip above a pinned question is the ground, not a window onto the
+   text scrolling under it. */
+.terminal-view[data-pin] .chat-transcript::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 6;
+  height: calc(var(--spacing) * 3);
+  background-color: var(--surface-0);
+  pointer-events: none;
+}
+/* The transcript fades out into the prompt's upper rule rather than cutting
+   a line in half above it. */
+.terminal-view .chat-transcript::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 6;
+  height: calc(var(--spacing) * 8);
+  background-image: linear-gradient(to bottom, transparent, var(--surface-0));
+  pointer-events: none;
+}
+.terminal-view .term-composer-wrap {
+  padding-top: 0;
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
@@ -4110,19 +4137,22 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
   cursor: pointer;
 }
-/* The folded box's bottom edge: its own padding band, so the lines it folds
-   away pass under the edge instead of peeking through the padding. */
+/* The folded box's bottom edge: the lines it folds away fade into it rather
+   than being cut, over twice the box's padding (sticky-questions.ts keeps
+   that much below the first line). The two gradients end on the box's own
+   colour: its tint over the ground. */
 .terminal-view .chat-turn-wrap[data-folded]::after {
   content: '';
   position: absolute;
   inset-inline: 0;
   bottom: var(--fold, 0);
-  height: calc(var(--spacing) * 2.5);
+  height: calc(var(--spacing) * 5);
   border: thin solid var(--border-subtle-color);
   border-top: 0;
   border-radius: 0 0 var(--radius-control) var(--radius-control);
-  background-color: var(--surface-0);
-  background-image: linear-gradient(var(--surface-100), var(--surface-100));
+  background-image:
+    linear-gradient(to bottom, transparent, var(--surface-100)),
+    linear-gradient(to bottom, transparent, var(--surface-0));
 }
 .terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
   display: none;
@@ -4274,30 +4304,69 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   background-color: var(--color-destructive);
 }
 
-/* The subagents, stacked under the status line while they run. */
+/* The subagents, stacked under the status line while they run. Each row
+   folds open as its agent starts and shut as it ends (a grid track going
+   from 0fr to 1fr), and the stack's own rule and room go with its last row. */
 .term-agents {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--spacing) / 2);
-  margin: calc(var(--spacing) * 2) 0 0;
-  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: calc(var(--spacing) * 2);
+  padding-top: calc(var(--spacing) * 2);
   border-top: thin dashed var(--border-subtle-color);
-  list-style: none;
   font-size: var(--text-xs);
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    margin-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    padding-top calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    border-color calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    padding-top: 0;
+    border-color: transparent;
+    opacity: 0;
+  }
+}
+.term-agents[data-empty] {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  padding-top: 0;
+  border-color: transparent;
+  opacity: 0;
+}
+.term-agents-list {
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 calc(var(--spacing) * 2);
+  list-style: none;
 }
 .term-agent {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows calc(var(--default-transition-duration) * 2) var(--ease-out-expo),
+    opacity calc(var(--default-transition-duration) * 2) var(--ease-out-expo);
+  @starting-style {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.term-agent[data-leaving] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.term-agent-row {
   display: flex;
   align-items: baseline;
   gap: calc(var(--spacing) * 2);
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(var(--spacing) / 4) 0;
   white-space: nowrap;
-  transition:
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    translate var(--default-transition-duration) var(--ease-out-expo);
-  @starting-style {
-    opacity: 0;
-    translate: 0 var(--spacing);
-  }
 }
 .term-agent-dot {
   flex-shrink: 0;

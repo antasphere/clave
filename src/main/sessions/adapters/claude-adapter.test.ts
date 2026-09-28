@@ -1393,6 +1393,8 @@ it('reports the context from the main thread and names the parent of a subagent 
   })
   expect(events.filter((e) => e.type === 'context_usage')).toEqual([
     { type: 'context_usage', used: 10_010, window: null },
+    // The subagent's own context, never the conversation's.
+    { type: 'context_usage', used: 90_000, window: null, parent: 'agent-1' },
     { type: 'context_usage', used: 10_010, window: 1_000_000 }
   ])
   const calls = events.filter((e) => e.type === 'tool_call')
