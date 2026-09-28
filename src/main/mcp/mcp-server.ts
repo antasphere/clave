@@ -700,8 +700,11 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_close_session',
     {
-      description: 'Close a Clave tab and terminate its underlying process.',
-      inputSchema: { sessionId: z.string().describe('Id of the session to close') }
+      description:
+        'Close a Clave tab and terminate its underlying process. "mine" closes your own tab: use it last, when the user asked you to close yourself once your work is done.',
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to close, or "mine" for the calling tab')
+      }
     },
     // callerSessionId rides along so the close is recorded with its closer.
     (args) => run('closeSession', { ...args, callerSessionId })

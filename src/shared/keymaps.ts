@@ -29,6 +29,7 @@ export const KEYMAP_ACTION_IDS = [
   'focusSidebarSearch',
   'closeFocused',
   'killFocusedSession',
+  'archiveAndKillSession',
   'previousWorkspace',
   'nextWorkspace',
   'previousSession',
@@ -58,6 +59,11 @@ export interface KeymapActionDefinition {
   category: 'Sessions' | 'Navigation' | 'Sidebar' | 'Application'
   scope: KeymapScope
   defaultBindings: readonly string[]
+  /** The action works on ONE session. Fired by a key, that is the focused
+   *  session; fired by a mouse button, it is the sidebar row under the pointer,
+   *  and nothing anywhere else — so a middle click in a terminal pane never
+   *  kills the session whose pane it is. */
+  targetsSession?: true
 }
 
 export interface KeymapOverridesV1 {
@@ -80,6 +86,14 @@ export interface KeymapValidationError {
 export type KeymapValidationResult =
   | { ok: true; value: KeymapOverridesV1 }
   | { ok: false; errors: KeymapValidationError[] }
+
+export interface MouseEventLike {
+  button: number
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}
 
 export interface KeyEventLike {
   key: string
@@ -152,7 +166,15 @@ export const KEYMAP_ACTIONS: readonly KeymapActionDefinition[] = [
     'Mod+Alt+Shift+P'
   ]),
   action('closeFocused', 'Close focused tab or window', 'Sessions', 'global', ['Mod+W']),
-  action('killFocusedSession', 'Kill focused session', 'Sessions', 'global', ['Mod+Backspace']),
+  action(
+    'killFocusedSession',
+    'Kill session',
+    'Sessions',
+    'global',
+    ['Mod+Backspace', 'MouseMiddle'],
+    true
+  ),
+  action('archiveAndKillSession', 'Archive and kill session', 'Sessions', 'global', [], true),
   action('previousSession', 'Previous session', 'Sessions', 'global', ['Mod+Shift+[']),
   action('nextSession', 'Next session', 'Sessions', 'global', ['Mod+Shift+]']),
   action('selectSession1', 'Select session 1', 'Sessions', 'global', ['Mod+1']),
@@ -245,15 +267,43 @@ function action(
   label: string,
   category: KeymapActionDefinition['category'],
   scope: KeymapScope,
-  defaultBindings: readonly string[]
+  defaultBindings: readonly string[],
+  targetsSession?: true
 ): KeymapActionDefinition {
-  return { id, label, category, scope, defaultBindings }
+  return { id, label, category, scope, defaultBindings, ...(targetsSession && { targetsSession }) }
+}
+
+/** The mouse buttons a binding may name, by `MouseEvent.button`. The left and
+ *  right buttons are not here on purpose: they are selection, drag and the
+ *  context menu everywhere in the app, and a binding on either would take them
+ *  away from every row and pane at once. */
+const MOUSE_BUTTONS: Record<number, string> = {
+  1: 'MouseMiddle',
+  3: 'MouseBack',
+  4: 'MouseForward'
+}
+const MOUSE_KEYS: Record<string, string> = {
+  mousemiddle: 'MouseMiddle',
+  middleclick: 'MouseMiddle',
+  mouseback: 'MouseBack',
+  mouseforward: 'MouseForward'
+}
+const MOUSE_LABELS: Record<string, string> = {
+  MouseMiddle: 'Middle click',
+  MouseBack: 'Back button',
+  MouseForward: 'Forward button'
+}
+
+/** A chord whose key is a mouse button rather than a key. */
+export function isMouseChord(chord: string): boolean {
+  const key = chord.split('+').pop() ?? ''
+  return key in MOUSE_LABELS
 }
 
 function canonicalKey(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) throw new Error('A chord needs a key')
-  const named = NAMED_KEYS[trimmed.toLowerCase()]
+  const named = NAMED_KEYS[trimmed.toLowerCase()] ?? MOUSE_KEYS[trimmed.toLowerCase()]
   if (named) return named
   if (trimmed.length === 1) return /[a-z]/i.test(trimmed) ? trimmed.toUpperCase() : trimmed
   if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(trimmed)) return trimmed.toUpperCase()
@@ -286,18 +336,22 @@ export function canonicalizeChord(chord: string): string {
 export function canonicalizeBinding(binding: string): string {
   const steps = binding.trim().split(/\s+/).filter(Boolean)
   if (steps.length === 0) throw new Error('A binding cannot be empty')
-  return steps
-    .map((step, index) => {
-      if (step.toLowerCase() === 'master') {
-        if (index > 0) throw new Error('Master can only be the first sequence step')
-        return 'Master'
-      }
-      if (index > 0 && step.toLowerCase().startsWith('master+')) {
-        throw new Error('Master is a sequence step, not a modifier')
-      }
-      return canonicalizeChord(step)
-    })
-    .join(' ')
+  const canonical = steps.map((step, index) => {
+    if (step.toLowerCase() === 'master') {
+      if (index > 0) throw new Error('Master can only be the first sequence step')
+      return 'Master'
+    }
+    if (index > 0 && step.toLowerCase().startsWith('master+')) {
+      throw new Error('Master is a sequence step, not a modifier')
+    }
+    return canonicalizeChord(step)
+  })
+  // A click is not a keystroke the command mode can wait on: a mouse binding
+  // is one chord, never a step of a sequence.
+  if (canonical.length > 1 && canonical.some(isMouseChord)) {
+    throw new Error('A mouse button cannot be part of a key sequence')
+  }
+  return canonical.join(' ')
 }
 
 /** The key a physical code stands for, used when `event.key` cannot be trusted.
@@ -353,6 +407,20 @@ export function keyEventToChord(event: KeyEventLike): string | null {
   return parts.join('+')
 }
 
+/** The chord a mouse button press stands for, or null for a button a binding
+ *  cannot name (left, right, anything past forward). */
+export function mouseEventToChord(event: MouseEventLike): string | null {
+  const key = MOUSE_BUTTONS[event.button]
+  if (!key) return null
+  const parts: string[] = []
+  if (event.metaKey) parts.push('Mod')
+  if (event.ctrlKey) parts.push('Ctrl')
+  if (event.altKey) parts.push('Alt')
+  if (event.shiftKey) parts.push('Shift')
+  parts.push(key)
+  return parts.join('+')
+}
+
 function formatChord(chord: string): string {
   const tokens = chord.split('+')
   const key = tokens.pop() ?? ''
@@ -365,7 +433,7 @@ function formatChord(chord: string): string {
         if (token === 'Shift') return '⇧'
         return token
       })
-      .join('') + (key === 'Space' ? 'Space' : key)
+      .join('') + (MOUSE_LABELS[key] ?? key)
   )
 }
 
@@ -414,6 +482,7 @@ export function parseKeymapOverrides(raw: unknown): KeymapValidationResult {
     } else {
       try {
         masterKey = canonicalizeChord(raw.masterKey)
+        if (isMouseChord(masterKey)) throw new Error('masterKey must be a key, not a mouse button')
       } catch (error) {
         errors.push({ path: 'masterKey', message: (error as Error).message })
       }
@@ -599,6 +668,12 @@ export class KeymapMatcher {
     this.pendingAction = exact?.actionId ?? null
     this.deadline = now + KEYMAP_SEQUENCE_TIMEOUT_MS
     return { kind: 'pending', sequence: this.pending.join(' ') }
+  }
+
+  /** The action a mouse chord is bound to, or null. A click never enters,
+   *  advances or cancels a command-mode sequence. */
+  matchMouse(chord: string): KeymapActionId | null {
+    return this.direct.get(canonicalizeChord(chord)) ?? null
   }
 
   expire(now: number): KeymapMatchResult {

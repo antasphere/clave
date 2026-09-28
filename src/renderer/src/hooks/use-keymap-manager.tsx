@@ -5,11 +5,29 @@ import {
   KeymapMatcher,
   formatKeyBinding,
   keyEventToChord,
+  mouseEventToChord,
   type KeymapActionId
 } from '../../../shared/keymaps'
 import { useKeymapStore } from '../store/keymap-store'
 
-export type KeymapActionHandlers = Record<KeymapActionId, (event: KeyboardEvent) => void>
+/** Where an action lands. `sessionId` is set only when a mouse binding fired a
+ *  session action: it is the sidebar row the click was on. A key binding leaves
+ *  it unset and the handler acts on the focused session. */
+export interface KeymapActionTarget {
+  sessionId?: string
+}
+
+export type KeymapActionHandlers = Record<
+  KeymapActionId,
+  (event: KeyboardEvent | MouseEvent, target: KeymapActionTarget) => void
+>
+
+/** The sidebar session row (a session or a file tab) a pointer event is on. */
+function sessionRowUnder(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null
+  const row = target.closest('[data-sidebar-item-type="session"][data-sidebar-item-id]')
+  return row?.getAttribute('data-sidebar-item-id') ?? null
+}
 
 export interface CommandHud {
   text: string
@@ -65,8 +83,8 @@ export function useKeymapManager(actions: KeymapActionHandlers): CommandHud | nu
     const run = (actionId: KeymapActionId, event: KeyboardEvent | null): void => {
       const action = ACTIONS_BY_ID.get(actionId)
       if (action?.scope === 'app' && editableTarget(event?.target ?? null)) return
-      if (event) actions[actionId](event)
-      else actions[actionId](new KeyboardEvent('keydown'))
+      if (event) actions[actionId](event, {})
+      else actions[actionId](new KeyboardEvent('keydown'), {})
     }
     const scheduleExpiry = (event: KeyboardEvent): void => {
       if (deadlineTimerRef.current) clearTimeout(deadlineTimerRef.current)
@@ -142,6 +160,37 @@ export function useKeymapManager(actions: KeymapActionHandlers): CommandHud | nu
       }
     }
 
+    // Mouse bindings. `mouseup` rather than `auxclick`: the back and forward
+    // buttons are only reliably cancellable there, and one listener serves all
+    // three buttons. A click is never a step of a command-mode sequence, so it
+    // is matched on its own and leaves a pending sequence alone.
+    const onMouseUp = (event: MouseEvent): void => {
+      const chord = mouseEventToChord(event)
+      if (!chord || localKeyContext(event.target) || editableTarget(event.target)) return
+      const actionId = matcherRef.current.matchMouse(chord)
+      if (!actionId) return
+      const definition = ACTIONS_BY_ID.get(actionId)
+      let sessionId: string | undefined
+      if (definition?.targetsSession) {
+        sessionId = sessionRowUnder(event.target) ?? undefined
+        if (!sessionId) return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      actions[actionId](event, sessionId ? { sessionId } : {})
+    }
+    // The browser's own middle-click behaviour (an autoscroll, a paste) must not
+    // run under a click that just fired an action.
+    const onAuxClick = (event: MouseEvent): void => {
+      const chord = mouseEventToChord(event)
+      if (!chord || localKeyContext(event.target) || editableTarget(event.target)) return
+      const actionId = matcherRef.current.matchMouse(chord)
+      if (!actionId) return
+      if (ACTIONS_BY_ID.get(actionId)?.targetsSession && !sessionRowUnder(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
     const reset = (): void => {
       matcherRef.current.reset()
       commandActiveRef.current = false
@@ -150,9 +199,13 @@ export function useKeymapManager(actions: KeymapActionHandlers): CommandHud | nu
     }
 
     window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('mouseup', onMouseUp, true)
+    window.addEventListener('auxclick', onAuxClick, true)
     window.addEventListener('blur', reset)
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('mouseup', onMouseUp, true)
+      window.removeEventListener('auxclick', onAuxClick, true)
       window.removeEventListener('blur', reset)
       if (deadlineTimerRef.current) clearTimeout(deadlineTimerRef.current)
       clearHideTimer()

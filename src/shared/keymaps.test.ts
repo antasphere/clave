@@ -5,8 +5,11 @@ import {
   KeymapMatcher,
   canonicalizeBinding,
   formatKeyBinding,
+  isMouseChord,
   keyEventToChord,
+  mouseEventToChord,
   overridesFromResolved,
+  type MouseEventLike,
   parseKeymapOverrides,
   resolveKeymapConfig
 } from './keymaps'
@@ -24,11 +27,12 @@ describe('keymap defaults', () => {
     expect(config.bindings.newCodex).toContain('Mod+U')
     expect(config.bindings.newYoloCodex).toContain('Mod+Y')
     expect(config.bindings.resetSessions).toEqual(['Mod+Shift+Backspace'])
-    expect(config.bindings.killFocusedSession).toEqual(['Mod+Backspace'])
+    expect(config.bindings.killFocusedSession).toEqual(['Mod+Backspace', 'MouseMiddle'])
+    expect(config.bindings.archiveAndKillSession).toEqual([])
     expect(config.bindings.newPi).toContain('Mod+Shift+P')
     expect(config.bindings.newClaudeAtFolder).toEqual(['Mod+Alt+N'])
     expect(config.bindings.newPiAtFolder).toEqual(['Mod+Alt+Shift+P'])
-    expect(KEYMAP_ACTIONS).toHaveLength(44)
+    expect(KEYMAP_ACTIONS).toHaveLength(45)
   })
 
   it('keeps the master key off the chords a terminal owns', () => {
@@ -231,5 +235,87 @@ describe('command mode matching', () => {
 
     expect(matcher.handleChord(master, 0)).toEqual({ kind: 'none' })
     expect(matcher.handleChord('Mod+N', 1)).toEqual({ kind: 'matched', actionId: 'newClaude' })
+  })
+})
+
+describe('mouse bindings', () => {
+  const click = (
+    button: number,
+    mods: Partial<Record<'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey', boolean>> = {}
+  ): MouseEventLike => ({
+    button,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...mods
+  })
+
+  it('names the middle, back and forward buttons, with their modifiers', () => {
+    expect(mouseEventToChord(click(1))).toBe('MouseMiddle')
+    expect(mouseEventToChord(click(3))).toBe('MouseBack')
+    expect(mouseEventToChord(click(4))).toBe('MouseForward')
+    expect(mouseEventToChord(click(1, { metaKey: true, altKey: true }))).toBe('Mod+Alt+MouseMiddle')
+  })
+
+  it('leaves the left and right buttons to selection, drag and the context menu', () => {
+    expect(mouseEventToChord(click(0))).toBeNull()
+    expect(mouseEventToChord(click(2))).toBeNull()
+    expect(mouseEventToChord(click(0, { metaKey: true }))).toBeNull()
+  })
+
+  it('canonicalizes and formats a mouse chord like a key chord', () => {
+    expect(canonicalizeBinding('alt+mousemiddle')).toBe('Alt+MouseMiddle')
+    expect(canonicalizeBinding('middleclick')).toBe('MouseMiddle')
+    expect(isMouseChord('Alt+MouseBack')).toBe(true)
+    expect(isMouseChord('Mod+M')).toBe(false)
+    expect(formatKeyBinding('MouseMiddle', 'Mod+K')).toBe('Middle click')
+    expect(formatKeyBinding('Alt+MouseForward', 'Mod+K')).toBe('⌥Forward button')
+  })
+
+  it('refuses a mouse button inside a sequence or as the master key', () => {
+    expect(() => canonicalizeBinding('Master MouseMiddle')).toThrow(
+      'A mouse button cannot be part of a key sequence'
+    )
+    const master = parseKeymapOverrides({ version: 1, masterKey: 'MouseMiddle' })
+    expect(master.ok).toBe(false)
+    const sequence = parseKeymapOverrides({
+      version: 1,
+      bindings: { newTerminal: ['Master MouseBack'] }
+    })
+    expect(sequence.ok).toBe(false)
+  })
+
+  it('persists a mouse binding and refuses one bound twice', () => {
+    const parsed = parseKeymapOverrides({
+      version: 1,
+      bindings: { archiveAndKillSession: ['alt+mousemiddle'] }
+    })
+    expect(parsed).toEqual({
+      ok: true,
+      value: { version: 1, bindings: { archiveAndKillSession: ['Alt+MouseMiddle'] } }
+    })
+    const twice = parseKeymapOverrides({
+      version: 1,
+      bindings: { archiveAndKillSession: ['MouseMiddle'] }
+    })
+    expect(twice.ok).toBe(false)
+  })
+
+  it('matches a click without touching a pending command sequence', () => {
+    const master = resolveKeymapConfig().masterKey!
+    const matcher = new KeymapMatcher(resolveKeymapConfig())
+    expect(matcher.matchMouse('MouseMiddle')).toBe('killFocusedSession')
+    expect(matcher.matchMouse('MouseBack')).toBeNull()
+
+    expect(matcher.handleChord(master, 0).kind).toBe('pending')
+    expect(matcher.matchMouse('MouseMiddle')).toBe('killFocusedSession')
+    // The sequence survived the click: the next key still completes it.
+    expect(matcher.handleChord('C', 10)).toEqual({ kind: 'matched', actionId: 'newClaude' })
+  })
+
+  it('marks exactly the session actions as acting on the clicked row', () => {
+    const targeted = KEYMAP_ACTIONS.filter((action) => action.targetsSession).map((a) => a.id)
+    expect(targeted.sort()).toEqual(['archiveAndKillSession', 'killFocusedSession'])
   })
 })
