@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
       kill: vi.fn(async () => undefined)
     },
     codexConfigure: vi.fn(),
+    remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
     title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
     manager: {
@@ -74,6 +75,7 @@ vi.mock('./sessions/adapters/echo-adapter', () => ({
     provider = 'echo'
   }
 }))
+vi.mock('./sessions/chat-model-default', () => ({ rememberedChatModel: mocks.remembered }))
 vi.mock('./sessions/session-manager', () => ({ sessionManager: mocks.manager }))
 vi.mock('./title-generator', () => mocks.title)
 vi.mock('./launch-profile-manager', () => ({
@@ -94,6 +96,7 @@ beforeEach(() => {
   mocks.handles.clear()
   mocks.manager.getAdapter.mockReturnValue(mocks.claude)
   mocks.findTranscript.mockReturnValue('/transcripts/conversation.jsonl')
+  mocks.remembered.mockReturnValue(undefined)
 })
 
 describe('a Claude chat tab survives a restart', () => {
@@ -270,5 +273,43 @@ describe('a chat tab is named by its first message', () => {
     const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     await ptyManager.kill(session.id)
     expect(mocks.title.cleanup).toHaveBeenCalledWith(session.id)
+  })
+})
+
+describe('a new chat starts on the model last picked in a composer', () => {
+  const launched = (): unknown =>
+    (mocks.claude.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { model?: string } })
+      .options.model
+
+  it('uses the remembered model when the launch names none', async () => {
+    mocks.remembered.mockReturnValue('opus')
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(mocks.remembered).toHaveBeenCalledWith('claude-chat')
+    expect(launched()).toBe('opus')
+    expect(session.model).toBe('opus')
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'opus' })
+    )
+  })
+
+  it('keeps a model the launch names', async () => {
+    mocks.remembered.mockReturnValue('opus')
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', model: 'haiku' })
+    expect(launched()).toBe('haiku')
+  })
+
+  it('leaves a restored tab on its own model', async () => {
+    mocks.remembered.mockReturnValue('opus')
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(launched()).toBeUndefined()
+  })
+
+  it('starts on the CLI default when nothing was picked', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(launched()).toBeUndefined()
   })
 })

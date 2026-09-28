@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map(),
   fromWebContents: vi.fn(),
   keyForWindow: vi.fn(),
-  notifyChatMessage: vi.fn()
+  notifyChatMessage: vi.fn(),
+  rememberChatModel: vi.fn()
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
@@ -14,6 +15,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
+vi.mock('./chat-model-default', () => ({ rememberChatModel: mocks.rememberChatModel }))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
@@ -443,4 +445,37 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   mocks.keyForWindow.mockReturnValue('other-window')
   expect(() => history(event, id)).toThrow('another window')
   mocks.keyForWindow.mockReturnValue('window')
+})
+
+it('remembers a composer model pick for the next chat, only once the session took it', () => {
+  const id = `ipc-model-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const event = { sender: { id: 102 } }
+  mocks.rememberChatModel.mockClear()
+  mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'opus' })
+  expect(mocks.rememberChatModel).toHaveBeenCalledWith('echo', 'opus')
+  mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: null })
+  expect(mocks.rememberChatModel).toHaveBeenLastCalledWith('echo', null)
+  mocks.rememberChatModel.mockClear()
+  vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
+    throw new Error('Invalid model name')
+  })
+  expect(() =>
+    mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'bad' })
+  ).toThrow('Invalid model name')
+  expect(mocks.rememberChatModel).not.toHaveBeenCalled()
+  sessionManager.kill(id)
+  sessionManager.forget(id)
 })
