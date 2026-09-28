@@ -4057,16 +4057,23 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   border: thin solid var(--border-subtle-color);
   border-radius: var(--radius-control);
   background-color: var(--surface-100);
-  font-size: calc(var(--text-sm) + var(--spacing) / 4);
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: 450;
+  line-height: 1.6;
   color: var(--text-primary);
 }
+/* The caret sits on the message's first line: a box one line tall at the
+   padding's edge, the glyph centred in it, whatever the fonts' metrics. */
 .terminal-view .chat-turn[data-role='user']::before {
   content: '❯';
   position: absolute;
   left: calc(var(--spacing) * 3);
   top: calc(var(--spacing) * 2.5);
+  display: flex;
+  align-items: center;
+  height: calc(var(--text-sm) * 1.6);
   font-family: var(--font-mono);
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
 
