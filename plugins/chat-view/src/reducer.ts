@@ -90,9 +90,18 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
   }
   if ('answer' in action) {
+    // The answer is this view's own, so it was never answered elsewhere: the
+    // adapter leaves blocked as soon as it has the reply, and that
+    // state_change can land before the write resolves here and mark the card
+    // closed from outside (PermissionRow read "No longer awaiting an answer").
     const entries = state.entries.map((e) =>
       e.kind === 'permission' && e.request.id === action.answer
-        ? { ...e, answer: action.optionId, ...(action.answers ? { answers: action.answers } : {}) }
+        ? {
+            ...e,
+            answer: action.optionId,
+            answeredElsewhere: undefined,
+            ...(action.answers ? { answers: action.answers } : {})
+          }
         : e
     )
     const waiting = entries.some(

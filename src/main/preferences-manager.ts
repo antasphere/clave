@@ -25,6 +25,11 @@ interface Preferences {
    * A fresh chat that names no model starts on it (`sessions/chat-model-default.ts`).
    */
   chatModels: Record<string, string>
+  /**
+   * The view the reader last picked in a chat pane (`<pluginId>/<viewId>`).
+   * A fresh chat opens in it (`sessions/chat-view-default.ts`).
+   */
+  chatView: string | null
 }
 
 const DEFAULTS: Preferences = {
@@ -37,7 +42,8 @@ const DEFAULTS: Preferences = {
   feedbackPromptCollapsed: false,
   missionControlOverlayEnabled: true,
   prereleaseUpdates: false,
-  chatModels: {}
+  chatModels: {},
+  chatView: null
 }
 
 class PreferencesManager {

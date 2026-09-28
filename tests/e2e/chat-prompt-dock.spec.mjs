@@ -92,7 +92,15 @@ export async function run(t) {
     )
     await dock.getByRole('checkbox', { name: /Romain/ }).click()
     await dock.getByPlaceholder('Type your own answer').fill('the client')
-    await dock.getByRole('button', { name: 'Submit', exact: true }).click()
+    await dock.getByRole('button', { name: 'Review', exact: true }).click()
+    // Nothing goes before the reader has seen every reply together.
+    const review = dock.locator('.chat-prompt-review')
+    await review.waitFor()
+    assert.equal((await writes()).length, 0, 'the review sends nothing')
+    assert.match(await review.innerText(), /Send now or draft\?\s*Draft only/)
+    assert.match(await review.innerText(), /Who else to copy\?\s*Valentin, Romain, the client/)
+    t.check('the last question opens a review of every reply, and sends nothing yet', true)
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
     await until(async () => (await writes()).length === 1)
     assert.deepEqual((await writes())[0], {
       type: 'permission_response',
