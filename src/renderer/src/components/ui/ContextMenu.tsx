@@ -1,13 +1,17 @@
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
-import { cn } from '@clave/ui/components'
+import { ChevronRightIcon } from '@heroicons/react/24/outline'
+import { cn, SUBMENU_ALIGN_OFFSET, SUBMENU_SIDE_OFFSET } from '@clave/ui/components'
 
-interface ContextMenuItem {
+export interface ContextMenuItem {
   label: string
+  /** Not called for an entry with a submenu: hovering it opens the submenu. */
   onClick: () => void
   shortcut?: string
   disabled?: boolean
   icon?: React.ReactNode
   danger?: boolean
+  /** Opens beside the menu on hover rather than acting on a click. */
+  submenu?: ContextMenuItem[]
 }
 
 interface ContextMenuProps {
@@ -24,14 +28,26 @@ interface ContextMenuProps {
 const ESTIMATED_MENU_WIDTH = 220
 const ESTIMATED_MENU_HEIGHT = 280
 
-export function ContextMenu({ items, x, y, onClose, header, className }: ContextMenuProps) {
+export function ContextMenu({
+  items,
+  x,
+  y,
+  onClose,
+  header,
+  className
+}: ContextMenuProps): React.JSX.Element {
   // Open leftward / upward when the cursor is too close to the viewport edge,
   // so the menu is never cropped off-screen.
   const align = x > window.innerWidth - ESTIMATED_MENU_WIDTH ? 'end' : 'start'
   const side = y > window.innerHeight - ESTIMATED_MENU_HEIGHT ? 'top' : 'bottom'
 
   return (
-    <DropdownMenuPrimitive.Root open onOpenChange={(open) => { if (!open) onClose() }}>
+    <DropdownMenuPrimitive.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
       <DropdownMenuPrimitive.Trigger
         style={{
           position: 'fixed',
@@ -64,24 +80,77 @@ export function ContextMenu({ items, x, y, onClose, header, className }: Context
             </>
           )}
           {items.map((item) => (
-            <DropdownMenuPrimitive.Item
+            <ContextMenuEntry
               key={item.label}
-              disabled={item.disabled}
-              onSelect={() => {
-                item.onClick()
-                onClose()
-              }}
-              className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
-            >
-              <span className="flex items-center gap-2">
-                {item.icon && <span className="w-4 h-4 flex items-center justify-center">{item.icon}</span>}
-                {item.label}
-              </span>
-              {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
-            </DropdownMenuPrimitive.Item>
+              item={item}
+              onClose={onClose}
+              className={className}
+            />
           ))}
         </DropdownMenuPrimitive.Content>
       </DropdownMenuPrimitive.Portal>
     </DropdownMenuPrimitive.Root>
+  )
+}
+
+function ContextMenuEntry({
+  item,
+  onClose,
+  className
+}: {
+  item: ContextMenuItem
+  onClose: () => void
+  /** The root surface's extra classes, carried to a submenu's surface. */
+  className?: string
+}): React.JSX.Element {
+  const body = (
+    <span className="flex items-center gap-2">
+      {item.icon && <span className="w-4 h-4 flex items-center justify-center">{item.icon}</span>}
+      {item.label}
+    </span>
+  )
+  if (item.submenu) {
+    return (
+      <DropdownMenuPrimitive.Sub>
+        <DropdownMenuPrimitive.SubTrigger
+          disabled={item.disabled}
+          className="menu-item justify-between"
+        >
+          {body}
+          <ChevronRightIcon className="w-3 h-3 ml-4 flex-shrink-0 text-text-tertiary" />
+        </DropdownMenuPrimitive.SubTrigger>
+        <DropdownMenuPrimitive.Portal>
+          <DropdownMenuPrimitive.SubContent
+            sideOffset={SUBMENU_SIDE_OFFSET}
+            alignOffset={SUBMENU_ALIGN_OFFSET}
+            avoidCollisions
+            collisionPadding={8}
+            className={cn('menu-surface menu-pop z-50 min-w-[180px] p-1', className)}
+          >
+            {item.submenu.map((child) => (
+              <ContextMenuEntry
+                key={child.label}
+                item={child}
+                onClose={onClose}
+                className={className}
+              />
+            ))}
+          </DropdownMenuPrimitive.SubContent>
+        </DropdownMenuPrimitive.Portal>
+      </DropdownMenuPrimitive.Sub>
+    )
+  }
+  return (
+    <DropdownMenuPrimitive.Item
+      disabled={item.disabled}
+      onSelect={() => {
+        item.onClick()
+        onClose()
+      }}
+      className={cn('menu-item justify-between', item.danger && 'menu-item--danger')}
+    >
+      {body}
+      {item.shortcut && <span className="ml-4 text-text-tertiary">{item.shortcut}</span>}
+    </DropdownMenuPrimitive.Item>
   )
 }

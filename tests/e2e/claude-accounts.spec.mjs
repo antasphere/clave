@@ -335,14 +335,37 @@ export async function run(t) {
     t.check('the menu hangs off the agent button, logos on one vertical', drift <= 1.5, { menu: menuBox.x, button: buttonBox.x })
     const claudeEntry = win.locator('[data-claude-entry="Claude Code"]')
     await claudeEntry.hover()
-    // Two launch profiles (the built-in claude and printenv), so the submenu
-    // groups the accounts under each; the rows read are printenv's.
-    // The exact label: the chat twin of the profile ("printenv (chat)") has
-    // a group of its own in the same submenu.
-    const accountGroup = (menu) =>
-      menu.locator('div').filter({ has: win.locator('.menu-label', { hasText: /^printenv · account$/ }) })
-    const rows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
+    // Two launch profiles (the built-in claude and printenv) and two
+    // accounts: hovering Claude Code lists the profiles, and hovering a
+    // profile opens its accounts in a third menu beside the second.
+    const profilesMenu = win.locator('[role="menu"]').nth(1)
+    const printenvEntry = profilesMenu.locator('[data-launch-profile-entry="e2e-printenv"]')
+    await printenvEntry.waitFor()
+    const profileRows = await profilesMenu
+      .locator('[data-launch-profile-entry]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-launch-profile-entry')))
+    t.check(
+      'hovering Claude Code lists the launch profiles, terminal and chat, not accounts',
+      profileRows.includes('builtin-claude') &&
+        profileRows.includes('e2e-printenv') &&
+        profileRows.some((id) => id.startsWith('chat:') || id === 'claude-chat') &&
+        (await profilesMenu.locator('[data-claude-account]').count()) === 0,
+      profileRows
+    )
+    await printenvEntry.hover()
+    const accountsMenu = win.locator('[role="menu"]').nth(2)
+    const rows = accountsMenu.locator('[data-claude-account]')
     await until(async () => (await rows.count()) === 2)
+    const boxes = await Promise.all(
+      [0, 1, 2].map((i) => win.locator('[role="menu"]').nth(i).boundingBox())
+    )
+    t.check(
+      'each menu opens beside the previous one, with a gap, never over it',
+      boxes.every(Boolean) &&
+        boxes[1].x >= boxes[0].x + boxes[0].width + 4 &&
+        boxes[2].x >= boxes[1].x + boxes[1].width + 4,
+      boxes
+    )
     t.equal('hovering Claude Code offers both accounts', await rows.count(), 2)
     const workRowText = await rows.filter({ hasText: 'Work' }).first().textContent()
     t.check("the account row shows the account's headroom", workRowText.includes('Work') && workRowText.includes('90% left'), workRowText)
@@ -370,9 +393,14 @@ export async function run(t) {
       t.check('the caret menu offers the Claude Agents entry', false, { menus, entries, error: e.message.split('\n')[0] })
       throw e
     }
-    // The Claude Code submenu the pointer crossed is still fading out: the
-    // Agents submenu is the newest menu in the document.
-    const agentsRows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
+    // The Claude Code submenus the pointer crossed may still be fading out:
+    // the Agents submenus are the newest menus in the document.
+    await win
+      .locator('[role="menu"]')
+      .last()
+      .locator('[data-launch-profile-entry="e2e-printenv"]')
+      .hover()
+    const agentsRows = win.locator('[role="menu"]').last().locator('[data-claude-account]')
     await until(async () => (await agentsRows.count()) === 2)
     await agentsRows.filter({ hasText: 'Work' }).first().click()
     const agents = await until(async () => {

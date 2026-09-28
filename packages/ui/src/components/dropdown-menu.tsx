@@ -108,18 +108,35 @@ const DropdownMenuSubTrigger = React.forwardRef<
 ))
 DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName
 
+/** A submenu is anchored to its trigger ROW, which sits inside the parent
+ *  menu's 4px padding and 1px border. At Radix's default offset of 0 the
+ *  submenu therefore lay over the parent's edge, touching the row. It opens
+ *  beside the parent menu instead, with a small gap: 5px to clear the parent's
+ *  padding and border, then 6px of air. Radix's pointer grace area spans the
+ *  gap, so the pointer can cross it without the submenu closing. The -5
+ *  alignment lines the submenu's first row up with the trigger row. */
+export const SUBMENU_SIDE_OFFSET = 11
+export const SUBMENU_ALIGN_OFFSET = -5
+
 const DropdownMenuSubContent = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.SubContent
-      ref={ref}
-      className={cn('menu-surface menu-pop z-50 min-w-[200px] p-1', className)}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-))
+>(
+  (
+    { className, sideOffset = SUBMENU_SIDE_OFFSET, alignOffset = SUBMENU_ALIGN_OFFSET, ...props },
+    ref
+  ) => (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        ref={ref}
+        sideOffset={sideOffset}
+        alignOffset={alignOffset}
+        className={cn('menu-surface menu-pop z-50 min-w-[200px] p-1', className)}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  )
+)
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName
 
 export {

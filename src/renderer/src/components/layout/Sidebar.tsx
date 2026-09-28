@@ -15,7 +15,7 @@ import ColorPicker from '../ui/ColorPicker'
 import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
-import { ContextMenu } from '../ui/ContextMenu'
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import { ConfirmDialog } from '@clave/ui/components'
 import { GroupCommandDialog } from '../ui/GroupCommandDialog'
 import { ExportClaveDialog } from '../ui/ExportClaveDialog'
@@ -73,7 +73,7 @@ import {
 interface ContextMenuState {
   x: number
   y: number
-  items: { label: string; onClick: () => void; shortcut?: string; disabled?: boolean; icon?: React.ReactNode; danger?: boolean }[]
+  items: ContextMenuItem[]
   header?: React.ReactNode
 }
 
@@ -1113,15 +1113,22 @@ export function Sidebar() {
       // window runs out and the question is "which subscription is this on".
       const header =
         session && accountProviderOf(session) ? <AccountMenuHeader session={session} /> : undefined
-      // Every other account of the tab's provider, those with headroom first:
-      // picking one restarts the tab's agent on it with the conversation
-      // resumed (ADR 0002). Only for a live tab: a dead one has Resume.
+      // Every other account of the tab's provider, those with headroom first,
+      // in one submenu beside the menu: picking one restarts the tab's agent
+      // on it with the conversation resumed (ADR 0002). Only for a live tab:
+      // a dead one has Resume.
       if (session?.alive && accountProviderOf(session)) {
-        for (const target of sessionSwitchTargets(session)) {
+        const targets = sessionSwitchTargets(session)
+        if (targets.length > 0) {
           items.push({
-            label: `Switch to ${target.label}${target.exhausted ? ' (at limit)' : ''}`,
+            label: 'Switch account',
             icon: <ArrowsRightLeftIcon className="w-3.5 h-3.5" />,
-            onClick: () => void switchSessionAccount(sessionId, target.id)
+            onClick: () => {},
+            submenu: targets.map((target) => ({
+              label: `${target.label}${target.exhausted ? ' (at limit)' : ''}`,
+              shortcut: target.headroom ?? undefined,
+              onClick: () => void switchSessionAccount(sessionId, target.id)
+            }))
           })
         }
         // The policy's knobs on this tab: pinned to its account (never moved,

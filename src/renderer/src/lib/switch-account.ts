@@ -12,7 +12,7 @@ import {
   codexAccountUsable,
   resolveCodexAccount
 } from '../store/codex-account-store'
-import { accountsUsageFor, type AccountUsageSummary } from '../store/usage-store'
+import { accountsUsageFor, headroomLabel, type AccountUsageSummary } from '../store/usage-store'
 import { isExhausted, pickAccount, switchTargets, type PoolAccount } from './account-pool'
 import type { CodexAccount } from '../../../preload/index.d'
 
@@ -113,15 +113,17 @@ export function sessionAccountUsage(session: Session): AccountUsageSummary | und
 /** The accounts a session could move to, with a label and headroom each. */
 export function sessionSwitchTargets(
   session: Session
-): { id: string; label: string; exhausted: boolean }[] {
+): { id: string; label: string; exhausted: boolean; headroom: string | null }[] {
   const provider = accountProviderOf(session)
   if (!provider) return []
   const current = sessionAccountId(session, provider)
   const labelOf = (id: string): string =>
     provider === 'codex' ? getCodexAccount(id).label : getClaudeProfile(id).label
-  return switchTargets(poolAccounts(provider), accountsUsageFor(provider), current).map((t) => ({
+  const usage = accountsUsageFor(provider)
+  return switchTargets(poolAccounts(provider), usage, current).map((t) => ({
     ...t,
-    label: labelOf(t.id)
+    label: labelOf(t.id),
+    headroom: headroomLabel(usage[t.id])
   }))
 }
 
