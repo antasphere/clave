@@ -102,6 +102,8 @@ export interface AccountUsageSummary {
   status: UsageResource<UsageLimits>['status']
   /** The window about to stop this account, or null when none is known. */
   tightest: UsageWindow | null
+  /** All returned windows, including the 5-hour session window used for balancing. */
+  windows?: UsageWindow[]
   error: string | null
 }
 
@@ -117,6 +119,7 @@ function summarize(state: UsageResource<UsageLimits>): AccountUsageSummary {
   return {
     status: state.status,
     tightest: state.status === 'error' ? null : tightestWindow(state.data?.windows ?? []),
+    windows: state.status === 'error' ? undefined : (state.data?.windows ?? []),
     error: state.error
   }
 }
