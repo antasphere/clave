@@ -4084,73 +4084,48 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     translate: 0 var(--spacing);
   }
 }
-/* The pinned question: sticky and of no height, so it takes no room in the
-   flow (the negative margin gives back the gap it would open); its card hangs
-   below it over the transcript, and shows once the question has scrolled out. */
-.term-pin {
+/* The question stays pinned while its answer scrolls (sticky-questions.ts):
+   the message row itself is sticky within its section, and folds to its first
+   line by a clip from the bottom (--fold), so its place in the flow never
+   changes. Its files sit under the text, so they fold away first. The browser's scroll
+   anchoring is off here: it would chase the folding row. */
+.terminal-view[data-pin] .chat-scroll {
+  overflow-anchor: none;
+}
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'] {
   position: sticky;
   top: 0;
   z-index: 5;
-  height: 0;
-  margin-bottom: calc(var(--spacing) * -5);
 }
-.term-pin-card {
-  display: flex;
-  align-items: flex-start;
-  gap: calc(var(--spacing) * 2);
-  width: 100%;
-  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
-  border: thin solid var(--border-subtle-color);
-  border-radius: 0 0 var(--radius-control) var(--radius-control);
-  /* Opaque: the surface tint laid over the ground, since the answer scrolls
-     underneath and must not read through. */
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'] {
+  /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  text-align: start;
-  opacity: 0;
-  translate: 0 calc(var(--spacing) * -1);
-  pointer-events: none;
-  transition:
-    opacity var(--default-transition-duration) var(--ease-out-expo),
-    translate var(--default-transition-duration) var(--ease-out-expo);
 }
-.term-pin[data-shown] .term-pin-card {
-  opacity: 1;
-  translate: none;
-  pointer-events: auto;
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
+  order: 1;
+  margin: calc(var(--spacing) * 1.5) 0 0;
 }
-.term-pin-card:hover {
-  color: var(--text-primary);
+.terminal-view .chat-turn-wrap[data-folded] {
+  clip-path: inset(0 0 var(--fold, 0) 0 round 0 0 var(--radius-control) var(--radius-control));
+  cursor: pointer;
 }
-.term-pin-card::before {
-  content: '❯';
-  font-family: var(--font-mono);
-  color: var(--text-tertiary);
+/* The folded box's bottom edge: its own padding band, so the lines it folds
+   away pass under the edge instead of peeking through the padding. */
+.terminal-view .chat-turn-wrap[data-folded]::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--fold, 0);
+  height: calc(var(--spacing) * 2.5);
+  border: thin solid var(--border-subtle-color);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  background-color: var(--surface-0);
+  background-image: linear-gradient(var(--surface-100), var(--surface-100));
 }
-.term-pin-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.term-pin-card[data-open] .term-pin-text {
-  max-height: 40vh;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.term-pin-card svg {
-  flex-shrink: 0;
-  width: var(--chat-glyph);
-  height: var(--chat-glyph);
-  margin-top: calc(var(--spacing) / 2);
-  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
-}
-.term-pin-card[data-open] svg {
-  rotate: 180deg;
+.terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
+  display: none;
 }
 
 /* The prompt: two rules, the caret, the field, the send button at the end. */

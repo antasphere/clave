@@ -26,7 +26,7 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
-import { PinnedQuestion } from './PinnedQuestion'
+import { useStickyQuestions } from './sticky-questions'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -766,15 +766,9 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
   // One section per exchange: the reader's message and everything answering
   // it, so a pinned question is carried off by its own section's end.
   const turns = useMemo(() => {
-    const out: { key: string; question: string | null; rows: typeof blocks }[] = []
+    const out: { key: string; rows: typeof blocks }[] = []
     for (const row of blocks) {
-      const opens = row.block.kind === 'user'
-      if (opens || !out.length)
-        out.push({
-          key: row.key,
-          question: row.block.kind === 'user' ? row.block.text : null,
-          rows: []
-        })
+      if (row.block.kind === 'user' || !out.length) out.push({ key: row.key, rows: [] })
       out[out.length - 1].rows.push(row)
     }
     return out
@@ -785,12 +779,14 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
       localStorage.setItem(PIN_KEY, value ? 'off' : 'on')
       return !value
     })
+  useStickyQuestions(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   return (
     <div
       className="chat-view terminal-view"
       data-testid="terminal-view"
+      data-pin={pinQuestions || undefined}
       onClick={(event) => {
         // A click on nothing in particular goes to the prompt; one on anything
         // that does something, or one that ends a text selection, does not.
@@ -849,7 +845,6 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             )}
             {turns.map((turn) => (
               <section key={turn.key} className="term-turn">
-                {pinQuestions && turn.question?.trim() && <PinnedQuestion text={turn.question} />}
                 {turn.rows.map(({ block, key }) =>
                   block.kind === 'tool-group' ? (
                     <ToolRow key={key} group={block} />
