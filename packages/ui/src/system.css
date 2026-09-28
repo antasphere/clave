@@ -4043,9 +4043,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   justify-content: flex-start;
   max-width: none;
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn-meta {
-  right: auto;
-  left: 0;
+/* A turn's time and copy show at its bottom right, the reader's and the
+   agent's alike. */
+.terminal-view .chat-turn-wrap .chat-turn-meta {
+  right: 0;
+  left: auto;
 }
 .terminal-view .chat-turn[data-role='user'] {
   position: relative;
@@ -4074,6 +4076,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   display: flex;
   flex-direction: column;
   gap: calc(var(--spacing) * 5);
+}
+/* A little more air between one exchange and the next: under the last answer,
+   over the next question. */
+.term-turn + .term-turn {
+  margin-top: calc(var(--spacing) * 4);
 }
 .term-turn > * {
   transition:
