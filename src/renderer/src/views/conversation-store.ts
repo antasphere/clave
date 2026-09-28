@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import type { BackgroundTask, HistoryItem, SessionEvent } from '../../../shared/session-model'
+import { endIsCurrent } from './session-end'
 
 /** One event as it arrived, with the moment it did: a view that groups turns by
  *  time needs the arrival, and the transport carries none. */
@@ -70,16 +71,28 @@ function attach(sessionId: string): void {
   }
   patch(sessionId, () => ({ ...empty }))
   let disposed = false
+  const append = (event: SessionEvent): void =>
+    patch(sessionId, (log) => ({
+      ...log,
+      events: [...log.events, { event, at: Date.now() }],
+      ...(event.type === 'background_tasks' ? { background: event.tasks } : {})
+    }))
+  // An end is taken only once the record confirms it: after a move to another
+  // account the old process's end can arrive after the new one is up.
+  const confirmed = (then: () => void): void =>
+    void endIsCurrent(sessionId)
+      .then((current) => {
+        if (current && !disposed) then()
+      })
+      .catch(console.error)
   const stopStream = window.electronAPI.onSessionStream(sessionId, (value) => {
-    if (value.kind === 'event')
-      patch(sessionId, (log) => ({
-        ...log,
-        events: [...log.events, { event: value.event, at: Date.now() }],
-        ...(value.event.type === 'background_tasks' ? { background: value.event.tasks } : {})
-      }))
+    if (value.kind !== 'event') return
+    const event = value.event
+    if (event.type === 'state_change' && event.state === 'ended') confirmed(() => append(event))
+    else append(event)
   })
   const stopExit = window.electronAPI.onSessionStreamExit(sessionId, (code) =>
-    patch(sessionId, (log) => ({ ...log, exitCode: code }))
+    confirmed(() => patch(sessionId, (log) => ({ ...log, exitCode: code })))
   )
   void window.electronAPI
     .sessionsSubscribe(sessionId)

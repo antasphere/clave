@@ -1,4 +1,5 @@
 import { AgentStateSchema, type AgentState, type Session } from '../../../shared/session-model'
+import { endIsCurrent } from './session-end'
 
 /* The kernel record is the one source of an events session's state: the main
    process publishes every `state_change` on `agent:state:<id>` and keeps the
@@ -38,20 +39,12 @@ export function bindKernelState(
     const parsed = AgentStateSchema.safeParse(state)
     if (!parsed.success) return
     if (parsed.data === 'ended') {
-      // Confirmed against the record before the tab is marked dead. The channel
-      // carrying a state and the reply of a restart are not ordered against
-      // each other: a tab moved to another account (ADR 0002) got its old
-      // process's last word AFTER the reply that brought the new one, and
-      // read as dead with a live agent under it. The record under this id
-      // is then a live session, and the word is stale; a session that really
-      // ended is on record as ended, or gone.
-      void bridge
-        .sessionsList()
-        .then((records) => {
-          if (!active) return
-          const record = records.find((s) => s.id === sessionId)
-          if (record && record.state !== 'ended') return
-          if (sink.isAlive(sessionId)) sink.setAlive(sessionId, false)
+      // Confirmed against the record before the tab is marked dead: after a
+      // move to another account the old process's last word can arrive after
+      // the new one is up (`session-end.ts`).
+      void endIsCurrent(sessionId, bridge.sessionsList)
+        .then((current) => {
+          if (active && current && sink.isAlive(sessionId)) sink.setAlive(sessionId, false)
         })
         .catch(console.error)
       return

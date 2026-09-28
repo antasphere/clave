@@ -30,6 +30,7 @@ import { ResumePicker } from './ResumePicker'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
+import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
@@ -468,11 +469,24 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // An end is taken only once the record confirms it: after a move to
+    // another account the old process's end can arrive after this pane has
+    // remounted on the new one, and closed it over a live agent.
+    const confirmed = (then: () => void): void =>
+      void endIsCurrent(session.id)
+        .then((current) => {
+          if (current && live) then()
+        })
+        .catch(console.error)
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
-      if (value.kind === 'event') dispatch({ event: value.event })
+      if (value.kind !== 'event') return
+      const event = value.event
+      if (event.type === 'state_change' && event.state === 'ended')
+        confirmed(() => dispatch({ event }))
+      else dispatch({ event })
     })
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
-      dispatch({ exit: code })
+      confirmed(() => dispatch({ exit: code }))
     )
     void window.electronAPI
       .sessionsSubscribe(session.id)
