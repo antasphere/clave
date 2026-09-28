@@ -13,7 +13,13 @@ import {
   resolveCodexAccount
 } from '../store/codex-account-store'
 import { accountsUsageFor, headroomLabel, type AccountUsageSummary } from '../store/usage-store'
-import { isExhausted, pickAccount, switchTargets, type PoolAccount } from './account-pool'
+import {
+  explicitAccountId,
+  isExhausted,
+  pickAccount,
+  switchTargets,
+  type PoolAccount
+} from './account-pool'
 import type { CodexAccount } from '../../../preload/index.d'
 
 /**
@@ -53,8 +59,9 @@ function poolAccounts(provider: AccountProvider): PoolAccount[] {
   }))
 }
 
-/** The pool's pick for a new session: the account asked for (or the one
- *  selected in settings) while it has headroom, else the next one along. */
+/** The pool's pick for a new session. A named account is honored; when no
+ *  account is named, the selected account is used while it has headroom, else
+ *  the next one along. */
 export function accountForLaunch(provider: 'claude', preferredId?: string): ClaudeProfile
 export function accountForLaunch(provider: 'codex', preferredId?: string): CodexAccount
 export function accountForLaunch(
@@ -65,6 +72,15 @@ export function accountForLaunch(
     provider === 'codex'
       ? useCodexAccountStore.getState().selectedAccountId
       : useClaudeProfileStore.getState().selectedProfileId
+  // A named account is an instruction, not a preference. The launcher menu
+  // passes the account the user clicked, so usage from another account must not
+  // silently replace it. The automatic policy uses `nextAccountFor` below and
+  // still rotates when the CLI reports a limit.
+  if (preferredId !== undefined) {
+    if (explicitAccountId(poolAccounts(provider), preferredId)) {
+      return provider === 'codex' ? getCodexAccount(preferredId) : getClaudeProfile(preferredId)
+    }
+  }
   const id = pickAccount({
     accounts: poolAccounts(provider),
     usage: accountsUsageFor(provider),
@@ -137,7 +153,8 @@ export function nextAccountFor(session: Session): string | null {
     accounts: poolAccounts(provider),
     usage: accountsUsageFor(provider),
     preferredId: current,
-    leavingId: current
+    leavingId: current,
+    preferSessionHeadroom: true
   })
   return next === current ? null : next
 }

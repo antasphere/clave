@@ -13,11 +13,22 @@ import type { AccountUsageSummary } from '../store/usage-store'
  * exhausted and never chosen while a subscription account has headroom.
  *
  * The order is the list's order, round robin: from the account just left,
- * the next usable one with headroom, wrapping. When every account is
+ * the next usable one with headroom, wrapping. Automatic switches can rank
+ * those targets by their 5-hour session headroom. When every account is
  * exhausted the one that resets soonest is taken (the ADR's assumption,
  * noted there), else the preferred one stays.
  */
 export const EXHAUSTED_LEFT_PERCENT = 5
+
+/** Resolve a launcher's named account without consulting usage. */
+export function explicitAccountId(
+  accounts: PoolAccount[],
+  preferredId: string | undefined
+): string | null {
+  if (preferredId === undefined) return null
+  const account = accounts.find((candidate) => candidate.id === preferredId)
+  return account?.usable ? account.id : null
+}
 
 export interface PoolAccount {
   id: string
@@ -52,6 +63,8 @@ export interface PickInput {
   leavingId?: string
   /** Accounts a pinned session may never land on (none today). */
   excludeIds?: string[]
+  /** Prefer the account with the most 5-hour headroom among open targets. */
+  preferSessionHeadroom?: boolean
 }
 
 /**
@@ -72,8 +85,26 @@ export function pickAccount(input: PickInput): string {
     accounts.findIndex((a) => a.id === from)
   )
   const ring = [...accounts.slice(start + 1), ...accounts.slice(0, start + 1)]
-  const next = ring.find((a) => a.id !== from && open(a))
-  if (next) return next.id
+  const openTargets = ring.filter((a) => a.id !== from && open(a))
+  if (openTargets.length > 0) {
+    if (input.preferSessionHeadroom) {
+      const sessionHeadroom = (id: string): number | null => {
+        const window = usage[id]?.windows?.find((candidate) => candidate.kind === 'session')
+        return window ? 100 - window.usedPercentage : null
+      }
+      const hasSessionRead = openTargets.some((a) => sessionHeadroom(a.id) !== null)
+      if (hasSessionRead) {
+        return [...openTargets].sort((a, b) => {
+          const aHeadroom = sessionHeadroom(a.id)
+          const bHeadroom = sessionHeadroom(b.id)
+          if (aHeadroom === null) return 1
+          if (bHeadroom === null) return -1
+          return bHeadroom - aHeadroom
+        })[0].id
+      }
+    }
+    return openTargets[0].id
+  }
   // Nothing with headroom: a fallback that can run, else whichever
   // subscription account comes back first, else stay where we are.
   const fallback = ring.find((a) => a.id !== from && ok(a) && a.fallback)
