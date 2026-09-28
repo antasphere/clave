@@ -4,6 +4,7 @@ import { SessionInputSchema } from '../../shared/session-model'
 import { preparePrompt } from './attachments'
 import { windowRegistry } from '../window-registry'
 import * as titleGenerator from '../title-generator'
+import { rememberChatModel } from './chat-model-default'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -106,6 +107,14 @@ export function registerSessionIpc(): void {
       throw new Error('Session belongs to another window')
     if (input instanceof Uint8Array) return sessionManager.write(id, input)
     const value = SessionInputSchema.parse(input)
+    if (value.type === 'set_model') {
+      // The composer's pick is the next chat's default too. Remembered only
+      // once the session took the switch: a refused name throws before this.
+      sessionManager.write(id, value)
+      const adapterId = sessionManager.get(id)?.adapterId
+      if (adapterId) rememberChatModel(adapterId, value.model)
+      return
+    }
     if (value.type !== 'user_message') return sessionManager.write(id, value)
     // A chat tab is named by its first message, and this is where that
     // message is first seen in main; the title comes back to the sender's

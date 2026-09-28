@@ -20,6 +20,11 @@ interface Preferences {
    * `allowDowngrade` for the way back).
    */
   prereleaseUpdates: boolean
+  /**
+   * The model the reader last picked in a chat composer, by chat adapter id.
+   * A fresh chat that names no model starts on it (`sessions/chat-model-default.ts`).
+   */
+  chatModels: Record<string, string>
 }
 
 const DEFAULTS: Preferences = {
@@ -31,7 +36,8 @@ const DEFAULTS: Preferences = {
   telemetryNoticeShown: false,
   feedbackPromptCollapsed: false,
   missionControlOverlayEnabled: true,
-  prereleaseUpdates: false
+  prereleaseUpdates: false,
+  chatModels: {}
 }
 
 class PreferencesManager {

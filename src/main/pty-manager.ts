@@ -14,6 +14,7 @@ import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
+import { rememberedChatModel } from './sessions/chat-model-default'
 import {
   defaultViewFor,
   eventsProfile,
@@ -136,6 +137,14 @@ class PtyManager {
         : ptyAdapter
     if (!adapter) throw new Error(`Adapter unavailable: ${events?.adapterId}`)
     const isEvents = !!events || echo
+    // A fresh chat that names no model starts on the one last picked in a
+    // chat composer. A restored or resumed tab keeps its own, and a launch
+    // that names a model (MCP, a .clave file) gets exactly that.
+    const remembered =
+      events && !options?.model && !options?.adoptSessionId && !options?.resumeSessionId
+        ? rememberedChatModel(adapter.id)
+        : undefined
+    if (remembered) options = { ...options, model: remembered }
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the
