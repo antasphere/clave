@@ -84,6 +84,19 @@ export function SidebarTabItem({
     [onClick]
   )
 
+  // A middle click closes the row the way browser tabs close: the same path as
+  // the X button, so a session still goes through its confirmation. Fires on
+  // `auxclick` — a middle button never reaches `click` — and the drag hook
+  // ignores every button but the left one, so no drag starts underneath it.
+  const handleAuxClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 1 || !onDelete || editing) return
+      e.preventDefault()
+      onDelete()
+    },
+    [onDelete, editing]
+  )
+
   // Dragging takes visual priority; otherwise fade dimmed (unselected) tabs.
   const itemOpacity = isDragging ? 0.3 : dimmed ? 0.55 : undefined
   const tintBackground =
@@ -100,6 +113,7 @@ export function SidebarTabItem({
     >
       <button
         onClick={handleClick}
+        onAuxClick={handleAuxClick}
         onContextMenu={onContextMenu}
         onKeyDown={handleButtonKeyDown}
         title={title}
