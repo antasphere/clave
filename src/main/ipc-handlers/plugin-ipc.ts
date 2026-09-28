@@ -10,13 +10,14 @@ import { sessionManager } from '../sessions/session-manager'
 import { listPluginSessions, pluginSessionById } from '../sessions/plugin-sessions'
 import { syncPluginAdapters } from '../sessions/plugin-adapters'
 import { registerPreviewFile, unregisterPreviewFile } from '../preview-protocol'
-import { TEST_NO_ACTIVATE } from '../test-mode'
+import { OWN_PROFILE, TEST_NO_ACTIVATE } from '../test-mode'
 import type { PluginPermission } from '@clave/plugin-sdk'
 
 export function registerPluginHandlers(): void {
-  const root = TEST_NO_ACTIVATE
-    ? join(app.getPath('userData'), 'clave-plugins')
-    : join(homedir(), '.clave')
+  const root =
+    TEST_NO_ACTIVATE || OWN_PROFILE
+      ? join(app.getPath('userData'), 'clave-plugins')
+      : join(homedir(), '.clave')
   const bundled = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'plugins')
   let store: PluginStore
   let initializationError: string | undefined

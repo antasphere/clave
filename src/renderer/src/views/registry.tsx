@@ -11,6 +11,7 @@ import {
 import type { AgentState } from '../../../shared/session-model'
 import { ChatView, type ChatViewProps } from '../../../../plugins/chat-view/src/ChatView'
 import { CompactView } from '../../../../plugins/chat-view/src/CompactView'
+import { TerminalView } from '../../../../plugins/chat-view/src/TerminalView'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
@@ -30,7 +31,8 @@ import { BackgroundTasksChip } from './BackgroundTasksChip'
  *  lets the picker offer them and a session name one. */
 const nativeViews: Record<string, ComponentType<ChatViewProps>> = {
   'clave.chat-view/chat': ChatView,
-  'clave.chat-view/compact': CompactView
+  'clave.chat-view/compact': CompactView,
+  'clave.chat-view/terminal': TerminalView
 }
 /** What this build can mount, handed to the pure resolution in `resolution.ts`. */
 const implemented: ReadonlySet<string> = new Set(Object.keys(nativeViews))
@@ -106,7 +108,7 @@ function ViewPicker({
           side="bottom"
           align="end"
           sideOffset={6}
-          className="menu-surface menu-pop z-50"
+          className="menu-surface menu-pop z-50 min-w-[200px] p-1"
           aria-label="Views"
         >
           <DropdownMenu.Label className="menu-label">Read this session as</DropdownMenu.Label>

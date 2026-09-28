@@ -3,9 +3,10 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { SkinStore } from '../skins/skin-store'
 import { preferencesManager } from '../preferences-manager'
+import { OWN_PROFILE } from '../test-mode'
 
 export function registerSkinHandlers(): void {
-  const testMode = process.argv.includes('--test-no-activate')
+  const testMode = process.argv.includes('--test-no-activate') || OWN_PROFILE
   const root = testMode
     ? join(app.getPath('userData'), 'skins')
     : join(homedir(), '.clave', 'skins')

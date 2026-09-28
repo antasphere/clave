@@ -234,6 +234,13 @@ class PluginSessionAdapter implements SessionAdapter {
         }
         this.call(live, () => instance.setModel!(value.model))
         return
+      case 'set_permission_mode':
+        this.emit(live, {
+          type: 'error',
+          message: `${this.id} does not offer permission modes`,
+          fatal: false
+        })
+        return
     }
   }
 

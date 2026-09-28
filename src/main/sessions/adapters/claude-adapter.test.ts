@@ -732,6 +732,110 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     await adapter.kill(handle)
   }
 )
+it('switches the permission mode the way Shift+Tab does, and says why the CLI refused', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'manual' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  // The launch's `manual` is the running `default`, and bypass is not offered
+  // to a session that was not launched on it.
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toEqual({
+    type: 'permission_mode',
+    mode: 'default',
+    modes: [
+      { id: 'default', label: 'Manual' },
+      { id: 'acceptEdits', label: 'Accept edits' },
+      { id: 'plan', label: 'Plan' },
+      { id: 'auto', label: 'Auto' }
+    ]
+  })
+  expect(() =>
+    adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  ).toThrow(/Unknown permission mode/)
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'plan' })
+  const request = JSON.parse(child.stdin.read().toString())
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'set_permission_mode', mode: 'plan' }
+  })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: request.request_id, response: { mode: 'plan' } }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toMatchObject({ type: 'permission_mode', mode: 'plan' })
+  // A refusal reaches the reader in the CLI's own words, and the mode stays.
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'auto' })
+  const auto = JSON.parse(child.stdin.read().toString())
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: auto.request_id,
+        error: 'Cannot set permission mode to auto: auto mode unavailable for this model'
+      }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({
+    type: 'error',
+    message: 'Cannot set permission mode to auto: auto mode unavailable for this model',
+    fatal: false
+  })
+  // A change the CLI makes itself (a plan approved) arrives as a status frame.
+  child.stdout.write(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode: 'acceptEdits'
+    }) + '\n'
+  )
+  expect(events.filter((e) => e.type === 'permission_mode').at(-1)).toMatchObject({
+    mode: 'acceptEdits'
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('offers bypass, and the way back to it, only to a session launched on it', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'bypassPermissions' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toMatchObject({ mode: 'bypassPermissions' })
+  expect(offered?.type === 'permission_mode' && offered.modes.map((m) => m.id)).toEqual([
+    'default',
+    'acceptEdits',
+    'plan',
+    'auto',
+    'bypassPermissions'
+  ])
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  expect(JSON.parse(child.stdin.read().toString())).toMatchObject({
+    request: { subtype: 'set_permission_mode', mode: 'bypassPermissions' }
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
 it('starts the process at ready so its boot overlaps the typing, and once only', async () => {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -747,14 +851,15 @@ it('starts the process at ready so its boot overlaps the typing, and once only',
   expect(mock.spawn).not.toHaveBeenCalled()
   adapter.ready(handle)
   expect(mock.spawn).toHaveBeenCalledTimes(1)
-  // Booting is silent: the model announcement, and no turn, no state.
-  expect(events).toEqual([{ type: 'session_meta', model: null, providerSessionId: null }])
+  // Booting is silent: the model and mode announcements, and no turn, no state.
+  expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
+  expect(events[0]).toEqual({ type: 'session_meta', model: null, providerSessionId: null })
   expect(child.stdin.read()).toBeNull()
   adapter.ready(handle)
   adapter.write(handle, { type: 'user_message', text: 'Hello' })
   expect(mock.spawn).toHaveBeenCalledTimes(1)
   // The first message is working before the CLI has said a word.
-  expect(events.slice(1)).toEqual([
+  expect(events.slice(2)).toEqual([
     { type: 'user_message', text: 'Hello' },
     { type: 'state_change', state: 'working' }
   ])
@@ -982,7 +1087,7 @@ it('keeps a resumed past in main for the view to page, and streams none of it', 
       if (s.kind === 'event') events.push(s.event)
     })
     adapter.ready(handle)
-    expect(events.map((e) => e.type)).toEqual(['session_meta'])
+    expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
     const history = adapter.history(handle)
     expect(history.map((item) => item.event)).toEqual(
       [0, 1, 2].flatMap((i) => [
@@ -1258,4 +1363,59 @@ it('empties the list when the CLI exits', () => {
   feed({ type: 'system', subtype: 'task_started', task_id: 'b3', is_backgrounded: true })
   translator.clearBackground()
   expect(lastBackground()).toEqual([])
+})
+it('reports the context from the main thread and names the parent of a subagent call', () => {
+  const usage = { input_tokens: 2, cache_read_input_tokens: 10_000, output_tokens: 8 }
+  const main = (content: unknown[]): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { content, usage }
+  })
+  feed(main([{ type: 'text', text: 'Looking.' }]))
+  // Every block of one message repeats its usage: one announcement, not two.
+  feed(main([{ type: 'tool_use', id: 'agent-1', name: 'Agent', input: { description: 'x' } }]))
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      content: [{ type: 'tool_use', id: 'sub-1', name: 'Grep', input: { pattern: 'y' } }],
+      usage: { input_tokens: 90_000 }
+    }
+  })
+  feed({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    modelUsage: {
+      'claude-opus-5[1m]': { contextWindow: 1_000_000 },
+      'claude-haiku-4-5': { contextWindow: 200_000 }
+    }
+  })
+  expect(events.filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 10_010, window: null },
+    // The subagent's own context, never the conversation's.
+    { type: 'context_usage', used: 90_000, window: null, parent: 'agent-1' },
+    { type: 'context_usage', used: 10_010, window: 1_000_000 }
+  ])
+  const calls = events.filter((e) => e.type === 'tool_call')
+  expect(calls.map((e) => (e.type === 'tool_call' ? [e.id, e.parent] : null))).toEqual([
+    ['agent-1', undefined],
+    ['sub-1', 'agent-1']
+  ])
+})
+it('replays the context a resumed conversation stood at', () => {
+  const line = (usage: object): string =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'ok' }], usage }
+    })
+  const items = translator.replay([
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 4_000 })
+  ])
+  expect(items.map((i) => i.event).filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 1_005, window: null },
+    { type: 'context_usage', used: 4_005, window: null }
+  ])
 })

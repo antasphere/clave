@@ -49,6 +49,13 @@
      and now the only one, so it reads. */
   --color-git-modified: #a78bfa;
   --color-git-incoming: #38bdf8;
+  /* The Terminal view's status line, after the TUI's: the folder in teal, the
+     model in violet, the permission mode in amber. Mid lightness, so each
+     reads on the dark grounds and the light ones alike. */
+  --color-term-cwd: oklch(0.64 0.11 205);
+  --color-term-model: oklch(0.62 0.2 300);
+  --color-term-mode: oklch(0.66 0.11 60);
+  --color-term-auto: oklch(0.7 0.17 50);
   /* The worktree badges of the git panel (PRDCT-2356): the modified purple's
      family, restated per theme because one hex fails contrast at 10px on the
      light grounds (2.6:1 on light, 2.4:1 on coffee). */

@@ -350,6 +350,8 @@ export class CodexAdapter implements SessionAdapter {
       })
       return
     }
+    if (value.type === 'set_permission_mode')
+      throw new Error('Codex chat does not offer permission modes')
     if (state.sending || state.translator.turnId)
       throw new Error('Codex already has an active turn')
     state.sending = true
