@@ -14,10 +14,17 @@ import {
   StopIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
-import type { SessionInput, ModelOption, CommandOption } from '../../../src/shared/session-model'
+import type {
+  SessionEvent,
+  SessionInput,
+  ModelOption,
+  CommandOption
+} from '../../../src/shared/session-model'
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { nextPermissionMode } from './permission-mode'
+import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
+import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -425,6 +432,11 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
     ...emptyConversation,
     state: session.state
   })
+  // The status line's own reading of the same stream: context and subagents.
+  const [status, dispatchStatus] = useReducer(
+    (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
+    emptyStatus
+  )
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -462,7 +474,9 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
   useEffect(() => {
     let live = true
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
-      if (value.kind === 'event') dispatch({ event: value.event })
+      if (value.kind !== 'event') return
+      dispatch({ event: value.event })
+      dispatchStatus(value.event)
     })
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
       dispatch({ exit: code })
@@ -743,7 +757,7 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
   const showMark = state === 'working'
   return (
     <div
-      className="chat-view"
+      className="chat-view terminal-view"
       data-testid="terminal-view"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && state === 'working') {
@@ -810,7 +824,7 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
         {earlier.loading && <EarlierLoading />}
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
-      <div className="chat-composer-wrap">
+      <div className="chat-composer-wrap term-composer-wrap">
         {resuming && (
           <ResumePicker
             cwd={session.cwd}
@@ -842,53 +856,58 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             />
           </div>
         )}
+        {(attachments.length > 0 || preparations.length > 0) && (
+          <div className="chat-composer-files term-files">
+            <Attachments
+              files={attachments}
+              imagesSupported={imagesSupported}
+              onChange={setAttachments}
+            />
+            {preparations.length > 0 && (
+              <ul className="chat-attachments" aria-label="Preparing files">
+                {preparations.map((item) => (
+                  <li
+                    key={item.id}
+                    className="chat-attachment"
+                    data-issue={item.error ? 'true' : undefined}
+                  >
+                    <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
+                      <span className="chat-attachment-name">{item.name}</span>
+                      <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="chat-turn-copy"
+                      aria-label={`Remove ${item.name}`}
+                      title="Remove"
+                      onClick={() => withdraw(item.id)}
+                    >
+                      <XMarkIcon />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <form
-          className="chat-composer"
+          className="term-prompt"
           data-dragging={dragging === 'paths' ? 'true' : undefined}
           onSubmit={(event) => {
             event.preventDefault()
             void send()
           }}
         >
-          {(attachments.length > 0 || preparations.length > 0) && (
-            <div className="chat-composer-files">
-              <Attachments
-                files={attachments}
-                imagesSupported={imagesSupported}
-                onChange={setAttachments}
-              />
-              {preparations.length > 0 && (
-                <ul className="chat-attachments" aria-label="Preparing files">
-                  {preparations.map((item) => (
-                    <li
-                      key={item.id}
-                      className="chat-attachment"
-                      data-issue={item.error ? 'true' : undefined}
-                    >
-                      <span className="chat-attachment-text" role={item.error ? 'alert' : 'status'}>
-                        <span className="chat-attachment-name">{item.name}</span>
-                        <span className="chat-attachment-hint">{item.error ?? 'Preparing…'}</span>
-                      </span>
-                      <button
-                        type="button"
-                        className="chat-turn-copy"
-                        aria-label={`Remove ${item.name}`}
-                        title="Remove"
-                        onClick={() => withdraw(item.id)}
-                      >
-                        <XMarkIcon />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+          <span className="term-caret" aria-hidden="true">
+            ❯
+          </span>
           <textarea
             ref={textarea}
             rows={1}
             aria-label="Message"
-            placeholder={state === 'ended' ? 'This session has ended' : 'Write a message…'}
+            placeholder={
+              state === 'ended' ? 'This session has ended' : 'Try "fix typecheck errors"'
+            }
             value={draft}
             disabled={closed}
             onChange={(event) => setDraft(event.target.value)}
@@ -963,46 +982,65 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             <StopIcon data-glyph="stop" />
           </button>
         </form>
-        <div className="chat-composer-footer">
-          <span className="chat-composer-hint">
-            <button
-              type="button"
-              className="chat-composer-tool"
-              aria-label="Add files"
-              title="Add files"
-              disabled={closed}
-              onClick={() =>
-                void window.electronAPI.sessionsFiles
-                  .pick()
-                  .then((paths) => addFiles(paths))
-                  .catch(report)
-              }
-            >
-              <PaperClipIcon />
-            </button>
-            {state === 'working'
-              ? 'Esc to interrupt and take the message back'
-              : 'Enter to send · Shift+Enter for a new line'}
-          </span>
-          <div className="chat-composer-controls">
-            {conversation.permissionMode && (
-              <PermissionModeMenu
-                mode={conversation.permissionMode.mode}
-                modes={conversation.permissionMode.modes}
+        <div className="term-status">
+          <div className="term-status-line">
+            <span className="term-cwd" title={session.cwd}>
+              {session.cwd.split('/').filter(Boolean).pop() ?? session.cwd}
+            </span>
+            <span className="term-model">
+              <ModelMenu
+                sessionId={session.id}
+                model={conversation.model}
                 disabled={closed}
-                onSelect={(id) =>
-                  void write({ type: 'set_permission_mode', mode: id }).catch(report)
-                }
+                onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
               />
+            </span>
+            <ContextMeter used={status.contextUsed} window={status.contextWindow} />
+            <span className="term-status-end">
+              <button
+                type="button"
+                className="chat-composer-tool"
+                aria-label="Add files"
+                title="Add files"
+                disabled={closed}
+                onClick={() =>
+                  void window.electronAPI.sessionsFiles
+                    .pick()
+                    .then((paths) => addFiles(paths))
+                    .catch(report)
+                }
+              >
+                <PaperClipIcon />
+              </button>
+            </span>
+          </div>
+          <div className="term-status-line">
+            {conversation.permissionMode && (
+              <span className="term-mode" data-mode={conversation.permissionMode.mode}>
+                <PermissionModeMenu
+                  mode={conversation.permissionMode.mode}
+                  modes={conversation.permissionMode.modes}
+                  disabled={closed}
+                  onSelect={(id) =>
+                    void write({ type: 'set_permission_mode', mode: id }).catch(report)
+                  }
+                />
+                <span className="term-dim">(shift+tab to cycle)</span>
+              </span>
             )}
-            <ModelMenu
-              sessionId={session.id}
-              model={conversation.model}
-              disabled={closed}
-              onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
-            />
+            {status.agents.length > 0 && (
+              <span className="term-dim">
+                · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}
+              </span>
+            )}
+            <span className="term-status-end term-dim">
+              {state === 'working'
+                ? 'esc to interrupt'
+                : 'enter to send · shift+enter for a new line'}
+            </span>
           </div>
         </div>
+        <SubAgentStack agents={status.agents} />
       </div>
     </div>
   )
