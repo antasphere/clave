@@ -335,6 +335,8 @@ export interface SessionRecord {
   claudeProfileLabel?: string
   codexAccountId?: string
   codexAccountLabel?: string
+  /** The thread a Codex chat tab resumes on relaunch. */
+  codexThreadId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string

@@ -7,7 +7,7 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
-import { codexRoot, findCodexThreadForSession } from './session-history/codex'
+import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
@@ -189,12 +189,14 @@ class PtyManager {
       viewId: defaultViewFor(profileId)
     }
     // A restored chat tab that never got a message has an id but no
-    // transcript, and `--resume` of it fails: it relaunches fresh under the
-    // same id instead.
+    // transcript (Claude) or rollout (Codex), and resuming it fails: it
+    // relaunches fresh under the same id instead.
     const resume =
-      adapter.id === 'claude-chat' &&
       options?.resumeSessionId &&
-      !findTranscript(options.resumeSessionId, cwd, options.configDir)
+      ((adapter.id === 'claude-chat' &&
+        !findTranscript(options.resumeSessionId, cwd, options.configDir)) ||
+        (adapter.id === 'codex-chat' &&
+          !hasCodexRollout(options.resumeSessionId, codexRoot(getLoginShellEnv()))))
         ? undefined
         : options?.resumeSessionId
     if (isEvents && adapter.id === 'claude-chat') {
@@ -244,7 +246,8 @@ class PtyManager {
     if (isEvents) this.eventSessions.set(session.id, session)
     if (isEvents) session.startedAt = Date.now()
     this.spawns.set(session.id, { cwd, options })
-    if (isEvents && adapter.id === 'claude-chat') this.writeChatRecord(session, profileId, options)
+    if (isEvents && (adapter.id === 'claude-chat' || adapter.id === 'codex-chat'))
+      this.writeChatRecord(adapter.id, session, profileId, options, resume)
     // A fresh conversation is named by its first message (the terminal path
     // reads it off the transcript; a chat tab's crosses `sessions:write`). A
     // resumed one keeps the name it was saved under. The title runs the agent
@@ -261,32 +264,41 @@ class PtyManager {
     return session
   }
 
-  /** A Claude chat tab's session record: what brings it back after a quit, an
-   *  update or a crash. Only Claude's: the restore relaunches with
-   *  `--resume <claudeSessionId>`, and no other events adapter resumes yet. */
+  /** A chat tab's session record: what brings it back after a quit, an
+   *  update or a crash. Claude's resumes its `claudeSessionId`; Codex's resumes
+   *  the thread the app-server opened, which is known only once the thread is
+   *  up — a resumed tab carries it from the start, a fresh one gets it from
+   *  its first `session_meta` (attachListeners). Without a record the tab is
+   *  simply gone at the next launch, which is what every Codex chat tab was. */
   private writeChatRecord(
+    adapterId: 'claude-chat' | 'codex-chat',
     session: PtySession,
     profileId: string | undefined,
-    options: PtySpawnOptions | undefined
+    options: PtySpawnOptions | undefined,
+    resume: string | undefined
   ): void {
+    const codex = adapterId === 'codex-chat'
     ptyBackend.writeEventSessionRecord({
-      adapterId: 'claude-chat',
+      adapterId,
       transport: 'events',
       id: session.id,
-      claudeSessionId: session.claudeSessionId,
+      claudeSessionId: codex ? undefined : session.claudeSessionId,
+      codexThreadId: codex ? resume : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
-      claudeMode: true,
+      claudeMode: !codex,
       antigravityMode: false,
-      codexMode: false,
+      codexMode: codex,
       piMode: false,
       claudeAgentsMode: false,
       dangerousMode: options?.dangerousMode === true,
       model: options?.model,
       launchProfileId: profileId,
-      configDir: options?.configDir,
-      claudeProfileId: options?.claudeProfileId,
-      claudeProfileLabel: options?.claudeProfileLabel,
+      configDir: codex ? undefined : options?.configDir,
+      claudeProfileId: codex ? undefined : options?.claudeProfileId,
+      claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,
+      codexAccountId: codex ? options?.codexAccountId : undefined,
+      codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
       windowKey: options?.windowKey
     })
@@ -309,6 +321,7 @@ class PtyManager {
         // The thread the app-server opened: what a restart resumes.
         if (sessionManager.get(id)?.adapterId === 'codex-chat' && stream.event.providerSessionId) {
           this.codexThreads.set(id, stream.event.providerSessionId)
+          ptyBackend.setSessionCodexThreadId(id, stream.event.providerSessionId)
         }
       }
       if (
