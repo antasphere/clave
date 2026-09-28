@@ -836,7 +836,13 @@ async function handleCloseSession(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const state = useSessionStore.getState()
-  const session = state.sessions.find((s) => s.id === payload.sessionId)
+  // "mine" is the calling tab, as for every other session tool: it is how an
+  // agent closes its own tab when its work is done (the archive-and-kill action
+  // asks exactly that of it).
+  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
+  if (!id)
+    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
+  const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
   // An agent-initiated close is a transport event: recorded with the closing
   // tab as `closer` BEFORE the kill, while the identity is still in the store.
@@ -844,9 +850,9 @@ async function handleCloseSession(payload: {
     ? (state.sessions.find((s) => s.id === payload.callerSessionId) ?? null)
     : null
   emitTabClosed(session, state.groups, 'agent', closer)
-  await window.electronAPI.killSession(payload.sessionId)
-  useSessionStore.getState().removeSession(payload.sessionId)
-  return { closed: payload.sessionId }
+  await window.electronAPI.killSession(id)
+  useSessionStore.getState().removeSession(id)
+  return { closed: id }
 }
 
 function handleRename(payload: { target: 'group' | 'session'; id: string; name: string }): unknown {
@@ -1096,6 +1102,60 @@ function handleSelfCheckpoint(sessionId: string, message: string): unknown {
   }
 }
 
+/**
+ * Type `text` into an agent tab's terminal input as ONE turn and submit it,
+ * setting aside and then restoring whatever the user had half-typed there
+ * (PRDCT-1569). Serialized per target on `sendChains`. `onSubmitted` fires the
+ * moment the submit lands, before the draft restore, so a caller can tell a
+ * delivered message from one whose restore failed afterwards. The text must
+ * already be sanitized: this writes it verbatim inside a bracketed paste.
+ */
+export function typeIntoAgentTab(
+  targetId: string,
+  text: string,
+  onSubmitted?: () => void
+): Promise<DraftStash> {
+  const runInjection = async (): Promise<DraftStash> => {
+    const shadow = getDraftShadow(targetId)
+    const stash = shadow.beginInjection()
+    try {
+      if (stash.clear) {
+        window.electronAPI.writeSession(targetId, stash.clear)
+        await new Promise((r) => setTimeout(r, 150))
+      }
+      // Deliver as one bracketed paste so embedded newlines don't submit early,
+      // then submit. The TUI queues input that arrives mid-turn, so a busy agent
+      // sees the message as its next user turn.
+      window.electronAPI.writeSession(targetId, `\x1b[200~${text}\x1b[201~`)
+      await new Promise((r) => setTimeout(r, 150))
+      window.electronAPI.writeSession(targetId, '\r')
+      onSubmitted?.()
+      if (stash.text) {
+        // Give the TUI a beat to consume the submit, then re-paste the draft
+        // with NO trailing submit — same sanitize + bracketed-paste discipline
+        // as the message itself (the draft is user text, not keystrokes).
+        await new Promise((r) => setTimeout(r, 150))
+        window.electronAPI.writeSession(
+          targetId,
+          `\x1b[200~${sanitizeForPaste(stash.text)}\x1b[201~`
+        )
+      }
+    } finally {
+      shadow.endInjection(stash.text)
+    }
+    return stash
+  }
+
+  const prior = sendChains.get(targetId) ?? Promise.resolve()
+  const run = prior.catch(() => {}).then(runInjection)
+  sendChains.set(targetId, run)
+  void run.finally(() => {
+    // Drop the chain once it drains so the map doesn't grow unboundedly.
+    if (sendChains.get(targetId) === run) sendChains.delete(targetId)
+  })
+  return run
+}
+
 async function handleSendToSession(payload: {
   sessionId: string
   message: string
@@ -1162,43 +1222,8 @@ async function handleSendToSession(payload: {
   // boundary and inside the CLI's dialogs (see draft-shadow.ts; undershoot
   // would leave residue to co-submit). The degradation is reported ONLY in
   // this tool's result (draftHandling) — nothing in the app UI shows it.
-  const runInjection = async (): Promise<DraftStash> => {
-    const shadow = getDraftShadow(targetId)
-    const stash = shadow.beginInjection()
-    try {
-      if (stash.clear) {
-        window.electronAPI.writeSession(targetId, stash.clear)
-        await new Promise((r) => setTimeout(r, 150))
-      }
-      // Deliver as one bracketed paste so embedded newlines don't submit early,
-      // then submit. The TUI queues input that arrives mid-turn, so a busy agent
-      // sees the message as its next user turn.
-      window.electronAPI.writeSession(targetId, `\x1b[200~${text}\x1b[201~`)
-      await new Promise((r) => setTimeout(r, 150))
-      window.electronAPI.writeSession(targetId, '\r')
-      submitted = true
-      if (stash.text) {
-        // Give the TUI a beat to consume the submit, then re-paste the draft
-        // with NO trailing submit — same sanitize + bracketed-paste discipline
-        // as the message itself (the draft is user text, not keystrokes).
-        await new Promise((r) => setTimeout(r, 150))
-        window.electronAPI.writeSession(
-          targetId,
-          `\x1b[200~${sanitizeForPaste(stash.text)}\x1b[201~`
-        )
-      }
-    } finally {
-      shadow.endInjection(stash.text)
-    }
-    return stash
-  }
-
-  const prior = sendChains.get(targetId) ?? Promise.resolve()
-  const run = prior.catch(() => {}).then(runInjection)
-  sendChains.set(targetId, run)
-  run.finally(() => {
-    // Drop the chain once it drains so the map doesn't grow unboundedly.
-    if (sendChains.get(targetId) === run) sendChains.delete(targetId)
+  const run = typeIntoAgentTab(targetId, text, () => {
+    submitted = true
   })
   // Transport-layer capture (PRDCT-1568), on a chain of its own so the delivery
   // never waits on it: it records the message once the submit has landed, and

@@ -4,7 +4,7 @@ import { windowRegistry } from './window-registry'
 import { workspaceManager } from './workspace-manager'
 import { checkForUpdatesNow, openUpdaterLog, RELEASES_URL } from './auto-updater'
 import { getStoredKeymapConfig } from './ipc-handlers/keymap-handlers'
-import type { KeymapActionId } from '../shared/keymaps'
+import { isMouseChord, type KeymapActionId } from '../shared/keymaps'
 
 const REPO_URL = 'https://github.com/antasphere/clave'
 // electron-builder's productName, stated rather than read: `app.name` is the
@@ -47,8 +47,9 @@ export interface AppMenuDeps {
 export function buildAppMenu(deps: AppMenuDeps): void {
   const keymaps = getStoredKeymapConfig()
   const acceleratorFor = (actionId: KeymapActionId): string | undefined => {
+    // A mouse binding has no accelerator form: Electron would reject the menu.
     const binding = keymaps.bindings[actionId].find(
-      (candidate) => !candidate.includes(' ') && candidate !== 'Master'
+      (candidate) => !candidate.includes(' ') && candidate !== 'Master' && !isMouseChord(candidate)
     )
     if (!binding) return undefined
     return binding
