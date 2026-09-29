@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { CodexAdapter, CodexTranslator } from './codex-adapter'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
 import type { SpawnSpec } from '../adapter'
+import type { LaunchProfile } from '../../../shared/agent-launch'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
 const rows = readFileSync(
   new URL('../fixtures/codex-app-server/live.ndjson', import.meta.url),
@@ -703,5 +704,61 @@ describe('Codex tool failure', () => {
     // zod strips an unknown key silently, so asserting "did not throw" would
     // pass just as well with `error` removed from the schema altogether.
     expect(SessionEventSchema.parse(event)).toMatchObject({ type: 'tool_result', error: true })
+  })
+})
+
+describe('Codex chat permissions', () => {
+  const profile = (...flags: string[]): LaunchProfile => ({
+    id: 'p',
+    name: 'P',
+    family: 'codex',
+    command: ['codex', ...flags],
+    additionalArgs: []
+  })
+  const threadParams = async (
+    options: Record<string, unknown>,
+    launchProfile?: LaunchProfile
+  ): Promise<unknown> => {
+    const { adapter, connection } = fake()
+    if (launchProfile) adapter.configure(spec.id, launchProfile)
+    const handle = await adapter.spawn({ ...spec, options })
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    const call = vi
+      .mocked(connection.request)
+      .mock.calls.find(([method]) => method === 'thread/start' || method === 'thread/resume')
+    await adapter.kill(handle)
+    return call?.[1]
+  }
+  it('starts a yolo profile thread with full access and no approvals', async () => {
+    expect(await threadParams({}, profile('--yolo'))).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user'
+    })
+  })
+  it('resumes a thread under the profile it was launched on', async () => {
+    expect(await threadParams({ resume: 'saved' }, profile('-s', 'workspace-write'))).toMatchObject(
+      { threadId: 'saved', sandbox: 'workspace-write', approvalPolicy: 'on-request' }
+    )
+  })
+  it("lets the launch's own choice win over the profile's flags", async () => {
+    expect(
+      await threadParams(
+        { permissionMode: 'never', sandbox: 'danger-full-access' },
+        profile('-s', 'read-only', '-a', 'untrusted')
+      )
+    ).toMatchObject({ sandbox: 'danger-full-access', approvalPolicy: 'never' })
+  })
+  it('refuses a sandbox Codex does not know', async () => {
+    const { adapter } = fake()
+    const handle = await adapter.spawn({ ...spec, options: { sandbox: 'everything' } })
+    const events: SessionEvent[] = []
+    adapter.on(handle, 'stream', (s) => s.kind === 'event' && events.push(s.event))
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await tick()
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'Unsupported Codex sandbox: everything' })
+    )
   })
 })
