@@ -111,6 +111,7 @@ beforeEach(() => {
   mocks.findTranscript.mockReturnValue('/transcripts/conversation.jsonl')
   mocks.remembered.mockReturnValue(undefined)
   mocks.hasCodexRollout.mockReturnValue(true)
+  mocks.backend.getSessionRecord.mockImplementation(() => null)
   mocks.streams.clear()
   mocks.manager.subscribe.mockImplementation((id: string, listener: (stream: unknown) => void) => {
     mocks.streams.set(id, listener)
@@ -159,6 +160,21 @@ describe('a Claude chat tab survives a restart', () => {
         id: TAB,
         options: expect.objectContaining({ resume: CONVERSATION })
       })
+    )
+  })
+
+  it('keeps the name it was saved under in the record it rewrites', async () => {
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, displayName: 'Hackathon', userRenamed: true } : null) as never)
+
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TAB, displayName: 'Hackathon', userRenamed: true })
     )
   })
 

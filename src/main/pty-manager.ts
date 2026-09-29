@@ -279,6 +279,10 @@ class PtyManager {
     resume: string | undefined
   ): void {
     const codex = adapterId === 'codex-chat'
+    // A restored tab rewrites the record it was restored from: the name lives
+    // only there, so it must be carried over or the tab survives one restart
+    // with its name and comes back as its folder at the next.
+    const previous = options?.adoptSessionId ? ptyBackend.getSessionRecord(session.id) : null
     ptyBackend.writeEventSessionRecord({
       adapterId,
       transport: 'events',
@@ -287,6 +291,8 @@ class PtyManager {
       codexThreadId: codex ? resume : undefined,
       cwd: session.cwd,
       folderName: session.folderName,
+      displayName: previous?.displayName,
+      userRenamed: previous?.userRenamed,
       claudeMode: !codex,
       antigravityMode: false,
       codexMode: codex,
