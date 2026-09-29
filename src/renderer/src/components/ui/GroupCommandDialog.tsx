@@ -4,53 +4,9 @@ import { AnimatePresence } from 'framer-motion'
 import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { type GroupTerminalColor, type GroupTerminalIcon, GROUP_TERMINAL_ICONS } from '../../store/session-store'
 import ColorPicker from './ColorPicker'
-import {
-  FolderIcon,
-  CommandLineIcon,
-  FireIcon,
-  BoltIcon,
-  RocketLaunchIcon,
-  EyeIcon,
-  GlobeAltIcon,
-  CubeIcon,
-  HeartIcon,
-  StarIcon,
-  UserIcon,
-  ShieldCheckIcon,
-  WrenchIcon,
-  BeakerIcon,
-  CpuChipIcon,
-  SignalIcon,
-  BugAntIcon,
-  SparklesIcon,
-  CloudIcon
-} from '@heroicons/react/24/outline'
+import { FolderIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
-
-const ICON_COMPONENTS: Record<GroupTerminalIcon, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
-  terminal: CommandLineIcon,
-  fire: FireIcon,
-  bolt: BoltIcon,
-  rocket: RocketLaunchIcon,
-  eye: EyeIcon,
-  globe: GlobeAltIcon,
-  cube: CubeIcon,
-  heart: HeartIcon,
-  star: StarIcon,
-  user: UserIcon,
-  shield: ShieldCheckIcon,
-  wrench: WrenchIcon,
-  beaker: BeakerIcon,
-  cpu: CpuChipIcon,
-  signal: SignalIcon,
-  bug: BugAntIcon,
-  sparkles: SparklesIcon,
-  cloud: CloudIcon
-}
-
-export function getTerminalIconComponent(icon?: GroupTerminalIcon): React.ComponentType<React.SVGProps<SVGSVGElement>> {
-  return ICON_COMPONENTS[icon ?? 'terminal'] ?? CommandLineIcon
-}
+import { ICON_COMPONENTS } from './terminal-icons'
 
 interface GroupCommandDialogProps {
   isOpen: boolean

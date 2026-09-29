@@ -5,7 +5,7 @@ import {
   TERMINAL_COLOR_VALUES,
   resolveColorHex
 } from '../../store/session-store'
-import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
+import { getTerminalIconComponent } from '../ui/terminal-icons'
 
 /** The group's terminals, listed one per row inside the header's hover panel:
  *  icon in the terminal's colour, the command it runs, and a dot that says
