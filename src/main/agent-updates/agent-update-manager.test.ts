@@ -367,6 +367,18 @@ describe('never two at once', () => {
   })
 })
 
+describe('an update asked before any check', () => {
+  it('inspects first and runs no installer for an agent already current', async () => {
+    const { m, deps } = machine({
+      installed: PI,
+      latest: { '@earendil-works/pi-coding-agent': '0.85.1' }
+    })
+    const state = await new AgentUpdateManager(deps).update('pi')
+    expect(state.agents.find((a) => a.id === 'pi')!.currentVersion).toBe('0.85.1')
+    expect(m.runs).toEqual(['/bin/pi --version'])
+  })
+})
+
 describe('the queue', () => {
   it('does not install an agent twice when the button and the automatic pass race', async () => {
     const { m, deps } = machine({

@@ -164,29 +164,45 @@ async function settingsAndInstallers(t) {
     t.equal('with automatic updates off, the check installed nothing', callLines(calls).length, 0)
 
     // --- The button: the owning installer, once, and the app keeps working ---
-    // Sampled from the click on, while the fake installer sleeps: a main
-    // process blocked on it answers nothing until it returns.
+    // A main process blocked on the installer shows in two places. The click
+    // first: in Electron the main process is the browser's UI thread, and a
+    // click is acknowledged there, so it cannot return while main is stuck
+    // (and Playwright runs this page's later commands behind it). Then every
+    // 100 ms until the upgrade lands, an IPC round trip, which needs main's
+    // event loop; app.evaluate cannot stand in for it, since the inspector
+    // behind it interrupts a busy main thread and answers anyway.
+    const clickStart = Date.now()
     await win.locator('[data-agent-update-button="pi"]').click()
+    const clickMs = Date.now() - clickStart
+    t.check(
+      'the click on Update returns at once, main not held by the installer',
+      clickMs < 1500,
+      clickMs
+    )
     const lags = []
-    for (let i = 0; i < 10; i++) {
+    let sawUpdating = 0
+    let sawRow = false
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline) {
       const start = Date.now()
-      await win.evaluate(() => document.title)
-      await app.evaluate(() => process.uptime())
+      const state = await win.evaluate(() => window.electronAPI.getAgentUpdates())
       lags.push(Date.now() - start)
+      const pi = state.agents.find((a) => a.id === 'pi')
+      if (pi?.phase === 'updating') sawUpdating++
+      if (!sawRow) sawRow = (await statusOf(win, 'pi')) === 'Updating to 0.2.0…'
+      if (pi?.currentVersion === '0.2.0' && pi.phase === 'idle') break
       await new Promise((r) => setTimeout(r, 100))
     }
-    const midway = await win.evaluate(() => window.electronAPI.getAgentUpdates())
-    t.equal(
-      'the samples were taken while the installer was still running',
-      midway.agents.find((a) => a.id === 'pi')?.phase,
-      'updating'
-    )
+    t.check('the samples cover the install, taken while the installer ran', sawUpdating >= 10, {
+      sawUpdating,
+      samples: lags.length
+    })
+    t.check('the row said it was updating', sawRow)
     t.check(
-      'while the installer runs, the window and the main process answer in under 250 ms',
+      'while the installer runs, the main process answers the window in under 250 ms',
       Math.max(...lags) < 250,
       lags
     )
-    t.equal('the row says it is updating', await statusOf(win, 'pi'), 'Updating to 0.2.0…')
     t.check(
       'the upgrade lands and the row says what moved',
       await waitFor(async () => /^Updated from 0\.1\.0 /.test((await statusOf(win, 'pi')) ?? '')),

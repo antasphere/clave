@@ -335,7 +335,8 @@ export class AgentUpdateManager {
       await this.inspect(id, env)
       status = this.agents.get(id)!
     }
-    if (!status.installed || !status.install || !status.path) return
+    // An update asked before any check inspected first: current is current.
+    if (!status.installed || !status.install || !status.path || !status.updateAvailable) return
     const ownNpm = prefixNpm(status.install)
     const command = upgradeCommand(
       status.install,
@@ -388,7 +389,7 @@ export class AgentUpdateManager {
 export function runCommand(
   file: string,
   args: string[],
-  opts: { env: Record<string, string>; timeoutMs: number }
+  opts: { env: Record<string, string>; timeoutMs: number; killGraceMs?: number }
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     let stdout = ''
@@ -411,7 +412,7 @@ export function runCommand(
       child.kill('SIGTERM')
       setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      }, KILL_GRACE_MS).unref()
+      }, opts.killGraceMs ?? KILL_GRACE_MS).unref()
       done({ code: null, stdout, stderr, failure: `${file} ${args.join(' ')} timed out` })
     }, opts.timeoutMs)
     child.stdout?.on('data', (chunk: Buffer) => {
