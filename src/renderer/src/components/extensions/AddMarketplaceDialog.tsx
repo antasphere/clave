@@ -25,11 +25,16 @@ export function AddMarketplaceDialog({
   const [source, setSource] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Opening clears the field. Done while rendering, against the open state the
+  // last render saw, so the dialog never paints the previous entry first.
+  const [wasOpen, setWasOpen] = useState(isOpen)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (isOpen) setSource('')
+  }
+
   useEffect(() => {
-    if (isOpen) {
-      setSource('')
-      setTimeout(() => inputRef.current?.focus(), 50)
-    }
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen])
 
   const trimmed = source.trim()

@@ -63,10 +63,17 @@ function CommitDetail({
 }): React.JSX.Element {
   const [files, setFiles] = useState<GitCommitFileStatus[]>([])
   const [loading, setLoading] = useState(true)
+  // A new commit (or repo) is loading again from its first render, rather than
+  // one frame later from the effect that fetches it.
+  const commitKey = `${cwd}\n${commit.hash}`
+  const [loadingKey, setLoadingKey] = useState(commitKey)
+  if (commitKey !== loadingKey) {
+    setLoadingKey(commitKey)
+    setLoading(true)
+  }
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     window.electronAPI
       .gitCommitFiles(cwd, commit.hash)
       .then((result) => {

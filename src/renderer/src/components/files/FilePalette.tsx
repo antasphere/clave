@@ -82,10 +82,13 @@ export function FilePalette(): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Reset selection when results change
-  useEffect(() => {
+  // Reset selection when results change (a memoised list), while rendering so
+  // no frame shows the old index against the new list.
+  const [resultsSeen, setResultsSeen] = useState(results)
+  if (results !== resultsSeen) {
+    setResultsSeen(results)
     setSelectedIndex(0)
-  }, [results])
+  }
 
   // Focus input when opened
   useEffect(() => {

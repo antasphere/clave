@@ -1323,11 +1323,13 @@ function MultiRepoSection({
   // Collapse all when trigger fires. Still honoured — a press must shut a row
   // the user opened — and now safe on mount too, since a row that mounts
   // folded cannot be wrongly folded by a stale press (PRDCT-1672).
-  useEffect(() => {
-    if (collapseAllTrigger > 0) {
-      setExpanded(false)
-    }
-  }, [collapseAllTrigger])
+  // Done while rendering, against the trigger the last render saw; a row mounts
+  // folded, so there is nothing for the trigger it mounts with to do.
+  const [collapseSeen, setCollapseSeen] = useState(collapseAllTrigger)
+  if (collapseAllTrigger !== collapseSeen) {
+    setCollapseSeen(collapseAllTrigger)
+    if (collapseAllTrigger > 0) setExpanded(false)
+  }
 
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {

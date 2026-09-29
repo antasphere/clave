@@ -97,14 +97,19 @@ export function AgentPickerPopover({
     }
   }
 
+  // The popover is placed under its anchor, which the parent laid out before
+  // mounting it; the anchor is measured on every render, as it always was.
+  // eslint-disable-next-line react-hooks/refs -- a DOM measurement of an already-mounted anchor, read to position a portal
+  const anchorRect = anchorRef.current?.getBoundingClientRect()
+
   if (agents.length === 0) {
     return createPortal(
       <div
         ref={menuRef}
         className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] py-3 px-3"
         style={{
-          top: (anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
-          left: anchorRef.current?.getBoundingClientRect().left ?? 0
+          top: (anchorRect?.bottom ?? 0) + 4,
+          left: anchorRect?.left ?? 0
         }}
       >
         <p className="text-control text-text-tertiary text-center">
@@ -122,8 +127,8 @@ export function AgentPickerPopover({
       ref={menuRef}
       className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col p-1"
       style={{
-        top: (anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
-        left: anchorRef.current?.getBoundingClientRect().left ?? 0
+        top: (anchorRect?.bottom ?? 0) + 4,
+        left: anchorRect?.left ?? 0
       }}
     >
       <div className="max-h-[50vh] overflow-y-auto">

@@ -22,18 +22,27 @@ export function ExportClaveDialog({
   const [keepSynced, setKeepSynced] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Opening (or a new default name while open) resets the form; closing forgets
+  // the folder. Done while rendering, against what the last render saw, so the
+  // dialog never paints the previous values first.
+  const [seen, setSeen] = useState({ isOpen, defaultFileName })
+  if (seen.isOpen !== isOpen || seen.defaultFileName !== defaultFileName) {
+    setSeen({ isOpen, defaultFileName })
     if (isOpen) {
       setFileName(defaultFileName)
       setKeepSynced(false)
-      // Load downloads path as default
-      window.electronAPI?.getDownloadsPath().then((p) => {
-        setFolder((prev) => prev ?? p)
-      })
-      setTimeout(() => inputRef.current?.focus(), 50)
     } else {
       setFolder(null)
     }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return
+    // Load downloads path as default
+    window.electronAPI?.getDownloadsPath().then((p) => {
+      setFolder((prev) => prev ?? p)
+    })
+    setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen, defaultFileName])
 
   const handleExport = (): void => {

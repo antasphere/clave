@@ -38,15 +38,31 @@ export function GroupCommandDialog({
   const [icon, setIcon] = useState<GroupTerminalIcon>(initialIcon)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Opening (or new initial values while open) resets the form. Done while
+  // rendering, against what the last render saw, so the dialog never paints the
+  // previous values first.
+  const inputs = { isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon }
+  const [seen, setSeen] = useState(inputs)
+  if (
+    seen.isOpen !== isOpen ||
+    seen.initialCommand !== initialCommand ||
+    seen.initialMode !== initialMode ||
+    seen.initialColor !== initialColor ||
+    seen.initialCwd !== initialCwd ||
+    seen.initialIcon !== initialIcon
+  ) {
+    setSeen(inputs)
     if (isOpen) {
       setCommand(initialCommand ?? '')
       setMode(initialMode)
       setColor(initialColor)
       setCwd(initialCwd)
       setIcon(initialIcon)
-      setTimeout(() => inputRef.current?.focus(), 50)
     }
+  }
+
+  useEffect(() => {
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon])
 
   const handleSave = (): void => {

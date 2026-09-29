@@ -216,6 +216,7 @@ export function GitJourneyPanel(): React.JSX.Element | null {
     if (!journeyPanel) return
     for (const hash of expandedCommitHashes) {
       if (commitFilesCache[hash] || loadingCommits.has(hash)) continue
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the request in flight in the same step that sends it, so the next run of this effect does not send it twice
       setLoadingCommits((prev) => new Set(prev).add(hash))
       window.electronAPI.gitCommitFiles(journeyPanel.cwd, hash)
         .then((files) => setCommitFilesCache((prev) => ({ ...prev, [hash]: files })))
@@ -234,6 +235,7 @@ export function GitJourneyPanel(): React.JSX.Element | null {
         .find((g) => g.id === groupId)
       if (!group) continue
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the request in flight in the same step that sends it, beside the IPC call this effect exists to make
       setSummarizing((prev) => new Set(prev).add(groupId))
       const messages = group.commits.map((c) => c.message)
       window.electronAPI.gitSummarizePush(journeyPanel.cwd, messages, `${group.commits.length} commit(s)`)
