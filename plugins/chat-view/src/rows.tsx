@@ -1,7 +1,8 @@
 import type React from 'react'
-import { useState, type RefObject } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import {
   Virtualizer,
+  type VirtualizerHandle,
   type CustomContainerComponent,
   type CustomContainerComponentProps,
   type CustomItemComponent
@@ -72,11 +73,19 @@ export function TranscriptRows<T extends { key: string }>({
   scroll,
   as,
   item,
+  holdAbove = false,
   children
 }: {
   rows: readonly T[]
   settled: boolean
   scroll: RefObject<HTMLDivElement | null>
+  /** Keep the row just above the viewport mounted. A row can paint past its
+   *  own box: the Terminal view's pinned question is pushed out by the next
+   *  one and hangs in the gap above it, still on screen after its exchange's
+   *  box has left the top. The virtualiser keeps its buffer only in the
+   *  direction of the scroll, so it unmounted that row there and then, and the
+   *  question blinked out mid-push. */
+  holdAbove?: boolean
   as?: CustomContainerComponent
   item?: CustomItemComponent
   children: (row: T, index: number, arrive: boolean) => React.ReactElement
@@ -90,8 +99,26 @@ export function TranscriptRows<T extends { key: string }>({
     setChange(current)
   }
   const { shift, arriving } = current
+  const handle = useRef<VirtualizerHandle>(null)
+  const [held, setHeld] = useState<number | null>(null)
+  const onScroll = holdAbove
+    ? (offset: number): void => {
+        const first = handle.current?.findItemIndex(offset) ?? 0
+        const above = first > 0 ? first - 1 : null
+        if (above !== held) setHeld(above)
+      }
+    : undefined
   return (
-    <Virtualizer data={rows} scrollRef={scroll} shift={shift} as={as ?? RowsBox} item={item}>
+    <Virtualizer
+      ref={handle}
+      data={rows}
+      scrollRef={scroll}
+      shift={shift}
+      as={as ?? RowsBox}
+      item={item}
+      onScroll={onScroll}
+      keepMounted={held !== null && held < rows.length ? [held] : undefined}
+    >
       {(row: T, index: number) => children(row, index, arriving.has(row.key))}
     </Virtualizer>
   )

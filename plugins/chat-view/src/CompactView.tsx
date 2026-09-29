@@ -8,7 +8,8 @@ import {
   type LoggedEvent
 } from '../../../src/renderer/src/views/conversation-store'
 import type { HistoryItem } from '../../../src/shared/session-model'
-import { emptyConversation, reduceConversation, type Conversation } from './reducer'
+import { type Conversation } from './reducer'
+import { foldLog, reducePast, withPast } from './fold-log'
 import {
   failureCount,
   groupEntries,
@@ -25,20 +26,29 @@ import { JumpToEnd } from './JumpToEnd'
 import { useEarlier } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
 import { TranscriptRows } from './rows'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
  *  proof that two views of one plugin read one session — the host keeps the
- *  log, each view reduces it its own way. */
-function reduceLog(
+ *  log, each view reduces it its own way: this one folds it as it grows
+ *  (`foldLog`), never replaying it. */
+function useFoldedLog(
   past: HistoryItem[],
   events: LoggedEvent[],
-  initialState: Conversation['state']
+  initial: Conversation['state']
 ): Conversation {
-  const live = events.reduce(reduceConversation, { ...emptyConversation, state: initialState })
-  // The past goes in front of what streamed since, so a row's key
-  // (`first + index`) holds as older pages arrive.
-  return reduceConversation(live, { prepend: past })
+  // What the last render folded, kept the way React keeps it: in state,
+  // advanced during render when the log has grown.
+  const [folded, setFolded] = useState(() => foldLog(null, events, initial))
+  let current = folded
+  if (folded.events !== events || folded.initial !== initial) {
+    current = foldLog(folded, events, initial)
+    setFolded(current)
+  }
+  const before = useMemo(() => reducePast(past), [past])
+  const live = current.live
+  return useMemo(() => withPast(live, before), [live, before])
 }
 /** What a row says about a turn, in the fewest words that still identify it.
  *  A run of tools is ONE row here as it is in the conversation view — the same
@@ -47,13 +57,17 @@ function reduceLog(
  *  and the summary is what that run looks like at this altitude. */
 function lineOf(entry: Exclude<Block, { kind: 'tool-group' }>): { role: string; text: string } {
   switch (entry.kind) {
-    case 'user':
+    case 'user': {
+      const delivery = parseDelivery(entry.text)
+      if (delivery)
+        return { role: `From ${delivery.sender?.name ?? 'another agent'}`, text: delivery.body }
       return {
         role: entry.interrupted ? 'You · interrupted' : 'You',
         text: entry.attachments?.length
           ? `${entry.text} [${entry.attachments.map((f) => f.name).join(', ')}]`.trim()
           : entry.text
       }
+    }
     case 'assistant':
       return { role: 'Agent', text: entry.text }
     case 'permission':
@@ -135,10 +149,7 @@ const screenSlack = (el: HTMLElement): number => el.clientHeight
 
 export function CompactView({ session, onState }: ChatViewProps): React.JSX.Element {
   const log = useSessionLogValue(session.id)
-  const conversation = useMemo(
-    () => reduceLog(log.past, log.events, session.state),
-    [log.past, log.events, session.state]
-  )
+  const conversation = useFoldedLog(log.past, log.events, session.state)
   // Each row keyed by its entry's ordinal, as in the conversation view, so a
   // page of the past arriving in front shifts no key.
   const ordinal = useMemo(() => {

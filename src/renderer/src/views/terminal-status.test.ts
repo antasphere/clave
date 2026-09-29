@@ -4,6 +4,7 @@ import {
   compactTokens,
   emptyStatus,
   reduceStatus,
+  relaunchRequest,
   type TerminalStatus
 } from '../../../../plugins/chat-view/src/terminal-status'
 
@@ -38,13 +39,16 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
   expect(started.agents).toEqual([
     {
       id: 'agent-1',
+      taskId: null,
       type: 'Explore',
       description: 'Find the reducer',
       background: false,
       startedAt: 1000,
       lastAction: expect.stringContaining('reducer.ts'),
+      lastActiveAt: 1000,
       toolCount: 2,
-      contextUsed: 42_000
+      contextUsed: 42_000,
+      model: null
     }
   ])
   const done = run([{ type: 'tool_result', id: 'agent-1', output: 'found it' }], started)
@@ -87,4 +91,68 @@ it('counts tokens the way the status line shows them', () => {
     compactTokens(12_400),
     compactTokens(1_000_000)
   ]).toEqual(['0', '950', '12k', '1M'])
+})
+
+it('names an agent by the model its answer names, over the alias its call asked for', () => {
+  const asked = run([
+    call('agent-1', 'Agent', { subagent_type: 'Explore', description: 'Map', model: 'haiku' })
+  ])
+  expect(asked.agents[0].model).toBe('haiku')
+  const answered = run(
+    [{ type: 'subagent_model', parent: 'agent-1', model: 'claude-sonnet-5-5' }],
+    asked
+  )
+  expect(answered.agents[0].model).toBe('claude-sonnet-5-5')
+})
+
+it('keeps the task a background agent runs as, which is what stopping it names', () => {
+  const status = run([
+    call('call-1', 'Agent', { subagent_type: 'Explore', description: 'Audit' }),
+    { type: 'subagent_model', parent: 'call-1', model: 'claude-opus-5-5' },
+    {
+      type: 'background_tasks',
+      tasks: [
+        { id: 'task-9', kind: 'agent', description: 'Audit', toolUseId: 'call-1', startedAt: 500 }
+      ]
+    }
+  ])
+  expect(status.agents).toEqual([
+    expect.objectContaining({
+      id: 'call-1',
+      taskId: 'task-9',
+      background: true,
+      model: 'claude-opus-5-5'
+    })
+  ])
+})
+
+it("dates an agent's last sign of work, which is what the quiet row reads", () => {
+  const at = (events: SessionEvent[], time: number, start: TerminalStatus): TerminalStatus =>
+    events.reduce((status, event) => reduceStatus(status, event, time), start)
+  const started = at([call('agent-1', 'Agent', { description: 'x' })], 1_000, emptyStatus)
+  const stepped = at([call('t1', 'Grep', { pattern: 'y' }, 'agent-1')], 50_000, started)
+  expect(stepped.agents[0].lastActiveAt).toBe(50_000)
+  const read = at(
+    [{ type: 'context_usage', used: 9_000, window: null, parent: 'agent-1' }],
+    70_000,
+    stepped
+  )
+  expect(read.agents[0].lastActiveAt).toBe(70_000)
+  // Its model being named is no step.
+  const named = at(
+    [{ type: 'subagent_model', parent: 'agent-1', model: 'claude-opus-5-5' }],
+    90_000,
+    read
+  )
+  expect(named.agents[0].lastActiveAt).toBe(70_000)
+})
+
+it('asks the conversation to relaunch the agent it made, on the alias picked', () => {
+  const [agent] = run([
+    call('agent-1', 'Agent', { subagent_type: 'Explore', description: 'Map the views' })
+  ]).agents
+  const text = relaunchRequest(agent, 'sonnet')
+  expect(text).toContain('“Map the views” (Explore)')
+  expect(text).toContain('Sonnet 5.5')
+  expect(text).toContain('model "sonnet"')
 })

@@ -11,6 +11,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type { AgentState } from '../../../shared/session-model'
+import { claudeModelName } from '../../../shared/claude-models'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
@@ -241,8 +242,8 @@ export function RegisteredSessionView({
             {name ?? session.title}
           </span>
           {meta.model && (
-            <span className="pane-header-meta" title="Model">
-              {meta.model}
+            <span className="pane-header-meta" title={meta.model}>
+              {claudeModelName(meta.model)}
             </span>
           )}
           <AccountProposal sessionId={sessionId} />

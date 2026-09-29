@@ -1222,9 +1222,21 @@ async function handleSendToSession(payload: {
   // boundary and inside the CLI's dialogs (see draft-shadow.ts; undershoot
   // would leave residue to co-submit). The degradation is reported ONLY in
   // this tool's result (draftHandling) — nothing in the app UI shows it.
-  const run = typeIntoAgentTab(targetId, text, () => {
-    submitted = true
-  })
+  // A chat tab has no terminal to type into: `pty:write` reaches only PTY
+  // sessions, so a paste addressed to one was dropped in main while this
+  // reported it delivered. It takes the message as a user message instead,
+  // as `requestArchiveAndKill` does; its draft is the host's own
+  // (`draft-store.ts`), never in the provider's input, so nothing is stashed.
+  const record = (await window.electronAPI.sessionsList()).find((s) => s.id === targetId)
+  const run: Promise<DraftStash> =
+    record?.transport === 'events'
+      ? window.electronAPI.sessionsWrite(targetId, { type: 'user_message', text }).then(() => {
+          submitted = true
+          return { text: '', confident: true, clear: '' }
+        })
+      : typeIntoAgentTab(targetId, text, () => {
+          submitted = true
+        })
   // Transport-layer capture (PRDCT-1568), on a chain of its own so the delivery
   // never waits on it: it records the message once the submit has landed, and
   // fires on BOTH settle paths — a restore that failed still delivered a

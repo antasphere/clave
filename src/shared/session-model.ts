@@ -82,6 +82,12 @@ export const SetPermissionModeSchema = z.object({
   type: z.literal('set_permission_mode'),
   mode: z.string()
 })
+/** Stop one piece of background work (a background subagent, a background
+ *  shell) by the id its `background_tasks` entry carries; the turn goes on. */
+export const StopTaskSchema = z.object({
+  type: z.literal('stop_task'),
+  taskId: z.string().min(1)
+})
 /** One permission mode a session can be switched to, in the provider's own
  *  vocabulary (`id`) and as the reader reads it (`label`). */
 export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.string() })
@@ -99,7 +105,8 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   PermissionResponseSchema,
   InterruptSchema,
   SetModelSchema,
-  SetPermissionModeSchema
+  SetPermissionModeSchema,
+  StopTaskSchema
 ])
 /** One model a provider offers a live session, as the view lists it. */
 export const ModelOptionSchema = z.object({
@@ -192,6 +199,10 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     /** A subagent's own context, named by the call that started it. */
     parent: z.string().optional()
   }),
+  /** The model a subagent runs on, as its own first answer names it (an
+   *  agent inherits the conversation's model unless its call or its
+   *  definition names another, so the call alone cannot tell). */
+  z.object({ type: z.literal('subagent_model'), parent: z.string(), model: z.string() }),
   /** The mode the session is in and the modes it may be switched to; sent at
    *  ready and again whenever the provider reports a change. A provider with
    *  no modes never sends it, and a view shows no switch. */

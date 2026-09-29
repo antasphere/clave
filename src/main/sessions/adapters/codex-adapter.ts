@@ -352,6 +352,7 @@ export class CodexAdapter implements SessionAdapter {
     }
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
+    if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
     if (state.sending || state.translator.turnId)
       throw new Error('Codex already has an active turn')
     state.sending = true

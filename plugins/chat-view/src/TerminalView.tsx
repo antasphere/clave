@@ -3,12 +3,10 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
   CheckIcon,
-  ChevronDownIcon,
   ClipboardDocumentIcon,
   MapPinIcon,
   PaperClipIcon,
@@ -19,15 +17,17 @@ import type {
   PermissionModeOption,
   SessionEvent,
   SessionInput,
-  ModelOption,
   CommandOption
 } from '../../../src/shared/session-model'
-import { emptyConversation, reduceConversation, type Entry } from './reducer'
+import { answeredSince, emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
+import { ModelMenu } from './ModelMenu'
+import { SenderChip } from './Delivery'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
-import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
+import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
-import { useStickyQuestions } from './sticky-questions'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
@@ -239,119 +239,6 @@ function SlashMenu({
 const STICK_THRESHOLD = 80
 const stickSlack = (): number => STICK_THRESHOLD
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
-// The provider reports a full id (claude-opus-5-20260301); the menu lists the
-// family (claude-opus-5). Either being a prefix of the other is the same model.
-const sameId = (reported: string, id: string): boolean =>
-  reported === id || reported.startsWith(id) || id.startsWith(reported)
-const sameModel = (reported: string | null, option: ModelOption): boolean =>
-  reported === null
-    ? option.id === 'default'
-    : sameId(reported, option.id) ||
-      (option.resolved !== undefined && sameId(reported, option.resolved))
-// An alias may stand for the same model as another ("default" and "opus[1m]"):
-// the option named exactly wins, then the first whose model it resolves to.
-const currentOption = (
-  reported: string | null,
-  options: ModelOption[] | null
-): ModelOption | undefined =>
-  options?.find((option) => option.id === reported) ??
-  options?.find((option) => sameModel(reported, option))
-/** The model chip on the composer's footer and the menu it opens above it. */
-function ModelMenu({
-  sessionId,
-  model,
-  disabled,
-  onSelect
-}: {
-  sessionId: string
-  model: string | null
-  disabled: boolean
-  onSelect: (id: string) => void
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [options, setOptions] = useState<ModelOption[] | null>(null)
-  const [failure, setFailure] = useState<string | null>(null)
-  useEffect(() => {
-    if (!open) return
-    let live = true
-    // A host older than this plugin has no sessionsModels: that is the menu's
-    // failure to report, never the pane's to crash on, so the call is made
-    // inside the chain where a missing method rejects instead of throwing.
-    Promise.resolve()
-      .then(() => window.electronAPI.sessionsModels(sessionId))
-      .then((list) => {
-        if (live) setOptions(list)
-      })
-      .catch((error) => {
-        if (live) setFailure(String(error))
-      })
-    return () => {
-      live = false
-    }
-  }, [open, sessionId])
-  const current = currentOption(model, options)
-  return (
-    <DropdownMenu.Root
-      modal={false}
-      open={open}
-      onOpenChange={(next) => {
-        // Each opening asks the provider again, from a clean slate.
-        if (next) setFailure(null)
-        setOpen(next)
-      }}
-    >
-      <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          className="chat-model-trigger"
-          aria-label="Model"
-          title="Change model"
-          disabled={disabled}
-        >
-          <span className="chat-model-trigger-label">
-            {/* The bar names the model; the menu keeps the provider's gloss
-                ("Default (recommended)"), the bar does not. */}
-            {(current?.label ?? model ?? 'Default').replace(/\s*\([^)]*\)\s*$/, '')}
-          </span>
-          <ChevronDownIcon />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          side="top"
-          align="end"
-          sideOffset={6}
-          className="menu-surface menu-pop chat-model-menu z-50"
-          aria-label="Models"
-        >
-          <DropdownMenu.Label className="menu-label">Select model</DropdownMenu.Label>
-          {options === null && !failure && <div className="chat-model-empty">Loading…</div>}
-          {failure && <div className="chat-model-empty">Models unavailable</div>}
-          {options?.length === 0 && !failure && (
-            <div className="chat-model-empty">This session offers no other model</div>
-          )}
-          {options?.map((option) => {
-            const selected = option === current
-            return (
-              <DropdownMenu.Item
-                key={option.id}
-                className="menu-item chat-model-option"
-                data-selected={selected ? 'true' : undefined}
-                onSelect={() => onSelect(option.id)}
-              >
-                <span className="chat-model-option-text">
-                  <span className="truncate">{option.label}</span>
-                  {option.hint && <span className="chat-model-option-hint">{option.hint}</span>}
-                </span>
-                {selected && <CheckIcon className="select-option-check" />}
-              </DropdownMenu.Item>
-            )
-          })}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  )
-}
 /** One turn of the transcript. Memoised on the entry itself, which the
  *  reducer replaces only when that entry changes: a streamed delta re-renders
  *  the answer it grows and nothing above it, and a keystroke in the composer
@@ -364,7 +251,11 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
-  if (entry.kind === 'user')
+  if (entry.kind === 'user') {
+    // A message another tab sent: its sender in a chip, its words without
+    // the bracketed header, in the delivery's own tint.
+    const delivery = parseDelivery(entry.text)
+    const text = delivery ? delivery.body : entry.text
     return (
       <div
         className="chat-turn-wrap"
@@ -372,16 +263,18 @@ const EntryRow = memo(function EntryRow({
         data-interrupted={entry.interrupted ? 'true' : undefined}
       >
         <Attachments files={entry.attachments ?? []} />
-        {entry.text.trim() !== '' && (
+        {text.trim() !== '' && (
           // The message is capped in height and scrolls inside past it; the
           // grip on its bottom edge moves the cap (question-height.ts).
           <div className="term-question">
             <article
               className="chat-turn"
               data-role="user"
+              data-from={delivery ? 'tab' : undefined}
               data-interrupted={entry.interrupted ? 'true' : undefined}
             >
-              {entry.text.replace(/\s+$/, '')}
+              {delivery && <SenderChip sender={delivery.sender} />}
+              {text.replace(/\s+$/, '')}
             </article>
             <div
               className="term-question-grip"
@@ -393,9 +286,10 @@ const EntryRow = memo(function EntryRow({
           </div>
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
-        <TurnMeta at={entry.at} text={entry.text} />
+        <TurnMeta at={entry.at} text={text} />
       </div>
     )
+  }
   if (entry.kind === 'assistant')
     return (
       <div className="chat-turn-wrap" data-side="start">
@@ -692,12 +586,20 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
   // Escape while the agent works is the TUI's gesture: stop the turn and hand
   // the message back to the composer to edit and resend, unless something
   // new is already being typed there.
+  /* Escape while the agent works stops it. Before it has answered anything,
+     the message is taken back: out of the transcript and into the composer,
+     to edit and send again. Once an answer has begun, the message is part of
+     the conversation: it stays, marked Interrupted, and the composer is left
+     as it is. */
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
     const last = lastSent.current
-    if (last && !draft.trim() && !attachments.length) {
-      setDraft(last.text)
-      setAttachments(last.attachments)
+    if (!answeredSince(conversation.entries)) {
+      dispatch({ withdraw: true })
+      if (last && !draft.trim() && !attachments.length) {
+        setDraft(last.text)
+        setAttachments(last.attachments)
+      }
     }
     textarea.current?.focus()
   }
@@ -860,7 +762,6 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
       return !value
     })
   useQuestionHeight(transcript.scroll)
-  useStickyQuestions(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   // The run in flight: the last one, while the turn it belongs to still runs
@@ -937,7 +838,12 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <TranscriptRows rows={turns} settled={pastRead} scroll={transcript.scroll}>
+              <TranscriptRows
+                rows={turns}
+                settled={pastRead}
+                scroll={transcript.scroll}
+                holdAbove={pinQuestions}
+              >
                 {(turn, index, arriving) => (
                   <TerminalTurn
                     key={turn.key}
@@ -1146,9 +1052,9 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             used={status.contextUsed}
             window={
               status.contextWindow ??
-              // The window is named by a turn's result; until one has come, a
-              // model the CLI calls "[1m]" says it for itself.
-              (conversation.model?.includes('[1m]') ? 1_000_000 : null)
+              // The window is named by a turn's result; until one has come,
+              // the model says it (a resumed conversation's replay never does).
+              claudeContextWindow(conversation.model)
             }
           />
           {status.agents.length > 0 && (
@@ -1185,7 +1091,22 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             </button>
           </span>
         </div>
-        <SubAgentStack agents={status.agents} />
+        <SubAgentStack
+          agents={status.agents}
+          onRelaunch={(agent, alias) => {
+            if (!agent.taskId) return
+            // Stopped first, then asked for again: the conversation made the
+            // agent, and it alone holds the prompt it was given.
+            void write({ type: 'stop_task', taskId: agent.taskId })
+              .then(() =>
+                write({
+                  type: 'user_message',
+                  text: relaunchRequest(agent, alias)
+                })
+              )
+              .catch(report)
+          }}
+        />
       </div>
     </div>
   )

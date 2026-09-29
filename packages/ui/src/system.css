@@ -2707,6 +2707,50 @@ button.extension-card:hover {
 .chat-turn-wrap[data-interrupted='true'] .chat-attachments {
   opacity: 0.5;
 }
+/* A message another tab sent (clave_send_to_session): the agents' own hue
+   instead of the reader's grey, and the sender in a chip at its head where
+   the bracketed header was. */
+.chat-turn[data-role='user'][data-from='tab'] {
+  background-color: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
+}
+.chat-turn-from {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  max-width: min(100%, 24rem);
+  margin-inline-end: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 1.5);
+  border: none;
+  border-radius: calc(var(--spacing) * 1.5);
+  background-color: color-mix(in oklch, var(--color-term-model) 16%, transparent);
+  color: var(--color-term-model);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.chat-turn-from svg {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+}
+.chat-turn-from-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.chat-turn-from {
+  cursor: pointer;
+  transition: background-color var(--default-transition-duration);
+}
+button.chat-turn-from:hover {
+  background-color: color-mix(in oklch, var(--color-term-model) 26%, transparent);
+}
+button.chat-turn-from:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 4);
+}
 .chat-turn-note {
   padding: var(--spacing) var(--spacing) 0;
   font-size: var(--text-xs);
@@ -4264,6 +4308,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-direction: column;
   gap: calc(var(--spacing) * 5);
 }
+/* A tool run belongs to the words that led to it: it sits closer to the text
+   above than to what follows, not at the even distance the column's gap gives
+   every block. Only after the answer's own text; under a question the gap stays. */
+.term-turn > .chat-turn-wrap[data-side='start'] + .term-tools {
+  margin-top: calc(var(--spacing) * -2.5);
+}
 /* A little more air between one exchange and the next: under the last answer,
    over the next question. Each exchange is one virtualised row. */
 .terminal-view .chat-row:not([data-first]) {
@@ -4282,52 +4332,55 @@ details[open] > .chat-tool-row .chat-tool-chevron,
     translate: 0 var(--spacing);
   }
 }
-/* The question stays pinned while its answer scrolls (sticky-questions.ts):
-   the message row itself is sticky within its section, and folds to its first
-   line by a clip from the bottom (--fold), so its place in the flow never
-   changes. Its files sit under the text, so they fold away first. The browser's scroll
-   anchoring is off here: it would chase the folding row. */
+/* The question stays pinned while its answer scrolls: the message row is
+   plain `position: sticky` within its exchange, so the browser alone moves it,
+   in the frame of the scroll, and the next exchange's question pushes it out
+   over the top edge. No script touches it. Its height is bounded by
+   question-height.ts, so a pinned question never fills the pane. The
+   browser's scroll anchoring is off here: it would chase the pinned row. */
 .terminal-view[data-pin] .chat-scroll {
   overflow-anchor: none;
 }
 .terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'] {
+  /* One distance, --pin-gap, everywhere: where the question sticks under
+     the top edge, how far its backdrop reaches above it, and the gap to the
+     question that pushes it out. The backdrop then fills exactly that gap,
+     never reaching over the question above. */
+  --pin-gap: calc(var(--spacing) * 2);
   position: sticky;
-  top: calc(var(--spacing) * 3);
+  top: var(--pin-gap);
   z-index: 5;
 }
-/* A stuck question stands on the ground (sticky-questions.ts, data-stuck):
-   a backdrop from the top edge down to its fold, a little wider than the box,
-   so nothing scrolling under it shows above it, through its rounded corners
-   or along its border. It is the row's own, so it travels with the row: when
-   the next question pushes it out, both leave over the top edge. */
-.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-stuck]::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  top: calc(var(--spacing) * -3);
-  bottom: var(--fold, 0px);
-  inset-inline: calc(var(--spacing) * -3);
-  background-color: var(--surface-0);
-  pointer-events: none;
+/* Sticky stops at the end of its exchange, and the next question starts
+   the exchanges' gap below it (9 units): pushed there, the two would stand
+   far apart. Each exchange ends with a spacer that lets its question travel
+   on until the pin gap (8px, --pin-gap) from the next, given back by an equal negative
+   margin, the column's own gap (5 units) included, so nothing in the flow
+   moves and the virtualiser (rows.tsx) measures every exchange the same.
+   The last exchange mounted has nothing to be pushed by and keeps none. */
+.terminal-view[data-pin] .chat-rows > :not(:last-child) .term-turn {
+  --push-room: calc(var(--spacing) * 9 - var(--spacing) * 5 - var(--spacing) * 2);
+  margin-bottom: calc(-1 * (var(--spacing) * 5 + var(--push-room)));
 }
-/* The room a question needs to be pushed by its FOLDED bottom: the sticky
-   clamp pushes on the row's layout box, which the fold leaves at full height,
-   so the section ends with a spacer as tall as the fold plus the gap
-   (--fold-space, set by sticky-questions.ts), and gives it back with an equal
-   negative margin: the next question does not move, and the browser's own
-   sticky pushes the folded question with the gap between them, smooth with
-   the scroll. The spacer's share of the section's gap is given back too, so
-   an exchange's item measures the same with the room or without it and the
-   virtualiser (rows.tsx) never sees it change. The last exchange mounted has
-   nothing to be pushed by and keeps none. */
 .terminal-view[data-pin] .chat-rows > :not(:last-child) .term-turn::after {
   content: '';
   flex: none;
-  height: var(--fold-space, 0px);
+  height: var(--push-room);
   pointer-events: none;
 }
-.terminal-view[data-pin] .chat-rows > :not(:last-child) .term-turn {
-  margin-bottom: calc(-1 * (var(--spacing) * 5 + var(--fold-space, 0px)));
+/* It stands on the ground: a backdrop from the top edge down, a little wider
+   than the box, so nothing scrolling under it shows above it, through its
+   rounded corners or along its border. It is the row's own, so it leaves
+   with the row when the next question pushes it out. */
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end']::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: calc(-1 * var(--pin-gap));
+  bottom: 0;
+  inset-inline: calc(var(--spacing) * -3);
+  background-color: var(--surface-0);
+  pointer-events: none;
 }
 /* Room under the last turn, so the conversation can be scrolled up off the
    prompt a little. */
@@ -4341,6 +4394,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] {
+  --from-tint: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
+  background-image: linear-gradient(var(--from-tint), var(--from-tint));
+}
+.terminal-view .chat-turn[data-role='user'][data-from='tab']::before {
+  color: var(--color-term-model);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
   order: 1;
@@ -4390,56 +4450,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .terminal-view .chat-turn-wrap[data-resizing] .term-question-grip::before {
   opacity: 1;
-}
-/* Folded, everything under the fold line is cut, straight, the backdrop above
-   the row spared; the message's own corners are rounded at the cut by its own
-   clip, so the backdrop shows through them, as at a whole box's corners. */
-.terminal-view .chat-turn-wrap[data-folded] {
-  clip-path: inset(
-    calc(var(--spacing) * -3 - 1px) calc(var(--spacing) * -3 - 1px) var(--fold, 0px)
-      calc(var(--spacing) * -3 - 1px)
-  );
-  cursor: pointer;
-}
-.terminal-view
-  .chat-turn-wrap[data-side='end'][data-fold-cut]
-  .term-question
-  .chat-turn[data-role='user'] {
-  clip-path: inset(
-    0 0 var(--message-fold, 0px) 0 round 0 0 var(--radius-control) var(--radius-control)
-  );
-}
-/* Folded, the message is one line to click, not a box to scroll: the wheel
-   over it moves the transcript, and its grip is out of reach. */
-.terminal-view
-  .chat-turn-wrap[data-side='end'][data-folded]
-  .term-question
-  .chat-turn[data-role='user'] {
-  overflow-y: hidden;
-}
-.terminal-view .chat-turn-wrap[data-folded] .term-question-grip {
-  display: none;
-}
-/* The folded box's bottom edge when the fold cuts through its text: a tight
-   foot in the box's own colour (its tint over the ground), so the lines it
-   folds away pass under a clean edge and none of the next one shows. A
-   one-line message folds on its own bottom edge and needs none. */
-.terminal-view .chat-turn-wrap[data-folded][data-fold-cut]::after {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  bottom: var(--fold, 0);
-  /* The message's bottom padding and border: folded, the box is exactly as
-     tall as a one-line message's, its line centred the same way. */
-  height: calc(var(--spacing) * 2.5 + 1px);
-  border: thin solid var(--border-subtle-color);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-control) var(--radius-control);
-  background-color: var(--surface-0);
-  background-image: linear-gradient(var(--surface-100), var(--surface-100));
-}
-.terminal-view .chat-turn-wrap[data-folded] .chat-turn-meta {
-  display: none;
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
    what was done, opening onto one row per call. The title has no kind icon,
@@ -4714,7 +4724,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--color-term-cwd);
 }
 .term-status .chat-model-trigger {
-  padding: 0 var(--spacing);
+  padding: 0 calc(var(--spacing) * 2);
   font-family: inherit;
 }
 .term-model .chat-model-trigger {
@@ -4771,8 +4781,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .term-context-bar {
   position: relative;
   display: inline-block;
-  inline-size: calc(var(--spacing) * 32);
-  block-size: calc(var(--spacing) * 2.5);
+  inline-size: calc(var(--spacing) * 24);
+  block-size: calc(var(--spacing) * 2);
   overflow: hidden;
   border-radius: calc(var(--spacing) / 2);
   background-image: repeating-linear-gradient(
@@ -4787,6 +4797,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   inset-inline-start: 0;
   background-color: var(--color-term-model);
   transition: inline-size var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A context that holds anything shows it: 12k of a 1M window is a hair's
+   width, which read as an empty bar beside a count that was not. */
+.term-context-fill[data-some] {
+  min-inline-size: calc(var(--spacing) / 2);
 }
 .term-context-bar[data-level='mid'] .term-context-fill {
   background-color: var(--color-warning);
@@ -4860,7 +4875,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
 }
 .term-agent-dot {
+  position: relative;
   flex-shrink: 0;
+  align-self: center;
   inline-size: calc(var(--spacing) * 1.5);
   block-size: calc(var(--spacing) * 1.5);
   border-radius: var(--radius-full);
@@ -4869,6 +4886,32 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .term-agent[data-background] .term-agent-dot {
   background-color: var(--color-term-mode);
+}
+/* Each new step: a ring leaves the dot once. The element is remounted per
+   step, so the one-shot animation is the tick. */
+.term-agent-tick {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: inherit;
+  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
+    forwards;
+}
+@keyframes term-agent-tick {
+  from {
+    opacity: 0.8;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 3;
+  }
+}
+/* A minute without a step: the dot stops breathing and dims, and the row
+   says for how long. */
+.term-agent[data-quiet] .term-agent-dot {
+  animation: none;
+  opacity: 0.4;
 }
 .term-agent-type {
   flex-shrink: 0;
@@ -4880,24 +4923,55 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   text-overflow: ellipsis;
   color: var(--text-primary);
 }
-.term-agent-action {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-tertiary);
-}
-.term-agent-action::before {
-  content: '⎿ ';
-}
 .term-agent-meta {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: baseline;
   margin-left: auto;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.term-agent-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+/* The model a subagent runs on: a chip opening the relaunch menu when the
+   agent can be stopped on its own, plain words when it cannot. */
+.term-agent-model {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) / 2);
+  padding: 0 var(--spacing);
+  margin-inline: calc(var(--spacing) * -1);
+  border: none;
+  border-radius: calc(var(--spacing) / 2);
+  background: none;
+  color: var(--color-term-model);
+  font: inherit;
+}
+button.term-agent-model:hover,
+button.term-agent-model[data-state='open'] {
+  background-color: var(--surface-100);
+}
+button.term-agent-model:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 4);
+}
+.term-agent-model svg {
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+  opacity: 0.7;
 }
 
 /* Reduced motion, the conversation views: the fades stay, since a thing that
    appears from nothing reads as broken either way; the travel goes. */
 @media (prefers-reduced-motion: reduce) {
+  .term-agent-tick {
+    display: none;
+  }
   .chat-column > *,
   .chat-row[data-arrive] > *,
   .chat-row[data-arrive] .term-turn > *,

@@ -250,6 +250,7 @@ verbatim, which is what a real provider spawns.
 | `write` `interrupt`           | `interrupt()`                                                |
 | `write` `permission_response` | `respond({ id, optionId })`, prefix stripped                 |
 | `write` `set_model`           | `setModel(model)`, or a non-fatal error if it has none       |
+| `write` `stop_task`           | a non-fatal error: a plugin cannot stop one task             |
 | `write` raw bytes             | refused: a plugin adapter is events-only                     |
 | `models` / `commands`         | the optional methods, or an empty list                       |
 | `kill`                        | `dispose()`, then exit 0                                     |

@@ -241,6 +241,13 @@ class PluginSessionAdapter implements SessionAdapter {
           fatal: false
         })
         return
+      case 'stop_task':
+        this.emit(live, {
+          type: 'error',
+          message: `${this.id} cannot stop one background task`,
+          fatal: false
+        })
+        return
     }
   }
 

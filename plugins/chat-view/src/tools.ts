@@ -28,7 +28,10 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
  *  the conversation view used to filter before grouping and the compact view
  *  not at all, which split a run in one view and not the other. */
 export function visibleEntries(entries: Entry[]): Entry[] {
-  return entries.filter((e) => e.kind !== 'assistant' || e.text.trim() !== '')
+  return entries.filter(
+    (e) =>
+      (e.kind !== 'assistant' || e.text.trim() !== '') && !(e.kind === 'user' && e.withdrawn)
+  )
 }
 
 export function groupEntries(entries: Entry[]): Block[] {

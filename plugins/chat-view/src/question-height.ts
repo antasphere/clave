@@ -4,24 +4,37 @@ import { useEffect, type RefObject } from 'react'
  *  its own box. A message taller than the pane cannot be pinned (it would
  *  cover the answer under it, and its lower half could never be read while it
  *  sticks), so every message is capped: by default at a share of the
- *  transcript's height, moved by the grip on a long message's bottom edge, and
- *  never past MAX_SHARE, so an answer always has room under a pinned
- *  question. The cap is the reader's, one for every message, and kept as a
- *  share of the pane, so it means the same in a split pane and a full one.
+ *  transcript's height, moved by the grip on a message's bottom edge, down to
+ *  a single line and never past MAX_SHARE, so an answer always has room under
+ *  a pinned question. The cap is the reader's, one for every message, and kept
+ *  as a share of the pane, so it means the same in a split pane and a full one.
  *
  *  The stylesheet reads `--term-question-max` on the scroller; a row whose
- *  message is taller than the smallest cap carries `data-tall`, which is what
- *  shows its grip: below that, dragging could change nothing. */
+ *  message is taller than one line carries `data-tall`, which is what shows
+ *  its grip: a one-line message has nothing to shrink. */
 const HEIGHT_KEY = 'clave-terminal-question-height'
-export const DEFAULT_SHARE = 0.4
+export const DEFAULT_SHARE = 0.3
 export const MAX_SHARE = 0.75
-/** The smallest cap, whatever the pane: six lines of a message and its padding. */
-export const MIN_CAP = 152
 
-/** The cap in pixels for a share of a pane this tall. */
-export function capFor(share: number, paneHeight: number): number {
-  const max = Math.max(MIN_CAP, paneHeight * MAX_SHARE)
-  return Math.round(Math.min(max, Math.max(MIN_CAP, share * paneHeight)))
+/** The cap in pixels for a share of a pane this tall, never under `min` (one
+ *  line of a message in its box). */
+export function capFor(share: number, paneHeight: number, min: number): number {
+  const max = Math.max(min, paneHeight * MAX_SHARE)
+  return Math.round(Math.min(max, Math.max(min, share * paneHeight)))
+}
+
+/** A message box holding one line: its padding, its border and a line. */
+function oneLine(message: HTMLElement): number {
+  const style = getComputedStyle(message)
+  const px = (value: string): number => Number.parseFloat(value) || 0
+  const line = px(style.lineHeight) || px(style.fontSize) * 1.5
+  return Math.ceil(
+    line +
+      px(style.paddingTop) +
+      px(style.paddingBottom) +
+      px(style.borderTopWidth) +
+      px(style.borderBottomWidth)
+  )
 }
 
 function storedShare(): number {
@@ -37,12 +50,22 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
     const messages = (): HTMLElement[] =>
       Array.from(root.querySelectorAll<HTMLElement>('.term-question > .chat-turn'))
     const apply = (cap: number): void => root.style.setProperty('--term-question-max', `${cap}px`)
+    // One line of a message, read off the first one mounted; every message
+    // shares the stylesheet's box, so one is all of them.
+    let min = 0
+    const floor = (): number => {
+      const first = messages()[0]
+      if (first) min = oneLine(first)
+      return min
+    }
     const measure = (): void => {
-      apply(capFor(share, root.clientHeight))
+      const line = floor()
+      apply(capFor(share, root.clientHeight, line))
       for (const message of messages()) {
         const row = message.closest<HTMLElement>('.chat-turn-wrap')
         if (!row) continue
-        if (message.scrollHeight > MIN_CAP + 1) row.dataset.tall = 'true'
+        // scrollHeight counts the padding but not the border.
+        if (line && message.scrollHeight > line + 1) row.dataset.tall = 'true'
         else delete row.dataset.tall
       }
     }
@@ -65,7 +88,7 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
       drag = {
         id: event.pointerId,
         y: event.clientY,
-        cap: capFor(share, root.clientHeight),
+        cap: capFor(share, root.clientHeight, floor()),
         row
       }
       row.dataset.resizing = 'true'
@@ -73,7 +96,7 @@ export function useQuestionHeight(scroll: RefObject<HTMLElement | null>): void {
     const onMove = (event: PointerEvent): void => {
       if (!drag || event.pointerId !== drag.id) return
       const pane = root.clientHeight
-      const cap = capFor((drag.cap + event.clientY - drag.y) / pane, pane)
+      const cap = capFor((drag.cap + event.clientY - drag.y) / pane, pane, min)
       share = cap / pane
       apply(cap)
     }
