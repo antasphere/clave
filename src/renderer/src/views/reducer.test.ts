@@ -255,7 +255,7 @@ describe('conversation stream', () => {
 describe('taking a message back', () => {
   const withdraw = (state: Conversation): Conversation =>
     reduceConversation(state, { withdraw: true })
-  const shown = (state: Conversation) =>
+  const shown = (state: Conversation): string[] =>
     visibleEntries(state.entries)
       .filter((e) => e.kind === 'user')
       .map((e) => e.text)

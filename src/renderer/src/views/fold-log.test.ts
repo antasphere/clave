@@ -1,7 +1,11 @@
 import { expect, it } from 'vitest'
 import type { LoggedEvent } from './conversation-store'
 import { foldLog, reducePast, withPast } from '../../../../plugins/chat-view/src/fold-log'
-import { emptyConversation, reduceConversation } from '../../../../plugins/chat-view/src/reducer'
+import {
+  emptyConversation,
+  reduceConversation,
+  type Conversation
+} from '../../../../plugins/chat-view/src/reducer'
 
 const log = (n: number, from = 0): LoggedEvent[] =>
   Array.from({ length: n }, (_, i) => ({
@@ -11,7 +15,7 @@ const log = (n: number, from = 0): LoggedEvent[] =>
         : { type: 'assistant_text', delta: `a${from + i}`, final: true },
     at: from + i
   }))
-const replay = (events: LoggedEvent[]) =>
+const replay = (events: LoggedEvent[]): Conversation =>
   events.reduce(reduceConversation, { ...emptyConversation, state: 'idle' })
 
 it('folds only what the log gained, and reads the same as a replay', () => {
