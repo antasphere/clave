@@ -28,7 +28,6 @@ import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
-import { useStickyQuestions } from './sticky-questions'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
@@ -755,7 +754,6 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
       return !value
     })
   useQuestionHeight(transcript.scroll)
-  useStickyQuestions(transcript.scroll, pinQuestions)
   // The mark is the agent at work, nothing else: it leaves with the state.
   const showMark = state === 'working'
   // The run in flight: the last one, while the turn it belongs to still runs
@@ -832,7 +830,12 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
             {/* Mounted from the start, empty or not: what it gains is told apart
                 from what it opened on by the rows it rendered before. */}
             <ToolDisclosure.Provider value={disclosure}>
-              <TranscriptRows rows={turns} settled={pastRead} scroll={transcript.scroll}>
+              <TranscriptRows
+                rows={turns}
+                settled={pastRead}
+                scroll={transcript.scroll}
+                holdAbove={pinQuestions}
+              >
                 {(turn, index, arriving) => (
                   <TerminalTurn
                     key={turn.key}

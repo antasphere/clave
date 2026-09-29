@@ -60,8 +60,8 @@ export async function run(t) {
       { mounted, of: EXCHANGES }
     )
 
-    // Inside the tall exchange, its question stays pinned. It is one line,
-    // so it stays whole: only a longer question folds (terminal-questions).
+    // Inside the tall exchange, its question stays pinned, whole: plain
+    // sticky, nothing clipped (terminal-questions).
     await scroller.evaluate((el) => {
       const last = [...el.querySelectorAll('.term-turn')].at(-1)
       el.scrollTop += last.getBoundingClientRect().top - el.getBoundingClientRect().top + 300
@@ -70,10 +70,12 @@ export async function run(t) {
       .locator('.term-turn')
       .filter({ hasText: `question ${EXCHANGES - 1}` })
       .locator('> .chat-turn-wrap[data-side="end"]')
-    const pinnedWhole = await until(
-      async () =>
-        (await pinned.getAttribute('data-stuck')) === 'true' &&
-        (await pinned.getAttribute('data-folded')) === null
+    const pinnedWhole = await until(async () =>
+      pinned.evaluate((row) => {
+        const edge = row.closest('.chat-scroll').getBoundingClientRect().top
+        const at = row.getBoundingClientRect().top - edge
+        return Math.abs(at - 8) <= 1 && getComputedStyle(row).clipPath === 'none'
+      })
     )
     const stuck = await pinned.evaluate((row) => {
       const edge = row.closest('.chat-scroll').getBoundingClientRect().top
