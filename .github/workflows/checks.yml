@@ -1,0 +1,48 @@
+name: Checks
+
+# Lint, typecheck and the unit tests on every push to dev and every pull
+# request. Nothing ran them before this workflow, which is how 175 lint errors
+# piled up unseen; release.yml and build-win.yml only build.
+#
+# Linux is enough here: none of the three builds the app. `npm ci` still runs
+# scripts/postinstall.cjs, whose `electron-builder install-app-deps` rebuilds
+# node-pty against Electron's headers with the runner's own toolchain; the
+# macOS-only pieces (the Swift helpers, signing, the private Synonym font) are
+# build steps, not install steps, and none of the checks reads them.
+on:
+  push:
+    branches: [dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes the running check.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npx vitest run
