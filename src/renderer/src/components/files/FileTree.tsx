@@ -44,7 +44,7 @@ function InlineCreateInput({
   depth: number
   onCreated: (path: string, type: 'file' | 'directory') => void
   onCancel: () => void
-}) {
+}): React.JSX.Element {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -138,9 +138,7 @@ function InlineCreateInput({
             error ? 'border-red-400' : 'border-accent'
           }`}
         />
-        {error && (
-          <span className="text-[10px] text-red-400 mt-0.5">{error}</span>
-        )}
+        {error && <span className="text-[10px] text-red-400 mt-0.5">{error}</span>}
       </div>
     </div>
   )
@@ -172,15 +170,19 @@ function TreeRule({ depth }: { depth: number }): React.JSX.Element {
   )
 }
 
-export function FileTree({ cwd, onNavigateToFolder }: {
+export function FileTree({
+  cwd,
+  onNavigateToFolder
+}: {
   cwd: string | null
   onNavigateToFolder: (absolutePath: string) => void
-}) {
+}): React.JSX.Element {
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const setPreviewFile = useSessionStore((s) => s.setPreviewFile)
   const addFileTab = useSessionStore((s) => s.addFileTab)
 
-  const { flatList, loading, filter, setFilter, toggleDir, refreshDir, collapseAll } = useFileTree(cwd)
+  const { flatList, loading, filter, setFilter, toggleDir, refreshDir, collapseAll } =
+    useFileTree(cwd)
 
   /**
    * Only a NEW collapse-all press folds anything.
@@ -208,12 +210,9 @@ export function FileTree({ cwd, onNavigateToFolder }: {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [inlineCreate, setInlineCreate] = useState<InlineCreateState | null>(null)
 
-  const handleClickFile = useCallback(
-    (_filePath: string) => {
-      // Plain click on file — no-op here, selection handled by handleSelect
-    },
-    []
-  )
+  const handleClickFile = useCallback(() => {
+    // Plain click on file — no-op here, selection handled by handleSelect
+  }, [])
 
   const handleSelect = useCallback(
     (path: string, metaKey: boolean) => {
@@ -242,12 +241,9 @@ export function FileTree({ cwd, onNavigateToFolder }: {
     [setPreviewFile, cwd]
   )
 
-  const handleDoubleClickDir = useCallback(
-    (_dirPath: string) => {
-      // Navigation on double-click removed — use "Open as Root" from context menu instead
-    },
-    []
-  )
+  const handleDoubleClickDir = useCallback(() => {
+    // Navigation on double-click removed — use "Open as Root" from context menu instead
+  }, [])
 
   const handleDragStart = useCallback(
     (e: React.DragEvent, node: FlatTreeNode) => {
@@ -318,12 +314,24 @@ export function FileTree({ cwd, onNavigateToFolder }: {
           onClick: () => setPreviewFile(node.path, 'tree', cwd)
         })
         const fileExt = node.path.split('.').pop()?.toLowerCase() ?? ''
-        const externalExts = new Set(['html', 'htm', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'])
+        const externalExts = new Set([
+          'html',
+          'htm',
+          'pdf',
+          'png',
+          'jpg',
+          'jpeg',
+          'gif',
+          'svg',
+          'webp'
+        ])
         if (externalExts.has(fileExt)) {
           items.push({
             label: 'Open Externally',
             icon: <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />,
-            onClick: () => { window.electronAPI?.openPath(absPath) }
+            onClick: () => {
+              window.electronAPI?.openPath(absPath)
+            }
           })
         }
       }
@@ -383,11 +391,13 @@ export function FileTree({ cwd, onNavigateToFolder }: {
       items.push({
         label: 'Reveal in Finder',
         icon: <MagnifyingGlassIcon className="w-3.5 h-3.5" />,
-        onClick: () => { window.electronAPI?.showItemInFolder(absPath) }
+        onClick: () => {
+          window.electronAPI?.showItemInFolder(absPath)
+        }
       })
       setContextMenu({ x: e.clientX, y: e.clientY, items })
     },
-    [cwd, setPreviewFile, onNavigateToFolder]
+    [cwd, setPreviewFile, onNavigateToFolder, addFileTab]
   )
 
   // Context menu on empty area — allow creating at root
@@ -448,7 +458,12 @@ export function FileTree({ cwd, onNavigateToFolder }: {
       )
 
       // If this is the directory where we're creating, insert inline input after it
-      if (inlineCreate && node.type === 'directory' && node.path === inlineCreate.parentPath && node.expanded) {
+      if (
+        inlineCreate &&
+        node.type === 'directory' &&
+        node.path === inlineCreate.parentPath &&
+        node.expanded
+      ) {
         elements.push(
           <InlineCreateInput
             key="__inline-create__"
@@ -477,7 +492,20 @@ export function FileTree({ cwd, onNavigateToFolder }: {
     }
 
     return elements
-  }, [flatList, inlineCreate, cwd, selectedPaths, handleClickFile, handleSelect, handleDoubleClickFile, handleDoubleClickDir, toggleDir, handleContextMenu, handleDragStart, handleInlineCreated])
+  }, [
+    flatList,
+    inlineCreate,
+    cwd,
+    selectedPaths,
+    handleClickFile,
+    handleSelect,
+    handleDoubleClickFile,
+    handleDoubleClickDir,
+    toggleDir,
+    handleContextMenu,
+    handleDragStart,
+    handleInlineCreated
+  ])
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -516,16 +544,13 @@ export function FileTree({ cwd, onNavigateToFolder }: {
               >
                 <XMarkIcon className="w-3 h-3" />
               </button>
-  )}
+            )}
           </div>
         </div>
       </div>
 
       {/* Tree list */}
-      <div
-        className="flex-1 overflow-y-auto"
-        onContextMenu={handleEmptyContextMenu}
-      >
+      <div className="flex-1 overflow-y-auto" onContextMenu={handleEmptyContextMenu}>
         {!cwd ? (
           <div className="px-3 py-8 text-center text-xs text-text-tertiary">
             Open a workspace or focus a session to browse files

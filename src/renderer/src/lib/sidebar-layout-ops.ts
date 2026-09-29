@@ -72,7 +72,11 @@ export function moveLayoutItems<G extends OpsGroup>(
   let order = layout.displayOrder.filter((id) => !dragged.has(id))
 
   const parentOf = (id: string): G | undefined => groups.find((g) => g.sessionIds.includes(id))
-  const insertTopLevel = (anchor: string | null, where: 'before' | 'after', what: string[]): void => {
+  const insertTopLevel = (
+    anchor: string | null,
+    where: 'before' | 'after',
+    what: string[]
+  ): void => {
     const idx = anchor === null ? -1 : order.indexOf(anchor)
     if (idx === -1) order.push(...what)
     else order.splice(where === 'after' ? idx + 1 : idx, 0, ...what)
@@ -99,7 +103,9 @@ export function moveLayoutItems<G extends OpsGroup>(
   }
 
   // Invariant 3: a group this move emptied goes away.
-  const emptied = new Set(groups.filter((g) => hadRows.has(g.id) && g.sessionIds.length === 0).map((g) => g.id))
+  const emptied = new Set(
+    groups.filter((g) => hadRows.has(g.id) && g.sessionIds.length === 0).map((g) => g.id)
+  )
   const finalGroups = groups.filter((g) => !emptied.has(g.id))
   order = order.filter((id) => !emptied.has(id))
 

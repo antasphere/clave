@@ -61,7 +61,13 @@ interface ExtensionActions {
 }
 
 /** A small neutral count/label chip. */
-function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
+function Chip({
+  children,
+  className
+}: {
+  children: React.ReactNode
+  className?: string
+}): React.JSX.Element {
   return (
     <span className={cn('badge bg-surface-200 text-text-secondary', className)}>{children}</span>
   )
@@ -73,7 +79,7 @@ function EmptyState({
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   message: string
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Icon className="w-8 h-8 text-text-tertiary/50 mb-3" />
@@ -103,7 +109,7 @@ function MarketplacesGrid({
 }: {
   inv: ExtensionsInventory
   onOpen: (drill: Drill) => void
-}) {
+}): React.JSX.Element {
   const standaloneCount = inv.userSkills.length + inv.userAgents.length + inv.userCommands.length
 
   if (inv.marketplaces.length === 0 && standaloneCount === 0) {
@@ -181,7 +187,7 @@ function MarketplaceView({
   marketplaceName: string
   onOpenPlugin: (id: string) => void
   actions: ExtensionActions
-}) {
+}): React.JSX.Element {
   const installed = inv.plugins.filter((p) => p.marketplace === marketplaceName)
   const installedNames = new Set(installed.map((p) => p.name))
   const market = inv.marketplaces.find((m) => m.name === marketplaceName)
@@ -280,7 +286,7 @@ function CapabilitySection({
   title: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   rows: { key: string; name: string; description?: string; trailing?: React.ReactNode }[]
-}) {
+}): React.JSX.Element | null {
   if (rows.length === 0) return null
   return (
     <section className="mb-5">
@@ -307,7 +313,13 @@ function CapabilitySection({
 }
 
 /** Action bar shown above a plugin's capabilities: enable/disable + uninstall. */
-function PluginActionBar({ plugin, actions }: { plugin: PluginInfo; actions: ExtensionActions }) {
+function PluginActionBar({
+  plugin,
+  actions
+}: {
+  plugin: PluginInfo
+  actions: ExtensionActions
+}): React.JSX.Element {
   const busy = actions.pending !== null
   const toggling = actions.pending === `toggle:${plugin.id}`
   const uninstalling = actions.pending === `uninstall:${plugin.id}`
@@ -355,7 +367,7 @@ function CapabilityDetail({
   agents: AgentInfo[]
   commands: CommandInfo[]
   mcp: McpServerInfo[]
-}) {
+}): React.JSX.Element {
   const total = skills.length + agents.length + commands.length + mcp.length
   if (total === 0) {
     return <EmptyState icon={CubeTransparentIcon} message="This item exposes no capabilities." />
@@ -410,7 +422,7 @@ function CapabilityDetail({
 
 // ── MCP tab: flat grid across all scopes ───────────────────────────────────────
 
-function McpGrid({ inv }: { inv: ExtensionsInventory }) {
+function McpGrid({ inv }: { inv: ExtensionsInventory }): React.JSX.Element {
   if (inv.mcpServers.length === 0) {
     return (
       <EmptyState icon={ServerStackIcon} message="No MCP servers configured for this profile." />
@@ -448,7 +460,11 @@ function McpGrid({ inv }: { inv: ExtensionsInventory }) {
 
 // ── Breadcrumb ──────────────────────────────────────────────────────────────────
 
-function Breadcrumb({ segments }: { segments: { label: string; onClick?: () => void }[] }) {
+function Breadcrumb({
+  segments
+}: {
+  segments: { label: string; onClick?: () => void }[]
+}): React.JSX.Element {
   return (
     <div className="flex items-center gap-1 text-control mb-4 min-w-0">
       {segments.map((seg, i) => {
@@ -484,7 +500,7 @@ function Breadcrumb({ segments }: { segments: { label: string; onClick?: () => v
 
 // ── Panel shell ──────────────────────────────────────────────────────────────────
 
-export function ExtensionsPanel() {
+export function ExtensionsPanel(): React.JSX.Element {
   const section = useSessionStore((s) => s.extensionsSection)
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
@@ -522,11 +538,12 @@ export function ExtensionsPanel() {
     } finally {
       setLoading(false)
     }
-  }, [profileId])
+  }, [])
 
+  // Read again on every profile switch, as well as on mount.
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, profileId])
 
   // Reset drill + transient state when switching tab or profile.
   useEffect(() => {
@@ -601,7 +618,7 @@ export function ExtensionsPanel() {
       })
   }
 
-  const handleAddMarketplace = (source: string) => {
+  const handleAddMarketplace = (source: string): void => {
     void runMutation(
       'mkt-add',
       () => window.electronAPI?.extensionsAddMarketplace(source, configDir),

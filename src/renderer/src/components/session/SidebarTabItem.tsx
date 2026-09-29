@@ -60,7 +60,7 @@ export function SidebarTabItem({
   onEditingDone,
   onPointerDown,
   isDragging
-}: SidebarTabItemProps) {
+}: SidebarTabItemProps): React.JSX.Element {
   const {
     editing,
     editValue,
@@ -87,9 +87,7 @@ export function SidebarTabItem({
   // Dragging takes visual priority; otherwise fade dimmed (unselected) tabs.
   const itemOpacity = isDragging ? 0.3 : dimmed ? 0.55 : undefined
   const tintBackground =
-    groupColorHex && isSelected && !groupSelected && grouped
-      ? `${groupColorHex}30`
-      : undefined
+    groupColorHex && isSelected && !groupSelected && grouped ? `${groupColorHex}30` : undefined
 
   return (
     <div

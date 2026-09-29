@@ -16,7 +16,7 @@ export function SidebarItem({
   onClick,
   rightContent,
   className
-}: SidebarItemProps) {
+}: SidebarItemProps): React.JSX.Element {
   return (
     <button
       onClick={onClick}

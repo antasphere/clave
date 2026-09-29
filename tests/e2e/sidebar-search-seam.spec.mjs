@@ -49,9 +49,24 @@ export async function run(t) {
       {
         $schema: 'clave/1.0',
         groups: [
-          { name: 'Lane alpha', cwd: '.', color: 'teal', sessions: [{ cwd: '.', name: 'a', claudeMode: false }] },
-          { name: 'Lane bravo', cwd: '.', color: 'purple', sessions: [{ cwd: '.', name: 'b', claudeMode: false }] },
-          { name: 'Charlie', cwd: '.', color: 'blue', sessions: [{ cwd: '.', name: 'c', claudeMode: false }] }
+          {
+            name: 'Lane alpha',
+            cwd: '.',
+            color: 'teal',
+            sessions: [{ cwd: '.', name: 'a', claudeMode: false }]
+          },
+          {
+            name: 'Lane bravo',
+            cwd: '.',
+            color: 'purple',
+            sessions: [{ cwd: '.', name: 'b', claudeMode: false }]
+          },
+          {
+            name: 'Charlie',
+            cwd: '.',
+            color: 'blue',
+            sessions: [{ cwd: '.', name: 'c', claudeMode: false }]
+          }
         ]
       },
       null,
@@ -68,7 +83,10 @@ export async function run(t) {
       const panel = document.querySelector('.group-switcher-panel')
       const rule = document.querySelector('.sidebar-list-seam')
       const viewport = document.querySelector('[data-radix-scroll-area-viewport]')
-      const launcher = document.querySelector('.launcher-panel') ?? document.querySelector('.group-switcher-panel')?.parentElement?.previousElementSibling?.firstElementChild
+      const launcher =
+        document.querySelector('.launcher-panel') ??
+        document.querySelector('.group-switcher-panel')?.parentElement?.previousElementSibling
+          ?.firstElementChild
       if (!panel || !rule || !viewport) return null
       const p = panel.getBoundingClientRect()
       const r = rule.getBoundingClientRect()
@@ -81,7 +99,8 @@ export async function run(t) {
         leftAlignedWithPanel: Math.round(r.left) === Math.round(p.left),
         widthMatchesPanel: Math.round(r.width) === Math.round(p.width),
         // Visible: a divider element that paints nothing is not a divider.
-        painted: style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent',
+        painted:
+          style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent',
         // The list starts under the rule — this is the edge it disappears at.
         viewportUnderRule: Math.round(v.top) >= Math.round(r.bottom),
         launcherPresent: !!launcher
@@ -91,7 +110,11 @@ export async function run(t) {
     if (seam) {
       t.equal('4px of air between the switcher and the rule', seam.gap, 4)
       t.equal('the rule is a hairline', seam.height, 1)
-      t.check('the rule sits on the panel gutter', seam.leftAlignedWithPanel && seam.widthMatchesPanel, seam)
+      t.check(
+        'the rule sits on the panel gutter',
+        seam.leftAlignedWithPanel && seam.widthMatchesPanel,
+        seam
+      )
       t.check('the rule actually paints', seam.painted, seam)
       t.check('the scroll viewport begins under the rule', seam.viewportUnderRule, seam)
     }
@@ -134,14 +157,15 @@ export async function run(t) {
           present: true,
           height: Math.round(r.height),
           painted:
-            style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
-            style.backgroundColor !== 'transparent',
+            style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent',
           // The list ends ON the line — the edge it disappears at.
           underViewport: Math.round(r.top) >= Math.round(v.bottom) - 1,
           gapBelow: belowBox ? Math.round(belowBox.top - r.bottom) : null,
           // Same gutter as the seam at the top, so the two line up.
-          sameGutterAsTop: t ? Math.round(r.left) === Math.round(t.left) &&
-            Math.round(r.width) === Math.round(t.width) : null
+          sameGutterAsTop: t
+            ? Math.round(r.left) === Math.round(t.left) &&
+              Math.round(r.width) === Math.round(t.width)
+            : null
         }
       })
 

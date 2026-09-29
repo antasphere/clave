@@ -7,7 +7,12 @@ interface DiffLinesViewProps {
   className?: string
 }
 
-export function DiffLinesView({ lines, loading, error, className }: DiffLinesViewProps) {
+export function DiffLinesView({
+  lines,
+  loading,
+  error,
+  className
+}: DiffLinesViewProps): React.JSX.Element {
   return (
     <div className={`overflow-auto font-mono text-[11px] leading-[18px] ${className ?? ''}`}>
       {loading && (
@@ -42,7 +47,7 @@ export function DiffLinesView({ lines, loading, error, className }: DiffLinesVie
             <div key={i} className={`px-3 whitespace-pre ${bg} ${textColor}`}>
               {line.type === 'add' && <span className="select-none mr-1">+</span>}
               {line.type === 'del' && <span className="select-none mr-1">-</span>}
-              {line.type === 'context' && <span className="select-none mr-1">{' '}</span>}
+              {line.type === 'context' && <span className="select-none mr-1"> </span>}
               {line.content}
             </div>
           )

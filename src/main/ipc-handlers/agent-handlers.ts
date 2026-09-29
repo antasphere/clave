@@ -43,19 +43,22 @@ export function registerAgentHandlers(): void {
     return openclawClient.requestChatHistory(locationId, sessionKey)
   })
 
-  ipcMain.handle('agent:send', async (_event, agentId: string, locationId: string, content: string) => {
-    // Return optimistic message immediately, send async
-    const msg: ChatMessage = {
-      id: randomUUID(),
-      agentId,
-      role: 'user',
-      content,
-      timestamp: Date.now(),
-      status: 'sending'
+  ipcMain.handle(
+    'agent:send',
+    async (_event, agentId: string, locationId: string, content: string) => {
+      // Return optimistic message immediately, send async
+      const msg: ChatMessage = {
+        id: randomUUID(),
+        agentId,
+        role: 'user',
+        content,
+        timestamp: Date.now(),
+        status: 'sending'
+      }
+      openclawClient.sendToAgent(locationId, agentId, content).catch(() => {
+        // Message delivery failed — could notify renderer
+      })
+      return msg
     }
-    openclawClient.sendToAgent(locationId, agentId, content).catch(() => {
-      // Message delivery failed — could notify renderer
-    })
-    return msg
-  })
+  )
 }

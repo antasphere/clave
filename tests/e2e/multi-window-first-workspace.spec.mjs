@@ -124,7 +124,9 @@ export async function run(t) {
     // The window's own layout file carries both groups, now stamped.
     const wFile = await until(() => {
       const l = windowLayout(DIR, idAfter?.windowKey)
-      return l && (l.groups ?? []).every((g) => g.workspaceId === wsId) && l.groups.length === 2 ? l : null
+      return l && (l.groups ?? []).every((g) => g.workspaceId === wsId) && l.groups.length === 2
+        ? l
+        : null
     })
     t.check(
       "the window's layout file carries both groups, stamped with the workspace",

@@ -14,7 +14,10 @@ function isSegmentStart(path: string, index: number): boolean {
   return prev === '/' || prev === '.' || prev === '-' || prev === '_'
 }
 
-function fuzzyMatch(query: string, target: string): { score: number; matchIndices: number[] } | null {
+function fuzzyMatch(
+  query: string,
+  target: string
+): { score: number; matchIndices: number[] } | null {
   const lowerQuery = query.toLowerCase()
   const lowerTarget = target.toLowerCase()
   const indices: number[] = []
@@ -60,7 +63,16 @@ function fuzzyMatch(query: string, target: string): { score: number; matchIndice
   return { score, matchIndices: indices }
 }
 
-export function useFileSearch(cwd: string | null, isOpen: boolean) {
+export function useFileSearch(
+  cwd: string | null,
+  isOpen: boolean
+): {
+  results: FuzzyMatch[]
+  query: string
+  setQuery: React.Dispatch<React.SetStateAction<string>>
+  loading: boolean
+  truncated: boolean
+} {
   const [files, setFiles] = useState<string[]>([])
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)

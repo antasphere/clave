@@ -18,14 +18,17 @@ interface AgentPickerPopoverProps {
   onClose: () => void
 }
 
-export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverProps) {
+export function AgentPickerPopover({
+  anchorRef,
+  onClose
+}: AgentPickerPopoverProps): React.ReactPortal {
   const agents = useAgentStore((s) => s.agents)
   const locations = useLocationStore((s) => s.locations)
   const sessions = useSessionStore((s) => s.sessions)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const handleAgentClick = useCallback(
-    (agent: typeof agents[0], locationId: string) => {
+    (agent: (typeof agents)[0], locationId: string) => {
       const sessionId = `agent-${locationId}-${agent.id}`
 
       // Set the active agent for the chat panel
@@ -46,12 +49,12 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
   )
 
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
+    const handleClick = (e: MouseEvent): void => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose()
       }
     }
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('mousedown', handleClick)
@@ -94,14 +97,19 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
     }
   }
 
+  // The popover is placed under its anchor, which the parent laid out before
+  // mounting it; the anchor is measured on every render, as it always was.
+  // eslint-disable-next-line react-hooks/refs -- a DOM measurement of an already-mounted anchor, read to position a portal
+  const anchorRect = anchorRef.current?.getBoundingClientRect()
+
   if (agents.length === 0) {
     return createPortal(
       <div
         ref={menuRef}
         className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] py-3 px-3"
         style={{
-          top: (anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
-          left: anchorRef.current?.getBoundingClientRect().left ?? 0
+          top: (anchorRect?.bottom ?? 0) + 4,
+          left: anchorRect?.left ?? 0
         }}
       >
         <p className="text-control text-text-tertiary text-center">
@@ -119,44 +127,42 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
       ref={menuRef}
       className="menu-surface menu-pop-mount fixed z-50 min-w-[220px] flex flex-col p-1"
       style={{
-        top: (anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
-        left: anchorRef.current?.getBoundingClientRect().left ?? 0
+        top: (anchorRect?.bottom ?? 0) + 4,
+        left: anchorRect?.left ?? 0
       }}
     >
       <div className="max-h-[50vh] overflow-y-auto">
-      {locationGroups.map((group) => {
-        return (
-          <div key={group.locationId}>
-            <div className="menu-label">
-              {group.name}
-            </div>
-            {group.agents.map((agent) => {
-              const sessionId = `agent-${agent.locationId}-${agent.id}`
-              const inSidebar = sessions.some((s) => s.id === sessionId)
-              return (
-                <button
-                  key={agent.id}
-                  onClick={() => handleAgentClick(agent, agent.locationId)}
-                  className="menu-item"
-                >
-                  <div
-                    className={cn(
-                      'w-2 h-2 rounded-full flex-shrink-0',
-                      statusColors[agent.status] || 'bg-gray-400'
+        {locationGroups.map((group) => {
+          return (
+            <div key={group.locationId}>
+              <div className="menu-label">{group.name}</div>
+              {group.agents.map((agent) => {
+                const sessionId = `agent-${agent.locationId}-${agent.id}`
+                const inSidebar = sessions.some((s) => s.id === sessionId)
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => handleAgentClick(agent, agent.locationId)}
+                    className="menu-item"
+                  >
+                    <div
+                      className={cn(
+                        'w-2 h-2 rounded-full flex-shrink-0',
+                        statusColors[agent.status] || 'bg-gray-400'
+                      )}
+                    />
+                    <span className="flex-1 text-left truncate">{agent.name}</span>
+                    {inSidebar ? (
+                      <CheckIcon className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+                    ) : (
+                      <span className="text-[11px] text-text-tertiary flex-shrink-0">Add</span>
                     )}
-                  />
-                  <span className="flex-1 text-left truncate">{agent.name}</span>
-                  {inSidebar ? (
-                    <CheckIcon className="w-3.5 h-3.5 text-accent flex-shrink-0" />
-                  ) : (
-                    <span className="text-[11px] text-text-tertiary flex-shrink-0">Add</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )
-      })}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
     </div>,
     document.body

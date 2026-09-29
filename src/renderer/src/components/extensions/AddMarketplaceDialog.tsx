@@ -16,21 +16,31 @@ interface AddMarketplaceDialogProps {
  * hand it back to the caller. Adding a marketplace fetches and trusts remote
  * code, so the dialog says so plainly before the user commits.
  */
-export function AddMarketplaceDialog({ isOpen, onAdd, onCancel, busy }: AddMarketplaceDialogProps) {
+export function AddMarketplaceDialog({
+  isOpen,
+  onAdd,
+  onCancel,
+  busy
+}: AddMarketplaceDialogProps): React.JSX.Element {
   const [source, setSource] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Opening clears the field. Done while rendering, against the open state the
+  // last render saw, so the dialog never paints the previous entry first.
+  const [wasOpen, setWasOpen] = useState(isOpen)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (isOpen) setSource('')
+  }
+
   useEffect(() => {
-    if (isOpen) {
-      setSource('')
-      setTimeout(() => inputRef.current?.focus(), 50)
-    }
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen])
 
   const trimmed = source.trim()
   const canAdd = trimmed.length > 0 && !trimmed.startsWith('-') && !/\s/.test(trimmed) && !busy
 
-  const submit = () => {
+  const submit = (): void => {
     if (canAdd) onAdd(trimmed)
   }
 

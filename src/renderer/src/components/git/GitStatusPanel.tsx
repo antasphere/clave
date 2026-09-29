@@ -5,7 +5,17 @@ import { ConfirmDialog } from '@clave/ui/components'
 import { ContextMenu } from '../ui/ContextMenu'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { shortenPath } from '../../lib/utils'
-import { ArrowTopRightOnSquareIcon, ArrowUturnLeftIcon, PlusIcon, MinusIcon, InformationCircleIcon, ArrowPathIcon, FolderIcon, CubeIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowTopRightOnSquareIcon,
+  ArrowUturnLeftIcon,
+  PlusIcon,
+  MinusIcon,
+  InformationCircleIcon,
+  ArrowPathIcon,
+  FolderIcon,
+  CubeIcon,
+  ChevronUpIcon
+} from '@heroicons/react/24/outline'
 import { buildGitTree, compactTree, collectAllDirPaths } from '../../lib/git-file-tree'
 import {
   buildRepoTree,
@@ -208,7 +218,10 @@ function RangeSection({
         }
       />
       {files.length === 0 ? (
-        <div className="flex items-center h-[var(--panel-row-h)] pr-3 text-[11px] text-text-tertiary" style={{ paddingLeft: fileIndentPx }}>
+        <div
+          className="flex items-center h-[var(--panel-row-h)] pr-3 text-[11px] text-text-tertiary"
+          style={{ paddingLeft: fileIndentPx }}
+        >
           {direction === 'worktree'
             ? 'No commits of its own since the cut.'
             : direction === 'base'
@@ -329,7 +342,7 @@ function RepoSection({
   /** Show the local work — staged, modified, untracked. On by default; the
    *  + badge-button folds it away so only the sync ranges remain. */
   showChanges?: boolean
-}) {
+}): React.JSX.Element {
   const sectionIndentPx = 12 + depth * TREE_INDENT_PX
   const fileIndentPx = sectionIndentPx + TREE_INDENT_PX
   const treeBaseIndentPx = (depth + 1) * TREE_INDENT_PX
@@ -355,29 +368,38 @@ function RepoSection({
   const [untrackedExpanded, _setUntrackedExpanded] = useState<Set<string>>(() => cache.untracked)
 
   // Wrap setters to also persist to cache
-  const setStagedExpanded: typeof _setStagedExpanded = useCallback((action) => {
-    _setStagedExpanded((prev) => {
-      const next = typeof action === 'function' ? action(prev) : action
-      getExpandedCache(cwd).staged = next
-      return next
-    })
-  }, [cwd])
+  const setStagedExpanded: typeof _setStagedExpanded = useCallback(
+    (action) => {
+      _setStagedExpanded((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action
+        getExpandedCache(cwd).staged = next
+        return next
+      })
+    },
+    [cwd]
+  )
 
-  const setUnstagedExpanded: typeof _setUnstagedExpanded = useCallback((action) => {
-    _setUnstagedExpanded((prev) => {
-      const next = typeof action === 'function' ? action(prev) : action
-      getExpandedCache(cwd).unstaged = next
-      return next
-    })
-  }, [cwd])
+  const setUnstagedExpanded: typeof _setUnstagedExpanded = useCallback(
+    (action) => {
+      _setUnstagedExpanded((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action
+        getExpandedCache(cwd).unstaged = next
+        return next
+      })
+    },
+    [cwd]
+  )
 
-  const setUntrackedExpanded: typeof _setUntrackedExpanded = useCallback((action) => {
-    _setUntrackedExpanded((prev) => {
-      const next = typeof action === 'function' ? action(prev) : action
-      getExpandedCache(cwd).untracked = next
-      return next
-    })
-  }, [cwd])
+  const setUntrackedExpanded: typeof _setUntrackedExpanded = useCallback(
+    (action) => {
+      _setUntrackedExpanded((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action
+        getExpandedCache(cwd).untracked = next
+        return next
+      })
+    },
+    [cwd]
+  )
 
   // The dialog names what will actually happen: a tracked file goes back to
   // its last commit, an untracked one is removed from disk. Its title, its
@@ -405,28 +427,22 @@ function RepoSection({
 
   const openDiffPreviewRef = useRef<(file: GitFileStatus, clickY?: number) => void>(() => {})
 
-  const openDiffPreview = useCallback(
-    (file: GitFileStatus, clickY?: number) => {
-      openDiffPreviewRef.current(file, clickY)
-    },
-    []
-  )
+  const openDiffPreview = useCallback((file: GitFileStatus, clickY?: number) => {
+    openDiffPreviewRef.current(file, clickY)
+  }, [])
 
-  const handleSelect = useCallback(
-    (path: string, metaKey: boolean) => {
-      if (metaKey) {
-        setSelectedPaths((prev) => {
-          const next = new Set(prev)
-          if (next.has(path)) next.delete(path)
-          else next.add(path)
-          return next
-        })
-      } else {
-        setSelectedPaths(new Set())
-      }
-    },
-    []
-  )
+  const handleSelect = useCallback((path: string, metaKey: boolean) => {
+    if (metaKey) {
+      setSelectedPaths((prev) => {
+        const next = new Set(prev)
+        if (next.has(path)) next.delete(path)
+        else next.add(path)
+        return next
+      })
+    } else {
+      setSelectedPaths(new Set())
+    }
+  }, [])
 
   const repoRoot = status?.repoRoot ?? cwd
 
@@ -437,6 +453,9 @@ function RepoSection({
       setUnstagedExpanded(new Set())
       setUntrackedExpanded(new Set())
     }
+    // The trigger alone: the setters change with the folder, and a folder
+    // change must not collapse the trees again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapseAllTrigger])
 
   // Auto-expand all dirs when switching to tree mode
@@ -450,7 +469,7 @@ function RepoSection({
       setUntrackedExpanded(allPaths)
     }
     prevViewMode.current = gitViewMode
-  }, [gitViewMode, status?.files])
+  }, [gitViewMode, status?.files, setStagedExpanded, setUnstagedExpanded, setUntrackedExpanded])
 
   const makeToggle = useCallback(
     (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (path: string) => {
@@ -467,9 +486,20 @@ function RepoSection({
     []
   )
 
-  const toggleStagedExpanded = useCallback(makeToggle(setStagedExpanded), [makeToggle])
-  const toggleUnstagedExpanded = useCallback(makeToggle(setUnstagedExpanded), [makeToggle])
-  const toggleUntrackedExpanded = useCallback(makeToggle(setUntrackedExpanded), [makeToggle])
+  // Built on the current setters: those change with the folder, and a toggle
+  // kept from the first render saved its state in the previous folder's cache.
+  const toggleStagedExpanded = useMemo(
+    () => makeToggle(setStagedExpanded),
+    [makeToggle, setStagedExpanded]
+  )
+  const toggleUnstagedExpanded = useMemo(
+    () => makeToggle(setUnstagedExpanded),
+    [makeToggle, setUnstagedExpanded]
+  )
+  const toggleUntrackedExpanded = useMemo(
+    () => makeToggle(setUntrackedExpanded),
+    [makeToggle, setUntrackedExpanded]
+  )
 
   // Compute relative filter prefix from the repo root
   const relativeFilterPrefix = useMemo(() => {
@@ -498,7 +528,8 @@ function RepoSection({
   }, [status?.files, relativeFilterPrefix])
 
   // Derive active diff file for highlighting
-  const activeDiffFile = diffPreview?.type === 'working' && diffPreview.cwd === cwd ? diffPreview.file : null
+  const activeDiffFile =
+    diffPreview?.type === 'working' && diffPreview.cwd === cwd ? diffPreview.file : null
 
   // Update ref so openDiffPreview can access latest file lists
   openDiffPreviewRef.current = (file: GitFileStatus, clickY?: number) => {
@@ -590,7 +621,8 @@ function RepoSection({
     const entries = files.map((f) => ({ path: f.path, status: f.status, staged: f.staged }))
     const untrackedCount = files.filter((f) => f.status === 'untracked').length
     const n = files.length
-    const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
+    const plural = (count: number, word: string): string =>
+      `${count} ${word}${count === 1 ? '' : 's'}`
     if (untrackedCount === n) {
       setConfirmDiscard({
         files: entries,
@@ -663,9 +695,11 @@ function RepoSection({
       },
       {
         label: file.staged ? 'Exclude from commit' : 'Include in commit',
-        icon: file.staged
-          ? <MinusIcon className="w-3.5 h-3.5" />
-          : <PlusIcon className="w-3.5 h-3.5" />,
+        icon: file.staged ? (
+          <MinusIcon className="w-3.5 h-3.5" />
+        ) : (
+          <PlusIcon className="w-3.5 h-3.5" />
+        ),
         onClick: () => (file.staged ? unstageFile(file.path) : stageFile(file.path))
       },
       {
@@ -1022,7 +1056,7 @@ export function GitStatusPanel({
   showIncoming?: boolean
   showOutgoing?: boolean
   showChanges?: boolean
-}) {
+}): React.JSX.Element | null {
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const internal = useGitStatus(externalStatus !== undefined ? null : cwd, isActive)
@@ -1061,12 +1095,7 @@ export function GitStatusPanel({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {gitPanelMode === 'log' ? (
-        <GitLogView
-          cwd={cwd}
-          branch={status.branch}
-          ahead={status.ahead}
-          behind={status.behind}
-        />
+        <GitLogView cwd={cwd} branch={status.branch} ahead={status.ahead} behind={status.behind} />
       ) : (
         <RepoSection
           cwd={cwd}
@@ -1258,7 +1287,7 @@ function MultiRepoSection({
   worktree?: { last: boolean }
   /** Worktree rows follow this repo — draw the stem their guides continue. */
   hasWorktrees?: boolean
-}) {
+}): React.JSX.Element {
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   const collapseAllTrigger = useSessionStore((s) => s.collapseAllTrigger)
@@ -1323,11 +1352,13 @@ function MultiRepoSection({
   // Collapse all when trigger fires. Still honoured — a press must shut a row
   // the user opened — and now safe on mount too, since a row that mounts
   // folded cannot be wrongly folded by a stale press (PRDCT-1672).
-  useEffect(() => {
-    if (collapseAllTrigger > 0) {
-      setExpanded(false)
-    }
-  }, [collapseAllTrigger])
+  // Done while rendering, against the trigger the last render saw; a row mounts
+  // folded, so there is nothing for the trigger it mounts with to do.
+  const [collapseSeen, setCollapseSeen] = useState(collapseAllTrigger)
+  if (collapseAllTrigger !== collapseSeen) {
+    setCollapseSeen(collapseAllTrigger)
+    if (collapseAllTrigger > 0) setExpanded(false)
+  }
 
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
@@ -1429,7 +1460,13 @@ function MultiRepoSection({
             expanded ? 'rotate-90' : ''
           }`}
         >
-          <path d="M3 1.5l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M3 1.5l4 3.5-4 3.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
 
         {!worktree && <RepoGlyph />}
@@ -1548,7 +1585,8 @@ function MultiRepoSection({
               <span className="truncate cursor-default">Part of {parentRepoName}</span>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="font-mono max-w-[300px]">
-              This folder isn’t a git repository. The changes shown belong to the parent repository {shortenPath(status.repoRoot)}, which contains it.
+              This folder isn’t a git repository. The changes shown belong to the parent repository{' '}
+              {shortenPath(status.repoRoot)}, which contains it.
             </TooltipContent>
           </Tooltip>
         </div>
@@ -1582,7 +1620,6 @@ function MultiRepoSection({
           )}
         </div>
       )}
-
     </div>
   )
 }
@@ -1634,56 +1671,64 @@ function RepoDirRow({
     <div>
       {rule && <TreeRule depth={depth} />}
       <button
-      data-tree-row={depth}
-      data-tree-kind="dir"
-      data-tree-name={node.name}
-      data-tree-collapsed={collapsed ? 'true' : undefined}
-      className="git-tree-row w-full flex items-center gap-1.5 pr-3 text-xs hover:bg-surface-100 transition-colors"
-      style={{ paddingLeft: 12 + depth * TREE_INDENT_PX }}
-      // A double-click is one gesture, not two toggles. Every click used to
-      // toggle, so a double-click on an open folder folded it and reopened it
-      // in the same breath — and, while a fold still cleared the subtree from
-      // the shared set, reopened it with everything beneath folded flat, which
-      // read as Collapse All. `detail` is the browser's own click count, so the
-      // second click of a double-click acts on nothing and the row lands where
-      // the first click put it, the same as the Files tab's rows.
-      onClick={(e) => {
-        if (e.detail > 1) return
-        onToggle()
-      }}
-    >
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 10 10"
-        fill="none"
-        className={`text-text-tertiary flex-shrink-0 transition-transform duration-150 ${
-          collapsed ? '' : 'rotate-90'
-        }`}
+        data-tree-row={depth}
+        data-tree-kind="dir"
+        data-tree-name={node.name}
+        data-tree-collapsed={collapsed ? 'true' : undefined}
+        className="git-tree-row w-full flex items-center gap-1.5 pr-3 text-xs hover:bg-surface-100 transition-colors"
+        style={{ paddingLeft: 12 + depth * TREE_INDENT_PX }}
+        // A double-click is one gesture, not two toggles. Every click used to
+        // toggle, so a double-click on an open folder folded it and reopened it
+        // in the same breath — and, while a fold still cleared the subtree from
+        // the shared set, reopened it with everything beneath folded flat, which
+        // read as Collapse All. `detail` is the browser's own click count, so the
+        // second click of a double-click acts on nothing and the row lands where
+        // the first click put it, the same as the Files tab's rows.
+        onClick={(e) => {
+          if (e.detail > 1) return
+          onToggle()
+        }}
       >
-        <path d="M3 1.5l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <FolderIcon className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
-      <span className="text-text-secondary font-medium truncate">{node.name}</span>
-      {collapsed && (
-        <span className="ml-auto flex-shrink-0 flex items-center gap-1.5">
-          {rollup.behind > 0 && (
-            <span className="text-[10px] font-medium text-git-incoming">
-              {'↓'}{rollup.behind}
-            </span>
-          )}
-          {rollup.ahead > 0 && (
-            <span className="text-[10px] font-medium text-green-400">
-              {'↑'}{rollup.ahead}
-            </span>
-          )}
-          {rollup.changes > 0 && (
-            <span className="badge bg-surface-200 text-text-secondary min-w-[18px] text-center">
-              {rollup.changes}
-            </span>
-          )}
-        </span>
-      )}
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          className={`text-text-tertiary flex-shrink-0 transition-transform duration-150 ${
+            collapsed ? '' : 'rotate-90'
+          }`}
+        >
+          <path
+            d="M3 1.5l4 3.5-4 3.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <FolderIcon className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+        <span className="text-text-secondary font-medium truncate">{node.name}</span>
+        {collapsed && (
+          <span className="ml-auto flex-shrink-0 flex items-center gap-1.5">
+            {rollup.behind > 0 && (
+              <span className="text-[10px] font-medium text-git-incoming">
+                {'↓'}
+                {rollup.behind}
+              </span>
+            )}
+            {rollup.ahead > 0 && (
+              <span className="text-[10px] font-medium text-green-400">
+                {'↑'}
+                {rollup.ahead}
+              </span>
+            )}
+            {rollup.changes > 0 && (
+              <span className="badge bg-surface-200 text-text-secondary min-w-[18px] text-center">
+                {rollup.changes}
+              </span>
+            )}
+          </span>
+        )}
       </button>
     </div>
   )
@@ -1796,27 +1841,24 @@ export function MultiRepoGitPanel({
   live?: boolean
   refreshing?: boolean
   lastUpdated?: number | null
-}) {
+}): React.JSX.Element {
   const [nestedDocked, setNestedDocked] = useState(false)
   const [selectedRepoPaths, setSelectedRepoPaths] = useState<Set<string>>(new Set())
 
-  const handleRepoSelect = useCallback(
-    (path: string, metaKey: boolean) => {
-      if (metaKey) {
-        setSelectedRepoPaths((prev) => {
-          const next = new Set(prev)
-          if (next.has(path)) next.delete(path)
-          else next.add(path)
-          return next
-        })
-      } else {
-        setSelectedRepoPaths(new Set())
-      }
-    },
-    []
-  )
+  const handleRepoSelect = useCallback((path: string, metaKey: boolean) => {
+    if (metaKey) {
+      setSelectedRepoPaths((prev) => {
+        const next = new Set(prev)
+        if (next.has(path)) next.delete(path)
+        else next.add(path)
+        return next
+      })
+    } else {
+      setSelectedRepoPaths(new Set())
+    }
+  }, [])
 
-  const rootRepo = rootPath ? repos.find((r) => r.path === rootPath) ?? null : null
+  const rootRepo = rootPath ? (repos.find((r) => r.path === rootPath) ?? null) : null
   const nestedRepos = useMemo(
     () => (rootPath ? repos.filter((r) => r.path !== rootPath) : repos),
     [repos, rootPath]
@@ -1828,10 +1870,7 @@ export function MultiRepoGitPanel({
     [nestedRepos]
   )
 
-  const statusByPath = useMemo(
-    () => new Map(repos.map((r) => [r.path, r.status])),
-    [repos]
-  )
+  const statusByPath = useMemo(() => new Map(repos.map((r) => [r.path, r.status])), [repos])
 
   // Each worktree's source, as discovery spells the source's path (PRDCT-2356):
   // git names it resolved, the list may hold it through a symlink.
@@ -1993,7 +2032,13 @@ export function MultiRepoGitPanel({
               title="Dock nested repos"
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M2.5 4L5 7l2.5-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                <path
+                  d="M2.5 4L5 7l2.5-3"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </button>
             <div className="flex-1 h-px bg-border" />
@@ -2048,9 +2093,17 @@ export function MultiRepoGitPanel({
             title="Restore nested repos"
           >
             <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className="flex-shrink-0">
-              <path d="M2 5.5L4 3l2 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M2 5.5L4 3l2 2.5"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
-            <span>{nestedRepos.length} nested repo{nestedRepos.length !== 1 ? 's' : ''}</span>
+            <span>
+              {nestedRepos.length} nested repo{nestedRepos.length !== 1 ? 's' : ''}
+            </span>
             {nestedChangeCount > 0 && (
               <span className="badge bg-surface-200 text-text-tertiary min-w-[16px] text-center">
                 {nestedChangeCount}

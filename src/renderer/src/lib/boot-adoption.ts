@@ -78,10 +78,7 @@ export function survivingIds<R extends BootRecordLike>(
   plan: BootPlan<R>,
   adoptedTabIds: Iterable<string>
 ): string[] {
-  return [
-    ...adoptedTabIds,
-    ...plan.hidden.map((r) => r.id)
-  ]
+  return [...adoptedTabIds, ...plan.hidden.map((r) => r.id)]
 }
 
 /** The store shape the hidden-owner lookup reads. */

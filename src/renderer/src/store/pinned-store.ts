@@ -3,11 +3,21 @@ import { resolveAccountRef, type AccountProvider } from '../lib/switch-account'
 import { getClaudeProfile } from './claude-profile-store'
 import { getCodexAccount } from './codex-account-store'
 import { substituteTokens } from './prompt-tokens'
-import type { PinnedGroup, PinnedGroupSession, PinnedGroupTerminal, GroupTerminalColor, GroupTerminalConfig } from './session-types'
+import type {
+  PinnedGroup,
+  PinnedGroupSession,
+  PinnedGroupTerminal,
+  GroupTerminalColor,
+  GroupTerminalConfig
+} from './session-types'
 import { resolveGroupDefaults } from './group-defaults'
 import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
 import { getActiveWorkspaceId } from './workspace-store'
+import type { ClaveFileWriteData } from '../../../preload/index.d'
+
+/** One group as `serializePin` writes it into a `.clave` file. */
+type SerializedPin = NonNullable<ClaveFileWriteData['groups']>[number]
 
 /** The `.clave` account field of a live session: its account's LABEL when it
  *  is not the Default (the file is shared between machines, ids are not). */
@@ -101,9 +111,45 @@ export interface PinnedGroupBlueprint {
 export { substituteTokens } from './prompt-tokens'
 
 export function serializePinnedGroups(groups: PinnedGroup[]): PinnedGroupBlueprint[] {
-  return groups.map(({ id, name, cwd, color, prompt, sessions, terminals, createdAt, filePath, rootDir, workspaceRoot, groupIndex, toolbar, logo, category, discoveredBy, workspaceId }) => ({
-    id, name, cwd, color, prompt, sessions, terminals, createdAt, filePath, rootDir, workspaceRoot, groupIndex, toolbar, logo, category, discoveredBy, workspaceId
-  }))
+  return groups.map(
+    ({
+      id,
+      name,
+      cwd,
+      color,
+      prompt,
+      sessions,
+      terminals,
+      createdAt,
+      filePath,
+      rootDir,
+      workspaceRoot,
+      groupIndex,
+      toolbar,
+      logo,
+      category,
+      discoveredBy,
+      workspaceId
+    }) => ({
+      id,
+      name,
+      cwd,
+      color,
+      prompt,
+      sessions,
+      terminals,
+      createdAt,
+      filePath,
+      rootDir,
+      workspaceRoot,
+      groupIndex,
+      toolbar,
+      logo,
+      category,
+      discoveredBy,
+      workspaceId
+    })
+  )
 }
 
 /** A pin id names ONE pin. The state file is written partition by partition
@@ -196,16 +242,12 @@ export const usePinnedStore = create<PinnedStoreState>((set) => ({
 
   setVisible: (pinnedId, visible) =>
     set((s) => ({
-      pinnedGroups: s.pinnedGroups.map((pg) =>
-        pg.id === pinnedId ? { ...pg, visible } : pg
-      )
+      pinnedGroups: s.pinnedGroups.map((pg) => (pg.id === pinnedId ? { ...pg, visible } : pg))
     })),
 
   updatePinnedGroup: (pinnedId, updates) =>
     set((s) => {
-      const next = s.pinnedGroups.map((pg) =>
-        pg.id === pinnedId ? { ...pg, ...updates } : pg
-      )
+      const next = s.pinnedGroups.map((pg) => (pg.id === pinnedId ? { ...pg, ...updates } : pg))
       return { pinnedGroups: next }
     })
 }))
@@ -232,7 +274,7 @@ function syncToClaveFile(pg: PinnedGroup): void {
 
       const isMulti = pinsForFile.length > 1 || pinsForFile[0].groupIndex !== undefined
 
-      const serializePin = (p: PinnedGroup) => ({
+      const serializePin = (p: PinnedGroup): SerializedPin => ({
         name: p.name,
         cwd: p.cwd,
         color: p.color,
@@ -240,8 +282,30 @@ function syncToClaveFile(pg: PinnedGroup): void {
         ...(p.logo ? { logo: p.logo } : {}),
         ...(p.prompt ? { prompt: p.prompt } : {}),
         ...(p.view ? { view: p.view } : {}),
-        sessions: p.sessions.map((s) => ({ cwd: s.cwd, name: s.name, claudeMode: s.claudeMode, antigravityMode: s.antigravityMode, codexMode: s.codexMode, piMode: s.piMode, claudeAgentsMode: s.claudeAgentsMode, dangerousMode: s.dangerousMode, ...(s.prompt ? { prompt: s.prompt } : {}), ...(s.rootSession ? { rootSession: true } : {}), ...(s.account ? { account: s.account } : {}) })),
-        terminals: p.terminals.map((t) => ({ command: t.command, commandMode: t.commandMode, color: t.color, icon: t.icon, cwd: t.cwd, autoLaunchLocalhost: t.autoLaunchLocalhost, persistent: t.persistent, serverUrl: t.serverUrl, groupView: t.groupView })),
+        sessions: p.sessions.map((s) => ({
+          cwd: s.cwd,
+          name: s.name,
+          claudeMode: s.claudeMode,
+          antigravityMode: s.antigravityMode,
+          codexMode: s.codexMode,
+          piMode: s.piMode,
+          claudeAgentsMode: s.claudeAgentsMode,
+          dangerousMode: s.dangerousMode,
+          ...(s.prompt ? { prompt: s.prompt } : {}),
+          ...(s.rootSession ? { rootSession: true } : {}),
+          ...(s.account ? { account: s.account } : {})
+        })),
+        terminals: p.terminals.map((t) => ({
+          command: t.command,
+          commandMode: t.commandMode,
+          color: t.color,
+          icon: t.icon,
+          cwd: t.cwd,
+          autoLaunchLocalhost: t.autoLaunchLocalhost,
+          persistent: t.persistent,
+          serverUrl: t.serverUrl,
+          groupView: t.groupView
+        })),
         ...(p.category ? { category: p.category } : {})
       })
 
@@ -251,7 +315,8 @@ function syncToClaveFile(pg: PinnedGroup): void {
 
       // Use rootDir from the first pin for this file (all pins from same file share rootDir)
       const rootDirForFile = pinsForFile[0].rootDir ?? undefined
-      window.electronAPI?.writeClaveFile(fp, writeData, rootDirForFile)
+      window.electronAPI
+        ?.writeClaveFile(fp, writeData, rootDirForFile)
         .catch((err) => console.error('[clave] Failed to write .clave file:', err))
     }
     pendingSyncs.clear()
@@ -262,7 +327,40 @@ function syncToClaveFile(pg: PinnedGroup): void {
 // ── Import / Export ──
 
 function createPinnedFromGroup(
-  g: { name: string; cwd: string; color: string | null; toolbar?: boolean; category?: string; logo?: string; prompt?: string; view?: string; sessions: { cwd: string; name: string; claudeMode: boolean; antigravityMode: boolean; codexMode: boolean; piMode?: boolean; claudeAgentsMode?: boolean; dangerousMode: boolean; prompt?: string; rootSession?: boolean; account?: string }[]; terminals: { command: string; commandMode: 'prefill' | 'auto'; color: string; icon?: string; cwd?: string; autoLaunchLocalhost?: boolean; persistent?: boolean; serverUrl?: string; groupView?: boolean }[] },
+  g: {
+    name: string
+    cwd: string
+    color: string | null
+    toolbar?: boolean
+    category?: string
+    logo?: string
+    prompt?: string
+    view?: string
+    sessions: {
+      cwd: string
+      name: string
+      claudeMode: boolean
+      antigravityMode: boolean
+      codexMode: boolean
+      piMode?: boolean
+      claudeAgentsMode?: boolean
+      dangerousMode: boolean
+      prompt?: string
+      rootSession?: boolean
+      account?: string
+    }[]
+    terminals: {
+      command: string
+      commandMode: 'prefill' | 'auto'
+      color: string
+      icon?: string
+      cwd?: string
+      autoLaunchLocalhost?: boolean
+      persistent?: boolean
+      serverUrl?: string
+      groupView?: boolean
+    }[]
+  },
   filePath: string,
   groupIndex?: number,
   rootDir?: string | null,
@@ -294,7 +392,19 @@ function createPinnedFromGroup(
   }
 }
 
-function groupDataToPinnedTerminals(terminals: { command: string; commandMode: 'prefill' | 'auto'; color: string; icon?: string; cwd?: string; autoLaunchLocalhost?: boolean; persistent?: boolean; serverUrl?: string; groupView?: boolean }[]): PinnedGroupTerminal[] {
+function groupDataToPinnedTerminals(
+  terminals: {
+    command: string
+    commandMode: 'prefill' | 'auto'
+    color: string
+    icon?: string
+    cwd?: string
+    autoLaunchLocalhost?: boolean
+    persistent?: boolean
+    serverUrl?: string
+    groupView?: boolean
+  }[]
+): PinnedGroupTerminal[] {
   return terminals.map((t) => ({
     command: t.command,
     commandMode: t.commandMode,
@@ -310,7 +420,16 @@ function groupDataToPinnedTerminals(terminals: { command: string; commandMode: '
 
 /** Import a .clave file as pinned group(s) and optionally auto-launch.
  *  Returns info about the first pin, and whether it already existed. */
-export async function importClaveFile(filePath: string, options?: { autoLaunch?: boolean; rootDir?: string; discoveredBy?: string; workspaceRoot?: string; workspaceId?: string | null }): Promise<{ pinnedId: string; alreadyExists: boolean } | null> {
+export async function importClaveFile(
+  filePath: string,
+  options?: {
+    autoLaunch?: boolean
+    rootDir?: string
+    discoveredBy?: string
+    workspaceRoot?: string
+    workspaceId?: string | null
+  }
+): Promise<{ pinnedId: string; alreadyExists: boolean } | null> {
   const rootDir = options?.rootDir
   const discoveredBy = options?.discoveredBy
   const workspaceRoot = options?.workspaceRoot
@@ -321,12 +440,27 @@ export async function importClaveFile(filePath: string, options?: { autoLaunch?:
   const autoLaunch = options?.autoLaunch ?? true
 
   // Normalize to array of groups
-  const groups = result.type === 'multi'
-    ? result.groups
-    : [{ name: result.name, cwd: result.cwd, color: result.color, toolbar: result.toolbar, category: result.category, logo: result.logo, prompt: result.prompt, sessions: result.sessions, terminals: result.terminals }]
+  const groups =
+    result.type === 'multi'
+      ? result.groups
+      : [
+          {
+            name: result.name,
+            cwd: result.cwd,
+            color: result.color,
+            toolbar: result.toolbar,
+            category: result.category,
+            logo: result.logo,
+            prompt: result.prompt,
+            sessions: result.sessions,
+            terminals: result.terminals
+          }
+        ]
 
   // Check if already imported — reuse existing pins
-  const existingPins = usePinnedStore.getState().pinnedGroups.filter((pg) => pg.filePath === filePath)
+  const existingPins = usePinnedStore
+    .getState()
+    .pinnedGroups.filter((pg) => pg.filePath === filePath)
   if (existingPins.length > 0) {
     // Update existing pins from the file
     for (let i = 0; i < groups.length; i++) {
@@ -362,7 +496,15 @@ export async function importClaveFile(filePath: string, options?: { autoLaunch?:
     // Add any new groups that weren't in existing pins
     for (let i = existingPins.length; i < groups.length; i++) {
       const g = groups[i]
-      const pinned = createPinnedFromGroup(g, filePath, result.type === 'multi' ? i : undefined, rootDir, discoveredBy, workspaceRoot, workspaceId)
+      const pinned = createPinnedFromGroup(
+        g,
+        filePath,
+        result.type === 'multi' ? i : undefined,
+        rootDir,
+        discoveredBy,
+        workspaceRoot,
+        workspaceId
+      )
       usePinnedStore.getState().addPinnedGroup(pinned)
       if (autoLaunch) await togglePinnedGroup(pinned.id)
     }
@@ -375,7 +517,15 @@ export async function importClaveFile(filePath: string, options?: { autoLaunch?:
   let firstId: string | null = null
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i]
-    const pinned = createPinnedFromGroup(g, filePath, result.type === 'multi' ? i : undefined, rootDir, discoveredBy, workspaceRoot, workspaceId)
+    const pinned = createPinnedFromGroup(
+      g,
+      filePath,
+      result.type === 'multi' ? i : undefined,
+      rootDir,
+      discoveredBy,
+      workspaceRoot,
+      workspaceId
+    )
     usePinnedStore.getState().addPinnedGroup(pinned)
     if (!firstId) firstId = pinned.id
     if (autoLaunch) await togglePinnedGroup(pinned.id)
@@ -390,7 +540,11 @@ export async function importClaveFile(filePath: string, options?: { autoLaunch?:
  *  from the profile/discovery set are pruned. Ad-hoc pins (no filePath) are
  *  never touched. Called on boot (active workspace), activation, profile
  *  change, and workspace registration — never on plain view switches away. */
-export async function refreshWorkspacePins(ws: { id: string; rootDir: string; profileFile: string | null }): Promise<void> {
+export async function refreshWorkspacePins(ws: {
+  id: string
+  rootDir: string
+  profileFile: string | null
+}): Promise<void> {
   const keep = new Set<string>()
 
   if (ws.profileFile) {
@@ -452,7 +606,12 @@ export function getExportFileName(pinnedId: string): string {
 }
 
 /** Export a pinned group to a .clave file at the specified path */
-export async function exportClaveFile(pinnedId: string, folder: string, fileName: string, keepSynced: boolean): Promise<void> {
+export async function exportClaveFile(
+  pinnedId: string,
+  folder: string,
+  fileName: string,
+  keepSynced: boolean
+): Promise<void> {
   const pg = usePinnedStore.getState().pinnedGroups.find((p) => p.id === pinnedId)
   if (!pg) return
 
@@ -521,9 +680,22 @@ export function initClaveFileWatchers(): () => void {
     if (!result) return
 
     // Normalize to array of groups
-    const groups = result.type === 'multi'
-      ? result.groups
-      : [{ name: result.name, cwd: result.cwd, color: result.color, toolbar: result.toolbar, category: result.category, logo: result.logo, prompt: result.prompt, sessions: result.sessions, terminals: result.terminals }]
+    const groups =
+      result.type === 'multi'
+        ? result.groups
+        : [
+            {
+              name: result.name,
+              cwd: result.cwd,
+              color: result.color,
+              toolbar: result.toolbar,
+              category: result.category,
+              logo: result.logo,
+              prompt: result.prompt,
+              sessions: result.sessions,
+              terminals: result.terminals
+            }
+          ]
 
     for (let i = 0; i < pinsForFile.length && i < groups.length; i++) {
       const pg = pinsForFile.find((p) => p.groupIndex === i) ?? pinsForFile[i]
@@ -588,7 +760,15 @@ export function initClaveFileWatchers(): () => void {
     // of the group per boot.
     for (let i = pinsForFile.length; i < groups.length; i++) {
       const g = groups[i]
-      const pinned = createPinnedFromGroup(g, filePath, result.type === 'multi' ? i : undefined, firstPin.rootDir, firstPin.discoveredBy, firstPin.workspaceRoot, firstPin.workspaceId)
+      const pinned = createPinnedFromGroup(
+        g,
+        filePath,
+        result.type === 'multi' ? i : undefined,
+        firstPin.rootDir,
+        firstPin.discoveredBy,
+        firstPin.workspaceRoot,
+        firstPin.workspaceId
+      )
       usePinnedStore.getState().addPinnedGroup(pinned)
     }
 
@@ -720,7 +900,8 @@ async function spawnPinnedGroup(
 
   for (const session of pg.sessions) {
     try {
-      const pinOtherProvider = session.antigravityMode || session.codexMode || session.piMode || session.claudeAgentsMode
+      const pinOtherProvider =
+        session.antigravityMode || session.codexMode || session.piMode || session.claudeAgentsMode
       // rootSession: spawn at the workspace root instead of the session's cwd
       // (which stays the project dir). No-op if the pin has no workspaceRoot.
       const atRoot = session.rootSession === true && !!pg.workspaceRoot
@@ -855,7 +1036,8 @@ async function spawnPinnedGroup(
   // Focus the first session — unless the pin belongs to a hidden workspace
   // (MCP launch): the spawned group must not steal the user's visible focus.
   const activeWorkspaceId = getActiveWorkspaceId()
-  const pinVisible = pg.workspaceId == null || activeWorkspaceId == null || pg.workspaceId === activeWorkspaceId
+  const pinVisible =
+    pg.workspaceId == null || activeWorkspaceId == null || pg.workspaceId === activeWorkspaceId
   if (spawnedIds.length > 0 && pinVisible) {
     useSessionStore.getState().setFocusedSession(spawnedIds[0])
     useSessionStore.getState().selectSession(spawnedIds[0], false)
@@ -890,9 +1072,11 @@ export function revealGroup(groupId: string): void {
 }
 
 /** Returns the set of group IDs that are hidden by pinned toggle (active but not visible) */
-export function getHiddenGroupIds(): Set<string> {
+export function getHiddenGroupIds(
+  pinnedGroups: PinnedGroup[] = usePinnedStore.getState().pinnedGroups
+): Set<string> {
   const ids = new Set<string>()
-  for (const pg of usePinnedStore.getState().pinnedGroups) {
+  for (const pg of pinnedGroups) {
     if (pg.activeGroupId && !pg.visible) {
       ids.add(pg.activeGroupId)
     }
@@ -1003,10 +1187,24 @@ export function isPinnedOutOfSync(groupId: string): boolean {
     const s = sessions.find((sess) => sess.id === liveSessions[i])
     const ps = pg.sessions[i]
     if (!s || !ps) return true
-    if (s.cwd !== ps.cwd || s.claudeMode !== ps.claudeMode || s.antigravityMode !== ps.antigravityMode || s.codexMode !== ps.codexMode || (!!s.piMode) !== (!!ps.piMode) || (!!s.claudeAgentsMode) !== (!!ps.claudeAgentsMode) || s.dangerousMode !== ps.dangerousMode) return true
+    if (
+      s.cwd !== ps.cwd ||
+      s.claudeMode !== ps.claudeMode ||
+      s.antigravityMode !== ps.antigravityMode ||
+      s.codexMode !== ps.codexMode ||
+      !!s.piMode !== !!ps.piMode ||
+      !!s.claudeAgentsMode !== !!ps.claudeAgentsMode ||
+      s.dangerousMode !== ps.dangerousMode
+    )
+      return true
     // An account named by the file that the tab is not on: drift (a tab
     // switched by hand, or the file's name changed). `any` matches every account.
-    if (ps.account && ps.account !== 'any' && (pinnedAccountField(s).account ?? 'Default') !== ps.account) return true
+    if (
+      ps.account &&
+      ps.account !== 'any' &&
+      (pinnedAccountField(s).account ?? 'Default') !== ps.account
+    )
+      return true
   }
 
   // Compare terminal count and configs
@@ -1014,7 +1212,13 @@ export function isPinnedOutOfSync(groupId: string): boolean {
   for (let i = 0; i < group.terminals.length; i++) {
     const t = group.terminals[i]
     const pt = pg.terminals[i]
-    if (t.command !== pt.command || t.commandMode !== pt.commandMode || t.color !== pt.color || (t.icon ?? 'terminal') !== (pt.icon ?? 'terminal')) return true
+    if (
+      t.command !== pt.command ||
+      t.commandMode !== pt.commandMode ||
+      t.color !== pt.color ||
+      (t.icon ?? 'terminal') !== (pt.icon ?? 'terminal')
+    )
+      return true
   }
 
   return false

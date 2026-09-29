@@ -87,7 +87,10 @@ async function hoverTo(win, target) {
   const glide = async (to) => {
     const steps = 10
     for (let i = 1; i <= steps; i++) {
-      await win.mouse.move(pointerAt.x + ((to.x - pointerAt.x) * i) / steps, pointerAt.y + ((to.y - pointerAt.y) * i) / steps)
+      await win.mouse.move(
+        pointerAt.x + ((to.x - pointerAt.x) * i) / steps,
+        pointerAt.y + ((to.y - pointerAt.y) * i) / steps
+      )
       await win.waitForTimeout(20)
     }
     pointerAt = to
@@ -107,7 +110,6 @@ async function dragTo(win, from, target) {
   // hovering, the way a hand tracks a row that the drop line's gap has just
   // pushed down the list — a fixed coordinate would end up over whatever moved
   // under it instead.
-  const aim = typeof target === 'function' ? target : () => target
   await win.mouse.move(from.x, from.y)
   await win.mouse.down()
   pointerAt = { x: from.x, y: from.y }
@@ -129,7 +131,8 @@ function activeLineBefore(win) {
     const gap = document.querySelector('.sidebar-drop-gap-active')
     if (!gap) return null
     let el = gap.nextElementSibling
-    while (el && !el.matches('[data-sidebar-item-id]')) el = el.querySelector?.('[data-sidebar-item-id]') ?? el.nextElementSibling
+    while (el && !el.matches('[data-sidebar-item-id]'))
+      el = el.querySelector?.('[data-sidebar-item-id]') ?? el.nextElementSibling
     return el?.dataset.sidebarItemId ?? 'end'
   })
 }
@@ -202,7 +205,10 @@ export async function run(t) {
     // Collapse Alpha via its folder disclosure (not the header click, which
     // selects). Beta now sits directly below the collapsed card.
     before = after
-    await win.locator(`${rowSel(alpha.id)} .sidebar-tab-icon`).first().click()
+    await win
+      .locator(`${rowSel(alpha.id)} .sidebar-tab-icon`)
+      .first()
+      .click()
     await win.waitForTimeout(600)
     // Drag Gamma's session onto Beta's header (inside).
     const gammaRow = before.find((g) => g.id === gamma.id).ids[0]
@@ -225,7 +231,10 @@ export async function run(t) {
 
     // ── 3. The FIRST position of another group is reachable, with a line ──
     // Expand Alpha again; drag Beta's last row onto the top of Alpha's first row.
-    await win.locator(`${rowSel(alpha.id)} .sidebar-tab-icon`).first().click()
+    await win
+      .locator(`${rowSel(alpha.id)} .sidebar-tab-icon`)
+      .first()
+      .click()
     await win.waitForTimeout(600)
     before = await layout(win)
     const alphaRows = before.find((g) => g.id === alpha.id).ids
@@ -234,7 +243,11 @@ export async function run(t) {
     await dragTo(win, await centerOf(win, rowSel(mover)), () =>
       centerOf(win, rowSel(alphaRows[0]), { yFraction: 0.2 })
     )
-    t.equal('a line is shown above the first row of the target group', await activeLineBefore(win), alphaRows[0])
+    t.equal(
+      'a line is shown above the first row of the target group',
+      await activeLineBefore(win),
+      alphaRows[0]
+    )
     await release(win)
     after = await layout(win)
     t.equal(
@@ -250,7 +263,11 @@ export async function run(t) {
     await dragTo(win, await centerOf(win, rowSel(mover2)), () =>
       centerOf(win, `[data-sidebar-drop-zone="group-end"][data-group-id="${alpha.id}"]`)
     )
-    t.equal('a line is shown below the last row of the target group', await activeLineBefore(win), 'end')
+    t.equal(
+      'a line is shown below the last row of the target group',
+      await activeLineBefore(win),
+      'end'
+    )
     await release(win)
     after = await layout(win)
     t.equal(
@@ -299,7 +316,11 @@ export async function run(t) {
     await dragTo(win, await centerOf(win, rowSel(lastRow)), () =>
       centerOf(win, rowSel(alpha.id), { yFraction: 0.8 })
     )
-    t.equal('the line sits above the first row, not around the group', await activeLineBefore(win), rowsNow[0])
+    t.equal(
+      'the line sits above the first row, not around the group',
+      await activeLineBefore(win),
+      rowsNow[0]
+    )
     t.equal(
       'no card outline is shown for a row that is already inside',
       await win.evaluate(() => document.querySelectorAll('.group-scope .border-accent').length),
@@ -323,7 +344,11 @@ export async function run(t) {
     t.equal('over its own faded row, no line is shown', await activeLineBefore(win), null)
     await release(win)
     after = await layout(win)
-    t.equal('and releasing there changes nothing', after.find((g) => g.id === alpha.id)?.ids.join(','), alphaIds.join(','))
+    t.equal(
+      'and releasing there changes nothing',
+      after.find((g) => g.id === alpha.id)?.ids.join(','),
+      alphaIds.join(',')
+    )
 
     // A single-row group: start dragging its only row toward Alpha, change
     // your mind, come back — onto the header, then onto the row.
@@ -338,12 +363,18 @@ export async function run(t) {
       ['header', () => centerOf(win, rowSel(solo.groupId), { yFraction: 0.7 })],
       ['row', () => centerOf(win, rowSel(only))]
     ]) {
-      await dragTo(win, await centerOf(win, rowSel(only)), () => centerOf(win, rowSel(alpha.id), { yFraction: 0.75 }))
+      await dragTo(win, await centerOf(win, rowSel(only)), () =>
+        centerOf(win, rowSel(alpha.id), { yFraction: 0.75 })
+      )
       await hoverTo(win, target)
       t.equal(`back over its own ${where}, no line is shown`, await activeLineBefore(win), null)
       await release(win)
       after = await layout(win)
-      t.equal(`released on its own ${where}, the single-row group keeps its row`, after.find((g) => g.id === solo.groupId)?.ids.join(','), only)
+      t.equal(
+        `released on its own ${where}, the single-row group keeps its row`,
+        after.find((g) => g.id === solo.groupId)?.ids.join(','),
+        only
+      )
     }
 
     // ── 9. The last row, hovering around its own place, is not offered outside ──
@@ -357,14 +388,33 @@ export async function run(t) {
       const box = await win.locator(`.group-scope:has(${rowSel(alpha.id)})`).boundingBox()
       return { x: box.x + box.width / 2, y: box.y + box.height }
     }
-    await dragTo(win, await centerOf(win, rowSel(tail)), () => centerOf(win, rowSel(aIds[0]), { yFraction: 0.2 }))
-    await hoverTo(win, () => centerOf(win, `[data-sidebar-drop-zone="group-end"][data-group-id="${alpha.id}"]`))
-    t.equal('on the strip under its own row, the line is the last position inside', await activeLineBefore(win), tail)
-    await hoverTo(win, async () => { const b = await cardBottom(); return { x: b.x, y: b.y + 8 } })
-    t.equal('8px past the card edge it still holds the last position inside', await activeLineBefore(win), tail)
+    await dragTo(win, await centerOf(win, rowSel(tail)), () =>
+      centerOf(win, rowSel(aIds[0]), { yFraction: 0.2 })
+    )
+    await hoverTo(win, () =>
+      centerOf(win, `[data-sidebar-drop-zone="group-end"][data-group-id="${alpha.id}"]`)
+    )
+    t.equal(
+      'on the strip under its own row, the line is the last position inside',
+      await activeLineBefore(win),
+      tail
+    )
+    await hoverTo(win, async () => {
+      const b = await cardBottom()
+      return { x: b.x, y: b.y + 8 }
+    })
+    t.equal(
+      '8px past the card edge it still holds the last position inside',
+      await activeLineBefore(win),
+      tail
+    )
     await release(win)
     after = await layout(win)
-    t.equal('and releasing there leaves the group as it was', after.find((g) => g.id === alpha.id)?.ids.join(','), aIds.join(','))
+    t.equal(
+      'and releasing there leaves the group as it was',
+      after.find((g) => g.id === alpha.id)?.ids.join(','),
+      aIds.join(',')
+    )
   } finally {
     await app.close()
   }

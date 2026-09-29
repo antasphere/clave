@@ -20,14 +20,20 @@ const mocks = vi.hoisted(() => ({
     additionalArgs: ['--add-dir', '/tmp']
   },
   /** The account store: one token account, `acct-work`. */
-  getToken: vi.fn((id: string | undefined) => (id === 'acct-work' ? 'sk-ant-oat01-account' : undefined))
+  getToken: vi.fn((id: string | undefined) =>
+    id === 'acct-work' ? 'sk-ant-oat01-account' : undefined
+  )
 }))
 vi.mock('electron', () => ({ BrowserWindow: class {} }))
 vi.mock('child_process', () => ({ execFile: mocks.execFile }))
 // The login shell of the machine this was found on: a Nushell profile that
 // exported a `claude setup-token` token as ANTHROPIC_API_KEY.
 vi.mock('./sessions/adapters/pty-backend', () => ({
-  getLoginShellEnv: () => ({ PATH: '/bin', CLAUDECODE: '1', ANTHROPIC_API_KEY: 'sk-ant-oat01-login' }),
+  getLoginShellEnv: () => ({
+    PATH: '/bin',
+    CLAUDECODE: '1',
+    ANTHROPIC_API_KEY: 'sk-ant-oat01-login'
+  }),
   getUserShell: () => '/bin/zsh',
   accountTokenForSpawn: (kind: string, id: string | undefined) =>
     kind === 'claude' ? mocks.getToken(id) : undefined

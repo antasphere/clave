@@ -7,9 +7,12 @@ import type { Location } from '../../shared/remote-types'
 export function registerLocationHandlers(): void {
   ipcMain.handle('location:list', () => locationManager.getLocations())
 
-  ipcMain.handle('location:add', (_event, loc: Omit<Location, 'id' | 'status'>, password?: string) => {
-    return locationManager.addLocation(loc, password)
-  })
+  ipcMain.handle(
+    'location:add',
+    (_event, loc: Omit<Location, 'id' | 'status'>, password?: string) => {
+      return locationManager.addLocation(loc, password)
+    }
+  )
 
   ipcMain.handle('location:update', (_event, id: string, updates: Partial<Location>) => {
     return locationManager.updateLocation(id, updates)
@@ -31,18 +34,28 @@ export function registerLocationHandlers(): void {
       let openclawPort: number | undefined
       let openclawToken: string | undefined
       try {
-        const result = await sshManager.exec(id, 'bash -lc "openclaw --version" 2>/dev/null || echo ""')
+        const result = await sshManager.exec(
+          id,
+          'bash -lc "openclaw --version" 2>/dev/null || echo ""'
+        )
         if (result.stdout.trim()) {
           openclawVersion = result.stdout.trim()
           // Read gateway port and auth token from config
-          const cfgResult = await sshManager.exec(id, 'cat ~/.openclaw/openclaw.json 2>/dev/null || echo "{}"')
+          const cfgResult = await sshManager.exec(
+            id,
+            'cat ~/.openclaw/openclaw.json 2>/dev/null || echo "{}"'
+          )
           try {
             const cfg = JSON.parse(cfgResult.stdout)
             openclawPort = cfg.gateway?.port || 18789
             openclawToken = cfg.gateway?.auth?.token
-          } catch { openclawPort = 18789 }
+          } catch {
+            openclawPort = 18789
+          }
         }
-      } catch { /* no openclaw */ }
+      } catch {
+        /* no openclaw */
+      }
       sshManager.disconnect(id)
       return { success: true, openclawVersion, openclawPort, openclawToken }
     } catch (err) {
@@ -59,7 +72,10 @@ export function registerLocationHandlers(): void {
         await sshManager.connect(id, config)
       }
       // Use login shell to ensure npm/node are in PATH
-      const result = await sshManager.exec(id, 'bash -lc "npm install -g @codika-io/clave-channel && clave-channel install"')
+      const result = await sshManager.exec(
+        id,
+        'bash -lc "npm install -g @codika-io/clave-channel && clave-channel install"'
+      )
       sshManager.disconnect(id)
       return { success: result.code === 0, output: result.stdout + result.stderr }
     } catch (err) {

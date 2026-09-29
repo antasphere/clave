@@ -62,10 +62,7 @@ export function HelpPanel(): ReactNode {
     return (
       <div className="flex flex-col h-full">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle flex-shrink-0">
-          <button
-            onClick={() => setSelectedDocId(null)}
-            className="btn-icon btn-icon-xs"
-          >
+          <button onClick={() => setSelectedDocId(null)} className="btn-icon btn-icon-xs">
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
           <span className="text-xs font-medium text-text-primary truncate">{selectedTitle}</span>

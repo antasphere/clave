@@ -20,7 +20,11 @@ function detectPrompt(buffer: string): string | null {
   return null
 }
 
-export function useRemoteTerminal(shellId: string) {
+export function useRemoteTerminal(shellId: string): {
+  containerRef: React.RefObject<HTMLDivElement | null>
+  fit: () => void
+  focus: () => void
+} {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -118,7 +122,7 @@ export function useRemoteTerminal(shellId: string) {
     let resizeIpcTimer: ReturnType<typeof setTimeout> | null = null
     let lastSentCols = terminal.cols
     let lastSentRows = terminal.rows
-    const flushResize = () => {
+    const flushResize = (): void => {
       resizeIpcTimer = null
       if (!pendingResize) return
       const { cols, rows } = pendingResize
@@ -134,8 +138,14 @@ export function useRemoteTerminal(shellId: string) {
       resizeIpcTimer = setTimeout(flushResize, 220)
     })
 
-    const { setSessionActivity, setSessionPromptWaiting, setSessionDetectedUrl, setSessionServerStatus, setSessionUnseenActivity, updateSessionAlive } =
-      useSessionStore.getState()
+    const {
+      setSessionActivity,
+      setSessionPromptWaiting,
+      setSessionDetectedUrl,
+      setSessionServerStatus,
+      setSessionUnseenActivity,
+      updateSessionAlive
+    } = useSessionStore.getState()
 
     // Activity tracking: debounce from active → idle after silence
     let activityTimer: ReturnType<typeof setTimeout> | null = null
@@ -177,7 +187,9 @@ export function useRemoteTerminal(shellId: string) {
       }
 
       // If a URL is set and we see signals the server was killed, verify immediately
-      const currentUrl = useSessionStore.getState().sessions.find((s) => s.id === shellId)?.detectedUrl
+      const currentUrl = useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === shellId)?.detectedUrl
       if (currentUrl && /(\^C|SIGINT|SIGTERM|EADDRINUSE)/.test(stripped)) {
         const port = safePort(currentUrl)
         if (port) {
@@ -217,9 +229,7 @@ export function useRemoteTerminal(shellId: string) {
         setSessionPromptWaiting(shellId, promptType)
         if (promptType) {
           notificationTimer = setTimeout(() => {
-            const session = useSessionStore
-              .getState()
-              .sessions.find((s) => s.id === shellId)
+            const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
             const title = session?.name ?? session?.folderName ?? 'Clave'
             window.electronAPI.showNotification?.({
               title,
@@ -285,7 +295,10 @@ export function useRemoteTerminal(shellId: string) {
     const portCheckInterval = setInterval(() => {
       if (!document.hasFocus() || !isVisibleRef.current) return
       const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
-      if (!session?.detectedUrl || session.serverStatus !== 'running') { portCheckFailures = 0; return }
+      if (!session?.detectedUrl || session.serverStatus !== 'running') {
+        portCheckFailures = 0
+        return
+      }
       const port = safePort(session.detectedUrl)
       if (port) {
         window.electronAPI.checkPort(port).then((alive) => {
@@ -338,13 +351,15 @@ export function useRemoteTerminal(shellId: string) {
       terminalRef.current.options.cursorBlink = isVisibleRef.current
     }
     let pendingFitTimer: ReturnType<typeof setTimeout> | null = null
-    const scheduleFit = () => {
+    const scheduleFit = (): void => {
       if (pendingFitTimer) clearTimeout(pendingFitTimer)
       pendingFitTimer = setTimeout(() => {
         try {
           fitAddonRef.current?.fit()
           terminalRef.current?.refresh(0, (terminalRef.current.rows ?? 1) - 1)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300)
     }
     const unsub = useSessionStore.subscribe((state, prevState) => {

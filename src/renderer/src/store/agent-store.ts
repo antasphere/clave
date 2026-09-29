@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { Agent, AgentStatus, ChatMessage, ChatMessageStatus } from '../../../shared/remote-types'
+import type {
+  Agent,
+  AgentStatus,
+  ChatMessage,
+  ChatMessageStatus
+} from '../../../shared/remote-types'
 
 interface AgentState {
   agents: Agent[]
@@ -33,7 +38,7 @@ export const useAgentStore = create<AgentState>((set) => ({
     for (const agentId of agentIds) {
       const sessionKey = `agent:${agentId}:main`
       try {
-        const history = await window.electronAPI.agentChatHistory(locationId, sessionKey) as {
+        const history = (await window.electronAPI.agentChatHistory(locationId, sessionKey)) as {
           messages?: Array<{
             role?: string
             content?: Array<{ type?: string; text?: string; thinking?: string }>

@@ -6,16 +6,14 @@ interface ChatMessageProps {
   message: ChatMessageType
 }
 
-function ChatMessageImpl({ message }: ChatMessageProps) {
+function ChatMessageImpl({ message }: ChatMessageProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
 
   if (isSystem) {
     return (
       <div className="flex justify-center py-2">
-        <span className="badge bg-surface-100 text-text-tertiary px-3 py-1">
-          {message.content}
-        </span>
+        <span className="badge bg-surface-100 text-text-tertiary px-3 py-1">{message.content}</span>
       </div>
     )
   }

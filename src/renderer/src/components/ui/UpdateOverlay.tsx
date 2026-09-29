@@ -14,7 +14,7 @@ function formatSpeed(bytesPerSecond: number): string {
   return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`
 }
 
-export function UpdateOverlay() {
+export function UpdateOverlay(): React.JSX.Element {
   const phase = useUpdaterStore((s) => s.phase)
   const version = useUpdaterStore((s) => s.availableVersion)
   const progress = useUpdaterStore((s) => s.progress)
@@ -40,9 +40,9 @@ export function UpdateOverlay() {
     }
   }, [phase])
 
-  const handleCancel = () => cancelDownload()
+  const handleCancel = (): void => cancelDownload()
 
-  const handleRetry = () => {
+  const handleRetry = (): void => {
     // 'retry' tells the main process to drop the differential download and
     // fetch the whole file. Retrying the identical request is what made a
     // failed update unescapable — see downloadStrategy() in auto-updater.ts.
@@ -80,9 +80,7 @@ export function UpdateOverlay() {
             {/* Logo */}
             <motion.div
               animate={
-                phase === 'downloaded'
-                  ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] }
-                  : undefined
+                phase === 'downloaded' ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] } : undefined
               }
               transition={
                 phase === 'downloaded'

@@ -141,7 +141,9 @@ export function buildRepoTree(basePath: string, repos: RepoRef[]): RepoTreeNode[
     const worktrees = nested
       .filter((w) => w.worktreeOf === repo.path)
       .sort(byNewest)
-      .map((w): RepoTreeWorktree => ({ type: 'worktree', name: w.name, path: w.path, of: repo.path }))
+      .map(
+        (w): RepoTreeWorktree => ({ type: 'worktree', name: w.name, path: w.path, of: repo.path })
+      )
     const subtreePaths = [repo.path, ...worktrees.map((w) => w.path)]
     const leaf: RepoTreeLeaf = { type: 'repo', name: repo.name, path: repo.path, worktrees }
 

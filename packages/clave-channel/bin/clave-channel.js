@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS bin, not part of the TypeScript sources */
 
 const args = process.argv.slice(2)
 const command = args[0]

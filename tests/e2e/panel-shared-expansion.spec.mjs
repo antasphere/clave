@@ -114,9 +114,7 @@ function readFileTree(win) {
 /** Click a tab by its label. */
 async function openTab(win, label) {
   await win.evaluate((l) => {
-    const tab = [...document.querySelectorAll('.panel-tab')].find(
-      (b) => b.textContent.trim() === l
-    )
+    const tab = [...document.querySelectorAll('.panel-tab')].find((b) => b.textContent.trim() === l)
     tab?.click()
   }, label)
   await win.waitForTimeout(1500)
@@ -194,11 +192,7 @@ export async function run(t) {
     // and would read as "folded" no matter what its own state was.
     await clickGitDir(win, 'labs')
     const afterLabs = await readGitTree(win)
-    t.check(
-      'opening a folder reveals what is under it',
-      afterLabs.length > first.length,
-      afterLabs
-    )
+    t.check('opening a folder reveals what is under it', afterLabs.length > first.length, afterLabs)
     await clickGitDir(win, 'products')
     const withRepos = await readGitTree(win)
     const repoRows = withRepos.filter((r) => r.kind === 'repo')

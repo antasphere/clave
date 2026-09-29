@@ -80,6 +80,7 @@ export function ToolbarTerminalPopover({
     // Reattach to the registry's live session, if any
     const existing = persistent ? getPersistentToolbarSession(registryKey) : null
     if (existing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the session comes from a module-level registry outside React, read when the popover opens
       setStatus('running')
       setSessionId(existing)
       return

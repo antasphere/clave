@@ -216,9 +216,7 @@ describe('withDirToggled', () => {
     // Guards the ancestor walk itself. Deleting it leaves the Files tab unable
     // to draw a compacted path, and an E2E fixture whose folders all branch
     // will not notice — the row and its ancestor coincide there.
-    expect(withDirToggled(new Set<string>(), 'a/b/c', true)).toEqual(
-      new Set(['a', 'a/b', 'a/b/c'])
-    )
+    expect(withDirToggled(new Set<string>(), 'a/b/c', true)).toEqual(new Set(['a', 'a/b', 'a/b/c']))
   })
 
   it('collapsing leaves a sibling sharing the name as a prefix alone', () => {

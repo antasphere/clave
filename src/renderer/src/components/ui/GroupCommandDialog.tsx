@@ -2,59 +2,25 @@ import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
 import { ModalScrim, ModalPositioner } from '@clave/ui/components'
-import { type GroupTerminalColor, type GroupTerminalIcon, GROUP_TERMINAL_ICONS } from '../../store/session-store'
-import ColorPicker from './ColorPicker'
 import {
-  FolderIcon,
-  CommandLineIcon,
-  FireIcon,
-  BoltIcon,
-  RocketLaunchIcon,
-  EyeIcon,
-  GlobeAltIcon,
-  CubeIcon,
-  HeartIcon,
-  StarIcon,
-  UserIcon,
-  ShieldCheckIcon,
-  WrenchIcon,
-  BeakerIcon,
-  CpuChipIcon,
-  SignalIcon,
-  BugAntIcon,
-  SparklesIcon,
-  CloudIcon
-} from '@heroicons/react/24/outline'
+  type GroupTerminalColor,
+  type GroupTerminalIcon,
+  GROUP_TERMINAL_ICONS
+} from '../../store/session-store'
+import ColorPicker from './ColorPicker'
+import { FolderIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
-
-const ICON_COMPONENTS: Record<GroupTerminalIcon, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
-  terminal: CommandLineIcon,
-  fire: FireIcon,
-  bolt: BoltIcon,
-  rocket: RocketLaunchIcon,
-  eye: EyeIcon,
-  globe: GlobeAltIcon,
-  cube: CubeIcon,
-  heart: HeartIcon,
-  star: StarIcon,
-  user: UserIcon,
-  shield: ShieldCheckIcon,
-  wrench: WrenchIcon,
-  beaker: BeakerIcon,
-  cpu: CpuChipIcon,
-  signal: SignalIcon,
-  bug: BugAntIcon,
-  sparkles: SparklesIcon,
-  cloud: CloudIcon
-}
-
-export function getTerminalIconComponent(icon?: GroupTerminalIcon): React.ComponentType<React.SVGProps<SVGSVGElement>> {
-  return ICON_COMPONENTS[icon ?? 'terminal'] ?? CommandLineIcon
-}
+import { ICON_COMPONENTS } from './terminal-icons'
 
 interface GroupCommandDialogProps {
   isOpen: boolean
-  onSave: (command: string, mode: 'prefill' | 'auto', color: GroupTerminalColor, cwd: string | null, icon: GroupTerminalIcon) => void
+  onSave: (
+    command: string,
+    mode: 'prefill' | 'auto',
+    color: GroupTerminalColor,
+    cwd: string | null,
+    icon: GroupTerminalIcon
+  ) => void
   onCancel: () => void
   onDelete?: () => void
   initialCommand?: string | null
@@ -74,7 +40,7 @@ export function GroupCommandDialog({
   initialColor = 'blue',
   initialCwd = null,
   initialIcon = 'terminal'
-}: GroupCommandDialogProps) {
+}: GroupCommandDialogProps): React.JSX.Element {
   const [command, setCommand] = useState(initialCommand ?? '')
   const [mode, setMode] = useState<'prefill' | 'auto'>(initialMode)
   const [color, setColor] = useState<GroupTerminalColor>(initialColor)
@@ -82,22 +48,38 @@ export function GroupCommandDialog({
   const [icon, setIcon] = useState<GroupTerminalIcon>(initialIcon)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Opening (or new initial values while open) resets the form. Done while
+  // rendering, against what the last render saw, so the dialog never paints the
+  // previous values first.
+  const inputs = { isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon }
+  const [seen, setSeen] = useState(inputs)
+  if (
+    seen.isOpen !== isOpen ||
+    seen.initialCommand !== initialCommand ||
+    seen.initialMode !== initialMode ||
+    seen.initialColor !== initialColor ||
+    seen.initialCwd !== initialCwd ||
+    seen.initialIcon !== initialIcon
+  ) {
+    setSeen(inputs)
     if (isOpen) {
       setCommand(initialCommand ?? '')
       setMode(initialMode)
       setColor(initialColor)
       setCwd(initialCwd)
       setIcon(initialIcon)
-      setTimeout(() => inputRef.current?.focus(), 50)
     }
+  }
+
+  useEffect(() => {
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon])
 
-  const handleSave = () => {
+  const handleSave = (): void => {
     onSave(command.trim(), mode, color, cwd, icon)
   }
 
-  const handlePickFolder = async () => {
+  const handlePickFolder = async (): Promise<void> => {
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
     const folder = await window.electronAPI.openFolderDialog(cwd ?? undefined)
@@ -109,7 +91,12 @@ export function GroupCommandDialog({
   const folderName = cwd ? cwd.split('/').pop() || cwd : null
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => { if (!open) onCancel() }}>
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
       <AnimatePresence>
         {isOpen && (
           <DialogPrimitive.Portal forceMount>

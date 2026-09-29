@@ -52,7 +52,7 @@ interface DiffViewerProps {
   fileTab: FileTab
 }
 
-export function DiffViewer({ fileTab }: DiffViewerProps) {
+export function DiffViewer({ fileTab }: DiffViewerProps): React.JSX.Element {
   const removeFileTab = useSessionStore((s) => s.removeFileTab)
   const triggerGitRefresh = useSessionStore((s) => s.triggerGitRefresh)
   const gitRefreshTrigger = useSessionStore((s) => s.gitRefreshTrigger)

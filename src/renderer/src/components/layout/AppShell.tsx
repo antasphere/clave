@@ -57,7 +57,7 @@ import { initCopyOfferStore } from '../../store/copy-offer-store'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
-import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
+import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
 import { PluginToolbar } from '../plugins/PluginToolbar'
 import { PluginMainPanel } from '../plugins/PluginMainPanel'
@@ -81,7 +81,7 @@ let tmuxAdoptionStarted = false
  *  per process, or concurrent tool calls would get duplicate responses. */
 let mcpDispatcherStarted = false
 
-export function AppShell() {
+export function AppShell(): React.JSX.Element {
   const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
   // No traffic lights in fullscreen, so no clearance to hold for them.
   const trafficLights = useTrafficLights()
@@ -305,14 +305,14 @@ export function AppShell() {
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onMouseMove = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(480, ev.clientX))
         if (sidebarRef.current) {
           sidebarRef.current.style.width = `${w}px`
         }
       }
 
-      const onMouseUp = (ev: MouseEvent) => {
+      const onMouseUp = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(480, ev.clientX))
         setSidebarWidth(w)
         // Keep skipTransition true briefly so Framer doesn't animate to the committed value
@@ -340,14 +340,14 @@ export function AppShell() {
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onMouseMove = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(400, window.innerWidth - ev.clientX))
         if (fileTreeRef.current) {
           fileTreeRef.current.style.width = `${w}px`
         }
       }
 
-      const onMouseUp = (ev: MouseEvent) => {
+      const onMouseUp = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(400, window.innerWidth - ev.clientX))
         setFileTreeWidth(w)
         requestAnimationFrame(() => {
@@ -938,7 +938,7 @@ function DissolveConfirmDialog(): React.JSX.Element {
   )
 }
 
-function ToolbarQuickActions() {
+function ToolbarQuickActions(): React.JSX.Element | null {
   const pinnedGroups = usePinnedStore((s) => s.pinnedGroups)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const [openId, setOpenId] = useState<string | null>(null)

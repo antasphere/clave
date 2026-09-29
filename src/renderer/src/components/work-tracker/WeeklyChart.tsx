@@ -9,7 +9,10 @@ interface WeeklyChartProps {
   avgDailyMinutes: number
 }
 
-export function WeeklyChart({ dailyMinutes, avgDailyMinutes }: WeeklyChartProps) {
+export function WeeklyChart({
+  dailyMinutes,
+  avgDailyMinutes
+}: WeeklyChartProps): React.JSX.Element {
   const max = Math.max(...dailyMinutes, 1)
   const todayIndex = (new Date().getDay() + 6) % 7 // 0=Mon
 

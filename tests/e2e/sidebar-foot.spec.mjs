@@ -158,7 +158,14 @@ export async function run(t) {
         name: panel.querySelector('.sidebar-footer-name')?.textContent,
         border: cs.borderTopWidth,
         radius: cs.borderTopLeftRadius,
-        panelRadius: (() => { const pr = document.createElement('div'); pr.style.borderRadius = 'var(--radius-xl)'; document.body.appendChild(pr); const r = getComputedStyle(pr).borderRadius; pr.remove(); return r })(),
+        panelRadius: (() => {
+          const pr = document.createElement('div')
+          pr.style.borderRadius = 'var(--radius-xl)'
+          document.body.appendChild(pr)
+          const r = getComputedStyle(pr).borderRadius
+          pr.remove()
+          return r
+        })(),
         // Nothing may sit loose beside the panel any more.
         siblings: panel.parentElement?.children.length
       }
@@ -559,7 +566,14 @@ export async function run(t) {
         hasNav: !!nav,
         // The band is a token (--content-top-offset, derived from the frame
         // spec), so the check reads it rather than pinning a number.
-        band: (() => { const pr = document.createElement('div'); pr.style.height = 'var(--content-top-offset)'; document.body.appendChild(pr); const h = Math.round(pr.getBoundingClientRect().height); pr.remove(); return h })()
+        band: (() => {
+          const pr = document.createElement('div')
+          pr.style.height = 'var(--content-top-offset)'
+          document.body.appendChild(pr)
+          const h = Math.round(pr.getBoundingClientRect().height)
+          pr.remove()
+          return h
+        })()
       }
     })
     t.check('the mark is still there in Settings', !!settingsStrip, settingsStrip)

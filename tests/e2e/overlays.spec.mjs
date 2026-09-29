@@ -15,8 +15,20 @@ export async function run(t) {
   seedWorkspaces(dir, {
     fresh: true,
     workspaces: [
-      { id: 'ws-a', name: 'Alpha', rootDir: fixturePath('overlays-ws'), profileFile: null, createdAt: 1 },
-      { id: 'ws-b', name: 'Beta', rootDir: fixturePath('overlays-ws2'), profileFile: null, createdAt: 2 }
+      {
+        id: 'ws-a',
+        name: 'Alpha',
+        rootDir: fixturePath('overlays-ws'),
+        profileFile: null,
+        createdAt: 1
+      },
+      {
+        id: 'ws-b',
+        name: 'Beta',
+        rootDir: fixturePath('overlays-ws2'),
+        profileFile: null,
+        createdAt: 2
+      }
     ],
     activeWorkspaceId: 'ws-a'
   })
@@ -34,7 +46,14 @@ export async function run(t) {
         radius: getComputedStyle(el).borderRadius,
         // The panel radius is a token (derived from the control spec), so the
         // check reads it rather than pinning a number.
-        panelRadius: (() => { const pr = document.createElement('div'); pr.style.borderRadius = 'var(--radius-xl)'; document.body.appendChild(pr); const r = getComputedStyle(pr).borderRadius; pr.remove(); return r })(),
+        panelRadius: (() => {
+          const pr = document.createElement('div')
+          pr.style.borderRadius = 'var(--radius-xl)'
+          document.body.appendChild(pr)
+          const r = getComputedStyle(pr).borderRadius
+          pr.remove()
+          return r
+        })(),
         hasLabel: !!el.querySelector('.menu-label'),
         hasSep: !!el.querySelector('.menu-sep'),
         itemRadius: item ? getComputedStyle(item).borderRadius : null,
@@ -61,8 +80,16 @@ export async function run(t) {
       const el = document.querySelector('.menu-surface')
       return el ? { ground: bg, surface: getComputedStyle(el).backgroundColor } : null
     })
-    t.check('the surface resolved to a painted colour', !!ground && ground.ground !== 'rgba(0, 0, 0, 0)', ground)
-    t.equal("the surface is painted with the panels' ground (--surface-0)", ground?.surface, ground?.ground)
+    t.check(
+      'the surface resolved to a painted colour',
+      !!ground && ground.ground !== 'rgba(0, 0, 0, 0)',
+      ground
+    )
+    t.equal(
+      "the surface is painted with the panels' ground (--surface-0)",
+      ground?.surface,
+      ground?.ground
+    )
 
     await win.keyboard.press('Escape')
     await win.waitForTimeout(500)
@@ -133,7 +160,14 @@ export async function run(t) {
         bdAnim: getComputedStyle(bd).animationName,
         panelAnim: getComputedStyle(panel).animationName,
         radius: getComputedStyle(panel).borderRadius,
-        panelRadius: (() => { const pr = document.createElement('div'); pr.style.borderRadius = 'var(--radius-xl)'; document.body.appendChild(pr); const r = getComputedStyle(pr).borderRadius; pr.remove(); return r })(),
+        panelRadius: (() => {
+          const pr = document.createElement('div')
+          pr.style.borderRadius = 'var(--radius-xl)'
+          document.body.appendChild(pr)
+          const r = getComputedStyle(pr).borderRadius
+          pr.remove()
+          return r
+        })(),
         bg: getComputedStyle(panel).backgroundColor,
         ground
       }
@@ -141,7 +175,11 @@ export async function run(t) {
     t.check('the group picker opens', !!gp)
     t.equal('its backdrop fades in on the shared keyframe', gp?.bdAnim, 'scrim-in')
     t.equal('its panel enters via surface-in', gp?.panelAnim, 'surface-in')
-    t.equal('its panel carries the panel radius, like every other surface', gp?.radius, gp?.panelRadius)
+    t.equal(
+      'its panel carries the panel radius, like every other surface',
+      gp?.radius,
+      gp?.panelRadius
+    )
     t.equal("its panel is painted with the panels' ground", gp?.bg, gp?.ground)
     await win.keyboard.press('Escape')
     await win.waitForTimeout(200)
@@ -151,7 +189,11 @@ export async function run(t) {
       const btn = document.querySelector('.launcher-btn')
       return btn ? getComputedStyle(btn).transition : null
     })
-    t.check('the launcher button transitions scale for press feedback', !!press && press.includes('scale'), press)
+    t.check(
+      'the launcher button transitions scale for press feedback',
+      !!press && press.includes('scale'),
+      press
+    )
   } finally {
     await app.close()
   }

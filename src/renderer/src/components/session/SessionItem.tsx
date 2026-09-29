@@ -3,7 +3,13 @@ import { cn } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
 import { CommandLineIcon, BoltIcon, RectangleGroupIcon } from '@heroicons/react/24/outline'
-import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo, ClaudeVariantGlyph } from '../icons/cli-logos'
+import {
+  ClaudeLogo,
+  AntigravityLogo,
+  CodexLogo,
+  PiLogo,
+  ClaudeVariantGlyph
+} from '../icons/cli-logos'
 import { SidebarTabItem } from './SidebarTabItem'
 import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
@@ -31,7 +37,7 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   )
 }
 
-function LocationBadge({ locationId }: { locationId: string }) {
+function LocationBadge({ locationId }: { locationId: string }): React.JSX.Element | null {
   const location = useLocationStore((s) => s.locations.find((l) => l.id === locationId))
   if (!location || location.type !== 'remote') return null
   return (
@@ -57,7 +63,7 @@ function getClaudeVariant(session: Session): 'agents' | null {
 /** The dashboard icon on a row carrying an attached web view (session.view):
  *  clicking it shows the view in the main pane; clicking the row itself still
  *  shows the terminal. A span, not a button — the row is already a button. */
-function SessionViewIcon({ session }: { session: Session }) {
+function SessionViewIcon({ session }: { session: Session }): React.JSX.Element {
   return (
     <span
       role="button"
@@ -80,22 +86,23 @@ function SessionViewIcon({ session }: { session: Session }) {
   )
 }
 
-function SessionIcon({ session }: { session: Session }) {
+function SessionIcon({ session }: { session: Session }): React.JSX.Element {
   // Provider sessions show their brand mark; plain terminals keep the terminal icon.
   // OpenClaw remote agents use the bolt. The local Claude variants share the Claude mark
   // (the trailing glyph tells them apart). Remote sessions reuse the same provider marks —
   // the location badge already signals "remote".
-  const Icon = session.sessionType === 'agent'
-    ? BoltIcon
-    : session.antigravityMode
-      ? AntigravityLogo
-      : session.codexMode
-        ? CodexLogo
-        : session.piMode
-          ? PiLogo
-        : (session.claudeMode || session.claudeAgentsMode)
-          ? ClaudeLogo
-          : CommandLineIcon
+  const Icon =
+    session.sessionType === 'agent'
+      ? BoltIcon
+      : session.antigravityMode
+        ? AntigravityLogo
+        : session.codexMode
+          ? CodexLogo
+          : session.piMode
+            ? PiLogo
+            : session.claudeMode || session.claudeAgentsMode
+              ? ClaudeLogo
+              : CommandLineIcon
 
   // Lifecycle-aware providers share these complementary status visuals:
   // the ICON color carries "is it running" and the DOT carries "does it need me".
@@ -107,12 +114,18 @@ function SessionIcon({ session }: { session: Session }) {
   //   ended → dimmed icon, no dot
   // Antigravity/terminals/agents have no deterministic state signal, so they stay
   // fully neutral — no color, no dot (see ROADMAP.md).
-  const isClaudeCode = session.claudeMode === true && !session.claudeAgentsMode &&
-    !session.antigravityMode && !session.codexMode && !session.piMode && session.sessionType === 'local'
+  const isClaudeCode =
+    session.claudeMode === true &&
+    !session.claudeAgentsMode &&
+    !session.antigravityMode &&
+    !session.codexMode &&
+    !session.piMode &&
+    session.sessionType === 'local'
   const isCodex = session.codexMode === true && session.sessionType === 'local'
-  const hasLifecycleState = isClaudeCode || isCodex || (session.piMode === true && session.sessionType === 'local')
+  const hasLifecycleState =
+    isClaudeCode || isCodex || (session.piMode === true && session.sessionType === 'local')
 
-  const state = !session.alive ? 'ended' : session.agentState ?? 'idle'
+  const state = !session.alive ? 'ended' : (session.agentState ?? 'idle')
   const working = hasLifecycleState && state === 'working'
   const blocked = (isClaudeCode || isCodex) && state === 'blocked'
   const doneUnseen = hasLifecycleState && state === 'done' && session.hasUnseenActivity
@@ -200,7 +213,7 @@ function SessionItemImpl({
   onPointerDown,
   isDragging,
   onDelete
-}: SessionItemProps) {
+}: SessionItemProps): React.JSX.Element {
   const renameSession = useSessionStore((s) => s.renameSession)
 
   return (
@@ -218,11 +231,11 @@ function SessionItemImpl({
         <>
           <AccountLimitBadge session={session} />
           {session.view ? <SessionViewIcon session={session} /> : null}
-          {session.locationId && session.sessionType !== 'local'
-            ? <LocationBadge locationId={session.locationId} />
-            : getClaudeVariant(session)
-              ? <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
-              : null}
+          {session.locationId && session.sessionType !== 'local' ? (
+            <LocationBadge locationId={session.locationId} />
+          ) : getClaudeVariant(session) ? (
+            <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
+          ) : null}
         </>
       }
       grouped={grouped}

@@ -9,8 +9,11 @@ interface RemoteFileTreeProps {
   cwd: string
 }
 
-export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps) {
-  const { flatNodes, loaded, error, loadRoot, refresh, toggleExpand } = useRemoteFileTree(locationId, cwd)
+export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps): React.JSX.Element {
+  const { flatNodes, loaded, error, loadRoot, refresh, toggleExpand } = useRemoteFileTree(
+    locationId,
+    cwd
+  )
   const setPreviewFile = useSessionStore((s) => s.setPreviewFile)
 
   useEffect(() => {
@@ -49,11 +52,7 @@ export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps) {
     <div className="flex-1 flex flex-col min-h-0">
       {/* Refresh header */}
       <div className="flex items-center justify-end px-2 py-1 flex-shrink-0">
-        <button
-          onClick={refresh}
-          className="btn-icon btn-icon-sm"
-          title="Refresh"
-        >
+        <button onClick={refresh} className="btn-icon btn-icon-sm" title="Refresh">
           <ArrowPathIcon className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -61,16 +60,10 @@ export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps) {
       {/* Tree content */}
       <div className="flex-1 overflow-y-auto px-1">
         {flatNodes.length === 0 ? (
-          <div className="px-3 py-6 text-center text-xs text-text-tertiary">
-            Empty directory
-          </div>
+          <div className="px-3 py-6 text-center text-xs text-text-tertiary">Empty directory</div>
         ) : (
           flatNodes.map((node) => (
-            <RemoteFileTreeRow
-              key={node.path}
-              node={node}
-              onClick={handleFileClick}
-            />
+            <RemoteFileTreeRow key={node.path} node={node} onClick={handleFileClick} />
           ))
         )}
       </div>
@@ -84,7 +77,7 @@ function RemoteFileTreeRow({
 }: {
   node: FlatRemoteTreeNode
   onClick: (node: FlatRemoteTreeNode) => void
-}) {
+}): React.JSX.Element {
   return (
     <button
       onClick={() => onClick(node)}
@@ -97,7 +90,16 @@ function RemoteFileTreeRow({
         <span className="w-4 h-4 flex items-center justify-center flex-shrink-0 text-[color:var(--tree-chevron-color)]">
           {node.loading ? (
             <svg width="12" height="12" viewBox="0 0 12 12" className="animate-spin">
-              <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="20" strokeDashoffset="10" />
+              <circle
+                cx="6"
+                cy="6"
+                r="5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill="none"
+                strokeDasharray="20"
+                strokeDashoffset="10"
+              />
             </svg>
           ) : (
             <svg
@@ -107,7 +109,13 @@ function RemoteFileTreeRow({
               fill="none"
               className={`transition-transform duration-100 ${node.expanded ? 'rotate-90' : ''}`}
             >
-              <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M3 1.5L7 5L3 8.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           )}
         </span>

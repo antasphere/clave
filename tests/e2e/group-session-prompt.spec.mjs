@@ -147,7 +147,6 @@ export async function run(t) {
       sent.cwd !== PROJECT,
       sent.cwd
     )
-
   } finally {
     await app.close()
   }

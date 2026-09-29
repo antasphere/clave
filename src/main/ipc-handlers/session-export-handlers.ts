@@ -143,10 +143,7 @@ async function readRemoteJsonl(
   }
 
   // 3. In the cwd's project dir, match by internal sessionId or fall back to newest.
-  const listed = await sshManager.exec(
-    locationId,
-    `ls -t ${remoteDirExpr}/*.jsonl 2>/dev/null`
-  )
+  const listed = await sshManager.exec(locationId, `ls -t ${remoteDirExpr}/*.jsonl 2>/dev/null`)
   const candidates = listed.stdout
     .split('\n')
     .map((l) => l.trim())
@@ -190,14 +187,23 @@ function findPlanFilePath(jsonlContents: string): string | null {
   return null
 }
 
-async function showNotFoundError(win: BrowserWindow | null, kind: 'discussion' | 'plan'): Promise<void> {
+async function showNotFoundError(
+  win: BrowserWindow | null,
+  kind: 'discussion' | 'plan'
+): Promise<void> {
   const title = kind === 'discussion' ? 'Discussion not found' : 'Plan not found'
   const message =
     kind === 'discussion'
       ? "Couldn't find the Claude session transcript for this terminal."
       : 'This session has no plan to save yet. Plans appear after ExitPlanMode runs in the conversation.'
   if (win) {
-    await dialog.showMessageBox(win, { type: 'warning', title, message, buttons: ['OK'], defaultId: 0 })
+    await dialog.showMessageBox(win, {
+      type: 'warning',
+      title,
+      message,
+      buttons: ['OK'],
+      defaultId: 0
+    })
   } else {
     dialog.showErrorBox(title, message)
   }

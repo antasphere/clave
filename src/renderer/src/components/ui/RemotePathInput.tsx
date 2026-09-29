@@ -6,7 +6,11 @@ interface RemotePathInputProps {
   onCancel: () => void
 }
 
-export function RemotePathInput({ defaultPath = '~', onSubmit, onCancel }: RemotePathInputProps) {
+export function RemotePathInput({
+  defaultPath = '~',
+  onSubmit,
+  onCancel
+}: RemotePathInputProps): React.JSX.Element {
   const [path, setPath] = useState(defaultPath)
 
   const handleSubmit = useCallback(() => {

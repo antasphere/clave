@@ -6,7 +6,7 @@ interface ChatInputProps {
   disabled?: boolean
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled }: ChatInputProps): React.JSX.Element {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 

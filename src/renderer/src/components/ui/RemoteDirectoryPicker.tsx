@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FolderIcon,
@@ -40,7 +40,7 @@ export function RemoteDirectoryPicker({
   locationName,
   onSelect,
   onCancel
-}: RemoteDirectoryPickerProps) {
+}: RemoteDirectoryPickerProps): React.ReactPortal {
   const [currentPath, setCurrentPath] = useState('')
   const [homePath, setHomePath] = useState('')
   const [entries, setEntries] = useState<DirEntry[]>([])
@@ -54,7 +54,10 @@ export function RemoteDirectoryPicker({
   const inputRef = useRef<HTMLInputElement>(null)
   const highlightedRowRef = useRef<HTMLButtonElement>(null)
   const editingRef = useRef(editingPath)
-  editingRef.current = editingPath
+  // Mirrored at commit, before any keydown can read it.
+  useLayoutEffect(() => {
+    editingRef.current = editingPath
+  }, [editingPath])
 
   // Resolve home directory on mount
   useEffect(() => {
@@ -81,13 +84,19 @@ export function RemoteDirectoryPicker({
     }
   }, [locationId])
 
-  // Load directory contents when path changes
-  useEffect(() => {
-    if (!currentPath) return
-    let cancelled = false
+  // Load directory contents when path changes. The listing's state resets while
+  // rendering, against the path the last render saw; the effect fetches.
+  const [listedPath, setListedPath] = useState<{ locationId: string; path: string } | null>(null)
+  if (currentPath && (listedPath?.locationId !== locationId || listedPath.path !== currentPath)) {
+    setListedPath({ locationId, path: currentPath })
     setLoading(true)
     setError(null)
     setHighlight(-1)
+  }
+
+  useEffect(() => {
+    if (!currentPath) return
+    let cancelled = false
     ;(async () => {
       try {
         const items = await window.electronAPI.sftpReadDir(locationId, currentPath)
@@ -164,7 +173,7 @@ export function RemoteDirectoryPicker({
 
   // Global Escape: exit edit mode first, otherwise close the picker
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       if (editingRef.current) {
         setEditingPath(false)
@@ -306,7 +315,11 @@ export function RemoteDirectoryPicker({
             title={editingPath ? 'Go' : 'Edit path'}
             className="btn-icon btn-icon-sm flex-shrink-0"
           >
-            {editingPath ? <CheckIcon className="w-4 h-4" /> : <PencilSquareIcon className="w-4 h-4" />}
+            {editingPath ? (
+              <CheckIcon className="w-4 h-4" />
+            ) : (
+              <PencilSquareIcon className="w-4 h-4" />
+            )}
           </button>
         </div>
 

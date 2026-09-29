@@ -84,10 +84,7 @@ import { resolveHiddenOwner } from './boot-adoption'
 describe('resolveHiddenOwner — an ownerless hidden half is discarded, never surfaced', () => {
   const state = {
     groups: [{ id: 'g1', terminals: [{ id: 't1' }] }],
-    sessions: [
-      { id: 'owner', view: { url: 'http://127.0.0.1:4740' } },
-      { id: 'plain' }
-    ]
+    sessions: [{ id: 'owner', view: { url: 'http://127.0.0.1:4740' } }, { id: 'plain' }]
   }
 
   it('links a group terminal back to a group that still carries its terminal', () => {

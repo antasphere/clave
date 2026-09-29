@@ -20,9 +20,7 @@ const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
 const declares = (body: string, property: string, value: RegExp): boolean =>
   new RegExp(`(^|;|\\s)${property}\\s*:\\s*${value.source}`, 'm').test(body)
 const families = rules
-  .filter(
-    (r) => /^\.[\w-]+$/.test(r.selector) && declares(r.body, 'width', /100%/)
-  )
+  .filter((r) => /^\.[\w-]+$/.test(r.selector) && declares(r.body, 'width', /100%/))
   .map((r) => r.selector.slice(1))
   .filter((name) =>
     rules.some(

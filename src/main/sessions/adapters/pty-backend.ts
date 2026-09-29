@@ -6,7 +6,11 @@ import { randomUUID } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import { DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS, INITIAL_COMMAND_DELAY_MS } from '../../constants'
+import {
+  DEFAULT_TERMINAL_COLS,
+  DEFAULT_TERMINAL_ROWS,
+  INITIAL_COMMAND_DELAY_MS
+} from '../../constants'
 import { stateFilePath } from '../../agent-state-manager'
 import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../../mcp/mcp-runtime'
 import { workspaceManager } from '../../workspace-manager'
@@ -132,18 +136,24 @@ export function preloadLoginShellEnv(): void {
     return
   }
 
-  execFile(getUserShell(), ['-lic', 'env -0'], {
-    encoding: 'utf-8',
-    maxBuffer: 10 * 1024 * 1024
-  }, (err, stdout) => {
-    if (loginShellEnv !== null) return // already set by sync fallback
-    if (err) {
-      loginShellEnv = { ...process.env } as Record<string, string>
-      return
+  execFile(
+    getUserShell(),
+    ['-lic', 'env -0'],
+    {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024
+    },
+    (err, stdout) => {
+      if (loginShellEnv !== null) return // already set by sync fallback
+      if (err) {
+        loginShellEnv = { ...process.env } as Record<string, string>
+        return
+      }
+      const env = parseEnvOutput(stdout)
+      loginShellEnv =
+        Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
     }
-    const env = parseEnvOutput(stdout)
-    loginShellEnv = Object.keys(env).length > 0 ? env : { ...process.env } as Record<string, string>
-  })
+  )
 }
 
 export function getLoginShellEnv(): Record<string, string> {
@@ -161,7 +171,8 @@ export function getLoginShellEnv(): Record<string, string> {
       maxBuffer: 10 * 1024 * 1024
     })
     const env = parseEnvOutput(output)
-    loginShellEnv = Object.keys(env).length > 0 ? env : { ...process.env } as Record<string, string>
+    loginShellEnv =
+      Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
   } catch {
     loginShellEnv = { ...process.env } as Record<string, string>
   }
@@ -227,13 +238,21 @@ export function isTmuxAvailable(): boolean {
  * wheel does. tmux exits 0 whether or not the text was found, so the return
  * only says the command was issued.
  */
-export function scrollTmuxSessionToText(tmuxName: string, needle: string, fromBottom: number): boolean {
+export function scrollTmuxSessionToText(
+  tmuxName: string,
+  needle: string,
+  fromBottom: number
+): boolean {
   const tmuxPath = detectTmux()
   if (!tmuxPath) return false
   // Literal text search; strip control characters, and leading dashes so the
   // needle can never be read as a flag. A substring still matches.
-  // eslint-disable-next-line no-control-regex
-  const text = needle.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/^[-\s]+/, '').trim().slice(0, 120)
+  const text = needle
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/^[-\s]+/, '')
+    .trim()
+    .slice(0, 120)
   if (text.length < 3) return false
   const times = Math.max(1, Math.min(50, Math.floor(fromBottom)))
   const args = ['-L', TMUX_SOCKET, 'copy-mode', '-e', '-t', tmuxName]
@@ -539,9 +558,11 @@ function writeSessionRecord(meta: SessionRecord): boolean {
 function readSessionRecord(key: string): SessionRecord | null {
   if (!isValidRecordKey(key)) return null
   try {
-    return migrateSessionAdapterRecord(JSON.parse(
-      fs.readFileSync(path.join(sessionRecordsDir(), `${key}.json`), 'utf-8')
-    ) as SessionRecord)
+    return migrateSessionAdapterRecord(
+      JSON.parse(
+        fs.readFileSync(path.join(sessionRecordsDir(), `${key}.json`), 'utf-8')
+      ) as SessionRecord
+    )
   } catch {
     return null
   }
@@ -565,9 +586,23 @@ function deleteSessionRecord(key: string): void {
 function reconcileTmuxBindings(tmuxPath: string): void {
   if (liveTmuxSessions(tmuxPath).size === 0) return
   try {
-    execFileSync(tmuxPath, ['-L', TMUX_SOCKET,
-      'set-option', '-g', 'set-titles', 'on', ';',
-      'set-option', '-g', 'set-titles-string', '#{pane_title}'], { stdio: 'ignore' })
+    execFileSync(
+      tmuxPath,
+      [
+        '-L',
+        TMUX_SOCKET,
+        'set-option',
+        '-g',
+        'set-titles',
+        'on',
+        ';',
+        'set-option',
+        '-g',
+        'set-titles-string',
+        '#{pane_title}'
+      ],
+      { stdio: 'ignore' }
+    )
   } catch {
     // Older tmux versions may not support title forwarding.
   }
@@ -620,7 +655,12 @@ function liveTmuxSessions(tmuxPath: string): Set<string> {
       ['-L', TMUX_SOCKET, 'list-sessions', '-F', '#{session_name}'],
       { encoding: 'utf-8' }
     )
-    return new Set(out.split('\n').map((s) => s.trim()).filter(Boolean))
+    return new Set(
+      out
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
   } catch {
     // No server running → no sessions.
     return new Set()
@@ -831,7 +871,12 @@ export class PtyBackend {
     const useAntigravityMode = options?.antigravityMode === true
     const useCodexMode = options?.codexMode === true
     const usePiMode = options?.piMode === true
-    const useClaudeMode = options?.claudeMode !== false && !useAntigravityMode && !useCodexMode && !useAgentsMode && !usePiMode
+    const useClaudeMode =
+      options?.claudeMode !== false &&
+      !useAntigravityMode &&
+      !useCodexMode &&
+      !useAgentsMode &&
+      !usePiMode
 
     let claudeSessionId: string | undefined
     let piSessionId: string | undefined
@@ -857,17 +902,24 @@ export class PtyBackend {
     // that carries every entry of the machine's own (ADR 0002).
     const codexHome = codexHomeForSpawn(kind, options?.codexAccountId)
     const model = options?.model ?? (usePiMode ? launchProfile?.pi?.model : undefined)
-    const piProvider = usePiMode ? options?.piProvider ?? launchProfile?.pi?.provider : undefined
-    const piThinking = usePiMode ? options?.piThinking ?? launchProfile?.pi?.thinking : undefined
+    const piProvider = usePiMode ? (options?.piProvider ?? launchProfile?.pi?.provider) : undefined
+    const piThinking = usePiMode ? (options?.piThinking ?? launchProfile?.pi?.thinking) : undefined
 
     // These values cross IPC and round-trip through the restore record. Shell
     // quoting is the injection boundary; shape checks also prevent accidental
     // flag-looking or malformed provider/model references from reaching a CLI.
-    if (model !== undefined && !(usePiMode ? isValidPiOptionValue(model) : isValidModelName(model))) {
+    if (
+      model !== undefined &&
+      !(usePiMode ? isValidPiOptionValue(model) : isValidModelName(model))
+    ) {
       throw new Error('Invalid model name')
     }
-    if (piProvider !== undefined && !isValidPiOptionValue(piProvider)) throw new Error('Invalid Pi provider')
-    if (piThinking !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(piThinking)) {
+    if (piProvider !== undefined && !isValidPiOptionValue(piProvider))
+      throw new Error('Invalid Pi provider')
+    if (
+      piThinking !== undefined &&
+      !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(piThinking)
+    ) {
       throw new Error('Invalid Pi thinking level')
     }
 
@@ -890,7 +942,9 @@ export class PtyBackend {
           parts.push('resume')
         }
         if (options?.dangerousMode) {
-          parts.push(options?.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo')
+          parts.push(
+            options?.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo'
+          )
         }
         if (model) parts.push('-m', model)
         parts.push('-c', CODEX_TITLE_CONFIG)
@@ -912,7 +966,8 @@ export class PtyBackend {
           claudeSessionId = options.resumeSessionId
         } else {
           const requested = options?.claudeSessionId
-          claudeSessionId = requested && isValidClaudeSessionId(requested) ? requested : randomUUID()
+          claudeSessionId =
+            requested && isValidClaudeSessionId(requested) ? requested : randomUUID()
           parts.push('--session-id', claudeSessionId)
         }
         if (options?.dangerousMode) parts.push('--dangerously-skip-permissions')
@@ -924,27 +979,35 @@ export class PtyBackend {
       // rc-file chatter). Plain terminals open the user's login shell.
       if (kind) {
         const profile = launchProfile!
-        if ((kind === 'claude' || kind === 'pi' || kind === 'codex') && options?.resumeSessionId && !isValidClaudeSessionId(options.resumeSessionId)) {
+        if (
+          (kind === 'claude' || kind === 'pi' || kind === 'codex') &&
+          options?.resumeSessionId &&
+          !isValidClaudeSessionId(options.resumeSessionId)
+        ) {
           throw new Error('Invalid resume session id')
         }
         if (kind === 'claude') {
-          claudeSessionId = options?.resumeSessionId
-            ?? (options?.claudeSessionId && isValidClaudeSessionId(options.claudeSessionId)
+          claudeSessionId =
+            options?.resumeSessionId ??
+            (options?.claudeSessionId && isValidClaudeSessionId(options.claudeSessionId)
               ? options.claudeSessionId
               : randomUUID())
         }
         if (kind === 'pi') {
-          piSessionId = options?.resumeSessionId
-            ?? (options?.piSessionId && isValidClaudeSessionId(options.piSessionId)
+          piSessionId =
+            options?.resumeSessionId ??
+            (options?.piSessionId && isValidClaudeSessionId(options.piSessionId)
               ? options.piSessionId
               : randomUUID())
         }
-        const mcpConfigPath = kind === 'claude' && getMcpRuntime() ? writeSessionMcpConfig(id) : null
-        const piExtensionPath = kind === 'pi'
-          ? path
-              .join(__dirname, '../../resources/pi-clave-state.js')
-              .replace('app.asar', 'app.asar.unpacked')
-          : undefined
+        const mcpConfigPath =
+          kind === 'claude' && getMcpRuntime() ? writeSessionMcpConfig(id) : null
+        const piExtensionPath =
+          kind === 'pi'
+            ? path
+                .join(__dirname, '../../resources/pi-clave-state.js')
+                .replace('app.asar', 'app.asar.unpacked')
+            : undefined
         const argv = buildAgentArgv({
           kind,
           profile,
@@ -955,12 +1018,14 @@ export class PtyBackend {
           provider: piProvider,
           thinking: piThinking,
           initialPrompt: options?.initialPrompt,
-          claudeSettings: kind === 'claude' ? buildClaudeHookSettingsArg(id) ?? undefined : undefined,
+          claudeSettings:
+            kind === 'claude' ? (buildClaudeHookSettingsArg(id) ?? undefined) : undefined,
           mcpConfigPath: mcpConfigPath ?? undefined,
           piStateExtensionPath: piExtensionPath
         })
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
-        if (kind === 'pi') assignments.push(`CLAVE_AGENT_STATE_FILE=${shellSingleQuote(stateFilePath(id))}`)
+        if (kind === 'pi')
+          assignments.push(`CLAVE_AGENT_STATE_FILE=${shellSingleQuote(stateFilePath(id))}`)
         // The account's home rides in the command, after the login profile
         // has run: a `CODEX_HOME` the user's own profile exports would
         // otherwise override the one in the environment.
@@ -1327,7 +1392,10 @@ export class PtyBackend {
 
   /** Persist (or clear, with null) a session's attached web view in its
    *  record. Mirrors setSessionDisplayName — see SessionRecord.view. */
-  setSessionViewRecord(id: string, view: { url: string; title?: string; command?: string; cwd?: string } | null): void {
+  setSessionViewRecord(
+    id: string,
+    view: { url: string; title?: string; command?: string; cwd?: string } | null
+  ): void {
     const key = this.recordKeyForSession(id)
     if (!key) return
     const meta = readSessionRecord(key)
@@ -1461,7 +1529,9 @@ export class PtyBackend {
         deleteSessionRecord(recordKeyOf(meta))
         continue
       }
-      const alreadyAdopted = meta.tmuxName ? adoptedTmuxNames.has(meta.tmuxName) : adoptedIds.has(meta.id)
+      const alreadyAdopted = meta.tmuxName
+        ? adoptedTmuxNames.has(meta.tmuxName)
+        : adoptedIds.has(meta.id)
       if (!alreadyAdopted) {
         adoptable.push({
           ...meta,
@@ -1469,7 +1539,8 @@ export class PtyBackend {
           // workspace model (or spawned with none active) are placed by cwd —
           // under a registered root → that workspace; else left unstamped for
           // the renderer to assign to the active workspace.
-          workspaceId: meta.workspaceId ?? workspaceManager.resolveWorkspaceForCwd(meta.cwd) ?? undefined,
+          workspaceId:
+            meta.workspaceId ?? workspaceManager.resolveWorkspaceForCwd(meta.cwd) ?? undefined,
           live: isLive
         })
       }

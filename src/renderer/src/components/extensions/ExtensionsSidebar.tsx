@@ -16,7 +16,7 @@ const SECTIONS: {
 ]
 
 /** Extensions-mode replacement for the sessions sidebar. */
-export function ExtensionsSidebar() {
+export function ExtensionsSidebar(): React.JSX.Element {
   const extensionsSection = useSessionStore((s) => s.extensionsSection)
   const setExtensionsSection = useSessionStore((s) => s.setExtensionsSection)
   const setActiveView = useSessionStore((s) => s.setActiveView)

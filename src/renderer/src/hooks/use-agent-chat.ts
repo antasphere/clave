@@ -4,7 +4,11 @@ import type { ChatMessage } from '../../../shared/remote-types'
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 
-export function useAgentChat(agentId: string | null) {
+export function useAgentChat(agentId: string | null): {
+  messages: ChatMessage[]
+  sendMessage: (content: string) => Promise<void>
+  scrollRef: React.RefObject<HTMLDivElement | null>
+} {
   const addMessage = useAgentStore((s) => s.addMessage)
   const appendMessageContent = useAgentStore((s) => s.appendMessageContent)
   const messages = useAgentStore((s) => {
@@ -19,7 +23,9 @@ export function useAgentChat(agentId: string | null) {
     const cleanup = window.electronAPI.onAgentMessage(agentId, (raw: unknown) => {
       const message = raw as ChatMessage
       if (message.status === 'streaming') {
-        const existing = useAgentStore.getState().messages[agentId]?.find((m) => m.id === message.id)
+        const existing = useAgentStore
+          .getState()
+          .messages[agentId]?.find((m) => m.id === message.id)
         if (existing) {
           appendMessageContent(agentId, message.id, message.content)
         } else {

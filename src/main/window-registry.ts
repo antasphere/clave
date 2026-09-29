@@ -98,9 +98,7 @@ export class WindowRegistry<W extends WindowLike = WindowLike> {
 
   /** Every live window showing a workspace, lowest id first. */
   getWindowsForWorkspace(workspaceId: string): W[] {
-    return this.listWindows().filter(
-      (w) => this.windows.get(w.id)!.workspaceId === workspaceId
-    )
+    return this.listWindows().filter((w) => this.windows.get(w.id)!.workspaceId === workspaceId)
   }
 
   getPrimaryWindow(): W | null {
