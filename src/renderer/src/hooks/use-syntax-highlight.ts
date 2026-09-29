@@ -51,24 +51,31 @@ export function useSyntaxHighlight(
   const theme = useSessionStore((s) => s.theme)
   const cancelRef = useRef(0)
 
-  useEffect(() => {
+  // What needs no highlighter is settled while rendering, against the inputs
+  // the last render saw: no content, or a file too large to highlight. A file
+  // that will be highlighted starts loading in the same render.
+  const [seen, setSeen] = useState<{
+    content: string | null
+    filename: string
+    theme: typeof theme
+  } | null>(null)
+  if (!seen || seen.content !== content || seen.filename !== filename || seen.theme !== theme) {
+    setSeen({ content, filename, theme })
     if (!content) {
       setHtml(null)
-      return
-    }
-
-    if (content.length > MAX_HIGHLIGHT_SIZE) {
+    } else if (content.length > MAX_HIGHLIGHT_SIZE) {
       // Fall back to plain pre for large files
-      const escaped = content
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+      const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       setHtml(`<pre style="margin:0;white-space:pre-wrap;">${escaped}</pre>`)
-      return
+    } else {
+      setLoading(true)
     }
+  }
+
+  useEffect(() => {
+    if (!content || content.length > MAX_HIGHLIGHT_SIZE) return
 
     const id = ++cancelRef.current
-    setLoading(true)
 
     getHighlighter()
       .then((highlighter) => {
