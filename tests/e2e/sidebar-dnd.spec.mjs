@@ -107,7 +107,6 @@ async function dragTo(win, from, target) {
   // hovering, the way a hand tracks a row that the drop line's gap has just
   // pushed down the list — a fixed coordinate would end up over whatever moved
   // under it instead.
-  const aim = typeof target === 'function' ? target : () => target
   await win.mouse.move(from.x, from.y)
   await win.mouse.down()
   pointerAt = { x: from.x, y: from.y }

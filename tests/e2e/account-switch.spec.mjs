@@ -291,7 +291,7 @@ export async function run(t) {
       'with headroom, a new session starts on the selected account',
       (await listed(fresh.sessionId))?.account?.label === 'Work'
     )
-    await app.evaluate(({}, WORK_TOKEN) => {
+    await app.evaluate((_electron, WORK_TOKEN) => {
       globalThis.__switchFixture.quota[WORK_TOKEN] = 0.97
     }, WORK_TOKEN)
     await win.evaluate(async (id) => {

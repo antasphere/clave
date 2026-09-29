@@ -32,6 +32,9 @@ const IconButton = React.forwardRef<
   React.ButtonHTMLAttributes<HTMLButtonElement> & {
     tooltip: React.ReactNode
     side?: 'top' | 'bottom' | 'left' | 'right'
+    /** Already in ButtonHTMLAttributes; named here because the trigger reads it
+     *  and react/prop-types cannot see a prop declared in a library type. */
+    disabled?: boolean
   }
 >(({ tooltip, side = 'bottom', children, ...props }, ref) => (
   <Tooltip>

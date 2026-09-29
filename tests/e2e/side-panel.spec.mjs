@@ -458,7 +458,7 @@ export async function run(t) {
       'a deeper rule is inset further than a shallower one',
       [...byDepth.entries()]
         .sort((a, b) => a[0] - b[0])
-        .every(([d, left], i, all) => i === 0 || left > all[i - 1][1]),
+        .every(([, left], i, all) => i === 0 || left > all[i - 1][1]),
       [...byDepth.entries()]
     )
 

@@ -209,7 +209,7 @@ export function FileTree({ cwd, onNavigateToFolder }: {
   const [inlineCreate, setInlineCreate] = useState<InlineCreateState | null>(null)
 
   const handleClickFile = useCallback(
-    (_filePath: string) => {
+    () => {
       // Plain click on file — no-op here, selection handled by handleSelect
     },
     []
@@ -243,7 +243,7 @@ export function FileTree({ cwd, onNavigateToFolder }: {
   )
 
   const handleDoubleClickDir = useCallback(
-    (_dirPath: string) => {
+    () => {
       // Navigation on double-click removed — use "Open as Root" from context menu instead
     },
     []
@@ -387,7 +387,7 @@ export function FileTree({ cwd, onNavigateToFolder }: {
       })
       setContextMenu({ x: e.clientX, y: e.clientY, items })
     },
-    [cwd, setPreviewFile, onNavigateToFolder]
+    [cwd, setPreviewFile, onNavigateToFolder, addFileTab]
   )
 
   // Context menu on empty area — allow creating at root
