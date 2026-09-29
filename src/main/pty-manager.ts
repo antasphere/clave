@@ -234,7 +234,14 @@ class PtyManager {
                 : adapter.provider === 'claude'
                   ? 'bypassPermissions'
                   : undefined
-              : undefined
+              : undefined,
+            // What `--yolo` means to a Codex terminal: no approvals AND no
+            // sandbox. The app-server takes the two separately, and without
+            // this a dangerous chat ran in the config's sandbox.
+            sandbox:
+              options?.dangerousMode && adapter.provider === 'codex'
+                ? 'danger-full-access'
+                : undefined
           }
         })
       : session

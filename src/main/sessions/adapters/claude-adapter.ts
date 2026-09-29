@@ -19,7 +19,7 @@ import {
   type CommandOption,
   type PermissionModeOption
 } from '../../../shared/session-model'
-import { buildAgentArgv } from '../../../shared/agent-launch'
+import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
 import {
   CLAUDE_MODELS,
@@ -840,6 +840,10 @@ export class ClaudeAdapter implements SessionAdapter {
       context.workspaceId,
       context.launchProfileId
     )
+    // Clave's own launch mode wins (the CLI takes the last --permission-mode);
+    // else the profile's, which the CLI obeys all the same.
+    const profilePermissions = claudeProfilePermissions(profile)
+    const launchMode = options.permissionMode ?? profilePermissions.mode
     const emitter = new EventEmitter()
     const emit = (event: SessionEvent): void => {
       if (event.type === 'permission_mode') live.permissionMode = event.mode
@@ -874,7 +878,7 @@ export class ClaudeAdapter implements SessionAdapter {
       initialPrompt: context.initialPrompt,
       initialInput: context.initialInput,
       model: options.model ?? null,
-      permissionMode: runningMode(options.permissionMode ?? 'default'),
+      permissionMode: runningMode(launchMode ?? 'default'),
       resume: options.resume
         ? { id: options.resume, cwd: spec.cwd, configDir: context.configDir }
         : undefined,
@@ -986,7 +990,7 @@ export class ClaudeAdapter implements SessionAdapter {
         return child
       }
     }
-    if (options.permissionMode === 'bypassPermissions')
+    if (launchMode === 'bypassPermissions' || profilePermissions.bypassAvailable)
       live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
     this.handles.set(spec.id, live)
     return live.handle
