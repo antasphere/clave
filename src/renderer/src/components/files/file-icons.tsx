@@ -94,7 +94,7 @@ export function FileIcon({
   isDirectory?: boolean
   isOpen?: boolean
   className?: string
-}) {
+}): React.JSX.Element {
   const cls = `w-3.5 h-3.5 ${className ?? ''}`
   if (isDirectory) return isOpen ? <FolderOpenIcon className={cls} /> : <FolderIcon className={cls} />
   const Component = ICON_COMPONENTS[resolveIconType(name)]

@@ -9,7 +9,7 @@ interface RemoteFileTreeProps {
   cwd: string
 }
 
-export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps) {
+export function RemoteFileTree({ locationId, cwd }: RemoteFileTreeProps): React.JSX.Element {
   const { flatNodes, loaded, error, loadRoot, refresh, toggleExpand } = useRemoteFileTree(locationId, cwd)
   const setPreviewFile = useSessionStore((s) => s.setPreviewFile)
 
@@ -84,7 +84,7 @@ function RemoteFileTreeRow({
 }: {
   node: FlatRemoteTreeNode
   onClick: (node: FlatRemoteTreeNode) => void
-}) {
+}): React.JSX.Element {
   return (
     <button
       onClick={() => onClick(node)}

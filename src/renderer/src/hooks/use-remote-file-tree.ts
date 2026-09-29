@@ -9,7 +9,18 @@ export interface FlatRemoteTreeNode extends RemoteTreeNode {
   depth: number
 }
 
-export function useRemoteFileTree(locationId: string | undefined, cwd: string | null) {
+export function useRemoteFileTree(
+  locationId: string | undefined,
+  cwd: string | null
+): {
+  rootNodes: RemoteTreeNode[]
+  flatNodes: RemoteTreeNode[]
+  loaded: boolean
+  error: string | null
+  loadRoot: () => Promise<void>
+  refresh: () => void
+  toggleExpand: (nodePath: string) => Promise<void>
+} {
   const [rootNodes, setRootNodes] = useState<RemoteTreeNode[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)

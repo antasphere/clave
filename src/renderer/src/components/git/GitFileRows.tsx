@@ -67,7 +67,7 @@ export function FileRow({
   overlap?: boolean
   /** Close the block above this one with a rule at this row's own indentation. */
   rule?: boolean
-}) {
+}): React.JSX.Element {
   const { name, dir } = splitPath(file.path)
   const isStaged = file.staged
 
@@ -173,7 +173,7 @@ export function GitTreeDirRow({
   onToggle: (path: string) => void
   onSelect?: (path: string, metaKey: boolean) => void
   baseIndentPx?: number
-}) {
+}): React.JSX.Element {
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.metaKey && onSelect) {
@@ -253,7 +253,7 @@ export function GitTreeFileRow({
   baseIndentPx?: number
   readOnly?: boolean
   overlap?: boolean
-}) {
+}): React.JSX.Element {
   const file = node.file!
   const isStaged = file.staged
 
@@ -377,7 +377,7 @@ export function GitTreeSection({
   readOnly?: boolean
   /** Files that also have local changes — flagged on their rows. */
   overlapPaths?: Set<string>
-}) {
+}): React.JSX.Element {
   const flatNodes = useMemo(() => {
     if (files.length === 0) return []
     const tree = compactTree(buildGitTree(files))

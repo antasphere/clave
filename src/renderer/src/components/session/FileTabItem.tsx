@@ -30,7 +30,7 @@ function FileTabItemImpl({
   onEditingDone,
   onPointerDown,
   isDragging
-}: FileTabItemProps) {
+}: FileTabItemProps): React.JSX.Element {
   const renameFileTab = useSessionStore((s) => s.renameFileTab)
   const removeFileTab = useSessionStore((s) => s.removeFileTab)
 

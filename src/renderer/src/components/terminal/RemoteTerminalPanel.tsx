@@ -12,7 +12,11 @@ interface RemoteTerminalPanelProps {
   locationId: string
 }
 
-export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTerminalPanelProps) {
+export function RemoteTerminalPanel({
+  sessionId,
+  shellId,
+  locationId
+}: RemoteTerminalPanelProps): React.JSX.Element {
   const { containerRef, focus } = useRemoteTerminal(shellId)
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const setFocusedSession = useSessionStore((s) => s.setFocusedSession)
@@ -32,7 +36,7 @@ export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTe
 
   // Auto-focus xterm when the window regains focus (Cmd+Tab, clicking from another app)
   useEffect(() => {
-    const handleWindowFocus = () => {
+    const handleWindowFocus = (): void => {
       if (useSessionStore.getState().focusedSessionId === sessionId) {
         focus()
       }

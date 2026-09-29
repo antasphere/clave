@@ -4,7 +4,11 @@ import type { ChatMessage } from '../../../shared/remote-types'
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 
-export function useAgentChat(agentId: string | null) {
+export function useAgentChat(agentId: string | null): {
+  messages: ChatMessage[]
+  sendMessage: (content: string) => Promise<void>
+  scrollRef: React.RefObject<HTMLDivElement | null>
+} {
   const addMessage = useAgentStore((s) => s.addMessage)
   const appendMessageContent = useAgentStore((s) => s.appendMessageContent)
   const messages = useAgentStore((s) => {

@@ -60,7 +60,16 @@ function fuzzyMatch(query: string, target: string): { score: number; matchIndice
   return { score, matchIndices: indices }
 }
 
-export function useFileSearch(cwd: string | null, isOpen: boolean) {
+export function useFileSearch(
+  cwd: string | null,
+  isOpen: boolean
+): {
+  results: FuzzyMatch[]
+  query: string
+  setQuery: React.Dispatch<React.SetStateAction<string>>
+  loading: boolean
+  truncated: boolean
+} {
   const [files, setFiles] = useState<string[]>([])
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)

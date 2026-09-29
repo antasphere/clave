@@ -47,7 +47,7 @@ function statusDisplayLetter(status: string): string {
   }
 }
 
-export function GitDiffPreview() {
+export function GitDiffPreview(): React.JSX.Element | null {
   const diffPreview = useSessionStore((s) => s.diffPreview)
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
   const triggerGitRefresh = useSessionStore((s) => s.triggerGitRefresh)

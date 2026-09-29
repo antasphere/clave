@@ -20,7 +20,11 @@ function detectPrompt(buffer: string): string | null {
   return null
 }
 
-export function useRemoteTerminal(shellId: string) {
+export function useRemoteTerminal(shellId: string): {
+  containerRef: React.RefObject<HTMLDivElement | null>
+  fit: () => void
+  focus: () => void
+} {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -118,7 +122,7 @@ export function useRemoteTerminal(shellId: string) {
     let resizeIpcTimer: ReturnType<typeof setTimeout> | null = null
     let lastSentCols = terminal.cols
     let lastSentRows = terminal.rows
-    const flushResize = () => {
+    const flushResize = (): void => {
       resizeIpcTimer = null
       if (!pendingResize) return
       const { cols, rows } = pendingResize
@@ -338,7 +342,7 @@ export function useRemoteTerminal(shellId: string) {
       terminalRef.current.options.cursorBlink = isVisibleRef.current
     }
     let pendingFitTimer: ReturnType<typeof setTimeout> | null = null
-    const scheduleFit = () => {
+    const scheduleFit = (): void => {
       if (pendingFitTimer) clearTimeout(pendingFitTimer)
       pendingFitTimer = setTimeout(() => {
         try {

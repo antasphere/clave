@@ -171,7 +171,16 @@ function collapseAllNodes(nodes: TreeNode[]): TreeNode[] {
   })
 }
 
-export function useFileTree(cwd: string | null) {
+export function useFileTree(cwd: string | null): {
+  rootNodes: TreeNode[]
+  flatList: TreeNode[]
+  loading: boolean
+  filter: string
+  setFilter: React.Dispatch<React.SetStateAction<string>>
+  toggleDir: (dirPath: string) => Promise<void>
+  refreshDir: (dirPath: string) => Promise<void>
+  collapseAll: () => void
+} {
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')

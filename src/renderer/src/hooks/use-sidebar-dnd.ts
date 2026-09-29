@@ -43,7 +43,13 @@ export function useSidebarDnd(opts: {
   moveItems: (ids: string[], targetId: string, position: 'before' | 'after' | 'inside') => void
   pinnedZoneRef?: React.RefObject<HTMLElement | null>
   onPinnedDrop?: (groupId: string) => void
-}) {
+}): {
+  isDragging: boolean
+  draggedIds: string[]
+  dropIndicator: DropIndicatorState | null
+  isOverPinnedZone: boolean
+  handlePointerDown: (e: React.PointerEvent, itemId: string, isGroup: boolean) => void
+} {
   const { containerRef, moveItems, pinnedZoneRef, onPinnedDrop } = opts
 
   const [dndState, setDndState] = useState<DndRenderState>({
@@ -435,7 +441,7 @@ export function useSidebarDnd(opts: {
       }
 
       if (scrollDelta !== 0) {
-        const scroll = () => {
+        const scroll = (): void => {
           container.scrollTop += scrollDelta
           drag.scrollAnimFrame = requestAnimationFrame(scroll)
         }
@@ -476,7 +482,7 @@ export function useSidebarDnd(opts: {
   )
 
   useEffect(() => {
-    const handlePointerMove = (e: PointerEvent) => {
+    const handlePointerMove = (e: PointerEvent): void => {
       const drag = dragRef.current
       if (!drag) return
 
@@ -499,7 +505,7 @@ export function useSidebarDnd(opts: {
         })
 
         // Prevent the click event that would fire on pointer up
-        const preventClick = (evt: Event) => {
+        const preventClick = (evt: Event): void => {
           evt.stopPropagation()
           evt.preventDefault()
         }
@@ -547,7 +553,7 @@ export function useSidebarDnd(opts: {
       autoScroll(e.clientY, drag)
     }
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (): void => {
       const drag = dragRef.current
       if (!drag) return
 
@@ -635,7 +641,7 @@ export function useSidebarDnd(opts: {
     }
 
     // ESC to cancel drag
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && dragRef.current?.started) {
         e.preventDefault()
         if (dragRef.current.scrollAnimFrame) {

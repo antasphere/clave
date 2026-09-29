@@ -44,7 +44,7 @@ function InlineCreateInput({
   depth: number
   onCreated: (path: string, type: 'file' | 'directory') => void
   onCancel: () => void
-}) {
+}): React.JSX.Element {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -175,7 +175,7 @@ function TreeRule({ depth }: { depth: number }): React.JSX.Element {
 export function FileTree({ cwd, onNavigateToFolder }: {
   cwd: string | null
   onNavigateToFolder: (absolutePath: string) => void
-}) {
+}): React.JSX.Element {
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const setPreviewFile = useSessionStore((s) => s.setPreviewFile)
   const addFileTab = useSessionStore((s) => s.addFileTab)

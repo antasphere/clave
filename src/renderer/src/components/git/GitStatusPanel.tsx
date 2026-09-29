@@ -329,7 +329,7 @@ function RepoSection({
   /** Show the local work — staged, modified, untracked. On by default; the
    *  + badge-button folds it away so only the sync ranges remain. */
   showChanges?: boolean
-}) {
+}): React.JSX.Element {
   const sectionIndentPx = 12 + depth * TREE_INDENT_PX
   const fileIndentPx = sectionIndentPx + TREE_INDENT_PX
   const treeBaseIndentPx = (depth + 1) * TREE_INDENT_PX
@@ -1022,7 +1022,7 @@ export function GitStatusPanel({
   showIncoming?: boolean
   showOutgoing?: boolean
   showChanges?: boolean
-}) {
+}): React.JSX.Element | null {
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const internal = useGitStatus(externalStatus !== undefined ? null : cwd, isActive)
@@ -1258,7 +1258,7 @@ function MultiRepoSection({
   worktree?: { last: boolean }
   /** Worktree rows follow this repo — draw the stem their guides continue. */
   hasWorktrees?: boolean
-}) {
+}): React.JSX.Element {
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   const collapseAllTrigger = useSessionStore((s) => s.collapseAllTrigger)
@@ -1796,7 +1796,7 @@ export function MultiRepoGitPanel({
   live?: boolean
   refreshing?: boolean
   lastUpdated?: number | null
-}) {
+}): React.JSX.Element {
   const [nestedDocked, setNestedDocked] = useState(false)
   const [selectedRepoPaths, setSelectedRepoPaths] = useState<Set<string>>(new Set())
 

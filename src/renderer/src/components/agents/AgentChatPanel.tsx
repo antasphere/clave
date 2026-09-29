@@ -5,7 +5,7 @@ import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline'
 
-export function AgentChatPanel() {
+export function AgentChatPanel(): React.JSX.Element {
   const activeAgentId = useAgentStore((s) => s.activeAgentId)
   const agent = useAgentStore((s) => s.agents.find((a) => a.id === activeAgentId))
   const { messages, sendMessage, scrollRef } = useAgentChat(activeAgentId)

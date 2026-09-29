@@ -210,7 +210,7 @@ export function SectionHeader({
   disabled?: boolean
   /** Left offset in px — lets the header sit at its tree depth (default 12 = px-3). */
   indentPx?: number
-}) {
+}): React.JSX.Element {
   return (
     <div className="git-section-header flex items-center pr-3" style={{ paddingLeft: indentPx ?? 12 }}>
       <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
@@ -251,7 +251,7 @@ export function SectionHeader({
  * folds its repos and their parent folders — and one button that does both is
  * the honest shape of that.
  */
-export function CollapseAllButton() {
+export function CollapseAllButton(): React.JSX.Element {
   const triggerCollapseAll = useSessionStore((s) => s.triggerCollapseAll)
   return (
     <IconButton
@@ -265,7 +265,7 @@ export function CollapseAllButton() {
   )
 }
 
-export function ViewModeToggle() {
+export function ViewModeToggle(): React.JSX.Element {
   const gitViewMode = useSessionStore((s) => s.gitViewMode)
   const setGitViewMode = useSessionStore((s) => s.setGitViewMode)
   const isTree = gitViewMode === 'tree'
@@ -301,7 +301,7 @@ export function CommitBarToggle(): React.JSX.Element {
   )
 }
 
-export function PanelModeToggle() {
+export function PanelModeToggle(): React.JSX.Element {
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const setGitPanelMode = useSessionStore((s) => s.setGitPanelMode)
   const isLog = gitPanelMode === 'log'
@@ -331,7 +331,7 @@ export function MagicSyncButton({
 }: {
   repoPaths: string[]
   onDone?: () => void
-}) {
+}): React.JSX.Element {
   const { state, run } = useGitBatch()
   const mine = state.running && state.op === 'sync'
 
@@ -400,7 +400,7 @@ export function MagicPullButton({
 }: {
   repoPaths: string[]
   onDone?: () => void
-}) {
+}): React.JSX.Element {
   const { state, run } = useGitBatch()
   const mine = state.running && state.op === 'pull'
   const count = repoPaths.length
@@ -444,7 +444,13 @@ export function MagicPullButton({
   )
 }
 
-export function JourneyButton({ cwd, repoName }: { cwd: string; repoName: string }) {
+export function JourneyButton({
+  cwd,
+  repoName
+}: {
+  cwd: string
+  repoName: string
+}): React.JSX.Element {
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   return (
     <IconButton
@@ -464,7 +470,7 @@ export function JourneyButton({ cwd, repoName }: { cwd: string; repoName: string
   )
 }
 
-export function ErrorBanner({ message }: { message: string }) {
+export function ErrorBanner({ message }: { message: string }): React.JSX.Element {
   return (
     <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{message}</div>
   )

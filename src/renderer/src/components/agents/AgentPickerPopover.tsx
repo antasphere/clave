@@ -18,7 +18,10 @@ interface AgentPickerPopoverProps {
   onClose: () => void
 }
 
-export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverProps) {
+export function AgentPickerPopover({
+  anchorRef,
+  onClose
+}: AgentPickerPopoverProps): React.ReactPortal {
   const agents = useAgentStore((s) => s.agents)
   const locations = useLocationStore((s) => s.locations)
   const sessions = useSessionStore((s) => s.sessions)
@@ -46,12 +49,12 @@ export function AgentPickerPopover({ anchorRef, onClose }: AgentPickerPopoverPro
   )
 
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
+    const handleClick = (e: MouseEvent): void => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose()
       }
     }
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('mousedown', handleClick)

@@ -60,7 +60,7 @@ export function SidebarTabItem({
   onEditingDone,
   onPointerDown,
   isDragging
-}: SidebarTabItemProps) {
+}: SidebarTabItemProps): React.JSX.Element {
   const {
     editing,
     editValue,

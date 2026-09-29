@@ -40,7 +40,7 @@ export function RemoteDirectoryPicker({
   locationName,
   onSelect,
   onCancel
-}: RemoteDirectoryPickerProps) {
+}: RemoteDirectoryPickerProps): React.ReactPortal {
   const [currentPath, setCurrentPath] = useState('')
   const [homePath, setHomePath] = useState('')
   const [entries, setEntries] = useState<DirEntry[]>([])
@@ -164,7 +164,7 @@ export function RemoteDirectoryPicker({
 
   // Global Escape: exit edit mode first, otherwise close the picker
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       if (editingRef.current) {
         setEditingPath(false)

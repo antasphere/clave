@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { GitJourneyResult } from '../../../preload/index.d'
 
-export function useGitJourney(cwd: string | null, active: boolean) {
+export function useGitJourney(
+  cwd: string | null,
+  active: boolean
+): {
+  data: GitJourneyResult | null
+  loading: boolean
+  error: string | null
+  refresh: () => Promise<void>
+  loadMore: () => void
+} {
   const [data, setData] = useState<GitJourneyResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

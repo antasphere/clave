@@ -5,7 +5,15 @@ import type { GitStatusResult } from '../../../preload/index.d'
 const POLL_INTERVAL = 5000
 const FETCH_INTERVAL = 30000
 
-export function useGitStatus(cwd: string | null, active: boolean) {
+export function useGitStatus(
+  cwd: string | null,
+  active: boolean
+): {
+  status: GitStatusResult | null
+  loading: boolean
+  error: string | null
+  refresh: () => void
+} {
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

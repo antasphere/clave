@@ -7,7 +7,7 @@ export function SectionHeading({
   /** When provided, the whole label toggles the section (no disclosure arrow). */
   onToggle?: () => void
   actions?: React.ReactNode
-}) {
+}): React.JSX.Element {
   // Both paddings derive from the shared sidebar keyline (--sidebar-gutter) so
   // the label aligns with row text on the left and any action icons align with
   // the rows' trailing icons on the right.

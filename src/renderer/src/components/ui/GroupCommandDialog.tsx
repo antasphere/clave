@@ -74,7 +74,7 @@ export function GroupCommandDialog({
   initialColor = 'blue',
   initialCwd = null,
   initialIcon = 'terminal'
-}: GroupCommandDialogProps) {
+}: GroupCommandDialogProps): React.JSX.Element {
   const [command, setCommand] = useState(initialCommand ?? '')
   const [mode, setMode] = useState<'prefill' | 'auto'>(initialMode)
   const [color, setColor] = useState<GroupTerminalColor>(initialColor)
@@ -93,11 +93,11 @@ export function GroupCommandDialog({
     }
   }, [isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon])
 
-  const handleSave = () => {
+  const handleSave = (): void => {
     onSave(command.trim(), mode, color, cwd, icon)
   }
 
-  const handlePickFolder = async () => {
+  const handlePickFolder = async (): Promise<void> => {
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
     const folder = await window.electronAPI.openFolderDialog(cwd ?? undefined)

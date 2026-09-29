@@ -28,7 +28,11 @@ function detectPrompt(buffer: string): string | null {
   return null
 }
 
-export function useTerminal(sessionId: string) {
+export function useTerminal(sessionId: string): {
+  containerRef: React.RefObject<HTMLDivElement | null>
+  fit: () => void
+  focus: () => void
+} {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -490,7 +494,7 @@ export function useTerminal(sessionId: string) {
       terminalRef.current.options.cursorBlink = isVisibleRef.current
     }
     let pendingFitTimer: ReturnType<typeof setTimeout> | null = null
-    const scheduleFit = () => {
+    const scheduleFit = (): void => {
       if (pendingFitTimer) clearTimeout(pendingFitTimer)
       // 300ms outlasts Framer Motion's 200ms panel/sidebar animation so the
       // final fit observes the settled width. We deliberately do NOT fit

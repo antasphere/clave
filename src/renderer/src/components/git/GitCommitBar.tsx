@@ -12,7 +12,7 @@ export function PullButton({
   cwd: string
   operating: boolean
   onOperation: (fn: () => Promise<void>) => void
-}) {
+}): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -106,7 +106,7 @@ export function CommitBar({
   hasUpstream: boolean
   operating: boolean
   onOperation: (fn: () => Promise<void>) => void
-}) {
+}): React.JSX.Element {
   const commitMessage = useSessionStore((s) => s.commitMessages[cwd] ?? '')
   const generating = useSessionStore((s) => s.generatingCommitCwds.has(cwd))
   const [generateError, setGenerateError] = useState<string | null>(null)

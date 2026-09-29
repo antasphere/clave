@@ -77,7 +77,7 @@ interface ContextMenuState {
   header?: React.ReactNode
 }
 
-function GroupColorPickerHeader({ groupId, initialColor }: { groupId: string; initialColor: GroupTerminalColor | null }) {
+function GroupColorPickerHeader({ groupId, initialColor }: { groupId: string; initialColor: GroupTerminalColor | null }): React.JSX.Element {
   const setGroupColor = useSessionStore((s) => s.setGroupColor)
   const currentColor = useSessionStore((s) => s.groups.find((g) => g.id === groupId)?.color ?? null)
 
@@ -91,7 +91,7 @@ function GroupColorPickerHeader({ groupId, initialColor }: { groupId: string; in
 }
 
 /** Animated gap spacer for drop displacement */
-function DropGap({ active, edge = 'before' }: { active: boolean; edge?: 'before' | 'after' }) {
+function DropGap({ active, edge = 'before' }: { active: boolean; edge?: 'before' | 'after' }): React.JSX.Element {
   // The drop line takes NO space: a zero-height wrapper in the flow and a bar
   // drawn over the seam between rows. It used to be a 16px (once 36px) slot
   // inserted into the list, and every move of the line shifted the rows under
@@ -153,7 +153,7 @@ function useOverflows(ref: React.RefObject<HTMLDivElement | null>): boolean {
   return overflows
 }
 
-export function Sidebar() {
+export function Sidebar(): React.JSX.Element {
   // No traffic lights in fullscreen, so the wordmark's clearance for them goes.
   const sessions = useSessionStore((s) => s.sessions)
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
@@ -306,12 +306,12 @@ export function Sidebar() {
   const [isFileDragOverWindow, setIsFileDragOverWindow] = useState(false)
   useEffect(() => {
     let clearTimer: ReturnType<typeof setTimeout> | null = null
-    const clear = () => {
+    const clear = (): void => {
       if (clearTimer) clearTimeout(clearTimer)
       clearTimer = null
       setIsFileDragOverWindow(false)
     }
-    const handleDragOver = (e: DragEvent) => {
+    const handleDragOver = (e: DragEvent): void => {
       if (!e.dataTransfer?.types.includes('Files')) return
       setIsFileDragOverWindow(true)
       if (clearTimer) clearTimeout(clearTimer)
@@ -2002,7 +2002,7 @@ function PinnedSection({
   isFileDragOver: boolean
   groupPickerOpen: boolean
   onCloseGroupPicker: () => void
-}) {
+}): React.JSX.Element {
   const [exportDialogPinnedId, setExportDialogPinnedId] = useState<string | null>(null)
 
   const handleContextMenu = useCallback(

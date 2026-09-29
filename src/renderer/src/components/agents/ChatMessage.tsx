@@ -6,7 +6,7 @@ interface ChatMessageProps {
   message: ChatMessageType
 }
 
-function ChatMessageImpl({ message }: ChatMessageProps) {
+function ChatMessageImpl({ message }: ChatMessageProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
 

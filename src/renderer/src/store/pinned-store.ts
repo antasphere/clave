@@ -8,6 +8,10 @@ import { resolveGroupDefaults } from './group-defaults'
 import { resolveDeclaredGroupView } from '../../../shared/group-view'
 import { useSessionStore } from './session-store'
 import { getActiveWorkspaceId } from './workspace-store'
+import type { ClaveFileWriteData } from '../../../preload/index.d'
+
+/** One group as `serializePin` writes it into a `.clave` file. */
+type SerializedPin = NonNullable<ClaveFileWriteData['groups']>[number]
 
 /** The `.clave` account field of a live session: its account's LABEL when it
  *  is not the Default (the file is shared between machines, ids are not). */
@@ -232,7 +236,7 @@ function syncToClaveFile(pg: PinnedGroup): void {
 
       const isMulti = pinsForFile.length > 1 || pinsForFile[0].groupIndex !== undefined
 
-      const serializePin = (p: PinnedGroup) => ({
+      const serializePin = (p: PinnedGroup): SerializedPin => ({
         name: p.name,
         cwd: p.cwd,
         color: p.color,

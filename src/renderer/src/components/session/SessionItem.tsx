@@ -31,7 +31,7 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   )
 }
 
-function LocationBadge({ locationId }: { locationId: string }) {
+function LocationBadge({ locationId }: { locationId: string }): React.JSX.Element | null {
   const location = useLocationStore((s) => s.locations.find((l) => l.id === locationId))
   if (!location || location.type !== 'remote') return null
   return (
@@ -57,7 +57,7 @@ function getClaudeVariant(session: Session): 'agents' | null {
 /** The dashboard icon on a row carrying an attached web view (session.view):
  *  clicking it shows the view in the main pane; clicking the row itself still
  *  shows the terminal. A span, not a button — the row is already a button. */
-function SessionViewIcon({ session }: { session: Session }) {
+function SessionViewIcon({ session }: { session: Session }): React.JSX.Element {
   return (
     <span
       role="button"
@@ -80,7 +80,7 @@ function SessionViewIcon({ session }: { session: Session }) {
   )
 }
 
-function SessionIcon({ session }: { session: Session }) {
+function SessionIcon({ session }: { session: Session }): React.JSX.Element {
   // Provider sessions show their brand mark; plain terminals keep the terminal icon.
   // OpenClaw remote agents use the bolt. The local Claude variants share the Claude mark
   // (the trailing glyph tells them apart). Remote sessions reuse the same provider marks —
@@ -200,7 +200,7 @@ function SessionItemImpl({
   onPointerDown,
   isDragging,
   onDelete
-}: SessionItemProps) {
+}: SessionItemProps): React.JSX.Element {
   const renameSession = useSessionStore((s) => s.renameSession)
 
   return (

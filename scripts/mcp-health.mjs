@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS, run by hand from a tab */
 // Is THIS tab's Clave MCP connection alive?
 //
 // Do NOT trust mcp-configs/<id>.json: Clave rewrites every surviving tab's
@@ -38,7 +39,7 @@ let last = null
 for (const f of readdirSync(logDir).filter((f) => f.endsWith('.jsonl'))) {
   for (const l of readFileSync(join(logDir, f), 'utf-8').split('\n')) {
     if (!l.trim()) continue
-    try { const d = JSON.parse(l); if (!last || d.timestamp > last.timestamp) last = d } catch {}
+    try { const d = JSON.parse(l); if (!last || d.timestamp > last.timestamp) last = d } catch { /* a line still being written: skip it */ }
   }
 }
 if (last && /Unable to connect|Connection error/.test(last.debug ?? '')) {

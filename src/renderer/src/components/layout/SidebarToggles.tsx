@@ -2,7 +2,7 @@ import { useSessionStore } from '../../store/session-store'
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
 
-export function ClaudeToggle({ compact }: { compact?: boolean }) {
+export function ClaudeToggle({ compact }: { compact?: boolean }): React.JSX.Element {
   const claudeMode = useSessionStore((s) => s.claudeMode)
   const toggleClaudeMode = useSessionStore((s) => s.toggleClaudeMode)
 
@@ -41,7 +41,7 @@ export function ClaudeToggle({ compact }: { compact?: boolean }) {
   )
 }
 
-export function DangerousToggle({ compact }: { compact?: boolean }) {
+export function DangerousToggle({ compact }: { compact?: boolean }): React.JSX.Element {
   const dangerousMode = useSessionStore((s) => s.dangerousMode)
   const toggleDangerousMode = useSessionStore((s) => s.toggleDangerousMode)
 

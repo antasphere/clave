@@ -9,7 +9,7 @@ const statusColors: Record<string, string> = {
   error: 'bg-red-500'
 }
 
-export function AgentHeader() {
+export function AgentHeader(): React.JSX.Element | null {
   const activeAgentId = useAgentStore((s) => s.activeAgentId)
   const agent = useAgentStore((s) => s.agents.find((a) => a.id === activeAgentId))
   const location = useLocationStore((s) => s.locations.find((l) => l.id === agent?.locationId))

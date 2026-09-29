@@ -42,7 +42,10 @@ function getLang(filename: string): string {
   return EXT_TO_LANG[ext] ?? 'text'
 }
 
-export function useSyntaxHighlight(content: string | null, filename: string) {
+export function useSyntaxHighlight(
+  content: string | null,
+  filename: string
+): { html: string | null; loading: boolean } {
   const [html, setHtml] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const theme = useSessionStore((s) => s.theme)

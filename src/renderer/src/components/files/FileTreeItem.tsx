@@ -27,7 +27,7 @@ export function FileTreeItem({
   onToggleDir,
   onContextMenu,
   onDragStart
-}: FileTreeItemProps) {
+}: FileTreeItemProps): React.JSX.Element {
   const lastClickRef = useRef<{ time: number; path: string }>({ time: 0, path: '' })
 
   const handleClick = useCallback(

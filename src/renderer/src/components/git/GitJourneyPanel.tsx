@@ -51,7 +51,7 @@ function CommitDot({
   variant: 'local' | 'pushed'
   isSelected?: boolean
   onClick: () => void
-}) {
+}): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const dotRef = useRef<HTMLButtonElement>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
@@ -113,7 +113,7 @@ function CommitFileRow({
   file: GitCommitFileStatus
   isFocused: boolean
   onClick: () => void
-}) {
+}): React.JSX.Element {
   const fileName = file.path.includes('/') ? file.path.split('/').pop()! : file.path
   const dir = file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/') + 1) : ''
 
@@ -157,7 +157,7 @@ function navItemKey(item: NavItem): string {
 // GitJourneyPanel — main exported component
 // ---------------------------------------------------------------------------
 
-export function GitJourneyPanel() {
+export function GitJourneyPanel(): React.JSX.Element | null {
   const journeyPanel = useSessionStore((s) => s.journeyPanel)
   const closeJourneyPanel = useSessionStore((s) => s.closeJourneyPanel)
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
@@ -308,7 +308,7 @@ export function GitJourneyPanel() {
   // Keyboard navigation — single handler, registered once
   useEffect(() => {
     if (!journeyPanel) return
-    const handleKey = (e: KeyboardEvent) => {
+    const handleKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         if (diffPreviewRef.current) {
           setDiffPreview(null)

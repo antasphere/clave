@@ -60,7 +60,7 @@ function CommitDetail({
   activeDiffFile: string | null
   onSelectFile: (file: GitCommitFileStatus, allFiles: GitCommitFileStatus[], clickY: number) => void
   onClose: () => void
-}) {
+}): React.JSX.Element {
   const [files, setFiles] = useState<GitCommitFileStatus[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -171,7 +171,7 @@ function CommitRow({
   isExpanded: boolean
   onClick: () => void
   variant?: 'outgoing' | 'incoming' | 'normal'
-}) {
+}): React.JSX.Element {
   // Subtle left border for outgoing/incoming commits
   const borderClass =
     variant === 'outgoing'
@@ -221,7 +221,7 @@ function LogSectionHeader({
   actionTitle?: string
   onAction?: () => void
   actionDisabled?: boolean
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex items-center px-3 pt-2.5 pb-1">
       <span className={`text-[10px] font-semibold uppercase tracking-wider ${color}`}>
@@ -246,7 +246,7 @@ function LogSectionHeader({
 // SyncDivider — visual separator between sections
 // ---------------------------------------------------------------------------
 
-function SyncDivider({ label }: { label: string }) {
+function SyncDivider({ label }: { label: string }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5">
       <div className="flex-1 h-px bg-border-subtle" />
@@ -272,7 +272,7 @@ export function GitLogView({
   branch: string
   ahead: number
   behind: number
-}) {
+}): React.JSX.Element {
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
   const [outgoing, setOutgoing] = useState<GitLogEntry[]>([])
   const [incoming, setIncoming] = useState<GitLogEntry[]>([])

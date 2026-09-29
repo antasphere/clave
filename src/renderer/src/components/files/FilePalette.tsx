@@ -5,7 +5,14 @@ import { useFileSearch, type FuzzyMatch } from '../../hooks/use-file-search'
 import { insertPath } from '../../lib/shell'
 import { FileIcon } from './file-icons'
 
-function HighlightedText({ text, indices }: { text: string; indices: number[]; offset?: number }) {
+function HighlightedText({
+  text,
+  indices
+}: {
+  text: string
+  indices: number[]
+  offset?: number
+}): React.JSX.Element {
   if (indices.length === 0) return <>{text}</>
   const chars: React.ReactNode[] = []
   const indexSet = new Set(indices)
@@ -33,7 +40,7 @@ function ResultRow({
   isSelected: boolean
   onMouseEnter: () => void
   onClick: () => void
-}) {
+}): React.JSX.Element {
   return (
     <button
       className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors ${
@@ -60,7 +67,7 @@ function ResultRow({
   )
 }
 
-export function FilePalette() {
+export function FilePalette(): React.JSX.Element {
   const isOpen = useSessionStore((s) => s.filePaletteOpen)
   const setOpen = useSessionStore((s) => s.setFilePaletteOpen)
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
@@ -95,7 +102,7 @@ export function FilePalette() {
   // Global Escape handler (works even when input is disabled)
   useEffect(() => {
     if (!isOpen) return
-    const handleEscape = (e: KeyboardEvent) => {
+    const handleEscape = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
         close()

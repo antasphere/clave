@@ -7,7 +7,12 @@ interface DiffLinesViewProps {
   className?: string
 }
 
-export function DiffLinesView({ lines, loading, error, className }: DiffLinesViewProps) {
+export function DiffLinesView({
+  lines,
+  loading,
+  error,
+  className
+}: DiffLinesViewProps): React.JSX.Element {
   return (
     <div className={`overflow-auto font-mono text-[11px] leading-[18px] ${className ?? ''}`}>
       {loading && (

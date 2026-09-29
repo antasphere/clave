@@ -262,6 +262,7 @@ export interface ClaveFileWriteData {
     category?: string
     logo?: string
     prompt?: string
+    view?: string
     sessions: {
       cwd: string
       name: string
@@ -273,6 +274,7 @@ export interface ClaveFileWriteData {
       dangerousMode: boolean
       prompt?: string
       rootSession?: boolean
+      account?: string
     }[]
     terminals: {
       command: string
@@ -283,6 +285,7 @@ export interface ClaveFileWriteData {
       autoLaunchLocalhost?: boolean
       persistent?: boolean
       serverUrl?: string
+      groupView?: boolean
     }[]
   }>
 }

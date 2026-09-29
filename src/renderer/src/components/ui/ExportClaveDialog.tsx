@@ -16,7 +16,7 @@ export function ExportClaveDialog({
   defaultFileName,
   onExport,
   onCancel
-}: ExportClaveDialogProps) {
+}: ExportClaveDialogProps): React.JSX.Element {
   const [folder, setFolder] = useState<string | null>(null)
   const [fileName, setFileName] = useState(defaultFileName)
   const [keepSynced, setKeepSynced] = useState(false)
@@ -36,14 +36,14 @@ export function ExportClaveDialog({
     }
   }, [isOpen, defaultFileName])
 
-  const handleExport = () => {
+  const handleExport = (): void => {
     const name = fileName.trim()
     if (!name || !folder) return
     const finalName = name.endsWith('.clave') ? name : `${name}.clave`
     onExport(folder, finalName, keepSynced)
   }
 
-  const handlePickFolder = async () => {
+  const handlePickFolder = async (): Promise<void> => {
     const selected = await window.electronAPI.openFolderDialog()
     if (selected) setFolder(selected)
   }
