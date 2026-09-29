@@ -16,10 +16,13 @@ export type Entry =
       at: number
       attachments?: Attachment[]
       /* The reader stopped the turn this message started, so the agent never
-         finished with it: the row reads muted, and the text is back in the
-         composer when Escape did the stopping. The adapter's word
+         finished with it: the row reads muted. The adapter's word
          (`turn_interrupted`), never inferred from an error. */
       interrupted?: boolean
+      /* Taken back before the agent answered anything (Escape): the message is
+         the composer's again, so the transcript does not show it. Undone if an
+         answer to it arrives after all. */
+      withdrawn?: boolean
     }
   | { kind: 'assistant'; text: string; final: boolean; at: number }
   | {
@@ -82,8 +85,29 @@ export type Action =
    *  Main only cuts a page where nothing pairs across the cut (a tool call and
    *  its result, an interrupt and its message), so it reduces on its own. */
   | { prepend: HistoryItem[] }
+  /** The reader took their last message back before any answer to it. */
+  | { withdraw: true }
+
+/** Whether anything answers the reader's last message yet: text, a tool call,
+ *  a question, an error. What decides, on Escape, between taking the message
+ *  back (nothing did) and leaving it in the transcript as interrupted. */
+export function answeredSince(entries: Entry[]): boolean {
+  const last = entries.findLastIndex((e) => e.kind === 'user')
+  return entries
+    .slice(last + 1)
+    .some((e) => e.kind !== 'user' && (e.kind !== 'assistant' || e.text.trim() !== ''))
+}
 export function reduceConversation(state: Conversation, action: Action): Conversation {
   if ('exit' in action) return { ...state, state: 'ended', exitCode: action.exit }
+  if ('withdraw' in action) {
+    if (answeredSince(state.entries)) return state
+    const last = state.entries.findLastIndex((e) => e.kind === 'user')
+    const message = state.entries[last]
+    if (message?.kind !== 'user') return state
+    const entries = [...state.entries]
+    entries[last] = { ...message, withdrawn: true }
+    return { ...state, entries }
+  }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
     const past = action.prepend.reduce(reduceConversation, emptyConversation).entries
@@ -206,5 +230,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       // reader's: nothing of it reaches the transcript.
       break
   }
+  // An answer that was already on its way when the reader took the message
+  // back: it answers something, so what it answers shows again.
+  const taken = entries.findLastIndex((e) => e.kind === 'user')
+  const takenBack = entries[taken]
+  if (takenBack?.kind === 'user' && takenBack.withdrawn && answeredSince(entries))
+    entries[taken] = { ...takenBack, withdrawn: undefined }
   return { ...state, entries }
 }

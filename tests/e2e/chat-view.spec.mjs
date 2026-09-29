@@ -317,8 +317,9 @@ export async function run(t) {
         app.evaluate(() => globalThis.__chatWrites.some((x) => x.type === 'interrupt'))
       )
     )
-    // Escape while working: a second interrupt, and the last message sent
-    // ('/help' + the newline Shift+Enter left) is back in the composer.
+    // Escape while working: a second interrupt. The last message sent
+    // ('/help') was answered already, so it stays in the transcript and the
+    // composer is left empty (terminal-escape.spec.mjs has the unanswered case).
     await input.press('Escape')
     assert.ok(
       await until(() =>
@@ -327,9 +328,8 @@ export async function run(t) {
         )
       )
     )
-    assert.equal(await input.inputValue(), '/help\n')
-    await input.fill('')
-    t.check('Escape interrupts the turn and hands the last message back to the composer', true)
+    assert.equal(await input.inputValue(), '')
+    t.check('Escape interrupts the turn, and an answered message stays out of the composer', true)
     // The adapter's word that the turn was stopped: the message that started
     // it steps back, says so underneath, and no error card is raised over it.
     const pane = win.locator('[data-testid="chat-view"]')

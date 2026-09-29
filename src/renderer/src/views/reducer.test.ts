@@ -2,11 +2,13 @@ import recordedEcho from '../../../../plugins/chat-view/fixtures/echo.json'
 import { SessionEventSchema } from '../../../shared/session-model'
 import { describe, expect, it } from 'vitest'
 import {
+  answeredSince,
   emptyConversation,
   reduceConversation,
   type Conversation,
   type ChatEvent
 } from '../../../../plugins/chat-view/src/reducer'
+import { visibleEntries } from '../../../../plugins/chat-view/src/tools'
 const run = (events: ChatEvent[]): Conversation =>
   events.reduce((state, event) => reduceConversation(state, { event, at: 1 }), emptyConversation)
 const elsewhere = (entry: Conversation['entries'][number]): boolean | undefined =>
@@ -247,5 +249,61 @@ describe('conversation stream', () => {
     expect(keyOf(merged, 'new question')).toBe(before)
     expect(merged.first).toBe(live.first - 3)
     expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
+  })
+})
+
+describe('taking a message back', () => {
+  const withdraw = (state: Conversation): Conversation =>
+    reduceConversation(state, { withdraw: true })
+  const shown = (state: Conversation) =>
+    visibleEntries(state.entries)
+      .filter((e) => e.kind === 'user')
+      .map((e) => e.text)
+
+  it('withdraws a message nothing has answered yet', () => {
+    const state = withdraw(run([{ type: 'user_message', text: 'go' }]))
+    expect(answeredSince(state.entries)).toBe(false)
+    expect(shown(state)).toEqual([])
+    // The stop that follows leaves it withdrawn.
+    expect(shown(reduceConversation(state, { event: { type: 'turn_interrupted' } }))).toEqual([])
+  })
+
+  it('keeps a message the agent had begun to answer', () => {
+    const started = run([
+      { type: 'user_message', text: 'go' },
+      { type: 'assistant_text', delta: 'Looking', final: false }
+    ])
+    expect(answeredSince(started.entries)).toBe(true)
+    expect(shown(withdraw(started))).toEqual(['go'])
+    const tool = run([
+      { type: 'user_message', text: 'go' },
+      { type: 'tool_call', id: 't', name: 'Read', input: {} }
+    ])
+    expect(shown(withdraw(tool))).toEqual(['go'])
+    // An empty opening frame is no answer.
+    const empty = run([
+      { type: 'user_message', text: 'go' },
+      { type: 'assistant_text', delta: '', final: false }
+    ])
+    expect(shown(withdraw(empty))).toEqual([])
+  })
+
+  it('shows a withdrawn message again when its answer arrives after all', () => {
+    const late = reduceConversation(withdraw(run([{ type: 'user_message', text: 'go' }])), {
+      event: { type: 'assistant_text', delta: 'Already on it', final: false },
+      at: 2
+    })
+    expect(shown(late)).toEqual(['go'])
+  })
+
+  it('never touches an earlier, answered message', () => {
+    const state = withdraw(
+      run([
+        { type: 'user_message', text: 'first' },
+        { type: 'assistant_text', delta: 'Done.', final: true },
+        { type: 'user_message', text: 'second' }
+      ])
+    )
+    expect(shown(state)).toEqual(['first'])
   })
 })

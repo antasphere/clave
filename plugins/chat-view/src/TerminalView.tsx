@@ -19,7 +19,7 @@ import type {
   SessionInput,
   CommandOption
 } from '../../../src/shared/session-model'
-import { emptyConversation, reduceConversation, type Entry } from './reducer'
+import { answeredSince, emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { SenderChip } from './Delivery'
@@ -586,12 +586,20 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
   // Escape while the agent works is the TUI's gesture: stop the turn and hand
   // the message back to the composer to edit and resend, unless something
   // new is already being typed there.
+  /* Escape while the agent works stops it. Before it has answered anything,
+     the message is taken back: out of the transcript and into the composer,
+     to edit and send again. Once an answer has begun, the message is part of
+     the conversation: it stays, marked Interrupted, and the composer is left
+     as it is. */
   const takeBack = (): void => {
     void write({ type: 'interrupt' }).catch(report)
     const last = lastSent.current
-    if (last && !draft.trim() && !attachments.length) {
-      setDraft(last.text)
-      setAttachments(last.attachments)
+    if (!answeredSince(conversation.entries)) {
+      dispatch({ withdraw: true })
+      if (last && !draft.trim() && !attachments.length) {
+        setDraft(last.text)
+        setAttachments(last.attachments)
+      }
     }
     textarea.current?.focus()
   }
