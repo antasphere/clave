@@ -5,6 +5,7 @@ import {
   compareVersions,
   isNewer,
   parseVersion,
+  prefixNpm,
   releaseSource,
   upgradeCommand
 } from './detect'
@@ -86,7 +87,7 @@ describe('where an agent CLI came from', () => {
     const install = classifyInstall('/usr/local/bin/agy', 'antigravity')
     expect(install).toEqual({ kind: 'unknown' })
     expect(canUpgrade(install)).toBe(false)
-    expect(upgradeCommand(install, '/usr/local/bin/agy', () => true)).toBeNull()
+    expect(upgradeCommand(install, '/usr/local/bin/agy')).toBeNull()
   })
 })
 
@@ -103,6 +104,9 @@ describe('versions', () => {
     expect(compareVersions('0.99.1', '0.85.1')).toBeGreaterThan(0)
     expect(compareVersions('2.1.10', '2.1.9')).toBeGreaterThan(0)
     expect(compareVersions('1.0.0-beta.1', '1.0.0')).toBeLessThan(0)
+    expect(compareVersions('1.0.0-beta.10', '1.0.0-beta.9')).toBeGreaterThan(0)
+    expect(compareVersions('1.0.0-beta.1', '1.0.0-beta.1.1')).toBeLessThan(0)
+    expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBeLessThan(0)
     expect(compareVersions('1.0.0', '1.0.0')).toBe(0)
     expect(compareVersions('garbage', '1.0.0')).toBe(0)
   })
@@ -150,25 +154,30 @@ describe('where the latest release is read', () => {
 
 describe('the upgrade command', () => {
   it('is argv, run by the installer that owns the install', () => {
-    expect(upgradeCommand({ kind: 'claude-native' }, '/u/.local/bin/claude', () => false)).toEqual({
+    expect(upgradeCommand({ kind: 'claude-native' }, '/u/.local/bin/claude')).toEqual({
       file: '/u/.local/bin/claude',
       args: ['update']
     })
-    expect(
-      upgradeCommand({ kind: 'homebrew', name: 'codex', cask: true }, '/x/codex', () => false)
-    ).toEqual({ file: 'brew', args: ['upgrade', '--cask', 'codex'] })
-    expect(
-      upgradeCommand({ kind: 'homebrew', name: 'gemini', cask: false }, '/x/g', () => false)
-    ).toEqual({ file: 'brew', args: ['upgrade', 'gemini'] })
-    expect(
-      upgradeCommand({ kind: 'package', manager: 'bun', pkg: '@x/pi' }, '/x/pi', () => false)
-    ).toEqual({ file: 'bun', args: ['add', '-g', '@x/pi@latest'] })
-    expect(
-      upgradeCommand({ kind: 'package', manager: 'pnpm', pkg: 'p' }, '/x/p', () => false)
-    ).toEqual({ file: 'pnpm', args: ['add', '-g', 'p@latest'] })
-    expect(
-      upgradeCommand({ kind: 'package', manager: 'yarn', pkg: 'y' }, '/x/y', () => false)
-    ).toEqual({ file: 'yarn', args: ['global', 'add', 'y@latest'] })
+    expect(upgradeCommand({ kind: 'homebrew', name: 'codex', cask: true }, '/x/codex')).toEqual({
+      file: 'brew',
+      args: ['upgrade', '--cask', 'codex']
+    })
+    expect(upgradeCommand({ kind: 'homebrew', name: 'gemini', cask: false }, '/x/g')).toEqual({
+      file: 'brew',
+      args: ['upgrade', 'gemini']
+    })
+    expect(upgradeCommand({ kind: 'package', manager: 'bun', pkg: '@x/pi' }, '/x/pi')).toEqual({
+      file: 'bun',
+      args: ['add', '-g', '@x/pi@latest']
+    })
+    expect(upgradeCommand({ kind: 'package', manager: 'pnpm', pkg: 'p' }, '/x/p')).toEqual({
+      file: 'pnpm',
+      args: ['add', '-g', 'p@latest']
+    })
+    expect(upgradeCommand({ kind: 'package', manager: 'yarn', pkg: 'y' }, '/x/y')).toEqual({
+      file: 'yarn',
+      args: ['global', 'add', 'y@latest']
+    })
   })
 
   it("uses the npm of the package's own prefix when it is there, else the PATH's", () => {
@@ -178,17 +187,19 @@ describe('the upgrade command', () => {
       pkg: '@openai/codex',
       prefix: '/n/v22'
     } as const
-    expect(upgradeCommand(install, '/n/v22/bin/codex', (f) => f === '/n/v22/bin/npm')).toEqual({
+    expect(prefixNpm(install)).toBe('/n/v22/bin/npm')
+    expect(prefixNpm({ kind: 'package', manager: 'bun', pkg: 'x' })).toBeNull()
+    expect(upgradeCommand(install, '/n/v22/bin/codex', '/n/v22/bin/npm')).toEqual({
       file: '/n/v22/bin/npm',
       args: ['install', '-g', '@openai/codex@latest']
     })
-    expect(upgradeCommand(install, '/n/v22/bin/codex', () => false)).toEqual({
+    expect(upgradeCommand(install, '/n/v22/bin/codex', null)).toEqual({
       file: 'npm',
       args: ['install', '-g', '@openai/codex@latest']
     })
   })
 
   it('never upgrades an app-shipped CLI', () => {
-    expect(upgradeCommand({ kind: 'app', app: 'X.app' }, '/x', () => true)).toBeNull()
+    expect(upgradeCommand({ kind: 'app', app: 'X.app' }, '/x')).toBeNull()
   })
 })

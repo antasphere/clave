@@ -3,7 +3,13 @@ import { useAgentUpdatesStore } from '../../store/agent-updates-store'
 import type { AgentUpdateId, AgentUpdateStatus } from '../../../../shared/agent-updates'
 import { agentStatusLine, installLabel, timeOf } from '../../lib/agent-update-status'
 import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
-import { SettingsCard, SettingsRow, SettingsSection, ToggleRow } from './primitives'
+import {
+  SettingsCallout,
+  SettingsCard,
+  SettingsRow,
+  SettingsSection,
+  ToggleRow
+} from './primitives'
 
 const LOGOS: Record<AgentUpdateId, (p: { className?: string }) => React.JSX.Element> = {
   claude: ClaudeLogo,
@@ -67,7 +73,8 @@ function AgentRow({
  * between upgrading them on its own and only saying an upgrade exists.
  */
 export function AgentUpdatesSection(): React.JSX.Element {
-  const { autoUpdate, busy, agents, check, update, setAutoUpdate } = useAgentUpdatesStore()
+  const { supported, autoUpdate, busy, agents, check, update, setAutoUpdate } =
+    useAgentUpdatesStore()
   const lastChecked = agents.reduce<number | null>(
     (latest, a) =>
       a.lastCheckedAt && (!latest || a.lastCheckedAt > latest) ? a.lastCheckedAt : latest,
@@ -78,36 +85,44 @@ export function AgentUpdatesSection(): React.JSX.Element {
       title="Agents"
       description="The agent command-line tools Clave launches, each upgraded by the installer that put it on this Mac. New sessions start on the new release; open tabs are never interrupted."
     >
-      <SettingsCard>
-        <ToggleRow
-          label="Update agents automatically"
-          description="Checks at launch and every six hours, and installs new releases in the background. Off, Clave only tells you."
-          checked={autoUpdate}
-          onChange={(value) => void setAutoUpdate(value)}
+      {!supported ? (
+        <SettingsCallout
+          tone="accent"
+          title="Not on Windows yet"
+          text="Clave keeps agents current on macOS and Linux. On Windows, update them with the installer you used."
         />
-        {agents.map((agent) => (
-          <AgentRow
-            key={agent.id}
-            agent={agent}
-            autoUpdate={autoUpdate}
-            onUpdate={() => void update(agent.id)}
+      ) : (
+        <SettingsCard>
+          <ToggleRow
+            label="Update agents automatically"
+            description="Checks at launch and every six hours, and installs new releases in the background. Off, Clave only tells you."
+            checked={autoUpdate}
+            onChange={(value) => void setAutoUpdate(value)}
           />
-        ))}
-        <SettingsRow label="Last checked">
-          <button
-            onClick={() => void check()}
-            disabled={busy}
-            className="btn-secondary"
-            data-agent-updates-check
-          >
-            <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
-            {busy ? 'Working…' : 'Check Agents'}
-          </button>
-          <span className="settings-row-value">
-            {lastChecked ? timeOf(lastChecked).replace(/^today/, 'Today') : 'Never'}
-          </span>
-        </SettingsRow>
-      </SettingsCard>
+          {agents.map((agent) => (
+            <AgentRow
+              key={agent.id}
+              agent={agent}
+              autoUpdate={autoUpdate}
+              onUpdate={() => void update(agent.id)}
+            />
+          ))}
+          <SettingsRow label="Last checked">
+            <button
+              onClick={() => void check()}
+              disabled={busy}
+              className="btn-secondary"
+              data-agent-updates-check
+            >
+              <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
+              {busy ? 'Working…' : 'Check Agents'}
+            </button>
+            <span className="settings-row-value">
+              {lastChecked ? timeOf(lastChecked).replace(/^today/, 'Today') : 'Never'}
+            </span>
+          </SettingsRow>
+        </SettingsCard>
+      )}
     </SettingsSection>
   )
 }

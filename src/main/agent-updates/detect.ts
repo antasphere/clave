@@ -113,7 +113,25 @@ export function compareVersions(a: string, b: string): number {
   }
   if (x[4] && !y[4]) return -1
   if (!x[4] && y[4]) return 1
-  if (x[4] && y[4]) return x[4] < y[4] ? -1 : x[4] > y[4] ? 1 : 0
+  if (x[4] && y[4]) return comparePrerelease(x[4], y[4])
+  return 0
+}
+
+/** Dot-separated identifiers, numeric ones numerically (`beta.10` > `beta.9`). */
+function comparePrerelease(a: string, b: string): number {
+  const xs = a.split('.')
+  const ys = b.split('.')
+  for (let i = 0; i < Math.max(xs.length, ys.length); i++) {
+    if (xs[i] === undefined) return -1
+    if (ys[i] === undefined) return 1
+    const nx = /^\d+$/.test(xs[i]) ? Number(xs[i]) : NaN
+    const ny = /^\d+$/.test(ys[i]) ? Number(ys[i]) : NaN
+    if (!Number.isNaN(nx) && !Number.isNaN(ny)) {
+      if (nx !== ny) return nx - ny
+    } else if (xs[i] !== ys[i]) {
+      return xs[i] < ys[i] ? -1 : 1
+    }
+  }
   return 0
 }
 
@@ -149,17 +167,25 @@ export interface UpgradeCommand {
   args: string[]
 }
 
+/** The npm an npm global's own prefix carries, which the caller checks exists. */
+export function prefixNpm(install: AgentInstall): string | null {
+  return install.kind === 'package' && install.manager === 'npm' && install.prefix
+    ? join(install.prefix, 'bin', 'npm')
+    : null
+}
+
 /**
  * The command that upgrades an install, as argv — never a shell string, so
  * nothing in a path or a package name is ever parsed by a shell. `bin` is the
  * agent's own binary on the PATH (Claude's installer upgrades itself). An npm
- * global is upgraded by the npm of ITS prefix when one sits there, so a CLI
- * installed under one Node version is not reinstalled under another.
+ * global is upgraded by the npm of ITS prefix when one sits there
+ * (`ownNpm`, from `prefixNpm`), so a CLI installed under one Node version is
+ * not reinstalled under another.
  */
 export function upgradeCommand(
   install: AgentInstall,
   bin: string,
-  exists: (file: string) => boolean
+  ownNpm: string | null = null
 ): UpgradeCommand | null {
   switch (install.kind) {
     case 'claude-native':
@@ -170,7 +196,7 @@ export function upgradeCommand(
         args: install.cask ? ['upgrade', '--cask', install.name] : ['upgrade', install.name]
       }
     case 'package':
-      return packageCommand(install, exists)
+      return packageCommand(install, ownNpm)
     default:
       return null
   }
@@ -178,14 +204,12 @@ export function upgradeCommand(
 
 function packageCommand(
   install: Extract<AgentInstall, { kind: 'package' }>,
-  exists: (file: string) => boolean
+  ownNpm: string | null
 ): UpgradeCommand {
   const spec = `${install.pkg}@latest`
   switch (install.manager) {
-    case 'npm': {
-      const own = install.prefix ? join(install.prefix, 'bin', 'npm') : null
-      return { file: own && exists(own) ? own : 'npm', args: ['install', '-g', spec] }
-    }
+    case 'npm':
+      return { file: ownNpm ?? 'npm', args: ['install', '-g', spec] }
     case 'pnpm':
       return { file: 'pnpm', args: ['add', '-g', spec] }
     case 'bun':

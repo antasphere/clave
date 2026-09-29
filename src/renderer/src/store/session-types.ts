@@ -339,9 +339,11 @@ export interface Session {
   /** Bumped by a restart on another account: the pane remounts on it, so
    *  the terminal reconnects to the new process under the same id. */
   restartEpoch?: number
-  /** Runtime: when this window first saw the tab's process (its add or its
-   *  last restart). A tab older than its agent's last upgrade is offered a
-   *  restart onto the new release (`AgentUpdateHint`). */
+  /** Runtime: when this window first saw the tab's process (its add, its
+   *  adoption, or its last restart), not when the process started: a tab
+   *  moved between windows is stamped again, so it loses a restart hint it
+   *  had. A tab older than its agent's last upgrade is offered a restart onto
+   *  the new release (`AgentUpdateHint`). */
   spawnedAt?: number
   /** Pinned to its account (ADR 0002): never moved by the policy, never
    *  proposed a move; the menu can still switch it by hand. Session-lifetime. */

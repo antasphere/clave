@@ -19,6 +19,8 @@ function agent(patch: Partial<AgentUpdateStatus>): AgentUpdateStatus {
     lastCheckedAt: 100,
     lastUpdatedAt: 500,
     updatedFrom: '2.1.285',
+    heldBack: null,
+    heldBackAt: null,
     note: null,
     error: null,
     ...patch
@@ -40,6 +42,32 @@ describe('the restart hint on a tab', () => {
     expect(staleAgentRelease({ ...claudeTab, spawnedAt: 600 }, [agent({})], undefined)).toBeNull()
     expect(staleAgentRelease({ ...claudeTab, alive: false }, [agent({})], undefined)).toBeNull()
     expect(staleAgentRelease({ alive: true, spawnedAt: 1 }, [agent({})], undefined)).toBeNull()
+  })
+
+  it("does not show on a remote tab, which runs another machine's CLI", () => {
+    expect(
+      staleAgentRelease({ ...claudeTab, sessionType: 'remote-claude' }, [agent({})], undefined)
+    ).toBeNull()
+    expect(
+      staleAgentRelease({ ...claudeTab, sessionType: 'local' }, [agent({})], undefined)
+    ).not.toBeNull()
+  })
+
+  it('shows on the boundary only for a tab strictly older than the upgrade', () => {
+    expect(staleAgentRelease({ ...claudeTab, spawnedAt: 500 }, [agent({})], undefined)).toBeNull()
+    expect(
+      staleAgentRelease({ ...claudeTab, spawnedAt: 499 }, [agent({})], undefined)
+    ).not.toBeNull()
+  })
+
+  it("takes Claude's agents view as Claude, without a resume", () => {
+    expect(
+      staleAgentRelease(
+        { alive: true, claudeAgentsMode: true, spawnedAt: 1 },
+        [agent({})],
+        undefined
+      )
+    ).toMatchObject({ agent: { id: 'claude' }, resumable: false })
   })
 
   it('does not show for an agent Clave has not moved', () => {
@@ -77,5 +105,27 @@ describe("an agent row's line", () => {
       agentStatusLine(agent({ lastUpdatedAt: null, note: 'Homebrew does not have 1 yet.' }), true)
     ).toBe('Homebrew does not have 1 yet.')
     expect(agentStatusLine(agent({ lastUpdatedAt: null }), true)).toBe('Up to date')
+    expect(agentStatusLine(agent({ installed: false, lastCheckedAt: null }), true)).toBe(
+      'Not checked yet'
+    )
+  })
+
+  it('never promises an install the installer does not have', () => {
+    const lagging = agent({
+      install: { kind: 'homebrew', name: 'codex', cask: true },
+      currentVersion: '0.159.0',
+      latestVersion: '0.159.1',
+      updateAvailable: true,
+      lastUpdatedAt: null,
+      heldBack: '0.159.1',
+      heldBackAt: 1
+    })
+    expect(agentStatusLine(lagging, true)).toBe(
+      'Homebrew does not offer 0.159.1 yet. Clave tries again tomorrow.'
+    )
+    expect(agentStatusLine(lagging, false)).toBe('Homebrew does not offer 0.159.1 yet.')
+    expect(agentStatusLine({ ...lagging, latestVersion: '0.160.0' }, true)).toBe(
+      '0.160.0 is available and will be installed shortly'
+    )
   })
 })

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentUpdateManager,
   CHECK_INTERVAL_MS,
+  HELD_BACK_RETRY_MS,
   INITIAL_DELAY_MS,
   failureText,
   type AgentUpdateDeps,
@@ -79,13 +80,13 @@ function machine(opts: {
     realpath: async (file) => bins.get(file)?.real ?? file,
     isExecutable: async (file) =>
       bins.has(file) || file === '/bin/brew' || file === '/bin/bun' || file === '/bin/npm',
-    exists: () => false,
     claudeChannel: async () => opts.claudeChannel ?? null,
     getAutoUpdate: () => auto,
     setAutoUpdate: (value) => {
       auto = value
     },
     scheduled: false,
+    supported: true,
     broadcast: (state) => states.push(state),
     notify: (title, body) => notes.push(`${title} | ${body}`),
     now: () => 1_000
@@ -212,20 +213,77 @@ describe('a check with automatic updates off', () => {
 })
 
 describe('what an upgrade can come back with', () => {
-  it('a clean run that moved nothing is a note about the installer, not an error', async () => {
+  it('a clean run that moved nothing holds the release back, and the automatic pass waits a day', async () => {
     const { m, deps } = machine({
       installed: {
         codex: { real: '/opt/homebrew/Caskroom/codex/0.159.0/bin/codex', version: '0.159.0' }
       },
       latest: { '@openai/codex': '0.159.1' }
     })
-    const state = await new AgentUpdateManager(deps).checkAll()
-    const codex = state.agents.find((a) => a.id === 'codex')!
-    expect(m.runs).toContain('/bin/brew upgrade --cask codex')
-    expect(codex.note).toBe('Homebrew does not have 0.159.1 yet.')
-    expect(codex.error).toBeNull()
-    expect(codex.lastUpdatedAt).toBeNull()
+    let clock = 1_000
+    deps.now = () => clock
+    const manager = new AgentUpdateManager(deps)
+    const brewRuns = (): number => m.runs.filter((r) => r.includes('brew upgrade')).length
+
+    const first = (await manager.checkAll()).agents.find((a) => a.id === 'codex')!
+    expect(brewRuns()).toBe(1)
+    expect(first.heldBack).toBe('0.159.1')
+    expect(first.heldBackAt).toBe(1_000)
+    expect(first.updateAvailable).toBe(true)
+    expect(first.error).toBeNull()
+    expect(first.lastUpdatedAt).toBeNull()
     expect(m.notes).toEqual([])
+
+    clock += HELD_BACK_RETRY_MS - 1
+    await manager.checkAll()
+    expect(brewRuns()).toBe(1)
+
+    // The button does not wait.
+    await manager.update('codex')
+    expect(brewRuns()).toBe(2)
+
+    clock += HELD_BACK_RETRY_MS
+    await manager.checkAll()
+    expect(brewRuns()).toBe(3)
+  })
+
+  it('a newer latest release than the one held back is tried at once', async () => {
+    const tags: Record<string, string> = { '@openai/codex': '0.159.1' }
+    const { m, deps } = machine({
+      installed: {
+        codex: { real: '/opt/homebrew/Caskroom/codex/0.159.0/bin/codex', version: '0.159.0' }
+      }
+    })
+    deps.fetchDistTag = async (pkg) => tags[pkg] ?? null
+    const manager = new AgentUpdateManager(deps)
+    await manager.checkAll()
+    tags['@openai/codex'] = '0.160.0'
+    const state = await manager.checkAll()
+    expect(m.runs.filter((r) => r.includes('brew upgrade'))).toHaveLength(2)
+    expect(state.agents.find((a) => a.id === 'codex')!.heldBack).toBe('0.160.0')
+  })
+
+  it('finds brew where Homebrew puts it when the login PATH lacks it', async () => {
+    const { m, deps } = machine({
+      installed: {
+        codex: { real: '/opt/homebrew/Caskroom/codex/0.159.0/bin/codex', version: '0.159.0' }
+      },
+      latest: { '@openai/codex': '0.159.1' }
+    })
+    deps.isExecutable = async (file) => file === '/bin/codex' || file === '/opt/homebrew/bin/brew'
+    await new AgentUpdateManager(deps).checkAll()
+    expect(m.runs).toContain('/opt/homebrew/bin/brew upgrade --cask codex')
+  })
+
+  it('reads a version a CLI prints on stderr', async () => {
+    const { deps } = machine({ installed: PI, latest: {} })
+    const run = deps.run
+    deps.run = async (file, args, opts) =>
+      args[0] === '--version'
+        ? { code: 0, stdout: '', stderr: 'pi v0.85.1\n' }
+        : run(file, args, opts)
+    const state = await new AgentUpdateManager(deps).checkAll()
+    expect(state.agents.find((a) => a.id === 'pi')!.currentVersion).toBe('0.85.1')
   })
 
   it('a failed run keeps the version and shows the tail of what the installer said', async () => {
@@ -306,6 +364,100 @@ describe('never two at once', () => {
     await pass
     expect(manager.getState().busy).toBe(false)
     expect(m.states.at(-1)!.busy).toBe(false)
+  })
+})
+
+describe('the queue', () => {
+  it('does not install an agent twice when the button and the automatic pass race', async () => {
+    const { m, deps } = machine({
+      installed: PI,
+      latest: PI_LATEST,
+      upgrade: (_f, _a, mm) => {
+        mm.setVersion('pi', '0.99.1')
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    })
+    const manager = new AgentUpdateManager(deps)
+    await Promise.all([manager.checkAll(), manager.update('pi')])
+    expect(m.runs.filter((r) => r.includes('add -g'))).toHaveLength(1)
+    expect(m.notes).toHaveLength(1)
+  })
+
+  it('a second click queued behind the first installs nothing', async () => {
+    const { m, deps } = machine({
+      installed: PI,
+      latest: PI_LATEST,
+      autoUpdate: false,
+      upgrade: (_f, _a, mm) => {
+        mm.setVersion('pi', '0.99.1')
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    })
+    const manager = new AgentUpdateManager(deps)
+    await manager.checkAll()
+    await Promise.all([manager.update('pi'), manager.update('pi')])
+    expect(m.runs.filter((r) => r.includes('add -g'))).toHaveLength(1)
+  })
+
+  it('survives a step that throws: the next check and update still run', async () => {
+    const { m, deps } = machine({
+      installed: PI,
+      latest: PI_LATEST,
+      autoUpdate: false,
+      upgrade: (_f, _a, mm) => {
+        mm.setVersion('pi', '0.99.1')
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    })
+    const loginEnv = deps.loginEnv
+    let fail = true
+    deps.loginEnv = async () => {
+      if (fail) {
+        fail = false
+        throw new Error('login shell died')
+      }
+      return loginEnv()
+    }
+    const manager = new AgentUpdateManager(deps)
+    await expect(manager.checkAll()).resolves.toBeDefined()
+    const checked = await manager.checkAll()
+    expect(checked.agents.find((a) => a.id === 'pi')!.updateAvailable).toBe(true)
+    const updated = await manager.update('pi')
+    expect(updated.agents.find((a) => a.id === 'pi')!.currentVersion).toBe('0.99.1')
+    expect(updated.busy).toBe(false)
+    expect(m.runs.filter((r) => r.includes('add -g'))).toHaveLength(1)
+  })
+
+  it('stays busy from the first read to the last upgrade of a pass', async () => {
+    const { m, deps } = machine({
+      installed: PI,
+      latest: PI_LATEST,
+      upgrade: (_f, _a, mm) => {
+        mm.setVersion('pi', '0.99.1')
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    })
+    const manager = new AgentUpdateManager(deps)
+    const start = m.states.length
+    await manager.checkAll()
+    const during = m.states.slice(start, -1)
+    expect(during.length).toBeGreaterThan(0)
+    expect(during.every((state) => state.busy)).toBe(true)
+    expect(m.states.at(-1)!.busy).toBe(false)
+  })
+})
+
+describe('where the installers cannot run', () => {
+  it('does nothing and says so', async () => {
+    vi.useFakeTimers()
+    const { m, deps } = machine({ installed: PI, latest: PI_LATEST })
+    const manager = new AgentUpdateManager({ ...deps, supported: false, scheduled: true })
+    manager.start()
+    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS)
+    const state = await manager.checkAll()
+    await manager.update('pi')
+    expect(state.supported).toBe(false)
+    expect(m.runs).toEqual([])
   })
 })
 

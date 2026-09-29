@@ -16,9 +16,9 @@
  * the renderer offers a restart to a tab spawned before the upgrade.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, promises as fsp, constants as fsConstants } from 'node:fs'
+import { promises as fsp, constants as fsConstants } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import {
   AGENT_UPDATE_TARGETS,
   type AgentUpdateId,
@@ -31,6 +31,7 @@ import {
   describeInstall,
   isNewer,
   parseVersion,
+  prefixNpm,
   releaseSource,
   upgradeCommand
 } from './detect'
@@ -41,6 +42,14 @@ export const INITIAL_DELAY_MS = 30 * 1000
 const VERSION_TIMEOUT_MS = 20 * 1000
 const REGISTRY_TIMEOUT_MS = 15 * 1000
 const UPGRADE_TIMEOUT_MS = 10 * 60 * 1000
+/** An installer that ignored SIGTERM this long after its timeout is killed. */
+const KILL_GRACE_MS = 5 * 1000
+/**
+ * How long the automatic pass leaves an installer that did not offer the
+ * latest release (a Homebrew cask behind npm) before running it again for
+ * that same release. The button still runs it at once.
+ */
+export const HELD_BACK_RETRY_MS = 24 * 60 * 60 * 1000
 const OUTPUT_CAP = 64 * 1024
 
 export interface RunResult {
@@ -62,13 +71,14 @@ export interface AgentUpdateDeps {
   fetchDistTag: (pkg: string, tag: string) => Promise<string | null>
   realpath: (file: string) => Promise<string>
   isExecutable: (file: string) => Promise<boolean>
-  exists: (file: string) => boolean
   /** Claude's own update channel (`autoUpdatesChannel`), or null. */
   claudeChannel: (env: Record<string, string>) => Promise<string | null>
   getAutoUpdate: () => boolean
   setAutoUpdate: (value: boolean) => void
   /** Whether the timers run at all (off under test mode and in dev). */
   scheduled: boolean
+  /** False where the installers' commands cannot run (Windows, for now). */
+  supported: boolean
   broadcast: (state: AgentUpdatesState) => void
   notify: (title: string, body: string) => void
   now: () => number
@@ -90,6 +100,8 @@ function freshStatus(target: (typeof AGENT_UPDATE_TARGETS)[number]): AgentUpdate
     lastCheckedAt: null,
     lastUpdatedAt: null,
     updatedFrom: null,
+    heldBack: null,
+    heldBackAt: null,
     note: null,
     error: null
   }
@@ -116,7 +128,8 @@ export class AgentUpdateManager {
   }
 
   start(): void {
-    if (!this.deps.scheduled || this.initialTimer || this.intervalTimer) return
+    if (!this.deps.scheduled || !this.deps.supported) return
+    if (this.initialTimer || this.intervalTimer) return
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null
       void this.checkAll()
@@ -133,6 +146,7 @@ export class AgentUpdateManager {
 
   getState(): AgentUpdatesState {
     return {
+      supported: this.deps.supported,
       autoUpdate: this.deps.getAutoUpdate(),
       busy: this.pending > 0,
       agents: AGENT_UPDATE_TARGETS.map((t) => ({ ...this.agents.get(t.id)! }))
@@ -143,22 +157,25 @@ export class AgentUpdateManager {
     this.deps.setAutoUpdate(value)
     this.emit()
     // Turning it on acts on what the last check already found.
-    if (value) void this.upgradeAvailable()
+    if (value) void this.busyWhile(this.upgradeAvailable())
     return this.getState()
   }
 
   /**
    * One pass: inspect every agent, then upgrade what is behind when automatic
    * updates are on. A second call while a pass runs joins it rather than
-   * queueing another.
+   * queueing another. Busy for the whole pass, the upgrades included, so the
+   * Check button does not wake between the two halves.
    */
   checkAll(): Promise<AgentUpdatesState> {
+    if (!this.deps.supported) return Promise.resolve(this.getState())
     if (this.checkInFlight) return this.checkInFlight
-    const pass = this.enqueue(async () => {
-      const env = await this.deps.loginEnv()
-      for (const target of AGENT_UPDATE_TARGETS) await this.inspect(target.id, env)
-    })
-      .then(() => (this.deps.getAutoUpdate() ? this.upgradeAvailable() : undefined))
+    const pass = this.busyWhile(
+      this.enqueue(async () => {
+        const env = await this.deps.loginEnv()
+        for (const target of AGENT_UPDATE_TARGETS) await this.inspect(target.id, env)
+      }).then(() => (this.deps.getAutoUpdate() ? this.upgradeAvailable() : undefined))
+    )
       .then(() => this.getState())
       .finally(() => {
         this.checkInFlight = null
@@ -167,38 +184,55 @@ export class AgentUpdateManager {
     return pass
   }
 
-  /** Upgrade one agent now (the Update button). */
+  /**
+   * Upgrade one agent now (the Update button). Runs the installer even for a
+   * release it held back before; does nothing for an agent a check found
+   * current, so a second click queued behind the first installs nothing.
+   */
   update(id: AgentUpdateId): Promise<AgentUpdatesState> {
-    if (!this.agents.has(id)) return Promise.resolve(this.getState())
+    if (!this.deps.supported || !this.agents.has(id)) return Promise.resolve(this.getState())
     return this.enqueue(async () => {
-      const env = await this.deps.loginEnv()
-      await this.upgrade(id, env)
+      const status = this.agents.get(id)!
+      if (status.install && !status.updateAvailable) return
+      await this.upgrade(id, await this.deps.loginEnv())
     }).then(() => this.getState())
+  }
+
+  /** Whether the automatic pass should run this agent's installer now. */
+  private dueForUpgrade(status: AgentUpdateStatus): boolean {
+    if (!status.updateAvailable) return false
+    if (status.heldBack !== status.latestVersion || status.heldBackAt === null) return true
+    return this.deps.now() - status.heldBackAt >= HELD_BACK_RETRY_MS
   }
 
   private async upgradeAvailable(): Promise<void> {
     for (const target of AGENT_UPDATE_TARGETS) {
-      if (!this.agents.get(target.id)!.updateAvailable) continue
+      if (!this.dueForUpgrade(this.agents.get(target.id)!)) continue
       await this.enqueue(async () => {
         // Re-read under the queue: a manual update may have run meanwhile.
-        if (!this.agents.get(target.id)!.updateAvailable) return
+        if (!this.dueForUpgrade(this.agents.get(target.id)!)) return
         await this.upgrade(target.id, await this.deps.loginEnv())
       })
     }
   }
 
-  /** Runs `task` after everything queued before it; never rejects. */
-  private enqueue(task: () => Promise<void>): Promise<void> {
+  private busyWhile<T>(work: Promise<T>): Promise<T> {
     this.pending++
     this.emit()
-    const run = this.queue.then(task).catch((err) => {
-      console.error('[agent-updates]', err)
-    })
-    this.queue = run.finally(() => {
+    return work.finally(() => {
       this.pending--
       this.emit()
     })
-    return this.queue
+  }
+
+  /** Runs `task` after everything queued before it; never rejects, so one
+   *  failed step never wedges the steps queued behind it. */
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(task).catch((err) => {
+      console.error('[agent-updates]', err)
+    })
+    this.queue = run
+    return this.busyWhile(run)
   }
 
   private patch(id: AgentUpdateId, patch: Partial<AgentUpdateStatus>): AgentUpdateStatus {
@@ -214,7 +248,7 @@ export class AgentUpdateManager {
 
   private async findOnPath(command: string, pathEnv: string | undefined): Promise<string | null> {
     if (command.includes('/')) return (await this.deps.isExecutable(command)) ? command : null
-    for (const dir of (pathEnv ?? '').split(':')) {
+    for (const dir of (pathEnv ?? '').split(delimiter)) {
       if (!dir) continue
       const candidate = join(dir, command)
       if (await this.deps.isExecutable(candidate)) return candidate
@@ -238,6 +272,7 @@ export class AgentUpdateManager {
       this.agents.set(id, {
         ...freshStatus(target),
         lastUpdatedAt: kept.lastUpdatedAt,
+        updatedFrom: kept.updatedFrom,
         lastCheckedAt: now
       })
       this.emit()
@@ -259,8 +294,12 @@ export class AgentUpdateManager {
     const latestVersion = source ? await this.deps.fetchDistTag(source.pkg, source.tag) : null
     const updatable = canUpgrade(install)
     const previous = this.agents.get(id)!
+    // A held-back release stays held back only while it is still the latest.
+    const heldBack = previous.heldBack === latestVersion ? previous.heldBack : null
     this.patch(id, {
       installed: true,
+      heldBack,
+      heldBackAt: heldBack ? previous.heldBackAt : null,
       path,
       realPath,
       install,
@@ -273,9 +312,7 @@ export class AgentUpdateManager {
         ? `${describeInstall(install)}: Clave leaves its updates to it.`
         : !currentVersion
           ? 'Clave could not read its version.'
-          : previous.note && previous.currentVersion === currentVersion
-            ? previous.note
-            : null,
+          : null,
       error: currentVersion ? null : previous.error
     })
   }
@@ -299,7 +336,12 @@ export class AgentUpdateManager {
       status = this.agents.get(id)!
     }
     if (!status.installed || !status.install || !status.path) return
-    const command = upgradeCommand(status.install, status.path, this.deps.exists)
+    const ownNpm = prefixNpm(status.install)
+    const command = upgradeCommand(
+      status.install,
+      status.path,
+      ownNpm && (await this.deps.isExecutable(ownNpm)) ? ownNpm : null
+    )
     if (!command) return
     const file = await this.resolveCommandFile(command.file, env)
     if (!file) {
@@ -308,14 +350,20 @@ export class AgentUpdateManager {
     }
     const from = status.currentVersion
     const target = status.latestVersion
-    this.patch(id, { phase: 'updating', error: null, note: null })
+    this.patch(id, { phase: 'updating', error: null })
     const result = await this.deps.run(file, command.args, { env, timeoutMs: UPGRADE_TIMEOUT_MS })
     await this.inspect(id, env)
     const after = this.agents.get(id)!
     // The version decides, not the exit code: an installer may exit non-zero
     // on a cleanup warning after the upgrade itself went through.
     if (from && after.currentVersion && isNewer(after.currentVersion, from)) {
-      this.patch(id, { lastUpdatedAt: this.deps.now(), updatedFrom: from, note: null, error: null })
+      this.patch(id, {
+        lastUpdatedAt: this.deps.now(),
+        updatedFrom: from,
+        heldBack: null,
+        heldBackAt: null,
+        error: null
+      })
       this.deps.notify(
         `${status.name} updated to ${after.currentVersion}`,
         `New ${status.name} sessions start on it. Open tabs stay on ${from} until restarted.`
@@ -327,15 +375,9 @@ export class AgentUpdateManager {
       return
     }
     // The installer ran cleanly and moved nothing: its channel has no newer
-    // release yet (a Homebrew cask trails npm by hours). Said, not an error.
-    this.patch(id, {
-      note:
-        target && status.install.kind === 'homebrew'
-          ? `Homebrew does not have ${target} yet.`
-          : target
-            ? `The installer did not offer ${target} yet.`
-            : null
-    })
+    // release yet (a Homebrew cask trails npm by hours). Remembered, so the
+    // row says so and the automatic pass does not rerun it every check.
+    if (target) this.patch(id, { heldBack: target, heldBackAt: this.deps.now() })
   }
 }
 
@@ -367,6 +409,9 @@ export function runCommand(
     }
     const timer = setTimeout(() => {
       child.kill('SIGTERM')
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      }, KILL_GRACE_MS).unref()
       done({ code: null, stdout, stderr, failure: `${file} ${args.join(' ')} timed out` })
     }, opts.timeoutMs)
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -422,7 +467,6 @@ export const realDeps = {
   fetchDistTag,
   realpath: (file: string) => fsp.realpath(file),
   isExecutable: isExecutableFile,
-  exists: existsSync,
   claudeChannel: readClaudeChannel,
   now: () => Date.now()
 }

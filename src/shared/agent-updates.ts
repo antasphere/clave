@@ -50,6 +50,14 @@ export interface AgentUpdateStatus {
   lastUpdatedAt: number | null
   /** The version it moved from, for the "updated from" line. */
   updatedFrom: string | null
+  /**
+   * The release the owning installer did not offer when Clave last ran it (a
+   * Homebrew cask trails npm by hours), and when. While the latest release is
+   * still this one, the row says so instead of promising an install, and the
+   * automatic pass waits a day before running the installer again.
+   */
+  heldBack: string | null
+  heldBackAt: number | null
   /** A plain sentence the settings row shows under the version (never an error). */
   note: string | null
   /** The last check or upgrade that failed, verbatim enough to act on. */
@@ -57,6 +65,8 @@ export interface AgentUpdateStatus {
 }
 
 export interface AgentUpdatesState {
+  /** False on Windows: the installers' commands are POSIX only for now. */
+  supported: boolean
   /** Upgrade on its own (default) or only say an upgrade exists. */
   autoUpdate: boolean
   /** A check pass or an upgrade is running. */
@@ -75,11 +85,12 @@ export const AGENT_UPDATE_TARGETS: readonly { id: AgentUpdateId; name: string; c
 /** The agent a session runs, from its mode flags; null for a plain terminal. */
 export function agentUpdateIdOf(session: {
   claudeMode?: boolean
+  claudeAgentsMode?: boolean
   codexMode?: boolean
   antigravityMode?: boolean
   piMode?: boolean
 }): AgentUpdateId | null {
-  if (session.claudeMode) return 'claude'
+  if (session.claudeMode || session.claudeAgentsMode) return 'claude'
   if (session.codexMode) return 'codex'
   if (session.antigravityMode) return 'antigravity'
   if (session.piMode) return 'pi'

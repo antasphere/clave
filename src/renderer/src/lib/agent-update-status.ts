@@ -33,6 +33,12 @@ export function agentStatusLine(agent: AgentUpdateStatus, autoUpdate: boolean): 
   if (!agent.installed) {
     return agent.lastCheckedAt ? 'Not installed' : 'Not checked yet'
   }
+  if (agent.updateAvailable && agent.latestVersion && agent.heldBack === agent.latestVersion) {
+    const who = agent.install?.kind === 'homebrew' ? 'Homebrew does not' : 'Its installer does not'
+    return autoUpdate
+      ? `${who} offer ${agent.latestVersion} yet. Clave tries again tomorrow.`
+      : `${who} offer ${agent.latestVersion} yet.`
+  }
   if (agent.updateAvailable && agent.latestVersion) {
     return autoUpdate
       ? `${agent.latestVersion} is available and will be installed shortly`

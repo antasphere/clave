@@ -20,6 +20,7 @@ interface AgentUpdatesStore extends AgentUpdatesState {
 }
 
 export const useAgentUpdatesStore = create<AgentUpdatesStore>((set, get) => ({
+  supported: true,
   autoUpdate: true,
   busy: false,
   agents: [],

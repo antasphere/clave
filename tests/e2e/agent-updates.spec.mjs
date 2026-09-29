@@ -24,9 +24,17 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:http'
 import path from 'node:path'
-import { launchApp, userDataDir } from './harness.mjs'
+import {
+  callMcp,
+  fixturePath,
+  launchApp,
+  seedTrustedRoots,
+  seedWorkspaces,
+  until,
+  userDataDir
+} from './harness.mjs'
 
-const INSTALL_SECONDS = 3
+const INSTALL_SECONDS = 4
 
 function fixture(root) {
   rmSync(root, { recursive: true, force: true })
@@ -98,7 +106,12 @@ async function waitFor(fn, timeoutMs = 20_000) {
 }
 
 export async function run(t) {
-  const root = '/tmp/clave-e2e-agent-updates-fixture'
+  await settingsAndInstallers(t)
+  await restartHint(t)
+}
+
+async function settingsAndInstallers(t) {
+  const root = fixturePath('agent-updates-fixture')
   const { bin, next, calls } = fixture(root)
   const tags = { '@clave-e2e/pi': { latest: '0.2.0' }, '@openai/codex': { latest: '9.9.9' } }
   const { server, port } = await registry(tags)
@@ -151,25 +164,29 @@ export async function run(t) {
     t.equal('with automatic updates off, the check installed nothing', callLines(calls).length, 0)
 
     // --- The button: the owning installer, once, and the app keeps working ---
+    // Sampled from the click on, while the fake installer sleeps: a main
+    // process blocked on it answers nothing until it returns.
     await win.locator('[data-agent-update-button="pi"]').click()
-    t.check(
-      'the row says it is updating',
-      await waitFor(async () => (await statusOf(win, 'pi')) === 'Updating to 0.2.0…', 3000),
-      await statusOf(win, 'pi')
-    )
     const lags = []
     for (let i = 0; i < 10; i++) {
       const start = Date.now()
       await win.evaluate(() => document.title)
       await app.evaluate(() => process.uptime())
       lags.push(Date.now() - start)
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 100))
     }
+    const midway = await win.evaluate(() => window.electronAPI.getAgentUpdates())
+    t.equal(
+      'the samples were taken while the installer was still running',
+      midway.agents.find((a) => a.id === 'pi')?.phase,
+      'updating'
+    )
     t.check(
       'while the installer runs, the window and the main process answer in under 250 ms',
       Math.max(...lags) < 250,
       lags
     )
+    t.equal('the row says it is updating', await statusOf(win, 'pi'), 'Updating to 0.2.0…')
     t.check(
       'the upgrade lands and the row says what moved',
       await waitFor(async () => /^Updated from 0\.1\.0 /.test((await statusOf(win, 'pi')) ?? '')),
@@ -203,6 +220,145 @@ export async function run(t) {
       'Codex was never run for anything but its version',
       !callLines(calls).some((line) => line.startsWith('codex')),
       callLines(calls)
+    )
+  } finally {
+    await app.close()
+    server.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+// A tab started before its agent was upgraded offers a restart onto the new
+// release, and the restart keeps the tab's account: the tab's "claude" is a
+// stand-in that prints the token its process got, read off the session.
+async function restartHint(t) {
+  const root = fixturePath('agent-updates-hint-agents')
+  const ws = fixturePath('agent-updates-hint-ws')
+  const dir = userDataDir('agent-updates-hint')
+  rmSync(root, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(ws, { recursive: true })
+  const bin = path.join(root, 'bin')
+  const versions = path.join(root, 'home/.local/share/claude/versions')
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(versions, { recursive: true })
+  const version = path.join(root, 'claude-version')
+  writeFileSync(version, '1.0.0 (Claude Code)\n')
+  const claude = path.join(versions, '1.0.0')
+  writeFileSync(
+    claude,
+    `#!/bin/sh\nif [ "$1" = "update" ]; then echo "1.0.1 (Claude Code)" > '${version}'; else /bin/cat '${version}'; fi\n`
+  )
+  chmodSync(claude, 0o755)
+  symlinkSync(claude, path.join(bin, 'claude'))
+  const release = { latest: '1.0.1', stable: '1.0.1' }
+  const { server, port } = await registry({ '@anthropic-ai/claude-code': release })
+  const WS = { id: 'hint-ws', name: 'Hint', rootDir: ws, profileFile: null, createdAt: 1 }
+  seedWorkspaces(dir, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
+  seedTrustedRoots(dir, [ws])
+  const TOKEN = 'sk-ant-oat01-hint-token-for-the-agent-updates-run-0123456789'
+  const { app, win } = await launchApp(dir, {
+    env: { CLAVE_TEST_AGENT_PATH: bin, CLAVE_TEST_NPM_REGISTRY: `http://127.0.0.1:${port}` }
+  })
+  try {
+    await win.evaluate(
+      async ({ workspaceId, TOKEN }) => {
+        await window.electronAPI.launchProfileUpsert({
+          id: 'e2e-claude-token',
+          name: 'token',
+          family: 'claude',
+          command: [
+            'sh',
+            '-c',
+            'printf "TOKEN=[%s]\\n" "$CLAUDE_CODE_OAUTH_TOKEN"; sleep 300',
+            'claude'
+          ],
+          additionalArgs: []
+        })
+        await window.electronAPI.launchProfileSetWorkspace(
+          workspaceId,
+          'claude',
+          'e2e-claude-token'
+        )
+        const work = await window.electronAPI.claudeAccountAdd({ label: 'Work' })
+        await window.electronAPI.claudeAccountSetToken(work.id, TOKEN)
+        await window.electronAPI.setAgentAutoUpdate(false)
+      },
+      { workspaceId: WS.id, TOKEN }
+    )
+    await win.reload()
+    await until(async () => {
+      try {
+        return await callMcp(app, 'list', {})
+      } catch {
+        return false
+      }
+    })
+    const tab = await callMcp(app, 'openSession', {
+      cwd: ws,
+      mode: 'claude',
+      account: 'Work',
+      name: 'Hinted'
+    })
+    await callMcp(app, 'focus', { sessionId: tab.sessionId })
+    const tokens = async () => {
+      const read = await callMcp(app, 'readSession', {
+        sessionId: tab.sessionId,
+        lines: 200,
+        callerSessionId: tab.sessionId
+      })
+      return [...(read?.text ?? '').matchAll(/TOKEN=\[([^\]]*)\]/g)].map((m) => m[1])
+    }
+    t.check(
+      'the tab started on its account',
+      !!(await until(async () => (await tokens()).includes(TOKEN), { tries: 60, gapMs: 250 })),
+      await tokens()
+    )
+    const hint = win.locator('[data-agent-update-hint="claude"]')
+    t.equal('no hint before any upgrade', await hint.count(), 0)
+
+    await win.evaluate(() => window.electronAPI.checkAgentUpdates())
+    const updated = await win.evaluate(() => window.electronAPI.updateAgent('claude'))
+    t.equal(
+      "Claude's installer moved it",
+      updated.agents.find((a) => a.id === 'claude')?.currentVersion,
+      '1.0.1'
+    )
+    t.check(
+      'the older tab shows the restart hint',
+      !!(await until(async () => (await hint.count()) > 0, { tries: 40, gapMs: 150 })),
+      await hint.count()
+    )
+    t.check(
+      'the hint names the new release',
+      /Claude 1\.0\.1/.test(
+        (await hint
+          .first()
+          .innerText()
+          .catch(() => '')) ?? ''
+      ),
+      await hint
+        .first()
+        .innerText()
+        .catch(() => null)
+    )
+    const before = (await tokens()).length
+    await win.locator('[data-agent-update-restart]').first().click()
+    const after = await until(
+      async () => {
+        const all = await tokens()
+        return all.length > before || (all.length > 0 && (await hint.count()) === 0 && all)
+          ? all
+          : null
+      },
+      { tries: 60, gapMs: 250 }
+    )
+    t.check('the tab restarted', !!after, after)
+    t.equal('the restarted process kept the account', after?.at(-1), TOKEN)
+    t.check(
+      'the hint is gone once the tab runs the new release',
+      !!(await until(async () => (await hint.count()) === 0, { tries: 20, gapMs: 150 })),
+      await hint.count()
     )
   } finally {
     await app.close()
