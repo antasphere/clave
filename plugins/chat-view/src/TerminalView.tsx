@@ -22,6 +22,8 @@ import type {
 import { emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
+import { SenderChip } from './Delivery'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
@@ -250,7 +252,11 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
-  if (entry.kind === 'user')
+  if (entry.kind === 'user') {
+    // A message another tab sent: its sender in a chip, its words without
+    // the bracketed header, in the delivery's own tint.
+    const delivery = parseDelivery(entry.text)
+    const text = delivery ? delivery.body : entry.text
     return (
       <div
         className="chat-turn-wrap"
@@ -258,16 +264,18 @@ const EntryRow = memo(function EntryRow({
         data-interrupted={entry.interrupted ? 'true' : undefined}
       >
         <Attachments files={entry.attachments ?? []} />
-        {entry.text.trim() !== '' && (
+        {text.trim() !== '' && (
           // The message is capped in height and scrolls inside past it; the
           // grip on its bottom edge moves the cap (question-height.ts).
           <div className="term-question">
             <article
               className="chat-turn"
               data-role="user"
+              data-from={delivery ? 'tab' : undefined}
               data-interrupted={entry.interrupted ? 'true' : undefined}
             >
-              {entry.text.replace(/\s+$/, '')}
+              {delivery && <SenderChip sender={delivery.sender} />}
+              {text.replace(/\s+$/, '')}
             </article>
             <div
               className="term-question-grip"
@@ -279,9 +287,10 @@ const EntryRow = memo(function EntryRow({
           </div>
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
-        <TurnMeta at={entry.at} text={entry.text} />
+        <TurnMeta at={entry.at} text={text} />
       </div>
     )
+  }
   if (entry.kind === 'assistant')
     return (
       <div className="chat-turn-wrap" data-side="start">

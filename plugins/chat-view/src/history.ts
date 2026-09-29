@@ -1,6 +1,7 @@
 import { useCallback, useRef, type KeyboardEvent, type SetStateAction } from 'react'
 import { useSessionDraft } from '../../../src/renderer/src/views/draft-store'
 import type { Entry } from './reducer'
+import { hasProvenanceHeader } from '../../../src/shared/exchange-provenance'
 
 type Browsing = { messages: string[]; index: number }
 type HistoryKey = Pick<KeyboardEvent, 'key'> &
@@ -25,8 +26,11 @@ export function recallMessage(
     return null
   if (!browsing) {
     if (draft !== '' || key.key !== 'ArrowUp') return null
+    // What the reader wrote, never what another tab sent here.
     const messages = entries.flatMap((entry) =>
-      entry.kind === 'user' && entry.text.trim() ? [entry.text] : []
+      entry.kind === 'user' && entry.text.trim() && !hasProvenanceHeader(entry.text)
+        ? [entry.text]
+        : []
     )
     if (!messages.length) return null
     browsing = { messages, index: messages.length }

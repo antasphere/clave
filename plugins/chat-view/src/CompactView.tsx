@@ -26,6 +26,7 @@ import { JumpToEnd } from './JumpToEnd'
 import { useEarlier } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
 import { TranscriptRows } from './rows'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 
 /** The same events the chat view reads, read as a list: one line per turn, no
  *  markdown, no tool bodies. The second view this plugin contributes, and the
@@ -56,13 +57,17 @@ function useFoldedLog(
  *  and the summary is what that run looks like at this altitude. */
 function lineOf(entry: Exclude<Block, { kind: 'tool-group' }>): { role: string; text: string } {
   switch (entry.kind) {
-    case 'user':
+    case 'user': {
+      const delivery = parseDelivery(entry.text)
+      if (delivery)
+        return { role: `From ${delivery.sender?.name ?? 'another agent'}`, text: delivery.body }
       return {
         role: entry.interrupted ? 'You · interrupted' : 'You',
         text: entry.attachments?.length
           ? `${entry.text} [${entry.attachments.map((f) => f.name).join(', ')}]`.trim()
           : entry.text
       }
+    }
     case 'assistant':
       return { role: 'Agent', text: entry.text }
     case 'permission':

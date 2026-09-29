@@ -2707,6 +2707,50 @@ button.extension-card:hover {
 .chat-turn-wrap[data-interrupted='true'] .chat-attachments {
   opacity: 0.5;
 }
+/* A message another tab sent (clave_send_to_session): the agents' own hue
+   instead of the reader's grey, and the sender in a chip at its head where
+   the bracketed header was. */
+.chat-turn[data-role='user'][data-from='tab'] {
+  background-color: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
+}
+.chat-turn-from {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing);
+  max-width: min(100%, 24rem);
+  margin-inline-end: calc(var(--spacing) * 2);
+  padding: 0 calc(var(--spacing) * 1.5);
+  border: none;
+  border-radius: calc(var(--spacing) * 1.5);
+  background-color: color-mix(in oklch, var(--color-term-model) 16%, transparent);
+  color: var(--color-term-model);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.chat-turn-from svg {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+}
+.chat-turn-from-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.chat-turn-from {
+  cursor: pointer;
+  transition: background-color var(--default-transition-duration);
+}
+button.chat-turn-from:hover {
+  background-color: color-mix(in oklch, var(--color-term-model) 26%, transparent);
+}
+button.chat-turn-from:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 4);
+}
 .chat-turn-note {
   padding: var(--spacing) var(--spacing) 0;
   font-size: var(--text-xs);
@@ -4347,6 +4391,13 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   /* Opaque, since the answer scrolls under it: the tint over the ground. */
   background-color: var(--surface-0);
   background-image: linear-gradient(var(--surface-100), var(--surface-100));
+}
+.terminal-view .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] {
+  --from-tint: color-mix(in oklch, var(--color-term-model) 10%, var(--surface-100));
+  background-image: linear-gradient(var(--from-tint), var(--from-tint));
+}
+.terminal-view .chat-turn[data-role='user'][data-from='tab']::before {
+  color: var(--color-term-model);
 }
 .terminal-view .chat-turn-wrap[data-side='end'] .chat-attachments {
   order: 1;
