@@ -58,9 +58,9 @@ describe('providerEventReportsLimit', () => {
     ).toBe(true)
     // A synthetic notice about something else, or a real model's reply that
     // happens to discuss limits, is nothing.
-    expect(
-      providerEventReportsLimit('claude', synthetic('[Request interrupted by user]'))
-    ).toBe(false)
+    expect(providerEventReportsLimit('claude', synthetic('[Request interrupted by user]'))).toBe(
+      false
+    )
     expect(
       providerEventReportsLimit(
         'claude',

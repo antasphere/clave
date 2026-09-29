@@ -171,7 +171,7 @@ export function useMultiRepoStatus(
   //     common case of an agent committing in a subfolder.
   const focusedActivity = useSessionStore((s) => {
     const id = s.focusedSessionId
-    return id ? s.sessions.find((x) => x.id === id)?.activityStatus ?? null : null
+    return id ? (s.sessions.find((x) => x.id === id)?.activityStatus ?? null) : null
   })
   const prevActivityRef = useRef(focusedActivity)
   useEffect(() => {

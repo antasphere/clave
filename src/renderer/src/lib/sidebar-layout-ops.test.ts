@@ -32,13 +32,18 @@ describe('moveLayoutItems — rows', () => {
     ])
   })
 
-  it('joins the target row\'s group when dropped next to it', () => {
+  it("joins the target row's group when dropped next to it", () => {
     const next = moveLayoutItems(layout([g('B', ['b1', 'b2'])], ['s0', 'B']), ['s0'], 'b1', 'after')
     expect(next).toEqual(layout([g('B', ['b1', 's0', 'b2'])], ['B']))
   })
 
   it('"inside" on a row reads as "after" that row', () => {
-    const next = moveLayoutItems(layout([g('B', ['b1', 'b2'])], ['s0', 'B']), ['s0'], 'b1', 'inside')
+    const next = moveLayoutItems(
+      layout([g('B', ['b1', 'b2'])], ['s0', 'B']),
+      ['s0'],
+      'b1',
+      'inside'
+    )
     expect(next!.groups[0].sessionIds).toEqual(['b1', 's0', 'b2'])
   })
 

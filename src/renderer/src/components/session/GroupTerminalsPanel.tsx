@@ -85,7 +85,9 @@ export function GroupTerminalsPanel({
             <span className="flex-1 min-w-0 flex flex-col leading-tight">
               <span className="truncate">{t.command || 'Shell'}</span>
               {folder && (
-                <span className="truncate text-[11px] font-normal text-text-tertiary">{folder}</span>
+                <span className="truncate text-[11px] font-normal text-text-tertiary">
+                  {folder}
+                </span>
               )}
             </span>
             <span

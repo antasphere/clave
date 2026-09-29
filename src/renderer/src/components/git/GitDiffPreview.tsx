@@ -192,24 +192,26 @@ export function GitDiffPreview(): React.JSX.Element | null {
         exit={{ opacity: 0, x: 8 }}
         transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
         className="menu-surface menu-surface--sheet fixed z-50 flex flex-col"
-        style={{
-          right: rightOffset,
-          top: panelTop != null ? panelTop : '4%',
-          maxHeight: '92vh',
-          width: panelWidth,
-          WebkitAppRegion: 'no-drag'
-        } as React.CSSProperties}
+        style={
+          {
+            right: rightOffset,
+            top: panelTop != null ? panelTop : '4%',
+            maxHeight: '92vh',
+            width: panelWidth,
+            WebkitAppRegion: 'no-drag'
+          } as React.CSSProperties
+        }
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle flex-shrink-0">
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className={`font-mono text-xs flex-shrink-0 ${commitFileStatusColor(diffPreview.fileStatus)}`}>
+            <span
+              className={`font-mono text-xs flex-shrink-0 ${commitFileStatusColor(diffPreview.fileStatus)}`}
+            >
               {statusDisplayLetter(diffPreview.fileStatus)}
             </span>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-text-primary truncate">
-                {filename}
-              </div>
+              <div className="text-sm font-medium text-text-primary truncate">{filename}</div>
               {diffPreview.file !== filename && (
                 <div className="text-xs text-text-tertiary truncate">{diffPreview.file}</div>
               )}
@@ -252,7 +254,10 @@ export function GitDiffPreview(): React.JSX.Element | null {
           <div className="flex items-center justify-between px-4 py-1.5 border-t border-border-subtle text-[10px] text-text-tertiary flex-shrink-0">
             <span className="flex items-center gap-2">
               {diffPreview.siblings && diffPreview.siblings.length > 1 && (
-                <span>{diffPreview.siblings.findIndex((s) => s.file === diffPreview.file) + 1}/{diffPreview.siblings.length}</span>
+                <span>
+                  {diffPreview.siblings.findIndex((s) => s.file === diffPreview.file) + 1}/
+                  {diffPreview.siblings.length}
+                </span>
               )}
               <span>{diffLines.length} lines</span>
             </span>

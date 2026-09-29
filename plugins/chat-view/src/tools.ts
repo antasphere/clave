@@ -29,8 +29,7 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
  *  not at all, which split a run in one view and not the other. */
 export function visibleEntries(entries: Entry[]): Entry[] {
   return entries.filter(
-    (e) =>
-      (e.kind !== 'assistant' || e.text.trim() !== '') && !(e.kind === 'user' && e.withdrawn)
+    (e) => (e.kind !== 'assistant' || e.text.trim() !== '') && !(e.kind === 'user' && e.withdrawn)
   )
 }
 

@@ -65,7 +65,11 @@ export function toggleNodeExpanded<T extends BaseTreeNode>(nodes: T[], path: str
 }
 
 /** Set a node's loading state by path. */
-export function setNodeLoading<T extends BaseTreeNode>(nodes: T[], path: string, loading: boolean): T[] {
+export function setNodeLoading<T extends BaseTreeNode>(
+  nodes: T[],
+  path: string,
+  loading: boolean
+): T[] {
   return nodes.map((node) => {
     if (node.path === path) {
       return { ...node, loading }

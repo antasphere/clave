@@ -66,12 +66,14 @@ export function PullButton({
           // Opens upward from the bar, so it grows from its bottom edge.
           style={{ transformOrigin: '100% 100%' }}
         >
-          {([
-            ['auto', 'Pull'],
-            ['merge', 'Pull (Merge)'],
-            ['rebase', 'Pull (Rebase)'],
-            ['ff-only', 'Pull (FF only)']
-          ] as [PullStrategy, string][]).map(([strategy, label]) => (
+          {(
+            [
+              ['auto', 'Pull'],
+              ['merge', 'Pull (Merge)'],
+              ['rebase', 'Pull (Rebase)'],
+              ['ff-only', 'Pull (FF only)']
+            ] as [PullStrategy, string][]
+          ).map(([strategy, label]) => (
             <button
               key={strategy}
               className="menu-item menu-item--muted"
@@ -189,8 +191,19 @@ export function CommitBar({
         >
           {generating ? (
             <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="3"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
             </svg>
           ) : (
             <SparklesIcon className="w-3.5 h-3.5" />
@@ -242,9 +255,7 @@ export function CommitBar({
                 {'\u2191'} Push
               </IconButton>
             )}
-            {behind > 0 && (
-              <PullButton cwd={cwd} operating={operating} onOperation={onOperation} />
-            )}
+            {behind > 0 && <PullButton cwd={cwd} operating={operating} onOperation={onOperation} />}
           </>
         )}
       </div>

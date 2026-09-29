@@ -63,9 +63,13 @@ function mcpClient(url, token) {
     const text = await res.text()
     // The streamable transport may answer as SSE; the JSON-RPC payload rides
     // in `data:` lines. Parse both shapes.
-    const payloads = text.startsWith('event:') || text.includes('\ndata:') || text.startsWith('data:')
-      ? text.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim())
-      : [text]
+    const payloads =
+      text.startsWith('event:') || text.includes('\ndata:') || text.startsWith('data:')
+        ? text
+            .split('\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trim())
+        : [text]
     const parsed = payloads.filter(Boolean).map((p) => JSON.parse(p))
     return parsed[parsed.length - 1] ?? null
   }
@@ -131,7 +135,10 @@ export async function run(t) {
       ?.Authorization
     const token = auth?.replace(/^Bearer /, '')
     const { url } = JSON.parse(readFileSync(path.join(DIR, 'mcp-server.json'), 'utf-8'))
-    t.check('the MCP endpoint and a session token exist', !!url && !!token, { url, hasToken: !!token })
+    t.check('the MCP endpoint and a session token exist', !!url && !!token, {
+      url,
+      hasToken: !!token
+    })
 
     const mcp = mcpClient(url, token)
     await mcp.init()
@@ -160,7 +167,10 @@ export async function run(t) {
     const events = await until(() => {
       const file = path.join(DIR, 'exchange-capture', 'events.jsonl')
       if (!existsSync(file)) return null
-      const lines = readFileSync(file, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      const lines = readFileSync(file, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
       const msgs = lines.filter((e) => e.kind === 'message')
       return msgs.length >= 2 ? msgs : null
     })
@@ -168,7 +178,9 @@ export async function run(t) {
     if (events) {
       t.check(
         'every checkpoint is a self-pair',
-        events.every((e) => e.sender.sessionId === cfg.claveId && e.target.sessionId === cfg.claveId),
+        events.every(
+          (e) => e.sender.sessionId === cfg.claveId && e.target.sessionId === cfg.claveId
+        ),
         events.map((e) => ({ s: e.sender.sessionId, t: e.target.sessionId }))
       )
       t.check(

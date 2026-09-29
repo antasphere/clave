@@ -216,10 +216,7 @@ export async function run(t) {
     // Check the same controls under every shipped theme in the real renderer.
     await footer().click()
     for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
-      await win.evaluate(
-        (value) => window.electronAPI.skinsActivate(value),
-        theme
-      )
+      await win.evaluate((value) => window.electronAPI.skinsActivate(value), theme)
       const geometry = await panel('codex').evaluate((el) => ({
         width: el.clientWidth,
         scroll: el.scrollWidth

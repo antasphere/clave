@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
 import { ModalScrim, ModalPositioner } from '@clave/ui/components'
-import { type GroupTerminalColor, type GroupTerminalIcon, GROUP_TERMINAL_ICONS } from '../../store/session-store'
+import {
+  type GroupTerminalColor,
+  type GroupTerminalIcon,
+  GROUP_TERMINAL_ICONS
+} from '../../store/session-store'
 import ColorPicker from './ColorPicker'
 import { FolderIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
@@ -10,7 +14,13 @@ import { ICON_COMPONENTS } from './terminal-icons'
 
 interface GroupCommandDialogProps {
   isOpen: boolean
-  onSave: (command: string, mode: 'prefill' | 'auto', color: GroupTerminalColor, cwd: string | null, icon: GroupTerminalIcon) => void
+  onSave: (
+    command: string,
+    mode: 'prefill' | 'auto',
+    color: GroupTerminalColor,
+    cwd: string | null,
+    icon: GroupTerminalIcon
+  ) => void
   onCancel: () => void
   onDelete?: () => void
   initialCommand?: string | null
@@ -81,7 +91,12 @@ export function GroupCommandDialog({
   const folderName = cwd ? cwd.split('/').pop() || cwd : null
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => { if (!open) onCancel() }}>
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
       <AnimatePresence>
         {isOpen && (
           <DialogPrimitive.Portal forceMount>

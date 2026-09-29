@@ -30,10 +30,16 @@ function relativeTime(isoDate: string): string {
 
 function commitFileStatusColor(status: GitCommitFileStatus['status']): string {
   switch (status) {
-    case 'A': return 'text-green-400'
-    case 'M': case 'T': return 'text-git-modified'
-    case 'D': return 'text-red-400'
-    case 'R': case 'C': return 'text-blue-400'
+    case 'A':
+      return 'text-green-400'
+    case 'M':
+    case 'T':
+      return 'text-git-modified'
+    case 'D':
+      return 'text-red-400'
+    case 'R':
+    case 'C':
+      return 'text-blue-400'
   }
 }
 
@@ -65,9 +71,14 @@ function CommitDot({
     }
   }, [hovered])
 
-  const baseColor = variant === 'local'
-    ? isSelected ? 'bg-green-300 scale-150' : 'bg-green-400 hover:bg-green-300 hover:scale-150'
-    : isSelected ? 'bg-accent scale-150' : 'bg-text-tertiary hover:bg-accent hover:scale-150'
+  const baseColor =
+    variant === 'local'
+      ? isSelected
+        ? 'bg-green-300 scale-150'
+        : 'bg-green-400 hover:bg-green-300 hover:scale-150'
+      : isSelected
+        ? 'bg-accent scale-150'
+        : 'bg-text-tertiary hover:bg-accent hover:scale-150'
 
   return (
     <>
@@ -93,7 +104,10 @@ function CommitDot({
             }}
           >
             <span className="text-[10px] font-mono text-text-tertiary">{commit.shortHash}</span>
-            <span className="text-[10px] text-text-secondary ml-1.5">{commit.message.slice(0, 50)}{commit.message.length > 50 ? '...' : ''}</span>
+            <span className="text-[10px] text-text-secondary ml-1.5">
+              {commit.message.slice(0, 50)}
+              {commit.message.length > 50 ? '...' : ''}
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -165,7 +179,6 @@ export function GitJourneyPanel(): React.JSX.Element | null {
   const fileTreeOpen = useSessionStore((s) => s.fileTreeOpen)
   const fileTreeWidth = useSessionStore((s) => s.fileTreeWidth)
 
-
   const { data, loading, error, refresh, loadMore } = useGitJourney(
     journeyPanel?.cwd ?? null,
     !!journeyPanel
@@ -176,11 +189,15 @@ export function GitJourneyPanel(): React.JSX.Element | null {
   const [expandedCommitHashes, setExpandedCommitHashes] = useState<Set<string>>(new Set())
 
   // Commit files cache
-  const [commitFilesCache, setCommitFilesCache] = useState<Record<string, GitCommitFileStatus[]>>({})
+  const [commitFilesCache, setCommitFilesCache] = useState<Record<string, GitCommitFileStatus[]>>(
+    {}
+  )
   const [loadingCommits, setLoadingCommits] = useState<Set<string>>(new Set())
 
   // AI summary state
-  const [summaries, setSummaries] = useState<Record<string, { title: string; description: string }>>({})
+  const [summaries, setSummaries] = useState<
+    Record<string, { title: string; description: string }>
+  >({})
   const [summarizing, setSummarizing] = useState<Set<string>>(new Set())
   const summaryFetched = useRef<Set<string>>(new Set())
 
@@ -191,7 +208,9 @@ export function GitJourneyPanel(): React.JSX.Element | null {
   const contentRef = useRef<HTMLDivElement>(null)
 
   // Keep ref in sync
-  useEffect(() => { focusedKeyRef.current = focusedKey }, [focusedKey])
+  useEffect(() => {
+    focusedKeyRef.current = focusedKey
+  }, [focusedKey])
 
   const togglePush = useCallback((groupId: string) => {
     setExpandedPushIds((prev) => {
@@ -218,10 +237,17 @@ export function GitJourneyPanel(): React.JSX.Element | null {
       if (commitFilesCache[hash] || loadingCommits.has(hash)) continue
       // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the request in flight in the same step that sends it, so the next run of this effect does not send it twice
       setLoadingCommits((prev) => new Set(prev).add(hash))
-      window.electronAPI.gitCommitFiles(journeyPanel.cwd, hash)
+      window.electronAPI
+        .gitCommitFiles(journeyPanel.cwd, hash)
         .then((files) => setCommitFilesCache((prev) => ({ ...prev, [hash]: files })))
         .catch(() => setCommitFilesCache((prev) => ({ ...prev, [hash]: [] })))
-        .finally(() => setLoadingCommits((prev) => { const next = new Set(prev); next.delete(hash); return next }))
+        .finally(() =>
+          setLoadingCommits((prev) => {
+            const next = new Set(prev)
+            next.delete(hash)
+            return next
+          })
+        )
     }
   }, [expandedCommitHashes, journeyPanel, commitFilesCache, loadingCommits])
 
@@ -229,19 +255,36 @@ export function GitJourneyPanel(): React.JSX.Element | null {
   useEffect(() => {
     if (!journeyPanel || !data) return
     for (const groupId of expandedPushIds) {
-      if (summaries[groupId] || summarizing.has(groupId) || summaryFetched.current.has(groupId)) continue
+      if (summaries[groupId] || summarizing.has(groupId) || summaryFetched.current.has(groupId))
+        continue
       summaryFetched.current.add(groupId)
-      const group = [...data.pushGroups, ...(data.local.length > 0 ? [{ id: 'local', commits: data.local, pushedAt: '' } as GitPushGroup] : [])]
-        .find((g) => g.id === groupId)
+      const group = [
+        ...data.pushGroups,
+        ...(data.local.length > 0
+          ? [{ id: 'local', commits: data.local, pushedAt: '' } as GitPushGroup]
+          : [])
+      ].find((g) => g.id === groupId)
       if (!group) continue
 
       // eslint-disable-next-line react-hooks/set-state-in-effect -- marks the request in flight in the same step that sends it, beside the IPC call this effect exists to make
       setSummarizing((prev) => new Set(prev).add(groupId))
       const messages = group.commits.map((c) => c.message)
-      window.electronAPI.gitSummarizePush(journeyPanel.cwd, messages, `${group.commits.length} commit(s)`)
+      window.electronAPI
+        .gitSummarizePush(journeyPanel.cwd, messages, `${group.commits.length} commit(s)`)
         .then((result) => setSummaries((prev) => ({ ...prev, [groupId]: result })))
-        .catch(() => setSummaries((prev) => ({ ...prev, [groupId]: { title: messages[0] || 'Changes', description: '' } })))
-        .finally(() => setSummarizing((prev) => { const next = new Set(prev); next.delete(groupId); return next }))
+        .catch(() =>
+          setSummaries((prev) => ({
+            ...prev,
+            [groupId]: { title: messages[0] || 'Changes', description: '' }
+          }))
+        )
+        .finally(() =>
+          setSummarizing((prev) => {
+            const next = new Set(prev)
+            next.delete(groupId)
+            return next
+          })
+        )
     }
   }, [expandedPushIds, journeyPanel, data, summaries, summarizing])
 
@@ -273,7 +316,12 @@ export function GitJourneyPanel(): React.JSX.Element | null {
           items.push({ type: 'commit', groupId: group.id, hash: commit.hash })
           if (expandedCommitHashes.has(commit.hash) && commitFilesCache[commit.hash]) {
             for (const file of commitFilesCache[commit.hash]) {
-              items.push({ type: 'file', groupId: group.id, hash: commit.hash, filePath: file.path })
+              items.push({
+                type: 'file',
+                groupId: group.id,
+                hash: commit.hash,
+                filePath: file.path
+              })
             }
           }
         }
@@ -286,15 +334,18 @@ export function GitJourneyPanel(): React.JSX.Element | null {
     (hash: string, file: GitCommitFileStatus) => {
       if (!journeyPanel) return
       const files = commitFilesCache[hash] ?? []
-      setDiffPreview({
-        file: file.path,
-        cwd: journeyPanel.cwd,
-        type: 'commit',
-        staged: false,
-        fileStatus: file.status,
-        hash,
-        siblings: files.map((f) => ({ file: f.path, staged: false, fileStatus: f.status }))
-      }, { fromJourney: true })
+      setDiffPreview(
+        {
+          file: file.path,
+          cwd: journeyPanel.cwd,
+          type: 'commit',
+          staged: false,
+          fileStatus: file.status,
+          hash,
+          siblings: files.map((f) => ({ file: f.path, staged: false, fileStatus: f.status }))
+        },
+        { fromJourney: true }
+      )
     },
     [journeyPanel, setDiffPreview, commitFilesCache]
   )
@@ -303,9 +354,15 @@ export function GitJourneyPanel(): React.JSX.Element | null {
   const buildNavListRef = useRef(buildNavList)
   const commitFilesCacheRef = useRef(commitFilesCache)
   const diffPreviewRef = useRef(diffPreview)
-  useEffect(() => { buildNavListRef.current = buildNavList }, [buildNavList])
-  useEffect(() => { commitFilesCacheRef.current = commitFilesCache }, [commitFilesCache])
-  useEffect(() => { diffPreviewRef.current = diffPreview }, [diffPreview])
+  useEffect(() => {
+    buildNavListRef.current = buildNavList
+  }, [buildNavList])
+  useEffect(() => {
+    commitFilesCacheRef.current = commitFilesCache
+  }, [commitFilesCache])
+  useEffect(() => {
+    diffPreviewRef.current = diffPreview
+  }, [diffPreview])
 
   // Keyboard navigation — single handler, registered once
   useEffect(() => {
@@ -333,9 +390,10 @@ export function GitJourneyPanel(): React.JSX.Element | null {
           currentIdx = e.key === 'ArrowDown' ? -1 : navList.length
         }
 
-        const nextIdx = e.key === 'ArrowDown'
-          ? Math.min(currentIdx + 1, navList.length - 1)
-          : Math.max(currentIdx - 1, 0)
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(currentIdx + 1, navList.length - 1)
+            : Math.max(currentIdx - 1, 0)
 
         const next = navList[nextIdx]
         const key = navItemKey(next)
@@ -421,22 +479,35 @@ export function GitJourneyPanel(): React.JSX.Element | null {
         exit={{ opacity: 0, x: 8 }}
         transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
         className="menu-surface menu-surface--sheet fixed z-50 flex flex-col"
-        style={{
-          right: rightOffset,
-          top: '4%',
-          maxHeight: '92vh',
-          width: panelWidth,
-          WebkitAppRegion: 'no-drag'
-        } as React.CSSProperties}
+        style={
+          {
+            right: rightOffset,
+            top: '4%',
+            maxHeight: '92vh',
+            width: panelWidth,
+            WebkitAppRegion: 'no-drag'
+          } as React.CSSProperties
+        }
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle flex-shrink-0">
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 12 12" fill="none" className="text-text-secondary flex-shrink-0">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 12 12"
+              fill="none"
+              className="text-text-secondary flex-shrink-0"
+            >
               <circle cx="3" cy="2.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
               <circle cx="9" cy="6" r="1.3" stroke="currentColor" strokeWidth="1.1" />
               <circle cx="3" cy="9.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
-              <path d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              <path
+                d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2"
+                stroke="currentColor"
+                strokeWidth="1.1"
+                strokeLinecap="round"
+              />
             </svg>
             <div className="min-w-0">
               <div className="text-sm font-medium text-text-primary truncate">
@@ -448,11 +519,7 @@ export function GitJourneyPanel(): React.JSX.Element | null {
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-            <button
-              onClick={refresh}
-              className="btn-icon btn-icon-sm"
-              title="Refresh"
-            >
+            <button onClick={refresh} className="btn-icon btn-icon-sm" title="Refresh">
               <ArrowPathIcon className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             </button>
             <button onClick={closeJourneyPanel} className={fileActionButtonClass}>
@@ -511,9 +578,7 @@ export function GitJourneyPanel(): React.JSX.Element | null {
                             )}
                           </span>
                           <span className="text-[10px] text-text-tertiary flex-shrink-0 whitespace-nowrap flex items-center gap-1.5">
-                            {group.commits[0]?.author && (
-                              <span>{group.commits[0].author}</span>
-                            )}
+                            {group.commits[0]?.author && <span>{group.commits[0].author}</span>}
                             <span>{relativeTime(group.pushedAt)}</span>
                           </span>
                         </div>
@@ -552,11 +617,15 @@ export function GitJourneyPanel(): React.JSX.Element | null {
                               {isSummarizing && (
                                 <div className="flex items-center gap-1.5">
                                   <div className="w-1.5 h-1.5 rounded-full bg-accent/60 animate-pulse" />
-                                  <span className="text-[10px] text-text-tertiary">Generating description...</span>
+                                  <span className="text-[10px] text-text-tertiary">
+                                    Generating description...
+                                  </span>
                                 </div>
                               )}
                               {!isSummarizing && summary?.description && (
-                                <p className="text-[11px] text-text-secondary leading-relaxed">{summary.description}</p>
+                                <p className="text-[11px] text-text-secondary leading-relaxed">
+                                  {summary.description}
+                                </p>
                               )}
                             </div>
                           )}
@@ -574,7 +643,9 @@ export function GitJourneyPanel(): React.JSX.Element | null {
                                   <div
                                     data-nav-key={commitKey}
                                     className={`w-full flex items-center gap-2 px-4 py-1 text-xs transition-colors cursor-pointer ${
-                                      focusedKey === commitKey ? 'bg-surface-200' : 'hover:bg-surface-100/50'
+                                      focusedKey === commitKey
+                                        ? 'bg-surface-200'
+                                        : 'hover:bg-surface-100/50'
                                     }`}
                                     onClick={() => {
                                       toggleCommit(commit.hash)
@@ -584,7 +655,9 @@ export function GitJourneyPanel(): React.JSX.Element | null {
                                     <span className="font-mono text-text-tertiary flex-shrink-0 text-[10px]">
                                       {commit.shortHash}
                                     </span>
-                                    <span className="text-text-primary truncate flex-1 text-left">{commit.message}</span>
+                                    <span className="text-text-primary truncate flex-1 text-left">
+                                      {commit.message}
+                                    </span>
                                     <span className="text-[10px] text-text-tertiary flex-shrink-0">
                                       {relativeTime(commit.date)}
                                     </span>
@@ -592,9 +665,13 @@ export function GitJourneyPanel(): React.JSX.Element | null {
                                   {commitExpanded && (
                                     <div className="border-t border-border-subtle/50">
                                       {filesLoading ? (
-                                        <div className="pl-6 py-1.5 text-[10px] text-text-tertiary">Loading files...</div>
+                                        <div className="pl-6 py-1.5 text-[10px] text-text-tertiary">
+                                          Loading files...
+                                        </div>
                                       ) : !files || files.length === 0 ? (
-                                        <div className="pl-6 py-1.5 text-[10px] text-text-tertiary">No files changed</div>
+                                        <div className="pl-6 py-1.5 text-[10px] text-text-tertiary">
+                                          No files changed
+                                        </div>
                                       ) : (
                                         <div className="py-0.5">
                                           {files.map((file) => {

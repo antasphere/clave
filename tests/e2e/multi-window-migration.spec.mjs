@@ -54,11 +54,36 @@ const WS_B = {
 }
 
 const SESS = {
-  a: { id: '11111111-0000-4000-8000-000000000001', tmux: fixtureTmuxName('mig-a'), cwd: ROOT_A, workspaceId: WS_A.id },
-  b: { id: '22222222-0000-4000-8000-000000000002', tmux: fixtureTmuxName('mig-b'), cwd: ROOT_B, workspaceId: WS_B.id },
-  c: { id: '33333333-0000-4000-8000-000000000003', tmux: fixtureTmuxName('mig-c'), cwd: ROOT_A, workspaceId: undefined },
-  x: { id: '44444444-0000-4000-8000-000000000004', tmux: fixtureTmuxName('mig-x'), cwd: ROOT_B, workspaceId: WS_B.id },
-  p: { id: '55555555-0000-4000-8000-000000000005', tmux: fixtureTmuxName('mig-p'), cwd: ROOT_B, workspaceId: WS_B.id }
+  a: {
+    id: '11111111-0000-4000-8000-000000000001',
+    tmux: fixtureTmuxName('mig-a'),
+    cwd: ROOT_A,
+    workspaceId: WS_A.id
+  },
+  b: {
+    id: '22222222-0000-4000-8000-000000000002',
+    tmux: fixtureTmuxName('mig-b'),
+    cwd: ROOT_B,
+    workspaceId: WS_B.id
+  },
+  c: {
+    id: '33333333-0000-4000-8000-000000000003',
+    tmux: fixtureTmuxName('mig-c'),
+    cwd: ROOT_A,
+    workspaceId: undefined
+  },
+  x: {
+    id: '44444444-0000-4000-8000-000000000004',
+    tmux: fixtureTmuxName('mig-x'),
+    cwd: ROOT_B,
+    workspaceId: WS_B.id
+  },
+  p: {
+    id: '55555555-0000-4000-8000-000000000005',
+    tmux: fixtureTmuxName('mig-p'),
+    cwd: ROOT_B,
+    workspaceId: WS_B.id
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -117,7 +142,10 @@ export async function run(t) {
   const perWsPath = path.join(DIR, 'sidebar-layouts', `${WS_B.id}.json`)
   mkdirSync(path.dirname(perWsPath), { recursive: true })
   const perWsText = JSON.stringify(
-    { groups: [group('g-perws', 'Per-workspace B', [SESS.p.id], { workspaceId: WS_B.id })], displayOrder: ['g-perws'] },
+    {
+      groups: [group('g-perws', 'Per-workspace B', [SESS.p.id], { workspaceId: WS_B.id })],
+      displayOrder: ['g-perws']
+    },
     null,
     2
   )
@@ -130,30 +158,47 @@ export async function run(t) {
     const id = await identityOf(launched.win)
     const key = id?.windowKey
     t.check('the first boot minted a window key', typeof key === 'string', id)
-    t.check('windows.json holds that one window', persistedWindows(DIR).length === 1 && persistedWindows(DIR)[0].key === key, persistedWindows(DIR))
+    t.check(
+      'windows.json holds that one window',
+      persistedWindows(DIR).length === 1 && persistedWindows(DIR)[0].key === key,
+      persistedWindows(DIR)
+    )
 
     // ── the files ──
     t.check('the legacy file is gone from its old path', !existsSync(legacyPath))
     const backup = `${legacyPath}.migrated-backup`
     t.check('the legacy file is kept as .migrated-backup', existsSync(backup), backup)
-    t.check('the backup is the legacy file byte for byte', existsSync(backup) && readFileSync(backup, 'utf-8') === legacyText)
+    t.check(
+      'the backup is the legacy file byte for byte',
+      existsSync(backup) && readFileSync(backup, 'utf-8') === legacyText
+    )
     t.check('the per-workspace file is gone from its old path', !existsSync(perWsPath))
     t.check(
       'and kept as .migrated-backup, byte for byte',
-      existsSync(`${perWsPath}.migrated-backup`) && readFileSync(`${perWsPath}.migrated-backup`, 'utf-8') === perWsText
+      existsSync(`${perWsPath}.migrated-backup`) &&
+        readFileSync(`${perWsPath}.migrated-backup`, 'utf-8') === perWsText
     )
 
     const file = windowLayout(DIR, key)
-    t.check("the first window got a layout file", file !== null)
+    t.check('the first window got a layout file', file !== null)
     const byId = new Map((file?.groups ?? []).map((g) => [g.id, g]))
     t.check(
       'every legacy group landed in it exactly once',
-      JSON.stringify([...byId.keys()].sort()) === JSON.stringify(['g-bycwd', 'g-orphan', 'g-perws', 'g-stamped']),
+      JSON.stringify([...byId.keys()].sort()) ===
+        JSON.stringify(['g-bycwd', 'g-orphan', 'g-perws', 'g-stamped']),
       [...byId.keys()]
     )
     t.equal('the stamped group kept its workspace', byId.get('g-stamped')?.workspaceId, WS_A.id)
-    t.equal('the cwd-placed group was stamped by its cwd', byId.get('g-bycwd')?.workspaceId, WS_B.id)
-    t.equal('the orphan was stamped with the fallback (last-active A)', byId.get('g-orphan')?.workspaceId, WS_A.id)
+    t.equal(
+      'the cwd-placed group was stamped by its cwd',
+      byId.get('g-bycwd')?.workspaceId,
+      WS_B.id
+    )
+    t.equal(
+      'the orphan was stamped with the fallback (last-active A)',
+      byId.get('g-orphan')?.workspaceId,
+      WS_A.id
+    )
     t.equal('the per-workspace group kept its stamp', byId.get('g-perws')?.workspaceId, WS_B.id)
     t.check(
       'the bare session id of the legacy order is in the window order',
@@ -166,8 +211,16 @@ export async function run(t) {
     const inB = await callMcp(app, 'list', { workspace: WS_B.id })
     const namesA = inA.groups.map((g) => g.name).sort()
     const namesB = inB.groups.map((g) => g.name).sort()
-    t.check('workspace A shows the stamped group and the orphan', JSON.stringify(namesA) === JSON.stringify(['Orphan', 'Stamped A']), namesA)
-    t.check('workspace B shows the cwd-placed and the per-workspace groups', JSON.stringify(namesB) === JSON.stringify(['By cwd B', 'Per-workspace B']), namesB)
+    t.check(
+      'workspace A shows the stamped group and the orphan',
+      JSON.stringify(namesA) === JSON.stringify(['Orphan', 'Stamped A']),
+      namesA
+    )
+    t.check(
+      'workspace B shows the cwd-placed and the per-workspace groups',
+      JSON.stringify(namesB) === JSON.stringify(['By cwd B', 'Per-workspace B']),
+      namesB
+    )
     const all = await callMcp(app, 'list', {})
     t.equal('no group was duplicated', all.groups.length, 4)
     t.check(
@@ -182,7 +235,10 @@ export async function run(t) {
     await sleep(1000)
     const again = await launchApp(DIR, { settleMs: 6000 })
     app = again.app
-    t.check('a second boot leaves the backups in place (idempotent)', existsSync(backup) && !existsSync(legacyPath) && !existsSync(perWsPath))
+    t.check(
+      'a second boot leaves the backups in place (idempotent)',
+      existsSync(backup) && !existsSync(legacyPath) && !existsSync(perWsPath)
+    )
     t.equal('and the same window comes back', (await identityOf(again.win))?.windowKey, key)
     const listed = await callMcp(app, 'list', {})
     t.equal('and the groups are still four', listed.groups.length, 4)

@@ -280,7 +280,7 @@ describe('splitUnifiedDiff', () => {
 })
 
 describe('ghSpawnEnv', () => {
-  it('runs gh on its stored login by dropping the login shell\'s token variables', () => {
+  it("runs gh on its stored login by dropping the login shell's token variables", () => {
     const plan = ghSpawnEnv({ PATH: '/bin', GITHUB_TOKEN: 'ghp_x', GH_TOKEN: 'gho_y', HOME: '/h' })
     expect(plan.env).toEqual({ PATH: '/bin', HOME: '/h' })
   })

@@ -315,7 +315,11 @@ export function RemoteDirectoryPicker({
             title={editingPath ? 'Go' : 'Edit path'}
             className="btn-icon btn-icon-sm flex-shrink-0"
           >
-            {editingPath ? <CheckIcon className="w-4 h-4" /> : <PencilSquareIcon className="w-4 h-4" />}
+            {editingPath ? (
+              <CheckIcon className="w-4 h-4" />
+            ) : (
+              <PencilSquareIcon className="w-4 h-4" />
+            )}
           </button>
         </div>
 

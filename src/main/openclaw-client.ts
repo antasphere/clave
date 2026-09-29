@@ -15,7 +15,9 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0'])
  * according to the location's transport policy. Plaintext ws:// is only used for
  * loopback or networks explicitly marked as already-encrypted (Tailscale/VPN).
  */
-export function buildOpenclawWsUrl(loc: Pick<Location, 'host' | 'openclawPort' | 'openclawTransport'>): string {
+export function buildOpenclawWsUrl(
+  loc: Pick<Location, 'host' | 'openclawPort' | 'openclawTransport'>
+): string {
   const host = loc.host ?? ''
   const port = loc.openclawPort
   const isLoopback = LOOPBACK_HOSTS.has(host)
@@ -80,7 +82,12 @@ class OpenClawClient {
   private messageCallbacks = new Set<MessageCallback>()
   private agentCallbacks = new Set<AgentsCallback>()
 
-  async connect(locationId: string, wsUrl: string, token?: string, reconnectAttempts = 0): Promise<void> {
+  async connect(
+    locationId: string,
+    wsUrl: string,
+    token?: string,
+    reconnectAttempts = 0
+  ): Promise<void> {
     // Disconnect existing connection if any
     this.disconnect(locationId)
 
@@ -200,15 +207,23 @@ class OpenClawClient {
 
   /** Send a message to an agent */
   async sendToAgent(locationId: string, agentId: string, content: string): Promise<void> {
-    const result = await this.request(locationId, 'agent', {
-      message: content,
-      agentId,
-      idempotencyKey: randomUUID(),
-      deliver: false
-    }, { expectFinal: true }) as { result?: { payloads?: Array<{ text?: string }> } }
+    const result = (await this.request(
+      locationId,
+      'agent',
+      {
+        message: content,
+        agentId,
+        idempotencyKey: randomUUID(),
+        deliver: false
+      },
+      { expectFinal: true }
+    )) as { result?: { payloads?: Array<{ text?: string }> } }
 
     // Extract final text from completed response
-    const text = result?.result?.payloads?.map((p) => p.text).filter(Boolean).join('\n')
+    const text = result?.result?.payloads
+      ?.map((p) => p.text)
+      .filter(Boolean)
+      .join('\n')
     if (text) {
       const message: ChatMessage = {
         id: randomUUID(),
@@ -226,22 +241,32 @@ class OpenClawClient {
 
   /** Request agents list from the gateway via health RPC */
   requestAgents(locationId: string): void {
-    this.request(locationId, 'health', {}).then((payload) => {
-      const raw = payload as { agents?: Array<{ agentId: string; name?: string; isDefault?: boolean; workspace?: string; sessions?: { path?: string } }> }
-      if (!raw?.agents) return
-      const agents: Agent[] = raw.agents.map((a) => ({
-        id: a.agentId,
-        name: a.name || a.agentId,
-        status: 'online',
-        locationId,
-        cwd: a.workspace || inferWorkspaceFromSessionsPath(a.sessions?.path)
-      }))
-      for (const cb of this.agentCallbacks) {
-        cb(locationId, agents)
-      }
-    }).catch(() => {
-      // Health request failed
-    })
+    this.request(locationId, 'health', {})
+      .then((payload) => {
+        const raw = payload as {
+          agents?: Array<{
+            agentId: string
+            name?: string
+            isDefault?: boolean
+            workspace?: string
+            sessions?: { path?: string }
+          }>
+        }
+        if (!raw?.agents) return
+        const agents: Agent[] = raw.agents.map((a) => ({
+          id: a.agentId,
+          name: a.name || a.agentId,
+          status: 'online',
+          locationId,
+          cwd: a.workspace || inferWorkspaceFromSessionsPath(a.sessions?.path)
+        }))
+        for (const cb of this.agentCallbacks) {
+          cb(locationId, agents)
+        }
+      })
+      .catch(() => {
+        // Health request failed
+      })
   }
 
   /** Request sessions list from the gateway */
@@ -256,17 +281,26 @@ class OpenClawClient {
 
   onMessage(callback: MessageCallback): () => void {
     this.messageCallbacks.add(callback)
-    return () => { this.messageCallbacks.delete(callback) }
+    return () => {
+      this.messageCallbacks.delete(callback)
+    }
   }
 
   onAgentsUpdate(callback: AgentsCallback): () => void {
     this.agentCallbacks.add(callback)
-    return () => { this.agentCallbacks.delete(callback) }
+    return () => {
+      this.agentCallbacks.delete(callback)
+    }
   }
 
   // ── Private ──
 
-  private request(locationId: string, method: string, params: Record<string, unknown>, opts?: { expectFinal?: boolean }): Promise<unknown> {
+  private request(
+    locationId: string,
+    method: string,
+    params: Record<string, unknown>,
+    opts?: { expectFinal?: boolean }
+  ): Promise<unknown> {
     const entry = this.connections.get(locationId)
     if (!entry || entry.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('not connected'))
@@ -326,24 +360,26 @@ class OpenClawClient {
           auth: entry.token ? { token: entry.token } : undefined,
           role: 'operator',
           scopes: ['operator.admin']
-        }).then((payload) => {
-          entry.connected = true
-          entry.reconnectAttempts = 0
-
-          // Extract tick interval from policy
-          const res = payload as { policy?: { tickIntervalMs?: number } }
-          if (res?.policy?.tickIntervalMs) {
-            entry.tickIntervalMs = res.policy.tickIntervalMs
-          }
-          this.startTickWatch(entry)
-
-          // Request agents list
-          this.requestAgents(locationId)
-
-          onFirstConnect()
-        }).catch(() => {
-          entry.ws.close()
         })
+          .then((payload) => {
+            entry.connected = true
+            entry.reconnectAttempts = 0
+
+            // Extract tick interval from policy
+            const res = payload as { policy?: { tickIntervalMs?: number } }
+            if (res?.policy?.tickIntervalMs) {
+              entry.tickIntervalMs = res.policy.tickIntervalMs
+            }
+            this.startTickWatch(entry)
+
+            // Request agents list
+            this.requestAgents(locationId)
+
+            onFirstConnect()
+          })
+          .catch(() => {
+            entry.ws.close()
+          })
         return
       }
 
@@ -384,7 +420,14 @@ class OpenClawClient {
 
       // Health events — refresh agent list
       if (event === 'health') {
-        const p = parsed.payload as { agents?: Array<{ agentId: string; name?: string; workspace?: string; sessions?: { path?: string } }> }
+        const p = parsed.payload as {
+          agents?: Array<{
+            agentId: string
+            name?: string
+            workspace?: string
+            sessions?: { path?: string }
+          }>
+        }
         if (p?.agents) {
           const agents: Agent[] = p.agents.map((a) => ({
             id: a.agentId,
@@ -452,12 +495,17 @@ class OpenClawClient {
     // Circuit breaker: stop retrying an unreachable host after a bounded number
     // of attempts instead of opening a new socket every second indefinitely.
     if (entry.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-      console.warn(`[openclaw] giving up reconnecting to ${locationId} after ${entry.reconnectAttempts} attempts`)
+      console.warn(
+        `[openclaw] giving up reconnecting to ${locationId} after ${entry.reconnectAttempts} attempts`
+      )
       return
     }
 
     const nextAttempt = entry.reconnectAttempts + 1
-    const base = Math.min(RECONNECT_BASE_MS * Math.pow(2, entry.reconnectAttempts), RECONNECT_MAX_MS)
+    const base = Math.min(
+      RECONNECT_BASE_MS * Math.pow(2, entry.reconnectAttempts),
+      RECONNECT_MAX_MS
+    )
     const delay = base / 2 + Math.random() * (base / 2) // full jitter on the upper half
 
     entry.reconnectTimer = setTimeout(async () => {

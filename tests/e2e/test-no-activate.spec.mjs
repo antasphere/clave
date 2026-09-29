@@ -114,7 +114,11 @@ export async function run(t) {
     t.equal('nor key', second?.focused, false)
     t.equal('both windows are open', (await allWindows(app)).length, 2)
     const answered = await opened.page.evaluate(() => window.electronAPI.windowIdentity())
-    t.equal('and the hidden second window answers over the driver', answered?.windowId, opened.windowId)
+    t.equal(
+      'and the hidden second window answers over the driver',
+      answered?.windowId,
+      opened.windowId
+    )
 
     // ── the driver can still work the app without OS focus ──
     // Focus is an OS concept; Playwright drives the renderer over CDP and does

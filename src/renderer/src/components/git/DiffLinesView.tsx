@@ -47,7 +47,7 @@ export function DiffLinesView({
             <div key={i} className={`px-3 whitespace-pre ${bg} ${textColor}`}>
               {line.type === 'add' && <span className="select-none mr-1">+</span>}
               {line.type === 'del' && <span className="select-none mr-1">-</span>}
-              {line.type === 'context' && <span className="select-none mr-1">{' '}</span>}
+              {line.type === 'context' && <span className="select-none mr-1"> </span>}
               {line.content}
             </div>
           )

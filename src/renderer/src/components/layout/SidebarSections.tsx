@@ -15,7 +15,9 @@ export function SectionHeading({
   return (
     <div className="w-full flex items-center px-[var(--sidebar-gutter)] pt-3.5 pb-1 flex-shrink-0">
       {onToggle ? (
-        <button onClick={onToggle} className="text-left">{label}</button>
+        <button onClick={onToggle} className="text-left">
+          {label}
+        </button>
       ) : (
         label
       )}

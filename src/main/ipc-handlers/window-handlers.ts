@@ -186,10 +186,9 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
   ipcMain.handle(
     'window:move-group',
     (event, group: unknown, targetWindowId: unknown): MoveResult & { ok: boolean } => {
-      const g = group as
-        | { id?: unknown; sessionIds?: unknown; terminals?: unknown }
-        | null
-      const target = typeof targetWindowId === 'number' ? windowRegistry.getWindow(targetWindowId) : null
+      const g = group as { id?: unknown; sessionIds?: unknown; terminals?: unknown } | null
+      const target =
+        typeof targetWindowId === 'number' ? windowRegistry.getWindow(targetWindowId) : null
       const sender = BrowserWindow.fromWebContents(event.sender)
       if (!target || !g || typeof g.id !== 'string' || (sender && sender.id === target.id)) {
         return { ok: false, moved: [], refused: [] }
@@ -198,9 +197,7 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
         ? g.sessionIds.filter((x): x is string => typeof x === 'string')
         : []
       const terminals = Array.isArray(g.terminals)
-        ? (g.terminals as { sessionId?: unknown }[]).filter(
-            (t) => t && typeof t === 'object'
-          )
+        ? (g.terminals as { sessionId?: unknown }[]).filter((t) => t && typeof t === 'object')
         : []
       const terminalIds = terminals
         .map((t) => t.sessionId)
@@ -229,7 +226,8 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
         sessionIds: members.filter((id) => movedSet.has(id)),
         terminals: terminals.map((t) => ({
           ...t,
-          sessionId: typeof t.sessionId === 'string' && movedSet.has(t.sessionId) ? t.sessionId : null
+          sessionId:
+            typeof t.sessionId === 'string' && movedSet.has(t.sessionId) ? t.sessionId : null
         }))
       }
       const layout: SidebarLayout = { groups: [handed], displayOrder: [g.id] }

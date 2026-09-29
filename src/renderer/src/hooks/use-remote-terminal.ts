@@ -138,8 +138,14 @@ export function useRemoteTerminal(shellId: string): {
       resizeIpcTimer = setTimeout(flushResize, 220)
     })
 
-    const { setSessionActivity, setSessionPromptWaiting, setSessionDetectedUrl, setSessionServerStatus, setSessionUnseenActivity, updateSessionAlive } =
-      useSessionStore.getState()
+    const {
+      setSessionActivity,
+      setSessionPromptWaiting,
+      setSessionDetectedUrl,
+      setSessionServerStatus,
+      setSessionUnseenActivity,
+      updateSessionAlive
+    } = useSessionStore.getState()
 
     // Activity tracking: debounce from active → idle after silence
     let activityTimer: ReturnType<typeof setTimeout> | null = null
@@ -181,7 +187,9 @@ export function useRemoteTerminal(shellId: string): {
       }
 
       // If a URL is set and we see signals the server was killed, verify immediately
-      const currentUrl = useSessionStore.getState().sessions.find((s) => s.id === shellId)?.detectedUrl
+      const currentUrl = useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === shellId)?.detectedUrl
       if (currentUrl && /(\^C|SIGINT|SIGTERM|EADDRINUSE)/.test(stripped)) {
         const port = safePort(currentUrl)
         if (port) {
@@ -221,9 +229,7 @@ export function useRemoteTerminal(shellId: string): {
         setSessionPromptWaiting(shellId, promptType)
         if (promptType) {
           notificationTimer = setTimeout(() => {
-            const session = useSessionStore
-              .getState()
-              .sessions.find((s) => s.id === shellId)
+            const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
             const title = session?.name ?? session?.folderName ?? 'Clave'
             window.electronAPI.showNotification?.({
               title,
@@ -289,7 +295,10 @@ export function useRemoteTerminal(shellId: string): {
     const portCheckInterval = setInterval(() => {
       if (!document.hasFocus() || !isVisibleRef.current) return
       const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
-      if (!session?.detectedUrl || session.serverStatus !== 'running') { portCheckFailures = 0; return }
+      if (!session?.detectedUrl || session.serverStatus !== 'running') {
+        portCheckFailures = 0
+        return
+      }
       const port = safePort(session.detectedUrl)
       if (port) {
         window.electronAPI.checkPort(port).then((alive) => {
@@ -348,7 +357,9 @@ export function useRemoteTerminal(shellId: string): {
         try {
           fitAddonRef.current?.fit()
           terminalRef.current?.refresh(0, (terminalRef.current.rows ?? 1) - 1)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300)
     }
     const unsub = useSessionStore.subscribe((state, prevState) => {

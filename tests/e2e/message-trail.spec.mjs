@@ -84,11 +84,16 @@ export async function run(t) {
     // The tab learns its transcript id the way a real one does (the
     // clear-detected event main sends), and the trail appears on the newest
     // message with the agent's final line under it.
-    await app.evaluate(({ BrowserWindow }, { id, stem }) => {
-      BrowserWindow.getAllWindows()[0].webContents.send(`session:clear-detected:${id}`, stem)
-    }, { id: tabId, stem: STEM })
-    const trail = await until(async () =>
-      (await win.evaluate(() => document.querySelector('.message-trail-text')?.textContent)) ?? null
+    await app.evaluate(
+      ({ BrowserWindow }, { id, stem }) => {
+        BrowserWindow.getAllWindows()[0].webContents.send(`session:clear-detected:${id}`, stem)
+      },
+      { id: tabId, stem: STEM }
+    )
+    const trail = await until(
+      async () =>
+        (await win.evaluate(() => document.querySelector('.message-trail-text')?.textContent)) ??
+        null
     )
     t.equal('the trail shows the newest human message', trail, 'Ship it to staging')
     t.equal(
@@ -105,7 +110,9 @@ export async function run(t) {
     // --- Chevrons walk the conversation ---
     await win.click('.message-trail [aria-label="Previous message"]')
     const prev = await until(async () => {
-      const txt = await win.evaluate(() => document.querySelector('.message-trail-text')?.textContent)
+      const txt = await win.evaluate(
+        () => document.querySelector('.message-trail-text')?.textContent
+      )
       return txt === 'Now wire the CSV download' ? txt : null
     })
     t.equal('the up chevron steps to the previous message', prev, 'Now wire the CSV download')
@@ -150,7 +157,10 @@ export async function run(t) {
         '.message-trail-row[data-selected="true"] .message-trail-text'
       )
       return el
-        ? { whiteSpace: getComputedStyle(el).whiteSpace, capped: getComputedStyle(el).maxHeight !== 'none' }
+        ? {
+            whiteSpace: getComputedStyle(el).whiteSpace,
+            capped: getComputedStyle(el).maxHeight !== 'none'
+          }
         : null
     })
     t.equal('the selected row unclamps to wrap', fullRow?.whiteSpace, 'pre-wrap')
@@ -166,10 +176,10 @@ export async function run(t) {
     )
     const grown = await until(
       async () =>
-        ((await win.evaluate(() => document.querySelector('.message-trail-count')?.textContent)) ===
+        (await win.evaluate(() => document.querySelector('.message-trail-count')?.textContent)) ===
         '2/4'
           ? '2/4'
-          : null),
+          : null,
       { tries: 40, gapMs: 400 }
     )
     t.equal('a new turn lands while the cursor holds its place', grown, '2/4')
@@ -189,7 +199,11 @@ export async function run(t) {
       const y = await win.evaluate((id) => window.__claveViewportY?.(id), tabId)
       return typeof y === 'number' && y > 250 ? y : null
     })
-    t.check('the output filled the scrollback (viewport rode to the bottom)', atBottom !== null, atBottom)
+    t.check(
+      'the output filled the scrollback (viewport rode to the bottom)',
+      atBottom !== null,
+      atBottom
+    )
     await win.click('.message-trail-line')
     const scrolled = await until(async () => {
       const y = await win.evaluate((id) => window.__claveViewportY?.(id), tabId)

@@ -238,7 +238,6 @@ export interface GitJourneyResult {
   hasMore: boolean
 }
 
-
 /**
  * The counter behind a batch. Every repo moves it exactly once, at the end of
  * its own pipeline, whatever happened to it — a batch where failures never
@@ -303,7 +302,14 @@ const GIT_LOG_FORMAT = {
 
 /** Parse raw log entries from simple-git into GitLogEntry[] */
 function parseLogEntries(
-  entries: ReadonlyArray<{ hash: string; shortHash: string; message: string; author: string; date: string; refs: string }>
+  entries: ReadonlyArray<{
+    hash: string
+    shortHash: string
+    message: string
+    author: string
+    date: string
+    refs: string
+  }>
 ): GitLogEntry[] {
   return entries.map((entry) => ({
     hash: entry.hash,
@@ -359,9 +365,7 @@ function mapFiles(status: StatusResult): GitFileStatus[] {
 
 class GitManager {
   /** Git status for many repos at once, with bounded concurrency. */
-  async getStatusBatch(
-    paths: string[]
-  ): Promise<Array<{ path: string; status: GitStatusResult }>> {
+  async getStatusBatch(paths: string[]): Promise<Array<{ path: string; status: GitStatusResult }>> {
     return mapWithConcurrency(paths, STATUS_BATCH_CONCURRENCY, async (p) => ({
       path: p,
       status: await this.getStatus(p)
@@ -419,7 +423,10 @@ class GitManager {
     await git.push(['-u', 'origin', branch])
   }
 
-  async pull(cwd: string, strategy: 'auto' | 'merge' | 'rebase' | 'ff-only' = 'auto'): Promise<void> {
+  async pull(
+    cwd: string,
+    strategy: 'auto' | 'merge' | 'rebase' | 'ff-only' = 'auto'
+  ): Promise<void> {
     const git = networkGit(cwd)
 
     if (strategy === 'ff-only') {
@@ -436,7 +443,11 @@ class GitManager {
       try {
         await git.pull(['--rebase', '--autostash'])
       } catch (err) {
-        try { await git.rebase(['--abort']) } catch { /* expected: abort may fail if rebase didn't start */ }
+        try {
+          await git.rebase(['--abort'])
+        } catch {
+          /* expected: abort may fail if rebase didn't start */
+        }
         throw err
       }
       return
@@ -449,7 +460,11 @@ class GitManager {
       try {
         await git.pull(['--rebase', '--autostash'])
       } catch (err) {
-        try { await git.rebase(['--abort']) } catch { /* abort may fail if rebase didn't start */ }
+        try {
+          await git.rebase(['--abort'])
+        } catch {
+          /* abort may fail if rebase didn't start */
+        }
         throw err
       }
     }
@@ -528,10 +543,7 @@ class GitManager {
     }
   }
 
-  async getLog(
-    cwd: string,
-    maxCount: number = 100
-  ): Promise<GitLogEntry[]> {
+  async getLog(cwd: string, maxCount: number = 100): Promise<GitLogEntry[]> {
     try {
       const git = simpleGit(cwd)
       const result = await git.log({ maxCount, format: GIT_LOG_FORMAT })
@@ -703,7 +715,9 @@ class GitManager {
       }
       let lastCommit: GitWorktreeInfo['lastCommit'] = null
       try {
-        const [at, ...subject] = (await git.raw(['log', '-1', '--format=%ct%x09%s'])).trim().split('\t')
+        const [at, ...subject] = (await git.raw(['log', '-1', '--format=%ct%x09%s']))
+          .trim()
+          .split('\t')
         const seconds = parseInt(at, 10)
         if (seconds) lastCommit = { at: seconds * 1000, subject: subject.join('\t') }
       } catch {
@@ -715,7 +729,16 @@ class GitManager {
       // no more.
       const base = onBranch ? await this.resolveWorktreeBase(git, branch) : null
       if (!base) {
-        return { of, base: null, baseLabel: '', ahead: 0, behind: 0, merged: false, createdAt, lastCommit }
+        return {
+          of,
+          base: null,
+          baseLabel: '',
+          ahead: 0,
+          behind: 0,
+          merged: false,
+          createdAt,
+          lastCommit
+        }
       }
       const counts = (await git.raw(['rev-list', '--left-right', '--count', `${base}...HEAD`]))
         .trim()
@@ -827,7 +850,9 @@ class GitManager {
     }
     if (!candidate) {
       try {
-        const head = (await git.raw(['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD'])).trim()
+        const head = (
+          await git.raw(['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD'])
+        ).trim()
         if (head && head !== `origin/${branch}`) candidate = head
       } catch {
         candidate = null
@@ -838,7 +863,9 @@ class GitManager {
     // stream, which simple-git resolves rather than throws (review of PR #55,
     // finding 16): the answer is the output, empty when the ref is no more.
     try {
-      const sha = (await git.raw(['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`])).trim()
+      const sha = (
+        await git.raw(['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`])
+      ).trim()
       if (!sha) return null
     } catch {
       return null
@@ -862,8 +889,22 @@ class GitManager {
   async getCommitFiles(cwd: string, hash: string): Promise<GitCommitFileStatus[]> {
     try {
       const git = simpleGit(cwd)
-      const raw = await git.raw(['diff-tree', '--no-commit-id', '-r', '--numstat', '--diff-filter=AMDRTC', hash])
-      const nameRaw = await git.raw(['diff-tree', '--no-commit-id', '-r', '--name-status', '--diff-filter=AMDRTC', hash])
+      const raw = await git.raw([
+        'diff-tree',
+        '--no-commit-id',
+        '-r',
+        '--numstat',
+        '--diff-filter=AMDRTC',
+        hash
+      ])
+      const nameRaw = await git.raw([
+        'diff-tree',
+        '--no-commit-id',
+        '-r',
+        '--name-status',
+        '--diff-filter=AMDRTC',
+        hash
+      ])
 
       const numLines = raw.trim().split('\n').filter(Boolean)
       const nameLines = nameRaw.trim().split('\n').filter(Boolean)
@@ -917,7 +958,9 @@ class GitManager {
       const fullDiff = await git.diff(['--cached'])
       console.log('[git] Staged diff length:', fullDiff.length)
       // Truncate to ~12k chars to stay within reasonable prompt size
-      return fullDiff.length > 12000 ? fullDiff.slice(0, 12000) + '\n... (diff truncated)' : fullDiff
+      return fullDiff.length > 12000
+        ? fullDiff.slice(0, 12000) + '\n... (diff truncated)'
+        : fullDiff
     })
 
     // Get recent commit messages for style context
@@ -1126,16 +1169,15 @@ ${diff}`
       byPath.set(repoPath, result)
     })
 
-    return repoPaths.map(
-      (repoPath) => byPath.get(repoPath) ?? { repoPath, error: 'not attempted' }
-    )
+    return repoPaths.map((repoPath) => byPath.get(repoPath) ?? { repoPath, error: 'not attempted' })
   }
 
   async getJourney(cwd: string, maxCount: number = 200): Promise<GitJourneyResult> {
     try {
       const git = simpleGit(cwd)
       const branch = (await git.status()).current
-      if (!branch) return { local: [], pushGroups: [], fallbackMode: false, branch: '', hasMore: false }
+      if (!branch)
+        return { local: [], pushGroups: [], fallbackMode: false, branch: '', hasMore: false }
 
       // Fetch outgoing (unpushed) commits and full log in parallel
       const [local, log] = await Promise.all([
@@ -1152,9 +1194,12 @@ ${diff}`
 
       try {
         const reflogRaw = await git.raw([
-          'reflog', 'show', `origin/${branch}`,
+          'reflog',
+          'show',
+          `origin/${branch}`,
           '--format=%H|%aI|%gs',
-          '-n', '200'
+          '-n',
+          '200'
         ])
 
         const pushEvents: Array<{ hash: string; date: string }> = []

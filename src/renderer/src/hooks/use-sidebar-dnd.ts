@@ -144,7 +144,9 @@ export function useSidebarDnd(opts: {
       // unfiltered walk in DOM order matched an invisible row first, and a
       // drop aimed at the group underneath landed inside the collapsed one.
       const visible = (el: Element): boolean => !el.closest('[data-group-collapsed="true"]')
-      const items = [...container.querySelectorAll<HTMLElement>('[data-sidebar-item-id]')].filter(visible)
+      const items = [...container.querySelectorAll<HTMLElement>('[data-sidebar-item-id]')].filter(
+        visible
+      )
       if (items.length === 0) return
 
       const state = useSessionStore.getState()
@@ -184,7 +186,9 @@ export function useSidebarDnd(opts: {
       // Leaving is a deliberate move past the band.
       {
         const holdGroup = cur
-          ? (cur.position === 'inside' ? null : groupOf(cur.targetId))
+          ? cur.position === 'inside'
+            ? null
+            : groupOf(cur.targetId)
           : drag.isGroup
             ? undefined
             : groupOf(drag.ids[0])
@@ -239,14 +243,25 @@ export function useSidebarDnd(opts: {
             position = side(frac, 0.35, lo) === 'lo' ? 'before' : 'inside'
           } else {
             // Collapsed: before / inside / after, held with the same margin.
-            if (held === 'before') position = frac > 0.3 + ZONE_BAND ? (frac > 0.7 ? 'after' : 'inside') : 'before'
-            else if (held === 'after') position = frac < 0.7 - ZONE_BAND ? (frac < 0.3 ? 'before' : 'inside') : 'after'
-            else if (held === 'inside') position = frac < 0.3 - ZONE_BAND ? 'before' : frac > 0.7 + ZONE_BAND ? 'after' : 'inside'
+            if (held === 'before')
+              position = frac > 0.3 + ZONE_BAND ? (frac > 0.7 ? 'after' : 'inside') : 'before'
+            else if (held === 'after')
+              position = frac < 0.7 - ZONE_BAND ? (frac < 0.3 ? 'before' : 'inside') : 'after'
+            else if (held === 'inside')
+              position =
+                frac < 0.3 - ZONE_BAND ? 'before' : frac > 0.7 + ZONE_BAND ? 'after' : 'inside'
             else position = frac < 0.3 ? 'before' : frac > 0.7 ? 'after' : 'inside'
           }
           if (position === 'inside' && drag.isGroup) position = frac < 0.5 ? 'before' : 'after'
         } else {
-          const held = cur?.targetId === itemId ? (cur.position === 'before' ? 'lo' : cur.position === 'after' ? 'hi' : null) : null
+          const held =
+            cur?.targetId === itemId
+              ? cur.position === 'before'
+                ? 'lo'
+                : cur.position === 'after'
+                  ? 'hi'
+                  : null
+              : null
           position = side(frac, 0.5, held) === 'lo' ? 'before' : 'after'
           if (drag.isGroup) {
             // A group dropped on a row inside another group lands beside that
@@ -254,7 +269,8 @@ export function useSidebarDnd(opts: {
             const parent = groupOf(itemId)
             if (parent) {
               targetId = parent.id
-              position = parent.sessionIds[0] === itemId && position === 'before' ? 'before' : 'after'
+              position =
+                parent.sessionIds[0] === itemId && position === 'before' ? 'before' : 'after'
             }
           }
         }
@@ -267,7 +283,9 @@ export function useSidebarDnd(opts: {
       // The strip at the foot of an expanded group: the last position of that
       // group.
       if (!resolved) {
-        const zones = [...container.querySelectorAll<HTMLElement>('[data-sidebar-drop-zone="group-end"]')].filter(visible)
+        const zones = [
+          ...container.querySelectorAll<HTMLElement>('[data-sidebar-drop-zone="group-end"]')
+        ].filter(visible)
         for (const zoneEl of zones) {
           const rect = zoneEl.getBoundingClientRect()
           if (clientX < rect.left || clientX > rect.right) continue
@@ -313,9 +331,13 @@ export function useSidebarDnd(opts: {
               // with no other row, or outside the card, it is "stay".
               const own = groupOf(itemId)
               const card = own ? cardRectOf(own.id) : null
-              if (!own || !card || clientY < card.top || clientY > card.bottom + CARD_EXIT_BAND) return null
+              if (!own || !card || clientY < card.top || clientY > card.bottom + CARD_EXIT_BAND)
+                return null
               const idx = own.sessionIds.indexOf(itemId)
-              const above = own.sessionIds.slice(0, idx).reverse().find((sid) => !drag.ids.includes(sid))
+              const above = own.sessionIds
+                .slice(0, idx)
+                .reverse()
+                .find((sid) => !drag.ids.includes(sid))
               if (above) return { targetId: above, position: 'after' }
               const below = own.sessionIds.slice(idx + 1).find((sid) => !drag.ids.includes(sid))
               return below ? { targetId: below, position: 'before' } : null
@@ -342,7 +364,8 @@ export function useSidebarDnd(opts: {
 
           if (clientY < first.top) {
             const firstId = items[0].dataset.sidebarItemId!
-            if (!drag.ids.includes(firstId)) newIndicator = { targetId: firstId, position: 'before' }
+            if (!drag.ids.includes(firstId))
+              newIndicator = { targetId: firstId, position: 'before' }
           } else if (clientY > last.bottom) {
             newIndicator = resolveAfter(lastItem.dataset.sidebarItemId!)
             if (!newIndicator && items.length > 1) {
@@ -407,11 +430,15 @@ export function useSidebarDnd(opts: {
     let key: string | null = null
     const gap = container.querySelector<HTMLElement>('.sidebar-drop-gap-active')
     if (gap) {
-      const itemId = gap.parentElement?.querySelector<HTMLElement>('[data-sidebar-item-id]')?.dataset.sidebarItemId
+      const itemId =
+        gap.parentElement?.querySelector<HTMLElement>('[data-sidebar-item-id]')?.dataset
+          .sidebarItemId
       key = `${gap.classList.contains('sidebar-drop-gap--after') ? 'after' : 'before'}:${itemId ?? '?'}`
     } else {
       const outline = container.querySelector<HTMLElement>('.group-scope > .border-accent')
-      const groupId = outline?.parentElement?.querySelector<HTMLElement>('[data-sidebar-item-type="group"]')?.dataset.sidebarItemId
+      const groupId = outline?.parentElement?.querySelector<HTMLElement>(
+        '[data-sidebar-item-type="group"]'
+      )?.dataset.sidebarItemId
       if (outline) key = `inside:${groupId ?? '?'}`
     }
     if (key && key !== lastLineKeyRef.current) window.electronAPI?.hapticTick?.('alignment')
@@ -511,7 +538,10 @@ export function useSidebarDnd(opts: {
         }
         document.addEventListener('click', preventClick, { capture: true, once: true })
         // Safety: remove if not fired within 500ms (click fires async after pointerup)
-        setTimeout(() => document.removeEventListener('click', preventClick, { capture: true }), 500)
+        setTimeout(
+          () => document.removeEventListener('click', preventClick, { capture: true }),
+          500
+        )
       }
 
       // Update overlay position (uses cached width to avoid layout thrashing)
@@ -671,7 +701,16 @@ export function useSidebarDnd(opts: {
       document.removeEventListener('pointerup', handlePointerUp)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [createOverlay, destroyOverlay, hitTest, autoScroll, moveItems, containerRef, pinnedZoneRef, onPinnedDrop])
+  }, [
+    createOverlay,
+    destroyOverlay,
+    hitTest,
+    autoScroll,
+    moveItems,
+    containerRef,
+    pinnedZoneRef,
+    onPinnedDrop
+  ])
 
   return {
     isDragging: dndState.isDragging,

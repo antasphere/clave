@@ -99,14 +99,18 @@ describe('migrateIntoWindow — the two older shapes into the first window', () 
     )
     expect(mgr.migrateIntoWindow('w1', ctx)).toBe(1)
     const out = mgr.loadForWindow('w1')
-    const byId = new Map(out.groups.map((g) => [(g as { id: string }).id, g as { workspaceId?: string }]))
+    const byId = new Map(
+      out.groups.map((g) => [(g as { id: string }).id, g as { workspaceId?: string }])
+    )
     expect([...byId.keys()].sort()).toEqual(['g1', 'g2', 'g3'])
     expect(byId.get('g1')!.workspaceId).toBe('A')
     expect(byId.get('g2')!.workspaceId).toBe('B')
     expect(byId.get('g3')!.workspaceId).toBe('A')
     expect(new Set(out.displayOrder)).toEqual(new Set(['g1', 'g2', 'g3']))
     expect(fs.existsSync(path.join(dir, LEGACY_LAYOUT_FILE))).toBe(false)
-    expect(fs.existsSync(path.join(dir, `${LEGACY_LAYOUT_FILE}${MIGRATED_BACKUP_SUFFIX}`))).toBe(true)
+    expect(fs.existsSync(path.join(dir, `${LEGACY_LAYOUT_FILE}${MIGRATED_BACKUP_SUFFIX}`))).toBe(
+      true
+    )
   })
 
   it('takes the legacy file as is when no workspace is registered', () => {
@@ -126,11 +130,17 @@ describe('migrateIntoWindow — the two older shapes into the first window', () 
     )
     fs.writeFileSync(
       path.join(dir, LAYOUTS_DIR, 'A.json'),
-      JSON.stringify({ groups: [group('g1', { workspaceId: 'A' }), group('g2', { workspaceId: 'A' })], displayOrder: ['g1', 'g2'] })
+      JSON.stringify({
+        groups: [group('g1', { workspaceId: 'A' }), group('g2', { workspaceId: 'A' })],
+        displayOrder: ['g1', 'g2']
+      })
     )
     fs.writeFileSync(
       path.join(dir, LAYOUTS_DIR, 'B.json'),
-      JSON.stringify({ groups: [group('g3', { workspaceId: 'B' })], displayOrder: ['g3', 's-free'] })
+      JSON.stringify({
+        groups: [group('g3', { workspaceId: 'B' })],
+        displayOrder: ['g3', 's-free']
+      })
     )
     expect(mgr.migrateIntoWindow('w1', ctx)).toBe(3)
     const out = mgr.loadForWindow('w1')
@@ -153,6 +163,8 @@ describe('migrateIntoWindow — the two older shapes into the first window', () 
     )
     expect(mgr.migrateIntoWindow('w1', ctx)).toBe(2)
     expect(mgr.loadForWindow('w1').groups.map((g) => (g as { id: string }).id)).toEqual(['g2'])
-    expect(fs.existsSync(path.join(dir, `${LEGACY_LAYOUT_FILE}${MIGRATED_BACKUP_SUFFIX}`))).toBe(true)
+    expect(fs.existsSync(path.join(dir, `${LEGACY_LAYOUT_FILE}${MIGRATED_BACKUP_SUFFIX}`))).toBe(
+      true
+    )
   })
 })

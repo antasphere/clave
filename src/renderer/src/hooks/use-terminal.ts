@@ -154,7 +154,19 @@ export function useTerminal(sessionId: string): {
       window.electronAPI.resizeSession(sessionId, cols, rows)
     })
 
-    const { setSessionActivity, setAgentState, setSessionPromptWaiting, setSessionDetectedUrl, setSessionServerStatus, setSessionServerCommand, setSessionUnseenActivity, updateSessionAlive, autoRenameSession, resetSessionName, setSessionPlanFile } = useSessionStore.getState()
+    const {
+      setSessionActivity,
+      setAgentState,
+      setSessionPromptWaiting,
+      setSessionDetectedUrl,
+      setSessionServerStatus,
+      setSessionServerCommand,
+      setSessionUnseenActivity,
+      updateSessionAlive,
+      autoRenameSession,
+      resetSessionName,
+      setSessionPlanFile
+    } = useSessionStore.getState()
 
     // Listen for auto-generated titles from the main process
     const cleanupAutoTitle = window.electronAPI.onSessionAutoTitle(sessionId, (title) => {
@@ -167,17 +179,20 @@ export function useTerminal(sessionId: string): {
     })
 
     // Listen for /clear command — reset session name to folder name
-    const cleanupClearDetected = window.electronAPI.onClearDetected(sessionId, (newClaudeSessionId) => {
-      resetSessionName(sessionId)
-      // The tab follows its rotated transcript: store (Resume, the history
-      // ledger's diff) and record (a restart's re-adoption) alike.
-      // Same alphabet main enforces before touching the record: the store
-      // and the record must never disagree on which conversation this is.
-      if (newClaudeSessionId && /^[A-Za-z0-9_-]{1,128}$/.test(newClaudeSessionId)) {
-        useSessionStore.getState().setClaudeSessionId(sessionId, newClaudeSessionId)
-        void window.electronAPI.setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+    const cleanupClearDetected = window.electronAPI.onClearDetected(
+      sessionId,
+      (newClaudeSessionId) => {
+        resetSessionName(sessionId)
+        // The tab follows its rotated transcript: store (Resume, the history
+        // ledger's diff) and record (a restart's re-adoption) alike.
+        // Same alphabet main enforces before touching the record: the store
+        // and the record must never disagree on which conversation this is.
+        if (newClaudeSessionId && /^[A-Za-z0-9_-]{1,128}$/.test(newClaudeSessionId)) {
+          useSessionStore.getState().setClaudeSessionId(sessionId, newClaudeSessionId)
+          void window.electronAPI.setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+        }
       }
-    })
+    )
 
     // Codex's TUI publishes its runtime state through OSC titles. xterm handles
     // fragmented escape sequences and both BEL/ST terminators for us. This
@@ -243,9 +258,9 @@ export function useTerminal(sessionId: string): {
           // Capture the server command from the group terminal config (if available)
           const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
           if (!currentSession?.serverCommand) {
-            const group = useSessionStore.getState().groups.find((g) =>
-              g.terminals.some((t) => t.sessionId === sessionId)
-            )
+            const group = useSessionStore
+              .getState()
+              .groups.find((g) => g.terminals.some((t) => t.sessionId === sessionId))
             const terminalConfig = group?.terminals.find((t) => t.sessionId === sessionId)
             if (terminalConfig?.command) {
               setSessionServerCommand(sessionId, terminalConfig.command)
@@ -255,7 +270,9 @@ export function useTerminal(sessionId: string): {
       }
 
       // If a URL is set and we see signals the server was killed, verify immediately
-      const currentUrl = useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.detectedUrl
+      const currentUrl = useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === sessionId)?.detectedUrl
       if (currentUrl && /(\^C|SIGINT|SIGTERM|EADDRINUSE)/.test(stripped)) {
         const port = safePort(currentUrl)
         if (port) {
@@ -294,7 +311,12 @@ export function useTerminal(sessionId: string): {
         // Check for prompt patterns after idle detection
         const promptType = detectPrompt(outputBuffer)
         setSessionPromptWaiting(sessionId, promptType)
-        console.log('[notification] Idle detected, prompt check:', promptType, '| buffer tail:', outputBuffer.slice(-100))
+        console.log(
+          '[notification] Idle detected, prompt check:',
+          promptType,
+          '| buffer tail:',
+          outputBuffer.slice(-100)
+        )
         if (promptType) {
           notificationTimer = setTimeout(() => {
             const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
@@ -432,7 +454,10 @@ export function useTerminal(sessionId: string): {
     const portCheckInterval = setInterval(() => {
       if (!document.hasFocus() || !isVisibleRef.current) return
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
-      if (!session?.detectedUrl || session.serverStatus !== 'running') { portCheckFailures = 0; return }
+      if (!session?.detectedUrl || session.serverStatus !== 'running') {
+        portCheckFailures = 0
+        return
+      }
       const port = safePort(session.detectedUrl)
       if (port) {
         window.electronAPI.checkPort(port).then((alive) => {
@@ -506,7 +531,9 @@ export function useTerminal(sessionId: string): {
         try {
           fitAddonRef.current?.fit()
           terminalRef.current?.refresh(0, (terminalRef.current.rows ?? 1) - 1)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300)
     }
     const unsub = useSessionStore.subscribe((state, prevState) => {

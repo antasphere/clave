@@ -80,9 +80,7 @@ export function UpdateOverlay(): React.JSX.Element {
             {/* Logo */}
             <motion.div
               animate={
-                phase === 'downloaded'
-                  ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] }
-                  : undefined
+                phase === 'downloaded' ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] } : undefined
               }
               transition={
                 phase === 'downloaded'

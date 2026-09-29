@@ -1,6 +1,14 @@
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useCallback, useState, type ReactElement } from 'react'
-import { ArrowTopRightOnSquareIcon, PlayIcon, ArrowDownTrayIcon, DocumentTextIcon, ChatBubbleBottomCenterTextIcon, StopIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowTopRightOnSquareIcon,
+  PlayIcon,
+  ArrowDownTrayIcon,
+  DocumentTextIcon,
+  ChatBubbleBottomCenterTextIcon,
+  StopIcon,
+  XMarkIcon
+} from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../store/session-store'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
 import { useCodexAccountStore } from '../../store/codex-account-store'
@@ -77,16 +85,21 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
             }
           />
           <span className="pane-header-title">{session.name}</span>
-          {multiProfile && session.claudeProfileLabel && (session.claudeMode || session.claudeAgentsMode) && (
+          {multiProfile &&
+            session.claudeProfileLabel &&
+            (session.claudeMode || session.claudeAgentsMode) && (
+              <span
+                className="badge flex-shrink-0"
+                title={`Claude account: ${session.claudeProfileLabel}${session.claudeConfigDir ? ` (${session.claudeConfigDir})` : ''}`}
+              >
+                {session.claudeProfileLabel}
+              </span>
+            )}
+          {multiCodex && session.codexAccountLabel && session.codexMode && (
             <span
               className="badge flex-shrink-0"
-              title={`Claude account: ${session.claudeProfileLabel}${session.claudeConfigDir ? ` (${session.claudeConfigDir})` : ''}`}
+              title={`Codex account: ${session.codexAccountLabel}`}
             >
-              {session.claudeProfileLabel}
-            </span>
-          )}
-          {multiCodex && session.codexAccountLabel && session.codexMode && (
-            <span className="badge flex-shrink-0" title={`Codex account: ${session.codexAccountLabel}`}>
               {session.codexAccountLabel}
             </span>
           )}
@@ -103,9 +116,11 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
                   serverStatus === 'starting' && 'text-amber-400 cursor-wait'
                 )}
                 title={
-                  serverStatus === 'running' ? `Open ${session.detectedUrl}` :
-                  serverStatus === 'stopped' ? `Restart server (${session.serverCommand})` :
-                  'Starting server…'
+                  serverStatus === 'running'
+                    ? `Open ${session.detectedUrl}`
+                    : serverStatus === 'stopped'
+                      ? `Restart server (${session.serverCommand})`
+                      : 'Starting server…'
                 }
               >
                 {/* Status dot */}
@@ -159,10 +174,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
             <>
               <button
                 onClick={() =>
-                  window.electronAPI.saveDiscussion(session.cwd, session.claudeSessionId!, session.name, {
-                    sessionType: session.sessionType,
-                    locationId: session.locationId ?? null
-                  })
+                  window.electronAPI.saveDiscussion(
+                    session.cwd,
+                    session.claudeSessionId!,
+                    session.name,
+                    {
+                      sessionType: session.sessionType,
+                      locationId: session.locationId ?? null
+                    }
+                  )
                 }
                 className="panel-icon-btn"
                 title="Save discussion"
@@ -172,10 +192,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               {session.planFilePath && (
                 <button
                   onClick={() =>
-                    window.electronAPI.savePlan(session.cwd, session.claudeSessionId!, session.name, {
-                      sessionType: session.sessionType,
-                      locationId: session.locationId ?? null
-                    })
+                    window.electronAPI.savePlan(
+                      session.cwd,
+                      session.claudeSessionId!,
+                      session.name,
+                      {
+                        sessionType: session.sessionType,
+                        locationId: session.locationId ?? null
+                      }
+                    )
                   }
                   className="panel-icon-btn"
                   title="Save plan"

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { pickGroupViewTerminal, resolveDeclaredGroupView } from './group-view'
 
-const term = (o: Partial<{ id: string; groupView: boolean; serverUrl: string }> = {}): {
+const term = (
+  o: Partial<{ id: string; groupView: boolean; serverUrl: string }> = {}
+): {
   id: string
   groupView?: boolean
   serverUrl?: string
@@ -47,7 +49,9 @@ describe('resolveDeclaredGroupView', () => {
   const served = term({ id: 'board', groupView: true, serverUrl: 'http://127.0.0.1:4713' })
 
   it('takes a group-level file view when no terminal serves one', () => {
-    expect(resolveDeclaredGroupView([term({ id: 'dev' })], '/repo/snapshots/board.html', 'Syndicable')).toEqual({
+    expect(
+      resolveDeclaredGroupView([term({ id: 'dev' })], '/repo/snapshots/board.html', 'Syndicable')
+    ).toEqual({
       url: '/repo/snapshots/board.html',
       title: 'Syndicable',
       terminalId: null
@@ -55,7 +59,9 @@ describe('resolveDeclaredGroupView', () => {
   })
 
   it('takes a group-level http view too', () => {
-    expect(resolveDeclaredGroupView([], 'https://status.example.com')?.url).toBe('https://status.example.com')
+    expect(resolveDeclaredGroupView([], 'https://status.example.com')?.url).toBe(
+      'https://status.example.com'
+    )
   })
 
   it('lets a serving terminal win — the live page carries the start action', () => {

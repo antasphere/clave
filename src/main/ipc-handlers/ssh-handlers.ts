@@ -65,12 +65,14 @@ export function registerSshHandlers(): void {
     return new Promise((resolve, reject) => {
       sftp.readdir(dirPath, (err, list) => {
         if (err) return reject(err)
-        resolve(list.map((item) => ({
-          name: item.filename,
-          path: dirPath === '/' ? `/${item.filename}` : `${dirPath}/${item.filename}`,
-          type: item.attrs.isDirectory() ? 'directory' as const : 'file' as const,
-          size: item.attrs.size
-        })))
+        resolve(
+          list.map((item) => ({
+            name: item.filename,
+            path: dirPath === '/' ? `/${item.filename}` : `${dirPath}/${item.filename}`,
+            type: item.attrs.isDirectory() ? ('directory' as const) : ('file' as const),
+            size: item.attrs.size
+          }))
+        )
       })
     })
   })
@@ -80,7 +82,9 @@ export function registerSshHandlers(): void {
     return new Promise<string>((resolve, reject) => {
       let data = ''
       const stream = sftp.createReadStream(filePath, { encoding: 'utf-8' })
-      stream.on('data', (chunk: string) => { data += chunk })
+      stream.on('data', (chunk: string) => {
+        data += chunk
+      })
       stream.on('end', () => resolve(data))
       stream.on('error', reject)
     })

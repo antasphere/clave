@@ -55,11 +55,7 @@ function FileTabItemImpl({
       onDelete={() => removeFileTab(fileTab.id)}
       icon={
         <span className="sidebar-tab-icon flex-shrink-0">
-          {isDiff ? (
-            <CodeBracketSquareIcon />
-          ) : (
-            <DocumentTextIcon />
-          )}
+          {isDiff ? <CodeBracketSquareIcon /> : <DocumentTextIcon />}
         </span>
       }
       grouped={grouped}

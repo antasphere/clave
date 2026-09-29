@@ -87,7 +87,14 @@ describe('agent argv', () => {
         dangerousMode: true,
         model: 'gpt-5.5'
       })
-    ).toEqual(['codex', '--yolo', '-m', 'gpt-5.5', '-c', 'tui.terminal_title=["app-name","status","spinner"]'])
+    ).toEqual([
+      'codex',
+      '--yolo',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      'tui.terminal_title=["app-name","status","spinner"]'
+    ])
   })
 
   it('resumes a Codex thread through the resume subcommand, the id last', () => {

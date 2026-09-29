@@ -14,18 +14,19 @@ const ROOT = '/Users/me/.antasphere'
 
 describe('substituteTokens', () => {
   it('expands @root_path to the workspace root', () => {
-    expect(substituteTokens('work at @root_path', ROOT, `${ROOT}/labs/clave`))
-      .toBe(`work at ${ROOT}`)
+    expect(substituteTokens('work at @root_path', ROOT, `${ROOT}/labs/clave`)).toBe(
+      `work at ${ROOT}`
+    )
   })
 
   it('expands @project_abs to the project directory', () => {
-    expect(substituteTokens('open @project_abs', ROOT, `${ROOT}/labs/clave`))
-      .toBe(`open ${ROOT}/labs/clave`)
+    expect(substituteTokens('open @project_abs', ROOT, `${ROOT}/labs/clave`)).toBe(
+      `open ${ROOT}/labs/clave`
+    )
   })
 
   it('expands @project_path relative to the root', () => {
-    expect(substituteTokens('cd @project_path', ROOT, `${ROOT}/labs/clave`))
-      .toBe('cd labs/clave')
+    expect(substituteTokens('cd @project_path', ROOT, `${ROOT}/labs/clave`)).toBe('cd labs/clave')
   })
 
   it('gives @project_path as "." when the project IS the root', () => {
@@ -53,7 +54,11 @@ describe('substituteTokens', () => {
   })
 
   it('leaves no @-token behind in a prompt using all three', () => {
-    const out = substituteTokens('@root_path @project_path @project_abs', ROOT, `${ROOT}/labs/clave`)
+    const out = substituteTokens(
+      '@root_path @project_path @project_abs',
+      ROOT,
+      `${ROOT}/labs/clave`
+    )
     expect(out).not.toMatch(/@(root_path|project_path|project_abs)/)
   })
 })

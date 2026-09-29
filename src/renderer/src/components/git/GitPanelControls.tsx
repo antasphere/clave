@@ -212,7 +212,10 @@ export function SectionHeader({
   indentPx?: number
 }): React.JSX.Element {
   return (
-    <div className="git-section-header flex items-center pr-3" style={{ paddingLeft: indentPx ?? 12 }}>
+    <div
+      className="git-section-header flex items-center pr-3"
+      style={{ paddingLeft: indentPx ?? 12 }}
+    >
       <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
         {label} ({count})
       </span>
@@ -464,7 +467,12 @@ export function JourneyButton({
         <circle cx="3" cy="2.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
         <circle cx="9" cy="6" r="1.3" stroke="currentColor" strokeWidth="1.1" />
         <circle cx="3" cy="9.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
-        <path d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <path
+          d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2"
+          stroke="currentColor"
+          strokeWidth="1.1"
+          strokeLinecap="round"
+        />
       </svg>
     </IconButton>
   )

@@ -30,7 +30,14 @@ export function useRemoteFileTree(
       if (!locationId || !window.electronAPI?.sftpReadDir) return []
       try {
         const entries = await window.electronAPI.sftpReadDir(locationId, dirPath)
-        return (entries as Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number }>)
+        return (
+          entries as Array<{
+            name: string
+            path: string
+            type: 'file' | 'directory'
+            size?: number
+          }>
+        )
           .sort((a, b) => {
             if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
             return a.name.localeCompare(b.name)

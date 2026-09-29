@@ -194,11 +194,17 @@ export async function run(t) {
     // toolbar, and the box under it starts where the content does.
     const align = await win.evaluate(() => {
       const bar = document.querySelector('[data-panel-bar="path"]')?.getBoundingClientRect()
-      const cards = [...document.querySelectorAll('.floating-card')].map((c) => c.getBoundingClientRect())
+      const cards = [...document.querySelectorAll('.floating-card')].map((c) =>
+        c.getBoundingClientRect()
+      )
       const main = cards.sort((a, b) => b.height - a.height)[0]
       return bar && main ? { bar: bar.top, card: main.top } : null
     })
-    t.check("the path bar sits on the content card's top edge", !!align && Math.abs(align.bar - align.card) < 1, align)
+    t.check(
+      "the path bar sits on the content card's top edge",
+      !!align && Math.abs(align.bar - align.card) < 1,
+      align
+    )
 
     // ── The tab bar carries the tabs, and nothing else ────────────────────
     const bar = await win.evaluate(() => {
@@ -271,7 +277,11 @@ export async function run(t) {
     t.check('the path sits in a bar of its own', pathBar !== null, pathBar)
     t.check('drawn as a box like the panel’s other bars', pathBar?.boxed === true, pathBar)
     t.check('the root chip is on it', pathBar?.chip === true, pathBar)
-    t.check('and the folder picker is in its menu, not loose on the bar', pathBar?.folder === false, pathBar)
+    t.check(
+      'and the folder picker is in its menu, not loose on the bar',
+      pathBar?.folder === false,
+      pathBar
+    )
     t.check('collapse-all is on it', pathBar?.collapse === true, pathBar)
     t.check('and it names the folder the panel is pointed at', pathBar?.text.length > 0, pathBar)
 
@@ -334,7 +344,9 @@ export async function run(t) {
     const openDir = async (name) => {
       await win.evaluate((n) => {
         const dir = [...document.querySelectorAll('[data-tree-item]')].find(
-          (r) => r.getAttribute('data-tree-name') === n && r.getAttribute('data-tree-expanded') === 'false'
+          (r) =>
+            r.getAttribute('data-tree-name') === n &&
+            r.getAttribute('data-tree-expanded') === 'false'
         )
         dir?.click()
       }, name)
@@ -381,7 +393,9 @@ export async function run(t) {
           `no rule between ${fPrev.name}(${fPrev.depth}) and ${entry.name}(${entry.depth})`
         )
       } else if (fPending !== entry.depth) {
-        fileRuleProblems.push(`rule above ${entry.name} at depth ${fPending}, wanted ${entry.depth}`)
+        fileRuleProblems.push(
+          `rule above ${entry.name} at depth ${fPending}, wanted ${entry.depth}`
+        )
       }
       fPending = null
       fPrev = entry
@@ -506,7 +520,9 @@ export async function run(t) {
     // the parity again.
     const fileRowHeights = await win.evaluate(() => [
       ...new Set(
-        [...document.querySelectorAll('[data-tree-item]')].map((el) => el.getBoundingClientRect().height)
+        [...document.querySelectorAll('[data-tree-item]')].map(
+          (el) => el.getBoundingClientRect().height
+        )
       )
     ])
     t.check(
@@ -544,11 +560,7 @@ export async function run(t) {
     const gitBar = await readGitBar()
     t.check('the git tab has a bar of its own', gitBar !== null)
     t.equal('the git tab keeps no collapse-all of its own', await straysIn('git'), 0)
-    t.check(
-      'at the default width every git control is inside the bar',
-      gitBar?.spill === 0,
-      gitBar
-    )
+    t.check('at the default width every git control is inside the bar', gitBar?.spill === 0, gitBar)
     t.check('and the bar is at most two lines', (gitBar?.height ?? 99) <= 64, gitBar)
 
     // The real test of the cluster: drag the panel to its 180px minimum, where
@@ -717,7 +729,9 @@ export async function run(t) {
       new Set(Object.values(tones.wanted)).size === 3,
       tones.wanted
     )
-    const modifiedLetters = tones.letters.filter((l) => l.letter === 'modified' || l.letter === 'staged-modified')
+    const modifiedLetters = tones.letters.filter(
+      (l) => l.letter === 'modified' || l.letter === 'staged-modified'
+    )
     t.check('the repo has a modified file to judge', modifiedLetters.length > 0, tones.letters)
     t.check(
       'a modified file wears the modified tone, not orange',
@@ -879,9 +893,7 @@ export async function run(t) {
     t.check('and offers one way to change the limit', opened?.settings === true, opened)
     t.equal('exactly one button, not a menu of them', opened?.buttons ?? -1, 1)
 
-    const limitBefore = await win.evaluate(() =>
-      localStorage.getItem('clave-git-live-poll-limit')
-    )
+    const limitBefore = await win.evaluate(() => localStorage.getItem('clave-git-live-poll-limit'))
     await win.click('[data-git-footnote-settings]')
     await win.waitForTimeout(1500)
 
@@ -897,7 +909,6 @@ export async function run(t) {
       await win.evaluate(() => localStorage.getItem('clave-git-live-poll-limit')),
       limitBefore
     )
-
   } finally {
     await app.close()
     rmSync(ROOT, { recursive: true, force: true })

@@ -23,7 +23,9 @@ export function useAgentChat(agentId: string | null): {
     const cleanup = window.electronAPI.onAgentMessage(agentId, (raw: unknown) => {
       const message = raw as ChatMessage
       if (message.status === 'streaming') {
-        const existing = useAgentStore.getState().messages[agentId]?.find((m) => m.id === message.id)
+        const existing = useAgentStore
+          .getState()
+          .messages[agentId]?.find((m) => m.id === message.id)
         if (existing) {
           appendMessageContent(agentId, message.id, message.content)
         } else {

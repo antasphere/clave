@@ -14,7 +14,10 @@ function isSegmentStart(path: string, index: number): boolean {
   return prev === '/' || prev === '.' || prev === '-' || prev === '_'
 }
 
-function fuzzyMatch(query: string, target: string): { score: number; matchIndices: number[] } | null {
+function fuzzyMatch(
+  query: string,
+  target: string
+): { score: number; matchIndices: number[] } | null {
   const lowerQuery = query.toLowerCase()
   const lowerTarget = target.toLowerCase()
   const indices: number[] = []

@@ -72,45 +72,48 @@ setInterval(()=>{},1000);
   try {
     // Create the account in main. Track all outbound IPC AFTER storing the token;
     // no renderer input or process-output payload is allowed to carry it.
-    await app.evaluate(async ({ ipcMain, BrowserWindow }, { token, configDir }) => {
-      globalThis.fetch = async () =>
-        new Response(JSON.stringify({ type: 'message', content: [] }), {
-          status: 200,
-          headers: {
-            'anthropic-ratelimit-unified-5h-utilization': '0.1',
-            'anthropic-ratelimit-unified-5h-reset': String(Math.floor(Date.now() / 1000) + 3600),
-            'anthropic-ratelimit-unified-5h-status': 'allowed'
+    await app.evaluate(
+      async ({ ipcMain, BrowserWindow }, { token, configDir }) => {
+        globalThis.fetch = async () =>
+          new Response(JSON.stringify({ type: 'message', content: [] }), {
+            status: 200,
+            headers: {
+              'anthropic-ratelimit-unified-5h-utilization': '0.1',
+              'anthropic-ratelimit-unified-5h-reset': String(Math.floor(Date.now() / 1000) + 3600),
+              'anthropic-ratelimit-unified-5h-status': 'allowed'
+            }
+          })
+        const handlers = ipcMain._invokeHandlers
+        const account = await handlers.get('claude-accounts:add')(
+          {},
+          { label: 'Fixture account', configDir }
+        )
+        await handlers.get('claude-accounts:set-token')({}, account.id, token)
+        const original = handlers.get('pty:spawn')
+        handlers.set('pty:spawn', (event, cwd, options) =>
+          original(event, cwd, {
+            ...options,
+            claudeProfileId: account.id,
+            configDir
+          })
+        )
+        globalThis.__chatLeaks = []
+        for (const win of BrowserWindow.getAllWindows()) {
+          const send = win.webContents.send.bind(win.webContents)
+          win.webContents.send = (channel, ...args) => {
+            if (JSON.stringify(args).includes(token)) globalThis.__chatLeaks.push(channel)
+            return send(channel, ...args)
           }
-        })
-      const handlers = ipcMain._invokeHandlers
-      const account = await handlers.get('claude-accounts:add')(
-        {},
-        { label: 'Fixture account', configDir }
-      )
-      await handlers.get('claude-accounts:set-token')({}, account.id, token)
-      const original = handlers.get('pty:spawn')
-      handlers.set('pty:spawn', (event, cwd, options) =>
-        original(event, cwd, {
-          ...options,
-          claudeProfileId: account.id,
-          configDir
-        })
-      )
-      globalThis.__chatLeaks = []
-      for (const win of BrowserWindow.getAllWindows()) {
-        const send = win.webContents.send.bind(win.webContents)
-        win.webContents.send = (channel, ...args) => {
-          if (JSON.stringify(args).includes(token)) globalThis.__chatLeaks.push(channel)
-          return send(channel, ...args)
         }
-      }
-      for (const [channel, handler] of handlers)
-        handlers.set(channel, async (...args) => {
-          const result = await handler(...args)
-          if (JSON.stringify(result)?.includes(token)) globalThis.__chatLeaks.push(channel)
-          return result
-        })
-    }, { token: TOKEN, configDir: ACCOUNT_DIR })
+        for (const [channel, handler] of handlers)
+          handlers.set(channel, async (...args) => {
+            const result = await handler(...args)
+            if (JSON.stringify(result)?.includes(token)) globalThis.__chatLeaks.push(channel)
+            return result
+          })
+      },
+      { token: TOKEN, configDir: ACCOUNT_DIR }
+    )
     const profiles = await win.evaluate(() => window.electronAPI.launchProfilesList())
     assert.ok(
       profiles.customProfiles.some((p) => p.id === 'claude-chat' && p.name === 'Claude (chat)')

@@ -90,7 +90,10 @@ describe('buildOneShotLaunch', () => {
       args,
       loginEnv: { PATH: '/opt/homebrew/bin:/usr/bin' },
       userShell: '/opt/homebrew/bin/nu',
-      locate: (command, path) => (command === 'claude' && path?.includes('/opt/homebrew/bin') ? '/opt/homebrew/bin/claude' : null)
+      locate: (command, path) =>
+        command === 'claude' && path?.includes('/opt/homebrew/bin')
+          ? '/opt/homebrew/bin/claude'
+          : null
     })
     expect(launch.file).toBe('/opt/homebrew/bin/claude')
     expect(launch.args).toEqual(args)

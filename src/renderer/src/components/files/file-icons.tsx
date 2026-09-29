@@ -39,26 +39,72 @@ const FILENAME_MAP: Record<string, IconType> = {
 
 const EXT_MAP: Record<string, IconType> = {
   // Code
-  ts: 'code', tsx: 'code', js: 'code', jsx: 'code',
-  py: 'code', rs: 'code', go: 'code', rb: 'code',
-  java: 'code', kt: 'code', swift: 'code', c: 'code',
-  cpp: 'code', h: 'code', hpp: 'code', cs: 'code',
-  php: 'code', lua: 'code', sh: 'code', bash: 'code',
-  zsh: 'code', fish: 'code', pl: 'code', r: 'code',
-  scala: 'code', clj: 'code', ex: 'code', exs: 'code',
-  erl: 'code', hs: 'code', elm: 'code', vue: 'code',
-  svelte: 'code', html: 'code', css: 'code', scss: 'code',
-  less: 'code', sql: 'code', graphql: 'code', gql: 'code',
+  ts: 'code',
+  tsx: 'code',
+  js: 'code',
+  jsx: 'code',
+  py: 'code',
+  rs: 'code',
+  go: 'code',
+  rb: 'code',
+  java: 'code',
+  kt: 'code',
+  swift: 'code',
+  c: 'code',
+  cpp: 'code',
+  h: 'code',
+  hpp: 'code',
+  cs: 'code',
+  php: 'code',
+  lua: 'code',
+  sh: 'code',
+  bash: 'code',
+  zsh: 'code',
+  fish: 'code',
+  pl: 'code',
+  r: 'code',
+  scala: 'code',
+  clj: 'code',
+  ex: 'code',
+  exs: 'code',
+  erl: 'code',
+  hs: 'code',
+  elm: 'code',
+  vue: 'code',
+  svelte: 'code',
+  html: 'code',
+  css: 'code',
+  scss: 'code',
+  less: 'code',
+  sql: 'code',
+  graphql: 'code',
+  gql: 'code',
   // Config
-  json: 'json', yaml: 'yml', yml: 'yml', toml: 'config',
-  ini: 'config', env: 'config', xml: 'config', lock: 'config',
+  json: 'json',
+  yaml: 'yml',
+  yml: 'yml',
+  toml: 'config',
+  ini: 'config',
+  env: 'config',
+  xml: 'config',
+  lock: 'config',
   // Table
-  csv: 'table', tsv: 'table', xls: 'table', xlsx: 'table',
+  csv: 'table',
+  tsv: 'table',
+  xls: 'table',
+  xlsx: 'table',
   // Image
-  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image',
-  svg: 'image', webp: 'image', ico: 'image', bmp: 'image',
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  svg: 'image',
+  webp: 'image',
+  ico: 'image',
+  bmp: 'image',
   // Markdown
-  md: 'markdown', mdx: 'markdown'
+  md: 'markdown',
+  mdx: 'markdown'
 }
 
 const ICON_COMPONENTS: Record<IconType, typeof DocumentIcon> = {
@@ -96,7 +142,8 @@ export function FileIcon({
   className?: string
 }): React.JSX.Element {
   const cls = `w-3.5 h-3.5 ${className ?? ''}`
-  if (isDirectory) return isOpen ? <FolderOpenIcon className={cls} /> : <FolderIcon className={cls} />
+  if (isDirectory)
+    return isOpen ? <FolderOpenIcon className={cls} /> : <FolderIcon className={cls} />
   const Component = ICON_COMPONENTS[resolveIconType(name)]
   return <Component className={cls} />
 }

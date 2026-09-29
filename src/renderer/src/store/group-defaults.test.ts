@@ -67,7 +67,10 @@ describe('resolveGroupDefaults', () => {
     expect(
       resolveGroupDefaults({
         prompt: null,
-        sessions: [session({ prompt: 'a plain brief' }), session({ rootSession: true, prompt: 'the root brief' })]
+        sessions: [
+          session({ prompt: 'a plain brief' }),
+          session({ rootSession: true, prompt: 'the root brief' })
+        ]
       })
     ).toEqual({ prompt: 'the root brief', rootSession: true })
   })
@@ -114,7 +117,9 @@ describe('findBackingPin', () => {
   })
 
   it('refuses a same-named pin from another workspace', () => {
-    expect(findBackingPin(group, [pin({ workspaceId: 'ws-2', sessions: backing.sessions })])).toBeNull()
+    expect(
+      findBackingPin(group, [pin({ workspaceId: 'ws-2', sessions: backing.sessions })])
+    ).toBeNull()
   })
 
   it('refuses a same-named pin rooted somewhere else', () => {

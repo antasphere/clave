@@ -1,9 +1,21 @@
 import { execFile } from 'child_process'
-import { existsSync, watchFile, unwatchFile, watch, readFileSync, promises as fsPromises, type Stats } from 'fs'
+import {
+  existsSync,
+  watchFile,
+  unwatchFile,
+  watch,
+  readFileSync,
+  promises as fsPromises,
+  type Stats
+} from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { BrowserWindow } from 'electron'
-import { accountTokenForSpawn, getLoginShellEnv, getUserShell } from './sessions/adapters/pty-backend'
+import {
+  accountTokenForSpawn,
+  getLoginShellEnv,
+  getUserShell
+} from './sessions/adapters/pty-backend'
 import { launchProfileManager } from './launch-profile-manager'
 import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
 import { TITLE_HELPER_MARKER } from './session-history'
@@ -92,9 +104,17 @@ export function scheduleTitleGeneration(
 ): void {
   const jsonlPath = getJsonlPath(cwd, claudeSessionId)
   const entry: SessionEntry = {
-    cwd, claudeSessionId, win, launch, jsonlPath,
-    titleDone: false, planDetected: false, pendingClear: false, dirWatcher: null,
-    scanOffset: 0, scanPartial: ''
+    cwd,
+    claudeSessionId,
+    win,
+    launch,
+    jsonlPath,
+    titleDone: false,
+    planDetected: false,
+    pendingClear: false,
+    dirWatcher: null,
+    scanOffset: 0,
+    scanPartial: ''
   }
   sessions.set(sessionId, entry)
 
@@ -117,13 +137,19 @@ export function scheduleTitleGeneration(
         try {
           const head = readFileSync(newFile, { encoding: 'utf-8', flag: 'r' })
           if (!head.includes('<command-name>/clear</command-name>')) return
-        } catch { return }
+        } catch {
+          return
+        }
 
         console.log(`[title-gen] Session ${sessionId}: /clear detected (new JSONL: ${filename})`)
         entry.pendingClear = false
 
         // Stop watching old JSONL, switch to new one
-        try { unwatchFile(entry.jsonlPath) } catch { /* ignore */ }
+        try {
+          unwatchFile(entry.jsonlPath)
+        } catch {
+          /* ignore */
+        }
         entry.jsonlPath = newFile
         entry.titleDone = false
         entry.planDetected = false
@@ -193,8 +219,16 @@ export function cleanup(sessionId: string): void {
   chatAwaitingTitle.delete(sessionId)
   const entry = sessions.get(sessionId)
   if (entry) {
-    try { unwatchFile(entry.jsonlPath) } catch { /* ignore */ }
-    try { entry.dirWatcher?.close() } catch { /* ignore */ }
+    try {
+      unwatchFile(entry.jsonlPath)
+    } catch {
+      /* ignore */
+    }
+    try {
+      entry.dirWatcher?.close()
+    } catch {
+      /* ignore */
+    }
   }
   sessions.delete(sessionId)
   // Remove any queued title jobs for this session
@@ -221,7 +255,11 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
   // the watcher re-read the whole (multi-MB, ever-growing) JSONL every 2s for the
   // session's entire life just to look for a plan that most sessions never emit.
   if (entry.titleDone && entry.planDetected) {
-    try { unwatchFile(entry.jsonlPath) } catch { /* ignore */ }
+    try {
+      unwatchFile(entry.jsonlPath)
+    } catch {
+      /* ignore */
+    }
     return
   }
 
@@ -471,10 +509,7 @@ const PREFIX_RE =
 function heuristicTitle(message: string): string | null {
   let text = message.split(/\n/)[0].trim()
   text = text.replace(PREFIX_RE, '')
-  const words = text
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 4)
+  const words = text.split(/\s+/).filter(Boolean).slice(0, 4)
   if (words.length === 0) return null
   return words.join(' ').toLowerCase()
 }

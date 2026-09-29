@@ -113,7 +113,13 @@ export function FileRow({
       <div
         data-git-row="file"
         className={`flex items-center gap-1.5 pr-3 h-[var(--panel-row-h)] text-xs transition-colors cursor-pointer group ${
-          disabled ? 'opacity-50 pointer-events-none' : isActiveDiff ? 'bg-accent/15 border-l-2 border-l-accent' : isSelected ? 'bg-surface-200 border-l-2 border-l-transparent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+          disabled
+            ? 'opacity-50 pointer-events-none'
+            : isActiveDiff
+              ? 'bg-accent/15 border-l-2 border-l-accent'
+              : isSelected
+                ? 'bg-surface-200 border-l-2 border-l-transparent'
+                : 'hover:bg-surface-100 border-l-2 border-l-transparent'
         }`}
         style={{ paddingLeft: indentPx ?? 12 }}
         onClick={handleClick}
@@ -128,9 +134,7 @@ export function FileRow({
           aria-label={statusWord(file.status)}
           title={statusWord(file.status)}
         />
-        <span className="text-text-primary truncate hover:underline">
-          {name}
-        </span>
+        <span className="text-text-primary truncate hover:underline">{name}</span>
         {dir && <span className="text-text-tertiary truncate text-[10px]">{dir}</span>}
         {overlap && (
           <span
@@ -213,7 +217,13 @@ export function GitTreeDirRow({
           fill="none"
           className={`transition-transform duration-100 ${node.expanded ? 'rotate-90' : ''}`}
         >
-          <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M3 1.5L7 5L3 8.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </span>
       <FileIcon name="" isDirectory className="flex-shrink-0 text-text-tertiary" />
@@ -297,7 +307,13 @@ export function GitTreeFileRow({
     <div
       data-git-row="file"
       className={`flex items-center gap-1.5 h-[var(--panel-row-h)] text-xs transition-colors cursor-pointer group pr-3 ${
-        disabled ? 'opacity-50 pointer-events-none' : isActiveDiff ? 'bg-accent/15 border-l-2 border-l-accent' : isSelected ? 'bg-surface-200 border-l-2 border-l-transparent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+        disabled
+          ? 'opacity-50 pointer-events-none'
+          : isActiveDiff
+            ? 'bg-accent/15 border-l-2 border-l-accent'
+            : isSelected
+              ? 'bg-surface-200 border-l-2 border-l-transparent'
+              : 'hover:bg-surface-100 border-l-2 border-l-transparent'
       }`}
       style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * 8}px` }}
       onClick={handleClick}
@@ -313,9 +329,7 @@ export function GitTreeFileRow({
         aria-label={statusWord(file.status)}
         title={statusWord(file.status)}
       />
-      <span className="text-text-primary truncate hover:underline">
-        {node.name}
-      </span>
+      <span className="text-text-primary truncate hover:underline">{node.name}</span>
       {overlap && (
         <span
           className="text-orange-400 text-[10px] flex-shrink-0"

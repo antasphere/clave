@@ -13,9 +13,7 @@ function ChatMessageImpl({ message }: ChatMessageProps): React.JSX.Element {
   if (isSystem) {
     return (
       <div className="flex justify-center py-2">
-        <span className="badge bg-surface-100 text-text-tertiary px-3 py-1">
-          {message.content}
-        </span>
+        <span className="badge bg-surface-100 text-text-tertiary px-3 py-1">{message.content}</span>
       </div>
     )
   }

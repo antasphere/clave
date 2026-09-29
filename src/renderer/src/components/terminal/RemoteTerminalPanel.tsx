@@ -54,10 +54,7 @@ export function RemoteTerminalPanel({
 
   return (
     <div
-      className={cn(
-        'flex flex-col h-full bg-surface-0 transition-shadow',
-        ''
-      )}
+      className={cn('flex flex-col h-full bg-surface-0 transition-shadow', '')}
       onMouseDown={handleClick}
     >
       <TerminalHeader sessionId={sessionId} />
@@ -65,7 +62,8 @@ export function RemoteTerminalPanel({
         <div className="flex items-center gap-2 px-3 py-1 bg-accent/5 border-b border-border-subtle text-xs text-text-tertiary">
           <GlobeAltIcon className="w-3.5 h-3.5" />
           <span>
-            {isClaudeMode ? 'Claude Code on' : 'Connected to'} {location.name} &middot; {location.host} via SSH
+            {isClaudeMode ? 'Claude Code on' : 'Connected to'} {location.name} &middot;{' '}
+            {location.host} via SSH
           </span>
         </div>
       )}

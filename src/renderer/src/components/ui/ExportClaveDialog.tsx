@@ -60,7 +60,12 @@ export function ExportClaveDialog({
   const folderName = folder ? folder.split('/').pop() || folder : null
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => { if (!open) onCancel() }}>
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
       <AnimatePresence>
         {isOpen && (
           <DialogPrimitive.Portal forceMount>
@@ -120,14 +125,18 @@ export function ExportClaveDialog({
                       onClick={() => setKeepSynced(!keepSynced)}
                       className="mt-3 w-full flex items-center gap-2.5 text-left"
                     >
-                      <div className={`
+                      <div
+                        className={`
                         w-8 h-[18px] rounded-full transition-colors flex-shrink-0 relative
                         ${keepSynced ? 'bg-accent' : 'bg-surface-200'}
-                      `}>
-                        <div className={`
+                      `}
+                      >
+                        <div
+                          className={`
                           absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-sm transition-transform
                           ${keepSynced ? 'translate-x-[16px]' : 'translate-x-[2px]'}
-                        `} />
+                        `}
+                        />
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="text-xs text-text-primary">Keep synced</span>

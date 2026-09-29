@@ -94,7 +94,9 @@ function CommitDetail({
     <div className="border-t border-border-subtle bg-surface-50/50">
       {/* Commit message + metadata */}
       <div className="px-3 py-1.5 space-y-0.5">
-        <p className="text-xs text-text-primary whitespace-pre-wrap break-words">{commit.message}</p>
+        <p className="text-xs text-text-primary whitespace-pre-wrap break-words">
+          {commit.message}
+        </p>
         <div className="text-[10px] text-text-tertiary flex items-center gap-2">
           <span>{commit.author}</span>
           <span>{relativeTime(commit.date)}</span>
@@ -122,9 +124,7 @@ function CommitDetail({
       ) : (
         <div className="pb-1">
           {files.map((file) => {
-            const fileName = file.path.includes('/')
-              ? file.path.split('/').pop()!
-              : file.path
+            const fileName = file.path.includes('/') ? file.path.split('/').pop()! : file.path
             const dir = file.path.includes('/')
               ? file.path.slice(0, file.path.lastIndexOf('/') + 1)
               : ''
@@ -133,7 +133,9 @@ function CommitDetail({
               <div
                 key={file.path}
                 className={`flex items-center gap-1.5 px-3 py-0.5 text-xs transition-colors cursor-pointer group ${
-                  isActive ? 'bg-accent/15 border-l-2 border-l-accent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+                  isActive
+                    ? 'bg-accent/15 border-l-2 border-l-accent'
+                    : 'hover:bg-surface-100 border-l-2 border-l-transparent'
                 }`}
                 onClick={(e) => onSelectFile(file, files, e.clientY)}
               >
@@ -143,17 +145,13 @@ function CommitDetail({
                   {commitFileStatusLetter(file.status)}
                 </span>
                 <span className="text-text-primary truncate hover:underline">{fileName}</span>
-                {dir && (
-                  <span className="text-text-tertiary truncate text-[10px]">{dir}</span>
-                )}
+                {dir && <span className="text-text-tertiary truncate text-[10px]">{dir}</span>}
                 <span className="ml-auto flex-shrink-0 text-[10px] font-mono text-text-tertiary">
                   {file.insertions > 0 && (
                     <span className="text-green-400">+{file.insertions}</span>
                   )}
                   {file.insertions > 0 && file.deletions > 0 && ' '}
-                  {file.deletions > 0 && (
-                    <span className="text-red-400">-{file.deletions}</span>
-                  )}
+                  {file.deletions > 0 && <span className="text-red-400">-{file.deletions}</span>}
                 </span>
               </div>
             )
@@ -197,7 +195,9 @@ function CommitRow({
       <span className="font-mono text-text-tertiary flex-shrink-0 text-[10px]">
         {commit.shortHash}
       </span>
-      <span className="text-text-primary truncate flex-1" title={commit.message}>{commit.message}</span>
+      <span className="text-text-primary truncate flex-1" title={commit.message}>
+        {commit.message}
+      </span>
       <span className="text-[10px] text-text-tertiary flex-shrink-0 whitespace-nowrap">
         {relativeTime(commit.date)}
       </span>
@@ -361,12 +361,9 @@ export function GitLogView({
     }
   }, [cwd, fetchLog])
 
-  const toggleCommit = useCallback(
-    (hash: string) => {
-      setExpandedHash((prev) => (prev === hash ? null : hash))
-    },
-    []
-  )
+  const toggleCommit = useCallback((hash: string) => {
+    setExpandedHash((prev) => (prev === hash ? null : hash))
+  }, [])
 
   if (loading) {
     return (
@@ -383,9 +380,7 @@ export function GitLogView({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {error && (
-        <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">
-          {error}
-        </div>
+        <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{error}</div>
       )}
 
       <div className="flex-1 overflow-y-auto">

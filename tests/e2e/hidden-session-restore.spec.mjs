@@ -164,7 +164,7 @@ export async function run(t) {
     t.equal('the toolbar terminal left exactly one record', toolbarRecords.length, 1)
     const toolbarId = toolbarRecords[0]?.id
     t.check(
-      "and the record names the button it belongs to, not a tab",
+      'and the record names the button it belongs to, not a tab',
       typeof toolbarRecords[0]?.link?.key === 'string' && toolbarRecords[0].link.key.endsWith(':0'),
       toolbarRecords[0]?.link
     )
@@ -219,7 +219,7 @@ export async function run(t) {
 
     // ── The toolbar survivor: no row, and the button REATTACHES to it ──
     t.check(
-      "the toolbar terminal is not in the sidebar order either",
+      'the toolbar terminal is not in the sidebar order either',
       !!layout && !!toolbarId && !layout.displayOrder.includes(toolbarId),
       { toolbarId, displayOrder: layout?.displayOrder }
     )

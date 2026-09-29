@@ -223,9 +223,7 @@ export async function run(t) {
     }, `${ROOT}/signature.html`)
     await win.getByRole('button', { name: 'Change default', exact: true }).click()
     await win.getByLabel('Subject', { exact: true }).fill('Subject while applying default')
-    const duringDefault = toolPayload(
-      await client.call('clave_side_panel', { action: 'read' })
-    )
+    const duringDefault = toolPayload(await client.call('clave_side_panel', { action: 'read' }))
     t.equal(
       'editing while picker applies default keeps final subject',
       duringDefault.email.subject,

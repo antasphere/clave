@@ -8,17 +8,46 @@ let highlighterPromise: Promise<Highlighter> | null = null
 const MAX_HIGHLIGHT_SIZE = 100_000 // 100KB
 
 const EXT_TO_LANG: Record<string, string> = {
-  ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
-  py: 'python', rs: 'rust', go: 'go', rb: 'ruby',
-  java: 'java', kt: 'kotlin', swift: 'swift', c: 'c',
-  cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-  php: 'php', lua: 'lua', sh: 'shellscript', bash: 'shellscript',
-  zsh: 'shellscript', json: 'json', yaml: 'yaml', yml: 'yaml',
-  toml: 'toml', md: 'markdown', mdx: 'mdx', html: 'html',
-  css: 'css', scss: 'scss', less: 'less', sql: 'sql',
-  graphql: 'graphql', xml: 'xml', svg: 'xml', vue: 'vue',
-  svelte: 'svelte', dockerfile: 'dockerfile',
-  makefile: 'makefile', r: 'r'
+  ts: 'typescript',
+  tsx: 'tsx',
+  js: 'javascript',
+  jsx: 'jsx',
+  py: 'python',
+  rs: 'rust',
+  go: 'go',
+  rb: 'ruby',
+  java: 'java',
+  kt: 'kotlin',
+  swift: 'swift',
+  c: 'c',
+  cpp: 'cpp',
+  h: 'c',
+  hpp: 'cpp',
+  cs: 'csharp',
+  php: 'php',
+  lua: 'lua',
+  sh: 'shellscript',
+  bash: 'shellscript',
+  zsh: 'shellscript',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  toml: 'toml',
+  md: 'markdown',
+  mdx: 'mdx',
+  html: 'html',
+  css: 'css',
+  scss: 'scss',
+  less: 'less',
+  sql: 'sql',
+  graphql: 'graphql',
+  xml: 'xml',
+  svg: 'xml',
+  vue: 'vue',
+  svelte: 'svelte',
+  dockerfile: 'dockerfile',
+  makefile: 'makefile',
+  r: 'r'
 }
 
 function getHighlighter(): Promise<Highlighter> {
@@ -27,9 +56,27 @@ function getHighlighter(): Promise<Highlighter> {
       shiki.createHighlighter({
         themes: ['github-dark', 'github-light'],
         langs: [
-          'typescript', 'tsx', 'javascript', 'jsx', 'python', 'rust', 'go',
-          'ruby', 'java', 'json', 'yaml', 'toml', 'markdown', 'html', 'css',
-          'scss', 'sql', 'shellscript', 'xml', 'c', 'cpp'
+          'typescript',
+          'tsx',
+          'javascript',
+          'jsx',
+          'python',
+          'rust',
+          'go',
+          'ruby',
+          'java',
+          'json',
+          'yaml',
+          'toml',
+          'markdown',
+          'html',
+          'css',
+          'scss',
+          'sql',
+          'shellscript',
+          'xml',
+          'c',
+          'cpp'
         ]
       })
     )
@@ -95,10 +142,7 @@ export function useSyntaxHighlight(
       })
       .catch(() => {
         if (id !== cancelRef.current) return
-        const escaped = content
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
+        const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         setHtml(`<pre style="margin:0;white-space:pre-wrap;">${escaped}</pre>`)
       })
       .finally(() => {

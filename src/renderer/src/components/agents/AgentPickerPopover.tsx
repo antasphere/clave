@@ -28,7 +28,7 @@ export function AgentPickerPopover({
   const menuRef = useRef<HTMLDivElement>(null)
 
   const handleAgentClick = useCallback(
-    (agent: typeof agents[0], locationId: string) => {
+    (agent: (typeof agents)[0], locationId: string) => {
       const sessionId = `agent-${locationId}-${agent.id}`
 
       // Set the active agent for the chat panel
@@ -132,39 +132,37 @@ export function AgentPickerPopover({
       }}
     >
       <div className="max-h-[50vh] overflow-y-auto">
-      {locationGroups.map((group) => {
-        return (
-          <div key={group.locationId}>
-            <div className="menu-label">
-              {group.name}
-            </div>
-            {group.agents.map((agent) => {
-              const sessionId = `agent-${agent.locationId}-${agent.id}`
-              const inSidebar = sessions.some((s) => s.id === sessionId)
-              return (
-                <button
-                  key={agent.id}
-                  onClick={() => handleAgentClick(agent, agent.locationId)}
-                  className="menu-item"
-                >
-                  <div
-                    className={cn(
-                      'w-2 h-2 rounded-full flex-shrink-0',
-                      statusColors[agent.status] || 'bg-gray-400'
+        {locationGroups.map((group) => {
+          return (
+            <div key={group.locationId}>
+              <div className="menu-label">{group.name}</div>
+              {group.agents.map((agent) => {
+                const sessionId = `agent-${agent.locationId}-${agent.id}`
+                const inSidebar = sessions.some((s) => s.id === sessionId)
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => handleAgentClick(agent, agent.locationId)}
+                    className="menu-item"
+                  >
+                    <div
+                      className={cn(
+                        'w-2 h-2 rounded-full flex-shrink-0',
+                        statusColors[agent.status] || 'bg-gray-400'
+                      )}
+                    />
+                    <span className="flex-1 text-left truncate">{agent.name}</span>
+                    {inSidebar ? (
+                      <CheckIcon className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+                    ) : (
+                      <span className="text-[11px] text-text-tertiary flex-shrink-0">Add</span>
                     )}
-                  />
-                  <span className="flex-1 text-left truncate">{agent.name}</span>
-                  {inSidebar ? (
-                    <CheckIcon className="w-3.5 h-3.5 text-accent flex-shrink-0" />
-                  ) : (
-                    <span className="text-[11px] text-text-tertiary flex-shrink-0">Add</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )
-      })}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
     </div>,
     document.body
