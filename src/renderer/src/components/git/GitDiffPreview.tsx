@@ -138,6 +138,10 @@ export function GitDiffPreview(): React.JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelTop, setPanelTop] = useState<number | null>(null)
 
+  // No dependency list on purpose: the panel's height changes as its diff
+  // loads and renders, so it is measured after every render. Setting the same
+  // top again does not re-render, so this settles.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     if (!diffPreview || !panelRef.current) return
     const clickY = diffPreview.clickY

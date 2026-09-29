@@ -453,6 +453,9 @@ function RepoSection({
       setUnstagedExpanded(new Set())
       setUntrackedExpanded(new Set())
     }
+    // The trigger alone: the setters change with the folder, and a folder
+    // change must not collapse the trees again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapseAllTrigger])
 
   // Auto-expand all dirs when switching to tree mode
@@ -466,7 +469,7 @@ function RepoSection({
       setUntrackedExpanded(allPaths)
     }
     prevViewMode.current = gitViewMode
-  }, [gitViewMode, status?.files])
+  }, [gitViewMode, status?.files, setStagedExpanded, setUnstagedExpanded, setUntrackedExpanded])
 
   const makeToggle = useCallback(
     (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (path: string) => {
@@ -483,9 +486,20 @@ function RepoSection({
     []
   )
 
-  const toggleStagedExpanded = useCallback(makeToggle(setStagedExpanded), [makeToggle])
-  const toggleUnstagedExpanded = useCallback(makeToggle(setUnstagedExpanded), [makeToggle])
-  const toggleUntrackedExpanded = useCallback(makeToggle(setUntrackedExpanded), [makeToggle])
+  // Built on the current setters: those change with the folder, and a toggle
+  // kept from the first render saved its state in the previous folder's cache.
+  const toggleStagedExpanded = useMemo(
+    () => makeToggle(setStagedExpanded),
+    [makeToggle, setStagedExpanded]
+  )
+  const toggleUnstagedExpanded = useMemo(
+    () => makeToggle(setUnstagedExpanded),
+    [makeToggle, setUnstagedExpanded]
+  )
+  const toggleUntrackedExpanded = useMemo(
+    () => makeToggle(setUntrackedExpanded),
+    [makeToggle, setUntrackedExpanded]
+  )
 
   // Compute relative filter prefix from the repo root
   const relativeFilterPrefix = useMemo(() => {

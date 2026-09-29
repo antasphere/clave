@@ -201,7 +201,6 @@ export function Sidebar(): React.JSX.Element {
   const groups = useSessionStore((s) => s.groups)
   const displayOrder = useSessionStore((s) => s.displayOrder)
   const createGroup = useSessionStore((s) => s.createGroup)
-  const setGroupColor = useSessionStore((s) => s.setGroupColor)
   const toggleGroupCollapsed = useSessionStore((s) => s.toggleGroupCollapsed)
   const setGroupView = useSessionStore((s) => s.setGroupView)
   const setActiveGroupView = useSessionStore((s) => s.setActiveGroupView)
@@ -384,7 +383,7 @@ export function Sidebar(): React.JSX.Element {
 
   // Track pinned group visibility to filter hidden groups from the sessions list
   const pinnedGroups = usePinnedStore((s) => s.pinnedGroups)
-  const hiddenGroupIds = useMemo(() => getHiddenGroupIds(), [pinnedGroups])
+  const hiddenGroupIds = useMemo(() => getHiddenGroupIds(pinnedGroups), [pinnedGroups])
 
   // Workspace scoping: the sidebar shows only the active workspace's world.
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -1363,7 +1362,6 @@ export function Sidebar(): React.JSX.Element {
     [
       handleUngroup,
       handleDeleteGroup,
-      setGroupColor,
       setGroupView,
       setActiveGroupView,
       moveToWindowItems,

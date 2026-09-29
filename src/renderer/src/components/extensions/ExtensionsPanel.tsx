@@ -538,11 +538,12 @@ export function ExtensionsPanel(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [profileId])
+  }, [])
 
+  // Read again on every profile switch, as well as on mount.
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, profileId])
 
   // Reset drill + transient state when switching tab or profile.
   useEffect(() => {

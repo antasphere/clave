@@ -1072,9 +1072,11 @@ export function revealGroup(groupId: string): void {
 }
 
 /** Returns the set of group IDs that are hidden by pinned toggle (active but not visible) */
-export function getHiddenGroupIds(): Set<string> {
+export function getHiddenGroupIds(
+  pinnedGroups: PinnedGroup[] = usePinnedStore.getState().pinnedGroups
+): Set<string> {
   const ids = new Set<string>()
-  for (const pg of usePinnedStore.getState().pinnedGroups) {
+  for (const pg of pinnedGroups) {
     if (pg.activeGroupId && !pg.visible) {
       ids.add(pg.activeGroupId)
     }
