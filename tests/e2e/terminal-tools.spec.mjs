@@ -150,6 +150,30 @@ export async function run(t) {
         failed.inks[0] !== failed.inks[1],
       failed
     )
+
+    /* 5. A run sits closer to the words that led to it than to what follows. */
+    await inject(app, record.id, [
+      { type: 'user_message', text: 'look around' },
+      { type: 'assistant_text', delta: 'Checking the layout first.', final: true },
+      { type: 'tool_call', id: 'g1', name: 'Grep', input: { pattern: 'layout' } },
+      { type: 'tool_result', id: 'g1', output: 'src/layout.ts' },
+      { type: 'assistant_text', delta: 'Found it in the layout file.', final: true },
+      { type: 'state_change', state: 'idle' }
+    ])
+    const spaced = view.locator('.term-turn').last()
+    await until(async () => (await spaced.locator('.term-tools').count()) === 1)
+    const gaps = await spaced.evaluate((turn) => {
+      const run = turn.querySelector(':scope > .term-tools')
+      const above = run.previousElementSibling.getBoundingClientRect()
+      const below = run.nextElementSibling.getBoundingClientRect()
+      const own = run.getBoundingClientRect()
+      return { above: own.top - above.bottom, below: below.top - own.bottom }
+    })
+    t.check(
+      'a tool run is nearer the text above it than the text below',
+      gaps.above > 0 && gaps.below - gaps.above >= 8,
+      gaps
+    )
   } finally {
     await fixture.close()
   }

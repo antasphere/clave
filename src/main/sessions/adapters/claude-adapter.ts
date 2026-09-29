@@ -21,6 +21,12 @@ import {
 } from '../../../shared/session-model'
 import { buildAgentArgv } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
+import {
+  CLAUDE_MODELS,
+  claudeContextWindow,
+  claudeModelName,
+  findClaudeModel
+} from '../../../shared/claude-models'
 import type {
   SessionAdapter,
   SessionAdapterEvents,
@@ -146,6 +152,8 @@ export class ClaudeStreamTranslator {
   readonly modelRequests = new Map<string, string | null>()
   /** request_id → the mode a set_permission_mode control request asked for. */
   readonly modeRequests = new Map<string, string>()
+  /** request_id → the task a stop_task control request asked to stop. */
+  readonly stopRequests = new Map<string, string>()
   /** What a `permission_mode` event offers; the adapter sets it at launch. */
   modes: PermissionModeOption[] = PERMISSION_MODES
   /** The main thread's context after its last call, and the model's window. */
@@ -153,6 +161,8 @@ export class ClaudeStreamTranslator {
   private contextWindow: number | null = null
   /** Each running subagent's own context, by the call that started it. */
   private readonly subagentContext = new Map<string, number>()
+  /** Each subagent's model, once its first answer has named it. */
+  private readonly subagentModels = new Map<string, string>()
   private publishUsage(): void {
     if (this.contextUsed === null) return
     this.emit({ type: 'context_usage', used: this.contextUsed, window: this.contextWindow })
@@ -295,6 +305,28 @@ export class ClaudeStreamTranslator {
       })
     return true
   }
+  /** A control_response answering one of our stop_task requests; false for
+   *  any other. A stop the CLI takes needs no word: the task's own frames
+   *  retire it from the background list. A refusal is the reader's to see. */
+  private stopRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        error: z.string().optional()
+      })
+      .safeParse(p.response)
+    if (!response.success || !this.stopRequests.has(response.data.request_id)) return false
+    const task = this.stopRequests.get(response.data.request_id)
+    this.stopRequests.delete(response.data.request_id)
+    if (response.data.subtype === 'error')
+      this.emit({
+        type: 'error',
+        message: response.data.error ?? `Claude could not stop ${task}`,
+        fatal: false
+      })
+    return true
+  }
   /** A control_response answering one of our set_model requests; false for any other. */
   private modelRequest(p: Record<string, unknown>): boolean {
     const response = z
@@ -394,11 +426,17 @@ export class ClaudeStreamTranslator {
           }
         }
         // The context as it stood, so a resumed session's meter is not blank
-        // until its next answer. The window is only in a live turn's result.
-        const tokens = contextTokens(object.safeParse(frame.message).data?.usage)
+        // until its next answer. A live turn's result names the window; until
+        // then the model the transcript's own frame names says it.
+        const message = object.safeParse(frame.message).data
+        const tokens = contextTokens(message?.usage)
         if (tokens > 0 && tokens !== used) {
           used = tokens
-          push({ type: 'context_usage', used, window: null })
+          push({
+            type: 'context_usage',
+            used,
+            window: claudeContextWindow(typeof message?.model === 'string' ? message.model : null)
+          })
         }
       }
     }
@@ -489,17 +527,26 @@ export class ClaudeStreamTranslator {
         const used = contextTokens(object.safeParse(p.message).data?.usage)
         if (!parent && used > 0 && used !== this.contextUsed) {
           this.contextUsed = used
+          // Until a result names the window, the answering model says it.
+          const model = z.object({ model: z.string() }).safeParse(p.message)
+          if (this.contextWindow === null && model.success)
+            this.contextWindow = claudeContextWindow(model.data.model)
           this.publishUsage()
         } else if (parent && used > 0 && used !== this.subagentContext.get(parent)) {
           this.subagentContext.set(parent, used)
           this.emit({ type: 'context_usage', used, window: null, parent })
+        }
+        const model = z.object({ model: z.string() }).safeParse(p.message)
+        if (parent && model.success && this.subagentModels.get(parent) !== model.data.model) {
+          this.subagentModels.set(parent, model.data.model)
+          this.emit({ type: 'subagent_model', parent, model: model.data.model })
         }
       }
       // Preserve usage, thinking, attachments, and unknown content without duplicate text.
       fallback()
     } else if (
       p.type === 'control_response' &&
-      (this.modelRequest(p) || this.modeRequest(p) || this.listRequest(p))
+      (this.modelRequest(p) || this.modeRequest(p) || this.stopRequest(p) || this.listRequest(p))
     ) {
       // Answered above: the switch took or the CLI said why not; the list arrived or did not.
     } else if (p.type === 'control_request' && object.parse(p.request).subtype === 'can_use_tool') {
@@ -708,6 +755,56 @@ interface Live {
   permissionMode: string
   emit: (event: SessionEvent) => void
   finish: (code: number) => void
+}
+
+/** One model as the CLI's initialize answer lists it. */
+interface CliModel {
+  value: string
+  displayName: string
+  description?: string
+  resolvedModel?: string
+}
+/** The CLI's list made the menu: Default first, as the CLI glosses it
+ *  ("Opus 5.5 · Best for everyday, complex tasks"), then every listed version
+ *  under its own name, then whatever the CLI offers that no version covers.
+ *  The gloss of a family's alias goes on its newest version, without the
+ *  version the name already says; an older one reads "Earlier version". */
+export function claudeModelOptions(cli: CliModel[]): ModelOption[] {
+  const options: ModelOption[] = []
+  const fallback = cli.find((m) => m.value === 'default')
+  if (fallback)
+    options.push({
+      id: 'default',
+      label: 'Default',
+      ...(fallback.description ? { hint: fallback.description } : {}),
+      ...(fallback.resolvedModel ? { resolved: fallback.resolvedModel } : {})
+    })
+  const glossed = new Set<string>()
+  for (const model of CLAUDE_MODELS) {
+    const family = cli.find(
+      (m) =>
+        m.value !== 'default' && findClaudeModel(m.resolvedModel ?? m.value)?.alias === model.alias
+    )
+    const gloss = family?.description?.replace(/^[^·]*·\s*/, '')
+    const newest = !glossed.has(model.alias)
+    glossed.add(model.alias)
+    options.push({
+      id: model.id,
+      label: model.name,
+      ...(newest && gloss ? { hint: gloss } : !newest ? { hint: 'Earlier version' } : {}),
+      resolved: model.id.replace(/\[[^\]]*\]$/, '')
+    })
+  }
+  for (const model of cli) {
+    if (model.value === 'default' || findClaudeModel(model.resolvedModel ?? model.value)) continue
+    options.push({
+      id: model.value,
+      label: claudeModelName(model.resolvedModel ?? model.value) ?? model.displayName,
+      ...(model.description ? { hint: model.description } : {}),
+      ...(model.resolvedModel ? { resolved: model.resolvedModel } : {})
+    })
+  }
+  return options
 }
 
 export class ClaudeAdapter implements SessionAdapter {
@@ -1008,6 +1105,14 @@ export class ClaudeAdapter implements SessionAdapter {
         request_id: requestId,
         request: { subtype: 'set_model', model: input.model }
       })
+    } else if (input.type === 'stop_task') {
+      const requestId = randomUUID()
+      live.translator.stopRequests.set(requestId, input.taskId)
+      send({
+        type: 'control_request',
+        request_id: requestId,
+        request: { subtype: 'stop_task', task_id: input.taskId }
+      })
     } else if (input.type === 'set_permission_mode') {
       const mode = runningMode(input.mode)
       if (!live.translator.modes.some((m) => m.id === mode))
@@ -1051,9 +1156,12 @@ export class ClaudeAdapter implements SessionAdapter {
       ...listed.filter((c) => !HOST_COMMANDS.some((h) => h.name === c.name))
     ]
   }
-  /** The models the CLI itself offers this account, asked of the session's own
-   *  process (started if the session has not spoken yet): no list is kept here,
-   *  so a new or retired model shows the moment the CLI knows of it. */
+  /** The models this session can be put on, asked of the session's own
+   *  process (started if the session has not spoken yet). The CLI lists its
+   *  aliases ("Opus", "Fable"); the menu lists versions (`CLAUDE_MODELS`), each
+   *  with the gloss the CLI gives its family, and keeps anything the CLI
+   *  offers that the list does not know yet, so a model shipped after this
+   *  build still shows. */
   async models(handle: SessionHandle): Promise<ModelOption[]> {
     const models = z
       .array(
@@ -1066,12 +1174,7 @@ export class ClaudeAdapter implements SessionAdapter {
       )
       .safeParse((await this.initialize(this.live(handle))).models)
     if (!models.success) throw new Error('Claude did not list its models')
-    return models.data.map((model) => ({
-      id: model.value,
-      label: model.displayName,
-      ...(model.description ? { hint: model.description } : {}),
-      ...(model.resolvedModel ? { resolved: model.resolvedModel } : {})
-    }))
+    return claudeModelOptions(models.data)
   }
   /** The CLI's initialize answer (commands, models, account), asked of the
    *  session's own process, started if the session has not spoken yet. No turn

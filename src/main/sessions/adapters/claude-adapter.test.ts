@@ -627,7 +627,7 @@ it('carries the CLI word that a tool failed, and says nothing when it did not', 
     { error: false }
   ])
 })
-it('lists the models the CLI itself offers, starting a session that has not spoken yet', async () => {
+it('lists the models by version, asking the CLI itself, starting a session that has not spoken yet', async () => {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -651,11 +651,18 @@ it('lists the models the CLI itself offers, starting a session that has not spok
           models: [
             {
               value: 'default',
-              resolvedModel: 'claude-opus-5-5[1m]',
+              resolvedModel: 'claude-opus-5-5',
               displayName: 'Default (recommended)',
-              description: 'Opus 5.5 with 1M context'
+              description: 'Opus 5.5 · Best for everyday, complex tasks'
             },
-            { value: 'haiku', displayName: 'Haiku' }
+            { value: 'haiku', displayName: 'Haiku' },
+            // Shipped after this build: kept, named from its own id.
+            {
+              value: 'claude-opus-6',
+              resolvedModel: 'claude-opus-6',
+              displayName: 'Opus 6',
+              description: 'Opus 6 · Newer'
+            }
           ]
         }
       }
@@ -664,11 +671,25 @@ it('lists the models the CLI itself offers, starting a session that has not spok
   await expect(listed).resolves.toEqual([
     {
       id: 'default',
-      label: 'Default (recommended)',
-      hint: 'Opus 5.5 with 1M context',
-      resolved: 'claude-opus-5-5[1m]'
+      label: 'Default',
+      hint: 'Opus 5.5 · Best for everyday, complex tasks',
+      resolved: 'claude-opus-5-5'
     },
-    { id: 'haiku', label: 'Haiku' }
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', resolved: 'claude-opus-5-5' },
+    { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
+    {
+      id: 'claude-fable-5[1m]',
+      label: 'Fable 5',
+      hint: 'Earlier version',
+      resolved: 'claude-fable-5'
+    },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', resolved: 'claude-sonnet-5-5' },
+    {
+      id: 'claude-haiku-4-5-20251001',
+      label: 'Haiku 4.5',
+      resolved: 'claude-haiku-4-5-20251001'
+    },
+    { id: 'claude-opus-6', label: 'Opus 6', hint: 'Opus 6 · Newer', resolved: 'claude-opus-6' }
   ])
   // A second ask reuses the running process and says why when the CLI refuses.
   const refused = adapter.models(handle)
@@ -1418,4 +1439,79 @@ it('replays the context a resumed conversation stood at', () => {
     { type: 'context_usage', used: 1_005, window: null },
     { type: 'context_usage', used: 4_005, window: null }
   ])
+})
+it('names the window from the answering model until a result does, and a subagent its model once', () => {
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      model: 'claude-haiku-4-5-20251001',
+      content: [{ type: 'text', text: 'Looking.' }],
+      usage: { input_tokens: 12_000 }
+    }
+  })
+  const sub = (id: string): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      model: 'claude-sonnet-5-5',
+      content: [{ type: 'tool_use', id, name: 'Grep', input: { pattern: 'y' } }],
+      usage: { input_tokens: 1_000 }
+    }
+  })
+  feed(sub('sub-1'))
+  feed(sub('sub-2'))
+  expect(events.filter((e) => e.type === 'context_usage')[0]).toEqual({
+    type: 'context_usage',
+    used: 12_000,
+    window: 200_000
+  })
+  // Every frame of the agent names its model: announced once.
+  expect(events.filter((e) => e.type === 'subagent_model')).toEqual([
+    { type: 'subagent_model', parent: 'agent-1', model: 'claude-sonnet-5-5' }
+  ])
+})
+it('replays a resumed conversation with the window its model names', () => {
+  const items = translator.replay([
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        model: 'claude-opus-5-5',
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 5, cache_read_input_tokens: 40_000 }
+      }
+    })
+  ])
+  expect(items.map((i) => i.event).filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 40_005, window: 1_000_000 }
+  ])
+})
+it('stops one background task by its id, and says why when the CLI refuses', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  adapter.write(handle, { type: 'stop_task', taskId: 'task-7' })
+  const request = JSON.parse(child.stdin.read().toString())
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'stop_task', task_id: 'task-7' }
+  })
+  // Never taken for an interrupt, which would stop the whole turn.
+  expect(request.request.subtype).not.toBe('interrupt')
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: request.request_id, error: 'no such task' }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({ type: 'error', message: 'no such task', fatal: false })
 })

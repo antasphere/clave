@@ -4264,6 +4264,12 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   flex-direction: column;
   gap: calc(var(--spacing) * 5);
 }
+/* A tool run belongs to the words that led to it: it sits closer to the text
+   above than to what follows, not at the even distance the column's gap gives
+   every block. Only after the answer's own text; under a question the gap stays. */
+.term-turn > .chat-turn-wrap[data-side='start'] + .term-tools {
+  margin-top: calc(var(--spacing) * -2.5);
+}
 /* A little more air between one exchange and the next: under the last answer,
    over the next question. Each exchange is one virtualised row. */
 .terminal-view .chat-row:not([data-first]) {
@@ -4714,7 +4720,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   color: var(--color-term-cwd);
 }
 .term-status .chat-model-trigger {
-  padding: 0 var(--spacing);
+  padding: 0 calc(var(--spacing) * 2);
   font-family: inherit;
 }
 .term-model .chat-model-trigger {
@@ -4771,8 +4777,8 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .term-context-bar {
   position: relative;
   display: inline-block;
-  inline-size: calc(var(--spacing) * 32);
-  block-size: calc(var(--spacing) * 2.5);
+  inline-size: calc(var(--spacing) * 24);
+  block-size: calc(var(--spacing) * 2);
   overflow: hidden;
   border-radius: calc(var(--spacing) / 2);
   background-image: repeating-linear-gradient(
@@ -4787,6 +4793,11 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   inset-inline-start: 0;
   background-color: var(--color-term-model);
   transition: inline-size var(--default-transition-duration) var(--ease-out-expo);
+}
+/* A context that holds anything shows it: 12k of a 1M window is a hair's
+   width, which read as an empty bar beside a count that was not. */
+.term-context-fill[data-some] {
+  min-inline-size: calc(var(--spacing) / 2);
 }
 .term-context-bar[data-level='mid'] .term-context-fill {
   background-color: var(--color-warning);
@@ -4860,7 +4871,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
 }
 .term-agent-dot {
+  position: relative;
   flex-shrink: 0;
+  align-self: center;
   inline-size: calc(var(--spacing) * 1.5);
   block-size: calc(var(--spacing) * 1.5);
   border-radius: var(--radius-full);
@@ -4869,6 +4882,32 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .term-agent[data-background] .term-agent-dot {
   background-color: var(--color-term-mode);
+}
+/* Each new step: a ring leaves the dot once. The element is remounted per
+   step, so the one-shot animation is the tick. */
+.term-agent-tick {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: inherit;
+  animation: term-agent-tick calc(var(--default-transition-duration) * 5) var(--ease-out-expo)
+    forwards;
+}
+@keyframes term-agent-tick {
+  from {
+    opacity: 0.8;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 3;
+  }
+}
+/* A minute without a step: the dot stops breathing and dims, and the row
+   says for how long. */
+.term-agent[data-quiet] .term-agent-dot {
+  animation: none;
+  opacity: 0.4;
 }
 .term-agent-type {
   flex-shrink: 0;
@@ -4880,24 +4919,55 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   text-overflow: ellipsis;
   color: var(--text-primary);
 }
-.term-agent-action {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-tertiary);
-}
-.term-agent-action::before {
-  content: '⎿ ';
-}
 .term-agent-meta {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: baseline;
   margin-left: auto;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.term-agent-meta > * + *::before {
+  content: '·';
+  padding-inline: calc(var(--spacing) * 1.5);
+}
+.term-agent-quiet {
+  color: var(--color-warning);
+}
+/* The model a subagent runs on: a chip opening the relaunch menu when the
+   agent can be stopped on its own, plain words when it cannot. */
+.term-agent-model {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) / 2);
+  padding: 0 var(--spacing);
+  margin-inline: calc(var(--spacing) * -1);
+  border: none;
+  border-radius: calc(var(--spacing) / 2);
+  background: none;
+  color: var(--color-term-model);
+  font: inherit;
+}
+button.term-agent-model:hover,
+button.term-agent-model[data-state='open'] {
+  background-color: var(--surface-100);
+}
+button.term-agent-model:focus-visible {
+  outline: thin solid var(--color-accent);
+  outline-offset: calc(var(--spacing) / 4);
+}
+.term-agent-model svg {
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+  opacity: 0.7;
 }
 
 /* Reduced motion, the conversation views: the fades stay, since a thing that
    appears from nothing reads as broken either way; the travel goes. */
 @media (prefers-reduced-motion: reduce) {
+  .term-agent-tick {
+    display: none;
+  }
   .chat-column > *,
   .chat-row[data-arrive] > *,
   .chat-row[data-arrive] .term-turn > *,
