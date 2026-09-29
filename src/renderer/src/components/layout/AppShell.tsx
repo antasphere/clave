@@ -25,6 +25,7 @@ import { ExtensionsPanel } from '../extensions/ExtensionsPanel'
 import { ExtensionsSidebar } from '../extensions/ExtensionsSidebar'
 import { UpdateOverlay } from '../ui/UpdateOverlay'
 import { connectUpdaterStore } from '../../store/updater-store'
+import { connectAgentUpdatesStore } from '../../store/agent-updates-store'
 import { MissionControlOverlay } from '../ui/MissionControlOverlay'
 import { SessionHistoryDialog } from '../session/SessionHistoryDialog'
 import { useHistoryStore } from '../../store/history-store'
@@ -542,6 +543,7 @@ export function AppShell(): React.JSX.Element {
   // The pull is the point — a push-only updater loses the "an update exists"
   // fact for 30 minutes if the renderer was not listening when it fired.
   useEffect(() => connectUpdaterStore(), [])
+  useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
 
   // Open Settings → Updates when asked from the native menu.

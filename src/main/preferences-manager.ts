@@ -21,6 +21,11 @@ interface Preferences {
    */
   prereleaseUpdates: boolean
   /**
+   * Keep the agent CLIs on their latest release on their own (on by default);
+   * off, Clave only says an upgrade exists (`agent-updates/`).
+   */
+  agentAutoUpdate: boolean
+  /**
    * The model the reader last picked in a chat composer, by chat adapter id.
    * A fresh chat that names no model starts on it (`sessions/chat-model-default.ts`).
    */
@@ -42,6 +47,7 @@ const DEFAULTS: Preferences = {
   feedbackPromptCollapsed: false,
   missionControlOverlayEnabled: true,
   prereleaseUpdates: false,
+  agentAutoUpdate: true,
   chatModels: {},
   chatView: null
 }

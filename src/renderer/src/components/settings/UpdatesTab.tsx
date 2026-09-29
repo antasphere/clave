@@ -17,6 +17,7 @@ import {
 } from './primitives'
 import { ClaveMark } from '../ui/ClaveMark'
 import { PrereleaseMark } from '../ui/PrereleaseMark'
+import { AgentUpdatesSection } from './AgentUpdatesSection'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -110,7 +111,7 @@ export function UpdatesTab(): React.JSX.Element {
   return (
     <SettingsPage
       title="Software Update"
-      description="Clave updates itself from its GitHub releases."
+      description="Clave updates itself from its GitHub releases, and keeps the agents it launches on their latest release."
     >
       <SettingsSection title="Installed version">
         <SettingsCard>
@@ -222,6 +223,8 @@ export function UpdatesTab(): React.JSX.Element {
           />
         )}
       </SettingsSection>
+
+      <AgentUpdatesSection />
 
       <SettingsSection
         title="Release channel"

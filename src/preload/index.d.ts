@@ -38,6 +38,7 @@ import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   LaunchProfile,
@@ -823,6 +824,12 @@ export interface ElectronAPI {
   checkForUpdates: () => Promise<UpdaterState>
   /** "Receive pre-release builds": persisted, applied, and a check run at once. */
   setPrereleaseUpdates: (enabled: boolean) => Promise<UpdaterState>
+  /** The agent CLIs Clave keeps current (`src/main/agent-updates/`). */
+  getAgentUpdates: () => Promise<AgentUpdatesState>
+  checkAgentUpdates: () => Promise<AgentUpdatesState>
+  updateAgent: (id: AgentUpdateId) => Promise<AgentUpdatesState>
+  setAgentAutoUpdate: (enabled: boolean) => Promise<AgentUpdatesState>
+  onAgentUpdatesState: (callback: (state: AgentUpdatesState) => void) => () => void
   getPathForFile: (file: File) => string
   persistDroppedFile: (sourcePath: string) => Promise<string | null>
   showNotification: (options: {
