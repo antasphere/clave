@@ -249,12 +249,10 @@ export function tightestWindow(windows: UsageWindow[]): UsageWindow | null {
   return best
 }
 
-/** The short name for a cap — what a one-line readout has room for. */
+/** The short name for a cap — what a one-line readout has room for. The
+ *  same words everywhere a cap is named: `capName`. */
 export function shortLabel(w: UsageWindow): string {
-  if (w.scope) return w.scope
-  if (w.kind === 'session') return 'session'
-  if (w.kind === 'weekly_all') return 'weekly'
-  return w.label
+  return capName(w)
 }
 
 /** Whether a window is a weekly cap — the one that decides the week, which
@@ -326,11 +324,58 @@ export function formatReset(resetsAt: number | null): string | null {
   return 'resets shortly'
 }
 
-/** "72% left · session", the one line a menu row has room for. */
+/** How urgent a cap reads, which picks its color. The service sends its own
+ *  plan-aware severity; the more urgent of that and the percentage wins, so a
+ *  scoped cap the percentage alone would understate still shows red. */
+export function capLevel(w: UsageWindow): 'normal' | 'warning' | 'critical' {
+  const fromPct =
+    w.usedPercentage >= 90 ? 'critical' : w.usedPercentage >= 70 ? 'warning' : 'normal'
+  const rank = { normal: 0, warning: 1, critical: 2 }
+  const own = w.severity ?? 'normal'
+  return rank[own] >= rank[fromPct] ? own : fromPct
+}
+
+/** The name a chart column has room for under its bar: the same words as a
+ *  headroom line. */
+export function columnLabel(w: UsageWindow): string {
+  return capName(w)
+}
+
+/** A cap's name beside a headroom, capitalised like the model caps it sits
+ *  among: "5h" for the session block, "Overall" for the all-models weekly
+ *  cap, the model for a scoped one ("Fable"). */
+export function capName(w: UsageWindow): string {
+  if (w.scope) return w.scope
+  if (w.kind === 'session') return '5h'
+  if (w.kind === 'weekly_all') return 'Overall'
+  return w.label
+}
+
+/** The cap a headroom line names: the tightest, except that a cap tied with
+ *  it at the same whole percent gives way to the all-models weekly one, so an
+ *  untouched account reads "100% left · Overall" rather than naming
+ *  whichever window the service happened to list first. */
+export function headroomWindow(summary: AccountUsageSummary | undefined): UsageWindow | null {
+  const tightest = summary?.tightest
+  if (!tightest) return null
+  const overall = summary.windows?.find((w) => w.kind === 'weekly_all')
+  if (
+    overall &&
+    overall !== tightest &&
+    (tightest.severity ?? 'normal') === (overall.severity ?? 'normal') &&
+    Math.round(overall.usedPercentage) === Math.round(tightest.usedPercentage)
+  ) {
+    return overall
+  }
+  return tightest
+}
+
+/** "72% left · Overall", the one line a menu row has room for. */
 export function headroomLabel(summary: AccountUsageSummary | undefined): string | null {
-  if (!summary || !summary.tightest) return null
-  const left = Math.max(0, Math.round(100 - summary.tightest.usedPercentage))
-  return `${left}% left · ${shortLabel(summary.tightest)}`
+  const w = headroomWindow(summary)
+  if (!w) return null
+  const left = Math.max(0, Math.round(100 - w.usedPercentage))
+  return `${left}% left · ${capName(w)}`
 }
 
 // Poll only providers/ranges that have been viewed. Codex is never started just

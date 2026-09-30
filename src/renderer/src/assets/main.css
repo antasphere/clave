@@ -1366,6 +1366,148 @@ html[data-ui-font='synonym'] {
   white-space: nowrap;
 }
 
+/* The Switch account submenu (a tab's context menu): one two-line row per
+   account — a dot in the urgency colours, the name and a Suggested badge,
+   when its week renews, and what is left on the right. The card beside the
+   highlighted row is the Usage page's chart for that one account, smaller. */
+.menu-item:has(> .account-switch-row) {
+  min-height: 2.5rem;
+  padding-top: 0.3125rem;
+  padding-bottom: 0.3125rem;
+}
+.account-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  min-width: 15.5rem;
+}
+.account-switch-dot {
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+}
+.account-switch-row[data-level='unknown'] .account-switch-dot {
+  background-color: var(--surface-300, var(--text-tertiary));
+}
+.account-switch-row[data-level='warning'] .account-switch-dot {
+  background-color: var(--color-wellbeing-gentle);
+}
+.account-switch-row[data-level='critical'] .account-switch-dot {
+  background-color: var(--color-wellbeing-strong);
+}
+.account-switch-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+.account-switch-name {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.account-switch-suggested {
+  flex-shrink: 0;
+  background-color: color-mix(in oklch, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+}
+.account-switch-suggested > svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.account-switch-detail,
+.account-switch-cap {
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-normal, 400);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.account-switch-headroom {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.0625rem;
+}
+.account-switch-left {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.account-switch-row[data-level='warning'] .account-switch-left {
+  color: var(--color-wellbeing-gentle);
+}
+.account-switch-row[data-level='critical'] .account-switch-left {
+  color: var(--color-wellbeing-strong);
+}
+/* An account at its limit stays pickable but reads as the last resort. */
+.account-switch-row[data-exhausted] .account-switch-main {
+  opacity: 0.6;
+}
+
+.menu-preview {
+  position: fixed;
+  pointer-events: none;
+  padding: 0.75rem 0.875rem 0.625rem;
+}
+.account-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 11rem;
+}
+.account-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.account-preview-name {
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.account-preview-meta,
+.account-preview-foot,
+.account-preview-empty {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.account-preview-plot {
+  --usage-track-h: 4.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.25rem;
+}
+.account-preview-plot .usage-column {
+  width: 3.5rem;
+}
+.account-preview-plot .usage-column-track {
+  width: 1.5rem;
+}
+.account-preview-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 0 0.375rem;
+  background-color: var(--color-border-subtle, var(--color-border));
+}
+.account-preview-empty {
+  padding: 1rem 0;
+  text-align: center;
+}
+.account-preview-foot {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
 /* The two headline tiles over the charts: the question, the answer, whose. */
 .usage-tiles > .settings-card + .settings-card {
   margin-top: 0;

@@ -4,15 +4,17 @@ import {
   getClaudeProfile,
   claudeProfileUsable,
   resolveClaudeProfile,
+  describeClaudeProfileAuth,
   type ClaudeProfile
 } from '../store/claude-profile-store'
 import {
   useCodexAccountStore,
   getCodexAccount,
   codexAccountUsable,
-  resolveCodexAccount
+  resolveCodexAccount,
+  describeCodexAccountAuth
 } from '../store/codex-account-store'
-import { accountsUsageFor, headroomLabel, type AccountUsageSummary } from '../store/usage-store'
+import { accountsUsageFor, type AccountUsageSummary } from '../store/usage-store'
 import {
   explicitAccountId,
   isExhausted,
@@ -126,21 +128,41 @@ export function sessionAccountUsage(session: Session): AccountUsageSummary | und
   return accountsUsageFor(provider)[sessionAccountId(session, provider)]
 }
 
-/** The accounts a session could move to, with a label and headroom each. */
-export function sessionSwitchTargets(
-  session: Session
-): { id: string; label: string; exhausted: boolean; headroom: string | null }[] {
+/** One account a session could move to, as the Switch account menu draws it. */
+export interface SwitchTarget {
+  id: string
+  provider: AccountProvider
+  label: string
+  /** How the account signs in ("Max 20x", "API key"), for the preview. */
+  auth: string
+  exhausted: boolean
+  /** The open account the pool would spend first: its week renews soonest. */
+  suggested: boolean
+  /** The soonest weekly reset among its caps, or null when none says. */
+  weeklyResetAt: number | null
+  summary: AccountUsageSummary | undefined
+}
+
+/** The accounts a session could move to, in the menu's order: those with
+ *  headroom first, each side by its soonest weekly reset. */
+export function sessionSwitchTargets(session: Session): SwitchTarget[] {
   const provider = accountProviderOf(session)
   if (!provider) return []
   const current = sessionAccountId(session, provider)
-  const labelOf = (id: string): string =>
-    provider === 'codex' ? getCodexAccount(id).label : getClaudeProfile(id).label
   const usage = accountsUsageFor(provider)
-  return switchTargets(poolAccounts(provider), usage, current).map((t) => ({
-    ...t,
-    label: labelOf(t.id),
-    headroom: headroomLabel(usage[t.id])
-  }))
+  return switchTargets(poolAccounts(provider), usage, current).map((t) => {
+    const account = provider === 'codex' ? getCodexAccount(t.id) : getClaudeProfile(t.id)
+    return {
+      ...t,
+      provider,
+      label: account.label,
+      auth:
+        provider === 'codex'
+          ? describeCodexAccountAuth(account as CodexAccount)
+          : describeClaudeProfileAuth(account as ClaudeProfile),
+      summary: usage[t.id]
+    }
+  })
 }
 
 /** The pool's next account for a session leaving the one it is on. Null

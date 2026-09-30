@@ -155,8 +155,34 @@ describe('pickAccount', () => {
 describe('switchTargets', () => {
   it('lists every other usable account, those with headroom first', () => {
     expect(switchTargets(accounts, { default: used(98), team: used(3) }, 'work')).toEqual([
-      { id: 'team', exhausted: false },
-      { id: 'default', exhausted: true }
+      { id: 'team', exhausted: false, suggested: true, weeklyResetAt: null },
+      { id: 'default', exhausted: true, suggested: false, weeklyResetAt: null }
     ])
+  })
+
+  it('suggests the open account whose weekly cap renews first', () => {
+    const weekly = (percent: number, resetsAt: number): AccountUsageSummary => {
+      const w = {
+        key: 'seven_day',
+        label: 'Weekly (all models)',
+        kind: 'weekly_all',
+        scope: null,
+        usedPercentage: percent,
+        resetsAt,
+        severity: null
+      }
+      return { status: 'ready', error: null, windows: [w], tightest: w }
+    }
+    const targets = switchTargets(
+      accounts,
+      { work: weekly(40, 5_000), default: weekly(99, 1_000), team: weekly(10, 9_000) },
+      'none'
+    )
+    expect(targets.map((t) => [t.id, t.suggested])).toEqual([
+      ['work', true],
+      ['team', false],
+      ['default', false]
+    ])
+    expect(targets[0].weeklyResetAt).toBe(5_000)
   })
 })
