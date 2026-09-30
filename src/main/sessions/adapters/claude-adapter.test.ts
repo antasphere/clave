@@ -1794,6 +1794,31 @@ describe('the reasoning effort of a Claude chat', () => {
     await adapter.kill(handle)
   })
 
+  it.each([['High;rm'], [3], [{ level: 'high' }]])(
+    'shows nothing for an applied effort %j that is not a level, and lets the request go',
+    async (effort) => {
+      const { adapter, handle, child } = await started(`effort-odd-${String(effort)}`)
+      adapter.ready(handle)
+      const [read] = sent(child)
+      const before = events.length
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      // Answered, so the id is released: the same answer again is not ours.
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort: 'low' } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    }
+  )
+
   it('launches on the effort last picked, and on none when there is none', async () => {
     const picked = await started('effort-argv', { effort: 'high' })
     picked.adapter.write(picked.handle, { type: 'user_message', text: 'Hello' })

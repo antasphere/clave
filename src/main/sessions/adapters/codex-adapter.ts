@@ -62,6 +62,8 @@ export class CodexTranslator {
   turnId = ''
   completedTurnId = ''
   model: string | null = null
+  /** The effort the thread reply named: what a turn with none runs at. */
+  threadEffort: string | null = null
   readonly approvals = new Map<string, Approval>()
   private metadataEmitted = false
   private streamed = new Map<string, string>()
@@ -76,8 +78,10 @@ export class CodexTranslator {
     this.emit({ type: 'session_meta', model: this.model, providerSessionId: this.threadId || null })
     // The thread's effort as the app-server resolved it (the config's, else
     // the model's default); absent on a server too old to say.
-    if ('reasoningEffort' in r)
-      this.emit({ type: 'effort', effort: text(r.reasoningEffort) || null })
+    if ('reasoningEffort' in r) {
+      this.threadEffort = text(r.reasoningEffort) || null
+      this.emit({ type: 'effort', effort: this.threadEffort })
+    }
   }
   notification(frame: RpcNotification): void {
     const p = object(frame.params)
@@ -98,7 +102,8 @@ export class CodexTranslator {
         fallback()
         return
       case 'thread/settings/updated': {
-        // What a turn/start's effort became: the app-server's own word.
+        // The app-server's word on the thread's effort, when it gives one;
+        // 0.159 sends none for a per-turn effort (checked 2026-09-30).
         const settings = object(p.threadSettings)
         if ('effort' in settings)
           this.emit({ type: 'effort', effort: text(settings.effort) || null })
@@ -303,6 +308,9 @@ interface HandleState {
   effort?: string
   /** The last model/list answer, to check that effort against the model. */
   listing?: unknown[]
+  /** A model/list that failed or timed out: not asked again at every turn,
+   *  only by the picker, whose answer fills the listing again. */
+  listingFailed?: boolean
   emitter: EventEmitter
   translator: CodexTranslator
   connection?: CodexConnection
@@ -405,7 +413,9 @@ export class CodexAdapter implements SessionAdapter {
     }
     if (value.type === 'set_effort') {
       // Per turn, like the model: recorded and announced now, carried by the
-      // next turn/start, whose settings notification then confirms it.
+      // next turn/start. The app-server says nothing back (0.159 sends no
+      // settings notification for it), so what the view shows after a pick
+      // is this record; a level the model refuses is kept off the turn below.
       state.effort = value.effort
       state.emitter.emit('stream', {
         kind: 'event',
@@ -486,29 +496,39 @@ export class CodexAdapter implements SessionAdapter {
     try {
       const result = object(await Promise.race([listing, deadline]))
       state.listing = Array.isArray(result.data) ? result.data : []
+      state.listingFailed = false
       return state.listing
+    } catch (error) {
+      state.listingFailed = true
+      throw error
     } finally {
       clearTimeout(timer)
     }
   }
-  /** The effort this turn carries: the chosen one while the turn's model
-   *  lists it. A model that does not (a remembered Ultra on a model that
-   *  stops at Max) runs at its own default, and the view is told so. A list
-   *  that cannot be had leaves the choice to the app-server. */
+  /** The effort this turn carries: the chosen one, only once the model list
+   *  says the turn's model takes it. The app-server forwards any level to the
+   *  API, which fails the whole turn on one the model does not take ("max"
+   *  on a model that stops at xhigh), so nothing unchecked goes out. A model
+   *  that does not list it (a remembered Ultra on a model that stops at Max)
+   *  runs at its own default, the choice forgotten. A list that cannot be had,
+   *  or that does not name the model, sends no effort either, the choice kept
+   *  for a model the list does name; either way the view is told what the
+   *  thread runs at. */
   private async turnEffort(state: HandleState): Promise<string | undefined> {
     const effort = state.effort
     if (!effort) return undefined
-    // A list that could not be had is not asked for again at every turn: the
-    // empty one leaves the choice to the app-server until the picker lists.
-    const rows = state.listing ?? (await this.listModels(state).catch(() => (state.listing = [])))
+    const rows =
+      state.listing ??
+      (state.listingFailed ? undefined : await this.listModels(state).catch(() => undefined))
     const model = state.model ?? state.translator.model
     const row = rows?.map(object).find((r) => model && (text(r.model) || text(r.id)) === model)
-    if (!row || codexEfforts(row).some((e) => e.id === effort)) return effort
-    state.effort = undefined
-    const fallback = text(row.defaultReasoningEffort) || null
+    if (row && codexEfforts(row).some((e) => e.id === effort)) return effort
+    if (row) state.effort = undefined
+    const fallback = (row && text(row.defaultReasoningEffort)) || state.translator.threadEffort
     state.emitter.emit('stream', { kind: 'event', event: { type: 'effort', effort: fallback } })
     return undefined
   }
+
   /** The skills the app-server finds for this folder; a Codex skill is invoked
    *  by mentioning it as $name in the message. */
   async commands(handle: SessionHandle): Promise<CommandOption[]> {

@@ -830,16 +830,20 @@ describe('Codex reasoning effort', () => {
     { model: 'gpt-hidden', hidden: true }
   ]
   /** The lifecycle fake, with a model list and a thread reply of the case's choosing. */
-  function effortFake(thread: Record<string, unknown> = {}): {
+  function effortFake(
+    thread: Record<string, unknown> = {},
+    list: () => Promise<unknown> = async () => ({ data: LISTING })
+  ): {
     adapter: CodexAdapter
     turns: () => Record<string, unknown>[]
+    lists: () => number
     complete: () => void
   } {
     let callbacks!: CodexCallbacks
     const request = vi.fn(async (method: string) => {
       if (method === 'thread/start' || method === 'thread/resume')
         return { thread: { id: 'thread' }, model: 'gpt-a', ...thread }
-      if (method === 'model/list') return { data: LISTING }
+      if (method === 'model/list') return list()
       if (method === 'turn/start') {
         callbacks.notification({ method: 'turn/started', params: { turn: { id: 'turn' } } })
         return { turn: { id: 'turn', status: 'inProgress' } }
@@ -863,6 +867,7 @@ describe('Codex reasoning effort', () => {
         request.mock.calls
           .filter(([method]) => method === 'turn/start')
           .map((call) => (call as unknown[])[1] as Record<string, unknown>),
+      lists: () => request.mock.calls.filter(([method]) => method === 'model/list').length,
       complete: () =>
         callbacks.notification({
           method: 'turn/completed',
@@ -964,6 +969,60 @@ describe('Codex reasoning effort', () => {
     await settle()
     expect(turns()[2]).not.toHaveProperty('effort')
     expect(effortsOf(seen)).toEqual(['ultra', 'medium', 'high', null])
+    await adapter.kill(handle)
+  })
+
+  it('sends no effort when the model list cannot be had, and keeps the choice for when it can', async () => {
+    // The app-server forwards any level and the API then fails the whole turn
+    // on one the model does not take, so an unchecked level never goes out.
+    let listing: () => Promise<unknown> = async () => {
+      throw new Error('model/list failed')
+    }
+    const { adapter, turns, lists, complete } = effortFake(
+      { model: 'gpt-b', reasoningEffort: 'medium' },
+      () => listing()
+    )
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'ultra' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).not.toHaveProperty('effort')
+    // The view is told what the thread runs at: its own reply's level.
+    expect(effortsOf(seen).at(-1)).toBe('medium')
+    // A failed list is not asked for again at every turn.
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).not.toHaveProperty('effort')
+    expect(lists()).toBe(1)
+    // The picker lists again; the kept choice then goes out where it is taken.
+    listing = async () => ({ data: LISTING })
+    complete()
+    await adapter.models(handle)
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'user_message', text: 'three' })
+    await settle()
+    expect(turns()[2]).toMatchObject({ model: 'gpt-a', effort: 'ultra' })
+    await adapter.kill(handle)
+  })
+
+  it('sends no effort for a model the list does not name, and keeps the choice for one it does', async () => {
+    const { adapter, turns, complete } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_model', model: 'gpt-unlisted' })
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).not.toHaveProperty('effort')
+    expect(effortsOf(seen).at(-1)).toBe('low')
+    complete()
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ model: 'gpt-a', effort: 'high' })
     await adapter.kill(handle)
   })
 
