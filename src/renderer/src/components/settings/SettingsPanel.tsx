@@ -36,7 +36,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { LocationsTab } from './LocationsTab'
 import { UpdatesTab } from './UpdatesTab'
-import { UsagePanel } from '../usage/UsagePanel'
+import { UsagePanel, UsageRefresh } from '../usage/UsagePanel'
 import { AccountsSettings } from './AccountsSettings'
 import {
   SettingsPage,
@@ -490,7 +490,8 @@ function UsageSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Usage"
-      description="Each provider's rate-limit windows, one card per account, read every five minutes. Accounts are added and signed in under Accounts."
+      description="How much of each account's limits is used, and when each one resets. Read every five minutes; accounts are added under Accounts."
+      actions={<UsageRefresh />}
     >
       <UsagePanel />
     </SettingsPage>

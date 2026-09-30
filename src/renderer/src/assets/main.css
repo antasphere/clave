@@ -1230,6 +1230,185 @@ html[data-ui-font='synonym'] {
   background-color: var(--surface-200);
 }
 
+/* ── The Usage page's charts ──
+   Every cap is a column on the same 0–100% scale: the track is the whole cap,
+   the fill is what is used, anchored to the track's floor with a rounded top.
+   An account is a group of columns with its name under them; the groups sit
+   side by side, so a glance across the row compares every account. The fill
+   wears the foot meter's urgency colours (`usage-meter-fill--*`). */
+.usage-chart {
+  padding: 1rem 1rem 0.875rem;
+  overflow-x: auto;
+}
+.usage-chart-plot {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+  min-width: min-content;
+}
+.usage-chart-group {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 8.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.625rem;
+}
+.usage-chart-group + .usage-chart-group {
+  padding-left: 1.5rem;
+  margin-left: -0.75rem;
+  border-left: 1px solid var(--color-border-subtle, var(--color-border));
+}
+.usage-chart-columns {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: calc(var(--usage-track-h, 8rem) + 4rem);
+}
+[data-usage-chart='session'] {
+  --usage-track-h: 3.5rem;
+}
+.usage-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 4rem;
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.usage-column:focus-visible {
+  outline: 1.5px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.usage-column-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: var(--control-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.usage-column-value > svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--color-wellbeing-strong);
+}
+.usage-column-track {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  width: 1.75rem;
+  height: var(--usage-track-h, 8rem);
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: var(--surface-200);
+}
+.usage-column-fill {
+  display: block;
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  transition:
+    height 300ms var(--ease-out-expo),
+    background-color 200ms;
+}
+.usage-column-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.usage-column-reset {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.usage-column-placeholder {
+  width: 1.75rem;
+  height: var(--usage-track-h, 8rem);
+  border-radius: 4px;
+  background-color: var(--surface-200);
+}
+.usage-chart-empty {
+  align-self: center;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.usage-chart-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+  min-width: 0;
+}
+.usage-chart-account {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+.usage-chart-meta {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* The two headline tiles over the charts: the question, the answer, whose. */
+.usage-tiles > .settings-card + .settings-card {
+  margin-top: 0;
+}
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.usage-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.875rem 1rem;
+  min-width: 0;
+}
+.usage-tile-label {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.usage-tile-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: calc(var(--control-text) + 0.375rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.usage-tile-value > svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--color-wellbeing-strong);
+}
+.usage-tile-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
 /* Markdown page editor: the Notion-style editable document surface
    (components/files/MarkdownPageEditor.tsx). Element styles mirror the `page`
    variant in MarkdownRenderer so the editable page and the read-only page
