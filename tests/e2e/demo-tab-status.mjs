@@ -1,6 +1,6 @@
 // A live demo of the sidebar tab status (PRDCT-2940): one tab per behaviour,
 // driven by fake CLIs so nothing calls a model. Run from the repo after
-// `npx electron-vite build`:  node scripts/demo-tab-status.mjs
+// `npx electron-vite build`:  node tests/e2e/demo-tab-status.mjs
 // It opens its own window on an isolated data folder and stays up until that
 // window is closed.
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -11,7 +11,7 @@ import {
   userDataDir,
   callMcp,
   fixturePath
-} from '../tests/e2e/harness.mjs'
+} from './harness.mjs'
 
 const DIR = userDataDir('tab-status-demo')
 const ROOT = fixturePath('tab-status-demo-root')
