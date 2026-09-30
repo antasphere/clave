@@ -1,6 +1,6 @@
 [
   {
-    "version": "next",
+    "version": "2.0.0",
     "title": "Clave 2.0: your agents in a chat, not only a terminal",
     "description": "Claude Code and Codex sessions can now open as a conversation: answers rendered as Markdown, tool calls as quiet rows, questions answered with a click, permissions above the composer, and files or screenshots dropped straight onto a message. The same session can also be read in the Terminal view, one readable turn per exchange. Pick the view from the pane header.\n\nAdd several Claude and Codex subscriptions in Settings → Accounts. A tab switches to another account without losing its conversation, and a tab stopped by a usage limit comes back on the next account by itself. The Usage page shows them all as charts.\n\nPlugins can now bring their own agents, views and panels, starting with a GitHub side panel for pull request links. Skins, five density presets, a text size, a font choice and mouse-button bindings round it out. Your sessions, groups and settings carry over from 1.x."
   },

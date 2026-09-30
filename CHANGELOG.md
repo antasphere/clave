@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-30
+
 Clave 2.0. A session is no longer only a terminal: Claude Code and Codex now open in a native chat view, the same session can be read as a terminal or as a Terminal view, and plugins can add agents, views and chrome of their own. Your sessions, groups and settings from 1.x carry over as they are.
 
 ### Added
