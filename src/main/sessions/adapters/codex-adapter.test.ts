@@ -1072,6 +1072,41 @@ describe('Codex reasoning effort', () => {
     expect(events.at(-1)).toMatchObject({ type: 'provider_event', provider: 'codex' })
   })
 
+  it('says the launch effort as soon as the thread starts, before any message', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'high' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready(handle)
+    await settle()
+    expect(announced(seen)).toEqual(['low', 'high'])
+    await adapter.kill(handle)
+  })
+
+  it('says a launch effort equal to the thread reply once', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'medium' })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'medium' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready(handle)
+    await settle()
+    expect(announced(seen)).toEqual(['medium'])
+    await adapter.kill(handle)
+  })
+
+  it('says a re-pick of the level already announced again, for a view that bound since', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn(spec)
+    adapter.ready(handle)
+    await settle()
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    const late: unknown[] = []
+    adapter.on(handle, 'stream', (s) => late.push(s))
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(announced(late)).toEqual(['high'])
+    await adapter.kill(handle)
+  })
+
   it('carries the launch effort on the first turn and announces it once the thread starts', async () => {
     const { adapter, turns } = effortFake({ reasoningEffort: 'low' })
     const handle = await adapter.spawn({ ...spec, options: { effort: 'high' } })

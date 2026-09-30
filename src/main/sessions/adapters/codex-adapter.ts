@@ -423,6 +423,9 @@ export class CodexAdapter implements SessionAdapter {
       // settings notification for it), so what the view shows after a pick
       // is this record; a level the model refuses is kept off the turn below.
       state.effort = value.effort
+      // Always said, even when it is the level last announced: a pick is the
+      // reader's, and a view that bound after that announcement catches up.
+      state.announced = undefined
       this.announce(state, value.effort)
       return
     }
