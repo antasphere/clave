@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
     hasCodexRollout: vi.fn<(threadId: string, root: string) => boolean>(() => true),
     streams: new Map<string, (stream: unknown) => void>(),
     remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
+    rememberedEffort: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
     title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
     manager: {
@@ -85,7 +86,10 @@ vi.mock('./sessions/adapters/echo-adapter', () => ({
     provider = 'echo'
   }
 }))
-vi.mock('./sessions/chat-model-default', () => ({ rememberedChatModel: mocks.remembered }))
+vi.mock('./sessions/chat-model-default', () => ({
+  rememberedChatModel: mocks.remembered,
+  rememberedChatEffort: mocks.rememberedEffort
+}))
 vi.mock('./sessions/chat-view-default', () => ({
   initialChatView: (profileDefault: string | undefined) => profileDefault
 }))
@@ -110,6 +114,7 @@ beforeEach(() => {
   mocks.manager.getAdapter.mockReturnValue(mocks.claude)
   mocks.findTranscript.mockReturnValue('/transcripts/conversation.jsonl')
   mocks.remembered.mockReturnValue(undefined)
+  mocks.rememberedEffort.mockReturnValue(undefined)
   mocks.hasCodexRollout.mockReturnValue(true)
   mocks.backend.getSessionRecord.mockImplementation(() => null)
   mocks.streams.clear()
@@ -487,5 +492,33 @@ describe("a chat tab's dangerous mode reaches its agent", () => {
         options: expect.objectContaining({ permissionMode: 'bypassPermissions' })
       })
     )
+  })
+})
+
+describe('a chat starts on the effort last picked in a composer', () => {
+  const launched = (): unknown =>
+    (mocks.claude.spawn.mock.calls.at(-1)?.[0] as unknown as { options: { effort?: string } })
+      .options.effort
+
+  it('hands the remembered effort to the adapter, per adapter', async () => {
+    mocks.rememberedEffort.mockReturnValue('xhigh')
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(mocks.rememberedEffort).toHaveBeenCalledWith('claude-chat')
+    expect(launched()).toBe('xhigh')
+  })
+
+  it('keeps it for a restored tab, whose record holds no effort of its own', async () => {
+    mocks.rememberedEffort.mockReturnValue('low')
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(launched()).toBe('low')
+  })
+
+  it('starts on the CLI default when nothing was picked', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(launched()).toBeUndefined()
   })
 })

@@ -26,8 +26,17 @@ import {
   type RpcRequest,
   type RpcId
 } from './codex-app-server'
+import { effortLabel, isValidEffort } from '../../../shared/effort'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+/** The efforts a model/list row says its model takes, with Codex's gloss. */
+const codexEfforts = (row: Record<string, unknown>): { id: string; hint: string }[] =>
+  (Array.isArray(row.supportedReasoningEfforts) ? row.supportedReasoningEfforts : []).flatMap(
+    (entry) => {
+      const id = text(object(entry).reasoningEffort)
+      return isValidEffort(id) ? [{ id, hint: text(object(entry).description) }] : []
+    }
+  )
 /** Did this completed item fail? The server says so structurally and never in
  *  prose: a command by its exit status, anything else by carrying an `error`.
  *  `undefined` means the item gave no word either way, which is not success. */
@@ -65,6 +74,10 @@ export class CodexTranslator {
     if (this.metadataEmitted) return
     this.metadataEmitted = true
     this.emit({ type: 'session_meta', model: this.model, providerSessionId: this.threadId || null })
+    // The thread's effort as the app-server resolved it (the config's, else
+    // the model's default); absent on a server too old to say.
+    if ('reasoningEffort' in r)
+      this.emit({ type: 'effort', effort: text(r.reasoningEffort) || null })
   }
   notification(frame: RpcNotification): void {
     const p = object(frame.params)
@@ -84,6 +97,14 @@ export class CodexTranslator {
         this.threadId = text(object(p.thread).id) || this.threadId
         fallback()
         return
+      case 'thread/settings/updated': {
+        // What a turn/start's effort became: the app-server's own word.
+        const settings = object(p.threadSettings)
+        if ('effort' in settings)
+          this.emit({ type: 'effort', effort: text(settings.effort) || null })
+        else fallback()
+        return
+      }
       case 'turn/started':
         this.turnId = text(object(p.turn).id)
         this.emit({ type: 'state_change', state: 'working' })
@@ -277,6 +298,11 @@ interface HandleState {
   env?: Record<string, string>
   /** A model chosen after launch; every later turn/start carries it. */
   model?: string | null
+  /** The effort chosen at launch or since; every later turn/start carries it
+   *  while the turn's model takes it. */
+  effort?: string
+  /** The last model/list answer, to check that effort against the model. */
+  listing?: unknown[]
   emitter: EventEmitter
   translator: CodexTranslator
   connection?: CodexConnection
@@ -326,8 +352,10 @@ export class CodexAdapter implements SessionAdapter {
     if (this.handles.has(spec.id)) throw new Error(`Codex session already exists: ${spec.id}`)
     const emitter = new EventEmitter()
     const context = this.profiles.get(spec.id)
+    const launchEffort = text(object(spec.options).effort)
     const state: HandleState = {
       spec,
+      ...(launchEffort && isValidEffort(launchEffort) ? { effort: launchEffort } : {}),
       profile: context?.profile,
       env: context?.env,
       initialPrompt: context?.initialPrompt,
@@ -375,6 +403,16 @@ export class CodexAdapter implements SessionAdapter {
       })
       return
     }
+    if (value.type === 'set_effort') {
+      // Per turn, like the model: recorded and announced now, carried by the
+      // next turn/start, whose settings notification then confirms it.
+      state.effort = value.effort
+      state.emitter.emit('stream', {
+        kind: 'event',
+        event: { type: 'effort', effort: value.effort }
+      })
+      return
+    }
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
@@ -414,19 +452,62 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     await this.start(state)
     if (!state.connection) throw new Error('Codex is not connected')
-    const listing = state.connection.request('model/list', {})
-    const deadline = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Codex did not list its models in time')), 5000)
-    )
-    const result = object(await Promise.race([listing, deadline]))
-    const rows = Array.isArray(result.data) ? result.data : []
+    const rows = await this.listModels(state)
     return rows.flatMap((row) => {
       const r = object(row)
       const id = text(r.model) || text(r.id)
       if (!id || r.hidden === true) return []
       const hint = text(r.description)
-      return [{ id, label: text(r.displayName) || id, ...(hint ? { hint } : {}) }]
+      const efforts = codexEfforts(r).map((effort) => ({
+        id: effort.id,
+        label: effortLabel(effort.id),
+        ...(effort.hint ? { hint: effort.hint } : {})
+      }))
+      const defaultEffort = text(r.defaultReasoningEffort)
+      return [
+        {
+          id,
+          label: text(r.displayName) || id,
+          ...(hint ? { hint } : {}),
+          ...(efforts.length ? { efforts } : {}),
+          ...(defaultEffort ? { defaultEffort } : {})
+        }
+      ]
     })
+  }
+  /** The app-server's model/list rows, kept for the effort check; a stub that
+   *  never answers must not hang the picker, hence the deadline. */
+  private async listModels(state: HandleState): Promise<unknown[]> {
+    const listing = state.connection!.request('model/list', {})
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Codex did not list its models in time')), 5000)
+    })
+    try {
+      const result = object(await Promise.race([listing, deadline]))
+      state.listing = Array.isArray(result.data) ? result.data : []
+      return state.listing
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  /** The effort this turn carries: the chosen one while the turn's model
+   *  lists it. A model that does not (a remembered Ultra on a model that
+   *  stops at Max) runs at its own default, and the view is told so. A list
+   *  that cannot be had leaves the choice to the app-server. */
+  private async turnEffort(state: HandleState): Promise<string | undefined> {
+    const effort = state.effort
+    if (!effort) return undefined
+    // A list that could not be had is not asked for again at every turn: the
+    // empty one leaves the choice to the app-server until the picker lists.
+    const rows = state.listing ?? (await this.listModels(state).catch(() => (state.listing = [])))
+    const model = state.model ?? state.translator.model
+    const row = rows?.map(object).find((r) => model && (text(r.model) || text(r.id)) === model)
+    if (!row || codexEfforts(row).some((e) => e.id === effort)) return effort
+    state.effort = undefined
+    const fallback = text(row.defaultReasoningEffort) || null
+    state.emitter.emit('stream', { kind: 'event', event: { type: 'effort', effort: fallback } })
+    return undefined
   }
   /** The skills the app-server finds for this folder; a Codex skill is invoked
    *  by mentioning it as $name in the message. */
@@ -455,6 +536,7 @@ export class CodexAdapter implements SessionAdapter {
   private async sendTurn(state: HandleState, prompt: PreparedPrompt): Promise<void> {
     await this.start(state)
     if (state.ended) return
+    const effort = await this.turnEffort(state)
     // Images are input items of their own, as a data URL, the way the
     // app-server's turn/start takes them.
     const result = await state.connection!.request('turn/start', {
@@ -466,7 +548,8 @@ export class CodexAdapter implements SessionAdapter {
           url: `data:${image.mimeType};base64,${image.data}`
         }))
       ],
-      ...(state.model ? { model: state.model } : {})
+      ...(state.model ? { model: state.model } : {}),
+      ...(effort ? { effort } : {})
     })
     const turn = object(object(result).turn)
     if (
@@ -533,6 +616,13 @@ export class CodexAdapter implements SessionAdapter {
       })
       state.translator.metadata(result)
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
+      // A launch effort (the one last picked) is the next turn's; announced
+      // as a switch is, the thread's own word following at that turn.
+      if (state.effort)
+        state.emitter.emit('stream', {
+          kind: 'event',
+          event: { type: 'effort', effort: state.effort }
+        })
     })().catch(async (error) => {
       this.error(state, error, true)
       if (state.connection) await state.connection.close()

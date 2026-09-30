@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   keyForWindow: vi.fn(),
   notifyChatMessage: vi.fn(),
   rememberChatModel: vi.fn(),
+  rememberChatEffort: vi.fn(),
   rememberChatView: vi.fn()
 }))
 vi.mock('electron', () => ({
@@ -16,7 +17,10 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
-vi.mock('./chat-model-default', () => ({ rememberChatModel: mocks.rememberChatModel }))
+vi.mock('./chat-model-default', () => ({
+  rememberChatModel: mocks.rememberChatModel,
+  rememberChatEffort: mocks.rememberChatEffort
+}))
 vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView }))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
@@ -481,6 +485,48 @@ it('remembers a composer model pick for the next chat, only once the session too
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'bad' })
   ).toThrow('Invalid model name')
   expect(mocks.rememberChatModel).not.toHaveBeenCalled()
+  sessionManager.kill(id)
+  sessionManager.forget(id)
+})
+
+it('remembers a composer effort pick for the next chat, only once the session took it', () => {
+  const id = `ipc-effort-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Echo'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const event = { sender: { id: 103 } }
+  mocks.rememberChatEffort.mockClear()
+  const order: string[] = []
+  const write = vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
+    order.push('write')
+  })
+  mocks.rememberChatEffort.mockImplementationOnce(() => order.push('remember'))
+  mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
+  expect(write).toHaveBeenCalledWith(expect.anything(), { type: 'set_effort', effort: 'high' })
+  expect(mocks.rememberChatEffort).toHaveBeenCalledWith('echo', 'high')
+  expect(order).toEqual(['write', 'remember'])
+  // A level the session refuses is not remembered, nor one the schema refuses.
+  mocks.rememberChatEffort.mockClear()
+  vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
+    throw new Error('refused')
+  })
+  expect(() =>
+    mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'max' })
+  ).toThrow('refused')
+  expect(() =>
+    mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high;rm' })
+  ).toThrow()
+  expect(mocks.rememberChatEffort).not.toHaveBeenCalled()
   sessionManager.kill(id)
   sessionManager.forget(id)
 })

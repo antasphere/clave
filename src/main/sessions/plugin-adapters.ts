@@ -34,6 +34,7 @@ export interface PluginAdapterLaunch {
   readonly options: {
     readonly resume?: string
     readonly model?: string
+    readonly effort?: string
     readonly permissionMode?: string
   }
 }
@@ -52,6 +53,10 @@ export interface PluginAdapterInstance {
   models?(): ModelOption[] | Promise<ModelOption[]>
   commands?(): CommandOption[] | Promise<CommandOption[]>
   setModel?(model: string | null): void | Promise<void>
+  /** Switch the reasoning effort to one of the levels the current model's
+   *  `ModelOption.efforts` lists; report the level in force with an `effort`
+   *  event. */
+  setEffort?(effort: string): void | Promise<void>
 }
 const REQUIRED_METHODS = ['start', 'send', 'interrupt', 'respond', 'dispose'] as const
 
@@ -233,6 +238,17 @@ class PluginSessionAdapter implements SessionAdapter {
           return
         }
         this.call(live, () => instance.setModel!(value.model))
+        return
+      case 'set_effort':
+        if (!instance.setEffort) {
+          this.emit(live, {
+            type: 'error',
+            message: `${this.id} does not offer a reasoning effort choice`,
+            fatal: false
+          })
+          return
+        }
+        this.call(live, () => instance.setEffort!(value.effort))
         return
       case 'set_permission_mode':
         this.emit(live, {
