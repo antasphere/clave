@@ -10,6 +10,7 @@ import type {
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
+import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
@@ -416,6 +417,16 @@ const electronAPI = {
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdaterState>,
   setPrereleaseUpdates: (enabled: boolean) =>
     ipcRenderer.invoke('updater:set-prerelease-updates', enabled) as Promise<UpdaterState>,
+
+  getAgentUpdates: () =>
+    ipcRenderer.invoke('agent-updates:get-state') as Promise<AgentUpdatesState>,
+  checkAgentUpdates: () => ipcRenderer.invoke('agent-updates:check') as Promise<AgentUpdatesState>,
+  updateAgent: (id: AgentUpdateId) =>
+    ipcRenderer.invoke('agent-updates:update', id) as Promise<AgentUpdatesState>,
+  setAgentAutoUpdate: (enabled: boolean) =>
+    ipcRenderer.invoke('agent-updates:set-auto', enabled) as Promise<AgentUpdatesState>,
+  onAgentUpdatesState: (callback: (state: AgentUpdatesState) => void) =>
+    createIpcListener<[AgentUpdatesState]>('agent-updates:state', callback),
 
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   persistDroppedFile: (sourcePath: string) =>

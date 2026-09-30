@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { accountOverrides } from './restart-overrides'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -425,7 +426,8 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
-    const { resendRejected, ...account } = overrides
+    const { resendRejected, ...requested } = overrides
+    const account = accountOverrides(requested)
     const options: PtySpawnOptions = {
       ...previous,
       adoptSessionId: id,
