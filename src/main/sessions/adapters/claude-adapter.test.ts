@@ -46,7 +46,26 @@ vi.mock('./pty-backend', () => ({
   shellSingleQuote: (s) => `'${s.replace(/'/g, `'\\''`)}'`,
   isValidClaudeSessionId: (s) => /^[\w-]+$/.test(s)
 }))
-import { ClaudeAdapter, ClaudeStreamTranslator, HOST_COMMANDS } from './claude-adapter'
+import {
+  ClaudeAdapter,
+  ClaudeStreamTranslator,
+  HOST_COMMANDS,
+  claudeModelOptions
+} from './claude-adapter'
+
+/** What the adapter wrote to the CLI since the last read, without the
+ *  get_settings reads it makes at ready and after every confirmed switch to
+ *  learn the effort (their own tests read the raw stream); null when nothing
+ *  else was written. */
+function written(child: { stdin: PassThrough }): string | null {
+  const raw = child.stdin.read() as Buffer | null
+  if (!raw) return null
+  const lines = raw
+    .toString()
+    .split('\n')
+    .filter((line) => line && !line.includes('"subtype":"get_settings"'))
+  return lines.length ? lines.map((line) => `${line}\n`).join('') : null
+}
 import { NdjsonLines } from './ndjson'
 const spec = {
   id: 'test-session',
@@ -225,7 +244,10 @@ it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets 
   })
   adapter.write(handle, { type: 'permission_response', id: 'p', optionId: 'allow-once' })
   adapter.write(handle, { type: 'interrupt' })
-  const inputs = child.stdin.read().toString().trim().split('\n').map(JSON.parse)
+  const inputs = written(child)!
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
   expect(inputs[0]).toEqual({ type: 'user', message: { role: 'user', content: 'Hello' } })
   expect(inputs[2]).toMatchObject({
     response: { request_id: 'p', response: { behavior: 'allow', updatedInput: { x: 1 } } }
@@ -359,7 +381,7 @@ it('sends the configured initial prompt only on ready and refuses shell commands
       fatal: false
     }
   ])
-  expect(child.stdin.read().toString()).toBe(
+  expect(written(child)).toBe(
     JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } }) + '\n'
   )
   // The prompt marks the session working at once, not at the init frame.
@@ -496,7 +518,7 @@ it('retains the configured prompt when starting it throws and reports divergent 
   expect(() => adapter.ready(handle)).toThrow('temporary spawn error')
   adapter.ready(handle)
   adapter.ready(handle)
-  expect(child.stdin.read().toString()).toContain('retry me')
+  expect(written(child)).toContain('retry me')
   expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1)
   child.stdout.write(
     JSON.stringify({ type: 'system', subtype: 'init', session_id: 'different-id', model: 'opus' }) +
@@ -640,7 +662,7 @@ it('lists the models by version, asking the CLI itself, starting a session that 
   expect(mock.spawn).not.toHaveBeenCalled()
   const listed = adapter.models(handle)
   expect(mock.spawn).toHaveBeenCalledTimes(1)
-  const request = JSON.parse(child.stdin.read().toString())
+  const request = JSON.parse(written(child)!)
   expect(request).toMatchObject({ type: 'control_request', request: { subtype: 'initialize' } })
   child.stdout.write(
     JSON.stringify({
@@ -694,7 +716,7 @@ it('lists the models by version, asking the CLI itself, starting a session that 
   ])
   // A second ask reuses the running process and says why when the CLI refuses.
   const refused = adapter.models(handle)
-  const again = JSON.parse(child.stdin.read().toString())
+  const again = JSON.parse(written(child)!)
   child.stdout.write(
     JSON.stringify({
       type: 'control_response',
@@ -731,7 +753,7 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     expect(mock.spawn).not.toHaveBeenCalled()
     adapter.write(handle, { type: 'set_model', model })
     expect(mock.spawn).toHaveBeenCalledTimes(1)
-    const request = JSON.parse(child.stdin.read().toString())
+    const request = JSON.parse(written(child)!)
     expect(request).toMatchObject({
       type: 'control_request',
       request: { subtype: 'set_model', model }
@@ -746,7 +768,7 @@ it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
     // The first message then goes to the same process.
     adapter.write(handle, { type: 'user_message', text: 'Hello' })
     expect(mock.spawn).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(child.stdin.read().toString())).toEqual({
+    expect(JSON.parse(written(child)!)).toEqual({
       type: 'user',
       message: { role: 'user', content: 'Hello' }
     })
@@ -784,7 +806,7 @@ it('switches the permission mode the way Shift+Tab does, and says why the CLI re
     adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
   ).toThrow(/Unknown permission mode/)
   adapter.write(handle, { type: 'set_permission_mode', mode: 'plan' })
-  const request = JSON.parse(child.stdin.read().toString())
+  const request = JSON.parse(written(child)!)
   expect(request).toMatchObject({
     type: 'control_request',
     request: { subtype: 'set_permission_mode', mode: 'plan' }
@@ -798,7 +820,7 @@ it('switches the permission mode the way Shift+Tab does, and says why the CLI re
   expect(events.at(-1)).toMatchObject({ type: 'permission_mode', mode: 'plan' })
   // A refusal reaches the reader in the CLI's own words, and the mode stays.
   adapter.write(handle, { type: 'set_permission_mode', mode: 'auto' })
-  const auto = JSON.parse(child.stdin.read().toString())
+  const auto = JSON.parse(written(child)!)
   child.stdout.write(
     JSON.stringify({
       type: 'control_response',
@@ -852,7 +874,7 @@ it('offers bypass, and the way back to it, only to a session launched on it', as
     'bypassPermissions'
   ])
   adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
-  expect(JSON.parse(child.stdin.read().toString())).toMatchObject({
+  expect(JSON.parse(written(child)!)).toMatchObject({
     request: { subtype: 'set_permission_mode', mode: 'bypassPermissions' }
   })
   child.emit('close', 0)
@@ -876,7 +898,7 @@ it('starts the process at ready so its boot overlaps the typing, and once only',
   // Booting is silent: the model and mode announcements, and no turn, no state.
   expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
   expect(events[0]).toEqual({ type: 'session_meta', model: null, providerSessionId: null })
-  expect(child.stdin.read()).toBeNull()
+  expect(written(child)).toBeNull()
   adapter.ready(handle)
   adapter.write(handle, { type: 'user_message', text: 'Hello' })
   expect(mock.spawn).toHaveBeenCalledTimes(1)
@@ -1208,7 +1230,7 @@ it('offers the host /resume before the commands the CLI lists at initialize', as
   const handle = await adapter.spawn(spec)
   const listed = adapter.commands(handle)
   expect(mock.spawn).toHaveBeenCalledTimes(1)
-  const request = JSON.parse(child.stdin.read().toString())
+  const request = JSON.parse(written(child)!)
   child.stdout.write(
     JSON.stringify({
       type: 'control_response',
@@ -1264,7 +1286,7 @@ it('sends attached images as content blocks and streams the message without them
       images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AQID' }]
     }
   })
-  const input = JSON.parse(child.stdin.read().toString().trim())
+  const input = JSON.parse(written(child)!.trim())
   expect(input).toEqual({
     type: 'user',
     message: {
@@ -1291,7 +1313,7 @@ it('sends attached images as content blocks and streams the message without them
       images: []
     }
   })
-  expect(JSON.parse(child.stdin.read().toString().trim()).message.content).toBe(
+  expect(JSON.parse(written(child)!.trim()).message.content).toBe(
     'read it\n\nAttached local files:\n{"path":"/pictures/shot.png"}'
   )
   child.emit('close', 0)
@@ -1544,7 +1566,7 @@ it('stops one background task by its id, and says why when the CLI refuses', asy
   })
   adapter.ready(handle)
   adapter.write(handle, { type: 'stop_task', taskId: 'task-7' })
-  const request = JSON.parse(child.stdin.read().toString())
+  const request = JSON.parse(written(child)!)
   expect(request).toMatchObject({
     type: 'control_request',
     request: { subtype: 'stop_task', task_id: 'task-7' }
@@ -1558,4 +1580,264 @@ it('stops one background task by its id, and says why when the CLI refuses', asy
     }) + '\n'
   )
   expect(events.at(-1)).toEqual({ type: 'error', message: 'no such task', fatal: false })
+})
+
+describe('the reasoning effort of a Claude chat', () => {
+  const FIVE = ['low', 'medium', 'high', 'xhigh', 'max']
+  const fakeChild = (): EventEmitter & {
+    stdin: PassThrough
+    stdout: PassThrough
+    stderr: PassThrough
+  } =>
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+  /** Every line written to the CLI since the last read, get_settings included. */
+  const sent = (child: {
+    stdin: PassThrough
+  }): { type: string; request_id: string; request: Record<string, unknown> }[] => {
+    const raw = child.stdin.read() as Buffer | null
+    return raw
+      ? raw
+          .toString()
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      : []
+  }
+  const answer = (child: { stdout: PassThrough }, response: Record<string, unknown>): void => {
+    child.stdout.write(JSON.stringify({ type: 'control_response', response }) + '\n')
+  }
+  async function started(
+    id: string,
+    options?: Record<string, unknown>
+  ): Promise<{
+    adapter: ClaudeAdapter
+    handle: Awaited<ReturnType<ClaudeAdapter['spawn']>>
+    child: ReturnType<typeof fakeChild>
+  }> {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, id, ...(options ? { options } : {}) })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    return { adapter, handle, child }
+  }
+  const effortOf = (option: { efforts?: { id: string }[] } | undefined): string[] | undefined =>
+    option?.efforts?.map((e) => e.id)
+
+  it("lists a version's own levels when the CLI lists it, else its family's, and none for a model without", () => {
+    const options = claudeModelOptions([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default',
+        supportsEffort: true,
+        supportedEffortLevels: FIVE
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        supportedEffortLevels: FIVE
+      },
+      // The family alias names the newest Fable, with five levels…
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        supportedEffortLevels: FIVE
+      },
+      // …and the earlier version has a row of its own, with four.
+      {
+        value: 'claude-fable-5[1m]',
+        resolvedModel: 'claude-fable-5',
+        displayName: 'Fable 5',
+        supportedEffortLevels: ['low', 'medium', 'high', 'max']
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-5',
+        displayName: 'Sonnet',
+        supportsEffort: false,
+        supportedEffortLevels: FIVE
+      },
+      { value: 'haiku', displayName: 'Haiku' },
+      {
+        value: 'claude-opus-6',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Opus 6',
+        supportedEffortLevels: ['low', 'high;rm', '--x', 'high']
+      }
+    ])
+    const byId = (id: string): (typeof options)[number] | undefined =>
+      options.find((option) => option.id === id)
+    expect(byId('default')?.efforts).toEqual([
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High' },
+      { id: 'xhigh', label: 'Extra high' },
+      { id: 'max', label: 'Max' }
+    ])
+    expect(effortOf(byId('claude-opus-5-5'))).toEqual(FIVE)
+    expect(effortOf(byId('claude-fable-5-1[1m]'))).toEqual(FIVE)
+    expect(effortOf(byId('claude-fable-5[1m]'))).toEqual(['low', 'medium', 'high', 'max'])
+    // supportsEffort false wins over any list; a model without levels has no key.
+    expect(byId('claude-sonnet-5-5')).not.toHaveProperty('efforts')
+    expect(byId('claude-haiku-4-5-20251001')).not.toHaveProperty('efforts')
+    // A level that could not reach a command line is never offered.
+    expect(effortOf(byId('claude-opus-6'))).toEqual(['low', 'high'])
+    // Without a row of its own, an earlier version takes its family's levels.
+    const family = claudeModelOptions([
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        supportedEffortLevels: FIVE
+      }
+    ])
+    expect(effortOf(family.find((option) => option.id === 'claude-fable-5[1m]'))).toEqual(FIVE)
+    expect(family.find((option) => option.id === 'claude-opus-5-5')).not.toHaveProperty('efforts')
+  })
+
+  it('switches the effort before any message, then reads back what the CLI applied', async () => {
+    const { adapter, handle, child } = await started('effort-switch')
+    expect(mock.spawn).not.toHaveBeenCalled()
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    const [apply, ...rest] = sent(child)
+    expect(rest).toEqual([])
+    expect(apply).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } }
+    })
+    expect(events.some((e) => e.type === 'effort')).toBe(false)
+    // The acknowledgement says nothing of the level: the settings are asked for.
+    answer(child, { subtype: 'success', request_id: apply.request_id })
+    const [settings, ...more] = sent(child)
+    expect(more).toEqual([])
+    expect(settings).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'get_settings' }
+    })
+    expect(settings.request_id).not.toBe(apply.request_id)
+    expect(events.some((e) => e.type === 'effort')).toBe(false)
+    answer(child, {
+      subtype: 'success',
+      request_id: settings.request_id,
+      response: { applied: { effort: 'high' } }
+    })
+    expect(events.at(-1)).toEqual({ type: 'effort', effort: 'high' })
+    // A refusal is the CLI's own words, never fatal, and reads nothing back.
+    adapter.write(handle, { type: 'set_effort', effort: 'max' })
+    const [refused] = sent(child)
+    answer(child, { subtype: 'error', request_id: refused.request_id, error: 'max needs Opus' })
+    expect(events.at(-1)).toEqual({ type: 'error', message: 'max needs Opus', fatal: false })
+    expect(sent(child)).toEqual([])
+    adapter.write(handle, { type: 'set_effort', effort: 'xhigh' })
+    const [silent] = sent(child)
+    answer(child, { subtype: 'error', request_id: silent.request_id })
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      message: 'Claude refused the Extra high effort',
+      fatal: false
+    })
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it.each(['high;rm', '--x', 'High', ''])(
+    'refuses the level %j before anything starts',
+    async (effort) => {
+      const { adapter, handle } = await started(`effort-invalid-${effort}`)
+      expect(() => adapter.write(handle, { type: 'set_effort', effort })).toThrow()
+      expect(mock.spawn).not.toHaveBeenCalled()
+      await adapter.kill(handle)
+    }
+  )
+
+  it('asks for the settings at ready, and after a model switch only once the CLI took it', async () => {
+    const { adapter, handle, child } = await started('effort-ready')
+    adapter.ready(handle)
+    const [first, ...rest] = sent(child)
+    expect(rest).toEqual([])
+    expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'get_settings' } })
+    // A CLI too old to say what it applied: nothing is shown, and nothing leaks.
+    const before = events.length
+    answer(child, { subtype: 'success', request_id: first.request_id, response: {} })
+    expect(events.length).toBe(before)
+    adapter.write(handle, { type: 'set_model', model: 'claude-haiku-4-5-20251001' })
+    const switched = sent(child)
+    expect(switched).toHaveLength(1)
+    expect(switched[0]).toMatchObject({ request: { subtype: 'set_model' } })
+    answer(child, { subtype: 'success', request_id: switched[0].request_id })
+    const [after, ...none] = sent(child)
+    expect(none).toEqual([])
+    expect(after).toMatchObject({ request: { subtype: 'get_settings' } })
+    // A model that takes no effort runs at none, and says so as null.
+    answer(child, {
+      subtype: 'success',
+      request_id: after.request_id,
+      response: { applied: { effort: null } }
+    })
+    expect(events.at(-1)).toEqual({ type: 'effort', effort: null })
+    // A refused switch reads nothing back.
+    adapter.write(handle, { type: 'set_model', model: 'opus' })
+    const [refused] = sent(child)
+    answer(child, { subtype: 'error', request_id: refused.request_id, error: 'no' })
+    expect(sent(child)).toEqual([])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it.each([['High;rm'], [3], [{ level: 'high' }]])(
+    'shows nothing for an applied effort %j that is not a level, and lets the request go',
+    async (effort) => {
+      const { adapter, handle, child } = await started(`effort-odd-${String(effort)}`)
+      adapter.ready(handle)
+      const [read] = sent(child)
+      const before = events.length
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      // Answered, so the id is released: the same answer again is not ours.
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort: 'low' } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    }
+  )
+
+  it('launches on the effort last picked, and on none when there is none', async () => {
+    const picked = await started('effort-argv', { effort: 'high' })
+    picked.adapter.write(picked.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn.mock.calls[0][1][2]).toContain("'--effort' 'high'")
+    picked.child.emit('close', 0)
+    await picked.adapter.kill(picked.handle)
+    mock.spawn.mockClear()
+    const plain = await started('effort-argv-none')
+    plain.adapter.write(plain.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--effort')
+    plain.child.emit('close', 0)
+    await plain.adapter.kill(plain.handle)
+    // One that could reach a command line is refused at spawn.
+    const adapter = new ClaudeAdapter()
+    await expect(
+      adapter.spawn({ ...spec, id: 'effort-argv-bad', options: { effort: '--x' } })
+    ).rejects.toThrow()
+    await expect(
+      adapter.spawn({ ...spec, id: 'effort-argv-bad-2', options: { effort: 'high;rm' } })
+    ).rejects.toThrow()
+  })
 })

@@ -5,7 +5,11 @@ import {
   claudeModelName,
   findClaudeModel
 } from '../../../shared/claude-models'
-import { currentOption, modelChipLabel } from '../../../../plugins/chat-view/src/models'
+import {
+  currentOption,
+  effortChoice,
+  modelChipLabel
+} from '../../../../plugins/chat-view/src/models'
 
 // The menu as the Claude adapter builds it (claudeModelOptions).
 const options: ModelOption[] = [
@@ -52,4 +56,36 @@ it('knows the window of a model before any result names it', () => {
   expect(claudeContextWindow('claude-haiku-4-5-20251001')).toBe(200_000)
   expect(claudeContextWindow('opus[1m]')).toBe(1_000_000)
   expect(claudeContextWindow('gpt-5.5')).toBeNull()
+})
+
+it('offers the efforts of the model the session is on, marking the reported one', () => {
+  const low = { id: 'low', label: 'Low' }
+  const high = { id: 'high', label: 'High' }
+  const max = { id: 'max', label: 'Max' }
+  const withEfforts: ModelOption[] = [
+    { id: 'default', label: 'Default', resolved: 'claude-opus-5-5', efforts: [low, high] },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: [low, high, max], defaultEffort: 'high' },
+    { id: 'claude-fable-5', label: 'Fable 5', efforts: [low, high] },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', efforts: [] },
+    { id: 'echo-2', label: 'Echo 2' }
+  ]
+  // The list is not in yet, the model is not in it, or it takes none.
+  expect(effortChoice('claude-opus-5-5', 'high', null)).toBeNull()
+  expect(effortChoice('gpt-5.5', 'high', withEfforts)).toBeNull()
+  expect(effortChoice('claude-haiku-4-5-20251001', null, withEfforts)).toBeNull()
+  expect(effortChoice('echo-2', null, withEfforts)).toBeNull()
+  // The reported level while the model lists it.
+  expect(effortChoice('claude-opus-5-5', 'max', withEfforts)).toEqual({
+    efforts: [low, high, max],
+    current: max
+  })
+  // Else the model's own default; else nothing marked.
+  expect(effortChoice('claude-opus-5-5', 'ultra', withEfforts)?.current).toBe(high)
+  expect(effortChoice('claude-opus-5-5', null, withEfforts)?.current).toBe(high)
+  expect(effortChoice('claude-fable-5', 'max', withEfforts)).toEqual({
+    efforts: [low, high],
+    current: undefined
+  })
+  // No model yet reads as the default option.
+  expect(effortChoice(null, 'low', withEfforts)).toEqual({ efforts: [low, high], current: low })
 })

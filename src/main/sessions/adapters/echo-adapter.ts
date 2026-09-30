@@ -15,8 +15,19 @@ import type {
   Unsubscribe
 } from '../adapter'
 
+// Echo 1 takes efforts and Echo 2 none, so the effort chip can be seen to
+// come and go with the model.
 const ECHO_MODELS: ModelOption[] = [
-  { id: 'echo-1', label: 'Echo 1', hint: 'Repeats what you say' },
+  {
+    id: 'echo-1',
+    label: 'Echo 1',
+    hint: 'Repeats what you say',
+    efforts: [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High', hint: 'Repeats it carefully' }
+    ],
+    defaultEffort: 'low'
+  },
   { id: 'echo-2', label: 'Echo 2', hint: 'Repeats it again' }
 ]
 
@@ -50,9 +61,14 @@ export class EchoAdapter implements SessionAdapter {
   }
 
   ready(handle: SessionHandle): void {
-    this.emitter(handle).emit('stream', {
+    const emitter = this.emitter(handle)
+    emitter.emit('stream', {
       kind: 'event',
       event: { type: 'session_meta', model: ECHO_MODELS[0].id, providerSessionId: null }
+    })
+    emitter.emit('stream', {
+      kind: 'event',
+      event: { type: 'effort', effort: ECHO_MODELS[0].defaultEffort ?? null }
     })
   }
 
@@ -78,11 +94,13 @@ export class EchoAdapter implements SessionAdapter {
       emitter.emit('stream', { kind: 'event', event })
     }
     if (value.type === 'set_model') {
-      emit({
-        type: 'session_meta',
-        model: value.model ?? ECHO_MODELS[0].id,
-        providerSessionId: null
-      })
+      const model = ECHO_MODELS.find((m) => m.id === value.model) ?? ECHO_MODELS[0]
+      emit({ type: 'session_meta', model: model.id, providerSessionId: null })
+      emit({ type: 'effort', effort: model.defaultEffort ?? null })
+      return
+    }
+    if (value.type === 'set_effort') {
+      emit({ type: 'effort', effort: value.effort })
       return
     }
     if (value.type !== 'user_message') return

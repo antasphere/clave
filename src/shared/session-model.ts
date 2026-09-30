@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AttachmentsSchema, ProviderImageSchema } from './attachments'
+import { isValidEffort } from './effort'
 
 export const AgentStateSchema = z.enum(['idle', 'working', 'blocked', 'done', 'ended'])
 export type AgentState = z.infer<typeof AgentStateSchema>
@@ -76,6 +77,13 @@ export const SetModelSchema = z.object({
   model: z.string().nullable()
 })
 export type SetModel = z.infer<typeof SetModelSchema>
+/** Switch how hard the session's model thinks: one of the levels its
+ *  `ModelOption.efforts` lists, in the provider's own word. */
+export const SetEffortSchema = z.object({
+  type: z.literal('set_effort'),
+  effort: z.string().refine(isValidEffort, 'Invalid reasoning effort')
+})
+export type SetEffort = z.infer<typeof SetEffortSchema>
 /** Switch how the agent asks before it acts (Claude's Shift+Tab cycle): one of
  *  the ids the session's last `permission_mode` event offered. */
 export const SetPermissionModeSchema = z.object({
@@ -105,9 +113,18 @@ export const SessionInputSchema = z.discriminatedUnion('type', [
   PermissionResponseSchema,
   InterruptSchema,
   SetModelSchema,
+  SetEffortSchema,
   SetPermissionModeSchema,
   StopTaskSchema
 ])
+/** One reasoning effort a model can run at: the provider's word (`id`), how
+ *  it reads (`label`), and the provider's gloss when it gives one. */
+export const EffortOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  hint: z.string().optional()
+})
+export type EffortOption = z.infer<typeof EffortOptionSchema>
 /** One model a provider offers a live session, as the view lists it. */
 export const ModelOptionSchema = z.object({
   id: z.string(),
@@ -115,7 +132,12 @@ export const ModelOptionSchema = z.object({
   hint: z.string().optional(),
   /** The full model id an alias stands for today (Claude's "opus" →
    *  "claude-opus-5-5"), so a session reporting the full id finds its option. */
-  resolved: z.string().optional()
+  resolved: z.string().optional(),
+  /** The reasoning efforts this model takes, lowest first. Absent or empty:
+   *  the model takes none, and a view offers no choice. */
+  efforts: z.array(EffortOptionSchema).optional(),
+  /** The level the provider runs this model at when nobody chose one. */
+  defaultEffort: z.string().optional()
 })
 export type ModelOption = z.infer<typeof ModelOptionSchema>
 /** One command the composer can offer under "/": the provider says what it is
@@ -182,6 +204,11 @@ export const SessionEventSchema = z.discriminatedUnion('type', [
     model: z.string().nullable(),
     providerSessionId: z.string().nullable()
   }),
+  /** The reasoning effort the session runs at, as the provider reports it,
+   *  or as the adapter recorded a switch the provider applies at the next
+   *  turn; null when the provider says the model runs at none or will not
+   *  say. Sent at ready and after every switch of model or effort. */
+  z.object({ type: z.literal('effort'), effort: z.string().nullable() }),
   z.object({ type: z.literal('error'), message: z.string(), fatal: z.boolean() }),
   /* The turn the reader's `interrupt` stopped ended there: the provider's word
      that it was cut short, never a failure. A view mutes the message that

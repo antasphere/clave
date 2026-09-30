@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { SessionEventSchema, SessionSchema, SessionStreamSchema } from './session-model'
+import {
+  ModelOptionSchema,
+  SessionEventSchema,
+  SessionInputSchema,
+  SessionSchema,
+  SessionStreamSchema,
+  SetEffortSchema
+} from './session-model'
 
 describe('session model v1', () => {
   const events = [
@@ -15,6 +22,8 @@ describe('session model v1', () => {
       options: [{ id: 'allow', label: 'Allow' }]
     },
     { type: 'state_change', state: 'blocked' },
+    { type: 'effort', effort: 'high' },
+    { type: 'effort', effort: null },
     { type: 'provider_event', provider: 'echo', payload: { arbitrary: [1, null, 'text'] } }
   ]
   it.each(events)('validates $type and its event stream', (event) => {
@@ -36,6 +45,8 @@ describe('session model v1', () => {
     { type: 'state_change', state: 'invented' },
     { type: 'user_message', text: 42 },
     { type: 'tool_call', id: 'x', input: {} },
+    { type: 'effort' },
+    { type: 'effort', effort: 3 },
     { type: 'permission_request', id: 'x', description: '?', options: ['allow'] },
     { type: 'unrecognized' }
   ])('rejects malformed $type', (event) => {
@@ -43,5 +54,30 @@ describe('session model v1', () => {
   })
   it('rejects invalid session metadata', () => {
     expect(SessionSchema.safeParse({ id: 'x', transport: 'http' }).success).toBe(false)
+  })
+  it('accepts an effort switch in the provider word, and refuses anything else', () => {
+    for (const effort of ['low', 'xhigh', 'ultra'])
+      expect(SessionInputSchema.parse({ type: 'set_effort', effort })).toEqual({
+        type: 'set_effort',
+        effort
+      })
+    for (const effort of ['', 'High', '--x', 'high;rm', 'high rm'])
+      expect(SetEffortSchema.safeParse({ type: 'set_effort', effort }).success).toBe(false)
+    expect(SetEffortSchema.safeParse({ type: 'set_effort', effort: null }).success).toBe(false)
+    expect(SessionInputSchema.safeParse({ type: 'set_effort', effort: '--x' }).success).toBe(false)
+  })
+  it('lists the efforts a model takes, and its default, as optional', () => {
+    const option = {
+      id: 'gpt-5.5',
+      label: 'GPT-5.5',
+      efforts: [
+        { id: 'low', label: 'Low', hint: 'Fast' },
+        { id: 'high', label: 'High' }
+      ],
+      defaultEffort: 'low'
+    }
+    expect(ModelOptionSchema.parse(option)).toEqual(option)
+    expect(ModelOptionSchema.parse({ id: 'm', label: 'M' })).toEqual({ id: 'm', label: 'M' })
+    expect(ModelOptionSchema.safeParse({ ...option, efforts: [{ id: 'low' }] }).success).toBe(false)
   })
 })

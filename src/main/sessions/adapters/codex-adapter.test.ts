@@ -805,3 +805,325 @@ describe('Codex chat permissions', () => {
     )
   })
 })
+
+describe('Codex reasoning effort', () => {
+  const LISTING = [
+    {
+      model: 'gpt-a',
+      displayName: 'GPT A',
+      description: 'Fast',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low', description: 'Quick' },
+        { reasoningEffort: 'high', description: '' },
+        { reasoningEffort: 'ultra' },
+        { reasoningEffort: '--x', description: 'never offered' }
+      ],
+      defaultReasoningEffort: 'low'
+    },
+    {
+      model: 'gpt-b',
+      displayName: 'GPT B',
+      supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+      defaultReasoningEffort: 'medium'
+    },
+    { id: 'gpt-c', displayName: 'GPT C' },
+    { model: 'gpt-hidden', hidden: true }
+  ]
+  /** The lifecycle fake, with a model list and a thread reply of the case's choosing. */
+  function effortFake(
+    thread: Record<string, unknown> = {},
+    list: () => Promise<unknown> = async () => ({ data: LISTING })
+  ): {
+    adapter: CodexAdapter
+    turns: () => Record<string, unknown>[]
+    lists: () => number
+    complete: () => void
+  } {
+    let callbacks!: CodexCallbacks
+    const request = vi.fn(async (method: string) => {
+      if (method === 'thread/start' || method === 'thread/resume')
+        return { thread: { id: 'thread' }, model: 'gpt-a', ...thread }
+      if (method === 'model/list') return list()
+      if (method === 'turn/start') {
+        callbacks.notification({ method: 'turn/started', params: { turn: { id: 'turn' } } })
+        return { turn: { id: 'turn', status: 'inProgress' } }
+      }
+      return {}
+    })
+    const connection: CodexConnection = {
+      request,
+      notify: vi.fn(),
+      respond: vi.fn(),
+      reject: vi.fn(),
+      close: vi.fn(async () => callbacks.exit(0))
+    }
+    const adapter = new CodexAdapter((_cwd: string, cb: CodexCallbacks) => {
+      callbacks = cb
+      return connection
+    })
+    return {
+      adapter,
+      turns: () =>
+        request.mock.calls
+          .filter(([method]) => method === 'turn/start')
+          .map((call) => (call as unknown[])[1] as Record<string, unknown>),
+      lists: () => request.mock.calls.filter(([method]) => method === 'model/list').length,
+      complete: () =>
+        callbacks.notification({
+          method: 'turn/completed',
+          params: { turn: { id: 'turn', status: 'completed' } }
+        })
+    }
+  }
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 6; i++) await tick()
+  }
+  /** The efforts the stream announced, a repeat of the same level folded:
+   *  a switch made before the thread starts is announced again once it has. */
+  /** Every effort the stream announced, repeats included. */
+  const announced = (seen: unknown[]): (string | null)[] =>
+    seen.flatMap((s) => {
+      const event = (s as { kind: string; event?: SessionEvent }).event
+      return event?.type === 'effort' ? [event.effort] : []
+    })
+  const effortsOf = (seen: unknown[]): (string | null)[] =>
+    seen
+      .flatMap((s) => {
+        const event = (s as { kind: string; event?: SessionEvent }).event
+        return event?.type === 'effort' ? [event.effort] : []
+      })
+      .filter((effort, i, all) => i === 0 || all[i - 1] !== effort)
+
+  it('lists each model with the efforts it takes, their gloss, and its default', async () => {
+    const { adapter } = effortFake()
+    const handle = await adapter.spawn(spec)
+    await expect(adapter.models(handle)).resolves.toEqual([
+      {
+        id: 'gpt-a',
+        label: 'GPT A',
+        hint: 'Fast',
+        efforts: [
+          { id: 'low', label: 'Low', hint: 'Quick' },
+          { id: 'high', label: 'High' },
+          { id: 'ultra', label: 'Ultra' }
+        ],
+        defaultEffort: 'low'
+      },
+      {
+        id: 'gpt-b',
+        label: 'GPT B',
+        efforts: [{ id: 'medium', label: 'Medium', hint: 'Balanced' }],
+        defaultEffort: 'medium'
+      },
+      { id: 'gpt-c', label: 'GPT C' }
+    ])
+    await adapter.kill(handle)
+  })
+
+  it('announces a switch at once and carries it on the next turn its model takes it', async () => {
+    const { adapter, turns, complete } = effortFake()
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(effortsOf(seen)).toEqual(['high'])
+    expect(() => adapter.write(handle, { type: 'set_effort', effort: '--x' })).toThrow()
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()).toEqual([
+      {
+        threadId: 'thread',
+        input: [{ type: 'text', text: 'one', text_elements: [] }],
+        effort: 'high'
+      }
+    ])
+    // Still carried by the turn after, on the same model.
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ effort: 'high' })
+    expect(effortsOf(seen)).toEqual(['high'])
+    await adapter.kill(handle)
+  })
+
+  it("drops a level the turn's model does not list, and says what it runs at instead", async () => {
+    const { adapter, turns, complete } = effortFake()
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_model', model: 'gpt-b' })
+    adapter.write(handle, { type: 'set_effort', effort: 'ultra' })
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).toEqual({
+      threadId: 'thread',
+      input: [{ type: 'text', text: 'one', text_elements: [] }],
+      model: 'gpt-b'
+    })
+    expect(effortsOf(seen)).toEqual(['ultra', 'medium'])
+    // The choice is forgotten: back on a model that lists it, no turn carries it.
+    complete()
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).not.toHaveProperty('effort')
+    // A model with no default reads as none.
+    complete()
+    adapter.write(handle, { type: 'set_model', model: 'gpt-c' })
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    adapter.write(handle, { type: 'user_message', text: 'three' })
+    await settle()
+    expect(turns()[2]).not.toHaveProperty('effort')
+    expect(effortsOf(seen)).toEqual(['ultra', 'medium', 'high', null])
+    await adapter.kill(handle)
+  })
+
+  it('sends no effort when the model list cannot be had, and keeps the choice for when it can', async () => {
+    // The app-server forwards any level and the API then fails the whole turn
+    // on one the model does not take, so an unchecked level never goes out.
+    let listing: () => Promise<unknown> = async () => {
+      throw new Error('model/list failed')
+    }
+    const { adapter, turns, lists, complete } = effortFake(
+      { model: 'gpt-b', reasoningEffort: 'medium' },
+      () => listing()
+    )
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'ultra' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).not.toHaveProperty('effort')
+    // The view is told what the thread runs at: its own reply's level.
+    expect(effortsOf(seen).at(-1)).toBe('medium')
+    // A failed list is not asked for again at every turn, and the level the
+    // thread runs at is not said again at every turn either.
+    const said = announced(seen).length
+    complete()
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).not.toHaveProperty('effort')
+    expect(lists()).toBe(1)
+    expect(announced(seen)).toHaveLength(said)
+    // The picker lists again; the kept choice then goes out where it is taken.
+    listing = async () => ({ data: LISTING })
+    complete()
+    await adapter.models(handle)
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'user_message', text: 'three' })
+    await settle()
+    expect(turns()[2]).toMatchObject({ model: 'gpt-a', effort: 'ultra' })
+    // What the turn carries is what the view was last told.
+    expect(announced(seen).at(-1)).toBe('ultra')
+    await adapter.kill(handle)
+  })
+
+  it('sends no effort for a model the list does not name, and keeps the choice for one it does', async () => {
+    const { adapter, turns, complete } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'set_model', model: 'gpt-unlisted' })
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    adapter.write(handle, { type: 'user_message', text: 'one' })
+    await settle()
+    expect(turns()[0]).not.toHaveProperty('effort')
+    expect(effortsOf(seen).at(-1)).toBe('low')
+    complete()
+    adapter.write(handle, { type: 'set_model', model: 'gpt-a' })
+    adapter.write(handle, { type: 'user_message', text: 'two' })
+    await settle()
+    expect(turns()[1]).toMatchObject({ model: 'gpt-a', effort: 'high' })
+    await adapter.kill(handle)
+  })
+
+  it.each([
+    [{ reasoningEffort: 'medium' }, ['medium']],
+    [{ reasoningEffort: null }, [null]],
+    [{}, []]
+  ])('reads the thread reply %j as the effort it runs at', async (thread, expected) => {
+    const { adapter } = effortFake(thread)
+    const handle = await adapter.spawn(spec)
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await settle()
+    expect(effortsOf(seen)).toEqual(expected)
+    await adapter.kill(handle)
+  })
+
+  it("takes the app-server's settings notification as its word", () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(SessionEventSchema.parse(e)))
+    translator.notification({
+      method: 'thread/settings/updated',
+      params: { threadSettings: { effort: 'xhigh' } }
+    })
+    translator.notification({
+      method: 'thread/settings/updated',
+      params: { threadSettings: { effort: null } }
+    })
+    expect(events).toEqual([
+      { type: 'effort', effort: 'xhigh' },
+      { type: 'effort', effort: null }
+    ])
+    // One that says nothing of the effort is kept as the provider's own frame.
+    translator.notification({ method: 'thread/settings/updated', params: { threadSettings: {} } })
+    expect(events.at(-1)).toMatchObject({ type: 'provider_event', provider: 'codex' })
+  })
+
+  it('says the launch effort as soon as the thread starts, before any message', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'high' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready(handle)
+    await settle()
+    expect(announced(seen)).toEqual(['low', 'high'])
+    await adapter.kill(handle)
+  })
+
+  it('says a launch effort equal to the thread reply once', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'medium' })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'medium' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.ready(handle)
+    await settle()
+    expect(announced(seen)).toEqual(['medium'])
+    await adapter.kill(handle)
+  })
+
+  it('says a re-pick of the level already announced again, for a view that bound since', async () => {
+    const { adapter } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn(spec)
+    adapter.ready(handle)
+    await settle()
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    const late: unknown[] = []
+    adapter.on(handle, 'stream', (s) => late.push(s))
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(announced(late)).toEqual(['high'])
+    await adapter.kill(handle)
+  })
+
+  it('carries the launch effort on the first turn and announces it once the thread starts', async () => {
+    const { adapter, turns } = effortFake({ reasoningEffort: 'low' })
+    const handle = await adapter.spawn({ ...spec, options: { effort: 'high' } })
+    const seen: unknown[] = []
+    adapter.on(handle, 'stream', (s) => seen.push(s))
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    await settle()
+    expect(turns()[0]).toMatchObject({ effort: 'high' })
+    // The thread's own word first, then the launch's, which the turn carries.
+    expect(effortsOf(seen)).toEqual(['low', 'high'])
+    await adapter.kill(handle)
+    // A launch effort that could reach a request is ignored.
+    const bad = effortFake()
+    const next = await bad.adapter.spawn({ ...spec, options: { effort: '--x' } })
+    bad.adapter.write(next, { type: 'user_message', text: 'hello' })
+    await settle()
+    expect(bad.turns()[0]).not.toHaveProperty('effort')
+    await bad.adapter.kill(next)
+  })
+})

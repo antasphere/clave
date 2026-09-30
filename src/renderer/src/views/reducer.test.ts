@@ -56,6 +56,19 @@ describe('conversation stream', () => {
     expect(reduceConversation(state, { exit: 7 })).toMatchObject({ state: 'ended', exitCode: 7 })
     expect(run([{ type: 'error', message: 'fatal', fatal: true }]).state).toBe('ended')
   })
+  it('keeps the effort the provider last reported, null until it says', () => {
+    expect(emptyConversation.effort).toBeNull()
+    expect(run([]).effort).toBeNull()
+    const state = run([
+      { type: 'effort', effort: 'high' },
+      { type: 'assistant_text', delta: 'hi', final: true }
+    ])
+    expect(state.effort).toBe('high')
+    expect(state.entries.map((e) => e.kind)).toEqual(['assistant'])
+    expect(
+      reduceConversation(state, { event: { type: 'effort', effort: null }, at: 2 }).effort
+    ).toBe(null)
+  })
   it('keeps what a user message attached, and adds nothing to one that attached nothing', () => {
     const shot = {
       id: 'shot',

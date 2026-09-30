@@ -238,7 +238,7 @@ narrower covers that. `src/main/sessions/plugin-adapters.ts` is the host side.
 adapter interface; `PluginSessionAdapter` does, one instance per contributed id,
 and it is what `sessionManager` registers. The plugin exports
 `createAdapter(launch, emit)` returning `{ start, send, interrupt, respond,
-dispose }` plus optional `models` / `commands` / `setModel`. `launch` carries
+dispose }` plus optional `models` / `commands` / `setModel` / `setEffort`. `launch` carries
 `{ sessionId, cwd, command, options }`, frozen; `command` is the manifest's,
 verbatim, which is what a real provider spawns.
 
@@ -250,6 +250,7 @@ verbatim, which is what a real provider spawns.
 | `write` `interrupt`           | `interrupt()`                                                |
 | `write` `permission_response` | `respond({ id, optionId })`, prefix stripped                 |
 | `write` `set_model`           | `setModel(model)`, or a non-fatal error if it has none       |
+| `write` `set_effort`          | `setEffort(effort)`, or a non-fatal error if it has none     |
 | `write` `stop_task`           | a non-fatal error: a plugin cannot stop one task             |
 | `write` raw bytes             | refused: a plugin adapter is events-only                     |
 | `models` / `commands`         | the optional methods, or an empty list                       |

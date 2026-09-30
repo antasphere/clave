@@ -22,6 +22,7 @@ import type {
 import { answeredSince, emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
+import { EffortMenu } from './EffortMenu'
 import { SenderChip } from './Delivery'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
@@ -1033,6 +1034,13 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
               model={conversation.model}
               disabled={closed}
               onSelect={(id) => void write({ type: 'set_model', model: id }).catch(report)}
+            />
+            <EffortMenu
+              sessionId={session.id}
+              model={conversation.model}
+              effort={conversation.effort}
+              disabled={closed}
+              onSelect={(id) => void write({ type: 'set_effort', effort: id }).catch(report)}
             />
           </span>
           {conversation.permissionMode && (

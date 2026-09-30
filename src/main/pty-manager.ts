@@ -15,7 +15,7 @@ import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
-import { rememberedChatModel } from './sessions/chat-model-default'
+import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
 import { initialChatView } from './sessions/chat-view-default'
 import {
   defaultViewFor,
@@ -147,6 +147,10 @@ class PtyManager {
         ? rememberedChatModel(adapter.id)
         : undefined
     if (remembered) options = { ...options, model: remembered }
+    // The effort last picked goes with every chat, a restored one included:
+    // the record does not keep the one a tab ran at, and the last pick is
+    // what the reader would pick again.
+    const effort = isEvents ? rememberedChatEffort(adapter.id) : undefined
     const session: PtySession = isEvents
       ? {
           // A restored chat tab keeps its id, as a restored terminal does: the
@@ -229,6 +233,7 @@ class PtyManager {
           options: {
             resume,
             model: options?.model,
+            effort,
             permissionMode: options?.dangerousMode
               ? adapter.provider === 'codex'
                 ? 'never'
