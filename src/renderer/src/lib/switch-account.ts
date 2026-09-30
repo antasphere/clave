@@ -194,9 +194,45 @@ export async function switchSessionAccount(
           const profile = getClaudeProfile(accountId)
           return { claudeProfileId: profile.id, claudeProfileLabel: profile.label }
         })()
+  return restartSessionProcess(sessionId, {
+    overrides,
+    resendRejected: options.resendRejected === true,
+    patch: provider === 'codex' ? overrides : { ...overrides, claudeConfigDir: undefined }
+  })
+}
+
+/**
+ * Stop a session's process and spawn the same thing again under the same id,
+ * the conversation resumed where the agent can resume it (Claude, Codex): the
+ * account switch, and the restart onto a newly upgraded agent CLI. `patch`
+ * is what the store learns besides the answer's own fields.
+ */
+export async function restartSessionProcess(
+  sessionId: string,
+  options: {
+    overrides?: Record<string, string | undefined>
+    resendRejected?: boolean
+    patch?: Partial<
+      Pick<
+        Session,
+        | 'claudeProfileId'
+        | 'claudeProfileLabel'
+        | 'claudeConfigDir'
+        | 'codexAccountId'
+        | 'codexAccountLabel'
+      >
+    >
+  } = {}
+): Promise<SwitchResult> {
+  const store = useSessionStore.getState()
+  const session = store.sessions.find((s) => s.id === sessionId)
+  if (!session) return { ok: false, resumed: false, error: 'No such session' }
   store.setSessionRestarting(sessionId, true)
   const result = await window.electronAPI
-    .restartSession(sessionId, { ...overrides, resendRejected: options.resendRejected === true })
+    .restartSession(sessionId, {
+      ...options.overrides,
+      resendRejected: options.resendRejected === true
+    })
     .catch((err) => ({
       error: err instanceof Error ? err.message : String(err)
     }))
@@ -209,7 +245,7 @@ export async function switchSessionAccount(
     claudeSessionId: result.claudeSessionId,
     launchProfileId: result.launchProfileId,
     model: result.model,
-    ...(provider === 'codex' ? overrides : { ...overrides, claudeConfigDir: undefined })
+    ...options.patch
   })
   // The new process starts when its pane measures itself, which a pane that
   // is not on screen never does (a background tab moved by the policy would

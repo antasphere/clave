@@ -3,12 +3,13 @@ import { PassThrough } from 'node:stream'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
 const mock = vi.hoisted(() => ({
   spawn: vi.fn(),
   token: vi.fn(() => 'secret-account-token'),
-  find: vi.fn((): string | null => null)
+  find: vi.fn((): string | null => null),
+  profileArgs: ['--debug']
 }))
 vi.mock('node:child_process', () => ({ spawn: mock.spawn }))
 // The binary is nowhere on the test PATH unless a case says so: the launch
@@ -28,7 +29,7 @@ vi.mock('../../launch-profile-manager', () => ({
       name: 'Custom',
       family: 'claude',
       command: ['claude'],
-      additionalArgs: ['--debug']
+      additionalArgs: mock.profileArgs
     })
   }
 }))
@@ -1440,6 +1441,49 @@ it('replays the context a resumed conversation stood at', () => {
     { type: 'context_usage', used: 4_005, window: null }
   ])
 })
+
+describe('a Claude chat on a profile that sets its own permissions', () => {
+  const launch = async (profileArgs: string[]): Promise<SessionEvent[]> => {
+    mock.profileArgs = profileArgs
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    const seen: SessionEvent[] = []
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') seen.push(s.event)
+    })
+    adapter.ready(handle)
+    child.emit('close', 0)
+    await adapter.kill(handle)
+    mock.profileArgs = ['--debug']
+    return seen
+  }
+  const offered = (events: SessionEvent[]): Extract<SessionEvent, { type: 'permission_mode' }> => {
+    const event = events.find((e) => e.type === 'permission_mode')
+    if (event?.type !== 'permission_mode') throw new Error('no permission_mode offered')
+    return event
+  }
+  it("shows the profile's mode from the start and offers bypass when it launches on it", async () => {
+    const event = offered(await launch(['--permission-mode', 'bypassPermissions']))
+    expect(event.mode).toBe('bypassPermissions')
+    expect(event.modes.map((m) => m.id)).toContain('bypassPermissions')
+  })
+  it('offers bypass to a profile that allows it without starting on it', async () => {
+    const event = offered(await launch(['--allow-dangerously-skip-permissions']))
+    expect(event.mode).toBe('default')
+    expect(event.modes.map((m) => m.id)).toContain('bypassPermissions')
+  })
+  it('reads the manual spelling as the running default', async () => {
+    expect(offered(await launch(['--permission-mode=manual'])).mode).toBe('default')
+    expect(offered(await launch(['--permission-mode=plan'])).mode).toBe('plan')
+  })
+})
+
 it('names the window from the answering model until a result does, and a subagent its model once', () => {
   feed({
     type: 'assistant',

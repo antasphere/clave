@@ -412,6 +412,7 @@ function normalizeSession(session: Session): Session {
   return {
     ...session,
     workspaceId,
+    spawnedAt: Date.now(),
     antigravityMode: session.antigravityMode ?? false,
     codexMode: session.codexMode ?? false,
     piMode: session.piMode ?? false,
@@ -1330,7 +1331,8 @@ export const useSessionStore = create<SessionState>((set) => ({
               activityStatus: 'idle' as const,
               agentState: undefined,
               promptWaiting: null,
-              restartEpoch: (s.restartEpoch ?? 0) + 1
+              restartEpoch: (s.restartEpoch ?? 0) + 1,
+              spawnedAt: Date.now()
             }
           : s
       )

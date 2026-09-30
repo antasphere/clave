@@ -309,6 +309,72 @@ export function buildAgentArgv(input: {
   return argv
 }
 
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+export interface CodexThreadPolicy {
+  sandbox?: CodexSandboxMode
+  approvalPolicy?: CodexApprovalPolicy
+  approvalsReviewer?: 'user' | 'auto_review'
+}
+const CODEX_SANDBOX_VALUES = new Set<string>(['read-only', 'workspace-write', 'danger-full-access'])
+const CODEX_APPROVAL_VALUES = new Set<string>(['untrusted', 'on-request', 'never'])
+
+/**
+ * The permissions a Codex profile's own flags ask for, as a chat thread's
+ * settings. The TUI reads `--yolo`, `-s` and `-a`; `codex app-server` accepts
+ * them before its subcommand and ignores them (codex-cli 0.157), so a chat
+ * thread started on a yolo profile ran in the config's sandbox. thread/start
+ * and thread/resume take the same settings as parameters, which is where
+ * they have to go. Later flags win, as they do on the command line.
+ */
+export function codexProfilePolicy(profile: LaunchProfile): CodexThreadPolicy {
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  const policy: CodexThreadPolicy = {}
+  const valueOf = (index: number, long: string, short: string): string | undefined => {
+    const token = tokens[index]
+    if (token === long || token === short) return tokens[index + 1]
+    return token.startsWith(`${long}=`) ? token.slice(long.length + 1) : undefined
+  }
+  tokens.forEach((token, index) => {
+    if (token === '--yolo' || token === '--dangerously-bypass-approvals-and-sandbox') {
+      policy.sandbox = 'danger-full-access'
+      policy.approvalPolicy = 'never'
+    } else if (token === '--approve-for-me') {
+      policy.sandbox = 'workspace-write'
+      policy.approvalsReviewer = 'auto_review'
+    }
+    const sandbox = valueOf(index, '--sandbox', '-s')
+    if (sandbox && CODEX_SANDBOX_VALUES.has(sandbox)) policy.sandbox = sandbox as CodexSandboxMode
+    const approval = valueOf(index, '--ask-for-approval', '-a')
+    if (approval && CODEX_APPROVAL_VALUES.has(approval))
+      policy.approvalPolicy = approval as CodexApprovalPolicy
+  })
+  return policy
+}
+
+/**
+ * The permission mode a Claude profile's own flags start the CLI on, and
+ * whether they make bypass reachable. The CLI obeys them in a chat as in a
+ * terminal; the chat reads them so it shows that mode from the first frame
+ * and offers bypass where the CLI will accept the switch.
+ */
+export function claudeProfilePermissions(profile: LaunchProfile): {
+  mode?: string
+  bypassAvailable: boolean
+} {
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  let mode: string | undefined
+  tokens.forEach((token, index) => {
+    if (token === '--permission-mode') mode = tokens[index + 1]
+    else if (token.startsWith('--permission-mode=')) mode = token.slice('--permission-mode='.length)
+  })
+  return {
+    ...(mode ? { mode } : {}),
+    bypassAvailable:
+      mode === 'bypassPermissions' || tokens.includes('--allow-dangerously-skip-permissions')
+  }
+}
+
 export const AGENT_CAPABILITIES = {
   claude: { claveTools: 'supported', exchangeCapture: 'supported', blockedState: 'supported' },
   antigravity: {

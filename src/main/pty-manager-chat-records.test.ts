@@ -458,3 +458,34 @@ describe('a new chat starts on the model last picked in a composer', () => {
     expect(launched()).toBeUndefined()
   })
 })
+
+describe("a chat tab's dangerous mode reaches its agent", () => {
+  it('asks Codex for full access, not only for no approvals', async () => {
+    const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+    mocks.manager.getAdapter.mockReturnValue(codex)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat', dangerousMode: true })
+    expect(codex.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: 'never', sandbox: 'danger-full-access' })
+      })
+    )
+  })
+
+  it('leaves a Codex tab without it to its profile and config', async () => {
+    const codex = { ...mocks.claude, id: 'codex-chat', provider: 'codex' }
+    mocks.manager.getAdapter.mockReturnValue(codex)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
+    const options = (codex.spawn.mock.calls[0] as unknown as [{ options: object }])[0].options
+    expect(options).not.toHaveProperty('sandbox', expect.anything())
+    expect(options).not.toHaveProperty('permissionMode', expect.anything())
+  })
+
+  it('asks Claude to bypass permissions', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', dangerousMode: true })
+    expect(mocks.claude.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ permissionMode: 'bypassPermissions' })
+      })
+    )
+  })
+})

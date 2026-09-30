@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { accountOverrides } from './restart-overrides'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -234,7 +235,14 @@ class PtyManager {
                 : adapter.provider === 'claude'
                   ? 'bypassPermissions'
                   : undefined
-              : undefined
+              : undefined,
+            // What `--yolo` means to a Codex terminal: no approvals AND no
+            // sandbox. The app-server takes the two separately, and without
+            // this a dangerous chat ran in the config's sandbox.
+            sandbox:
+              options?.dangerousMode && adapter.provider === 'codex'
+                ? 'danger-full-access'
+                : undefined
           }
         })
       : session
@@ -418,7 +426,8 @@ class PtyManager {
     if (!spawn) return null
     const conversationId = this.conversationIdOf(id)
     const previous = spawn.options ?? {}
-    const { resendRejected, ...account } = overrides
+    const { resendRejected, ...requested } = overrides
+    const account = accountOverrides(requested)
     const options: PtySpawnOptions = {
       ...previous,
       adoptSessionId: id,

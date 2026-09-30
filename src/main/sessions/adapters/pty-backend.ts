@@ -129,31 +129,45 @@ function parseEnvOutput(output: string): Record<string, string> {
  * On macOS/Linux, call the login shell so that PATH and other vars are populated.
  */
 export function preloadLoginShellEnv(): void {
-  if (loginShellEnv !== null) return
+  void loginShellEnvAsync()
+}
 
+let loginShellEnvPending: Promise<Record<string, string>> | null = null
+
+/**
+ * The login shell environment without ever blocking the main process: the
+ * cache when it is there, else the one in-flight read (started here when
+ * nothing started it yet). Background work that can wait, such as the agent
+ * updater, asks this instead of `getLoginShellEnv`, whose sync fallback
+ * freezes the app for as long as the person's profile takes.
+ */
+export function loginShellEnvAsync(): Promise<Record<string, string>> {
+  if (loginShellEnv !== null) return Promise.resolve(loginShellEnv)
   if (isWindows) {
     loginShellEnv = { ...process.env } as Record<string, string>
-    return
+    return Promise.resolve(loginShellEnv)
   }
-
-  execFile(
-    getUserShell(),
-    ['-lic', 'env -0'],
-    {
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024
-    },
-    (err, stdout) => {
-      if (loginShellEnv !== null) return // already set by sync fallback
-      if (err) {
-        loginShellEnv = { ...process.env } as Record<string, string>
-        return
+  if (loginShellEnvPending) return loginShellEnvPending
+  loginShellEnvPending = new Promise((resolve) => {
+    execFile(
+      getUserShell(),
+      ['-lic', 'env -0'],
+      {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024
+      },
+      (err, stdout) => {
+        if (loginShellEnv === null) {
+          // Not already set by the sync fallback.
+          const env = err ? {} : parseEnvOutput(stdout)
+          loginShellEnv =
+            Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
+        }
+        resolve(loginShellEnv)
       }
-      const env = parseEnvOutput(stdout)
-      loginShellEnv =
-        Object.keys(env).length > 0 ? env : ({ ...process.env } as Record<string, string>)
-    }
-  )
+    )
+  })
+  return loginShellEnvPending
 }
 
 export function getLoginShellEnv(): Record<string, string> {

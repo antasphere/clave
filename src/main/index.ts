@@ -19,6 +19,7 @@ import {
 } from './ipc-handlers/window-handlers'
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
+import { agentUpdateManager } from './agent-updates'
 import { buildAppMenu } from './app-menu'
 import { initTelemetry, cleanupTelemetry } from './telemetry'
 import { initNotificationManager } from './notification-manager'
@@ -324,6 +325,7 @@ app.whenReady().then(() => {
     },
     snapshot: prereleaseSnapshotOutcome()
   })
+  agentUpdateManager.start()
   initTelemetry()
   initMissionControl()
 
@@ -366,6 +368,7 @@ app.on('before-quit', (event) => {
   quitting = true
   cleanupClaveWatchers()
   cleanupAutoUpdater()
+  agentUpdateManager.stop()
   cleanupTelemetry()
   cleanupMissionControl()
   usageManager.stopPolling()

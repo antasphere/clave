@@ -17,6 +17,7 @@ import { safePort } from '../../lib/utils'
 import { ConfirmDialog } from '@clave/ui/components'
 import { SessionCopyOffers } from './SessionCopyOffers'
 import { AccountProposal } from './AccountProposal'
+import { AgentUpdateHint } from './AgentUpdateHint'
 import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
 
 interface TerminalHeaderProps {
@@ -104,6 +105,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
             </span>
           )}
           <AccountProposal sessionId={sessionId} />
+          <AgentUpdateHint sessionId={sessionId} />
           {hasServer && (
             <div className="flex items-center gap-0.5 flex-shrink-0">
               <button

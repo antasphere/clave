@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { LaunchProfile } from '../../../shared/agent-launch'
+import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
   userMessageEvent,
@@ -455,9 +455,18 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ready) return state.ready
     state.ready = (async () => {
       const options = object(state.spec.options)
-      const permissionMode = text(options.permissionMode) || 'on-request'
-      if (!['on-request', 'never'].includes(permissionMode))
-        throw new Error(`Unsupported Codex permissionMode: ${permissionMode}`)
+      // The launch's own choice (Clave's dangerous mode) first, then what the
+      // profile's flags ask for, then the defaults; an absent sandbox leaves
+      // the one Codex's config gives the folder.
+      const profilePolicy = state.profile ? codexProfilePolicy(state.profile) : {}
+      const launchMode = text(options.permissionMode)
+      if (launchMode && !['on-request', 'never'].includes(launchMode))
+        throw new Error(`Unsupported Codex permissionMode: ${launchMode}`)
+      // A profile may also ask for `untrusted`, already checked by its parser.
+      const permissionMode = launchMode || profilePolicy.approvalPolicy || 'on-request'
+      const sandbox = text(options.sandbox) || profilePolicy.sandbox
+      if (sandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(sandbox))
+        throw new Error(`Unsupported Codex sandbox: ${sandbox}`)
       state.connection = this.connect(
         state.spec.cwd,
         {
@@ -493,8 +502,9 @@ export class CodexAdapter implements SessionAdapter {
         ...(resume ? { threadId: resume } : {}),
         cwd: state.spec.cwd,
         ...(text(options.model) ? { model: text(options.model) } : {}),
+        ...(sandbox ? { sandbox } : {}),
         approvalPolicy: permissionMode,
-        approvalsReviewer: 'user'
+        approvalsReviewer: profilePolicy.approvalsReviewer ?? 'user'
       })
       state.translator.metadata(result)
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
