@@ -154,6 +154,31 @@ export class CodexTranslator {
         this.emit({ type: 'state_change', state: 'done' })
         return
       }
+      case 'thread/tokenUsage/updated': {
+        // After every call: `last` is that call, `total` the thread's sum.
+        // Its context is what it read and wrote, less the reasoning, which
+        // the next call does not carry. Raw tokens, like the Claude meter:
+        // Codex's own status line also drops a fixed baseline, so its
+        // percentage reads a few points apart by design.
+        const usage = object(p.tokenUsage)
+        const last = object(usage.last)
+        const reasoning = last.reasoningOutputTokens
+        const used =
+          typeof last.totalTokens === 'number'
+            ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
+            : NaN
+        const window = usage.modelContextWindow
+        if (!Number.isFinite(used) || used <= 0) {
+          fallback()
+          return
+        }
+        this.emit({
+          type: 'context_usage',
+          used,
+          window: typeof window === 'number' && window > 0 ? window : null
+        })
+        return
+      }
       case 'serverRequest/resolved': {
         this.approvals.delete(JSON.stringify(p.requestId))
         fallback()
