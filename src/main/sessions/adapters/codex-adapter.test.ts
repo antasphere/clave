@@ -880,6 +880,12 @@ describe('Codex reasoning effort', () => {
   }
   /** The efforts the stream announced, a repeat of the same level folded:
    *  a switch made before the thread starts is announced again once it has. */
+  /** Every effort the stream announced, repeats included. */
+  const announced = (seen: unknown[]): (string | null)[] =>
+    seen.flatMap((s) => {
+      const event = (s as { kind: string; event?: SessionEvent }).event
+      return event?.type === 'effort' ? [event.effort] : []
+    })
   const effortsOf = (seen: unknown[]): (string | null)[] =>
     seen
       .flatMap((s) => {
@@ -990,12 +996,15 @@ describe('Codex reasoning effort', () => {
     expect(turns()[0]).not.toHaveProperty('effort')
     // The view is told what the thread runs at: its own reply's level.
     expect(effortsOf(seen).at(-1)).toBe('medium')
-    // A failed list is not asked for again at every turn.
+    // A failed list is not asked for again at every turn, and the level the
+    // thread runs at is not said again at every turn either.
+    const said = announced(seen).length
     complete()
     adapter.write(handle, { type: 'user_message', text: 'two' })
     await settle()
     expect(turns()[1]).not.toHaveProperty('effort')
     expect(lists()).toBe(1)
+    expect(announced(seen)).toHaveLength(said)
     // The picker lists again; the kept choice then goes out where it is taken.
     listing = async () => ({ data: LISTING })
     complete()
@@ -1004,6 +1013,8 @@ describe('Codex reasoning effort', () => {
     adapter.write(handle, { type: 'user_message', text: 'three' })
     await settle()
     expect(turns()[2]).toMatchObject({ model: 'gpt-a', effort: 'ultra' })
+    // What the turn carries is what the view was last told.
+    expect(announced(seen).at(-1)).toBe('ultra')
     await adapter.kill(handle)
   })
 

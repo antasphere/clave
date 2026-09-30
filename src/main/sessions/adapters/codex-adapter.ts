@@ -311,6 +311,9 @@ interface HandleState {
   /** A model/list that failed or timed out: not asked again at every turn,
    *  only by the picker, whose answer fills the listing again. */
   listingFailed?: boolean
+  /** The last effort the view was told, so that what a turn carries is said
+   *  whenever it changes, and said once. Undefined until anything was. */
+  announced?: string | null
   emitter: EventEmitter
   translator: CodexTranslator
   connection?: CodexConnection
@@ -368,7 +371,10 @@ export class CodexAdapter implements SessionAdapter {
       env: context?.env,
       initialPrompt: context?.initialPrompt,
       emitter,
-      translator: new CodexTranslator((event) => emitter.emit('stream', { kind: 'event', event })),
+      translator: new CodexTranslator((event) => {
+        if (event.type === 'effort') state.announced = event.effort
+        emitter.emit('stream', { kind: 'event', event })
+      }),
       sending: false,
       ended: false,
       closing: false
@@ -417,10 +423,7 @@ export class CodexAdapter implements SessionAdapter {
       // settings notification for it), so what the view shows after a pick
       // is this record; a level the model refuses is kept off the turn below.
       state.effort = value.effort
-      state.emitter.emit('stream', {
-        kind: 'event',
-        event: { type: 'effort', effort: value.effort }
-      })
+      this.announce(state, value.effort)
       return
     }
     if (value.type === 'set_permission_mode')
@@ -522,11 +525,20 @@ export class CodexAdapter implements SessionAdapter {
       (state.listingFailed ? undefined : await this.listModels(state).catch(() => undefined))
     const model = state.model ?? state.translator.model
     const row = rows?.map(object).find((r) => model && (text(r.model) || text(r.id)) === model)
-    if (row && codexEfforts(row).some((e) => e.id === effort)) return effort
+    if (row && codexEfforts(row).some((e) => e.id === effort)) {
+      // A choice kept through a missing list goes out now: the view is told,
+      // or it would still show the level announced in its place.
+      this.announce(state, effort)
+      return effort
+    }
     if (row) state.effort = undefined
-    const fallback = (row && text(row.defaultReasoningEffort)) || state.translator.threadEffort
-    state.emitter.emit('stream', { kind: 'event', event: { type: 'effort', effort: fallback } })
+    this.announce(state, (row && text(row.defaultReasoningEffort)) || state.translator.threadEffort)
     return undefined
+  }
+  private announce(state: HandleState, effort: string | null): void {
+    if (state.announced === effort) return
+    state.announced = effort
+    state.emitter.emit('stream', { kind: 'event', event: { type: 'effort', effort } })
   }
 
   /** The skills the app-server finds for this folder; a Codex skill is invoked
@@ -638,11 +650,7 @@ export class CodexAdapter implements SessionAdapter {
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
       // A launch effort (the one last picked) is the next turn's; announced
       // as a switch is, the thread's own word following at that turn.
-      if (state.effort)
-        state.emitter.emit('stream', {
-          kind: 'event',
-          event: { type: 'effort', effort: state.effort }
-        })
+      if (state.effort) this.announce(state, state.effort)
     })().catch(async (error) => {
       this.error(state, error, true)
       if (state.connection) await state.connection.close()
