@@ -188,6 +188,54 @@ describe('SessionManager', () => {
     expect(emitter.listenerCount('stream')).toBe(0)
   })
 
+  it('holds the background list, and drops it when the process ends or is replaced', async () => {
+    const manager = new SessionManager()
+    const emitter = new EventEmitter()
+    const adapter: SessionAdapter = {
+      id: 'chat',
+      provider: '*',
+      transports: ['events'],
+      spawn: vi.fn(),
+      attach: vi.fn(async (id: string) => ({ id })),
+      write: vi.fn(),
+      kill: vi.fn(),
+      on: <K extends keyof SessionAdapterEvents>(
+        _handle: { id: string },
+        event: K,
+        cb: (value: SessionAdapterEvents[K]) => void
+      ) => {
+        emitter.on(event, cb)
+        return () => {
+          emitter.off(event, cb)
+        }
+      }
+    }
+    manager.adopt({ ...session('a'), adapterId: 'chat' }, { id: 'a' }, adapter)
+    const streams = vi.fn()
+    manager.subscribe('a', streams)
+    const task = { id: 't1', kind: 'shell' as const, description: 'sleep', startedAt: 1 }
+    const snapshot = (tasks: (typeof task)[]): SessionStream => ({
+      kind: 'event',
+      event: { type: 'background_tasks', tasks }
+    })
+    emitter.emit('stream', snapshot([task]))
+    expect(manager.background('a')).toEqual([task])
+    // A new process under the same id: the old one's list goes with it.
+    await manager.attach('a')
+    expect(manager.background('a')).toEqual([])
+    expect(streams).toHaveBeenLastCalledWith(snapshot([]))
+    emitter.emit('stream', snapshot([task]))
+    streams.mockClear()
+    emitter.emit('exit', 0)
+    expect(manager.background('a')).toEqual([])
+    expect(streams).toHaveBeenCalledWith(snapshot([]))
+    // Nothing to clear is not a change worth publishing.
+    streams.mockClear()
+    await manager.attach('a')
+    expect(streams).not.toHaveBeenCalledWith(snapshot([]))
+    expect(manager.background('absent')).toEqual([])
+  })
+
   it('forgets a transferred handle without killing it and permits readoption', async () => {
     const { manager, adapter } = fixture()
     const record = await manager.create(session('a'))

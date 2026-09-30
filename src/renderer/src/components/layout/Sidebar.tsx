@@ -1,4 +1,3 @@
-import { SessionViewBadge } from '../../views/registry'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -2250,10 +2249,5 @@ function PinnedSection({
 }
 
 function SessionItem(props: React.ComponentProps<typeof BaseSessionItem>): React.JSX.Element {
-  return (
-    <div className="chat-sidebar-row">
-      <BaseSessionItem {...props} />
-      <SessionViewBadge sessionId={props.session.id} />
-    </div>
-  )
+  return <BaseSessionItem {...props} />
 }

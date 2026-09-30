@@ -84,6 +84,14 @@ export function registerSessionIpc(): void {
         sessionManager.detachWindow(windowKey)
       })
     }
+    // A pane that subscribes after the list last changed would otherwise
+    // show nothing running until the next change.
+    const background = sessionManager.background(id)
+    if (background.length && !sender.isDestroyed())
+      sender.send(`sessions:stream:${id}`, {
+        kind: 'event',
+        event: { type: 'background_tasks', tasks: background }
+      })
     sessionManager.ready(id)
     return sessionManager.get(id)
   })
