@@ -21,7 +21,14 @@
  * repo is over in a few hundred milliseconds, and a single late query would
  * find an empty bar and call it a pass.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
@@ -29,8 +36,8 @@ import path from 'node:path'
 const DIR = userDataDir('git-batch-progress')
 // /private/tmp, not /tmp: git resolves the symlink, and a repo root that
 // disagrees with the discovered path makes every repo look nested.
-const ROOT = '/private/tmp/clave-e2e-git-batch-root'
-const ORIGINS = '/private/tmp/clave-e2e-git-batch-origins'
+const ROOT = fixturePath('git-batch-root', { real: true })
+const ORIGINS = fixturePath('git-batch-origins', { real: true })
 // Over the default live-poll limit of 50, so the panel pauses: no background
 // fetch, and therefore no badge nobody asked for.
 const PADDING = 48
@@ -194,11 +201,7 @@ export async function run(t) {
     })
     const fraction = pullCounts.find((c) => /^\d+\/\d+$/.test(c))
     t.check('the count reads X/N', !!fraction, pullCounts.slice(0, 12))
-    t.equal(
-      'and N is the ONE badged repo, not the whole tree',
-      fraction?.split('/')[1],
-      String(1)
-    )
+    t.equal('and N is the ONE badged repo, not the whole tree', fraction?.split('/')[1], String(1))
     t.check(
       'it reports which op is running',
       pullSamples.some((s) => s.op === 'pull'),
@@ -215,11 +218,13 @@ export async function run(t) {
       afterPull
     )
     // The point of the whole design: the unfetched repo was NOT swept.
-    const staleUntouched = await win.evaluate((root) =>
-      window.electronAPI
-        .gitLog(`${root}/stale-behind`, 10)
-        .then((entries) => entries.map((e) => e.message))
-    , ROOT)
+    const staleUntouched = await win.evaluate(
+      (root) =>
+        window.electronAPI
+          .gitLog(`${root}/stale-behind`, 10)
+          .then((entries) => entries.map((e) => e.message)),
+      ROOT
+    )
     t.check(
       'the repo nothing had fetched was left alone — no sweep',
       !staleUntouched.includes('remote work'),
@@ -242,11 +247,7 @@ export async function run(t) {
       [...new Set(fetchSamples.map((s) => s.op))]
     )
     const fetchFraction = fetchCounts.find((c) => /^\d+\/\d+$/.test(c))
-    t.equal(
-      'this one IS every repo in the tree',
-      fetchFraction?.split('/')[1],
-      String(TOTAL_REPOS)
-    )
+    t.equal('this one IS every repo in the tree', fetchFraction?.split('/')[1], String(TOTAL_REPOS))
     const fetchNumerators = fetchCounts
       .map((c) => /^(\d+)\/\d+$/.exec(c))
       .filter(Boolean)
@@ -274,7 +275,11 @@ export async function run(t) {
       placed.length > 0 && placed.every((s) => s.inSameBar),
       placed[0]
     )
-    t.check('under it, not beside it', placed.length > 0 && placed.every((s) => s.belowButton), placed[0])
+    t.check(
+      'under it, not beside it',
+      placed.length > 0 && placed.every((s) => s.belowButton),
+      placed[0]
+    )
     t.check(
       "and takes most of the bar's width",
       placed.length > 0 && placed.every((s) => s.widthShare > 0.8),
@@ -295,7 +300,11 @@ export async function run(t) {
     const secondSummary = (await samples(win))
       .map((s) => s.count)
       .find((c) => /pulled|up to date|failed/.test(c))
-    t.check('a second pull takes the newly found commits', secondSummary?.includes('1 pulled'), secondSummary)
+    t.check(
+      'a second pull takes the newly found commits',
+      secondSummary?.includes('1 pulled'),
+      secondSummary
+    )
 
     const finally_ = await repoState(win, ROOT)
     t.check(

@@ -38,8 +38,8 @@ const LEGACY_COLOR_TO_PALETTE: Record<string, PaletteKey> = {
   '#007aff': 'glacier'
 }
 
-// Iris: a cool violet that lands near the app's own accent, so a profile
-// nobody has touched still looks like it belongs to Clave.
+// Iris: a cool violet, the palette nearest the indigo Clave's accent used to
+// be, so a profile nobody has touched keeps the look it always had.
 const DEFAULT_PALETTE: PaletteKey = 'iris'
 
 interface UserProfile {

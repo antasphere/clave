@@ -1,6 +1,6 @@
 import { MotionConfig } from 'framer-motion'
 import { AppShell } from './components/layout/AppShell'
-import { TooltipProvider } from './components/ui/tooltip'
+import { TooltipProvider } from '@clave/ui/components'
 
 function App(): React.JSX.Element {
   return (

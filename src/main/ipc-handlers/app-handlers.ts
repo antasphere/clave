@@ -142,8 +142,7 @@ export function registerAppHandlers(): void {
   // Trackpad tick (the sidebar's drop line moving to a new row). Fire-and-
   // forget: no reply, nothing to await, silent where unsupported.
   ipcMain.on('haptic:tick', (_event, pattern: unknown) => {
-    const p: HapticPattern =
-      pattern === 'generic' || pattern === 'level' ? pattern : 'alignment'
+    const p: HapticPattern = pattern === 'generic' || pattern === 'level' ? pattern : 'alignment'
     hapticTick(p)
   })
 
@@ -155,7 +154,9 @@ export function registerAppHandlers(): void {
         try {
           const fullName = execFileSync('id', ['-F'], { encoding: 'utf-8', timeout: 2000 }).trim()
           if (fullName) return fullName
-        } catch { /* fall through */ }
+        } catch {
+          /* fall through */
+        }
       }
       return info.username
     } catch {

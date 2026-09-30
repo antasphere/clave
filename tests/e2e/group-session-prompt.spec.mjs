@@ -27,12 +27,14 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn
+  spyPtySpawn,
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-session-prompt')
-const ROOT = '/tmp/clave-e2e-session-prompt-root'
+const ROOT = fixturePath('session-prompt-root')
 const PROJECT = `${ROOT}/labs/widget`
 const CLAVE = `${ROOT}/project.clave`
 const MARKER = 'e2e-session-brief-marker'
@@ -97,7 +99,7 @@ export async function run(t) {
     // spawn payload can be read from.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Codex CLI")')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
     await win.waitForTimeout(4000)
 
     await win.click('button[aria-label="Add a group"]')
@@ -145,7 +147,6 @@ export async function run(t) {
       sent.cwd !== PROJECT,
       sent.cwd
     )
-
   } finally {
     await app.close()
   }

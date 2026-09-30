@@ -9,7 +9,18 @@ export interface FlatRemoteTreeNode extends RemoteTreeNode {
   depth: number
 }
 
-export function useRemoteFileTree(locationId: string | undefined, cwd: string | null) {
+export function useRemoteFileTree(
+  locationId: string | undefined,
+  cwd: string | null
+): {
+  rootNodes: RemoteTreeNode[]
+  flatNodes: RemoteTreeNode[]
+  loaded: boolean
+  error: string | null
+  loadRoot: () => Promise<void>
+  refresh: () => void
+  toggleExpand: (nodePath: string) => Promise<void>
+} {
   const [rootNodes, setRootNodes] = useState<RemoteTreeNode[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,7 +30,14 @@ export function useRemoteFileTree(locationId: string | undefined, cwd: string | 
       if (!locationId || !window.electronAPI?.sftpReadDir) return []
       try {
         const entries = await window.electronAPI.sftpReadDir(locationId, dirPath)
-        return (entries as Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number }>)
+        return (
+          entries as Array<{
+            name: string
+            path: string
+            type: 'file' | 'directory'
+            size?: number
+          }>
+        )
           .sort((a, b) => {
             if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
             return a.name.localeCompare(b.name)

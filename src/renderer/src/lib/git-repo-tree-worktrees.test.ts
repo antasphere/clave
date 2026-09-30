@@ -99,12 +99,25 @@ describe('worktrees by date (PRDCT-2360)', () => {
   it('runs newest first, ties by name, the undated last', () => {
     const tree = buildRepoTree(WS, repos)
     const leaf = tree[0] as RepoTreeLeaf
-    expect(leaf.worktrees.map((w) => w.name)).toEqual(['wt-b', 'wt-same-1', 'wt-c', 'wt-a', 'wt-undated'])
+    expect(leaf.worktrees.map((w) => w.name)).toEqual([
+      'wt-b',
+      'wt-same-1',
+      'wt-c',
+      'wt-a',
+      'wt-undated'
+    ])
   })
 
   it('the flat order agrees', () => {
     const rows = orderWithWorktrees(repos)
-    expect(rows.map((r) => r.repo.name)).toEqual(['app', 'wt-b', 'wt-same-1', 'wt-c', 'wt-a', 'wt-undated'])
+    expect(rows.map((r) => r.repo.name)).toEqual([
+      'app',
+      'wt-b',
+      'wt-same-1',
+      'wt-c',
+      'wt-a',
+      'wt-undated'
+    ])
     expect(rows[rows.length - 1].last).toBe(true)
   })
 })
@@ -134,7 +147,11 @@ describe('worktreeSourcePath', () => {
   it('so a worktree under a symlinked root still hangs under its source', () => {
     const tree = buildRepoTree('/tmp/ws', [
       { name: 'app', path: '/tmp/ws/app' },
-      { name: 'wt', path: '/tmp/ws/wt', worktreeOf: worktreeSourcePath('/private/tmp/ws/app', repos) }
+      {
+        name: 'wt',
+        path: '/tmp/ws/wt',
+        worktreeOf: worktreeSourcePath('/private/tmp/ws/app', repos)
+      }
     ])
     expect(names(tree)).toEqual(['repo:app'])
     expect((tree[0] as RepoTreeLeaf).worktrees.map((w) => w.name)).toEqual(['wt'])

@@ -2,7 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { LaunchProfileManager } from './launch-profile-manager'
+import { sessionManager } from './sessions/session-manager'
+import { EchoAdapter } from './sessions/adapters/echo-adapter'
+import { syncPluginAdapters } from './sessions/plugin-adapters'
+import type { PluginRecord } from './plugins/plugin-store'
+import {
+  LaunchProfileManager,
+  defaultViewFor,
+  eventsProfile,
+  isEchoLaunchProfile
+} from './launch-profile-manager'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
 
@@ -17,6 +26,59 @@ function withManager(test: (manager: LaunchProfileManager, filePath: string) => 
 }
 
 describe('LaunchProfileManager', () => {
+  it.each(['claude', 'codex'] as const)(
+    'offers a %s chat variant using the saved command and arguments',
+    (family) => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(new EchoAdapter())
+      try {
+        Object.defineProperty(process, 'platform', { value: 'darwin' })
+        withManager((manager, filePath) => {
+          const profile = {
+            id: 'work',
+            name: 'Work',
+            family,
+            command: ['wrapper', 'arg with spaces', family],
+            additionalArgs: ['--profile', 'work']
+          }
+          manager.upsert(profile)
+          const id = `chat:${family}:work`
+          expect(manager.getPreferences().customProfiles).toContainEqual(
+            expect.objectContaining({
+              ...profile,
+              id,
+              name: 'Work (chat)',
+              sourceProfileId: 'work'
+            })
+          )
+          expect(manager.resolve(family, null, id).command).toEqual(profile.command)
+          expect(manager.resolve(family, null, id).additionalArgs).toEqual(profile.additionalArgs)
+          expect(eventsProfile(id)?.adapterId).toBe(`${family}-chat`)
+          expect(defaultViewFor(id)).toBe('clave.chat-view/chat')
+          manager.setGlobalDefault(family, id)
+          manager.setWorkspaceDefault('workspace', family, id)
+          const reloaded = new LaunchProfileManager(filePath)
+          expect(reloaded.resolve(family, 'workspace').id).toBe(id)
+          // A preferences round trip must not persist synthetic profile copies.
+          reloaded.replace(reloaded.getPreferences())
+          const stored = JSON.parse(fs.readFileSync(filePath, 'utf8')).customProfiles
+          expect(stored).toContainEqual(profile)
+          expect(stored.some((item: { id: string }) => item.id === id)).toBe(false)
+          expect(reloaded.resolve(family, 'workspace').id).toBe(id)
+          reloaded.upsert({ ...profile, command: ['updated', family] })
+          expect(reloaded.resolve(family, 'workspace').command).toEqual(['updated', family])
+          const preferences = reloaded.delete('work')
+          expect(preferences.globalDefaults[family]).toBeUndefined()
+          expect(preferences.workspaceOverrides.workspace[family]).toBeUndefined()
+          expect(() => reloaded.resolve(family, null, id)).toThrow(/no longer exists/)
+        })
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+        lookup.mockRestore()
+      }
+    }
+  )
+
   it('persists custom profiles with global and workspace defaults', () => {
     withManager((manager, filePath) => {
       manager.upsert({
@@ -92,5 +154,304 @@ describe('LaunchProfileManager', () => {
         'Invalid workspace id'
       )
     })
+  })
+})
+
+it('echo detection is a non-throwing predicate and resolution does not clone preferences', () => {
+  const clone = vi.spyOn(globalThis, 'structuredClone')
+  try {
+    expect(isEchoLaunchProfile('dev-echo-adapter')).toBe(false)
+    expect(isEchoLaunchProfile('builtin-claude')).toBe(false)
+    expect(isEchoLaunchProfile(null)).toBe(false)
+    withManager((manager) => expect(manager.resolve('claude').id).toBe('builtin-claude'))
+    expect(clone).not.toHaveBeenCalled()
+  } finally {
+    clone.mockRestore()
+  }
+})
+
+it('lists event profiles only with registered adapters and hides Claude chat on Windows', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(undefined)
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    withManager((manager) => {
+      expect(manager.getPreferences().customProfiles).toEqual([])
+      lookup.mockReturnValue(new EchoAdapter())
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat'
+      ])
+      Object.defineProperty(process, 'platform', { value: 'win32' })
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'codex-chat'
+      ])
+      expect(() => manager.setGlobalDefault('claude', 'claude-chat')).toThrow(
+        'Unknown launch profile'
+      )
+    })
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+    lookup.mockRestore()
+  }
+})
+
+it('keeps the development echo profile exclusive to the Claude family', async () => {
+  const argv = process.argv.slice()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-echo-family-'))
+  try {
+    process.argv.push('--dev-echo-adapter')
+    vi.resetModules()
+    const { LaunchProfileManager: DevManager } = await import('./launch-profile-manager')
+    const manager = new DevManager(path.join(dir, 'profiles.json'))
+    expect(() => manager.setGlobalDefault('codex', 'dev-echo-adapter')).toThrow(/Claude-family/)
+    expect(manager.setGlobalDefault('claude', 'dev-echo-adapter').globalDefaults.claude).toBe(
+      'dev-echo-adapter'
+    )
+  } finally {
+    process.argv.splice(0, process.argv.length, ...argv)
+    fs.rmSync(dir, { recursive: true, force: true })
+    vi.resetModules()
+  }
+})
+
+/** A store record for a plugin contributing one adapter, as the registry reads it. */
+function adapterPlugin(enabled: boolean): PluginRecord {
+  return {
+    id: 'acme.agent',
+    version: '1.0.0',
+    source: 'bundled',
+    enabled,
+    permissionsGranted: ['sessions.write'],
+    installedAt: new Date().toISOString(),
+    directory: '/tmp/acme-agent',
+    contentDigest: 'digest',
+    status: 'active',
+    panels: [],
+    commands: [],
+    toolbar: [],
+    generation: 0,
+    manifest: {
+      id: 'acme.agent',
+      name: 'Acme agent',
+      version: '1.0.0',
+      kind: 'plugin',
+      engines: { clave: '>=1.0.0' },
+      ui: 'none',
+      uiEntry: undefined,
+      permissions: ['sessions.write'],
+      contributes: {
+        panels: [],
+        commands: [],
+        toolbar: [],
+        sidebarSections: [],
+        views: [],
+        adapters: [
+          {
+            id: 'acme-agent',
+            name: 'Acme (plugin)',
+            entry: 'provider.cjs',
+            command: ['acme', '--stdio'],
+            capabilities: { permissions: true, questions: false, resume: false }
+          }
+        ]
+      }
+    } as PluginRecord['manifest']
+  }
+}
+
+it('refuses a stored default whose plugin is switched off, instead of starting a terminal', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const echo = new EchoAdapter()
+  const lookup = vi
+    .spyOn(sessionManager, 'getAdapter')
+    .mockImplementation((id: string) =>
+      id === 'claude-chat' || id === 'codex-chat' ? echo : undefined
+    )
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    syncPluginAdapters({ list: () => [adapterPlugin(true)] })
+    withManager((manager) => {
+      manager.setGlobalDefault('claude', 'acme-agent')
+      expect(manager.resolve('claude').id).toBe('acme-agent')
+      // Switched off, the stored default still points at it. The shared resolver
+      // would hand back the family's built-in, which is a terminal Claude.
+      syncPluginAdapters({ list: () => [adapterPlugin(false)] })
+      expect(() => manager.resolve('claude')).toThrow(
+        'Acme (plugin) is not enabled; enable it in Settings → Plugins'
+      )
+      // Uninstalled entirely, it is still named rather than silently replaced.
+      syncPluginAdapters({ list: () => [] })
+      expect(() => manager.resolve('claude')).toThrow('Acme (plugin) is no longer installed')
+      // A workspace override is the same story.
+      manager.setWorkspaceDefault('workspace-1', 'claude', null)
+      expect(() => manager.resolve('claude', 'workspace-1')).toThrow('no longer installed')
+    })
+  } finally {
+    syncPluginAdapters({ list: () => [] })
+    Object.defineProperty(process, 'platform', { value: platform.value })
+    lookup.mockRestore()
+  }
+})
+
+it('leaves an ordinary deleted profile to the built-in fallback', () => {
+  withManager((manager) => {
+    manager.upsert({
+      id: 'gone-custom',
+      name: 'Gone',
+      family: 'claude',
+      command: ['x'],
+      additionalArgs: []
+    })
+    manager.setGlobalDefault('claude', 'gone-custom')
+    manager.delete('gone-custom')
+    // Nothing to name and nothing to refuse: this is what the fallback is for.
+    expect(manager.resolve('claude').id).toBe('builtin-claude')
+  })
+})
+
+it('derives a launch profile from an enabled adapter plugin and hides it once disabled', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const echo = new EchoAdapter()
+  const lookup = vi
+    .spyOn(sessionManager, 'getAdapter')
+    .mockImplementation((id: string) =>
+      id === 'claude-chat' || id === 'codex-chat' ? echo : undefined
+    )
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    syncPluginAdapters({ list: () => [adapterPlugin(true)] })
+    withManager((manager) => {
+      const profiles = manager.getPreferences().customProfiles
+      expect(profiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat',
+        'acme-agent'
+      ])
+      const acme = profiles.find((profile) => profile.id === 'acme-agent')!
+      // The command is the manifest's, verbatim, and the profile joins the Claude family.
+      expect(acme.command).toEqual(['acme', '--stdio'])
+      expect(acme.name).toBe('Acme (plugin)')
+      expect(acme.family).toBe('claude')
+      expect(manager.resolve('claude', null, 'acme-agent').id).toBe('acme-agent')
+      // It is an events profile, so it is reserved against a user-authored one.
+      expect(() =>
+        manager.upsert({
+          id: 'acme-agent',
+          name: 'Mine',
+          family: 'claude',
+          command: ['mine'],
+          additionalArgs: []
+        })
+      ).toThrow('Reserved events profile')
+    })
+    syncPluginAdapters({ list: () => [adapterPlugin(false)] })
+    withManager((manager) => {
+      expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
+        'claude-chat',
+        'codex-chat'
+      ])
+    })
+    // Disabled hides new launches; the id still resolves to its adapter, so a
+    // stale launch is refused by name instead of silently starting a shell.
+    expect(eventsProfile('acme-agent')?.adapterId).toBe('acme-agent')
+  } finally {
+    syncPluginAdapters({ list: () => [] })
+    Object.defineProperty(process, 'platform', platform)
+    lookup.mockRestore()
+  }
+})
+// A one-shot Clave runs for a session (its tab's title) must start the Claude
+// CLI, whatever the session runs: found when the chat spec's echo fixture was
+// handed the one-shot and printed its arguments back as the tab's name.
+describe('the profile that starts the Claude CLI for a one-shot', () => {
+  const work = {
+    id: 'work',
+    name: 'Work',
+    family: 'claude' as const,
+    command: ['/opt/agents/claude-work', '--profile', 'work'],
+    additionalArgs: ['--add-dir', '/tmp']
+  }
+  function onDarwinWithChat(test: () => void): void {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    const echo = new EchoAdapter()
+    const lookup = vi
+      .spyOn(sessionManager, 'getAdapter')
+      .mockImplementation((id: string) =>
+        id === 'claude-chat' || id === 'codex-chat' ? echo : undefined
+      )
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin' })
+      test()
+    } finally {
+      syncPluginAdapters({ list: () => [] })
+      Object.defineProperty(process, 'platform', { value: platform.value })
+      lookup.mockRestore()
+    }
+  }
+
+  it("a Claude session's own profile, terminal or chat, carrying its command", () => {
+    onDarwinWithChat(() =>
+      withManager((manager) => {
+        manager.upsert(work)
+        expect(manager.resolveClaudeCli(null, 'work').command).toEqual(work.command)
+        expect(manager.resolveClaudeCli(null, 'chat:claude:work').command).toEqual(work.command)
+        expect(manager.resolveClaudeCli(null, 'claude-chat').command).toEqual(['claude'])
+        expect(manager.resolveClaudeCli(null, 'builtin-claude').id).toBe('builtin-claude')
+      })
+    )
+  })
+
+  it("another family's chat is named by the workspace's default Claude", () => {
+    onDarwinWithChat(() =>
+      withManager((manager) => {
+        manager.upsert(work)
+        manager.setGlobalDefault('claude', 'work')
+        expect(manager.resolveClaudeCli(null, 'codex-chat').id).toBe('work')
+        manager.setWorkspaceDefault('ws-1', 'claude', 'builtin-claude')
+        expect(manager.resolveClaudeCli('ws-1', 'codex-chat').id).toBe('builtin-claude')
+      })
+    )
+  })
+
+  it("a plugin's agent as the default, on or off, yields the built-in claude", () => {
+    onDarwinWithChat(() =>
+      withManager((manager) => {
+        syncPluginAdapters({ list: () => [adapterPlugin(true)] })
+        manager.setGlobalDefault('claude', 'acme-agent')
+        expect(manager.resolve('claude').id).toBe('acme-agent')
+        expect(manager.resolveClaudeCli(null, 'acme-agent').command).toEqual(['claude'])
+        expect(manager.resolveClaudeCli(null, undefined).id).toBe('builtin-claude')
+        // Switched off, `resolve` refuses the stored default by name; the title
+        // is not worth that refusal.
+        syncPluginAdapters({ list: () => [adapterPlugin(false)] })
+        expect(() => manager.resolve('claude')).toThrow()
+        expect(manager.resolveClaudeCli(null, undefined).id).toBe('builtin-claude')
+      })
+    )
+  })
+
+  it('a deleted profile falls through to the default', () => {
+    onDarwinWithChat(() =>
+      withManager((manager) => {
+        manager.upsert(work)
+        manager.setGlobalDefault('claude', 'work')
+        expect(manager.resolveClaudeCli(null, 'chat:claude:gone').id).toBe('work')
+        expect(manager.resolveClaudeCli(null, 'gone').id).toBe('work')
+      })
+    )
+  })
+})
+
+describe('the view a profile opens its sessions in', () => {
+  it('names the chat view on both built-in chat profiles', () => {
+    expect(eventsProfile('claude-chat')?.viewId).toBe('clave.chat-view/chat')
+    expect(eventsProfile('codex-chat')?.viewId).toBe('clave.chat-view/chat')
+    expect(defaultViewFor('claude-chat')).toBe('clave.chat-view/chat')
+    expect(defaultViewFor('codex-chat')).toBe('clave.chat-view/chat')
+  })
+  it('names none for a terminal profile, an unknown one, or nothing at all', () => {
+    for (const id of ['claude-terminal', 'tokenops-claude', 'dev-echo-adapter', null, undefined])
+      expect(defaultViewFor(id)).toBeUndefined()
   })
 })

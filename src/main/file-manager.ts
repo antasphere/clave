@@ -2,12 +2,7 @@ import * as fs from 'fs/promises'
 import { existsSync } from 'fs'
 import * as path from 'path'
 import fg from 'fast-glob'
-import {
-  IGNORED_DIRECTORIES,
-  MAX_FILES,
-  MAX_FILE_SIZE,
-  BINARY_PROBE_SIZE
-} from './constants'
+import { IGNORED_DIRECTORIES, MAX_FILES, MAX_FILE_SIZE, BINARY_PROBE_SIZE } from './constants'
 
 export interface DirEntry {
   name: string

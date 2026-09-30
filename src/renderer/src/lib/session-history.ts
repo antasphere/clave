@@ -49,7 +49,13 @@ export function startSessionHistoryStamping(): void {
  */
 export async function resumeHistoryEntry(
   entry: HistoryListEntry,
-  options: { groupId: string | null; dangerousMode: boolean }
+  options: {
+    groupId: string | null
+    dangerousMode: boolean
+    /** The launch profile to resume on, when not the global one: a chat tab's
+     *  /resume opens the conversation as a chat, whatever the default is. */
+    launchProfileId?: string
+  }
 ): Promise<string | null> {
   const state = useSessionStore.getState()
   const live = state.sessions.find(
@@ -76,6 +82,7 @@ export async function resumeHistoryEntry(
       piProvider: entry.provider === 'pi' ? (entry.agentProvider ?? undefined) : undefined,
       piThinking: entry.provider === 'pi' ? (entry.thinking ?? undefined) : undefined,
       resumeSessionId: entry.claudeSessionId,
+      ...(options.launchProfileId ? { launchProfileId: options.launchProfileId } : {}),
       workspaceId
     })
     const after = useSessionStore.getState()

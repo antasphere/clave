@@ -118,21 +118,31 @@ describe('parseUnifiedRateLimitHeaders', () => {
 })
 
 describe('credentialFor', () => {
-  const account = { id: 'a', label: 'Work', configDir: '', hasToken: true }
-  it('takes the pasted token ahead of everything', () => {
-    expect(credentialFor({ ...account, configDir: '/x' }, 'sk-ant-x')).toEqual({
-      kind: 'token',
-      token: 'sk-ant-x'
-    })
+  const account = {
+    id: 'a',
+    label: 'Work',
+    hasToken: true,
+    tokenSetAt: 1,
+    tokenExpiresAt: 2,
+    tokenInvalid: false
+  }
+  it('takes the pasted token', () => {
+    expect(credentialFor(account, 'sk-ant-x')).toEqual({ kind: 'token', token: 'sk-ant-x' })
   })
-  it('falls back to the config dir; only the Default reads the keychain', () => {
-    expect(credentialFor({ ...account, configDir: '/x' }, undefined)).toEqual({
-      kind: 'config-dir',
-      dir: '/x'
-    })
+  it('only the Default reads the keychain', () => {
     expect(credentialFor(undefined, undefined)).toEqual({ kind: 'keychain' })
     expect(
-      credentialFor({ id: 'default', label: 'Default', configDir: '', hasToken: false }, undefined)
+      credentialFor(
+        {
+          ...account,
+          id: 'default',
+          label: 'Default',
+          hasToken: false,
+          tokenSetAt: null,
+          tokenExpiresAt: null
+        },
+        undefined
+      )
     ).toEqual({ kind: 'keychain' })
   })
   it('never reads the machine login for an account that has no credential yet', () => {

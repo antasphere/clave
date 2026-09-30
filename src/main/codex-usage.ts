@@ -1,7 +1,13 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { resolvePosixShellLaunch } from './shell-launch'
-import type { UsageError, UsageLimits, UsageWindow } from './usage-manager'
+import { resolvePosixShellLaunch, shellSingleQuote } from './shell-launch'
+import {
+  AccountUsageManager,
+  type UsageError,
+  type UsageLimits,
+  type UsageWindow
+} from './usage-manager'
+import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from './codex-accounts'
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -73,17 +79,29 @@ export function normalizeCodexLimits(value: unknown): UsageLimits {
   return { windows, fetchedAt: Date.now() }
 }
 
+/** The shell command that starts the app-server on an account's home. The
+ *  assignment rides inside the login shell's command, after the profile has
+ *  run, so a `CODEX_HOME` the user's own profile exports cannot override the
+ *  account's. Exported for the test. */
+export function codexAppServerCommand(codexHome?: string): string {
+  return codexHome
+    ? `exec env CODEX_HOME=${shellSingleQuote(codexHome)} codex app-server`
+    : 'exec codex app-server'
+}
+
 /** A read-only, short-lived app-server connection. Codex handles its own auth;
  * credentials and account identity never cross into the renderer. No thread or
- * turn is started. A login shell resolves npm/nvm installs in packaged Electron. */
-export function readCodexLimits(): Promise<UsageLimits | UsageError> {
+ * turn is started. A login shell resolves npm/nvm installs in packaged Electron.
+ * `codexHome` is an account's own home (ADR 0002); absent, the machine's. */
+export function readCodexLimits(codexHome?: string): Promise<UsageLimits | UsageError> {
   return new Promise((resolve) => {
     const launch =
       process.platform === 'win32'
         ? { file: 'codex.cmd', args: ['app-server'] }
-        : resolvePosixShellLaunch(process.env.SHELL || '/bin/zsh', 'exec codex app-server')
+        : resolvePosixShellLaunch(process.env.SHELL || '/bin/zsh', codexAppServerCommand(codexHome))
     const child = spawn(launch.file, launch.args, {
       cwd: homedir(),
+      env: codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env,
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
       shell: process.platform === 'win32'
@@ -194,13 +212,13 @@ export function readCodexLimits(): Promise<UsageLimits | UsageError> {
   })
 }
 
-let inFlight: Promise<UsageLimits | UsageError> | null = null
-export const codexUsageManager = {
-  getLimits(): Promise<UsageLimits | UsageError> {
-    if (!inFlight)
-      inFlight = readCodexLimits().finally(() => {
-        inFlight = null
-      })
-    return inFlight
-  }
-}
+/** The Codex accounts: each read on its own home. An API-key account has no
+ *  quota, which the read itself says (`message`, no windows). */
+export const codexUsageManager = new AccountUsageManager(
+  {
+    ids: () => codexAccountsManager.list().map((a) => a.id),
+    exists: (id) => !!codexAccountsManager.get(id),
+    read: (id) => readCodexLimits(codexAccountsManager.syncHome(id))
+  },
+  DEFAULT_CODEX_ACCOUNT_ID
+)

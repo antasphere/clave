@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode } from 'react'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 
@@ -60,7 +60,7 @@ export function SidebarTabItem({
   onEditingDone,
   onPointerDown,
   isDragging
-}: SidebarTabItemProps) {
+}: SidebarTabItemProps): React.JSX.Element {
   const {
     editing,
     editValue,
@@ -87,9 +87,7 @@ export function SidebarTabItem({
   // Dragging takes visual priority; otherwise fade dimmed (unselected) tabs.
   const itemOpacity = isDragging ? 0.3 : dimmed ? 0.55 : undefined
   const tintBackground =
-    groupColorHex && isSelected && !groupSelected && grouped
-      ? `${groupColorHex}30`
-      : undefined
+    groupColorHex && isSelected && !groupSelected && grouped ? `${groupColorHex}30` : undefined
 
   return (
     <div
@@ -144,10 +142,14 @@ export function SidebarTabItem({
             onBlur={commitRename}
             onKeyDown={handleInputKeyDown}
             onClick={(e) => e.stopPropagation()}
-            className="flex-1 min-w-0 bg-transparent text-[13px] font-medium text-text-primary outline-none border-none"
+            className="flex-1 min-w-0 bg-transparent text-control font-medium text-text-primary outline-none border-none"
           />
         ) : (
-          <span className="flex-1 min-w-0 text-[13px] font-medium truncate" onDoubleClick={handleDoubleClick}>
+          <span
+            data-testid="session-tab-name"
+            className="flex-1 min-w-0 text-control font-medium truncate"
+            onDoubleClick={handleDoubleClick}
+          >
             {name}
           </span>
         )}
@@ -164,7 +166,7 @@ export function SidebarTabItem({
               e.stopPropagation()
               onDelete()
             }}
-            className="btn-icon btn-icon-xs flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="btn-icon btn-icon-xs sidebar-item-close opacity-0 group-hover:opacity-100 transition-opacity"
           >
             <XMarkIcon className="w-3.5 h-3.5" />
           </span>

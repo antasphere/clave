@@ -39,14 +39,15 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  stubFolderDialog
+  stubFolderDialog,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const DIR = userDataDir('side-panel')
-const ROOT = '/private/tmp/clave-e2e-side-panel-root'
+const ROOT = fixturePath('side-panel-root', { real: true })
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',
   name: 'Panel',
@@ -70,10 +71,10 @@ const REPOS = [
 // Bare inits: the note is about how many repos there are, not what is in them.
 // Bare remotes for the one repo that must sit BEHIND its upstream — outside
 // ROOT so the panel does not discover them as repos of their own.
-const ORIGINS = '/private/tmp/clave-e2e-side-panel-origins'
+const ORIGINS = fixturePath('side-panel-origins', { real: true })
 const BEHIND_REPO = 'alpha-app'
 
-const BIG_ROOT = '/private/tmp/clave-e2e-side-panel-big'
+const BIG_ROOT = fixturePath('side-panel-big', { real: true })
 const BIG_COUNT = 51
 
 function seedBigRoot() {
@@ -193,11 +194,17 @@ export async function run(t) {
     // toolbar, and the box under it starts where the content does.
     const align = await win.evaluate(() => {
       const bar = document.querySelector('[data-panel-bar="path"]')?.getBoundingClientRect()
-      const cards = [...document.querySelectorAll('.floating-card')].map((c) => c.getBoundingClientRect())
+      const cards = [...document.querySelectorAll('.floating-card')].map((c) =>
+        c.getBoundingClientRect()
+      )
       const main = cards.sort((a, b) => b.height - a.height)[0]
       return bar && main ? { bar: bar.top, card: main.top } : null
     })
-    t.check("the path bar sits on the content card's top edge", !!align && Math.abs(align.bar - align.card) < 1, align)
+    t.check(
+      "the path bar sits on the content card's top edge",
+      !!align && Math.abs(align.bar - align.card) < 1,
+      align
+    )
 
     // ── The tab bar carries the tabs, and nothing else ────────────────────
     const bar = await win.evaluate(() => {
@@ -220,20 +227,23 @@ export async function run(t) {
         rightSlack: last ? barBox.right - last.right : null,
         barWidth: barBox.width,
         parentWidth: el.parentElement.getBoundingClientRect().width,
+        // The bundled GitHub panel's tab makes three; at the panel's default
+        // width they must still fit without the bar having to scroll.
+        overflow: el.scrollWidth - el.clientWidth,
         barLeftGap: barBox.left - el.parentElement.getBoundingClientRect().left,
         barRightGap: el.parentElement.getBoundingClientRect().right - barBox.right
       }
     })
     t.check('the panel has one tab bar', bar !== null, bar)
     t.check(
-      'it holds both tabs',
-      JSON.stringify(bar?.tabs) === JSON.stringify(['Files', 'Git']),
+      'it holds the app’s two tabs and the bundled GitHub panel’s',
+      JSON.stringify(bar?.tabs) === JSON.stringify(['Files', 'Git', 'GitHub']),
       bar?.tabs
     )
     t.check(
-      'the bar is the width of the two tabs, not the panel’s',
-      bar !== null && bar.barWidth < bar.parentWidth - 20,
-      { barWidth: bar?.barWidth, parentWidth: bar?.parentWidth }
+      'the bar is the width of its tabs, inside the panel and without scrolling',
+      bar !== null && bar.barWidth <= bar.parentWidth - 16 && bar.overflow <= 0,
+      { barWidth: bar?.barWidth, parentWidth: bar?.parentWidth, overflow: bar?.overflow }
     )
     t.check(
       'and it centres itself in the panel',
@@ -267,7 +277,11 @@ export async function run(t) {
     t.check('the path sits in a bar of its own', pathBar !== null, pathBar)
     t.check('drawn as a box like the panel’s other bars', pathBar?.boxed === true, pathBar)
     t.check('the root chip is on it', pathBar?.chip === true, pathBar)
-    t.check('and the folder picker is in its menu, not loose on the bar', pathBar?.folder === false, pathBar)
+    t.check(
+      'and the folder picker is in its menu, not loose on the bar',
+      pathBar?.folder === false,
+      pathBar
+    )
     t.check('collapse-all is on it', pathBar?.collapse === true, pathBar)
     t.check('and it names the folder the panel is pointed at', pathBar?.text.length > 0, pathBar)
 
@@ -330,7 +344,9 @@ export async function run(t) {
     const openDir = async (name) => {
       await win.evaluate((n) => {
         const dir = [...document.querySelectorAll('[data-tree-item]')].find(
-          (r) => r.getAttribute('data-tree-name') === n && r.getAttribute('data-tree-expanded') === 'false'
+          (r) =>
+            r.getAttribute('data-tree-name') === n &&
+            r.getAttribute('data-tree-expanded') === 'false'
         )
         dir?.click()
       }, name)
@@ -377,7 +393,9 @@ export async function run(t) {
           `no rule between ${fPrev.name}(${fPrev.depth}) and ${entry.name}(${entry.depth})`
         )
       } else if (fPending !== entry.depth) {
-        fileRuleProblems.push(`rule above ${entry.name} at depth ${fPending}, wanted ${entry.depth}`)
+        fileRuleProblems.push(
+          `rule above ${entry.name} at depth ${fPending}, wanted ${entry.depth}`
+        )
       }
       fPending = null
       fPrev = entry
@@ -454,7 +472,7 @@ export async function run(t) {
       'a deeper rule is inset further than a shallower one',
       [...byDepth.entries()]
         .sort((a, b) => a[0] - b[0])
-        .every(([d, left], i, all) => i === 0 || left > all[i - 1][1]),
+        .every(([, left], i, all) => i === 0 || left > all[i - 1][1]),
       [...byDepth.entries()]
     )
 
@@ -462,24 +480,21 @@ export async function run(t) {
     // "Removed" has to mean removed, not hidden: a --tree-guide-color left
     // standing in one theme is a guide one class away from coming back. Swept
     // over ALL FOUR themes because each declares its own palette block.
-    const tokenSweep = await win.evaluate(() => {
-      const root = document.documentElement
-      const was = root.getAttribute('data-theme')
+    const tokenSweep = await win.evaluate(async () => {
+      const was = (await window.electronAPI.skinsList()).activeId
       const probe = document.createElement('span')
       probe.style.position = 'fixed'
       document.body.appendChild(probe)
       const out = {}
       for (const theme of ['dark', 'charcoal', 'light', 'coffee']) {
-        if (theme === 'dark') root.removeAttribute('data-theme')
-        else root.setAttribute('data-theme', theme)
+        await window.electronAPI.skinsActivate(theme)
         probe.style.backgroundColor = ''
         probe.style.backgroundColor = 'var(--tree-guide-color)'
         // An undefined custom property makes the declaration invalid at
         // computed-value time, so background-color falls back to transparent.
         out[theme] = getComputedStyle(probe).backgroundColor
       }
-      if (was === null) root.removeAttribute('data-theme')
-      else root.setAttribute('data-theme', was)
+      if (was) await window.electronAPI.skinsActivate(was)
       probe.remove()
       return out
     })
@@ -505,7 +520,9 @@ export async function run(t) {
     // the parity again.
     const fileRowHeights = await win.evaluate(() => [
       ...new Set(
-        [...document.querySelectorAll('[data-tree-item]')].map((el) => el.getBoundingClientRect().height)
+        [...document.querySelectorAll('[data-tree-item]')].map(
+          (el) => el.getBoundingClientRect().height
+        )
       )
     ])
     t.check(
@@ -543,11 +560,7 @@ export async function run(t) {
     const gitBar = await readGitBar()
     t.check('the git tab has a bar of its own', gitBar !== null)
     t.equal('the git tab keeps no collapse-all of its own', await straysIn('git'), 0)
-    t.check(
-      'at the default width every git control is inside the bar',
-      gitBar?.spill === 0,
-      gitBar
-    )
+    t.check('at the default width every git control is inside the bar', gitBar?.spill === 0, gitBar)
     t.check('and the bar is at most two lines', (gitBar?.height ?? 99) <= 64, gitBar)
 
     // The real test of the cluster: drag the panel to its 180px minimum, where
@@ -699,8 +712,10 @@ export async function run(t) {
         incoming: resolve('var(--color-git-incoming)'),
         orange: resolve('var(--color-orange-400)')
       }
-      const letters = [...document.querySelectorAll('[data-git-row="file"] .font-mono')].map(
-        (el) => ({ letter: el.textContent.trim(), color: getComputedStyle(el).color })
+      // The status is a dot in the row's tone with the word on the element
+      // (data-status, title), no longer a letter.
+      const letters = [...document.querySelectorAll('[data-git-row="file"] .git-status-dot')].map(
+        (el) => ({ letter: el.dataset.status, color: getComputedStyle(el).color })
       )
       const badges = [...document.querySelectorAll('.git-sync-badge')].map((el) => ({
         text: el.textContent.trim(),
@@ -714,7 +729,9 @@ export async function run(t) {
       new Set(Object.values(tones.wanted)).size === 3,
       tones.wanted
     )
-    const modifiedLetters = tones.letters.filter((l) => l.letter === 'M')
+    const modifiedLetters = tones.letters.filter(
+      (l) => l.letter === 'modified' || l.letter === 'staged-modified'
+    )
     t.check('the repo has a modified file to judge', modifiedLetters.length > 0, tones.letters)
     t.check(
       'a modified file wears the modified tone, not orange',
@@ -876,9 +893,7 @@ export async function run(t) {
     t.check('and offers one way to change the limit', opened?.settings === true, opened)
     t.equal('exactly one button, not a menu of them', opened?.buttons ?? -1, 1)
 
-    const limitBefore = await win.evaluate(() =>
-      localStorage.getItem('clave-git-live-poll-limit')
-    )
+    const limitBefore = await win.evaluate(() => localStorage.getItem('clave-git-live-poll-limit'))
     await win.click('[data-git-footnote-settings]')
     await win.waitForTimeout(1500)
 
@@ -894,7 +909,6 @@ export async function run(t) {
       await win.evaluate(() => localStorage.getItem('clave-git-live-poll-limit')),
       limitBefore
     )
-
   } finally {
     await app.close()
     rmSync(ROOT, { recursive: true, force: true })

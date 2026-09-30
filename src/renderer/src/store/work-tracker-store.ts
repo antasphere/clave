@@ -148,7 +148,12 @@ export const useWorkTrackerStore = create<WorkTrackerState>((set, get) => ({
         trackedSessions: state.trackedSessions.map((s) => {
           if (s.sessionId !== sessionId || s.endedAt) return s
           const delta = now - s.lastTickAt
-          return { ...s, endedAt: now, lastTickAt: now, accumulatedMs: s.accumulatedMs + (delta / activeCount) }
+          return {
+            ...s,
+            endedAt: now,
+            lastTickAt: now,
+            accumulatedMs: s.accumulatedMs + delta / activeCount
+          }
         })
       }
     }),
@@ -212,8 +217,7 @@ export const useWorkTrackerStore = create<WorkTrackerState>((set, get) => ({
       todayTotalMinutes,
       todaySessionCount
     })
-  },
-
+  }
 }))
 
 /**

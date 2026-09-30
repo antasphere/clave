@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
+import { ConfirmDialog } from '@clave/ui/components'
 import { useSessionStore } from '../../store/session-store'
 import {
   ListBulletIcon,
@@ -11,7 +12,7 @@ import {
   ClockIcon,
   QueueListIcon
 } from '@heroicons/react/24/outline'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 import { useGitBatch } from './git-batch-context'
 
 // ---------------------------------------------------------------------------
@@ -209,29 +210,35 @@ export function SectionHeader({
   disabled?: boolean
   /** Left offset in px — lets the header sit at its tree depth (default 12 = px-3). */
   indentPx?: number
-}) {
+}): React.JSX.Element {
   return (
-    <div className="git-section-header flex items-center pr-3" style={{ paddingLeft: indentPx ?? 12 }}>
+    <div
+      className="git-section-header flex items-center pr-3"
+      style={{ paddingLeft: indentPx ?? 12 }}
+    >
       <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
         {label} ({count})
       </span>
       <span className="ml-auto flex items-center gap-2">
-        {discardAction && onDiscardAction && (
-          <button
-            className="text-[10px] text-text-tertiary hover:text-red-400 transition-colors disabled:opacity-50"
-            onClick={onDiscardAction}
-            disabled={disabled}
-          >
-            {discardAction}
-          </button>
-        )}
         {action && onAction && (
           <button
-            className="text-[10px] text-text-tertiary hover:text-text-secondary transition-colors disabled:opacity-50"
+            className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors disabled:opacity-50"
             onClick={onAction}
             disabled={disabled}
           >
             {action}
+          </button>
+        )}
+        {/* The destructive verb goes LAST. It used to open the pair, at the
+            same weight as Stage All with red only on hover, so the first word
+            on the line was the one that loses work. */}
+        {discardAction && onDiscardAction && (
+          <button
+            className="text-[11px] text-text-tertiary hover:text-red-400 transition-colors disabled:opacity-50"
+            onClick={onDiscardAction}
+            disabled={disabled}
+          >
+            {discardAction}
           </button>
         )}
         {trailing}
@@ -247,7 +254,7 @@ export function SectionHeader({
  * folds its repos and their parent folders — and one button that does both is
  * the honest shape of that.
  */
-export function CollapseAllButton() {
+export function CollapseAllButton(): React.JSX.Element {
   const triggerCollapseAll = useSessionStore((s) => s.triggerCollapseAll)
   return (
     <IconButton
@@ -261,7 +268,7 @@ export function CollapseAllButton() {
   )
 }
 
-export function ViewModeToggle() {
+export function ViewModeToggle(): React.JSX.Element {
   const gitViewMode = useSessionStore((s) => s.gitViewMode)
   const setGitViewMode = useSessionStore((s) => s.setGitViewMode)
   const isTree = gitViewMode === 'tree'
@@ -297,7 +304,7 @@ export function CommitBarToggle(): React.JSX.Element {
   )
 }
 
-export function PanelModeToggle() {
+export function PanelModeToggle(): React.JSX.Element {
   const gitPanelMode = useSessionStore((s) => s.gitPanelMode)
   const setGitPanelMode = useSessionStore((s) => s.setGitPanelMode)
   const isLog = gitPanelMode === 'log'
@@ -327,7 +334,7 @@ export function MagicSyncButton({
 }: {
   repoPaths: string[]
   onDone?: () => void
-}) {
+}): React.JSX.Element {
   const { state, run } = useGitBatch()
   const mine = state.running && state.op === 'sync'
 
@@ -351,16 +358,34 @@ export function MagicSyncButton({
     })
   }, [run, repoPaths, onDone])
 
+  // Named for what it does, and gated: one click used to pull, stage every
+  // change, write a message, commit and push across every listed repo, under
+  // the word "Magic". The confirm says the five steps and the count once.
+  const [confirming, setConfirming] = useState(false)
+  const n = repoPaths.length
   return (
-    <IconButton
-      onClick={handleSync}
-      disabled={state.running || repoPaths.length === 0}
-      className="panel-icon-btn"
-      aria-label="Magic sync"
-      tooltip={mine ? 'Syncing...' : 'Magic sync'}
-    >
-      <ArrowPathIcon className={`w-3.5 h-3.5 ${mine ? 'animate-spin' : ''}`} />
-    </IconButton>
+    <>
+      <IconButton
+        onClick={() => setConfirming(true)}
+        disabled={state.running || n === 0}
+        className="panel-icon-btn"
+        aria-label="Commit and push all"
+        tooltip={mine ? 'Committing and pushing…' : 'Commit and push all'}
+      >
+        <ArrowPathIcon className={`w-3.5 h-3.5 ${mine ? 'animate-spin' : ''}`} />
+      </IconButton>
+      <ConfirmDialog
+        isOpen={confirming}
+        title="Commit and push all"
+        message={`In ${n === 1 ? 'this repo' : `${n} repos`}: pull what is behind, include every change, write a commit message for it, commit, and push. A repo with nothing to do is left alone.`}
+        confirmLabel="Commit and push"
+        onConfirm={() => {
+          setConfirming(false)
+          handleSync()
+        }}
+        onCancel={() => setConfirming(false)}
+      />
+    </>
   )
 }
 
@@ -378,7 +403,7 @@ export function MagicPullButton({
 }: {
   repoPaths: string[]
   onDone?: () => void
-}) {
+}): React.JSX.Element {
   const { state, run } = useGitBatch()
   const mine = state.running && state.op === 'pull'
   const count = repoPaths.length
@@ -422,27 +447,38 @@ export function MagicPullButton({
   )
 }
 
-export function JourneyButton({ cwd, repoName }: { cwd: string; repoName: string }) {
+export function JourneyButton({
+  cwd,
+  repoName
+}: {
+  cwd: string
+  repoName: string
+}): React.JSX.Element {
   const openJourneyPanel = useSessionStore((s) => s.openJourneyPanel)
   return (
     <IconButton
       onClick={() => openJourneyPanel(cwd, repoName)}
       className="panel-icon-btn"
       aria-label="Journey"
-      tooltip="Journey"
+      tooltip="Journey: this repo's history drawn as a map"
     >
       {/* Timeline/route icon */}
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
         <circle cx="3" cy="2.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
         <circle cx="9" cy="6" r="1.3" stroke="currentColor" strokeWidth="1.1" />
         <circle cx="3" cy="9.5" r="1.3" stroke="currentColor" strokeWidth="1.1" />
-        <path d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <path
+          d="M3 3.8v4.4M4.3 2.8l3.4 2.5M7.7 6.7l-3.4 2"
+          stroke="currentColor"
+          strokeWidth="1.1"
+          strokeLinecap="round"
+        />
       </svg>
     </IconButton>
   )
 }
 
-export function ErrorBanner({ message }: { message: string }) {
+export function ErrorBanner({ message }: { message: string }): React.JSX.Element {
   return (
     <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{message}</div>
   )

@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import {
   ArrowPathIcon,
   ArrowDownTrayIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
   DocumentTextIcon,
   ArrowTopRightOnSquareIcon,
   FolderOpenIcon
@@ -19,6 +17,7 @@ import {
 } from './primitives'
 import { ClaveMark } from '../ui/ClaveMark'
 import { PrereleaseMark } from '../ui/PrereleaseMark'
+import { AgentUpdatesSection } from './AgentUpdatesSection'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -112,7 +111,7 @@ export function UpdatesTab(): React.JSX.Element {
   return (
     <SettingsPage
       title="Software Update"
-      description="Clave updates itself from its GitHub releases. Check, download and install from here."
+      description="Clave updates itself from its GitHub releases, and keeps the agents it launches on their latest release."
     >
       <SettingsSection title="Installed version">
         <SettingsCard>
@@ -140,7 +139,7 @@ export function UpdatesTab(): React.JSX.Element {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="settings-row-controls">
               {phase === 'downloading' ? (
                 <button onClick={cancelDownload} className="btn-secondary">
                   Cancel
@@ -186,27 +185,46 @@ export function UpdatesTab(): React.JSX.Element {
             </div>
           )}
 
-          <SettingsRow label="Last checked" description={formatChecked(lastCheckedAt)}>
+          <SettingsRow label="Last checked">
             {supported && availableVersion && (
               <button onClick={handleCheck} disabled={busy} className="btn-secondary">
                 <ArrowPathIcon className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
                 Check Again
               </button>
             )}
+            <span className="settings-row-value">{formatChecked(lastCheckedAt)}</span>
           </SettingsRow>
-
-          {upToDate && phase !== 'checking' && lastCheckedAt !== null && (
-            <div className="settings-row">
-              <div className="flex items-center gap-2 min-w-0">
-                <CheckCircleIcon className="w-4 h-4 flex-shrink-0 text-accent" />
-                <p className="settings-row-description">
-                  Clave {currentVersion} is the latest version.
-                </p>
-              </div>
-            </div>
-          )}
         </SettingsCard>
+
+        {/* A check that failed is not an emergency, but it must be visible: it is
+            the difference between "you are up to date" and "we could not find
+            out". It used to be swallowed entirely. A callout under the card,
+            the system's shape for an error, not a section of its own. */}
+        {checkErrorMessage && phase !== 'error' && (
+          <SettingsCallout
+            tone="danger"
+            title="Could not check for updates"
+            text={<span className="break-words">{checkErrorMessage}</span>}
+          />
+        )}
+
+        {phase === 'error' && (
+          <SettingsCallout
+            tone="danger"
+            title="The download did not complete"
+            text={
+              <span className="break-words">{errorMessage || 'An unexpected error occurred'}</span>
+            }
+            actions={
+              <button onClick={() => startDownload('retry')} className="btn-primary">
+                Try Again
+              </button>
+            }
+          />
+        )}
       </SettingsSection>
+
+      <AgentUpdatesSection />
 
       <SettingsSection
         title="Release channel"
@@ -244,71 +262,31 @@ export function UpdatesTab(): React.JSX.Element {
         {confirmPrerelease && !prereleaseUpdates && (
           <SettingsCallout
             tone="accent"
-            className="mt-2"
             title="Receive pre-release builds?"
             text="You will be offered betas as soon as they are published, ahead of the stable release. A beta uses the same data as the stable app; the first one to run copies your settings and sessions aside before it starts. Turn this off to be offered the current stable release again."
-          >
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setConfirmPrerelease(false)} className="btn-secondary">
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setConfirmPrerelease(false)
-                  void setPrereleaseUpdates(true)
-                }}
-                className="btn-primary"
-              >
-                Receive Pre-releases
-              </button>
-            </div>
-          </SettingsCallout>
+            actions={
+              <>
+                <button onClick={() => setConfirmPrerelease(false)} className="btn-dialog">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmPrerelease(false)
+                    void setPrereleaseUpdates(true)
+                  }}
+                  className="btn-primary"
+                >
+                  Receive Pre-releases
+                </button>
+              </>
+            }
+          />
         )}
       </SettingsSection>
 
-      {/* A check that failed is not an emergency, but it must be visible: it is
-          the difference between "you are up to date" and "we could not find
-          out". It used to be swallowed entirely. */}
-      {checkErrorMessage && phase !== 'error' && (
-        <SettingsSection title="Last check failed">
-          <SettingsCard>
-            <div className="settings-row">
-              <div className="flex items-start gap-2 min-w-0">
-                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-warning" />
-                <div className="min-w-0">
-                  <p className="settings-row-title">Could not check for updates</p>
-                  <p className="settings-row-description break-words">{checkErrorMessage}</p>
-                </div>
-              </div>
-            </div>
-          </SettingsCard>
-        </SettingsSection>
-      )}
-
-      {phase === 'error' && (
-        <SettingsSection title="Update failed">
-          <SettingsCard>
-            <div className="settings-row">
-              <div className="flex items-start gap-2 min-w-0">
-                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5 text-destructive" />
-                <div className="min-w-0">
-                  <p className="settings-row-title">The download did not complete</p>
-                  <p className="settings-row-description break-words">
-                    {errorMessage || 'An unexpected error occurred'}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => startDownload('retry')} className="btn-primary">
-                Try Again
-              </button>
-            </div>
-          </SettingsCard>
-        </SettingsSection>
-      )}
-
       <SettingsSection
         title="If an update will not install"
-        description="Auto-update is Clave's only distribution channel, so these two are the way out when it cannot deliver: install the release by hand, and send us the log that says why."
+        description="Install the release by hand, and send us the log that says why the updater could not."
       >
         <SettingsCard>
           <SettingsRow

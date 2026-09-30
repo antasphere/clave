@@ -52,6 +52,7 @@ const MARKETPLACE_NAME_RE = /^[A-Za-z0-9._-]+$/
  *  is ever valid in a repo / URL / path, so their presence flags a malformed
  *  marketplace source. (Written as a code-point range to avoid a literal space
  *  byte in the class.) */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point: it rejects them
 const ILLEGAL_SOURCE_RE = /[\u0000-\u0020]/
 const VALID_SCOPES: MutationScope[] = ['user', 'project', 'local']
 

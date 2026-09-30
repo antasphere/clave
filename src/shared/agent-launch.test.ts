@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_CAPABILITIES,
   buildAgentArgv,
+  codexProfilePolicy,
   resolveLaunchProfile,
   sanitizeLaunchProfilePreferences,
+  type LaunchProfile,
   type LaunchProfilePreferences
 } from './agent-launch'
 
@@ -87,7 +89,51 @@ describe('agent argv', () => {
         dangerousMode: true,
         model: 'gpt-5.5'
       })
-    ).toEqual(['codex', '--yolo', '-m', 'gpt-5.5', '-c', 'tui.terminal_title=["app-name","status","spinner"]'])
+    ).toEqual([
+      'codex',
+      '--yolo',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      'tui.terminal_title=["app-name","status","spinner"]'
+    ])
+  })
+
+  it('resumes a Codex thread through the resume subcommand, the id last', () => {
+    const profile = {
+      id: 'codex',
+      name: 'Codex',
+      family: 'codex' as const,
+      command: ['codex'],
+      additionalArgs: ['--search']
+    }
+    expect(
+      buildAgentArgv({
+        kind: 'codex',
+        profile,
+        resumeSessionId: 'thread-1',
+        dangerousMode: true,
+        model: 'gpt-5.5'
+      })
+    ).toEqual([
+      'codex',
+      '--search',
+      'resume',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-m',
+      'gpt-5.5',
+      '-c',
+      'tui.terminal_title=["app-name","status","spinner"]',
+      'thread-1'
+    ])
+    expect(buildAgentArgv({ kind: 'codex', profile, resumeSessionId: 'thread-1' })).toEqual([
+      'codex',
+      '--search',
+      'resume',
+      '-c',
+      'tui.terminal_title=["app-name","status","spinner"]',
+      'thread-1'
+    ])
   })
 
   it('preserves the TokenOps command vector and appends Clave-owned Claude args', () => {
@@ -185,5 +231,42 @@ describe('agent argv', () => {
       exchangeCapture: 'unsupported',
       blockedState: 'unsupported'
     })
+  })
+})
+
+describe('Codex profile policy', () => {
+  const codex = (command: string[], additionalArgs: string[] = []): LaunchProfile => ({
+    id: 'p',
+    name: 'P',
+    family: 'codex',
+    command,
+    additionalArgs
+  })
+  it('reads yolo, and its long spelling, as full access without approvals', () => {
+    const full = { sandbox: 'danger-full-access', approvalPolicy: 'never' }
+    expect(codexProfilePolicy(codex(['codex', '--yolo']))).toEqual(full)
+    expect(
+      codexProfilePolicy(codex(['codex'], ['--dangerously-bypass-approvals-and-sandbox']))
+    ).toEqual(full)
+  })
+  it('reads the sandbox and approval flags in both spellings, the later winning', () => {
+    expect(
+      codexProfilePolicy(
+        codex(['codex', '-s', 'workspace-write'], ['--ask-for-approval=untrusted'])
+      )
+    ).toEqual({ sandbox: 'workspace-write', approvalPolicy: 'untrusted' })
+    expect(
+      codexProfilePolicy(codex(['codex', '--yolo'], ['--sandbox=read-only', '-a', 'on-request']))
+    ).toEqual({ sandbox: 'read-only', approvalPolicy: 'on-request' })
+  })
+  it('routes approvals to the reviewer for approve-for-me', () => {
+    expect(codexProfilePolicy(codex(['codex', '--approve-for-me']))).toEqual({
+      sandbox: 'workspace-write',
+      approvalsReviewer: 'auto_review'
+    })
+  })
+  it('asks for nothing when the profile names no permission, or an unknown value', () => {
+    expect(codexProfilePolicy(codex(['env', '-u', 'OPENAI_API_KEY', 'codex']))).toEqual({})
+    expect(codexProfilePolicy(codex(['codex', '-s', 'everything', '-a']))).toEqual({})
   })
 })

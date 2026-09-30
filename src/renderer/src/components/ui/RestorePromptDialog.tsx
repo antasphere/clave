@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { useRestorePromptStore } from '../../store/restore-prompt-store'
 
 /** Launch restore prompt — shown when the previous run left sessions that can
@@ -48,7 +48,7 @@ export function RestorePromptDialog(): React.JSX.Element | null {
             <ModalPositioner className="w-[300px]">
               <div className="modal-card">
                 <div className="px-4 pt-4 pb-3 text-center">
-                  <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                  <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                     Restore previous session?
                   </DialogPrimitive.Title>
                   <DialogPrimitive.Description className="mt-1.5 text-xs text-text-secondary leading-relaxed">
@@ -68,7 +68,7 @@ export function RestorePromptDialog(): React.JSX.Element | null {
                     ref={restoreRef}
                     type="button"
                     onClick={() => resolver(true)}
-                    className="btn-dialog text-accent hover:brightness-110 outline-none"
+                    className="btn-dialog text-action hover:brightness-110 outline-none"
                   >
                     Restore
                   </button>

@@ -39,9 +39,7 @@ class LocationManager {
     try {
       const raw = fs.readFileSync(this.locationsPath, 'utf-8')
       const locations = JSON.parse(raw) as Location[]
-      const remote = locations
-        .filter((l) => l.id !== 'local')
-        .map((l) => this.stripSecrets(l))
+      const remote = locations.filter((l) => l.id !== 'local').map((l) => this.stripSecrets(l))
       return [LOCAL_LOCATION, ...remote]
     } catch {
       return [LOCAL_LOCATION]

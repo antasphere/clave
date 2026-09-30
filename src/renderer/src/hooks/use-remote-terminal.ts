@@ -1,3 +1,4 @@
+import { useSkinStore } from '../lib/skin'
 import { useEffect, useRef, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -19,12 +20,17 @@ function detectPrompt(buffer: string): string | null {
   return null
 }
 
-export function useRemoteTerminal(shellId: string) {
+export function useRemoteTerminal(shellId: string): {
+  containerRef: React.RefObject<HTMLDivElement | null>
+  fit: () => void
+  focus: () => void
+} {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isVisibleRef = useRef(false)
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   const fit = useCallback(() => {
     fitAddonRef.current?.fit()
@@ -57,7 +63,10 @@ export function useRemoteTerminal(shellId: string) {
 
     terminal.open(container)
 
-    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+    // A hidden tile keeps a real box (TerminalGrid hides it off screen), so
+    // only a selected one is fitted; the selection effect fits it when shown.
+    const selectedAtMount = useSessionStore.getState().selectedSessionIds.includes(shellId)
+    if (selectedAtMount && container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
     }
     terminalRef.current = terminal
@@ -113,7 +122,7 @@ export function useRemoteTerminal(shellId: string) {
     let resizeIpcTimer: ReturnType<typeof setTimeout> | null = null
     let lastSentCols = terminal.cols
     let lastSentRows = terminal.rows
-    const flushResize = () => {
+    const flushResize = (): void => {
       resizeIpcTimer = null
       if (!pendingResize) return
       const { cols, rows } = pendingResize
@@ -129,8 +138,14 @@ export function useRemoteTerminal(shellId: string) {
       resizeIpcTimer = setTimeout(flushResize, 220)
     })
 
-    const { setSessionActivity, setSessionPromptWaiting, setSessionDetectedUrl, setSessionServerStatus, setSessionUnseenActivity, updateSessionAlive } =
-      useSessionStore.getState()
+    const {
+      setSessionActivity,
+      setSessionPromptWaiting,
+      setSessionDetectedUrl,
+      setSessionServerStatus,
+      setSessionUnseenActivity,
+      updateSessionAlive
+    } = useSessionStore.getState()
 
     // Activity tracking: debounce from active → idle after silence
     let activityTimer: ReturnType<typeof setTimeout> | null = null
@@ -172,7 +187,9 @@ export function useRemoteTerminal(shellId: string) {
       }
 
       // If a URL is set and we see signals the server was killed, verify immediately
-      const currentUrl = useSessionStore.getState().sessions.find((s) => s.id === shellId)?.detectedUrl
+      const currentUrl = useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === shellId)?.detectedUrl
       if (currentUrl && /(\^C|SIGINT|SIGTERM|EADDRINUSE)/.test(stripped)) {
         const port = safePort(currentUrl)
         if (port) {
@@ -212,9 +229,7 @@ export function useRemoteTerminal(shellId: string) {
         setSessionPromptWaiting(shellId, promptType)
         if (promptType) {
           notificationTimer = setTimeout(() => {
-            const session = useSessionStore
-              .getState()
-              .sessions.find((s) => s.id === shellId)
+            const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
             const title = session?.name ?? session?.folderName ?? 'Clave'
             window.electronAPI.showNotification?.({
               title,
@@ -260,6 +275,7 @@ export function useRemoteTerminal(shellId: string) {
       if (!entry) return
       const { width, height } = entry.contentRect
       if (width === 0 || height === 0) return
+      if (!isVisibleRef.current) return
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => {
         try {
@@ -279,7 +295,10 @@ export function useRemoteTerminal(shellId: string) {
     const portCheckInterval = setInterval(() => {
       if (!document.hasFocus() || !isVisibleRef.current) return
       const session = useSessionStore.getState().sessions.find((s) => s.id === shellId)
-      if (!session?.detectedUrl || session.serverStatus !== 'running') { portCheckFailures = 0; return }
+      if (!session?.detectedUrl || session.serverStatus !== 'running') {
+        portCheckFailures = 0
+        return
+      }
       const port = safePort(session.detectedUrl)
       if (port) {
         window.electronAPI.checkPort(port).then((alive) => {
@@ -319,7 +338,7 @@ export function useRemoteTerminal(shellId: string) {
     if (terminalRef.current) {
       terminalRef.current.options.theme = getXtermTheme(theme)
     }
-  }, [theme])
+  }, [theme, skinRevision])
 
   // Track visibility and toggle cursor blink for hidden terminals.
   // Also re-fit when anything that alters the terminal grid's available width
@@ -332,13 +351,15 @@ export function useRemoteTerminal(shellId: string) {
       terminalRef.current.options.cursorBlink = isVisibleRef.current
     }
     let pendingFitTimer: ReturnType<typeof setTimeout> | null = null
-    const scheduleFit = () => {
+    const scheduleFit = (): void => {
       if (pendingFitTimer) clearTimeout(pendingFitTimer)
       pendingFitTimer = setTimeout(() => {
         try {
           fitAddonRef.current?.fit()
           terminalRef.current?.refresh(0, (terminalRef.current.rows ?? 1) - 1)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300)
     }
     const unsub = useSessionStore.subscribe((state, prevState) => {

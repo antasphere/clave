@@ -5,7 +5,9 @@ import {
   ArrowDownTrayIcon,
   ChartBarIcon,
   CommandLineIcon,
-  CpuChipIcon
+  PuzzlePieceIcon,
+  CpuChipIcon,
+  UserCircleIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
@@ -32,12 +34,16 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     label: 'Agents',
     rows: [
       { id: 'agents', label: 'Agents', icon: CpuChipIcon },
+      { id: 'accounts', label: 'Accounts', icon: UserCircleIcon },
       { id: 'usage', label: 'Usage', icon: ChartBarIcon }
     ]
   },
   {
     label: 'Clave',
-    rows: [{ id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }]
+    rows: [
+      { id: 'plugins', label: 'Plugins', icon: PuzzlePieceIcon },
+      { id: 'updates', label: 'Software Update', icon: ArrowDownTrayIcon }
+    ]
   }
 ]
 
@@ -73,7 +79,10 @@ export function SettingsSidebar(): React.JSX.Element {
               <ChevronLeftIcon className="w-4 h-4" />
             </button>
             <span className="launcher-sep" />
-            <span className="px-2 text-[13px] font-medium text-text-primary select-none truncate">
+            <span
+              data-testid="settings-nav-title"
+              className="px-2 text-control font-medium text-text-primary select-none truncate"
+            >
               Settings
             </span>
           </div>

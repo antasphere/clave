@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useSessionStore } from '../../store/session-store'
 
-export function NewSessionButton() {
+export function NewSessionButton(): React.JSX.Element {
   const addSession = useSessionStore((s) => s.addSession)
   const [loading, setLoading] = useState(false)
 

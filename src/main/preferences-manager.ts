@@ -5,6 +5,7 @@ import { app } from 'electron'
 export type AppIcon = 'dark' | 'light' | 'claude'
 
 interface Preferences {
+  activeSkinId: string | null
   appIcon: AppIcon
   telemetryEnabled: boolean
   telemetryInstallId: string | null
@@ -19,9 +20,31 @@ interface Preferences {
    * `allowDowngrade` for the way back).
    */
   prereleaseUpdates: boolean
+  /**
+   * Keep the agent CLIs on their latest release on their own (on by default);
+   * off, Clave only says an upgrade exists (`agent-updates/`).
+   */
+  agentAutoUpdate: boolean
+  /**
+   * The model the reader last picked in a chat composer, by chat adapter id.
+   * A fresh chat that names no model starts on it (`sessions/chat-model-default.ts`).
+   */
+  chatModels: Record<string, string>
+  /**
+   * The reasoning effort the reader last picked in a chat composer, per chat
+   * adapter. A fresh chat starts on it (`sessions/chat-model-default.ts`);
+   * the adapter drops it for a model that does not take it.
+   */
+  chatEfforts: Record<string, string>
+  /**
+   * The view the reader last picked in a chat pane (`<pluginId>/<viewId>`).
+   * A fresh chat opens in it (`sessions/chat-view-default.ts`).
+   */
+  chatView: string | null
 }
 
 const DEFAULTS: Preferences = {
+  activeSkinId: null,
   appIcon: 'dark',
   telemetryEnabled: true,
   telemetryInstallId: null,
@@ -29,7 +52,11 @@ const DEFAULTS: Preferences = {
   telemetryNoticeShown: false,
   feedbackPromptCollapsed: false,
   missionControlOverlayEnabled: true,
-  prereleaseUpdates: false
+  prereleaseUpdates: false,
+  agentAutoUpdate: true,
+  chatModels: {},
+  chatEfforts: {},
+  chatView: null
 }
 
 class PreferencesManager {

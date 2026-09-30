@@ -32,8 +32,13 @@ export interface CodexSessionInfo {
 const HEAD_BYTES = 256 * 1024
 const WALK_DEPTH = 4
 
-export function codexRoot(): string {
-  return process.env.CLAVE_CODEX_ROOT || path.join(homedir(), '.codex', 'sessions')
+/** The store's root: the machine's own Codex home (the user's `CODEX_HOME`
+ *  when their shell exports one, else `~/.codex`), or the fixture root the
+ *  tests inject. Every account's home links its `sessions` here (ADR 0002),
+ *  so one root holds every thread whatever account wrote it. */
+export function codexRoot(env: Record<string, string | undefined> = process.env): string {
+  const home = env.CODEX_HOME?.trim() || path.join(homedir(), '.codex')
+  return process.env.CLAVE_CODEX_ROOT || path.join(home, 'sessions')
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -60,6 +65,15 @@ export function listCodexFiles(root: string): string[] {
     }
   }
   return out
+}
+
+/** Whether the store holds the rollout of a thread — the file Codex names
+ *  `rollout-<time>-<threadId>.jsonl` once the thread's first turn is written.
+ *  A thread that never got a message has none, and `thread/resume` of it
+ *  fails ("no rollout found"), so a restore resumes only what this finds. */
+export function hasCodexRollout(threadId: string, root: string = codexRoot()): boolean {
+  const suffix = `-${threadId}.jsonl`
+  return listCodexFiles(root).some((file) => file.endsWith(suffix))
 }
 
 function isInjected(text: string): boolean {
@@ -202,4 +216,30 @@ export function listCodexSessions(root: string, cache: CodexCache): CodexSession
     if (info) out.push(info)
   }
   return out
+}
+
+/**
+ * The thread a Codex TERMINAL session is running: Codex's TUI never tells
+ * its host which rollout it writes, so the thread is found by what the
+ * store says — the earliest conversation started in this cwd at or after
+ * the session started (a small allowance for clock drift), which is the one
+ * this session opened. Null when nothing in the store fits: the restart
+ * then starts fresh and says so. A chat session knows its thread from the
+ * app-server and never comes here.
+ */
+export function findCodexThreadForSession(
+  cwd: string,
+  startedAt: number,
+  root: string = codexRoot(),
+  cache: CodexCache = new CodexCache()
+): string | null {
+  const since = startedAt - 5_000
+  let best: { id: string; at: number } | null = null
+  for (const info of listCodexSessions(root, cache)) {
+    if (info.cwd !== cwd || !info.firstAt) continue
+    const at = Date.parse(info.firstAt)
+    if (!Number.isFinite(at) || at < since) continue
+    if (!best || at < best.at) best = { id: info.id, at }
+  }
+  return best?.id ?? null
 }

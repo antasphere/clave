@@ -12,11 +12,17 @@
  * both are things you only notice by looking at the row, and both are one
  * prop away from silently going back to what they were.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-terminals-panel')
-const ROOT = '/tmp/clave-e2e-terminals-panel-root'
+const ROOT = fixturePath('terminals-panel-root')
 const CLAVE = `${ROOT}/many.clave`
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',
@@ -26,8 +32,34 @@ const WS = {
   createdAt: 1
 }
 
-const COLORS = ['green', 'teal', 'blue', 'purple', 'yellow', 'pink', 'red', 'black', 'green', 'teal', 'blue', 'purple']
-const ICONS = ['bolt', 'globe', 'cube', 'eye', 'signal', 'fire', 'rocket', 'star', 'heart', 'wrench', 'beaker', 'cloud']
+const COLORS = [
+  'green',
+  'teal',
+  'blue',
+  'purple',
+  'yellow',
+  'pink',
+  'red',
+  'black',
+  'green',
+  'teal',
+  'blue',
+  'purple'
+]
+const ICONS = [
+  'bolt',
+  'globe',
+  'cube',
+  'eye',
+  'signal',
+  'fire',
+  'rocket',
+  'star',
+  'heart',
+  'wrench',
+  'beaker',
+  'cloud'
+]
 const TERMINAL_COUNT = 12
 
 export async function run(t) {
@@ -45,7 +77,14 @@ export async function run(t) {
             cwd: '.',
             color: 'blue',
             sessions: [
-              { cwd: '.', name: 'five-seed', claudeMode: false, antigravityMode: false, codexMode: false, dangerousMode: false }
+              {
+                cwd: '.',
+                name: 'five-seed',
+                claudeMode: false,
+                antigravityMode: false,
+                codexMode: false,
+                dangerousMode: false
+              }
             ],
             terminals: Array.from({ length: 5 }, (_, i) => ({
               command: `echo five-${i + 1}`,
@@ -59,7 +98,14 @@ export async function run(t) {
             cwd: '.',
             color: 'teal',
             sessions: [
-              { cwd: '.', name: 'seed', claudeMode: false, antigravityMode: false, codexMode: false, dangerousMode: false }
+              {
+                cwd: '.',
+                name: 'seed',
+                claudeMode: false,
+                antigravityMode: false,
+                codexMode: false,
+                dangerousMode: false
+              }
             ],
             terminals: Array.from({ length: TERMINAL_COUNT }, (_, i) => ({
               // prefill: the command is typed, never run, so nothing lingers.
@@ -107,17 +153,39 @@ export async function run(t) {
         addRows: document.querySelectorAll('.group-add-row').length
       }
     })
-    t.check('the terminals button is inside the header', geometry.btn && geometry.btn.right <= geometry.header.right + 0.5, geometry)
-    t.check('the + is inside the header', geometry.plus && geometry.plus.right <= geometry.header.right + 0.5, geometry)
-    t.check('the + comes first, the terminals button last', geometry.plus.right <= geometry.btn.left + 0.5, {
-      plus: geometry.plus.right,
-      btn: geometry.btn.left
-    })
-    t.check('the count reads before the icon it counts', geometry.countBox && geometry.iconBox && geometry.countBox.right <= geometry.iconBox.left + 0.5, {
-      count: geometry.countBox,
-      icon: geometry.iconBox
-    })
-    t.check('the name still has at least 60px', geometry.name && geometry.name.width >= 60, geometry)
+    t.check(
+      'the terminals button is inside the header',
+      geometry.btn && geometry.btn.right <= geometry.header.right + 0.5,
+      geometry
+    )
+    t.check(
+      'the + is inside the header',
+      geometry.plus && geometry.plus.right <= geometry.header.right + 0.5,
+      geometry
+    )
+    t.check(
+      'the + comes first, the terminals button last',
+      geometry.plus.right <= geometry.btn.left + 0.5,
+      {
+        plus: geometry.plus.right,
+        btn: geometry.btn.left
+      }
+    )
+    t.check(
+      'the count reads before the icon it counts',
+      geometry.countBox &&
+        geometry.iconBox &&
+        geometry.countBox.right <= geometry.iconBox.left + 0.5,
+      {
+        count: geometry.countBox,
+        icon: geometry.iconBox
+      }
+    )
+    t.check(
+      'the name still has at least 60px',
+      geometry.name && geometry.name.width >= 60,
+      geometry
+    )
     t.equal('the button shows the terminal count', geometry.count, String(TERMINAL_COUNT))
     t.equal('no per-terminal icons are laid out in the header any more', geometry.oldIconRow, 0)
     t.equal('the per-group "New session" row is gone', geometry.addRows, 0)
@@ -150,14 +218,26 @@ export async function run(t) {
     t.check('and entirely clear of the sidebar', side.panelLeft >= side.sidebarRight, side)
     // Level with the GROUP, not with the button centred inside it — off by the
     // row's own padding is exactly what you see, and only when you look.
-    t.check(
-      "its top is the group row's top",
-      Math.abs(side.panelTop - side.rowTop) <= 2,
-      { panelTop: side.panelTop, rowTop: side.rowTop, btnTop: side.btnTop }
+    t.check("its top is the group row's top", Math.abs(side.panelTop - side.rowTop) <= 2, {
+      panelTop: side.panelTop,
+      rowTop: side.rowTop,
+      btnTop: side.btnTop
+    })
+    t.equal(
+      'the panel lists every terminal',
+      await panel.locator('[data-terminal-row]').count(),
+      TERMINAL_COUNT
     )
-    t.equal('the panel lists every terminal', await panel.locator('[data-terminal-row]').count(), TERMINAL_COUNT)
-    t.equal('the panel ends with a New terminal row', await panel.locator('[data-add-terminal]').count(), 1)
-    t.equal('nothing is running yet', await panel.locator('[data-terminal-row][data-running="true"]').count(), 0)
+    t.equal(
+      'the panel ends with a New terminal row',
+      await panel.locator('[data-add-terminal]').count(),
+      1
+    )
+    t.equal(
+      'nothing is running yet',
+      await panel.locator('[data-terminal-row][data-running="true"]').count(),
+      0
+    )
 
     // ── Clicking a row starts that terminal; the button lights up ──
     await panel.locator('[data-terminal-row]').nth(2).click()
@@ -165,11 +245,15 @@ export async function run(t) {
     const lit = await header.locator('[data-group-terminals][data-running="true"]').count()
     t.equal('the terminals button is lit once a terminal runs', lit, 1)
     const litColor = await header.locator('[data-group-terminals]').evaluate((el) => el.style.color)
-    t.check('it carries the running terminal\'s colour', litColor && litColor !== '', litColor)
+    t.check("it carries the running terminal's colour", litColor && litColor !== '', litColor)
 
     await header.locator('[data-group-terminals]').hover()
     await win.waitForTimeout(500)
-    t.equal('the panel marks that terminal as running', await panel.locator('[data-terminal-row][data-running="true"]').count(), 1)
+    t.equal(
+      'the panel marks that terminal as running',
+      await panel.locator('[data-terminal-row][data-running="true"]').count(),
+      1
+    )
 
     // ── Leaving closes it ──
     await win.mouse.move(5, 5)

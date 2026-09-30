@@ -25,8 +25,31 @@ export interface ClaveGroupData {
    *  inherit it; a session's own `prompt` still wins for that session. Same
    *  @-token vocabulary as a session prompt, substituted at spawn. */
   prompt?: string
-  sessions: { cwd: string; name: string; claudeMode: boolean; antigravityMode: boolean; codexMode: boolean; piMode?: boolean; claudeAgentsMode?: boolean; dangerousMode: boolean; prompt?: string; rootSession?: boolean; /** @deprecated legacy alias for antigravityMode, read for back-compat */ geminiMode?: boolean }[]
-  terminals: { command: string; commandMode: 'prefill' | 'auto'; color: string; icon?: string; cwd?: string; autoLaunchLocalhost?: boolean; persistent?: boolean; serverUrl?: string; /** Bind this terminal's `serverUrl` as the group's web view at launch. */ groupView?: boolean }[]
+  sessions: {
+    cwd: string
+    name: string
+    claudeMode: boolean
+    antigravityMode: boolean
+    codexMode: boolean
+    piMode?: boolean
+    claudeAgentsMode?: boolean
+    dangerousMode: boolean
+    prompt?: string
+    rootSession?: boolean
+    /** The account (subscription) by label, or `any` (ADR 0002). Routes the session; drives nothing, so it is not elevated. */ account?: string
+    /** @deprecated legacy alias for antigravityMode, read for back-compat */ geminiMode?: boolean
+  }[]
+  terminals: {
+    command: string
+    commandMode: 'prefill' | 'auto'
+    color: string
+    icon?: string
+    cwd?: string
+    autoLaunchLocalhost?: boolean
+    persistent?: boolean
+    serverUrl?: string
+    /** Bind this terminal's `serverUrl` as the group's web view at launch. */ groupView?: boolean
+  }[]
   /** The group's web view when no command serves it: an http(s) URL, or a path
    *  to an .html file resolved like `cwd` (relative to the file's root dir).
    *  A terminal's `groupView` wins over it — that one carries a start action. */
@@ -37,10 +60,13 @@ export type ClaveFileReadResult =
   | ({ type: 'single' } & ClaveGroupData)
   | { type: 'multi'; groups: ClaveGroupData[] }
 
-
 /** Auto-run commands, auto-submitted agent prompts, or dangerousMode sessions
  *  present in a parsed result — anything that acts on launch without user input. */
-export function describeElevated(result: ClaveFileReadResult): { autoCommands: string[]; prompts: string[]; dangerous: boolean } {
+export function describeElevated(result: ClaveFileReadResult): {
+  autoCommands: string[]
+  prompts: string[]
+  dangerous: boolean
+} {
   const groups = result.type === 'multi' ? result.groups : [result]
   const autoCommands: string[] = []
   const prompts: string[] = []

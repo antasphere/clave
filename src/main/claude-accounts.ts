@@ -6,17 +6,18 @@ import { randomUUID } from 'crypto'
 /**
  * The Claude accounts a session can run on, owned by the main process.
  *
- * An account is a label plus one of three credential stories, in the order the
- * spawn and the usage read try them:
+ * An account is a label plus a pasted long-lived OAuth token (`claude
+ * setup-token`), injected into the session as `CLAUDE_CODE_OAUTH_TOKEN`.
+ * Claude Code takes it ahead of the machine's own login, so the session runs
+ * on that subscription while its settings, plugins and history stay the
+ * shared `~/.claude` — which is what lets a conversation be resumed on
+ * another account (ADR 0002). The built-in Default account is a passthrough
+ * to whatever the machine is signed into.
  *
- *  - a pasted long-lived OAuth token (`claude setup-token`), injected into the
- *    session as `CLAUDE_CODE_OAUTH_TOKEN`. Claude Code takes it ahead of the
- *    machine's own login, so the session runs on that subscription while its
- *    settings, plugins and history stay the shared `~/.claude`;
- *  - a `CLAUDE_CONFIG_DIR` of its own (the pre-token shape, issue #22), where
- *    Claude's login flow keeps a file-based credential;
- *  - nothing at all: the built-in Default account, a passthrough to whatever the
- *    machine is signed into.
+ * The `CLAUDE_CONFIG_DIR` shape (issue #22) is retired: an account that
+ * carried a directory keeps its label and is asked to sign in again. Its
+ * history lived in that directory, so nothing on it could move between
+ * accounts.
  *
  * The list (`claude-accounts.json`) is public and crosses IPC; the tokens live
  * apart in `claude-accounts-credentials.json`, encrypted by the OS through
@@ -31,25 +32,35 @@ import { randomUUID } from 'crypto'
 export interface ClaudeAccount {
   id: string
   label: string
-  /** Absolute `CLAUDE_CONFIG_DIR`, or '' for the shared `~/.claude`. */
-  configDir: string
   /** Whether a pasted token is held for this account. */
   hasToken: boolean
+  /** When the token was captured, or null without one. */
+  tokenSetAt: number | null
+  /** When the token is assumed to stop working (the command prints no
+   *  lifetime; a year is what a setup token has lasted), or null. */
+  tokenExpiresAt: number | null
+  /** The service refused the token on its last read: the account is out of
+   *  the pool until a new token lands. */
+  tokenInvalid: boolean
 }
 
 export const DEFAULT_CLAUDE_ACCOUNT_ID = 'default'
+/** What a `claude setup-token` token is good for, as observed; the read that
+ *  fails is the truth, this only drives the "expires in" line. */
+export const CLAUDE_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 
 const DEFAULT_ACCOUNT: ClaudeAccount = {
   id: DEFAULT_CLAUDE_ACCOUNT_ID,
   label: 'Default',
-  configDir: '',
-  hasToken: false
+  hasToken: false,
+  tokenSetAt: null,
+  tokenExpiresAt: null,
+  tokenInvalid: false
 }
 
 interface StoredAccount {
   id: string
   label: string
-  configDir: string
 }
 
 interface AccountsFile {
@@ -57,8 +68,15 @@ interface AccountsFile {
   accounts: StoredAccount[]
 }
 
+interface StoredCredential {
+  token: string
+  setAt: number
+  /** Set by the usage read that was refused; cleared by the next token. */
+  invalidAt?: number
+}
+
 interface CredentialsFile {
-  [accountId: string]: { token: string; setAt: number }
+  [accountId: string]: StoredCredential
 }
 
 /** What `claude setup-token` prints: an `sk-ant-oat01-…` token. The check is a
@@ -68,16 +86,17 @@ export function isPlausibleOauthToken(value: string): boolean {
   return /^sk-ant-[A-Za-z0-9_-]{20,}$/.test(value.trim())
 }
 
-function isStoredAccount(value: unknown): value is StoredAccount {
-  if (!value || typeof value !== 'object') return false
+/** A stored account, from this file or the legacy renderer list. A
+ *  `configDir` on it is the retired shape: the label survives, the directory
+ *  does not (`migratedFromConfigDir` tells the caller which ones). */
+function readStoredAccount(value: unknown): StoredAccount | null {
+  if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
-  return (
-    typeof v.id === 'string' &&
-    v.id.length > 0 &&
-    v.id !== DEFAULT_CLAUDE_ACCOUNT_ID &&
-    typeof v.label === 'string' &&
-    (v.configDir === undefined || typeof v.configDir === 'string')
-  )
+  if (typeof v.id !== 'string' || v.id.length === 0 || v.id === DEFAULT_CLAUDE_ACCOUNT_ID) {
+    return null
+  }
+  if (typeof v.label !== 'string') return null
+  return { id: v.id, label: v.label }
 }
 
 type ChangeListener = (accounts: ClaudeAccount[]) => void
@@ -86,6 +105,8 @@ class ClaudeAccountsManager {
   private accounts: StoredAccount[] | null = null
   private credentials: CredentialsFile | null = null
   private listeners = new Set<ChangeListener>()
+  /** Ids whose config-dir shape was dropped at this load: they need a login. */
+  private migrated = new Set<string>()
 
   private accountsPath(): string {
     return path.join(app.getPath('userData'), 'claude-accounts.json')
@@ -107,33 +128,39 @@ class ClaudeAccountsManager {
     }
     const file = parsed as Partial<AccountsFile> | null
     if (file && Array.isArray(file.accounts)) {
-      this.accounts = file.accounts.filter(isStoredAccount).map((a) => ({
-        id: a.id,
-        label: a.label,
-        configDir: a.configDir ?? ''
-      }))
+      this.accounts = this.importList(file.accounts)
+      // The migration is written back once, so the retired field is gone
+      // from disk and an older build reading the file sees no directory.
+      if (this.migrated.size > 0) this.saveAccounts()
     } else {
-      this.accounts = this.importLegacyProfiles()
+      this.accounts = this.importList(this.legacyProfiles())
       this.saveAccounts()
     }
     return this.accounts
   }
 
+  private importList(raw: unknown[]): StoredAccount[] {
+    const out: StoredAccount[] = []
+    for (const value of raw) {
+      const account = readStoredAccount(value)
+      if (!account) continue
+      const dir = (value as Record<string, unknown>).configDir
+      if (typeof dir === 'string' && dir.trim() !== '') this.migrated.add(account.id)
+      out.push(account)
+    }
+    return out
+  }
+
   /** One-time import of the renderer-era list (`claudeProfiles` in
    *  `clave-preferences.json`). The old key is left in place: an older build
    *  reading the same profile still finds its accounts. */
-  private importLegacyProfiles(): StoredAccount[] {
+  private legacyProfiles(): unknown[] {
     try {
       const raw = JSON.parse(
         fs.readFileSync(path.join(app.getPath('userData'), 'clave-preferences.json'), 'utf-8')
       ) as Record<string, unknown>
       const legacy = raw.claudeProfiles
-      if (!Array.isArray(legacy)) return []
-      return legacy.filter(isStoredAccount).map((a) => ({
-        id: a.id,
-        label: a.label,
-        configDir: a.configDir ?? ''
-      }))
+      return Array.isArray(legacy) ? legacy : []
     } catch {
       return []
     }
@@ -177,18 +204,31 @@ class ClaudeAccountsManager {
     return () => this.listeners.delete(listener)
   }
 
-  /** Every account, the Default first. Never carries a token value. */
+  private publicAccount(stored: StoredAccount): ClaudeAccount {
+    const credential = this.loadCredentials()[stored.id]
+    const hasToken = typeof credential?.token === 'string'
+    const setAt = hasToken && typeof credential.setAt === 'number' ? credential.setAt : null
+    return {
+      id: stored.id,
+      label: stored.label,
+      hasToken,
+      tokenSetAt: setAt,
+      tokenExpiresAt: setAt === null ? null : setAt + CLAUDE_TOKEN_LIFETIME_MS,
+      tokenInvalid: hasToken && typeof credential.invalidAt === 'number'
+    }
+  }
+
+  /** Every account, the Default first, the rest in the user's order. Never
+   *  carries a token value. */
   list(): ClaudeAccount[] {
-    const credentials = this.loadCredentials()
-    return [
-      DEFAULT_ACCOUNT,
-      ...this.loadAccounts().map((a) => ({
-        id: a.id,
-        label: a.label,
-        configDir: a.configDir,
-        hasToken: typeof credentials[a.id]?.token === 'string'
-      }))
-    ]
+    return [DEFAULT_ACCOUNT, ...this.loadAccounts().map((a) => this.publicAccount(a))]
+  }
+
+  /** The accounts whose config-dir shape was dropped at this load — they
+   *  still exist, with their label, and need a token. */
+  migratedAccountIds(): string[] {
+    this.loadAccounts()
+    return [...this.migrated]
   }
 
   get(id: string | undefined): ClaudeAccount | undefined {
@@ -207,28 +247,43 @@ class ClaudeAccountsManager {
     return loose.length === 1 ? loose[0] : undefined
   }
 
-  add(input: { label: string; configDir?: string }): ClaudeAccount {
+  add(input: { label: string }): ClaudeAccount {
     const accounts = this.loadAccounts()
     const account: StoredAccount = {
       id: randomUUID(),
-      label: input.label.trim() || 'Account',
-      configDir: (input.configDir ?? '').trim()
+      label: input.label.trim() || 'Account'
     }
     accounts.push(account)
     this.saveAccounts()
     this.emit()
-    return { ...account, hasToken: false }
+    return this.publicAccount(account)
   }
 
-  update(id: string, updates: { label?: string; configDir?: string }): ClaudeAccount | undefined {
+  update(id: string, updates: { label?: string }): ClaudeAccount | undefined {
     if (id === DEFAULT_CLAUDE_ACCOUNT_ID) return DEFAULT_ACCOUNT
     const account = this.loadAccounts().find((a) => a.id === id)
     if (!account) return undefined
     if (updates.label !== undefined) account.label = updates.label.trim() || account.label
-    if (updates.configDir !== undefined) account.configDir = updates.configDir.trim()
     this.saveAccounts()
     this.emit()
     return this.get(id)
+  }
+
+  /** The pool's order is the list's order: every non-default id, in the order
+   *  given. Ids left out keep their place after the named ones; unknown ids
+   *  are ignored. The Default is not reorderable and always first. */
+  reorder(ids: string[]): void {
+    const accounts = this.loadAccounts()
+    const byId = new Map(accounts.map((a) => [a.id, a]))
+    const next: StoredAccount[] = []
+    for (const id of ids) {
+      const account = byId.get(id)
+      if (account && !next.includes(account)) next.push(account)
+    }
+    for (const account of accounts) if (!next.includes(account)) next.push(account)
+    this.accounts = next
+    this.saveAccounts()
+    this.emit()
   }
 
   /** Removing an account forgets its token with it. */
@@ -238,6 +293,7 @@ class ClaudeAccountsManager {
     const index = accounts.findIndex((a) => a.id === id)
     if (index === -1) return false
     accounts.splice(index, 1)
+    this.migrated.delete(id)
     this.saveAccounts()
     const credentials = this.loadCredentials()
     if (credentials[id]) {
@@ -248,8 +304,9 @@ class ClaudeAccountsManager {
     return true
   }
 
-  /** Store a pasted token, encrypted by the OS. Throws when the shape is not a
-   *  token or when the OS cannot encrypt (never falls back to plaintext). */
+  /** Store a pasted or captured token, encrypted by the OS. Throws when the
+   *  shape is not a token or when the OS cannot encrypt (never falls back to
+   *  plaintext). A new token clears the refused mark and the migration mark. */
   setToken(id: string, token: string): void {
     const trimmed = token.trim()
     if (id === DEFAULT_CLAUDE_ACCOUNT_ID) {
@@ -267,6 +324,7 @@ class ClaudeAccountsManager {
       token: safeStorage.encryptString(trimmed).toString('base64'),
       setAt: Date.now()
     }
+    this.migrated.delete(id)
     this.saveCredentials()
     this.emit()
   }
@@ -275,6 +333,16 @@ class ClaudeAccountsManager {
     const credentials = this.loadCredentials()
     if (!credentials[id]) return
     delete credentials[id]
+    this.saveCredentials()
+    this.emit()
+  }
+
+  /** The service refused the token (a 401 on the read or the spawn): keep it,
+   *  so the user sees which account died, but take it out of the pool. */
+  markTokenInvalid(id: string): void {
+    const credential = this.loadCredentials()[id]
+    if (!credential || typeof credential.invalidAt === 'number') return
+    credential.invalidAt = Date.now()
     this.saveCredentials()
     this.emit()
   }

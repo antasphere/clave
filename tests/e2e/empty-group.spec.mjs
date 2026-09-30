@@ -21,10 +21,18 @@
  * nothing, or a group missing after the restart.
  */
 import { mkdirSync } from 'node:fs'
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp, until } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  until,
+  fixturePath
+} from './harness.mjs'
 
 const DIR = userDataDir('empty-group')
-const ROOT = '/tmp/clave-e2e-empty-group-root'
+const ROOT = fixturePath('empty-group-root')
 const WS = {
   id: 'abababab-0000-4000-8000-00000000000a',
   name: 'Empty',
@@ -32,7 +40,8 @@ const WS = {
   createdAt: 1
 }
 
-const cardSel = (groupId) => `.group-scope:has([data-sidebar-item-id="${groupId}"][data-sidebar-item-type="group"])`
+const cardSel = (groupId) =>
+  `.group-scope:has([data-sidebar-item-id="${groupId}"][data-sidebar-item-type="group"])`
 const rowSel = (id) => `[data-sidebar-item-id="${id}"]`
 const emptyRowSel = (groupId) => `[data-sidebar-empty-group="${groupId}"]`
 
@@ -47,7 +56,9 @@ function card(win, groupId) {
       const empty = el.querySelector(emptyRowSel)
       return {
         height: Math.round(rect.height),
-        rows: [...el.querySelectorAll('.group-rail [data-sidebar-item-id]')].map((r) => r.dataset.sidebarItemId),
+        rows: [...el.querySelectorAll('.group-rail [data-sidebar-item-id]')].map(
+          (r) => r.dataset.sidebarItemId
+        ),
         placeholder: empty ? (empty.textContent || '').trim() : null,
         placeholderHeight: empty ? Math.round(empty.getBoundingClientRect().height) : null
       }
@@ -69,7 +80,10 @@ async function drag(win, from, to) {
   await win.mouse.down()
   const steps = 12
   for (let i = 1; i <= steps; i++) {
-    await win.mouse.move(from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps)
+    await win.mouse.move(
+      from.x + ((to.x - from.x) * i) / steps,
+      from.y + ((to.y - from.y) * i) / steps
+    )
     await win.waitForTimeout(20)
   }
   await win.waitForTimeout(500)
@@ -94,7 +108,11 @@ export async function run(t) {
       fresh
     )
 
-    const member = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'only-tab' })
+    const member = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'terminal',
+      name: 'only-tab'
+    })
     await callMcp(app, 'moveSession', { sessionId: member.sessionId, groupId: group.groupId })
     await win.waitForTimeout(800)
     const withOne = await card(win, group.groupId)
@@ -120,33 +138,57 @@ export async function run(t) {
     const emptied = await card(win, group.groupId)
     t.check('the card is still drawn', !!emptied, 'no card for the group')
     t.equal('and it says "No sessions"', emptied?.placeholder, 'No sessions')
-    t.equal('the placeholder row is exactly one session row tall', emptied?.placeholderHeight, rowHeight)
-    t.equal('so the empty card is exactly as tall as it was with one tab', emptied?.height, withOne?.height)
+    t.equal(
+      'the placeholder row is exactly one session row tall',
+      emptied?.placeholderHeight,
+      rowHeight
+    )
+    t.equal(
+      'so the empty card is exactly as tall as it was with one tab',
+      emptied?.height,
+      withOne?.height
+    )
 
     // ── 2. The header still folds and unfolds the empty card ──
     await win.click(rowSel(group.groupId))
     await win.waitForTimeout(600)
     const folded = await card(win, group.groupId)
-    t.check('a click on the header folds the empty card', !!folded && folded.height < emptied.height, {
-      folded: folded?.height,
-      open: emptied?.height
-    })
+    t.check(
+      'a click on the header folds the empty card',
+      !!folded && folded.height < emptied.height,
+      {
+        folded: folded?.height,
+        open: emptied?.height
+      }
+    )
     await win.click(rowSel(group.groupId))
     await win.waitForTimeout(600)
     const unfolded = await card(win, group.groupId)
     t.equal('and a second click unfolds it to the same height', unfolded?.height, emptied?.height)
 
     // ── 3. The row is the drop zone: a loose tab dropped on it joins ──
-    const loose = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'loose-tab' })
+    const loose = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'terminal',
+      name: 'loose-tab'
+    })
     await win.waitForTimeout(800)
-    await drag(win, await centerOf(win, rowSel(loose.sessionId)), await centerOf(win, emptyRowSel(group.groupId)))
+    await drag(
+      win,
+      await centerOf(win, rowSel(loose.sessionId)),
+      await centerOf(win, emptyRowSel(group.groupId))
+    )
     const joined = await card(win, group.groupId)
     t.check(
       'the tab dropped on "No sessions" joined the group, and the row made way',
       joined?.rows.join(',') === loose.sessionId && joined.placeholder === null,
       joined
     )
-    t.equal('the card is as tall with the new tab as with the placeholder', joined?.height, emptied?.height)
+    t.equal(
+      'the card is as tall with the new tab as with the placeholder',
+      joined?.height,
+      emptied?.height
+    )
 
     // ── 4. The restart: the empty group comes back, empty ──
     await callMcp(app, 'closeSession', { sessionId: loose.sessionId })

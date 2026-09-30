@@ -1,6 +1,7 @@
+import { useEffect, useRef, useState } from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { CheckIcon, ChevronUpDownIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 /**
  * The settings primitives. Every settings page is built from these and from
@@ -12,7 +13,9 @@ import { cn } from '../../lib/utils'
  */
 
 /** The page: one width for every page, a title, a one-line description, the
- *  page's own actions on the right where it has some. */
+ *  page's own actions on the right where it has some. The header stays put
+ *  while the sections scroll under it, and draws its hairline only once
+ *  something has actually gone under (`data-scrolled`). */
 export function SettingsPage({
   title,
   description,
@@ -26,16 +29,30 @@ export function SettingsPage({
   children: React.ReactNode
   testId?: string
 }): React.JSX.Element {
+  const headerRef = useRef<HTMLElement>(null)
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const scroller = headerRef.current?.closest('.settings-scroller')
+    if (!scroller) return
+    const update = (): void => setScrolled(scroller.scrollTop > 0)
+    update()
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [])
   return (
     <div data-settings-page={testId ?? title.toLowerCase()}>
-      <header className="settings-page-header">
+      <header
+        ref={headerRef}
+        className="settings-page-header"
+        data-scrolled={scrolled ? 'true' : undefined}
+      >
         <div className="min-w-0">
           <h2 className="settings-page-title">{title}</h2>
           {description && <p className="settings-page-description">{description}</p>}
         </div>
         {actions && <div className="settings-page-actions">{actions}</div>}
       </header>
-      <div className="space-y-7">{children}</div>
+      <div className="settings-page-sections">{children}</div>
     </div>
   )
 }
@@ -62,26 +79,36 @@ export function SettingsSection({
   )
 }
 
-/** Grouped card: rows separated by hairline seams. */
+/** Grouped card: rows separated by hairline seams. Other div attributes
+ *  (a data-* hook for a test) pass through; they used to be dropped silently. */
 export function SettingsCard({
   children,
-  className
-}: {
+  className,
+  ...rest
+}: React.HTMLAttributes<HTMLDivElement> & {
   children: React.ReactNode
   className?: string
 }): React.JSX.Element {
-  return <div className={cn('settings-card', className)}>{children}</div>
+  return (
+    <div className={cn('settings-card', className)} {...rest}>
+      {children}
+    </div>
+  )
 }
 
-/** One row in a card: label + description left, control right. */
+/** One row in a card: label + description left, control right. `tags` is
+ *  the row's metadata as chips under the description (a plugin's
+ *  permissions), which is where metadata belongs: never a second row. */
 export function SettingsRow({
   label,
   description,
+  tags,
   disabled = false,
   children
 }: {
-  label: string
+  label: React.ReactNode
   description?: React.ReactNode
+  tags?: React.ReactNode
   disabled?: boolean
   children?: React.ReactNode
 }): React.JSX.Element {
@@ -90,32 +117,73 @@ export function SettingsRow({
       <div className="min-w-0">
         <p className="settings-row-title">{label}</p>
         {description && <p className="settings-row-description">{description}</p>}
+        {tags && <div className="settings-row-tags">{tags}</div>}
       </div>
-      {children && <div className="flex items-center gap-1.5 flex-shrink-0">{children}</div>}
+      {children && <div className="settings-row-controls">{children}</div>}
     </div>
   )
 }
 
-/** A callout under a card: a confirmation, a picker, an error. */
+/** A callout under a card: a confirmation, a picker, an error. `inset` puts
+ *  the same callout INSIDE a card, as a row of it, for a confirmation that
+ *  belongs to the row above (a plugin's enable review): no second outline.
+ *  `actions` is the Cancel / primary pair, right-aligned on the control ramp. */
 export function SettingsCallout({
   tone,
   title,
   text,
+  inset = false,
+  actions,
   children,
-  className
+  className,
+  role
 }: {
   tone?: 'accent' | 'danger'
   title?: React.ReactNode
   text?: React.ReactNode
+  inset?: boolean
+  actions?: React.ReactNode
   children?: React.ReactNode
   className?: string
+  role?: string
 }): React.JSX.Element {
   return (
-    <div className={cn('settings-callout', className)} data-tone={tone}>
+    <div
+      className={cn('settings-callout', inset && 'settings-callout--inset', className)}
+      data-tone={tone}
+      role={role}
+    >
       {title && <p className="settings-callout-title">{title}</p>}
       {text && <p className="settings-callout-text">{text}</p>}
       {children}
+      {actions && <div className="settings-callout-actions">{actions}</div>}
     </div>
+  )
+}
+
+/** One of a set: the default account, the profile file to adopt. */
+export function Radio({
+  checked,
+  onSelect,
+  ariaLabel,
+  title
+}: {
+  checked: boolean
+  onSelect: () => void
+  ariaLabel: string
+  title?: string
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      title={title}
+      className="radio"
+      data-checked={checked ? 'true' : undefined}
+      onClick={onSelect}
+    />
   )
 }
 

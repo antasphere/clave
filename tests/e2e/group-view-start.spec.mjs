@@ -33,13 +33,15 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath,
+  freePorts
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
 const DIR = userDataDir('group-view-start')
-const ROOT = '/tmp/clave-e2e-group-view-start-root'
+const ROOT = fixturePath('group-view-start-root')
 const CLAVE = `${ROOT}/boards.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',
@@ -48,9 +50,9 @@ const WS = {
   profileFile: CLAVE,
   createdAt: 1
 }
-const FAST_PORT = 47901
-const SLOW_PORT = 47902
-const MANUAL_PORT = 47903
+// Asked of the OS, not fixed: a second run at once would otherwise find its
+// board already served by the first run's server.
+const [FAST_PORT, SLOW_PORT, MANUAL_PORT] = await freePorts(3)
 const SLOW_DELAY_S = 75
 // tmux names carry the cwd's basename cut to 24 characters.
 const FIXTURE_TMUX_MARK = 'clave-e2e-group-view'
@@ -156,7 +158,9 @@ export async function run(t) {
             cwd: '.',
             color: 'blue',
             sessions: [seed('fast-seed')],
-            terminals: [boardTerminal(FAST_PORT, `python3 -m http.server ${FAST_PORT} --bind 127.0.0.1`)]
+            terminals: [
+              boardTerminal(FAST_PORT, `python3 -m http.server ${FAST_PORT} --bind 127.0.0.1`)
+            ]
           },
           {
             name: 'Slow board',
@@ -164,7 +168,10 @@ export async function run(t) {
             color: 'teal',
             sessions: [seed('slow-seed')],
             terminals: [
-              boardTerminal(SLOW_PORT, `sleep ${SLOW_DELAY_S}; python3 -m http.server ${SLOW_PORT} --bind 127.0.0.1`)
+              boardTerminal(
+                SLOW_PORT,
+                `sleep ${SLOW_DELAY_S}; python3 -m http.server ${SLOW_PORT} --bind 127.0.0.1`
+              )
             ]
           },
           {
@@ -173,7 +180,11 @@ export async function run(t) {
             color: 'green',
             sessions: [seed('manual-seed')],
             terminals: [
-              boardTerminal(MANUAL_PORT, `python3 -m http.server ${MANUAL_PORT} --bind 127.0.0.1`, 'prefill')
+              boardTerminal(
+                MANUAL_PORT,
+                `python3 -m http.server ${MANUAL_PORT} --bind 127.0.0.1`,
+                'prefill'
+              )
             ]
           }
         ]
@@ -189,7 +200,11 @@ export async function run(t) {
   try {
     // ── MANUAL first: the control, before any auto start could confuse it ──
     let state = await openGroup(win, 'Manual board')
-    t.check('MANUAL: the group opens on its view pane', state.pane && state.title === 'Manual board', state)
+    t.check(
+      'MANUAL: the group opens on its view pane',
+      state.pane && state.title === 'Manual board',
+      state
+    )
     await sleep(4000)
     state = await paneState(win)
     t.check(
@@ -199,13 +214,25 @@ export async function run(t) {
     )
     let listed = await callMcp(app, 'list', {})
     const manual = listed.groups.find((g) => g.name === 'Manual board')
-    t.check('MANUAL: no session was spawned for it', manual?.terminals?.[0]?.sessionId == null, manual)
+    t.check(
+      'MANUAL: no session was spawned for it',
+      manual?.terminals?.[0]?.sessionId == null,
+      manual
+    )
 
     // ── FAST: an auto terminal starts itself and the page mounts ──────────
     state = await openGroup(win, 'Fast board')
-    t.check('FAST: the group opens on its view pane', state.pane && state.title === 'Fast board', state)
+    t.check(
+      'FAST: the group opens on its view pane',
+      state.pane && state.title === 'Fast board',
+      state
+    )
     const fastUp = await untilFrame(win, 20_000)
-    t.check('FAST: the page frame mounts within 20 s with no click at all', fastUp?.frame === true, fastUp)
+    t.check(
+      'FAST: the page frame mounts within 20 s with no click at all',
+      fastUp?.frame === true,
+      fastUp
+    )
 
     listed = await callMcp(app, 'list', {})
     const fastGroup = listed.groups.find((g) => g.name === 'Fast board')
@@ -215,11 +242,19 @@ export async function run(t) {
       fastGroup
     )
     const sessions = fixtureTmuxSessions()
-    t.check('FAST: the serving shell is a tmux session named for the fixture', sessions.length >= 1, sessions)
+    t.check(
+      'FAST: the serving shell is a tmux session named for the fixture',
+      sessions.length >= 1,
+      sessions
+    )
 
     // ── SLOW: a server that binds after the old 60 s ceiling ──────────────
     state = await openGroup(win, 'Slow board')
-    t.check('SLOW: the group opens on its own view pane', state.pane && state.title === 'Slow board', state)
+    t.check(
+      'SLOW: the group opens on its own view pane',
+      state.pane && state.title === 'Slow board',
+      state
+    )
     const t0 = Date.now()
 
     // Sample the pane every 5 s until the frame shows or 100 s pass. The
@@ -228,7 +263,13 @@ export async function run(t) {
     let slowUp = null
     while (Date.now() - t0 < 100_000) {
       const s = await paneState(win)
-      timeline.push({ t: Math.round((Date.now() - t0) / 1000), notice: s.notice, elapsed: s.elapsed, frame: s.frame, buttons: s.buttons })
+      timeline.push({
+        t: Math.round((Date.now() - t0) / 1000),
+        notice: s.notice,
+        elapsed: s.elapsed,
+        frame: s.frame,
+        buttons: s.buttons
+      })
       if (s.frame) {
         slowUp = s
         break

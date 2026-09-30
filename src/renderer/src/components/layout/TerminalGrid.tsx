@@ -1,3 +1,4 @@
+import { useViewRegistry } from '../../views/store'
 import { initLinkedDocuments, useLinkedDocumentStore } from '../../store/linked-document-store'
 import { LinkedDocumentPanel } from '../files/LinkedDocumentPanel'
 import { useEffect, useMemo, useState } from 'react'
@@ -8,7 +9,8 @@ import {
   inActiveWorkspace
 } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
-import { TerminalPanel } from '../terminal/TerminalPanel'
+import { RegisteredSessionView } from '../../views/registry'
+import { useViewPaneIds } from '../../views/pane-kind'
 import { RemoteTerminalPanel } from '../terminal/RemoteTerminalPanel'
 import { TerminalErrorBoundary } from '../terminal/TerminalErrorBoundary'
 import { FileViewer } from '../files/FileViewer'
@@ -49,7 +51,21 @@ function computeGridLayout(count: number): { cols: number; rows: number } {
   return { cols, rows }
 }
 
+/** How an unselected terminal tile hides: a real box over the pane, out of the
+ *  grid's flow, pushed past the pane's clipped edge. Never `display: none`;
+ *  the comment on the tile loop says why. */
+const HIDDEN_TERMINAL_TILE: React.CSSProperties = {
+  visibility: 'hidden',
+  pointerEvents: 'none',
+  position: 'absolute',
+  inset: 0,
+  transform: 'translateX(-200%)'
+}
+const HIDDEN_VIEW_TILE: React.CSSProperties = { display: 'none' }
+
 export function TerminalGrid(): React.JSX.Element {
+  useViewRegistry()
+  const viewPaneIds = useViewPaneIds()
   const linked = useLinkedDocumentStore((s) => s.documents)
   useEffect(() => initLinkedDocuments(), [])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
@@ -146,8 +162,18 @@ export function TerminalGrid(): React.JSX.Element {
   const visibleCount = selectedTerminalIds.length + selectedFileTabIds.length
   const { cols, rows } = computeGridLayout(visibleCount)
 
+  // A linked document turns the pane into ONE frame: the session fills its left
+  // side without a card of its own, and the document is a card inset in the
+  // rest (.linked-document-frame / .linked-document-slot) — the conversation
+  // and its document read as one surface, not as two windows side by side.
   return (
-    <div className="flex-1 relative overflow-hidden">
+    <div
+      className={
+        linkedActive
+          ? 'flex-1 relative overflow-hidden floating-card linked-document-frame'
+          : 'flex-1 relative overflow-hidden'
+      }
+    >
       {/* "Select a session" overlay when nothing is selected */}
       {!hasSelection && !viewGroup && !viewSession && (
         <div className="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm z-10">
@@ -247,20 +273,8 @@ export function TerminalGrid(): React.JSX.Element {
           <LinkedDocumentPanel document={doc} />
         </div>
       ))}
-      {selectedSessionIds.length === 1 &&
-        linked.find((d) => d.sessionId === selectedSessionIds[0] && d.hidden) && (
-          <button
-            className="panel-tab linked-document-reopen"
-            onClick={() => {
-              const doc = linked.find((d) => d.sessionId === selectedSessionIds[0])!
-              void window.electronAPI.linkedDocuments.update(doc.id, doc.revision, {
-                hidden: false
-              })
-            }}
-          >
-            Open linked document
-          </button>
-        )}
+      {/* A hidden document is reopened from the session's own header
+          (LinkedDocumentReopen), not from a chip floating over its content. */}
 
       {/* Grid renders ALL terminals and ALL file tabs to keep them alive; the
           unselected ones are hidden (see each loop below). */}
@@ -288,11 +302,41 @@ export function TerminalGrid(): React.JSX.Element {
           // Agent sessions use AgentChatPanel via activeView, skip entirely
           if (session.sessionType === 'agent') return null
           const isSelected = selectedTerminalIds.includes(session.id)
+          // An unselected terminal is hidden WITHOUT `display: none`, and that
+          // is what keeps the window from freezing. xterm's DOM renderer
+          // measures each glyph once and caches the width, but only a width
+          // above zero: under `display: none` every glyph measures 0, nothing
+          // is cached, and each glyph of a repaint forces a layout of the whole
+          // window. A hidden terminal still repaints every row whenever its
+          // selection is cleared (an agent starting switches to the alternate
+          // screen and turns mouse reporting on), so 24 rows of glyphs cost
+          // seconds, and several agents starting at once froze the window for
+          // over a minute (profiled 2026-09-28: 98% of the freeze in that
+          // measure).
+          //
+          // So the tile keeps a real box, stretched over the pane and out of
+          // grid flow like a hidden file tab below, and is moved off screen:
+          // xterm's IntersectionObserver then sees it leave and pauses its
+          // rendering, as `display: none` did. `inert` keeps keystrokes and
+          // focus out of a terminal nobody is looking at.
+          //
+          // Only a TERMINAL pane pays for that box. A chat view holds no
+          // xterm, and a long conversation is thousands of elements: kept in
+          // layout it would be laid out again at every message it receives
+          // while hidden, so it keeps `display: none`.
+          const hiddenStyle = viewPaneIds.has(session.id) ? HIDDEN_VIEW_TILE : HIDDEN_TERMINAL_TILE
           return (
             <div
               key={session.id}
-              className="min-h-0 min-w-0 h-full floating-card"
-              style={{ display: isSelected ? undefined : 'none' }}
+              data-terminal-tile={session.id}
+              className={
+                linkedActive
+                  ? 'min-h-0 min-w-0 h-full overflow-hidden'
+                  : 'min-h-0 min-w-0 h-full floating-card'
+              }
+              style={isSelected ? undefined : hiddenStyle}
+              inert={!isSelected}
+              aria-hidden={isSelected ? undefined : true}
             >
               <TerminalErrorBoundary sessionId={session.id}>
                 {(session.sessionType === 'remote-terminal' ||
@@ -311,7 +355,13 @@ export function TerminalGrid(): React.JSX.Element {
                     locationId={session.locationId}
                   />
                 ) : (
-                  <TerminalPanel sessionId={session.id} />
+                  // Keyed on the restart epoch: a switch to another account
+                  // (ADR 0002) brings a new process under the same id, and
+                  // the pane reconnects to it by mounting afresh.
+                  <RegisteredSessionView
+                    key={`${session.id}:${session.restartEpoch ?? 0}`}
+                    sessionId={session.id}
+                  />
                 )}
               </TerminalErrorBoundary>
             </div>

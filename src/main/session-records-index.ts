@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { sessionRecordsDir } from './pty-manager'
+import { sessionRecordsDir } from './sessions/adapters/pty-backend'
 import { workspaceManager } from './workspace-manager'
 
 /** Session id → workspace, read straight from the session records on disk
@@ -35,4 +35,11 @@ export function sessionWorkspaceResolver(): (sessionId: string) => string | null
     /* no records dir yet */
   }
   return (id) => byId.get(id) ?? null
+}
+
+/** Records predating adapters all used the shared PTY adapter. */
+export function migrateSessionAdapterRecord<
+  T extends { adapterId?: string; transport?: 'pty' | 'events' }
+>(record: T): T & { adapterId: string; transport: 'pty' | 'events' } {
+  return { ...record, adapterId: record.adapterId ?? 'pty', transport: record.transport ?? 'pty' }
 }

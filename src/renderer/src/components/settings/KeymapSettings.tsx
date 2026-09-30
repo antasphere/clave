@@ -14,6 +14,7 @@ import {
   canonicalizeBinding,
   formatKeyBinding,
   keyEventToChord,
+  mouseEventToChord,
   overridesFromResolved,
   parseKeymapOverrides,
   resolveKeymapConfig,
@@ -21,7 +22,7 @@ import {
   type ResolvedKeymapConfig
 } from '../../../../shared/keymaps'
 import { saveKeymapOverrides, useKeymapStore } from '../../store/keymap-store'
-import { SettingsCard, SettingsPage, SettingsSection } from './primitives'
+import { SettingsCallout, SettingsCard, SettingsPage, SettingsSection } from './primitives'
 
 type EditorMode = 'actions' | 'json'
 
@@ -148,6 +149,28 @@ export function KeymapSettings(): React.JSX.Element {
     recordingTimer.current = setTimeout(() => finishRecording(next), KEYMAP_SEQUENCE_TIMEOUT_MS)
   }
 
+  // A mouse button is a whole binding on its own: it ends the recording at
+  // once, and it cannot follow the master key (a sequence is keys only).
+  const recordMouse = (event: React.MouseEvent, target: RecordingTarget): void => {
+    const chord = mouseEventToChord(event.nativeEvent)
+    if (!chord) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (target.master) {
+      clearRecordingTimer()
+      setRecording(null)
+      setErrors(['The master key must be a key, not a mouse button'])
+      return
+    }
+    if (target.steps.length > 0) {
+      clearRecordingTimer()
+      setRecording(null)
+      setErrors(['A mouse button cannot be part of a key sequence'])
+      return
+    }
+    finishRecording({ ...target, steps: [chord] })
+  }
+
   const startBinding = (actionId: KeymapActionId, index: number): void => {
     clearRecordingTimer()
     setRecording({ actionId, index, steps: [] })
@@ -245,7 +268,7 @@ export function KeymapSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Keymaps"
-      description="Changes stay in this draft until Save. Each action accepts at most two bindings."
+      description="Changes stay in this draft until you save. Up to two bindings per action."
       actions={
         <>
           <button onClick={() => void importJson()} className="btn-secondary">
@@ -259,17 +282,17 @@ export function KeymapSettings(): React.JSX.Element {
     >
       <SettingsSection
         title="Command mode"
-        description={`Press the master key, then a command sequence. Each next key has ${KEYMAP_SEQUENCE_TIMEOUT_MS}ms to match.`}
+        description={`The master key opens a sequence: press it, then the command's keys, each within ${KEYMAP_SEQUENCE_TIMEOUT_MS}ms.`}
       >
         <SettingsCard>
           <div className="settings-row">
             <div>
               <p className="settings-row-title">Master key</p>
               <p className="settings-row-description">
-                Unset it to disable command mode without changing direct shortcuts.
+                Unset it to turn command mode off. Direct shortcuts keep working.
               </p>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="settings-row-controls">
               <button
                 data-keymap-recorder
                 data-recording="master"
@@ -278,6 +301,7 @@ export function KeymapSettings(): React.JSX.Element {
                   setRecording({ master: true, steps: [] })
                 }}
                 onKeyDown={(event) => recording?.master && recordKey(event, recording)}
+                onMouseUp={(event) => recording?.master && recordMouse(event, recording)}
                 className="keymap-binding"
               >
                 {recording?.master
@@ -301,7 +325,10 @@ export function KeymapSettings(): React.JSX.Element {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Bindings">
+      <SettingsSection
+        title="Bindings"
+        description="A binding is keys or a mouse button: middle click, back or forward, with any modifiers. A session action bound to a mouse button acts on the sidebar row you click; bound to keys, on the focused session."
+      >
         <div className="flex items-center gap-2 mb-2.5">
           <div className="search-field flex-1">
             <MagnifyingGlassIcon className="w-3.5 h-3.5" />
@@ -357,12 +384,15 @@ export function KeymapSettings(): React.JSX.Element {
                             onKeyDown={(event) =>
                               active && recording && recordKey(event, recording)
                             }
+                            onMouseUp={(event) =>
+                              active && recording && recordMouse(event, recording)
+                            }
                             className="keymap-binding"
                           >
                             {active
                               ? recording.steps.length > 0
                                 ? formatKeyBinding(recording.steps.join(' '), draft.masterKey)
-                                : 'Press keys…'
+                                : 'Press keys or a mouse button…'
                               : formatKeyBinding(binding, draft.masterKey)}
                           </button>
                           <button
@@ -371,7 +401,7 @@ export function KeymapSettings(): React.JSX.Element {
                             title="Remove binding"
                             aria-label={`Remove binding for ${action.label}`}
                           >
-                            <TrashIcon className="w-3 h-3" />
+                            <TrashIcon className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       )
@@ -381,11 +411,12 @@ export function KeymapSettings(): React.JSX.Element {
                         data-keymap-recorder
                         data-recording={`${action.id}-${bindings.length}`}
                         onKeyDown={(event) => recordKey(event, recording)}
+                        onMouseUp={(event) => recordMouse(event, recording)}
                         className="keymap-binding"
                       >
                         {recording.steps.length > 0
                           ? formatKeyBinding(recording.steps.join(' '), draft.masterKey)
-                          : 'Press keys…'}
+                          : 'Press keys or a mouse button…'}
                       </button>
                     )}
                     {bindings.length < MAX_BINDINGS_PER_ACTION && !adding && (
@@ -428,13 +459,15 @@ export function KeymapSettings(): React.JSX.Element {
       </SettingsSection>
 
       {(loadError || errors.length > 0) && (
-        <div className="keymap-message" data-tone="error">
+        <SettingsCallout tone="danger" role="alert">
           {(errors.length > 0 ? errors : [loadError]).map((error) => (
-            <p key={error}>{error}</p>
+            <p key={error} className="settings-callout-text whitespace-pre-wrap">
+              {error}
+            </p>
           ))}
-        </div>
+        </SettingsCallout>
       )}
-      {notice && <div className="keymap-message">{notice}</div>}
+      {notice && <SettingsCallout text={notice} role="status" />}
 
       <div className="flex items-center justify-between gap-3">
         <button

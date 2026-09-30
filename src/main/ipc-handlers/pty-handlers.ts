@@ -17,6 +17,19 @@ import {
   clearState as clearAgentState
 } from '../agent-state-manager'
 
+type SessionInfoResult = {
+  id: string
+  cwd: string
+  folderName: string
+  alive: boolean
+  claudeSessionId: string | null
+  piSessionId: string | null
+  launchProfileId?: string
+  model?: string
+  piProvider?: string
+  piThinking?: PtySpawnOptions['piThinking']
+}
+
 export function registerPtyHandlers(): void {
   // Buffer PTY input per session to detect /clear command
   const inputBuffers = new Map<string, string>()
@@ -28,8 +41,15 @@ export function registerPtyHandlers(): void {
     }
   })
 
-  ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) => {
-    const win = BrowserWindow.fromWebContents(_event.sender)
+  /** The spawn, for the window that asked: the session, its listeners and
+   *  its window binding. `pty:spawn` and `pty:restart` share it so a restart
+   *  on another account (ADR 0002) is the same spawn with the account
+   *  changed, never a second copy of this wiring. */
+  async function spawnForWindow(
+    win: BrowserWindow | null,
+    cwd: string,
+    options?: PtySpawnOptions
+  ): Promise<SessionInfoResult> {
     // tmux mode is a global app setting, ON by default. Honour it unless a
     // caller overrides per-spawn or the user explicitly turned it off. (When
     // tmux isn't installed the spawn transparently falls back to a plain shell.)
@@ -48,7 +68,7 @@ export function registerPtyHandlers(): void {
     // record, so the next boot brings the tab back in that window (an
     // adoption or a move re-stamps through this same path).
     const windowKey = (win ? windowRegistry.getKeyForWindow(win.id) : null) ?? undefined
-    const session = ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
+    const session = await ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
     // The sender hosts the session from now on: its renderer holds the xterm
     // and receives pty:data. Adoption and re-homing rebind through this same
     // path (the adopting window is the sender).
@@ -61,9 +81,21 @@ export function registerPtyHandlers(): void {
       !options?.claudeAgentsMode
     const isResumed = !!options?.resumeSessionId
 
-    // Schedule title generation for new Claude-mode sessions
+    // A fresh Claude session is named by its first message, by the agent it
+    // runs: its resolved profile, on its account.
     if (isClaudeMode && !isResumed && session.claudeSessionId && win) {
-      titleGenerator.scheduleTitleGeneration(session.id, session.cwd, session.claudeSessionId, win)
+      titleGenerator.scheduleTitleGeneration(
+        session.id,
+        session.cwd,
+        session.claudeSessionId,
+        win,
+        {
+          workspaceId,
+          launchProfileId: session.launchProfileId,
+          claudeProfileId: options?.claudeProfileId,
+          configDir: options?.configDir
+        }
+      )
     }
 
     // Attach listeners now so the channels are ready before the renderer
@@ -104,7 +136,67 @@ export function registerPtyHandlers(): void {
       piProvider: session.piProvider,
       piThinking: session.piThinking
     }
+  }
+
+  // The CLI's own word on its account's limit reaches the window holding the
+  // tab (ADR 0002): the policy there proposes or makes the move.
+  ptyManager.onLimitReported((sessionId) => {
+    const win = windowRegistry.getWindowForSession(sessionId)
+    if (win && !win.isDestroyed()) win.webContents.send('session:limit-reported', sessionId)
   })
+
+  // `initialInput` is main's own (a restart's resend, pty-manager.ts): a
+  // renderer's spawn never carries one.
+  ipcMain.handle('pty:spawn', (_event, cwd: string, options?: PtySpawnOptions) =>
+    spawnForWindow(
+      BrowserWindow.fromWebContents(_event.sender),
+      cwd,
+      options && { ...options, initialInput: undefined }
+    )
+  )
+
+  // A session moved to another account (ADR 0002): the process is stopped,
+  // its record's name and view read first, and the same spawn made again
+  // under the same id with the conversation resumed. The renderer remounts
+  // the tab on the answer. `resumed` false means nothing was found to
+  // resume — a Codex terminal whose thread is not in the store yet — and
+  // the tab starts a fresh conversation on the new account.
+  ipcMain.handle(
+    'pty:restart',
+    async (
+      _event,
+      id: string,
+      overrides: {
+        claudeProfileId?: unknown
+        claudeProfileLabel?: unknown
+        codexAccountId?: unknown
+        codexAccountLabel?: unknown
+        resendRejected?: unknown
+      }
+    ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
+      if (typeof id !== 'string') return { error: 'No session' }
+      const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+      const plan = ptyManager.restartSpawn(id, {
+        claudeProfileId: str(overrides?.claudeProfileId),
+        claudeProfileLabel: str(overrides?.claudeProfileLabel),
+        codexAccountId: str(overrides?.codexAccountId),
+        codexAccountLabel: str(overrides?.codexAccountLabel),
+        resendRejected: overrides?.resendRejected === true
+      })
+      if (!plan) return { error: 'This session cannot be restarted from here.' }
+      const record = ptyManager.getSessionRecord(id)
+      const win = BrowserWindow.fromWebContents(_event.sender)
+      await ptyManager.killAndWait(id)
+      windowRegistry.unbindSession(id)
+      const info = await spawnForWindow(win, plan.cwd, plan.options)
+      // The kill took the record's name and view with it; put them back.
+      if (record?.displayName) {
+        ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
+      }
+      if (record?.view) ptyManager.setSessionViewRecord(id, record.view)
+      return { ...info, resumed: plan.resumed }
+    }
+  )
 
   // Renderer calls this once xterm has been fit, so claude/agy are spawned
   // at the real cols/rows instead of the default 80×24.
@@ -150,7 +242,7 @@ export function registerPtyHandlers(): void {
     ) {
       await callRenderer('flushLinkedDocument', { sessionId: id, allowConflict: true }, owner)
     }
-    ptyManager.kill(id)
+    await ptyManager.kill(id)
     // A session that never started has no exit event to unbind it.
     windowRegistry.unbindSession(id)
   })

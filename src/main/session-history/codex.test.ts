@@ -123,3 +123,36 @@ describe('listCodexFiles / listCodexSessions', () => {
     expect(cache.get(file)?.cwd).toBe('/Users/someone/elsewhere')
   })
 })
+
+/**
+ * A Codex terminal's thread (ADR 0002): the earliest conversation the store
+ * holds for the session's cwd from its start on. The one the restart on
+ * another account resumes, so a wrong pick is a wrong conversation brought
+ * back under the tab's name.
+ */
+describe('findCodexThreadForSession', () => {
+  const rollout = (name: string, id: string, at: string, cwd = '/Users/someone/project'): void => {
+    const dir = join(tmp, '2026', '07', '27')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, `rollout-${name}-${id}.jsonl`),
+      lines({ ...META, payload: { ...META.payload, id, timestamp: at, cwd } })
+    )
+  }
+  it('picks the first thread started in the cwd since the session started', async () => {
+    const { findCodexThreadForSession } = await import('./codex')
+    rollout('a', 'earlier-thread', '2026-07-27T14:00:00.000Z')
+    rollout('b', 'ours', '2026-07-27T14:06:41.000Z')
+    rollout('c', 'later', '2026-07-27T14:30:00.000Z')
+    rollout('d', 'elsewhere', '2026-07-27T14:06:41.000Z', '/Users/someone/other')
+    const startedAt = Date.parse('2026-07-27T14:06:40.000Z')
+    expect(findCodexThreadForSession('/Users/someone/project', startedAt, tmp)).toBe('ours')
+    // A start a moment after the rollout's own stamp still finds it (clock drift).
+    expect(findCodexThreadForSession('/Users/someone/project', startedAt + 4_000, tmp)).toBe('ours')
+    // Nothing since the start, or nothing in that cwd, is nothing to resume.
+    expect(
+      findCodexThreadForSession('/Users/someone/project', startedAt + 3_600_000, tmp)
+    ).toBeNull()
+    expect(findCodexThreadForSession('/nowhere', startedAt, tmp)).toBeNull()
+  })
+})

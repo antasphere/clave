@@ -1,0 +1,71 @@
+{
+  "number": 42,
+  "title": "Add the widget",
+  "body": "Adds the **widget** and its tests.\n\n- one\n- two",
+  "state": "OPEN",
+  "isDraft": false,
+  "url": "https://github.com/acme/widgets/pull/42",
+  "author": { "login": "octocat", "is_bot": false },
+  "createdAt": "2026-09-20T10:00:00Z",
+  "updatedAt": "2026-09-21T10:00:00Z",
+  "mergedAt": null,
+  "baseRefName": "dev",
+  "headRefName": "feat/widget",
+  "headRepositoryOwner": { "login": "acme" },
+  "isCrossRepository": false,
+  "additions": 12,
+  "deletions": 3,
+  "changedFiles": 2,
+  "commits": [{ "oid": "a" }, { "oid": "b" }],
+  "labels": [{ "name": "feature", "color": "0e8a16" }],
+  "reviewRequests": [],
+  "reviewDecision": "REVIEW_REQUIRED",
+  "mergeable": "MERGEABLE",
+  "mergeStateStatus": "CLEAN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "name": "build",
+      "workflowName": "CI",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/acme/widgets/actions/runs/1/job/1"
+    },
+    {
+      "__typename": "CheckRun",
+      "name": "lint",
+      "workflowName": "CI",
+      "status": "COMPLETED",
+      "conclusion": "FAILURE",
+      "detailsUrl": "https://github.com/acme/widgets/actions/runs/1/job/2"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "coverage",
+      "state": "SUCCESS",
+      "targetUrl": "https://coverage.example/acme/widgets/42"
+    }
+  ],
+  "files": [
+    { "path": "src/widget.ts", "additions": 10, "deletions": 0, "changeType": "ADDED" },
+    { "path": "src/index.ts", "additions": 2, "deletions": 3, "changeType": "MODIFIED" }
+  ],
+  "comments": [
+    {
+      "id": "IC_1",
+      "author": { "login": "reviewer" },
+      "body": "Could this take a *size*?",
+      "createdAt": "2026-09-20T12:00:00Z",
+      "url": "https://github.com/acme/widgets/pull/42#issuecomment-1"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "PRR_1",
+      "author": { "login": "reviewer" },
+      "body": "One nit inline.",
+      "submittedAt": "2026-09-20T13:00:00Z",
+      "state": "COMMENTED"
+    }
+  ]
+}

@@ -2,22 +2,24 @@ import type { GitFileStatus } from '../../../../preload/index.d'
 
 export type PullStrategy = 'auto' | 'merge' | 'rebase' | 'ff-only'
 
-export function statusLetter(status: GitFileStatus['status']): string {
+/** The row's status in the user's words, not git's letters: what the dot beside
+    the file name says on hover and to a screen reader (2026-09-21). */
+export function statusWord(status: GitFileStatus['status']): string {
   switch (status) {
     case 'staged':
-      return 'A'
+      return 'New, ready to commit'
     case 'modified':
-      return 'M'
+      return 'Changed'
     case 'deleted':
-      return 'D'
+      return 'Removed'
     case 'untracked':
-      return '?'
+      return 'New'
     case 'staged-modified':
-      return 'M'
+      return 'Changed, ready to commit'
     case 'staged-deleted':
-      return 'D'
+      return 'Removed, ready to commit'
     case 'renamed':
-      return 'R'
+      return 'Renamed, ready to commit'
   }
 }
 

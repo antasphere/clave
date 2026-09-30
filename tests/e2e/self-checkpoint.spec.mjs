@@ -11,35 +11,18 @@
  * or provenance, and a sanitize bypass. The nonexistent-target check is the
  * positive control that non-self dispatch still errors.
  */
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
-import { execFileSync } from 'node:child_process'
+import {
+  launchApp,
+  seedWorkspaces,
+  userDataDir,
+  fixturePath,
+  killLeakedE2eTmux
+} from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
-/**
- * The PTYs live on the SHARED tmux socket ('clave', a fixed constant), so
- * `--user-data-dir` isolation stops at userData: a spawned tab's tmux session
- * and its live agent process survive `app.close()`. Kill ONLY sessions named
- * for e2e fixture roots ('clave-e2e' is the harness's own prefix) — never
- * anything of the user's, and never with pkill.
- */
-function killLeakedE2eTmux() {
-  try {
-    const names = execFileSync('tmux', ['-L', 'clave', 'list-sessions', '-F', '#{session_name}'], {
-      encoding: 'utf-8'
-    })
-      .split('\n')
-      .filter(Boolean)
-    for (const n of names) {
-      if (n.includes('clave-e2e')) execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', n])
-    }
-  } catch {
-    // No tmux server = nothing leaked.
-  }
-}
-
 const DIR = userDataDir('self-checkpoint')
-const ROOT = '/tmp/clave-e2e-root-checkpoint'
+const ROOT = fixturePath('root-checkpoint')
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',
   name: 'Checkpoint',
@@ -80,9 +63,13 @@ function mcpClient(url, token) {
     const text = await res.text()
     // The streamable transport may answer as SSE; the JSON-RPC payload rides
     // in `data:` lines. Parse both shapes.
-    const payloads = text.startsWith('event:') || text.includes('\ndata:') || text.startsWith('data:')
-      ? text.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim())
-      : [text]
+    const payloads =
+      text.startsWith('event:') || text.includes('\ndata:') || text.startsWith('data:')
+        ? text
+            .split('\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trim())
+        : [text]
     const parsed = payloads.filter(Boolean).map((p) => JSON.parse(p))
     return parsed[parsed.length - 1] ?? null
   }
@@ -148,7 +135,10 @@ export async function run(t) {
       ?.Authorization
     const token = auth?.replace(/^Bearer /, '')
     const { url } = JSON.parse(readFileSync(path.join(DIR, 'mcp-server.json'), 'utf-8'))
-    t.check('the MCP endpoint and a session token exist', !!url && !!token, { url, hasToken: !!token })
+    t.check('the MCP endpoint and a session token exist', !!url && !!token, {
+      url,
+      hasToken: !!token
+    })
 
     const mcp = mcpClient(url, token)
     await mcp.init()
@@ -177,7 +167,10 @@ export async function run(t) {
     const events = await until(() => {
       const file = path.join(DIR, 'exchange-capture', 'events.jsonl')
       if (!existsSync(file)) return null
-      const lines = readFileSync(file, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      const lines = readFileSync(file, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
       const msgs = lines.filter((e) => e.kind === 'message')
       return msgs.length >= 2 ? msgs : null
     })
@@ -185,7 +178,9 @@ export async function run(t) {
     if (events) {
       t.check(
         'every checkpoint is a self-pair',
-        events.every((e) => e.sender.sessionId === cfg.claveId && e.target.sessionId === cfg.claveId),
+        events.every(
+          (e) => e.sender.sessionId === cfg.claveId && e.target.sessionId === cfg.claveId
+        ),
         events.map((e) => ({ s: e.sender.sessionId, t: e.target.sessionId }))
       )
       t.check(

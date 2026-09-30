@@ -115,13 +115,33 @@ beforeAll(() => {
   commit(wtSquashed, 's1.txt', 'squash one')
   commit(wtSquashed, 's1.txt', 'squash two')
   git(repo, 'merge', '-q', '--squash', 'lane/squashed')
-  git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-qm', 'Squash of lane/squashed')
+  git(
+    repo,
+    '-c',
+    'user.email=t@example.com',
+    '-c',
+    'user.name=T',
+    'commit',
+    '-qm',
+    'Squash of lane/squashed'
+  )
 
   // A branch merged with a merge commit: its commit is an ancestor of main.
   wtMerged = path.join(root, 'wt-merged')
   git(repo, 'worktree', 'add', '-q', wtMerged, '-b', 'lane/merged', 'main')
   commit(wtMerged, 'm1.txt', 'merge one')
-  git(repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'merge', '-q', '--no-ff', '--no-edit', 'lane/merged')
+  git(
+    repo,
+    '-c',
+    'user.email=t@example.com',
+    '-c',
+    'user.name=T',
+    'merge',
+    '-q',
+    '--no-ff',
+    '--no-edit',
+    'lane/merged'
+  )
 
   // Cut from a branch that is deleted afterwards (review of PR #55, finding 16).
   git(repo, 'branch', 'tempbase', 'main')

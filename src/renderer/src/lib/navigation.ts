@@ -1,12 +1,7 @@
 import { useSessionStore } from '../store/session-store'
 import type { ActiveView } from '../store/session-types'
 
-const VIEW_TARGETS: Set<string> = new Set([
-  'terminals',
-  'settings',
-  'agents',
-  'extensions'
-])
+const VIEW_TARGETS: Set<string> = new Set(['terminals', 'settings', 'agents', 'extensions'])
 
 const SIDE_PANEL_TABS: Record<string, 'files' | 'git' | 'help'> = {
   'side:files': 'files',

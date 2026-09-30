@@ -14,11 +14,17 @@
  * the first row of the sidebar, so stamping A then B renders B above A, and an
  * index-addressed check reads the right count off the wrong lane.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-placement')
-const ROOT = '/tmp/clave-e2e-placement-root'
+const ROOT = fixturePath('placement-root')
 const CLAVE = `${ROOT}/two-lanes.clave`
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000000e',

@@ -60,13 +60,20 @@ function CommitDetail({
   activeDiffFile: string | null
   onSelectFile: (file: GitCommitFileStatus, allFiles: GitCommitFileStatus[], clickY: number) => void
   onClose: () => void
-}) {
+}): React.JSX.Element {
   const [files, setFiles] = useState<GitCommitFileStatus[]>([])
   const [loading, setLoading] = useState(true)
+  // A new commit (or repo) is loading again from its first render, rather than
+  // one frame later from the effect that fetches it.
+  const commitKey = `${cwd}\n${commit.hash}`
+  const [loadingKey, setLoadingKey] = useState(commitKey)
+  if (commitKey !== loadingKey) {
+    setLoadingKey(commitKey)
+    setLoading(true)
+  }
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     window.electronAPI
       .gitCommitFiles(cwd, commit.hash)
       .then((result) => {
@@ -87,7 +94,9 @@ function CommitDetail({
     <div className="border-t border-border-subtle bg-surface-50/50">
       {/* Commit message + metadata */}
       <div className="px-3 py-1.5 space-y-0.5">
-        <p className="text-xs text-text-primary whitespace-pre-wrap break-words">{commit.message}</p>
+        <p className="text-xs text-text-primary whitespace-pre-wrap break-words">
+          {commit.message}
+        </p>
         <div className="text-[10px] text-text-tertiary flex items-center gap-2">
           <span>{commit.author}</span>
           <span>{relativeTime(commit.date)}</span>
@@ -115,9 +124,7 @@ function CommitDetail({
       ) : (
         <div className="pb-1">
           {files.map((file) => {
-            const fileName = file.path.includes('/')
-              ? file.path.split('/').pop()!
-              : file.path
+            const fileName = file.path.includes('/') ? file.path.split('/').pop()! : file.path
             const dir = file.path.includes('/')
               ? file.path.slice(0, file.path.lastIndexOf('/') + 1)
               : ''
@@ -126,7 +133,9 @@ function CommitDetail({
               <div
                 key={file.path}
                 className={`flex items-center gap-1.5 px-3 py-0.5 text-xs transition-colors cursor-pointer group ${
-                  isActive ? 'bg-accent/15 border-l-2 border-l-accent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+                  isActive
+                    ? 'bg-accent/15 border-l-2 border-l-accent'
+                    : 'hover:bg-surface-100 border-l-2 border-l-transparent'
                 }`}
                 onClick={(e) => onSelectFile(file, files, e.clientY)}
               >
@@ -136,17 +145,13 @@ function CommitDetail({
                   {commitFileStatusLetter(file.status)}
                 </span>
                 <span className="text-text-primary truncate hover:underline">{fileName}</span>
-                {dir && (
-                  <span className="text-text-tertiary truncate text-[10px]">{dir}</span>
-                )}
+                {dir && <span className="text-text-tertiary truncate text-[10px]">{dir}</span>}
                 <span className="ml-auto flex-shrink-0 text-[10px] font-mono text-text-tertiary">
                   {file.insertions > 0 && (
                     <span className="text-green-400">+{file.insertions}</span>
                   )}
                   {file.insertions > 0 && file.deletions > 0 && ' '}
-                  {file.deletions > 0 && (
-                    <span className="text-red-400">-{file.deletions}</span>
-                  )}
+                  {file.deletions > 0 && <span className="text-red-400">-{file.deletions}</span>}
                 </span>
               </div>
             )
@@ -171,7 +176,7 @@ function CommitRow({
   isExpanded: boolean
   onClick: () => void
   variant?: 'outgoing' | 'incoming' | 'normal'
-}) {
+}): React.JSX.Element {
   // Subtle left border for outgoing/incoming commits
   const borderClass =
     variant === 'outgoing'
@@ -190,7 +195,9 @@ function CommitRow({
       <span className="font-mono text-text-tertiary flex-shrink-0 text-[10px]">
         {commit.shortHash}
       </span>
-      <span className="text-text-primary truncate flex-1" title={commit.message}>{commit.message}</span>
+      <span className="text-text-primary truncate flex-1" title={commit.message}>
+        {commit.message}
+      </span>
       <span className="text-[10px] text-text-tertiary flex-shrink-0 whitespace-nowrap">
         {relativeTime(commit.date)}
       </span>
@@ -221,7 +228,7 @@ function LogSectionHeader({
   actionTitle?: string
   onAction?: () => void
   actionDisabled?: boolean
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex items-center px-3 pt-2.5 pb-1">
       <span className={`text-[10px] font-semibold uppercase tracking-wider ${color}`}>
@@ -246,7 +253,7 @@ function LogSectionHeader({
 // SyncDivider — visual separator between sections
 // ---------------------------------------------------------------------------
 
-function SyncDivider({ label }: { label: string }) {
+function SyncDivider({ label }: { label: string }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5">
       <div className="flex-1 h-px bg-border-subtle" />
@@ -272,7 +279,7 @@ export function GitLogView({
   branch: string
   ahead: number
   behind: number
-}) {
+}): React.JSX.Element {
   const setDiffPreview = useSessionStore((s) => s.setDiffPreview)
   const [outgoing, setOutgoing] = useState<GitLogEntry[]>([])
   const [incoming, setIncoming] = useState<GitLogEntry[]>([])
@@ -354,12 +361,9 @@ export function GitLogView({
     }
   }, [cwd, fetchLog])
 
-  const toggleCommit = useCallback(
-    (hash: string) => {
-      setExpandedHash((prev) => (prev === hash ? null : hash))
-    },
-    []
-  )
+  const toggleCommit = useCallback((hash: string) => {
+    setExpandedHash((prev) => (prev === hash ? null : hash))
+  }, [])
 
   if (loading) {
     return (
@@ -376,9 +380,7 @@ export function GitLogView({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {error && (
-        <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">
-          {error}
-        </div>
+        <div className="px-3 py-1.5 bg-red-500/10 text-red-400 text-xs flex-shrink-0">{error}</div>
       )}
 
       <div className="flex-1 overflow-y-auto">

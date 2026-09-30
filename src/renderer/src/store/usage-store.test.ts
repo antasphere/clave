@@ -97,8 +97,8 @@ describe('shortLabel', () => {
     expect(shortLabel(w({ kind: 'weekly_scoped', scope: 'Fable' }))).toBe('Fable')
   })
   it('shortens the two known kinds', () => {
-    expect(shortLabel(w({ kind: 'session' }))).toBe('session')
-    expect(shortLabel(w({ kind: 'weekly_all' }))).toBe('weekly')
+    expect(shortLabel(w({ kind: 'session' }))).toBe('5h')
+    expect(shortLabel(w({ kind: 'weekly_all' }))).toBe('Overall')
   })
   it('falls back to the full label for a kind we have never seen', () => {
     // The service invents kinds; an unknown one must still read as words.
@@ -114,7 +114,7 @@ describe('headroomLabel', () => {
         tightest: w({ kind: 'session', usedPercentage: 28 }),
         error: null
       })
-    ).toBe('72% left · session')
+    ).toBe('72% left · 5h')
     expect(
       headroomLabel({
         status: 'ready',
@@ -122,6 +122,22 @@ describe('headroomLabel', () => {
         error: null
       })
     ).toBe('9% left · Opus')
+  })
+  it('names the all-models weekly cap Overall when it ties with the tightest', () => {
+    const session = w({ key: 'five_hour', kind: 'session', usedPercentage: 0 })
+    const overall = w({ key: 'seven_day', kind: 'weekly_all', usedPercentage: 0.2 })
+    expect(
+      headroomLabel({
+        status: 'ready',
+        tightest: session,
+        windows: [session, overall],
+        error: null
+      })
+    ).toBe('100% left · Overall')
+    const busy = w({ key: 'five_hour', kind: 'session', usedPercentage: 40 })
+    expect(
+      headroomLabel({ status: 'ready', tightest: busy, windows: [busy, overall], error: null })
+    ).toBe('60% left · 5h')
   })
   it('says nothing before a read, or after a failed one', () => {
     expect(headroomLabel(undefined)).toBeNull()

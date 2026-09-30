@@ -10,11 +10,11 @@
  * container MDXEditor appends to <body> at z-index 2, under the pane, so it
  * opened where nobody could see or click it.
  */
-import { launchApp, seedWorkspaces, userDataDir, callMcp } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, callMcp, fixturePath } from './harness.mjs'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 
 const DIR = userDataDir('markdown-page-tables')
-const ROOT = '/tmp/clave-e2e-root-mdtables'
+const ROOT = fixturePath('root-mdtables')
 const WS = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000e2',
   name: 'Docs',

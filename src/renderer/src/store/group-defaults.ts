@@ -50,9 +50,7 @@ function entrySession(sessions: PinnedGroupSession[]): PinnedGroupSession | null
  *
  *  A group-level `prompt` overrides the entry session's TEXT (it is the
  *  explicit answer), never where its sessions live. */
-export function resolveGroupDefaults(
-  pg: Pick<PinnedGroup, 'prompt' | 'sessions'>
-): GroupDefaults {
+export function resolveGroupDefaults(pg: Pick<PinnedGroup, 'prompt' | 'sessions'>): GroupDefaults {
   const entry = entrySession(pg.sessions)
   return {
     prompt: pg.prompt ?? entry?.prompt ?? null,

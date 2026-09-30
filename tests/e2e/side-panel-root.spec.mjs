@@ -28,13 +28,14 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  callMcp
+  callMcp,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('side-panel-root')
-const ROOT = '/private/tmp/clave-e2e-side-panel-root-scope'
+const ROOT = fixturePath('side-panel-root-scope', { real: true })
 const APPS = path.join(ROOT, 'apps')
 const ONE = path.join(APPS, 'one')
 const TWO = path.join(APPS, 'two')
@@ -151,7 +152,11 @@ export async function run(t) {
 
     const empty = await readPanel(win)
     t.equal('with no session focused, the panel roots at the workspace', empty.scope, 'workspace')
-    t.check('and the path names the workspace root', empty.path.includes('side-panel-root-scope'), empty.path)
+    t.check(
+      'and the path names the workspace root',
+      empty.path.includes('side-panel-root-scope'),
+      empty.path
+    )
     t.check(
       'and the tree lists the workspace, not nothing',
       has(empty.rows, 'README.md') && has(empty.rows, 'apps'),
@@ -278,7 +283,11 @@ export async function run(t) {
     for (const s of [a, b, c]) await callMcp(app, 'closeSession', { sessionId: s.sessionId })
     await win.waitForTimeout(1500)
     const closed = await readPanel(win)
-    t.equal('with every session closed, the panel is back on the workspace', closed.scope, 'workspace')
+    t.equal(
+      'with every session closed, the panel is back on the workspace',
+      closed.scope,
+      'workspace'
+    )
     t.check('and lists it', has(closed.rows, 'README.md'), closed.rows)
 
     // ── 7. The default rung is a setting, and it moves the default ────────

@@ -254,4 +254,3 @@ describe('placeAdopted — an adopted tab never lands twice, never in a foreign 
     expect(placeAdopted(state, 's-free')).toEqual(['g1', 's-free'])
   })
 })
-

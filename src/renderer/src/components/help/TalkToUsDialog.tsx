@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { CalendarDaysIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@clave/ui/components'
 
 const BOOKING_URL = 'https://meet.codika.io/book/luca/clave-interview'
 

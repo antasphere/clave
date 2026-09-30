@@ -12,10 +12,18 @@
  *  @root_path → workspace root, @project_path → project dir relative to root
  *  (`.` if equal, absolute if outside root), @project_abs → project dir absolute.
  *  No-op when the prompt contains no tokens. */
-export function substituteTokens(prompt: string, workspaceRoot: string | null, projectAbs: string): string {
+export function substituteTokens(
+  prompt: string,
+  workspaceRoot: string | null,
+  projectAbs: string
+): string {
   const root = (workspaceRoot ?? projectAbs).replace(/\/+$/, '')
   const rel =
-    projectAbs === root ? '.' : projectAbs.startsWith(root + '/') ? projectAbs.slice(root.length + 1) : projectAbs
+    projectAbs === root
+      ? '.'
+      : projectAbs.startsWith(root + '/')
+        ? projectAbs.slice(root.length + 1)
+        : projectAbs
   return prompt
     .replaceAll('@project_abs', projectAbs)
     .replaceAll('@project_path', rel)

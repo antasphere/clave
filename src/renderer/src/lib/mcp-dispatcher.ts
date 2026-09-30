@@ -19,17 +19,30 @@ import type { PinnedGroupSession } from '../store/session-types'
 import { useWorkspaceStore, type Workspace } from '../store/workspace-store'
 import { profilesFor } from '../store/launch-profile-store'
 import {
-  useClaudeProfileStore,
   getClaudeProfile,
-  resolveClaudeProfile,
   claudeProfileSpawnFields,
   sessionAccount,
   type ClaudeProfile
 } from '../store/claude-profile-store'
+import {
+  getCodexAccount,
+  codexAccountSpawnFields,
+  sessionCodexAccount
+} from '../store/codex-account-store'
+import {
+  accountProviderOf,
+  nextAccountFor,
+  resolveAccountRef,
+  sessionAccountExhausted,
+  switchSessionAccount
+} from './switch-account'
+import type { CodexAccount } from '../../../preload/index.d'
+import { effectiveSwitchMode } from '../store/account-policy-store'
 import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
+import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
   buildProvenanceHeader
@@ -148,9 +161,15 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       mode: sessionMode(s),
       alive: s.alive,
       agentState: s.agentState ?? null,
-      // The Claude account the tab runs on; the Default when the tab predates
-      // accounts or was launched without naming one.
-      account: s.claudeMode || s.claudeAgentsMode ? sessionAccount(s) : null,
+      // The account the tab runs on (Claude or Codex); the Default when the
+      // tab predates accounts or was launched without naming one. Whether
+      // that account is about to hit its limit, for an agent to act on.
+      account:
+        s.claudeMode || s.claudeAgentsMode
+          ? { ...sessionAccount(s), exhausted: sessionAccountExhausted(s) }
+          : s.codexMode
+            ? { ...sessionCodexAccount(s), exhausted: sessionAccountExhausted(s) }
+            : null,
       groupId: groupOfSession(state.groups, s.id)?.id ?? null,
       view: s.view ? { url: s.view.url, title: s.view.title ?? null } : null,
       workspaceId: s.workspaceId ?? null,
@@ -338,17 +357,11 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
 }
 
 /** The Claude account an agent's spawn runs on: the one it named (an id or a
- *  label), else the one selected in settings. An unknown name errors with the
- *  names that exist, never a silent fall-through to the wrong subscription. */
+ *  label), else the pool's pick from the one selected in settings. An
+ *  unknown name errors with the names that exist, never a silent
+ *  fall-through to the wrong subscription. */
 export function resolveAccountForSpawn(ref: string | undefined): ClaudeProfile {
-  const { profiles, selectedProfileId } = useClaudeProfileStore.getState()
-  if (!ref) return getClaudeProfile(selectedProfileId)
-  const account = resolveClaudeProfile(profiles, ref)
-  if (!account) {
-    const names = profiles.map((p) => `"${p.label}" (${p.id})`).join(', ')
-    throw new Error(`Unknown Claude account "${ref}". Available: ${names}`)
-  }
-  return account
+  return resolveAccountRef('claude', ref) as ClaudeProfile
 }
 
 export async function openSessionProgrammatically(payload: {
@@ -359,6 +372,8 @@ export async function openSessionProgrammatically(payload: {
   dangerous?: boolean
   model?: string
   profile?: string
+  /** Open claude / codex in Clave's chat view instead of the terminal. */
+  chat?: boolean
   /** The Claude account (id or label) the tab runs on; claude mode only. */
   account?: string
   provider?: string
@@ -382,34 +397,39 @@ export async function openSessionProgrammatically(payload: {
     : (targetGroup?.workspaceId ?? workspaceForSpawn(undefined, payload.callerSessionId))
 
   const mode = payload.mode ?? 'claude'
-  const claudeMode = mode === 'claude'
-  // 'gemini' is accepted as a deprecated alias for the retired Gemini CLI.
-  const antigravityMode = mode === 'antigravity' || mode === 'gemini'
-  const codexMode = mode === 'codex'
-  const piMode = mode === 'pi'
-  // --dangerously-skip-permissions is a claude flag; other providers ignore it.
-  const dangerousMode = claudeMode && payload.dangerous === true
-  // model maps to claude --model / codex -m; antigravity and terminals have no flag.
-  const model = (claudeMode || codexMode || piMode) && payload.model ? payload.model : undefined
-  const family = mode === 'gemini' ? 'antigravity' : mode === 'terminal' ? null : mode
+  // Which CLI starts and which flags it takes, decided in `open-session-modes`
+  // where a unit test reaches it. The skip-approvals flag used to stop here
+  // for every agent but Claude, while the spawn already turned it into Codex's
+  // --yolo for the launcher's own Cmd+Y (PRDCT-2528).
+  const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
+    resolveSpawnModes(payload)
+  const profileRef = resolveProfileRef(payload)
   const launchProfileId =
-    family && payload.profile
+    family && profileRef
       ? profilesFor(family).find(
           (profile) =>
-            profile.id === payload.profile ||
-            profile.name.toLowerCase() === payload.profile!.toLowerCase()
+            profile.id === profileRef || profile.name.toLowerCase() === profileRef.toLowerCase()
         )?.id
       : undefined
-  if (payload.profile && family && !launchProfileId)
-    throw new Error(`Unknown ${family} launch profile "${payload.profile}"`)
-  // The Claude account: the one named, else the one selected in settings —
-  // the same rule the launcher applies, so an agent-opened tab lands on the
-  // account the user would have got from the button. Never for another agent.
+  if (profileRef && family && !launchProfileId)
+    throw new Error(`Unknown ${family} launch profile "${profileRef}"`)
+  // The account: the one named, else the pool's pick from the one selected
+  // in settings — the same rule the launcher applies, so an agent-opened tab
+  // lands on the account the user would have got from the button. Claude and
+  // Codex have pools; nothing else does.
   const claudeProfile = claudeMode ? resolveAccountForSpawn(payload.account) : null
-  if (payload.account && !claudeMode) {
-    throw new Error(`The account argument applies to claude mode only (got mode "${mode}")`)
+  const codexAccount = codexMode
+    ? (resolveAccountRef('codex', payload.account) as CodexAccount)
+    : null
+  if (payload.account && !claudeMode && !codexMode) {
+    throw new Error(
+      `The account argument applies to claude and codex modes only (got mode "${mode}")`
+    )
   }
-  const accountFields = claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}
+  const accountFields = {
+    ...(claudeProfile ? claudeProfileSpawnFields(claudeProfile) : {}),
+    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
+  }
   const info = await window.electronAPI.spawnSession(payload.cwd, {
     claudeMode,
     antigravityMode,
@@ -452,7 +472,8 @@ export async function openSessionProgrammatically(payload: {
     piThinking: info.piThinking,
     claudeProfileId: claudeProfile?.id,
     claudeProfileLabel: claudeProfile?.label,
-    claudeConfigDir: claudeProfile?.configDir || undefined,
+    codexAccountId: codexAccount?.id,
+    codexAccountLabel: codexAccount?.label,
     // Persist so Duplicate re-primes the clone with the same prompt.
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
     sessionType: 'local',
@@ -815,7 +836,13 @@ async function handleCloseSession(payload: {
   callerSessionId?: string
 }): Promise<unknown> {
   const state = useSessionStore.getState()
-  const session = state.sessions.find((s) => s.id === payload.sessionId)
+  // "mine" is the calling tab, as for every other session tool: it is how an
+  // agent closes its own tab when its work is done (the archive-and-kill action
+  // asks exactly that of it).
+  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
+  if (!id)
+    throw new Error('sessionId "mine" needs a calling tab — this request has no tab identity')
+  const session = state.sessions.find((s) => s.id === id)
   if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
   // An agent-initiated close is a transport event: recorded with the closing
   // tab as `closer` BEFORE the kill, while the identity is still in the store.
@@ -823,9 +850,9 @@ async function handleCloseSession(payload: {
     ? (state.sessions.find((s) => s.id === payload.callerSessionId) ?? null)
     : null
   emitTabClosed(session, state.groups, 'agent', closer)
-  await window.electronAPI.killSession(payload.sessionId)
-  useSessionStore.getState().removeSession(payload.sessionId)
-  return { closed: payload.sessionId }
+  await window.electronAPI.killSession(id)
+  useSessionStore.getState().removeSession(id)
+  return { closed: id }
 }
 
 function handleRename(payload: { target: 'group' | 'session'; id: string; name: string }): unknown {
@@ -1075,6 +1102,60 @@ function handleSelfCheckpoint(sessionId: string, message: string): unknown {
   }
 }
 
+/**
+ * Type `text` into an agent tab's terminal input as ONE turn and submit it,
+ * setting aside and then restoring whatever the user had half-typed there
+ * (PRDCT-1569). Serialized per target on `sendChains`. `onSubmitted` fires the
+ * moment the submit lands, before the draft restore, so a caller can tell a
+ * delivered message from one whose restore failed afterwards. The text must
+ * already be sanitized: this writes it verbatim inside a bracketed paste.
+ */
+export function typeIntoAgentTab(
+  targetId: string,
+  text: string,
+  onSubmitted?: () => void
+): Promise<DraftStash> {
+  const runInjection = async (): Promise<DraftStash> => {
+    const shadow = getDraftShadow(targetId)
+    const stash = shadow.beginInjection()
+    try {
+      if (stash.clear) {
+        window.electronAPI.writeSession(targetId, stash.clear)
+        await new Promise((r) => setTimeout(r, 150))
+      }
+      // Deliver as one bracketed paste so embedded newlines don't submit early,
+      // then submit. The TUI queues input that arrives mid-turn, so a busy agent
+      // sees the message as its next user turn.
+      window.electronAPI.writeSession(targetId, `\x1b[200~${text}\x1b[201~`)
+      await new Promise((r) => setTimeout(r, 150))
+      window.electronAPI.writeSession(targetId, '\r')
+      onSubmitted?.()
+      if (stash.text) {
+        // Give the TUI a beat to consume the submit, then re-paste the draft
+        // with NO trailing submit — same sanitize + bracketed-paste discipline
+        // as the message itself (the draft is user text, not keystrokes).
+        await new Promise((r) => setTimeout(r, 150))
+        window.electronAPI.writeSession(
+          targetId,
+          `\x1b[200~${sanitizeForPaste(stash.text)}\x1b[201~`
+        )
+      }
+    } finally {
+      shadow.endInjection(stash.text)
+    }
+    return stash
+  }
+
+  const prior = sendChains.get(targetId) ?? Promise.resolve()
+  const run = prior.catch(() => {}).then(runInjection)
+  sendChains.set(targetId, run)
+  void run.finally(() => {
+    // Drop the chain once it drains so the map doesn't grow unboundedly.
+    if (sendChains.get(targetId) === run) sendChains.delete(targetId)
+  })
+  return run
+}
+
 async function handleSendToSession(payload: {
   sessionId: string
   message: string
@@ -1141,44 +1222,21 @@ async function handleSendToSession(payload: {
   // boundary and inside the CLI's dialogs (see draft-shadow.ts; undershoot
   // would leave residue to co-submit). The degradation is reported ONLY in
   // this tool's result (draftHandling) — nothing in the app UI shows it.
-  const runInjection = async (): Promise<DraftStash> => {
-    const shadow = getDraftShadow(targetId)
-    const stash = shadow.beginInjection()
-    try {
-      if (stash.clear) {
-        window.electronAPI.writeSession(targetId, stash.clear)
-        await new Promise((r) => setTimeout(r, 150))
-      }
-      // Deliver as one bracketed paste so embedded newlines don't submit early,
-      // then submit. The TUI queues input that arrives mid-turn, so a busy agent
-      // sees the message as its next user turn.
-      window.electronAPI.writeSession(targetId, `\x1b[200~${text}\x1b[201~`)
-      await new Promise((r) => setTimeout(r, 150))
-      window.electronAPI.writeSession(targetId, '\r')
-      submitted = true
-      if (stash.text) {
-        // Give the TUI a beat to consume the submit, then re-paste the draft
-        // with NO trailing submit — same sanitize + bracketed-paste discipline
-        // as the message itself (the draft is user text, not keystrokes).
-        await new Promise((r) => setTimeout(r, 150))
-        window.electronAPI.writeSession(
-          targetId,
-          `\x1b[200~${sanitizeForPaste(stash.text)}\x1b[201~`
-        )
-      }
-    } finally {
-      shadow.endInjection(stash.text)
-    }
-    return stash
-  }
-
-  const prior = sendChains.get(targetId) ?? Promise.resolve()
-  const run = prior.catch(() => {}).then(runInjection)
-  sendChains.set(targetId, run)
-  run.finally(() => {
-    // Drop the chain once it drains so the map doesn't grow unboundedly.
-    if (sendChains.get(targetId) === run) sendChains.delete(targetId)
-  })
+  // A chat tab has no terminal to type into: `pty:write` reaches only PTY
+  // sessions, so a paste addressed to one was dropped in main while this
+  // reported it delivered. It takes the message as a user message instead,
+  // as `requestArchiveAndKill` does; its draft is the host's own
+  // (`draft-store.ts`), never in the provider's input, so nothing is stashed.
+  const record = (await window.electronAPI.sessionsList()).find((s) => s.id === targetId)
+  const run: Promise<DraftStash> =
+    record?.transport === 'events'
+      ? window.electronAPI.sessionsWrite(targetId, { type: 'user_message', text }).then(() => {
+          submitted = true
+          return { text: '', confident: true, clear: '' }
+        })
+      : typeIntoAgentTab(targetId, text, () => {
+          submitted = true
+        })
   // Transport-layer capture (PRDCT-1568), on a chain of its own so the delivery
   // never waits on it: it records the message once the submit has landed, and
   // fires on BOTH settle paths — a restore that failed still delivered a
@@ -1287,6 +1345,64 @@ function handleSwitchWorkspace(payload: { workspace: string }): unknown {
   return { activeWorkspaceId: ws.id, name: ws.name }
 }
 
+/** An agent moves a tab to another account (ADR 0002): the pool's pick for
+ *  "any", a named account otherwise, through the same switch the menu
+ *  makes. `mine` is the calling tab: its own process restarts. */
+async function handleSwitchAccount(payload: {
+  sessionId: string
+  account: string
+  callerSessionId?: string
+}): Promise<{
+  sessionId: string
+  account: { id: string; label: string }
+  resumed: boolean
+  switched: boolean
+  proposed: boolean
+}> {
+  const state = useSessionStore.getState()
+  const id = payload.sessionId === 'mine' ? payload.callerSessionId : payload.sessionId
+  const session = id ? state.sessions.find((s) => s.id === id) : undefined
+  if (!session) throw new Error(`Unknown session "${payload.sessionId}"`)
+  const provider = accountProviderOf(session)
+  if (!provider) throw new Error('Only Claude and Codex tabs run on an account')
+  let target: { id: string; label: string }
+  if (payload.account === 'any') {
+    const next = nextAccountFor(session)
+    if (!next) throw new Error('No other account of this provider has headroom')
+    target = provider === 'codex' ? getCodexAccount(next) : getClaudeProfile(next)
+  } else {
+    target = resolveAccountRef(provider, payload.account)
+  }
+  // An agent's ask goes through the tab's mode (ADR 0002): in propose mode
+  // the user sees the move and decides; a pinned tab is never moved.
+  if (session.accountPinned) {
+    throw new Error('This tab is pinned to its account; the user can unpin it from the tab menu')
+  }
+  if (effectiveSwitchMode(session) === 'propose') {
+    state.setAccountProposal(session.id, {
+      accountId: target.id,
+      label: target.label,
+      reason: 'reported'
+    })
+    return {
+      sessionId: session.id,
+      account: { id: target.id, label: target.label },
+      resumed: false,
+      switched: false,
+      proposed: true
+    }
+  }
+  const result = await switchSessionAccount(session.id, target.id)
+  if (!result.ok) throw new Error(result.error ?? 'The switch failed')
+  return {
+    sessionId: session.id,
+    account: { id: target.id, label: target.label },
+    resumed: result.resumed,
+    switched: true,
+    proposed: false
+  }
+}
+
 async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
@@ -1315,6 +1431,10 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
       return handleRename(payload as Parameters<typeof handleRename>[0])
     case 'focus':
       return handleFocus(payload as Parameters<typeof handleFocus>[0])
+    case 'switchAccount':
+      return handleSwitchAccount(
+        payload as { sessionId: string; account: string; callerSessionId?: string }
+      )
     case 'switchWorkspace':
       return handleSwitchWorkspace(payload as Parameters<typeof handleSwitchWorkspace>[0])
     case 'sendToSession':

@@ -28,10 +28,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel
-} from '../ui/dropdown-menu'
-import { ConfirmDialog } from '../ui/ConfirmDialog'
+} from '@clave/ui/components'
+import { ConfirmDialog } from '@clave/ui/components'
 import { AddMarketplaceDialog } from './AddMarketplaceDialog'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import type {
   ExtensionsInventory,
   PluginInfo,
@@ -61,7 +61,13 @@ interface ExtensionActions {
 }
 
 /** A small neutral count/label chip. */
-function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
+function Chip({
+  children,
+  className
+}: {
+  children: React.ReactNode
+  className?: string
+}): React.JSX.Element {
   return (
     <span className={cn('badge bg-surface-200 text-text-secondary', className)}>{children}</span>
   )
@@ -73,11 +79,11 @@ function EmptyState({
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   message: string
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Icon className="w-8 h-8 text-text-tertiary/50 mb-3" />
-      <p className="text-[13px] text-text-tertiary max-w-xs">{message}</p>
+      <p className="text-control text-text-tertiary max-w-xs">{message}</p>
     </div>
   )
 }
@@ -103,7 +109,7 @@ function MarketplacesGrid({
 }: {
   inv: ExtensionsInventory
   onOpen: (drill: Drill) => void
-}) {
+}): React.JSX.Element {
   const standaloneCount = inv.userSkills.length + inv.userAgents.length + inv.userCommands.length
 
   if (inv.marketplaces.length === 0 && standaloneCount === 0) {
@@ -125,7 +131,7 @@ function MarketplacesGrid({
         >
           <div className="flex items-center gap-2">
             <BuildingStorefrontIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               {m.name}
             </span>
             {m.autoUpdate && <Chip className="!bg-green-500/15 !text-green-600">auto</Chip>}
@@ -148,7 +154,7 @@ function MarketplacesGrid({
         >
           <div className="flex items-center gap-2">
             <FolderOpenIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               Standalone
             </span>
           </div>
@@ -181,7 +187,7 @@ function MarketplaceView({
   marketplaceName: string
   onOpenPlugin: (id: string) => void
   actions: ExtensionActions
-}) {
+}): React.JSX.Element {
   const installed = inv.plugins.filter((p) => p.marketplace === marketplaceName)
   const installedNames = new Set(installed.map((p) => p.name))
   const market = inv.marketplaces.find((m) => m.name === marketplaceName)
@@ -220,7 +226,7 @@ function MarketplaceView({
             <button key={p.id} className="extension-card" onClick={() => onOpenPlugin(p.id)}>
               <div className="flex items-center gap-2">
                 <CubeTransparentIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-                <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+                <span className="text-control font-semibold text-text-primary truncate flex-1">
                   {p.name}
                 </span>
                 {!p.enabled && <Chip className="!bg-amber-500/15 !text-amber-600">disabled</Chip>}
@@ -242,7 +248,7 @@ function MarketplaceView({
               <div key={name} className="extension-card extension-card-muted">
                 <div className="flex items-center gap-2">
                   <CubeTransparentIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-                  <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+                  <span className="text-control font-semibold text-text-primary truncate flex-1">
                     {name}
                   </span>
                 </div>
@@ -280,7 +286,7 @@ function CapabilitySection({
   title: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   rows: { key: string; name: string; description?: string; trailing?: React.ReactNode }[]
-}) {
+}): React.JSX.Element | null {
   if (rows.length === 0) return null
   return (
     <section className="mb-5">
@@ -307,7 +313,13 @@ function CapabilitySection({
 }
 
 /** Action bar shown above a plugin's capabilities: enable/disable + uninstall. */
-function PluginActionBar({ plugin, actions }: { plugin: PluginInfo; actions: ExtensionActions }) {
+function PluginActionBar({
+  plugin,
+  actions
+}: {
+  plugin: PluginInfo
+  actions: ExtensionActions
+}): React.JSX.Element {
   const busy = actions.pending !== null
   const toggling = actions.pending === `toggle:${plugin.id}`
   const uninstalling = actions.pending === `uninstall:${plugin.id}`
@@ -323,7 +335,7 @@ function PluginActionBar({ plugin, actions }: { plugin: PluginInfo; actions: Ext
         <button
           onClick={() => actions.toggle(plugin)}
           disabled={busy}
-          className="btn-secondary btn-compact border border-border-subtle disabled:opacity-40"
+          className="btn-secondary btn-compact disabled:opacity-40"
         >
           {toggling && <ArrowPathIcon className="w-3.5 h-3.5 animate-spin" />}
           {plugin.enabled ? 'Disable' : 'Enable'}
@@ -355,7 +367,7 @@ function CapabilityDetail({
   agents: AgentInfo[]
   commands: CommandInfo[]
   mcp: McpServerInfo[]
-}) {
+}): React.JSX.Element {
   const total = skills.length + agents.length + commands.length + mcp.length
   if (total === 0) {
     return <EmptyState icon={CubeTransparentIcon} message="This item exposes no capabilities." />
@@ -410,7 +422,7 @@ function CapabilityDetail({
 
 // ── MCP tab: flat grid across all scopes ───────────────────────────────────────
 
-function McpGrid({ inv }: { inv: ExtensionsInventory }) {
+function McpGrid({ inv }: { inv: ExtensionsInventory }): React.JSX.Element {
   if (inv.mcpServers.length === 0) {
     return (
       <EmptyState icon={ServerStackIcon} message="No MCP servers configured for this profile." />
@@ -422,7 +434,7 @@ function McpGrid({ inv }: { inv: ExtensionsInventory }) {
         <div key={`${m.scope}:${m.name}:${i}`} className="extension-card">
           <div className="flex items-center gap-2">
             <ServerStackIcon className="w-4 h-4 text-text-tertiary flex-shrink-0" />
-            <span className="text-[13px] font-semibold text-text-primary truncate flex-1">
+            <span className="text-control font-semibold text-text-primary truncate flex-1">
               {m.name}
             </span>
             <Chip className="!bg-accent/12 !text-accent">{m.transport}</Chip>
@@ -448,9 +460,13 @@ function McpGrid({ inv }: { inv: ExtensionsInventory }) {
 
 // ── Breadcrumb ──────────────────────────────────────────────────────────────────
 
-function Breadcrumb({ segments }: { segments: { label: string; onClick?: () => void }[] }) {
+function Breadcrumb({
+  segments
+}: {
+  segments: { label: string; onClick?: () => void }[]
+}): React.JSX.Element {
   return (
-    <div className="flex items-center gap-1 text-[13px] mb-4 min-w-0">
+    <div className="flex items-center gap-1 text-control mb-4 min-w-0">
       {segments.map((seg, i) => {
         const isLast = i === segments.length - 1
         return (
@@ -484,7 +500,7 @@ function Breadcrumb({ segments }: { segments: { label: string; onClick?: () => v
 
 // ── Panel shell ──────────────────────────────────────────────────────────────────
 
-export function ExtensionsPanel() {
+export function ExtensionsPanel(): React.JSX.Element {
   const section = useSessionStore((s) => s.extensionsSection)
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
@@ -508,27 +524,26 @@ export function ExtensionsPanel() {
 
   const multiProfile = profiles.length > 1
   const activeProfile = getClaudeProfile(profileId)
-  const configDir = activeProfile.configDir || undefined
+  // Every account shares `~/.claude` (ADR 0002): one inventory for all.
+  const configDir = undefined
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const profile = getClaudeProfile(profileId)
-      const inventory = await window.electronAPI?.extensionsGetInventory(
-        profile.configDir || undefined
-      )
+      const inventory = await window.electronAPI?.extensionsGetInventory(undefined)
       setInv(inventory ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to read extensions.')
     } finally {
       setLoading(false)
     }
-  }, [profileId])
+  }, [])
 
+  // Read again on every profile switch, as well as on mount.
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, profileId])
 
   // Reset drill + transient state when switching tab or profile.
   useEffect(() => {
@@ -603,7 +618,7 @@ export function ExtensionsPanel() {
       })
   }
 
-  const handleAddMarketplace = (source: string) => {
+  const handleAddMarketplace = (source: string): void => {
     void runMutation(
       'mkt-add',
       () => window.electronAPI?.extensionsAddMarketplace(source, configDir),
@@ -648,7 +663,7 @@ export function ExtensionsPanel() {
               <button
                 onClick={() => setAddOpen(true)}
                 disabled={pending !== null}
-                className="btn-secondary btn-compact border border-border-subtle disabled:opacity-40"
+                className="btn-secondary btn-compact disabled:opacity-40"
               >
                 <PlusIcon className="w-3.5 h-3.5" />
                 Add marketplace
@@ -657,7 +672,7 @@ export function ExtensionsPanel() {
             {multiProfile && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="btn-secondary btn-compact border border-border-subtle">
+                  <button className="btn-secondary btn-compact">
                     {activeProfile.label}
                     {activeProfile.id === DEFAULT_CLAUDE_PROFILE_ID && (
                       <span className="text-text-tertiary"> · default</span>
@@ -722,13 +737,13 @@ export function ExtensionsPanel() {
         )}
 
         {error && (
-          <div className="px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/20 text-[13px] text-red-500">
+          <div className="px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/20 text-control text-red-500">
             {error}
           </div>
         )}
 
         {!error && loading && !inv && (
-          <p className="text-[13px] text-text-tertiary py-16 text-center">Reading extensions…</p>
+          <p className="text-control text-text-tertiary py-16 text-center">Reading extensions…</p>
         )}
 
         {!error && inv && section === 'mcp' && <McpGrid inv={inv} />}

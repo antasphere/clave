@@ -7,13 +7,30 @@ import {
   ExclamationCircleIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
+import { Toggle } from './primitives'
 
 type Step = 'credentials' | 'test' | 'summary'
+const STEPS: { id: Step; label: string }[] = [
+  { id: 'credentials', label: 'Connection' },
+  { id: 'test', label: 'Test' },
+  { id: 'summary', label: 'Done' }
+]
+const AUTH_METHODS = [
+  { id: 'key', label: 'SSH key' },
+  { id: 'password', label: 'Password' },
+  { id: 'agent', label: 'SSH agent' }
+] as const
 
 interface AddLocationDialogProps {
   onClose: () => void
 }
 
+/**
+ * The three-step remote location dialog, on the app's own modal: the
+ * `.modal-card` surface, the title block every dialog opens with, a
+ * `.segmented` step rail, the system's fields and labels, the switch for the
+ * one boolean, and the `.btn-dialog` footer pair the other modals end with.
+ */
 export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JSX.Element {
   const addLocation = useLocationStore((s) => s.addLocation)
 
@@ -125,6 +142,7 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JS
   }, [createdLocationId, onClose])
 
   const credentialsValid = host.trim() && username.trim()
+  const stepIndex = STEPS.findIndex((s) => s.id === step)
 
   // Portal to body so the overlay escapes the main content's z-10 stacking
   // context. Otherwise it cannot cover the z-[45] git side panel.
@@ -136,124 +154,137 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JS
       <div
         className="modal-card menu-pop-mount w-full max-w-md mx-4"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="add-location-title"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
-          <h3 className="text-base font-semibold text-text-primary">Add Remote Location</h3>
-          <button onClick={handleRemoveOnCancel} className="btn-icon btn-icon-sm">
-            <XMarkIcon className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Step indicator */}
-        <div className="flex items-center gap-2 px-6 py-3 bg-surface-100/50">
-          {(['credentials', 'test', 'summary'] as Step[]).map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
-                  step === s
-                    ? 'bg-accent text-white'
-                    : i < ['credentials', 'test', 'summary'].indexOf(step)
-                      ? 'bg-success text-white'
-                      : 'bg-surface-200 text-text-tertiary'
-                }`}
-              >
-                {i + 1}
-              </div>
-              {i < 2 && <div className="w-8 h-px bg-border-subtle" />}
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 id="add-location-title" className="text-control font-semibold text-text-primary">
+                Add remote location
+              </h3>
+              <p className="mt-1 text-xs text-text-secondary">
+                A machine reached over SSH that terminals and agents can run on.
+              </p>
             </div>
-          ))}
+            <button
+              onClick={handleRemoveOnCancel}
+              className="btn-icon btn-icon-sm"
+              title="Close"
+              aria-label="Close"
+            >
+              <XMarkIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* The step rail: the same segmented control as every other mode
+              switch, read-only here (the footer moves the step). */}
+          <div className="segmented mt-3" aria-label="Steps" aria-hidden>
+            {STEPS.map((s, i) => (
+              <span
+                key={s.id}
+                className="segmented-item"
+                data-active={step === s.id ? 'true' : undefined}
+                data-step-done={i < stepIndex ? 'true' : undefined}
+              >
+                {i + 1}. {s.label}
+              </span>
+            ))}
+          </div>
         </div>
 
-        {/* Content */}
-        <div className="px-6 py-5 space-y-4">
+        <div className="px-4 pb-4 space-y-3">
           {step === 'credentials' && (
             <>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Name</label>
+                <label className="field-label" htmlFor="add-location-name">
+                  Name
+                </label>
                 <input
+                  id="add-location-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="My Mac Mini"
-                  className="input-field"
+                  placeholder="My Mac mini"
+                  className="input-compact"
                 />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  <label className="field-label" htmlFor="add-location-host">
                     Host
                   </label>
                   <input
+                    id="add-location-host"
                     value={host}
                     onChange={(e) => setHost(e.target.value)}
                     placeholder="100.x.x.x or hostname"
-                    className="input-field"
+                    className="input-compact"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  <label className="field-label" htmlFor="add-location-port">
                     Port
                   </label>
                   <input
+                    id="add-location-port"
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
-                    className="input-field"
+                    className="input-compact tabular-nums"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                <label className="field-label" htmlFor="add-location-user">
                   Username
                 </label>
                 <input
+                  id="add-location-user"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="admin"
-                  className="input-field"
+                  className="input-compact"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Auth Method
-                </label>
-                <div className="flex gap-2">
-                  {(['key', 'password', 'agent'] as const).map((m) => (
+                <span className="field-label">Sign in with</span>
+                <div className="segmented">
+                  {AUTH_METHODS.map((m) => (
                     <button
-                      key={m}
-                      onClick={() => setAuthMethod(m)}
-                      className={`flex-1 text-xs font-medium py-2 rounded-lg border transition-colors ${
-                        authMethod === m
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border-subtle bg-surface-100 text-text-secondary hover:text-text-primary'
-                      }`}
+                      key={m.id}
+                      type="button"
+                      onClick={() => setAuthMethod(m.id)}
+                      className="segmented-item"
+                      data-active={authMethod === m.id ? 'true' : undefined}
                     >
-                      {m === 'key' ? 'SSH Key' : m === 'password' ? 'Password' : 'SSH Agent'}
+                      {m.label}
                     </button>
                   ))}
                 </div>
               </div>
               {authMethod === 'key' && (
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Private Key Path
+                  <label className="field-label" htmlFor="add-location-key">
+                    Private key
                   </label>
                   <input
+                    id="add-location-key"
                     value={privateKeyPath}
                     onChange={(e) => setPrivateKeyPath(e.target.value)}
-                    className="input-field"
+                    className="input-compact font-mono"
                   />
                 </div>
               )}
               {authMethod === 'password' && (
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  <label className="field-label" htmlFor="add-location-password">
                     Password
                   </label>
                   <input
+                    id="add-location-password"
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="input-field"
+                    className="input-compact"
                   />
                 </div>
               )}
@@ -261,113 +292,112 @@ export function AddLocationDialog({ onClose }: AddLocationDialogProps): React.JS
           )}
 
           {step === 'test' && (
-            <div className="text-center py-4">
+            <div className="flex flex-col items-center gap-2 py-4 text-center">
               {testing ? (
-                <div className="flex flex-col items-center gap-3">
-                  <ArrowPathIcon className="w-8 h-8 text-accent animate-spin" />
-                  <p className="text-sm text-text-secondary">Testing connection...</p>
-                </div>
+                <>
+                  <ArrowPathIcon className="w-6 h-6 text-text-tertiary animate-spin" />
+                  <p className="text-control text-text-secondary">Testing the connection…</p>
+                </>
               ) : testResult ? (
-                <div className="flex flex-col items-center gap-3">
-                  {testResult.success ? (
-                    <>
-                      <CheckCircleIcon className="w-10 h-10 text-green-500" />
-                      <p className="text-sm font-medium text-text-primary">
-                        Connection successful!
+                testResult.success ? (
+                  <>
+                    <CheckCircleIcon className="w-6 h-6 text-success" />
+                    <p className="text-control font-medium text-text-primary">Connected</p>
+                    {testResult.openclawVersion ? (
+                      <p className="text-xs text-text-secondary">
+                        OpenClaw {testResult.openclawVersion} on port {testResult.openclawPort}
                       </p>
-                      {testResult.openclawVersion ? (
-                        <p className="text-xs text-text-secondary">
-                          {testResult.openclawVersion} detected (port {testResult.openclawPort})
+                    ) : (
+                      <>
+                        <p className="text-xs text-text-tertiary">
+                          OpenClaw is not installed, so agents cannot run there yet.
                         </p>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-xs text-text-tertiary">OpenClaw not detected</p>
-                          <button
-                            onClick={handleInstallPlugin}
-                            disabled={installing}
-                            className="btn-primary"
-                          >
-                            {installing ? 'Installing...' : 'Install Clave Channel Plugin'}
-                          </button>
-                          {installError && (
-                            <p className="text-xs text-destructive mt-1">{installError}</p>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <ExclamationCircleIcon className="w-10 h-10 text-destructive" />
-                      <p className="text-sm font-medium text-text-primary">Connection failed</p>
-                      <p className="text-xs text-text-tertiary">{testResult.error}</p>
-                    </>
-                  )}
-                </div>
+                        <button
+                          onClick={handleInstallPlugin}
+                          disabled={installing}
+                          className="btn-secondary mt-1"
+                        >
+                          {installing ? 'Installing…' : 'Install the Clave channel plugin'}
+                        </button>
+                        {installError && <p className="text-xs text-destructive">{installError}</p>}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <ExclamationCircleIcon className="w-6 h-6 text-destructive" />
+                    <p className="text-control font-medium text-text-primary">Could not connect</p>
+                    <p className="text-xs text-text-tertiary break-words">{testResult.error}</p>
+                  </>
+                )
               ) : (
-                <p className="text-sm text-text-secondary">Click below to test the connection</p>
+                <p className="text-control text-text-secondary">Test the connection to go on.</p>
               )}
             </div>
           )}
 
           {step === 'summary' && (
-            <div className="space-y-3">
+            <>
               <div className="flex items-center gap-3">
-                <CheckCircleIcon className="w-6 h-6 text-green-500 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-text-primary">{name || host}</p>
-                  <p className="text-xs text-text-tertiary">
+                <CheckCircleIcon className="w-5 h-5 text-success flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-control font-medium text-text-primary truncate">
+                    {name || host}
+                  </p>
+                  <p className="text-xs text-text-tertiary truncate">
                     {username}@{host}:{port}
                   </p>
                 </div>
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-control text-text-secondary">Connect when Clave starts</span>
+                <Toggle
                   checked={autoConnect}
-                  onChange={(e) => setAutoConnect(e.target.checked)}
-                  className="rounded border-border-subtle"
+                  onChange={setAutoConnect}
+                  ariaLabel="Connect when Clave starts"
                 />
-                <span className="text-sm text-text-secondary">Auto-connect on app launch</span>
-              </label>
-            </div>
+              </div>
+            </>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-border-subtle bg-surface-100/30">
+        <div className="border-t border-border-subtle flex">
           <button
+            type="button"
             onClick={
               step === 'credentials'
                 ? handleRemoveOnCancel
                 : () => setStep(step === 'test' ? 'credentials' : 'test')
             }
-            className="text-sm text-text-secondary hover:text-text-primary transition-colors"
+            className="btn-dialog text-text-secondary hover:text-text-primary border-r border-border-subtle"
           >
             {step === 'credentials' ? 'Cancel' : 'Back'}
           </button>
           {step === 'credentials' && (
             <button
+              type="button"
               onClick={() => {
                 handleTest()
                 setStep('test')
               }}
               disabled={!credentialsValid}
-              className="btn-primary h-auto py-2 px-4 text-sm"
+              className="btn-dialog text-action disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Test Connection
+              Test connection
             </button>
           )}
           {step === 'test' && (
             <button
+              type="button"
               onClick={() => setStep('summary')}
               disabled={!testResult?.success}
-              className="btn-primary h-auto py-2 px-4 text-sm"
+              className="btn-dialog text-action disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Continue
             </button>
           )}
           {step === 'summary' && (
-            <button onClick={handleFinish} className="btn-primary h-auto py-2 px-4 text-sm">
+            <button type="button" onClick={handleFinish} className="btn-dialog text-action">
               Done
             </button>
           )}

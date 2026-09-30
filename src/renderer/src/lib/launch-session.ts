@@ -1,9 +1,7 @@
 import { useSessionStore } from '../store/session-store'
-import {
-  getClaudeProfile,
-  claudeProfileSpawnFields,
-  useClaudeProfileStore
-} from '../store/claude-profile-store'
+import { claudeProfileSpawnFields } from '../store/claude-profile-store'
+import { codexAccountSpawnFields } from '../store/codex-account-store'
+import { accountForLaunch } from './switch-account'
 import { getActiveWorkspaceId, getWorkspaceById } from '../store/workspace-store'
 import {
   agentAcceptsPrompt,
@@ -98,13 +96,15 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
   const initialPrompt =
     req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
 
+  // The account is the pool's answer (ADR 0002): the one asked for while it
+  // has headroom, else the next one along. Claude and Codex alike.
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
-  const profile = isClaudeSession
-    ? getClaudeProfile(
-        req.setup?.claudeProfileId ?? useClaudeProfileStore.getState().selectedProfileId
-      )
-    : null
-  const profileFields = profile ? claudeProfileSpawnFields(profile) : {}
+  const profile = isClaudeSession ? accountForLaunch('claude', req.setup?.claudeProfileId) : null
+  const codexAccount = modes.codexMode ? accountForLaunch('codex', req.setup?.codexAccountId) : null
+  const profileFields = {
+    ...(profile ? claudeProfileSpawnFields(profile) : {}),
+    ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
+  }
 
   try {
     const sessionInfo = await window.electronAPI.spawnSession(folderPath, {
@@ -136,7 +136,8 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
         piThinking: sessionInfo.piThinking,
         claudeProfileId: profile?.id,
         claudeProfileLabel: profile?.label,
-        claudeConfigDir: profile?.configDir || undefined,
+        codexAccountId: codexAccount?.id,
+        codexAccountLabel: codexAccount?.label,
         // Persisted so Duplicate re-primes the clone with the same prompt.
         initialPrompt,
         sessionType: 'local'

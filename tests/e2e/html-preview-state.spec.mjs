@@ -50,11 +50,18 @@
  * not about survival, and it is written down as such in TerminalGrid.tsx rather
  * than asserted here as something it is not.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('html-preview-state')
-const ROOT = '/tmp/clave-e2e-html-preview-state-root'
+const ROOT = fixturePath('html-preview-state-root')
 const PAGE = `${ROOT}/report.html`
 const OTHER = `${ROOT}/other.txt`
 const VIEW_PAGE = `${ROOT}/dash.html`

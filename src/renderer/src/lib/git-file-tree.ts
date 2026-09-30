@@ -39,9 +39,7 @@ export function buildGitTree(files: GitFileStatus[]): GitTreeNode[] {
         })
       } else {
         const dirPath = parts.slice(0, i + 1).join('/')
-        let existing = current.children!.find(
-          (c) => c.type === 'directory' && c.name === part
-        )
+        let existing = current.children!.find((c) => c.type === 'directory' && c.name === part)
         if (!existing) {
           existing = { name: part, path: dirPath, type: 'directory', children: [] }
           current.children!.push(existing)

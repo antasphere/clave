@@ -13,8 +13,8 @@ import { useUpdaterStore } from '../../store/updater-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { useFeedbackStore } from '../../store/feedback-store'
 import {
-  quotaUsageStores,
   claudeUsageStore,
+  codexUsageStore,
   piUsageStores,
   tightestWindow,
   shortLabel,
@@ -26,14 +26,14 @@ import {
   type UsageProvider
 } from '../../store/usage-store'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
+import { useCodexAccountStore } from '../../store/codex-account-store'
 import { PiLogo } from '../icons/cli-logos'
 import { formatDuration } from '../work-tracker/utils'
 import { ReleaseNotesBadge } from '../help/ReleaseNotesBadge'
 import { UserIconDisplay } from '../ui/UserIconDisplay'
 import { BrandField } from '../ui/BrandField'
-import { PrereleaseMark } from '../ui/PrereleaseMark'
 import { fieldAccent } from '../../lib/brand-field'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
 /**
@@ -86,11 +86,11 @@ export function UpdateBanner(): React.ReactElement {
             data-testid="update-banner"
             className="px-2.5 py-2 rounded-xl bg-accent/8 border border-accent/15"
           >
-            {/* One row while it fits. A full pre-release version with its
-                mark does not fit beside both buttons at the sidebar's width,
-                so the buttons are allowed to wrap under it rather than the
-                version being cut to "v2.0…" — the whole point of showing it. */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            {/* One row, always. A full pre-release version fits beside both
+                buttons only without a separate mark, so the prompt carries
+                none: `v2.0.0-beta.1` names the beta itself, and the mark
+                stays where there is room for it, in Software Update. */}
+            <div className="flex items-center gap-2">
               <div className="relative flex items-center justify-center w-6 h-6 rounded-md bg-accent/12 flex-shrink-0">
                 <ArrowDownTrayIcon className="w-3.5 h-3.5 text-accent" />
                 {/* A release published with an empty body normalises to null
@@ -103,9 +103,6 @@ export function UpdateBanner(): React.ReactElement {
               <p className="text-[12px] font-medium text-text-primary leading-tight whitespace-nowrap">
                 {version ? `v${version}` : 'Update'}
               </p>
-              {/* A beta is named as one: the user asked to see them, and the
-                  prompt must not read as a stable update. */}
-              <PrereleaseMark version={version} />
               <div className="flex items-center gap-1 ml-auto">
                 <button
                   onClick={dismiss}
@@ -115,7 +112,7 @@ export function UpdateBanner(): React.ReactElement {
                 </button>
                 <button
                   onClick={handleUpdate}
-                  className="px-2 py-0.5 text-[11px] font-medium text-white bg-accent hover:bg-accent-hover rounded-md transition-colors"
+                  className="px-2 py-0.5 text-[11px] font-medium text-action-foreground bg-action hover:bg-action-hover rounded-md transition-colors"
                 >
                   Update
                 </button>
@@ -277,16 +274,29 @@ export function SidebarFooter(): React.ReactElement {
       ? null
       : (s.sessions.find((session) => session.id === s.focusedSessionId) ?? null)
   )
-  const accountId = focusedSession?.claudeProfileId ?? selectedProfileId
-  const account = profiles.find((p) => p.id === accountId)
+  const selectedCodexId = useCodexAccountStore((s) => s.selectedAccountId)
+  const codexAccounts = useCodexAccountStore((s) => s.accounts)
+  const accountId =
+    provider === 'codex'
+      ? (focusedSession?.codexAccountId ?? selectedCodexId)
+      : (focusedSession?.claudeProfileId ?? selectedProfileId)
+  const account =
+    provider === 'codex'
+      ? codexAccounts.find((a) => a.id === accountId)
+      : profiles.find((p) => p.id === accountId)
+  const many = provider === 'codex' ? codexAccounts.length > 1 : profiles.length > 1
+  const sessionLabel =
+    provider === 'codex' ? focusedSession?.codexAccountLabel : focusedSession?.claudeProfileLabel
+  const sessionAccountRef =
+    provider === 'codex' ? focusedSession?.codexAccountId : focusedSession?.claudeProfileId
   // A session whose account was removed keeps the label it started with.
   const accountLabel =
-    profiles.length > 1 && account
+    many && account
       ? account.label
-      : !account && focusedSession?.claudeProfileId
-        ? (focusedSession.claudeProfileLabel ?? 'Removed account')
+      : !account && sessionAccountRef
+        ? (sessionLabel ?? 'Removed account')
         : null
-  const quota = provider === 'codex' ? quotaUsageStores.codex() : claudeUsageStore(accountId)()
+  const quota = provider === 'codex' ? codexUsageStore(accountId)() : claudeUsageStore(accountId)()
   const pi = piUsageStores.today()
   const loadUsage =
     provider === 'pi' ? pi.load : provider === 'claude' || provider === 'codex' ? quota.load : null

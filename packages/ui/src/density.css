@@ -1,0 +1,71 @@
+/* ── Density presets ─────────────────────────────────────────────────────────
+   Appearance → Density writes one of five ids on the root element as
+   data-density. tokens.css holds COMPACT (the spec as set on 2026-09-21); each
+   block here restates, as literals, only the tokens that differ from it.
+   Nothing is multiplied — see "Density" in tokens.css for why.
+
+     tight        one step denser than Compact (derived, not hand-tuned)
+     compact      the 2026-09-21 spec, exactly — tokens.css, no block here
+     balanced     halfway between Compact and Comfortable (derived)
+     comfortable  the chrome as tuned before 2026-09-20, exactly
+     spacious     one step past Comfortable (derived)
+
+   The frame's inner control height and corner are never set here: they are
+   derived in tokens.css from --frame-h, --frame-inset and --frame-radius, so
+   the inner corner stays concentric with the frame's at every preset.
+   Measured against the real builds: tests/e2e/density.spec.mjs. */
+
+:root[data-density='tight'] {
+  --frame-h: 26px;
+  --frame-inset: 1px;
+  --frame-radius: 5px;
+  --radius-control: 5.5px;
+  --radius-xl: 11px;
+  --sidebar-row-h: 26px;
+  --menu-item-gap: 5px;
+}
+
+:root[data-density='balanced'] {
+  --frame-h: 32px;
+  --frame-inset: 2px;
+  --frame-radius: 8px;
+  --radius-control: 6.5px;
+  --radius-xl: 10.5px;
+  --control-text-sm: calc(12.5px + var(--ui-text-offset));
+  --sidebar-item-font-size: calc(13.25px + var(--ui-text-offset));
+  --sidebar-row-h: 30px;
+  --menu-item-gap: 7px;
+  --menu-row-gap: 1px;
+  --scope-glyph-size: 10px;
+  --scope-glyph-line: 1;
+}
+
+:root[data-density='comfortable'] {
+  --frame-h: 34px;
+  --frame-inset: 2px;
+  --frame-radius: 10px;
+  --radius-control: 7px;
+  --radius-xl: 10px;
+  --control-text-sm: calc(12px + var(--ui-text-offset));
+  --sidebar-item-font-size: calc(13.5px + var(--ui-text-offset));
+  --sidebar-row-h: 32px;
+  --menu-item-gap: 8px;
+  --menu-row-gap: 0px;
+  --scope-glyph-size: 10px;
+  --scope-glyph-line: 1;
+}
+
+:root[data-density='spacious'] {
+  --frame-h: 36px;
+  --frame-inset: 2px;
+  --frame-radius: 12px;
+  --radius-control: 7.5px;
+  --radius-xl: 12px;
+  --control-text-sm: calc(12px + var(--ui-text-offset));
+  --sidebar-item-font-size: calc(13.5px + var(--ui-text-offset));
+  --sidebar-row-h: 34px;
+  --menu-item-gap: 9px;
+  --menu-row-gap: 0px;
+  --scope-glyph-size: 10px;
+  --scope-glyph-line: 1;
+}

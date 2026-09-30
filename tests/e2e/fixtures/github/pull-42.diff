@@ -1,0 +1,19 @@
+diff --git a/src/widget.ts b/src/widget.ts
+new file mode 100644
+index 0000000..3b18e51
+--- /dev/null
++++ b/src/widget.ts
+@@ -0,0 +1,3 @@
++export function widget(size: number): string {
++  return `widget:${size}`
++}
+diff --git a/src/index.ts b/src/index.ts
+index 1111111..2222222 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,3 +1,2 @@
+-import { old } from './old'
+-export { old }
++import { widget } from './widget'
++export { widget }
+ export const version = 1

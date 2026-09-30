@@ -10,11 +10,11 @@
  * The assertions read the MAIN process clipboard, so they see what actually
  * landed on the pasteboard rather than what the renderer believes it wrote.
  */
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 
 const DIR = userDataDir('copy-contents')
-const ROOT = '/tmp/clave-e2e-root-copy'
+const ROOT = fixturePath('root-copy')
 const BODY = '# Notes\n\nthe body of the file, not its name\n'
 const WS = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000e1',

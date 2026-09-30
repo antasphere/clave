@@ -17,6 +17,7 @@ import type {
 } from '../../../../shared/agent-launch'
 import { ClaudeLogo, AntigravityLogo, CodexLogo, PiLogo } from '../icons/cli-logos'
 import {
+  SettingsCallout,
   SettingsCard,
   SettingsPage,
   SettingsRow,
@@ -67,38 +68,38 @@ function TokenEditor({
       <div className="settings-row-title pt-1.5 w-40 flex-shrink-0">{label}</div>
       <div className="flex-1 space-y-1.5 min-w-0">
         {tokens.map((token, index) => (
-          <div key={index} className="flex gap-1">
+          <div key={index} className="settings-row-controls">
             <input
-              className="input-compact flex-1 font-mono"
+              className="input-compact font-mono"
               value={token}
               onChange={(event) => replace(index, event.target.value)}
               aria-label={`${label} token ${index + 1}`}
             />
             <button
-              className="btn-icon btn-icon-md"
+              className="btn-icon btn-icon-sm"
               onClick={() => move(index, -1)}
               disabled={index === 0}
               title="Move up"
               aria-label="Move up"
             >
-              <ArrowUpIcon className="w-4 h-4" />
+              <ArrowUpIcon className="w-3.5 h-3.5" />
             </button>
             <button
-              className="btn-icon btn-icon-md"
+              className="btn-icon btn-icon-sm"
               onClick={() => move(index, 1)}
               disabled={index === tokens.length - 1}
               title="Move down"
               aria-label="Move down"
             >
-              <ArrowDownIcon className="w-4 h-4" />
+              <ArrowDownIcon className="w-3.5 h-3.5" />
             </button>
             <button
-              className="btn-icon btn-icon-md btn-icon--danger"
+              className="btn-icon btn-icon-sm btn-icon--danger"
               onClick={() => onChange(tokens.filter((_, i) => i !== index))}
               title="Remove token"
               aria-label="Remove token"
             >
-              <TrashIcon className="w-4 h-4" />
+              <TrashIcon className="w-3.5 h-3.5" />
             </button>
           </div>
         ))}
@@ -133,7 +134,7 @@ function ProfileEditor({
     }
   }
   return (
-    <SettingsCard className="mt-2" data-launch-profile-editor>
+    <SettingsCard data-launch-profile-editor>
       <SettingsRow label="Name">
         <input
           className="input-compact w-56"
@@ -199,14 +200,18 @@ function ProfileEditor({
           </SettingsRow>
         </>
       )}
-      {error && <div className="px-3.5 py-2 text-xs text-destructive">{error}</div>}
-      <div className="settings-row justify-end gap-2">
-        <button className="btn-secondary" onClick={onDone}>
-          Cancel
-        </button>
-        <button className="btn-primary" onClick={() => void save()}>
-          Save profile
-        </button>
+      {error && <SettingsCallout inset tone="danger" text={error} />}
+      <div className="settings-row">
+        {/* ml-auto, not justify-end: the row's own space-between is unlayered
+            and beats the utility (field guide, rule 1). */}
+        <div className="settings-row-controls ml-auto">
+          <button className="btn-secondary" onClick={onDone}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => void save()}>
+            Save profile
+          </button>
+        </div>
       </div>
     </SettingsCard>
   )
@@ -233,7 +238,7 @@ export function AgentsSettings(): React.JSX.Element {
   return (
     <SettingsPage
       title="Agents"
-      description="One launch profile per agent family: the command Clave runs and its arguments. Commands are stored locally as argument tokens; never put a password or an API key in them."
+      description="The command each agent family launches with. Keep passwords and API keys out of it: profiles are stored in plain text."
     >
       {FAMILIES.map(({ id: family, label, Logo }) => {
         const profiles = profilesFor(family)
@@ -267,7 +272,10 @@ export function AgentsSettings(): React.JSX.Element {
                 />
               </SettingsRow>
               {activeWorkspaceId && (
-                <SettingsRow label="Workspace override" description="Empty uses the global default">
+                <SettingsRow
+                  label="This workspace"
+                  description="Overrides the global default here only"
+                >
                   <SettingsSelect
                     value={workspaceId || USE_GLOBAL}
                     options={[
@@ -286,35 +294,37 @@ export function AgentsSettings(): React.JSX.Element {
                   />
                 </SettingsRow>
               )}
-              {profiles.map((profile) => (
-                <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
-                  <div className="min-w-0">
-                    <div className="settings-row-title truncate">{profile.name}</div>
-                    <div className="settings-row-description font-mono truncate">
-                      {profile.command.join(' ')}
+              {profiles
+                .filter((profile) => !profile.sourceProfileId)
+                .map((profile) => (
+                  <div key={profile.id} className="settings-row" data-launch-profile={profile.id}>
+                    <div className="min-w-0">
+                      <div className="settings-row-title truncate">{profile.name}</div>
+                      <div className="settings-row-description font-mono truncate">
+                        {profile.command.join(' ')}
+                      </div>
+                    </div>
+                    <div className="settings-row-controls">
+                      {profile.builtIn ? (
+                        <span className="badge badge-muted">Built in</span>
+                      ) : (
+                        <>
+                          <button className="btn-secondary" onClick={() => setEditing(profile)}>
+                            Edit
+                          </button>
+                          <button
+                            className="btn-icon btn-icon-sm btn-icon--danger"
+                            onClick={() => void deleteLaunchProfile(profile.id)}
+                            title="Delete profile"
+                            aria-label={`Delete profile ${profile.name}`}
+                          >
+                            <TrashIcon className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-                    {profile.builtIn ? (
-                      <span className="badge bg-surface-200 text-text-tertiary">Built in</span>
-                    ) : (
-                      <>
-                        <button className="btn-secondary" onClick={() => setEditing(profile)}>
-                          Edit
-                        </button>
-                        <button
-                          className="btn-icon btn-icon-md btn-icon--danger"
-                          onClick={() => void deleteLaunchProfile(profile.id)}
-                          title="Delete profile"
-                          aria-label={`Delete profile ${profile.name}`}
-                        >
-                          <TrashIcon className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+                ))}
               <button
                 className="settings-row-action"
                 onClick={() =>

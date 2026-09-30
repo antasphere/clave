@@ -11,8 +11,8 @@
   },
   "aliases": {
     "components": "@renderer/components",
-    "utils": "@renderer/lib/utils",
-    "ui": "@renderer/components/ui",
+    "utils": "@clave/ui/components",
+    "ui": "@clave/ui/components",
     "lib": "@renderer/lib",
     "hooks": "@renderer/hooks"
   },

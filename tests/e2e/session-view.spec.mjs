@@ -15,11 +15,18 @@
  * of the grid's visibility rule in TerminalGrid.tsx and the xterm assertions
  * below go red while everything else stays green.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('session-view')
-const ROOT = '/tmp/clave-e2e-session-view-root'
+const ROOT = fixturePath('session-view-root')
 const PAGE = `${ROOT}/dash.html`
 const MARKER = 'E2E-SESSION-VIEW-MARKER'
 const WS = {

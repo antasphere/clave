@@ -1,0 +1,669 @@
+@theme {
+  --color-surface-0: var(--surface-0);
+  --color-surface-50: var(--surface-50);
+  --color-surface-100: var(--surface-100);
+  --color-surface-200: var(--surface-200);
+  --color-surface-300: var(--surface-300);
+  --color-surface-400: var(--surface-400);
+
+  --color-border: var(--border-color);
+  --color-border-subtle: var(--border-subtle-color);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
+  /* Two colour roles, and the rule that splits them: verbs are ink, states
+     are blue, everything else is neutral.
+
+     --color-action is what a button that DOES something is filled with (Send,
+     Save, Allow, Create): the theme's own primary ink, opaque, with the
+     theme's ground as its label. A verb does not need a hue to be found — it
+     is the darkest (or lightest) thing on the page — and a hue spent on it is
+     a hue no longer free to say "this is on".
+
+     --color-accent is that hue: a signal blue, cut per theme so it clears
+     4.5:1 as text on --surface-50 everywhere, and used ONLY for state — on,
+     selected, active, focus, links, a drag target, progress. It is never a
+     fill under white text any more; the one Linear indigo it replaces was the
+     same hex in all four themes, clashed with the warm ramps, and missed
+     4.5:1 as text on three of them.
+
+     Both are restated per theme below and aliased here so Tailwind generates
+     bg-action / text-action-foreground / text-accent from them. */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-action-foreground: var(--action-foreground);
+
+  /* Git status tones. Two of them deliberately leave git's convention behind.
+     Orange means "careful", and it was painted on the two things in a repo that
+     least deserve it: a file you modified, and a commit waiting on the remote.
+     A healthy repo showed a wall of warnings for doing exactly what it is for.
+     Modified takes a violet of its own — work in progress is yours, not a
+     fault — and incoming goes plainly informational. Green, red and blue keep
+     their conventional meanings, where the convention is actually saying
+     something. Orange survives in one place only, the warning glyph on a file
+     that an incoming change and your working tree both touch: a real heads-up,
+     and now the only one, so it reads. */
+  --color-git-modified: #a78bfa;
+  --color-git-incoming: #38bdf8;
+  /* The Terminal view's status line, after the TUI's: the folder in teal, the
+     model in violet, the permission mode in amber. Mid lightness, so each
+     reads on the dark grounds and the light ones alike. */
+  --color-term-cwd: oklch(0.64 0.11 205);
+  --color-term-model: oklch(0.62 0.2 300);
+  --color-term-mode: oklch(0.66 0.11 60);
+  --color-term-auto: oklch(0.7 0.17 50);
+  /* The worktree badges of the git panel (PRDCT-2356): the modified purple's
+     family, restated per theme because one hex fails contrast at 10px on the
+     light grounds (2.6:1 on light, 2.4:1 on coffee). */
+  --color-git-worktree: var(--git-worktree);
+
+  --color-wellbeing-gentle: oklch(0.75 0.15 85);
+  --color-wellbeing-gentle-bg: oklch(0.25 0.03 85);
+  --color-wellbeing-gentle-border: oklch(0.4 0.06 85);
+  --color-wellbeing-strong: oklch(0.7 0.15 50);
+  --color-wellbeing-strong-bg: oklch(0.25 0.03 50);
+  --color-wellbeing-strong-border: oklch(0.4 0.06 50);
+
+  /* shadcn semantic aliases */
+  --color-background: var(--surface-0);
+  --color-foreground: var(--text-primary);
+  --color-popover: var(--surface-0);
+  --color-popover-foreground: var(--text-primary);
+  --color-muted: var(--surface-200);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent-shadcn: var(--surface-200);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: #ef4444;
+  /* The two other status inks a settings row states in words (Connected,
+     Connecting…, a check that failed): cross-theme like destructive above. */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  /* The switch's knob: white on every theme, over the accent when on and the
+     surface-300 track when off. On the dark themes the blue track is light,
+     and that is fine: a knob is a shape the track frames, not a label, and
+     the one place white may sit on the accent. */
+  --color-switch-knob: #ffffff;
+  /* Focus is a state, so the ring is the accent — and it names the alias, not
+     --accent, so a skin that sets only --color-accent moves the ring too. */
+  --color-ring: var(--color-accent);
+
+  /* Border-radius scale — app-wide roundness, slightly tighter than Tailwind's
+     defaults. Every rounded-* utility resolves to these, and the design-system
+     classes (.sidebar-item, .btn-*, .input-*, .floating-card) reference them,
+     so this is the single knob for how round the whole app feels. */
+  --radius: 0.375rem;       /* base (== --radius-lg) */
+  --radius-sm: 0.1875rem;   /* 3px  (was 4px) */
+  --radius-md: 0.25rem;     /* 4px  (was 6px) */
+  --radius-lg: 0.375rem;    /* 6px  (was 8px)  — buttons, tabs, inputs */
+  /* --radius-xl: the corner of a SURFACE (a menu, a card, a pane). At Compact
+     it is derived, concentric with the rows it holds: control corner + the
+     surface's inset + its border = 11px. Comfortable keeps the hand-picked
+     10px it was tuned at. Each density preset sets its own — see
+     density.css. Frames (bars) take --frame-radius. */
+  --radius-xl: calc(var(--control-radius) + var(--surface-inset) + var(--frame-border));
+  --radius-2xl: 0.875rem;   /* 14px (was 16px) */
+  --radius-full: 9999px;    /* pills, dots, round buttons */
+
+  /* The radius of a control sitting INSIDE a --radius-xl panel — every button,
+     chip, tab and field in the toolbar, the sidebar's launcher and switcher, and
+     the side panel's bars. It is --radius-lg, the same corner as a menu row, a
+     dialog button or a sidebar tab: one 28px control, one corner, wherever it
+     sits. It used to be 7px (10 − 3, the concentric-corner arithmetic for a
+     control 3px inside its panel), and the extra pixel is exactly what made the
+     launcher, the switcher chips and the toolbar buttons read rounder and
+     heavier than the popover rows beside them (2026-09-20). The token stays so
+     a panel control can still be told apart from a free-standing one in the
+     stylesheet. Comfortable keeps the 7px (density.css). */
+  --radius-control: var(--control-radius);
+
+  /* ── Density ───────────────────────────────────────────────────────────
+     The values below are the COMPACT preset (the spec as set on 2026-09-21).
+     Appearance → Density picks one of five presets, written on the root
+     element as data-density; each preset in density.css restates the tokens
+     that differ from this block as literal values. Nothing is multiplied:
+     Compact and Comfortable are two designs that were each tuned by hand, and
+     no single ratio maps one onto the other (bars grow while labels shrink).
+     A user setting, not a skin's: every token a preset sets is on
+     packages/skins/excluded-token-names.json.
+
+     --ui-text-offset is Appearance → Text size: a few px added to the chrome's
+     label sizes on top of whichever preset is active. */
+  --ui-text-offset: 0px;
+
+
+  /* ── The control spec ──────────────────────────────────────────────────
+     One control, five numbers. Every button, chip, tab, row and field reads
+     ALL of them from here and writes none as a literal, so the ratio Luca
+     picked on the workspace popover's rows (28px, 8px sides, 13px label,
+     6px corner) is the ratio of every control in the app, and a change here
+     is a change everywhere (2026-09-21, with the design lead). */
+  --control-h: var(--control-h-md);  /* 28px */
+  --control-px: 0.5rem;              /* 8px  — the sides of a text control */
+  --control-gap: 0.375rem;           /* 6px  — icon to label inside a control */
+  --control-text: calc(13px + var(--ui-text-offset));  /* the label */
+  --control-radius: var(--radius-lg);/* 6px */
+  --control-icon: 1rem;              /* 16px — the glyph in a 28px box */
+
+  /* The label of the small controls — the launcher's buttons, the switcher's
+     chips and search, the side panel's tabs, the primary / secondary buttons,
+     the compact input. 13px at Compact; Comfortable draws them at 12px. */
+  --control-text-sm: calc(13px + var(--ui-text-offset));
+  /* A sidebar row's own size (the Settings nav rows read it; a session tab's
+     name sets its own --control-text). 13.5px at Comfortable. */
+  --sidebar-item-font-size: calc(13px + var(--ui-text-offset));
+  /* A menu row: icon-to-label gap, and the air between two rows. */
+  --menu-item-gap: var(--control-gap);
+  --menu-row-gap: var(--row-gap);
+  /* The side panel's W / G / S root letter. */
+  --scope-glyph-size: 11px;
+  --scope-glyph-line: 16px;
+
+  /* ── The frame spec ────────────────────────────────────────────────────
+     A frame is a bordered box that GROUPS two or more controls: the
+     launcher, the switcher, the side panel's bars, the toolbar. A single
+     control is never framed (a field alone is a field, not a bar around a
+     field: that is what read as "thick"). The rule that keeps every frame
+     the same size: a control is 28px free-standing and ONE SIZE DOWN inside
+     a frame, so the frame itself is one control tall with the control's
+     corner, the way a macOS segmented control relates to the buttons beside
+     it. Every number below is derived from that sentence (2026-09-21).
+
+     Each density preset sets --frame-h, --frame-inset and --frame-radius;
+     the framed control's height and corner are always DERIVED from them, so
+     the inner corner stays concentric with the frame's at every preset
+     (Comfortable: 34px frame, 2px inset, 10px corner → 28px control, 7px). */
+  --frame-border: 1px;
+  --frame-inset: 1px;                /* framed control to frame edge */
+  --frame-h: var(--control-h);       /* 28px: a frame is one control tall */
+  --frame-radius: var(--control-radius);                                              /* 6px */
+  --framed-control-h: calc(var(--frame-h) - 2 * (var(--frame-inset) + var(--frame-border)));   /* 24px */
+  --framed-control-radius: calc(var(--frame-radius) - var(--frame-inset) - var(--frame-border)); /* 4px */
+  --framed-control-icon: 0.875rem;   /* 14px glyph in a 24px box (Tight / Compact only) */
+
+  /* A surface (menu, card, pane) is not a frame: it holds full-size rows and
+     insets them by this much, which is what --radius-xl above is cut from. */
+  --surface-inset: 4px;
+
+  /* Control height scale — single source of truth for row/button/input heights.
+     Components reference these via var(--control-h-*) so a change here propagates everywhere. */
+  --control-h-xs: 1.25rem; /* 20px — row-level affordances (a file row's stage/discard) */
+  --control-h-sm: 1.5rem;  /* 24px — extra compact */
+  --control-h-md: 1.75rem; /* 28px — default rows, buttons, compact inputs */
+  --control-h-lg: 2rem;    /* 32px — inputs */
+
+  /* The toolbar's inner row, and the card height that follows from it once the
+     floating card's 1px borders are added. The sidebar's launcher panel is cut
+     to the same height, so the two top bars read as one band across the divide. */
+  --toolbar-h: var(--frame-h);                                            /* 28px: the toolbar is a frame */
+  --toolbar-row-h: calc(var(--toolbar-h) - 2 * var(--frame-border));      /* 26px */
+
+  /* Where the content column's first card BELOW the toolbar starts, measured
+     from the top of the window: the column's own top margin (my-2), the toolbar
+     card, and the gap between them (gap-2). The sidebar pads its top spacer to
+     the same offset, which is what puts the launcher panel's top edge on the
+     terminal cards' top edge instead of a few pixels under it. Comfortably
+     clears the macOS traffic lights (y=16, ~14px tall). The two 0.5rem terms
+     restate the `my-2` and `gap-2` utilities the components are written with;
+     --toolbar-h is the part that moves with the density preset. */
+  --content-top-offset: calc(0.5rem + var(--toolbar-h) + 0.5rem); /* 44px at Compact, 50px at Comfortable */
+
+  /* Height of a row in the git panel's repo tree (a directory or a repo
+     header). Sized to hold the trailing sync badges, which come and go — a
+     folder's roll-up only shows while it is collapsed, and a repo's ↓ clears
+     on pull — so the row is fixed rather than content-sized. */
+  --git-tree-row-h: 1.875rem; /* 30px = 18px badge + 12px of padding */
+
+  /* Height of a leaf row in either side-panel tree — a file or a folder in the
+     Files tab, a file or a folder inside a repo in the Git tab. One token
+     because they are one list to the eye: you read the same names, at the same
+     indentation, in the same column, and a repo's contents packed tighter than
+     the file tree above it read as clutter rather than as density. The repo and
+     directory rows of the git tree stay one notch taller (--git-tree-row-h):
+     they carry the sync badges, and they are the level you scan, not the level
+     you read. */
+  --panel-row-h: 1.75rem; /* 28px */
+  --brand-claude: #d97757; /* Claude's mark keeps its colour in every skin */
+  /* The air between two filled rows — see "Row rhythm" in system.css. One of
+     the few metrics a SKIN may set (deliberately absent from
+     packages/skins/excluded-token-names.json), so it stays a plain literal:
+     a skin token whose value names a token skins cannot see is refused by
+     validateTokens. Menus read it through --menu-row-gap, which a density
+     preset can set to 0. */
+  --row-gap: 2px;
+
+  /* Height of a tab row in the sidebar list — a session, a file tab, a group
+     header, a group's `+`. Its own token rather than --control-h-md so the list
+     can move without the launcher and rail panels (they are pinned to the
+     toolbar's height), but the value is the control height: a sidebar tab is
+     the same 28px row as a menu item, and the taller list (30px, then 32px, on
+     the "reading wants more air" argument) was the one row family that did not
+     match the rest of the app (2026-09-20). */
+  --sidebar-row-h: var(--control-h-md); /* 28px at Compact, 32px at Comfortable */
+
+  /* Sidebar tab icon size — single source of truth for the leading icon on
+     session/file/group tabs in the sidebar. Change here to resize all of them. */
+  --sidebar-tab-icon-size: 0.9375rem; /* 15px (was 14px) */
+
+  /* Sidebar row horizontal padding — distance from a tab row's edge to its
+     leading/trailing icons. Tab rows, the group header, and the section-label
+     alignment all derive from this, so changing it keeps everything in sync. */
+  --sidebar-row-px: 0.625rem; /* 10px (was 7px) */
+
+  /* Sidebar content keyline — the vertical guide that row content aligns to on
+     both edges: the list container's padding (px-2 = 0.5rem) plus the row's own
+     horizontal padding. Section headers and any sidebar chrome (leading labels,
+     trailing action icons) must pad to this so everything lines up vertically
+     across components instead of each picking its own padding. */
+  --sidebar-gutter: calc(0.5rem + var(--sidebar-row-px)); /* 18px */
+
+  --color-status-working: #3b82f6;
+  --color-status-ready: #22c55e;
+  --color-status-waiting: #f59e0b;
+  --color-status-inactive: #6b7280;
+
+  --font-sans: "Geist Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Single source of truth for "medium" UI text weight. Overrides Tailwind's
+     default font-medium (500) so every `font-medium` utility and every design-
+     system class that references this token gets a lighter weight at once.
+     Geist is loaded at 400/500/600 only — keep this to one of those. */
+  --font-weight-medium: 400;
+
+  --ease-out-expo: cubic-bezier(0.2, 0, 0, 1);
+
+  --animate-fade-in: fade-in 150ms var(--ease-out-expo);
+}
+
+/* Dark theme (default) */
+/* Dark is the app's default and lives on bare :root; it is ALSO addressable by
+   attribute so a nested element can carry a theme of its own, which is how the
+   Appearance page paints each theme's swatch with that theme's real tokens
+   instead of a copied hex. Same rule, two selectors: nothing is duplicated. */
+[data-theme="dark"],
+:root {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: rgba(255, 255, 255, 0.9);
+  --terminal-accent: rgba(255, 255, 255, 0.8);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(255, 255, 255, 0.15);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1a1a1a;
+  --terminal-red: #f87171;
+  --terminal-green: #4ade80;
+  --terminal-yellow: #facc15;
+  --terminal-blue: #60a5fa;
+  --terminal-magenta: #c084fc;
+  --terminal-cyan: #22d3ee;
+  --terminal-white: #e5e5e5;
+  --terminal-bright-black: #404040;
+  --terminal-bright-red: #fca5a5;
+  --terminal-bright-green: #86efac;
+  --terminal-bright-yellow: #fde047;
+  --terminal-bright-blue: #93bbfd;
+  --terminal-bright-magenta: #d8b4fe;
+  --terminal-bright-cyan: #67e8f9;
+  --terminal-bright-white: #ffffff;
+
+  /* Off-black ramp — lifted off pure #000 with a subtle warm tint (R>G>B),
+     mirroring the warm off-white of the light/coffee themes for a shared vibe. */
+  --surface-0: #0e0d0c;
+  --surface-50: #161513;
+  --surface-100: #1d1c19;
+  --surface-raised: #161513;
+  --raised-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 12px rgb(0 0 0 / 0.22);
+  /* The two colour roles (see --color-action in @theme). The action is this
+     theme's opaque primary ink with its --surface-0 as the label; its hover
+     steps 12% toward --surface-50, a press you see without a second hue. The
+     accent is the state blue: lighter on hover on the dark grounds, darker on
+     the light ones, so a hover always moves away from the ground. */
+  --accent: #5aa2f7;
+  --accent-hover: #78b4f9;
+  --action: #f1f0ee;
+  --action-hover: #d7d6d4;
+  --action-foreground: #0e0d0c;
+  /* A raised control (.btn-secondary): a hairline edge and a soft drop in one
+     box-shadow, so it costs no layout. Restated per theme because an edge
+     that reads on off-black is invisible on warm white, and the reverse. */
+  --raised-control-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 2px rgb(0 0 0 / 0.4);
+  --surface-200: #262420;
+  --surface-300: #2f2c28;
+  --surface-400: #38352f;
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-subtle-color: rgba(255, 255, 255, 0.06);
+  /* The repeating hairline inside a list — every tree's row rules, in the Files
+     tab and in the git panel alike. Softer than --border-subtle on purpose: a
+     structural border appears once around a panel, this one appears between
+     every block down a scroll, and at the subtle border's weight a dozen repos
+     read as ruled paper.
+
+     Split into channels and an alpha because the user owns the weight of these
+     lines (Appearance → Tree separators): --rule-intensity scales every theme's
+     alpha from the one place, so a theme still says how dark its own hairline
+     is and the setting says how much of it to draw. Each theme sets --rule-rgb
+     and --rule-alpha; --rule-color is composed once, here, and recomputes per
+     theme because a [data-theme] block overrides those on this same element. */
+  --rule-rgb: 255 255 255;
+  --rule-alpha: 0.045;
+  --rule-intensity: 1;
+  --rule-color: rgb(var(--rule-rgb) / calc(var(--rule-alpha) * var(--rule-intensity)));
+  /* The ink of the worktree guides in the repo tree (PRDCT-2356): the
+     tertiary text at half strength, so the guide reads as structure under
+     the labels rather than as one of them. */
+  --tree-guide-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  /* 0.47, not 0.4: the tertiary ink is text people read (branch names, counters,
+     placeholders, the unselected tab), so it clears 4.5:1 on --surface-50 in
+     every theme (2026-09-21). Secondary keeps a full step above it. */
+  --text-tertiary: rgba(255, 255, 255, 0.47);
+  --git-worktree: #a78bfa;
+  /* Resting text color for sidebar rows — slightly more opaque than --text-secondary */
+  --sidebar-item-text: rgba(255, 255, 255, 0.78);
+  /* Resting color for sidebar tab icons — more opaque than --text-tertiary */
+  --sidebar-icon-color: rgba(255, 255, 255, 0.6);
+  /* The 0.5px ring under a selected row or group card. A token because it was
+     literal rgba(0,0,0,0.12) in the rules, which no theme could reach — on the
+     off-black themes a black hairline is invisible, and on a lifted ground it
+     is a black outline drawn around the one row you are looking at. */
+  --selected-ring: rgba(0, 0, 0, 0.12);
+  /* The disclosure chevron on a tree row. Derived from the icon colour rather
+     than set per theme, so it follows every skin for free — and a step back
+     from it, because the chevron is not an icon: it says which way a row is
+     facing, which the row's indentation and its open folder already say too.
+     At the icon's full strength it read as a third mark competing with the
+     folder and the name, hardest in light mode where the icon ink is a solid
+     mid grey rather than a translucent white. */
+  --tree-chevron-color: color-mix(in srgb, var(--sidebar-icon-color) 60%, transparent);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+  /* The ONE modal scrim (dialogs, the group picker) and the two overlay shadow
+     levels (menus/popovers, modals). Overlays float above the flat panels, so
+     they are the one place a shadow is depth rather than chrome. */
+  --scrim-color: rgb(0 0 0 / 0.4);
+  --overlay-shadow: 0 6px 16px rgb(0 0 0 / 0.24), 0 1px 4px rgb(0 0 0 / 0.16);
+  --overlay-shadow-lg: 0 12px 28px rgb(0 0 0 / 0.3), 0 3px 8px rgb(0 0 0 / 0.2);
+  --danger-toggle-bg: rgba(255, 255, 255, 0.08);
+  --danger-toggle-active: rgba(229, 64, 64, 0.18);
+  --danger-toggle-glow: rgba(229, 64, 64, 0.25);
+  --danger-toggle-icon: #e54040;
+  --claude-toggle-bg: rgba(255, 255, 255, 0.08);
+  --claude-toggle-active: rgba(217, 119, 87, 0.18);
+  --claude-toggle-glow: rgba(217, 119, 87, 0.25);
+  --heatmap-0: #211f1b;
+  --heatmap-1: color-mix(in srgb, var(--accent) 30%, transparent);
+  --heatmap-2: color-mix(in srgb, var(--accent) 50%, transparent);
+  --heatmap-3: color-mix(in srgb, var(--accent) 70%, transparent);
+  --heatmap-4: color-mix(in srgb, var(--accent) 95%, transparent);
+}
+
+/* Light theme — Linear-inspired warm grays */
+[data-theme="light"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #1b1b18;
+  --terminal-accent: rgba(27, 27, 24, 0.7);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(0, 0, 0, 0.1);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1b1b18;
+  --terminal-red: #dc2626;
+  --terminal-green: #16a34a;
+  --terminal-yellow: #ca8a04;
+  --terminal-blue: #2563eb;
+  --terminal-magenta: #9333ea;
+  --terminal-cyan: #0891b2;
+  --terminal-white: #d7d6d3;
+  --terminal-bright-black: #6c6c65;
+  --terminal-bright-red: #ef4444;
+  --terminal-bright-green: #22c55e;
+  --terminal-bright-yellow: #eab308;
+  --terminal-bright-blue: #3b82f6;
+  --terminal-bright-magenta: #a855f7;
+  --terminal-bright-cyan: #06b6d4;
+  --terminal-bright-white: #9b9b94;
+
+  --surface-0: #fbfbf9;
+  --surface-50: #f5f4f2;
+  --surface-100: #eeedeb;
+  --surface-raised: #ffffff;
+  --raised-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.05);
+  --accent: #1f5fcf;
+  --accent-hover: #1a51b1;
+  --action: #1b1b18;
+  --action-hover: #353532;
+  --action-foreground: #fbfbf9;
+  --raised-control-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 2px rgb(0 0 0 / 0.08);
+  --surface-200: #e4e3e0;
+  --surface-300: #d7d6d3;
+  --surface-400: #c9c8c5;
+  --border-color: rgba(0, 0, 0, 0.1);
+  --border-subtle-color: rgba(0, 0, 0, 0.05);
+  /* Lighter than the dark theme's equivalent alpha on purpose: black on a warm
+     off-white reads harder than white on off-black, so the same number is a
+     darker line here. Kept a shade under what the eye would call a border. */
+  --rule-rgb: 0 0 0;
+  --rule-alpha: 0.022;
+  --text-primary: #1b1b18;
+  --text-secondary: #5c5c56; /* 6.1:1 on --surface-50 (was #6c6c65, 4.8:1) */
+  --text-tertiary: #70706a;  /* 4.5:1 on --surface-50 (was #9b9b94, 2.5:1) */
+  --git-worktree: #7c3aed;
+  --sidebar-item-text: #45453f;
+  --sidebar-icon-color: #6c6c65;
+  --selected-ring: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.22);
+  --scrim-color: rgb(27 27 24 / 0.25);
+  --overlay-shadow: 0 6px 16px rgb(0 0 0 / 0.07), 0 1px 4px rgb(0 0 0 / 0.04);
+  --overlay-shadow-lg: 0 12px 28px rgb(0 0 0 / 0.11), 0 3px 8px rgb(0 0 0 / 0.05);
+  --danger-toggle-bg: rgba(0, 0, 0, 0.05);
+  --danger-toggle-active: rgba(220, 53, 69, 0.14);
+  --danger-toggle-glow: rgba(220, 53, 69, 0.17);
+  --danger-toggle-icon: #dc3545;
+  --claude-toggle-bg: rgba(0, 0, 0, 0.05);
+  --claude-toggle-active: rgba(217, 119, 87, 0.14);
+  --claude-toggle-glow: rgba(217, 119, 87, 0.17);
+  --heatmap-0: #e4e3e0;
+  --heatmap-1: color-mix(in srgb, var(--accent) 20%, transparent);
+  --heatmap-2: color-mix(in srgb, var(--accent) 40%, transparent);
+  --heatmap-3: color-mix(in srgb, var(--accent) 65%, transparent);
+  --heatmap-4: color-mix(in srgb, var(--accent) 90%, transparent);
+  --color-wellbeing-gentle: oklch(0.55 0.15 85);
+  --color-wellbeing-gentle-bg: oklch(0.95 0.03 85);
+  --color-wellbeing-gentle-border: oklch(0.8 0.08 85);
+  --color-wellbeing-strong: oklch(0.5 0.15 50);
+  --color-wellbeing-strong-bg: oklch(0.95 0.03 50);
+  --color-wellbeing-strong-border: oklch(0.8 0.08 50);
+}
+
+/* Coffee theme — warm light, matching Claude's cream/beige aesthetic */
+[data-theme="coffee"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #1b1610;
+  --terminal-accent: rgba(27, 22, 16, 0.7);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(120, 100, 80, 0.15);
+  --terminal-selection-foreground: none;
+  --terminal-black: #1b1610;
+  --terminal-red: #c53030;
+  --terminal-green: #2f855a;
+  --terminal-yellow: #b7791f;
+  --terminal-blue: #2b6cb0;
+  --terminal-magenta: #805ad5;
+  --terminal-cyan: #0e7490;
+  --terminal-white: #d0cbc3;
+  --terminal-bright-black: #756e66;
+  --terminal-bright-red: #e53e3e;
+  --terminal-bright-green: #38a169;
+  --terminal-bright-yellow: #d69e2e;
+  --terminal-bright-blue: #3182ce;
+  --terminal-bright-magenta: #9f7aea;
+  --terminal-bright-cyan: #0891b2;
+  --terminal-bright-white: #9b9590;
+
+  --surface-0: #f5f1eb;
+  --surface-50: #eeebe5;
+  --surface-100: #e8e4dd;
+  --surface-raised: #fcfaf7;
+  --raised-shadow: 0 1px 2px rgb(60 45 30 / 0.05), 0 4px 12px rgb(60 45 30 / 0.06);
+  --accent: #1f5bc4;
+  --accent-hover: #1a4ea8;
+  --action: #1b1610;
+  --action-hover: #34302a;
+  --action-foreground: #f5f1eb;
+  --raised-control-shadow: 0 0 0 0.5px rgb(60 45 30 / 0.22), 0 1px 2px rgb(60 45 30 / 0.1);
+  --surface-200: #ddd9d1;
+  --surface-300: #d0cbc3;
+  --surface-400: #c3bdb4;
+  --border-color: rgba(120, 100, 80, 0.15);
+  --border-subtle-color: rgba(120, 100, 80, 0.08);
+  --rule-rgb: 120 100 80;
+  --rule-alpha: 0.055;
+  --text-primary: #1b1610;
+  --text-secondary: #5d574f; /* 6.0:1 on --surface-50 (was #756e66, 4.2:1) */
+  --text-tertiary: #6d6660;  /* 4.8:1 on --surface-50 (was #9b9590, 2.5:1) */
+  --git-worktree: #7c3aed;
+  --sidebar-item-text: #4d4840;
+  --sidebar-icon-color: #756e66;
+  --selected-ring: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb: rgba(120, 100, 80, 0.18);
+  --scrollbar-thumb-hover: rgba(120, 100, 80, 0.3);
+  --scrim-color: rgb(43 34 24 / 0.25);
+  --overlay-shadow: 0 6px 16px rgb(60 45 30 / 0.08), 0 1px 4px rgb(60 45 30 / 0.05);
+  --overlay-shadow-lg: 0 12px 28px rgb(60 45 30 / 0.12), 0 3px 8px rgb(60 45 30 / 0.06);
+  --danger-toggle-bg: rgba(120, 100, 80, 0.08);
+  --danger-toggle-active: rgba(220, 53, 69, 0.15);
+  --danger-toggle-glow: rgba(220, 53, 69, 0.18);
+  --danger-toggle-icon: #dc3545;
+  --claude-toggle-bg: rgba(120, 100, 80, 0.08);
+  --claude-toggle-active: rgba(217, 119, 87, 0.18);
+  --claude-toggle-glow: rgba(217, 119, 87, 0.22);
+  --heatmap-0: #ddd9d1;
+  --heatmap-1: color-mix(in srgb, var(--accent) 20%, transparent);
+  --heatmap-2: color-mix(in srgb, var(--accent) 40%, transparent);
+  --heatmap-3: color-mix(in srgb, var(--accent) 65%, transparent);
+  --heatmap-4: color-mix(in srgb, var(--accent) 90%, transparent);
+  --color-wellbeing-gentle: oklch(0.5 0.12 85);
+  --color-wellbeing-gentle-bg: oklch(0.85 0.04 85);
+  --color-wellbeing-gentle-border: oklch(0.7 0.08 85);
+  --color-wellbeing-strong: oklch(0.45 0.15 50);
+  --color-wellbeing-strong-bg: oklch(0.85 0.04 50);
+  --color-wellbeing-strong-border: oklch(0.7 0.08 50);
+}
+
+/* Charcoal theme — the soft dark. The default dark theme is off-black, which
+   reads as a hole cut in the screen; this is the same architecture painted on
+   warm charcoal instead, with nothing on it pure black and nothing pure white.
+
+   Three things carry it, and none of them is a brightness change:
+
+   1. A warm hue held at low chroma through the WHOLE ramp — every surface,
+      every ink, every hairline is oklch hue 68 at chroma ~0.010, so the greys
+      are ash and not slate. A ramp that warms only its darkest rungs goes
+      muddy at the top; holding one hue is what makes it read as a material.
+   2. Bigger steps between the rungs than dark uses. On off-black a 1px border
+      does the separating and the fills barely need to differ; lift the ground
+      and that border stops carrying it, so tone has to. Selected-against-chrome
+      is 1.43:1 here where dark gets away with 1.18:1 — which is the point of
+      the skin, not a side effect: soft ground, firm structure.
+   3. Nothing in it may be black. Not the ramp, and not the four places a theme
+      normally leaves on the default: the modal scrim, the two overlay shadows,
+      the terminal's own ANSI black, and the hairline ring under a selected row
+      — that last one was literal rgba(0,0,0,0.12) in a rule no theme could
+      reach, which is invisible on off-black and an outline here.
+
+   The layer order is the app's, unchanged: --surface-0 is the card (terminal,
+   toolbar, the panels inside the sidebar) and sits a step BELOW --surface-50,
+   the chrome that the window ground and the sidebar share. Cards are wells
+   here exactly as they are in dark. */
+[data-theme="charcoal"] {
+  /* Terminal palette: extracted from the original xterm theme, byte-for-byte. */
+  --terminal-foreground: #efece9;
+  --terminal-accent: rgba(255, 243, 232, 0.8);
+  --terminal-cursor: var(--terminal-accent);
+  --terminal-selection-background: rgba(255, 243, 232, 0.18);
+  --terminal-selection-foreground: none;
+  --terminal-black: #3d3834;
+  --terminal-red: #f0857c;
+  --terminal-green: #8fce87;
+  --terminal-yellow: #e6c068;
+  --terminal-blue: #7fb0ea;
+  --terminal-magenta: #c49bef;
+  --terminal-cyan: #6cc9d4;
+  --terminal-white: #d7d3d0;
+  --terminal-bright-black: #736f6b;
+  --terminal-bright-red: #f7a9a1;
+  --terminal-bright-green: #b0e0a4;
+  --terminal-bright-yellow: #f2d68a;
+  --terminal-bright-blue: #a6c9f5;
+  --terminal-bright-magenta: #d9bcf7;
+  --terminal-bright-cyan: #98dfe6;
+  --terminal-bright-white: #faf8f6;
+
+  --surface-0: #2b2722;
+  --surface-50: #34302c;
+  --surface-100: #3e3a35;
+  --surface-raised: #34302c;
+  --raised-shadow: 0 1px 2px rgb(9 6 4 / 0.34), 0 4px 12px rgb(9 6 4 / 0.26);
+  --accent: #78b0f5;
+  --accent-hover: #93c0f7;
+  --action: #efece9;
+  --action-hover: #d9d5d2;
+  --action-foreground: #2b2722;
+  --raised-control-shadow: 0 0 0 0.5px rgba(255, 243, 232, 0.16), 0 1px 2px rgb(9 6 4 / 0.4);
+  --surface-200: #4c4743;
+  --surface-300: #5a5651;
+  --surface-400: #6a6560;
+  /* Warm white rather than #fff: a neutral hairline over a warm ground reads
+     blue, and at these alphas that tint is the whole difference between ash
+     and slate. The same alphas dark uses, which is not the same line: a white
+     hairline loses relative contrast as the fill under it rises, so holding
+     the number is what keeps the border where dark has it. */
+  --border-color: rgba(255, 243, 232, 0.1);
+  --border-subtle-color: rgba(255, 243, 232, 0.058);
+  --rule-rgb: 255 243 232;
+  --rule-alpha: 0.045;
+  /* Ink as explicit warm greys, not white-at-alpha. Over a warm ground white
+     alpha composites toward neutral as it gets more opaque, so the body text —
+     the most opaque ink there is — would be the one thing in the theme that
+     went cold. */
+  --text-primary: #efece9;
+  --text-secondary: #b8b4b0; /* 6.4:1 on --surface-50 (was #a39f9b, 5.0:1) */
+  --text-tertiary: #9c9893;  /* 4.5:1 on --surface-50 (was #84807b, 3.3:1) */
+  --git-worktree: #a78bfa;
+  --sidebar-item-text: #c7c3c0;
+  --sidebar-icon-color: #9f9a96;
+  --selected-ring: rgba(255, 243, 232, 0.07);
+  --scrollbar-thumb: rgba(255, 243, 232, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 243, 232, 0.26);
+  --scrim-color: rgb(24 18 13 / 0.46);
+  /* A shade heavier than dark's. A shadow is the difference between the
+     overlay and what is under it, and what is under it here is 12 points
+     lighter — the same shadow would simply be less shadow. */
+  --overlay-shadow: 0 6px 16px rgb(9 6 4 / 0.34), 0 1px 4px rgb(9 6 4 / 0.22);
+  --overlay-shadow-lg: 0 12px 28px rgb(9 6 4 / 0.42), 0 3px 8px rgb(9 6 4 / 0.3);
+  --danger-toggle-bg: rgba(255, 243, 232, 0.07);
+  --danger-toggle-active: rgba(229, 64, 64, 0.2);
+  --danger-toggle-glow: rgba(229, 64, 64, 0.26);
+  --danger-toggle-icon: #e54040;
+  --claude-toggle-bg: rgba(255, 243, 232, 0.07);
+  --claude-toggle-active: rgba(217, 119, 87, 0.2);
+  --claude-toggle-glow: rgba(217, 119, 87, 0.26);
+  --heatmap-0: #3a3631;
+  --heatmap-1: color-mix(in srgb, var(--accent) 30%, transparent);
+  --heatmap-2: color-mix(in srgb, var(--accent) 50%, transparent);
+  --heatmap-3: color-mix(in srgb, var(--accent) 70%, transparent);
+  --heatmap-4: color-mix(in srgb, var(--accent) 95%, transparent);
+  /* Lifted off dark's 0.25 backgrounds: those were solved against off-black and
+     land almost on this theme's own surface, so the chip would lose its edge. */
+  --color-wellbeing-gentle: oklch(0.78 0.14 85);
+  --color-wellbeing-gentle-bg: oklch(0.36 0.035 85);
+  --color-wellbeing-gentle-border: oklch(0.5 0.06 85);
+  --color-wellbeing-strong: oklch(0.73 0.15 50);
+  --color-wellbeing-strong-bg: oklch(0.36 0.035 50);
+  --color-wellbeing-strong-border: oklch(0.5 0.07 50);
+}
+

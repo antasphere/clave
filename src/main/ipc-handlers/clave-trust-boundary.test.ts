@@ -61,7 +61,9 @@ describe('describeElevated — what the review dialog must disclose', () => {
   })
 
   it('treats a Pi launch prompt as elevated and strips it in safe mode', () => {
-    const loaded = single(group({ sessions: [session({ claudeMode: false, piMode: true, prompt: 'work now' })] }))
+    const loaded = single(
+      group({ sessions: [session({ claudeMode: false, piMode: true, prompt: 'work now' })] })
+    )
     expect(describeElevated(loaded).prompts).toEqual(['work now'])
     const safe = sanitizeElevated(loaded) as ClaveFileReadResult & ClaveGroupData
     expect(safe.sessions[0].piMode).toBe(true)
@@ -133,7 +135,13 @@ describe('sanitizeElevated — what "Open safely" must strip', () => {
       single(
         group({
           terminals: [
-            { command: 'npm run dev', commandMode: 'prefill', color: 'green', serverUrl: 'http://evil.example', groupView: true }
+            {
+              command: 'npm run dev',
+              commandMode: 'prefill',
+              color: 'green',
+              serverUrl: 'http://evil.example',
+              groupView: true
+            }
           ]
         })
       )
@@ -155,6 +163,16 @@ describe('sanitizeElevated — what "Open safely" must strip', () => {
     const g = out as ClaveFileReadResult & ClaveGroupData
     expect(g.name).toBe('Docs')
     expect(g.cwd).toBe('/tmp/docs')
+  })
+
+  it("keeps a session's account: it routes the session, it drives nothing (ADR 0002)", () => {
+    const out = sanitizeElevated(
+      single(group({ sessions: [session({ account: 'Work', prompt: 'brief' })] }))
+    )
+    const g = out as ClaveFileReadResult & ClaveGroupData
+    expect(g.sessions[0].account).toBe('Work')
+    expect(g.sessions[0].prompt).toBeUndefined()
+    expect(describeElevated(out)).toEqual({ autoCommands: [], prompts: [], dangerous: false })
   })
 })
 

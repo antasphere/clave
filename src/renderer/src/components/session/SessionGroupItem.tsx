@@ -1,17 +1,8 @@
 import { useCallback, useEffect, useRef, useState, memo } from 'react'
-import { cn } from '../../lib/utils'
-import {
-  useSessionStore,
-  type SessionGroup,
-  resolveColorHex
-} from '../../store/session-store'
-import {
-  FolderIcon,
-  FolderOpenIcon,
-  CommandLineIcon,
-  PlusIcon
-} from '@heroicons/react/24/outline'
-import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
+import { cn } from '@clave/ui/components'
+import { useSessionStore, type SessionGroup, resolveColorHex } from '../../store/session-store'
+import { FolderIcon, FolderOpenIcon, CommandLineIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { Popover, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { GroupTerminalsPanel } from './GroupTerminalsPanel'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 
@@ -156,9 +147,7 @@ function SessionGroupItemImpl({
   const litColor = runningTerminals.length
     ? (resolveColorHex(runningTerminals[0].color) ?? undefined)
     : undefined
-  const terminalFocused = terminals.some(
-    (t) => !!t.sessionId && t.sessionId === focusedSessionId
-  )
+  const terminalFocused = terminals.some((t) => !!t.sessionId && t.sessionId === focusedSessionId)
 
   // Two different fades, deliberately not the same element. Dragging fades the
   // whole row. "Not the active selection" fades only the header's own folder and
@@ -193,11 +182,7 @@ function SessionGroupItemImpl({
           className="sidebar-tab-icon flex-shrink-0 flex items-center justify-center cursor-pointer"
           style={labelStyle}
         >
-          {group.collapsed ? (
-            <FolderIcon />
-          ) : (
-            <FolderOpenIcon />
-          )}
+          {group.collapsed ? <FolderIcon /> : <FolderOpenIcon />}
         </span>
 
         {/* Group name */}
@@ -209,13 +194,10 @@ function SessionGroupItemImpl({
             onBlur={commitRename}
             onKeyDown={handleInputKeyDown}
             onClick={(e) => e.stopPropagation()}
-            className="flex-1 min-w-0 bg-transparent text-[13px] font-medium text-text-primary outline-none border-none"
+            className="flex-1 min-w-0 bg-transparent text-control font-medium text-text-primary outline-none border-none"
           />
         ) : (
-          <span
-            className="flex-1 min-w-0 text-[13px] font-medium truncate"
-            style={labelStyle}
-          >
+          <span className="flex-1 min-w-0 text-control font-medium truncate" style={labelStyle}>
             {group.name}
           </span>
         )}

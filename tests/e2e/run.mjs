@@ -8,8 +8,17 @@
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
+import { finishRun, killLeakedE2eTmux } from './harness.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
+
+// Every run gets its own fixture namespace (PRDCT-2615). Set before any spec
+// is imported, because the specs build their fixture paths at module load.
+// One given in the environment wins; otherwise the checkout names the run, so
+// two worktrees running the suite at once never share a /tmp folder.
+if (!process.env[NAMESPACE_ENV] || process.env[NAMESPACE_ENV].trim() === '')
+  process.env[NAMESPACE_ENV] = defaultNamespace(path.resolve(DIR, '..', '..'))
 const only = process.argv[2]
 const GREEN = '\u001b[32m'
 const RED = '\u001b[31m'
@@ -50,6 +59,14 @@ if (specs.length === 0) {
   process.exit(1)
 }
 
+console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
+
+// Several specs spawn tmux sessions and leave them to a later sweep, and the
+// sweep is scoped to this run's namespace (harness killLeakedE2eTmux), so no
+// other checkout will ever take them. The run sweeps its own at both ends:
+// the start catches what an interrupted run of this checkout left.
+killLeakedE2eTmux()
+
 let failed = 0
 let passed = 0
 
@@ -73,6 +90,8 @@ for (const file of specs) {
   passed += t.results.filter((r) => r.ok).length
   failed += t.results.filter((r) => !r.ok).length
 }
+
+finishRun({ failed })
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

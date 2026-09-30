@@ -1,0 +1,13 @@
+{
+  "kind": "skin",
+  "id": "coffee",
+  "name": "Coffee",
+  "version": "1.0.0",
+  "engines": {
+    "clave": ">=1.90.2"
+  },
+  "skin": {
+    "tokens": "skin.json",
+    "base": "light"
+  }
+}

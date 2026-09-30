@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FileReadResult } from '../../../../preload/index.d'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { formatSize, countLines } from './file-types'
 
 interface FileInfoTooltipProps {

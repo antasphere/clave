@@ -67,8 +67,8 @@ interface GroupSwitcherProps {
  * and it opens on a height transition when the first chip arrives — starting a
  * group, or a search reaching past the running ones.
  *
- * Named "switcher", not "rail": .group-rail is the coloured bar down a group's
- * sessions in the list below.
+ * Named "switcher", not "rail": .group-rail is a group card's session list in
+ * the sidebar below (once a coloured bar down it, hence the name).
  */
 export function GroupSwitcher({
   entries,

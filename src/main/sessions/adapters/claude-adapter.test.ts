@@ -1,0 +1,1843 @@
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+const mock = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  token: vi.fn(() => 'secret-account-token'),
+  find: vi.fn((): string | null => null),
+  profileArgs: ['--debug']
+}))
+vi.mock('node:child_process', () => ({ spawn: mock.spawn }))
+// The binary is nowhere on the test PATH unless a case says so: the launch
+// then takes the login-shell wrapper, which is what most cases exercise.
+vi.mock('../../shell-launch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shell-launch')>()),
+  findExecutable: mock.find
+}))
+vi.mock('../../mcp/mcp-runtime', () => ({
+  getMcpRuntime: () => null,
+  deleteSessionMcpConfig: vi.fn()
+}))
+vi.mock('../../launch-profile-manager', () => ({
+  launchProfileManager: {
+    resolve: () => ({
+      id: 'custom',
+      name: 'Custom',
+      family: 'claude',
+      command: ['claude'],
+      additionalArgs: mock.profileArgs
+    })
+  }
+}))
+vi.mock('./pty-backend', () => ({
+  accountTokenForSpawn: mock.token,
+  buildSpawnEnv: (env, account) => ({
+    ...env,
+    CLAUDE_CONFIG_DIR: account.configDir,
+    CLAUDE_CODE_OAUTH_TOKEN: account.oauthToken
+  }),
+  getLoginShellEnv: () => ({ PATH: '/test/bin' }),
+  getUserShell: () => '/bin/zsh',
+  buildClaudeHookSettingsArg: (id) => JSON.stringify({ hooks: id }),
+  shellSingleQuote: (s) => `'${s.replace(/'/g, `'\\''`)}'`,
+  isValidClaudeSessionId: (s) => /^[\w-]+$/.test(s)
+}))
+import {
+  ClaudeAdapter,
+  ClaudeStreamTranslator,
+  HOST_COMMANDS,
+  claudeModelOptions
+} from './claude-adapter'
+
+/** What the adapter wrote to the CLI since the last read, without the
+ *  get_settings reads it makes at ready and after every confirmed switch to
+ *  learn the effort (their own tests read the raw stream); null when nothing
+ *  else was written. */
+function written(child: { stdin: PassThrough }): string | null {
+  const raw = child.stdin.read() as Buffer | null
+  if (!raw) return null
+  const lines = raw
+    .toString()
+    .split('\n')
+    .filter((line) => line && !line.includes('"subtype":"get_settings"'))
+  return lines.length ? lines.map((line) => `${line}\n`).join('') : null
+}
+import { NdjsonLines } from './ndjson'
+const spec = {
+  id: 'test-session',
+  provider: 'claude',
+  transport: 'events' as const,
+  cwd: '/tmp',
+  windowKey: 'w',
+  state: 'idle' as const,
+  createdAt: 1,
+  adapterId: 'claude-chat',
+  title: 'test'
+}
+const events: SessionEvent[] = []
+let translator: ClaudeStreamTranslator
+beforeEach(() => {
+  events.length = 0
+  translator = new ClaudeStreamTranslator((e) => events.push(e))
+  vi.clearAllMocks()
+})
+afterEach(() => vi.restoreAllMocks())
+function feed(payload: unknown): void {
+  translator.line(JSON.stringify(payload))
+}
+it('translates the real installed CLI transcript without duplicating text and preserves every line', () => {
+  const lines = readFileSync(
+    new URL('../fixtures/claude-stream/real-turn.ndjson', import.meta.url),
+    'utf8'
+  )
+    .trim()
+    .split('\n')
+  for (const line of lines) {
+    const before = events.length
+    translator.line(line)
+    expect(events.length).toBeGreaterThan(before)
+  }
+  expect(events[0]).toMatchObject({ type: 'session_meta', model: 'claude-opus-5[1m]' })
+  expect(events.filter((e) => e.type === 'assistant_text')).toEqual([
+    { type: 'assistant_text', delta: 'CLAVE_OK', final: false },
+    { type: 'assistant_text', delta: '', final: true }
+  ])
+  expect(events.at(-1)).toEqual({ type: 'state_change', state: 'done' })
+  expect(
+    events.some(
+      (e) => e.type === 'provider_event' && (e.payload as { type: string }).type === 'result'
+    )
+  ).toBe(true)
+})
+it('correlates tool results and offers only real permission updates', () => {
+  feed({
+    type: 'assistant',
+    message: {
+      content: [{ type: 'tool_use', id: 'tool1', name: 'Write', input: { file_path: '/tmp/x' } }]
+    }
+  })
+  const request = {
+    type: 'control_request',
+    request_id: 'req1',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Write',
+      input: { file_path: '/tmp/x' },
+      permission_suggestions: [
+        {
+          type: 'addRules',
+          rules: [{ toolName: 'Write' }],
+          behavior: 'allow',
+          destination: 'session'
+        }
+      ]
+    }
+  }
+  feed(request)
+  expect(events.find((e) => e.type === 'permission_request')).toMatchObject({
+    id: 'req1',
+    toolName: 'Write',
+    options: [{ id: 'allow-once' }, { id: 'allow-always' }, { id: 'deny' }]
+  })
+  expect(() => translator.response('req1', 'invalid')).toThrow()
+  expect(translator.response('req1', 'allow-always')).toMatchObject({
+    type: 'control_response',
+    response: {
+      request_id: 'req1',
+      response: {
+        behavior: 'allow',
+        updatedInput: request.request.input,
+        updatedPermissions: request.request.permission_suggestions
+      }
+    }
+  })
+  expect(() => translator.response('req1', 'allow-once')).toThrow()
+  feed({
+    type: 'user',
+    message: { content: [{ type: 'tool_result', tool_use_id: 'tool1', content: 'written' }] }
+  })
+  expect(events.find((e) => e.type === 'tool_result')).toEqual({
+    type: 'tool_result',
+    id: 'tool1',
+    output: 'written'
+  })
+  feed({
+    ...request,
+    request_id: 'req2',
+    request: { ...request.request, permission_suggestions: [] }
+  })
+  expect(() => translator.response('req2', 'allow-always')).toThrow()
+  expect(translator.response('req2', 'deny')).toMatchObject({
+    response: { response: { behavior: 'deny' } }
+  })
+})
+it('reports malformed lines, unknown events, cancellation, UTF-8 fragmentation and final unterminated lines', () => {
+  const reader = new NdjsonLines((line) => translator.line(line))
+  const bytes = Buffer.from('bad\n' + JSON.stringify({ type: 'future', text: 'été' }))
+  for (const byte of bytes) reader.push(Buffer.from([byte]))
+  reader.end()
+  expect(events).toEqual([
+    { type: 'error', message: expect.any(String), fatal: false },
+    { type: 'provider_event', provider: 'claude', payload: { type: 'future', text: 'été' } }
+  ])
+  feed({
+    type: 'control_request',
+    request_id: 'cancel',
+    request: { subtype: 'can_use_tool', tool_name: 'Bash', input: {} }
+  })
+  feed({ type: 'control_cancel_request', request_id: 'cancel' })
+  expect(() => translator.response('cancel', 'deny')).toThrow()
+})
+it('uses the shared shell/profile/account path, writes NDJSON and keeps secrets out of events', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, { configDir: '/account', claudeProfileId: 'account-id' })
+  const handle = await adapter.spawn({
+    ...spec,
+    options: { resume: 'resume-id', model: 'opus[1m]', permissionMode: 'manual' }
+  })
+  expect(await adapter.attach(spec.id)).toBe(handle)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  const exits: number[] = []
+  adapter.on(handle, 'exit', (code) => exits.push(code))
+  expect(mock.spawn).not.toHaveBeenCalled()
+  expect(() => adapter.write(handle, new Uint8Array())).toThrow(/raw bytes/)
+  adapter.write(handle, { type: 'user_message', text: 'Hello' })
+  expect(mock.spawn.mock.calls[0][0]).toBe('/bin/zsh')
+  const command = mock.spawn.mock.calls[0][1][2]
+  expect(command).toContain("'--resume' 'resume-id'")
+  expect(command).not.toContain('--session-id')
+  expect(command).toContain("'--model' 'opus[1m]'")
+  expect(command).toContain("'--permission-mode' 'manual'")
+  expect(command).toContain("'--settings'")
+  expect(command).toContain("'--debug'")
+  expect(command).toContain("'--permission-prompts' 'host'")
+  expect(mock.spawn.mock.calls[0][2].env).toMatchObject({
+    CLAUDE_CONFIG_DIR: '/account',
+    CLAUDE_CODE_OAUTH_TOKEN: 'secret-account-token',
+    CLAVE_SESSION_ID: spec.id
+  })
+  expect(mock.token).toHaveBeenCalledWith('claude', 'account-id')
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_request',
+      request_id: 'p',
+      request: { subtype: 'can_use_tool', tool_name: 'Write', input: { x: 1 } }
+    }) + '\n'
+  )
+  adapter.write(handle, { type: 'user_message', text: 'queued while blocked' })
+  expect(events.filter((event) => event.type === 'state_change').at(-1)).toEqual({
+    type: 'state_change',
+    state: 'blocked'
+  })
+  adapter.write(handle, { type: 'permission_response', id: 'p', optionId: 'allow-once' })
+  adapter.write(handle, { type: 'interrupt' })
+  const inputs = written(child)!
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  expect(inputs[0]).toEqual({ type: 'user', message: { role: 'user', content: 'Hello' } })
+  expect(inputs[2]).toMatchObject({
+    response: { request_id: 'p', response: { behavior: 'allow', updatedInput: { x: 1 } } }
+  })
+  expect(inputs[3]).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } })
+  child.emit('close', 7)
+  expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
+  expect(exits).toEqual([7])
+  expect(JSON.stringify(events)).not.toContain('secret-account-token')
+  expect(() => adapter.write(handle, { type: 'user_message', text: 'late' })).toThrow(/ended/)
+  await adapter.kill(handle)
+  await expect(adapter.attach(spec.id)).rejects.toThrow()
+})
+it('reports spawn errors and emits ended before exit exactly once', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const h = await adapter.spawn(spec)
+  const order: unknown[] = []
+  adapter.on(h, 'stream', (s) => order.push(s))
+  adapter.on(h, 'exit', (n) => order.push(n))
+  adapter.write(h, { type: 'user_message', text: 'hello' })
+  child.emit('error', new Error('ENOENT'))
+  child.emit('close', -2)
+  expect(order.slice(-3)).toEqual([
+    { kind: 'event', event: { type: 'error', message: 'ENOENT', fatal: true } },
+    { kind: 'event', event: { type: 'state_change', state: 'ended' } },
+    1
+  ])
+  await adapter.kill(h)
+})
+
+it('translates every recorded permission frame and supports the recorded denial response', () => {
+  const lines = readFileSync(
+    new URL('../fixtures/claude-stream/permission-turn.ndjson', import.meta.url),
+    'utf8'
+  )
+    .trim()
+    .split('\n')
+  for (const line of lines) {
+    const before = events.length
+    translator.line(line)
+    expect(events.length).toBeGreaterThan(before)
+    const frame = JSON.parse(line)
+    if (frame.type === 'control_request') {
+      expect(translator.response(frame.request_id, 'deny')).toEqual({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: frame.request_id,
+          response: { behavior: 'deny', message: 'Denied by user' }
+        }
+      })
+    }
+  }
+  expect(events.filter((e) => e.type === 'error')).toEqual([])
+  const call = events.find((e) => e.type === 'tool_call')
+  expect(call).toBeDefined()
+  expect(events.find((e) => e.type === 'tool_result')).toMatchObject({ id: call!.id })
+})
+
+it('kills only the owned process group, escalates a stuck child, and cleans up the handle', async () => {
+  vi.useFakeTimers()
+  try {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 987654
+    })
+    mock.spawn.mockReturnValue(child)
+    const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 'SIGKILL') child.emit('exit', null)
+      return true
+    })
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    adapter.write(handle, { type: 'user_message', text: 'hello' })
+    const closing = adapter.kill(handle)
+    expect(kill).toHaveBeenCalledWith(-987654, 'SIGTERM')
+    await vi.advanceTimersByTimeAsync(1000)
+    await closing
+    expect(kill).toHaveBeenCalledWith(-987654, 'SIGKILL')
+    expect(events.at(-1)).toEqual({ type: 'state_change', state: 'ended' })
+    await expect(adapter.attach(spec.id)).rejects.toThrow(/Unknown/)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('preserves plain-text user acknowledgements without duplicate rows or false errors', () => {
+  const payload = { type: 'user', message: { role: 'user', content: 'already echoed' } }
+  feed(payload)
+  expect(events).toEqual([{ type: 'provider_event', provider: 'claude', payload }])
+})
+
+it('sends the configured initial prompt only on ready and refuses shell commands visibly', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, {
+    initialPrompt: 'initial prompt',
+    initialCommand: 'echo unsafe',
+    autoExecute: true
+  })
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  expect(mock.spawn).not.toHaveBeenCalled()
+  adapter.ready(handle)
+  adapter.ready(handle)
+  expect(events.filter((event) => event.type === 'user_message')).toEqual([
+    { type: 'user_message', text: 'initial prompt' }
+  ])
+  expect(events.filter((event) => event.type === 'error')).toEqual([
+    {
+      type: 'error',
+      message: expect.stringContaining('initialCommand and autoExecute'),
+      fatal: false
+    }
+  ])
+  expect(written(child)).toBe(
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'initial prompt' } }) + '\n'
+  )
+  // The prompt marks the session working at once, not at the init frame.
+  expect(events.filter((event) => event.type === 'state_change')).toEqual([
+    { type: 'state_change', state: 'working' }
+  ])
+  child.stdout.write(
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'provider-id', model: 'opus' }) +
+      '\n'
+  )
+  expect(events.slice(-2)).toEqual([
+    { type: 'session_meta', providerSessionId: 'provider-id', model: 'opus' },
+    { type: 'state_change', state: 'working' }
+  ])
+  child.emit('close', 0)
+  await adapter.kill(handle)
+  await expect(adapter.spawn({ ...spec, options: { permissionMode: 'default' } })).rejects.toThrow()
+})
+
+it('names mode-changing permission suggestions and includes the tool in descriptions', () => {
+  feed({
+    type: 'control_request',
+    request_id: 'mode',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Write',
+      input: {},
+      description: '/tmp/file',
+      permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+    }
+  })
+  expect(events.find((event) => event.type === 'permission_request')).toMatchObject({
+    description: 'Allow Write: /tmp/file',
+    options: [
+      { id: 'allow-once' },
+      { id: 'allow-always', label: 'Switch session to acceptEdits' },
+      { id: 'deny' }
+    ]
+  })
+})
+
+it('settles kill on process exit even when a setsid grandchild holds stdout open', async () => {
+  const { spawn: realSpawn } =
+    await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  let child: import('node:child_process').ChildProcessWithoutNullStreams | undefined
+  let grandchildPid: number | undefined
+  mock.spawn.mockImplementation(() => {
+    child = realSpawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {spawn} = require('node:child_process');
+      process.on('SIGTERM', () => {});
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true, stdio: ['ignore', process.stdout, process.stderr]
+      });
+      grandchild.unref();
+      console.log(JSON.stringify({type: 'fixture', pid: grandchild.pid}));
+      setInterval(() => {}, 1000);
+    `
+      ],
+      { detached: true, stdio: 'pipe' }
+    )
+    return child
+  })
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  try {
+    const descendant = new Promise<void>((resolve) => {
+      adapter.on(handle, 'stream', (stream) => {
+        if (stream.kind === 'event' && stream.event.type === 'provider_event') {
+          const payload = stream.event.payload as { type: string; pid: number }
+          if (payload.type === 'fixture') {
+            grandchildPid = payload.pid
+            resolve()
+          }
+        }
+      })
+    })
+    adapter.write(handle, { type: 'user_message', text: 'start' })
+    await descendant
+    const started = Date.now()
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        adapter.kill(handle),
+        new Promise((_, reject) => {
+          deadline = setTimeout(() => reject(new Error('kill hung on inherited stdout')), 3000)
+        })
+      ])
+    } finally {
+      clearTimeout(deadline)
+    }
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(child!.signalCode).toBe('SIGKILL')
+    expect(process.kill(grandchildPid!, 0)).toBe(true)
+    // Descendant still lives; shutdown has released its inherited pipe locally.
+    expect(child!.stdout.destroyed).toBe(true)
+    await expect(adapter.attach(spec.id)).rejects.toThrow(/Unknown/)
+  } finally {
+    if (grandchildPid) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL')
+      } catch {
+        // Fixture descendant already exited.
+      }
+    }
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    child?.stdin.destroy()
+    child?.stdout.destroy()
+    child?.stderr.destroy()
+    await adapter.kill(handle)
+  }
+})
+
+it('retains the configured prompt when starting it throws and reports divergent provider identity', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn
+    .mockImplementationOnce(() => {
+      throw new Error('temporary spawn error')
+    })
+    .mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, { claudeSessionId: 'minted-id', initialPrompt: 'retry me' })
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  expect(() => adapter.ready(handle)).toThrow('temporary spawn error')
+  adapter.ready(handle)
+  adapter.ready(handle)
+  expect(written(child)).toContain('retry me')
+  expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1)
+  child.stdout.write(
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'different-id', model: 'opus' }) +
+      '\n'
+  )
+  expect(events).toContainEqual({
+    type: 'session_meta',
+    providerSessionId: 'different-id',
+    model: 'opus'
+  })
+  expect(events).toContainEqual({
+    type: 'error',
+    message: expect.stringContaining('keeping the launch identity'),
+    fatal: false
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+
+it('ends naturally with code 3 and flushes the last frame despite a setsid stdout holder', async () => {
+  const { spawn: realSpawn } =
+    await vi.importActual<typeof import('node:child_process')>('node:child_process')
+  let child: import('node:child_process').ChildProcessWithoutNullStreams | undefined
+  let grandchildPid: number | undefined
+  mock.spawn.mockImplementation(() => {
+    child = realSpawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {spawn} = require('node:child_process');
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true, stdio: ['ignore', process.stdout, process.stderr]
+      });
+      grandchild.unref();
+      console.log(JSON.stringify({type: 'fixture', pid: grandchild.pid}));
+      process.stdout.write(JSON.stringify({type: 'last-frame', text: 'unterminated'}), () => process.exit(3));
+    `
+      ],
+      { detached: true, stdio: 'pipe' }
+    )
+    return child
+  })
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  const order: unknown[] = []
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    adapter.on(handle, 'stream', (stream) => {
+      if (stream.kind !== 'event') return
+      order.push(stream.event)
+      if (stream.event.type === 'provider_event') {
+        const payload = stream.event.payload as { type: string; pid: number }
+        if (payload.type === 'fixture') grandchildPid = payload.pid
+      }
+    })
+    const exited = new Promise<number>((resolve) =>
+      adapter.on(handle, 'exit', (code) => {
+        order.push(code)
+        resolve(code)
+      })
+    )
+    adapter.write(handle, { type: 'user_message', text: 'start' })
+    expect(
+      await Promise.race([
+        exited,
+        new Promise((_, reject) => {
+          deadline = setTimeout(
+            () => reject(new Error('natural exit hung on inherited stdout')),
+            3000
+          )
+        })
+      ])
+    ).toBe(3)
+    expect(order.slice(-3)).toEqual([
+      {
+        type: 'provider_event',
+        provider: 'claude',
+        payload: { type: 'last-frame', text: 'unterminated' }
+      },
+      { type: 'state_change', state: 'ended' },
+      3
+    ])
+    expect(child!.stdout.destroyed).toBe(true)
+    expect(process.kill(grandchildPid!, 0)).toBe(true)
+    const { deleteSessionMcpConfig } = await import('../../mcp/mcp-runtime')
+    expect(deleteSessionMcpConfig).toHaveBeenCalledExactlyOnceWith(spec.id)
+    expect(() => adapter.write(handle, { type: 'user_message', text: 'late' })).toThrow(/ended/)
+  } finally {
+    clearTimeout(deadline)
+    if (grandchildPid) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL')
+      } catch {
+        /* already exited */
+      }
+    }
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    child?.stdin.destroy()
+    child?.stdout.destroy()
+    child?.stderr.destroy()
+    await adapter.kill(handle)
+  }
+})
+it('carries the CLI word that a tool failed, and says nothing when it did not', () => {
+  feed({
+    type: 'user',
+    message: {
+      content: [
+        { type: 'tool_result', tool_use_id: 'ok', content: 'Error: in the file I read' },
+        { type: 'tool_result', tool_use_id: 'bad', content: 'permission denied', is_error: true },
+        { type: 'tool_result', tool_use_id: 'said-no', content: 'fine', is_error: false }
+      ]
+    }
+  })
+  const results = events.filter((e) => e.type === 'tool_result')
+  // The failure is the CLI's flag, never the prose: the first result READS like
+  // an error and is not one, which is exactly why this view may not guess.
+  expect(results).toEqual([
+    { type: 'tool_result', id: 'ok', output: 'Error: in the file I read', error: undefined },
+    { type: 'tool_result', id: 'bad', output: 'permission denied', error: true },
+    { type: 'tool_result', id: 'said-no', output: 'fine', error: false }
+  ])
+  // The flag must survive the contract, not merely fail to crash it: zod strips
+  // an unknown key silently, so `not.toThrow()` would pass with no field at all.
+  expect(results.map((e) => SessionEventSchema.parse(e))).toMatchObject([
+    { error: undefined },
+    { error: true },
+    { error: false }
+  ])
+})
+it('lists the models by version, asking the CLI itself, starting a session that has not spoken yet', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  expect(mock.spawn).not.toHaveBeenCalled()
+  const listed = adapter.models(handle)
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  const request = JSON.parse(written(child)!)
+  expect(request).toMatchObject({ type: 'control_request', request: { subtype: 'initialize' } })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: {
+          models: [
+            {
+              value: 'default',
+              resolvedModel: 'claude-opus-5-5',
+              displayName: 'Default (recommended)',
+              description: 'Opus 5.5 · Best for everyday, complex tasks'
+            },
+            { value: 'haiku', displayName: 'Haiku' },
+            // Shipped after this build: kept, named from its own id.
+            {
+              value: 'claude-opus-6',
+              resolvedModel: 'claude-opus-6',
+              displayName: 'Opus 6',
+              description: 'Opus 6 · Newer'
+            }
+          ]
+        }
+      }
+    }) + '\n'
+  )
+  await expect(listed).resolves.toEqual([
+    {
+      id: 'default',
+      label: 'Default',
+      hint: 'Opus 5.5 · Best for everyday, complex tasks',
+      resolved: 'claude-opus-5-5'
+    },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', resolved: 'claude-opus-5-5' },
+    { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', resolved: 'claude-fable-5-1' },
+    {
+      id: 'claude-fable-5[1m]',
+      label: 'Fable 5',
+      hint: 'Earlier version',
+      resolved: 'claude-fable-5'
+    },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', resolved: 'claude-sonnet-5-5' },
+    {
+      id: 'claude-haiku-4-5-20251001',
+      label: 'Haiku 4.5',
+      resolved: 'claude-haiku-4-5-20251001'
+    },
+    { id: 'claude-opus-6', label: 'Opus 6', hint: 'Opus 6 · Newer', resolved: 'claude-opus-6' }
+  ])
+  // A second ask reuses the running process and says why when the CLI refuses.
+  const refused = adapter.models(handle)
+  const again = JSON.parse(written(child)!)
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: again.request_id, error: 'nope' }
+    }) + '\n'
+  )
+  await expect(refused).rejects.toThrow('nope')
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // One still waiting when the process ends is told so, not left hanging.
+  const orphan = adapter.models(handle)
+  child.emit('close', 0)
+  await expect(orphan).rejects.toThrow(/ended/)
+  await expect(adapter.models(handle)).rejects.toThrow(/ended/)
+  await adapter.kill(handle)
+})
+it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
+  'switches to %s before the first message using the real model validator',
+  async (model) => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    expect(() => adapter.write(handle, { type: 'interrupt' })).toThrow(/not started/)
+    expect(() => adapter.write(handle, { type: 'set_model', model: 'opus[1m];echo bad' })).toThrow(
+      'Invalid model name'
+    )
+    expect(mock.spawn).not.toHaveBeenCalled()
+    adapter.write(handle, { type: 'set_model', model })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    const request = JSON.parse(written(child)!)
+    expect(request).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'set_model', model }
+    })
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { subtype: 'success', request_id: request.request_id }
+      }) + '\n'
+    )
+    expect(events.at(-1)).toEqual({ type: 'session_meta', model, providerSessionId: null })
+    // The first message then goes to the same process.
+    adapter.write(handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(written(child)!)).toEqual({
+      type: 'user',
+      message: { role: 'user', content: 'Hello' }
+    })
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  }
+)
+it('switches the permission mode the way Shift+Tab does, and says why the CLI refused', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'manual' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  // The launch's `manual` is the running `default`, and bypass is not offered
+  // to a session that was not launched on it.
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toEqual({
+    type: 'permission_mode',
+    mode: 'default',
+    modes: [
+      { id: 'default', label: 'Manual' },
+      { id: 'acceptEdits', label: 'Accept edits' },
+      { id: 'plan', label: 'Plan' },
+      { id: 'auto', label: 'Auto' }
+    ]
+  })
+  expect(() =>
+    adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  ).toThrow(/Unknown permission mode/)
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'plan' })
+  const request = JSON.parse(written(child)!)
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'set_permission_mode', mode: 'plan' }
+  })
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: request.request_id, response: { mode: 'plan' } }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toMatchObject({ type: 'permission_mode', mode: 'plan' })
+  // A refusal reaches the reader in the CLI's own words, and the mode stays.
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'auto' })
+  const auto = JSON.parse(written(child)!)
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: auto.request_id,
+        error: 'Cannot set permission mode to auto: auto mode unavailable for this model'
+      }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({
+    type: 'error',
+    message: 'Cannot set permission mode to auto: auto mode unavailable for this model',
+    fatal: false
+  })
+  // A change the CLI makes itself (a plan approved) arrives as a status frame.
+  child.stdout.write(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode: 'acceptEdits'
+    }) + '\n'
+  )
+  expect(events.filter((e) => e.type === 'permission_mode').at(-1)).toMatchObject({
+    mode: 'acceptEdits'
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('offers bypass, and the way back to it, only to a session launched on it', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn({ ...spec, options: { permissionMode: 'bypassPermissions' } })
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  const offered = events.find((e) => e.type === 'permission_mode')
+  expect(offered).toMatchObject({ mode: 'bypassPermissions' })
+  expect(offered?.type === 'permission_mode' && offered.modes.map((m) => m.id)).toEqual([
+    'default',
+    'acceptEdits',
+    'plan',
+    'auto',
+    'bypassPermissions'
+  ])
+  adapter.write(handle, { type: 'set_permission_mode', mode: 'bypassPermissions' })
+  expect(JSON.parse(written(child)!)).toMatchObject({
+    request: { subtype: 'set_permission_mode', mode: 'bypassPermissions' }
+  })
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('starts the process at ready so its boot overlaps the typing, and once only', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  expect(mock.spawn).not.toHaveBeenCalled()
+  adapter.ready(handle)
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // Booting is silent: the model and mode announcements, and no turn, no state.
+  expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
+  expect(events[0]).toEqual({ type: 'session_meta', model: null, providerSessionId: null })
+  expect(written(child)).toBeNull()
+  adapter.ready(handle)
+  adapter.write(handle, { type: 'user_message', text: 'Hello' })
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  // The first message is working before the CLI has said a word.
+  expect(events.slice(2)).toEqual([
+    { type: 'user_message', text: 'Hello' },
+    { type: 'state_change', state: 'working' }
+  ])
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('starts the binary directly when the login PATH places it, wrapper otherwise', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  mock.find.mockReturnValueOnce('/resolved/bin/claude')
+  const adapter = new ClaudeAdapter()
+  adapter.configure(spec.id, { claudeSessionId: 'minted-id' })
+  const handle = await adapter.spawn({ ...spec, options: { model: 'sonnet' } })
+  adapter.ready(handle)
+  expect(mock.find).toHaveBeenCalledWith('claude', '/test/bin')
+  const [file, args, options] = mock.spawn.mock.calls[0]
+  expect(file).toBe('/resolved/bin/claude')
+  // The argv the wrapper would have quoted, minus the command, unquoted.
+  expect(args.slice(0, 5)).toEqual(['--debug', '--session-id', 'minted-id', '--model', 'sonnet'])
+  expect(args).toContain('--permission-prompt-tool')
+  expect(args).not.toContain('claude')
+  expect(args.some((a: string) => a.includes("'"))).toBe(false)
+  expect(options.env.PATH).toBe('/test/bin')
+  expect(options.env.CLAVE_SESSION_ID).toBe(spec.id)
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+it('asks AskUserQuestion as questions and answers with the reader choices', () => {
+  const input = {
+    questions: [
+      {
+        question: 'Which color do you prefer?',
+        header: 'Color',
+        options: [{ label: 'Red', description: 'The color red' }, { label: 'Blue' }],
+        multiSelect: false
+      }
+    ]
+  }
+  feed({
+    type: 'control_request',
+    request_id: 'q1',
+    request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input }
+  })
+  expect(events[0]).toMatchObject({
+    type: 'permission_request',
+    id: 'q1',
+    description: 'Which color do you prefer?',
+    questions: input.questions,
+    options: [
+      { id: 'answer', label: 'Submit' },
+      { id: 'deny', label: 'Skip' }
+    ]
+  })
+  expect(events[1]).toEqual({ type: 'state_change', state: 'blocked' })
+  // An answer without a choice would hand the model nothing: refused.
+  expect(() => translator.response('q1', 'answer', {})).toThrow(/at least one/)
+  expect(() => translator.response('q1', 'allow-once')).toThrow(/Invalid/)
+  // The shape the real CLI turns into "…"Which color do you prefer?"="Blue"".
+  expect(translator.response('q1', 'answer', { 'Which color do you prefer?': 'Blue' })).toEqual({
+    type: 'control_response',
+    response: {
+      subtype: 'success',
+      request_id: 'q1',
+      response: {
+        behavior: 'allow',
+        updatedInput: { ...input, answers: { 'Which color do you prefer?': 'Blue' } }
+      }
+    }
+  })
+  // Skipping tells the model the reader chose not to answer.
+  feed({
+    type: 'control_request',
+    request_id: 'q2',
+    request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input }
+  })
+  expect(translator.response('q2', 'deny')).toMatchObject({
+    response: { response: { behavior: 'deny', message: 'The user skipped the question' } }
+  })
+  // A tool permission is unchanged, and carries the CLI's reason as detail.
+  feed({
+    type: 'control_request',
+    request_id: 'p1',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Write',
+      input: { file_path: '/x' },
+      description: 'Path is outside allowed working directories'
+    }
+  })
+  expect(events.at(-2)).toMatchObject({
+    id: 'p1',
+    detail: 'Path is outside allowed working directories'
+  })
+  expect(events.at(-2)).not.toHaveProperty('questions')
+  expect(() => translator.response('p1', 'answer', { a: 'b' })).toThrow(/Invalid/)
+})
+
+it('replays a resumed transcript as the events a live turn would have produced', () => {
+  const lines = [
+    { type: 'permission-mode', permissionMode: 'default' },
+    { type: 'user', isMeta: true, message: { role: 'user', content: 'Caveat: local commands' } },
+    {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<command-name>/exos:lane</command-name><command-args>clave 2527</command-args>'
+      }
+    },
+    {
+      type: 'user',
+      message: { role: 'user', content: '<local-command-stdout>ok</local-command-stdout>' }
+    },
+    { type: 'user', message: { role: 'user', content: 'Fix the capture scan' } },
+    {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'thinking', thinking: 'hmm' },
+          { type: 'text', text: 'Looking.' },
+          { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+          { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/x' } }
+        ]
+      }
+    },
+    {
+      type: 'user',
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 't1', content: 'a\nb', is_error: true }]
+      }
+    },
+    {
+      type: 'assistant',
+      isSidechain: true,
+      message: { content: [{ type: 'text', text: 'subagent' }] }
+    },
+    'not json',
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } },
+    {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }
+    },
+    {
+      type: 'user',
+      message: { role: 'user', content: '[Request interrupted by user for tool use]' }
+    }
+  ].map((line) => (typeof line === 'string' ? line : JSON.stringify(line)))
+  const replayed = translator.replay(lines).map((item) => item.event)
+  // The past is returned for a view to page through, never streamed.
+  expect(events).toEqual([])
+  expect(replayed).toEqual([
+    { type: 'user_message', text: '/exos:lane clave 2527' },
+    { type: 'user_message', text: 'Fix the capture scan' },
+    { type: 'assistant_text', delta: 'Looking.', final: true },
+    { type: 'tool_call', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    { type: 'tool_call', id: 't2', name: 'Read', input: { file_path: '/x' } },
+    { type: 'tool_result', id: 't1', output: 'a\nb', error: true },
+    { type: 'assistant_text', delta: 'Done.', final: true },
+    // The CLI's interrupt acknowledgements, in either shape: the turn they
+    // closed reads interrupted, never as a message the reader typed.
+    { type: 'turn_interrupted' },
+    { type: 'turn_interrupted' },
+    // Never answered in the transcript: closed rather than left running.
+    { type: 'tool_result', id: 't2', output: undefined }
+  ])
+  for (const event of replayed) expect(SessionEventSchema.safeParse(event).success).toBe(true)
+})
+it('dates each replayed event by its transcript line, and closes a dead call at the next message', () => {
+  const at = (iso: string): number => Date.parse(iso)
+  const items = translator.replay(
+    [
+      {
+        type: 'user',
+        timestamp: '2026-09-01T10:00:00.000Z',
+        message: { role: 'user', content: 'first' }
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-09-01T10:00:05.000Z',
+        message: { content: [{ type: 'tool_use', id: 'lost', name: 'Bash', input: {} }] }
+      },
+      // No timestamp: the event goes undated rather than dated wrongly.
+      { type: 'user', message: { role: 'user', content: 'second' } }
+    ].map((line) => JSON.stringify(line))
+  )
+  expect(items).toEqual([
+    { event: { type: 'user_message', text: 'first' }, at: at('2026-09-01T10:00:00.000Z') },
+    {
+      event: { type: 'tool_call', id: 'lost', name: 'Bash', input: {} },
+      at: at('2026-09-01T10:00:05.000Z')
+    },
+    // Closed before the reader spoke again, not at the transcript's end, so the
+    // call never ties every later turn to it and a page may begin at each.
+    { event: { type: 'tool_result', id: 'lost', output: undefined } },
+    { event: { type: 'user_message', text: 'second' } }
+  ])
+})
+it('keeps a resumed past in main for the view to page, and streams none of it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'clave-history-'))
+  vi.stubEnv('CLAVE_TRANSCRIPTS_ROOT', root)
+  mkdirSync(join(root, '-tmp'))
+  const turns = Array.from({ length: 3 }, (_, i) => [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `question ${i}` } }),
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: `answer ${i}` }] }
+    })
+  ]).flat()
+  writeFileSync(join(root, '-tmp', 'resume-id.jsonl'), turns.join('\n'))
+  mock.spawn.mockReturnValue(
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn()
+    })
+  )
+  try {
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, options: { resume: 'resume-id' } })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    adapter.ready(handle)
+    expect(events.map((e) => e.type)).toEqual(['session_meta', 'permission_mode'])
+    const history = adapter.history(handle)
+    expect(history.map((item) => item.event)).toEqual(
+      [0, 1, 2].flatMap((i) => [
+        { type: 'user_message', text: `question ${i}` },
+        { type: 'assistant_text', delta: `answer ${i}`, final: true }
+      ])
+    )
+    // Read once, at readiness: every later ask is served from main, even once
+    // the file is gone.
+    rmSync(join(root, '-tmp', 'resume-id.jsonl'))
+    expect(adapter.history(handle)).toBe(history)
+  } finally {
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+it('reports an interrupted turn as interrupted, not as a failed one', () => {
+  // Recorded 2026-09-24 from Claude Code with `--model haiku`: an interrupt
+  // control_request mid-answer. The CLI acknowledges the interrupt as a user
+  // text block, then closes the turn with an is_error result carrying no text.
+  const interruptedResult = {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    terminal_reason: 'aborted_streaming',
+    errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null'],
+    duration_ms: 5235,
+    num_turns: 2,
+    session_id: 's'
+  }
+  feed({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: '1\n2\n3' }] }
+  })
+  feed({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }
+  })
+  feed(interruptedResult)
+  expect(events.filter((e) => e.type === 'error')).toEqual([])
+  expect(events.filter((e) => e.type === 'user_message')).toEqual([])
+  expect(events.slice(-3)).toEqual([
+    { type: 'turn_interrupted' },
+    { type: 'provider_event', provider: 'claude', payload: interruptedResult },
+    { type: 'state_change', state: 'done' }
+  ])
+  // The acknowledgement is consumed by that result: the next failure is a failure.
+  events.length = 0
+  feed({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's' })
+  expect(events.filter((e) => e.type === 'error')).toEqual([
+    { type: 'error', message: 'Claude turn failed', fatal: false }
+  ])
+  expect(events.some((e) => e.type === 'turn_interrupted')).toBe(false)
+})
+it("takes the adapter's own interrupt as the word too, until the next message", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  const streamed: SessionEvent[] = []
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') streamed.push(s.event)
+  })
+  adapter.write(handle, { type: 'user_message', text: 'count' })
+  adapter.write(handle, { type: 'interrupt' })
+  // A CLI that never writes the acknowledgement still closes the turn as an error.
+  child.stdout.write(
+    `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true })}\n`
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(streamed.some((e) => e.type === 'turn_interrupted')).toBe(true)
+  expect(streamed.some((e) => e.type === 'error')).toBe(false)
+  // A new message withdraws the word: its own failure reads as one.
+  adapter.write(handle, { type: 'user_message', text: 'again' })
+  child.stdout.write(
+    `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true })}\n`
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(streamed.filter((e) => e.type === 'turn_interrupted')).toHaveLength(1)
+  expect(streamed.filter((e) => e.type === 'error')).toEqual([
+    { type: 'error', message: 'Claude turn failed', fatal: false }
+  ])
+})
+it('offers the host /resume before the commands the CLI lists at initialize', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  const listed = adapter.commands(handle)
+  expect(mock.spawn).toHaveBeenCalledTimes(1)
+  const request = JSON.parse(written(child)!)
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: {
+          commands: [
+            { name: 'review', description: 'Review a PR', argumentHint: '' },
+            { name: 'resume', description: 'the CLI one' }
+          ]
+        }
+      }
+    }) + '\n'
+  )
+  expect(await listed).toEqual([
+    ...HOST_COMMANDS,
+    { name: 'review', description: 'Review a PR', insert: '/review ' }
+  ])
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+
+it('sends attached images as content blocks and streams the message without them', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  expect(adapter.images).toBe(true)
+  const handle = await adapter.spawn(spec)
+  const streamed: SessionEvent[] = []
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') streamed.push(s.event)
+  })
+  const shot = {
+    id: 'shot',
+    path: '/pictures/shot.png',
+    name: 'shot.png',
+    mimeType: 'image/png',
+    size: 3,
+    delivery: 'image' as const
+  }
+  adapter.write(handle, {
+    type: 'user_message',
+    text: 'What is this?',
+    attachments: [shot],
+    prepared: {
+      text: 'What is this?',
+      images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AQID' }]
+    }
+  })
+  const input = JSON.parse(written(child)!.trim())
+  expect(input).toEqual({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'What is this?' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } }
+      ]
+    }
+  })
+  expect(streamed.find((e) => e.type === 'user_message')).toEqual({
+    type: 'user_message',
+    text: 'What is this?',
+    attachments: [shot]
+  })
+  expect(JSON.stringify(streamed)).not.toContain('AQID')
+  // References travel inside the prepared text, as a plain string prompt.
+  adapter.write(handle, {
+    type: 'user_message',
+    text: 'read it',
+    attachments: [{ ...shot, delivery: 'reference' }],
+    prepared: {
+      text: 'read it\n\nAttached local files:\n{"path":"/pictures/shot.png"}',
+      images: []
+    }
+  })
+  expect(JSON.parse(written(child)!.trim()).message.content).toBe(
+    'read it\n\nAttached local files:\n{"path":"/pictures/shot.png"}'
+  )
+  child.emit('close', 0)
+  await adapter.kill(handle)
+})
+
+// Frame shapes as the installed CLI wrote them for `Bash` with
+// `run_in_background: true` (captured 2026-09-24): the list, the task's start,
+// the call's result naming the output file, then completion after the turn.
+const bgResult = (id: string): unknown => ({
+  type: 'user',
+  message: {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: id,
+        content: `Command running in background with ID: b1. Output is being written to: /tmp/tasks/b1.output. You will be notified when it completes`
+      }
+    ]
+  }
+})
+const lastBackground = ():
+  | Extract<SessionEvent, { type: 'background_tasks' }>['tasks']
+  | undefined =>
+  (
+    events.filter((e) => e.type === 'background_tasks').at(-1) as
+      | Extract<SessionEvent, { type: 'background_tasks' }>
+      | undefined
+  )?.tasks
+it('publishes a background shell, with its call and output file, until the CLI retires it', () => {
+  feed({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'Watch the build' }]
+  })
+  feed({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: 'b1',
+    tool_use_id: 'toolu_1',
+    description: 'Watch the build',
+    is_backgrounded: true,
+    task_type: 'local_bash'
+  })
+  feed(bgResult('toolu_1'))
+  expect(lastBackground()).toEqual([
+    expect.objectContaining({
+      id: 'b1',
+      kind: 'shell',
+      description: 'Watch the build',
+      toolUseId: 'toolu_1',
+      outputFile: '/tmp/tasks/b1.output'
+    })
+  ])
+  // The turn ending says nothing about the background.
+  feed({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })
+  expect(lastBackground()).toHaveLength(1)
+  feed({ type: 'system', subtype: 'task_updated', task_id: 'b1', patch: { status: 'completed' } })
+  expect(lastBackground()).toEqual([])
+  // Every frame stays on the stream for a view that reads it raw.
+  expect(
+    events.filter(
+      (e) =>
+        e.type === 'provider_event' &&
+        (e.payload as { subtype?: string }).subtype === 'task_updated'
+    )
+  ).toHaveLength(1)
+})
+it('drops a task the authoritative list no longer names, so nothing stays running forever', () => {
+  feed({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: 'a1',
+    description: 'Review the diff',
+    is_backgrounded: true,
+    task_type: 'local_agent'
+  })
+  expect(lastBackground()).toEqual([expect.objectContaining({ id: 'a1', kind: 'agent' })])
+  feed({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })
+  expect(lastBackground()).toEqual([])
+})
+it('ignores a foreground task and retires one on its notification', () => {
+  feed({ type: 'system', subtype: 'task_started', task_id: 'f1', is_backgrounded: false })
+  expect(lastBackground()).toBeUndefined()
+  feed({ type: 'system', subtype: 'task_started', task_id: 'b2', is_backgrounded: true })
+  feed({ type: 'system', subtype: 'task_notification', task_id: 'b2', status: 'completed' })
+  expect(lastBackground()).toEqual([])
+})
+it('empties the list when the CLI exits', () => {
+  feed({ type: 'system', subtype: 'task_started', task_id: 'b3', is_backgrounded: true })
+  translator.clearBackground()
+  expect(lastBackground()).toEqual([])
+})
+it('reports the context from the main thread and names the parent of a subagent call', () => {
+  const usage = { input_tokens: 2, cache_read_input_tokens: 10_000, output_tokens: 8 }
+  const main = (content: unknown[]): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { content, usage }
+  })
+  feed(main([{ type: 'text', text: 'Looking.' }]))
+  // Every block of one message repeats its usage: one announcement, not two.
+  feed(main([{ type: 'tool_use', id: 'agent-1', name: 'Agent', input: { description: 'x' } }]))
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      content: [{ type: 'tool_use', id: 'sub-1', name: 'Grep', input: { pattern: 'y' } }],
+      usage: { input_tokens: 90_000 }
+    }
+  })
+  feed({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    modelUsage: {
+      'claude-opus-5[1m]': { contextWindow: 1_000_000 },
+      'claude-haiku-4-5': { contextWindow: 200_000 }
+    }
+  })
+  expect(events.filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 10_010, window: null },
+    // The subagent's own context, never the conversation's.
+    { type: 'context_usage', used: 90_000, window: null, parent: 'agent-1' },
+    { type: 'context_usage', used: 10_010, window: 1_000_000 }
+  ])
+  const calls = events.filter((e) => e.type === 'tool_call')
+  expect(calls.map((e) => (e.type === 'tool_call' ? [e.id, e.parent] : null))).toEqual([
+    ['agent-1', undefined],
+    ['sub-1', 'agent-1']
+  ])
+})
+it('replays the context a resumed conversation stood at', () => {
+  const line = (usage: object): string =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'ok' }], usage }
+    })
+  const items = translator.replay([
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 1_000 }),
+    line({ input_tokens: 5, cache_read_input_tokens: 4_000 })
+  ])
+  expect(items.map((i) => i.event).filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 1_005, window: null },
+    { type: 'context_usage', used: 4_005, window: null }
+  ])
+})
+
+describe('a Claude chat on a profile that sets its own permissions', () => {
+  const launch = async (profileArgs: string[]): Promise<SessionEvent[]> => {
+    mock.profileArgs = profileArgs
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    const seen: SessionEvent[] = []
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') seen.push(s.event)
+    })
+    adapter.ready(handle)
+    child.emit('close', 0)
+    await adapter.kill(handle)
+    mock.profileArgs = ['--debug']
+    return seen
+  }
+  const offered = (events: SessionEvent[]): Extract<SessionEvent, { type: 'permission_mode' }> => {
+    const event = events.find((e) => e.type === 'permission_mode')
+    if (event?.type !== 'permission_mode') throw new Error('no permission_mode offered')
+    return event
+  }
+  it("shows the profile's mode from the start and offers bypass when it launches on it", async () => {
+    const event = offered(await launch(['--permission-mode', 'bypassPermissions']))
+    expect(event.mode).toBe('bypassPermissions')
+    expect(event.modes.map((m) => m.id)).toContain('bypassPermissions')
+  })
+  it('offers bypass to a profile that allows it without starting on it', async () => {
+    const event = offered(await launch(['--allow-dangerously-skip-permissions']))
+    expect(event.mode).toBe('default')
+    expect(event.modes.map((m) => m.id)).toContain('bypassPermissions')
+  })
+  it('reads the manual spelling as the running default', async () => {
+    expect(offered(await launch(['--permission-mode=manual'])).mode).toBe('default')
+    expect(offered(await launch(['--permission-mode=plan'])).mode).toBe('plan')
+  })
+})
+
+it('names the window from the answering model until a result does, and a subagent its model once', () => {
+  feed({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      model: 'claude-haiku-4-5-20251001',
+      content: [{ type: 'text', text: 'Looking.' }],
+      usage: { input_tokens: 12_000 }
+    }
+  })
+  const sub = (id: string): unknown => ({
+    type: 'assistant',
+    parent_tool_use_id: 'agent-1',
+    message: {
+      model: 'claude-sonnet-5-5',
+      content: [{ type: 'tool_use', id, name: 'Grep', input: { pattern: 'y' } }],
+      usage: { input_tokens: 1_000 }
+    }
+  })
+  feed(sub('sub-1'))
+  feed(sub('sub-2'))
+  expect(events.filter((e) => e.type === 'context_usage')[0]).toEqual({
+    type: 'context_usage',
+    used: 12_000,
+    window: 200_000
+  })
+  // Every frame of the agent names its model: announced once.
+  expect(events.filter((e) => e.type === 'subagent_model')).toEqual([
+    { type: 'subagent_model', parent: 'agent-1', model: 'claude-sonnet-5-5' }
+  ])
+})
+it('replays a resumed conversation with the window its model names', () => {
+  const items = translator.replay([
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        model: 'claude-opus-5-5',
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 5, cache_read_input_tokens: 40_000 }
+      }
+    })
+  ])
+  expect(items.map((i) => i.event).filter((e) => e.type === 'context_usage')).toEqual([
+    { type: 'context_usage', used: 40_005, window: 1_000_000 }
+  ])
+})
+it('stops one background task by its id, and says why when the CLI refuses', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (s) => {
+    if (s.kind === 'event') events.push(s.event)
+  })
+  adapter.ready(handle)
+  adapter.write(handle, { type: 'stop_task', taskId: 'task-7' })
+  const request = JSON.parse(written(child)!)
+  expect(request).toMatchObject({
+    type: 'control_request',
+    request: { subtype: 'stop_task', task_id: 'task-7' }
+  })
+  // Never taken for an interrupt, which would stop the whole turn.
+  expect(request.request.subtype).not.toBe('interrupt')
+  child.stdout.write(
+    JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: request.request_id, error: 'no such task' }
+    }) + '\n'
+  )
+  expect(events.at(-1)).toEqual({ type: 'error', message: 'no such task', fatal: false })
+})
+
+describe('the reasoning effort of a Claude chat', () => {
+  const FIVE = ['low', 'medium', 'high', 'xhigh', 'max']
+  const fakeChild = (): EventEmitter & {
+    stdin: PassThrough
+    stdout: PassThrough
+    stderr: PassThrough
+  } =>
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+  /** Every line written to the CLI since the last read, get_settings included. */
+  const sent = (child: {
+    stdin: PassThrough
+  }): { type: string; request_id: string; request: Record<string, unknown> }[] => {
+    const raw = child.stdin.read() as Buffer | null
+    return raw
+      ? raw
+          .toString()
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      : []
+  }
+  const answer = (child: { stdout: PassThrough }, response: Record<string, unknown>): void => {
+    child.stdout.write(JSON.stringify({ type: 'control_response', response }) + '\n')
+  }
+  async function started(
+    id: string,
+    options?: Record<string, unknown>
+  ): Promise<{
+    adapter: ClaudeAdapter
+    handle: Awaited<ReturnType<ClaudeAdapter['spawn']>>
+    child: ReturnType<typeof fakeChild>
+  }> {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn({ ...spec, id, ...(options ? { options } : {}) })
+    adapter.on(handle, 'stream', (s) => {
+      if (s.kind === 'event') events.push(s.event)
+    })
+    return { adapter, handle, child }
+  }
+  const effortOf = (option: { efforts?: { id: string }[] } | undefined): string[] | undefined =>
+    option?.efforts?.map((e) => e.id)
+
+  it("lists a version's own levels when the CLI lists it, else its family's, and none for a model without", () => {
+    const options = claudeModelOptions([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default',
+        supportsEffort: true,
+        supportedEffortLevels: FIVE
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        supportedEffortLevels: FIVE
+      },
+      // The family alias names the newest Fable, with five levels…
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        supportedEffortLevels: FIVE
+      },
+      // …and the earlier version has a row of its own, with four.
+      {
+        value: 'claude-fable-5[1m]',
+        resolvedModel: 'claude-fable-5',
+        displayName: 'Fable 5',
+        supportedEffortLevels: ['low', 'medium', 'high', 'max']
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-5',
+        displayName: 'Sonnet',
+        supportsEffort: false,
+        supportedEffortLevels: FIVE
+      },
+      { value: 'haiku', displayName: 'Haiku' },
+      {
+        value: 'claude-opus-6',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Opus 6',
+        supportedEffortLevels: ['low', 'high;rm', '--x', 'high']
+      }
+    ])
+    const byId = (id: string): (typeof options)[number] | undefined =>
+      options.find((option) => option.id === id)
+    expect(byId('default')?.efforts).toEqual([
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High' },
+      { id: 'xhigh', label: 'Extra high' },
+      { id: 'max', label: 'Max' }
+    ])
+    expect(effortOf(byId('claude-opus-5-5'))).toEqual(FIVE)
+    expect(effortOf(byId('claude-fable-5-1[1m]'))).toEqual(FIVE)
+    expect(effortOf(byId('claude-fable-5[1m]'))).toEqual(['low', 'medium', 'high', 'max'])
+    // supportsEffort false wins over any list; a model without levels has no key.
+    expect(byId('claude-sonnet-5-5')).not.toHaveProperty('efforts')
+    expect(byId('claude-haiku-4-5-20251001')).not.toHaveProperty('efforts')
+    // A level that could not reach a command line is never offered.
+    expect(effortOf(byId('claude-opus-6'))).toEqual(['low', 'high'])
+    // Without a row of its own, an earlier version takes its family's levels.
+    const family = claudeModelOptions([
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        supportedEffortLevels: FIVE
+      }
+    ])
+    expect(effortOf(family.find((option) => option.id === 'claude-fable-5[1m]'))).toEqual(FIVE)
+    expect(family.find((option) => option.id === 'claude-opus-5-5')).not.toHaveProperty('efforts')
+  })
+
+  it('switches the effort before any message, then reads back what the CLI applied', async () => {
+    const { adapter, handle, child } = await started('effort-switch')
+    expect(mock.spawn).not.toHaveBeenCalled()
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(mock.spawn).toHaveBeenCalledTimes(1)
+    const [apply, ...rest] = sent(child)
+    expect(rest).toEqual([])
+    expect(apply).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } }
+    })
+    expect(events.some((e) => e.type === 'effort')).toBe(false)
+    // The acknowledgement says nothing of the level: the settings are asked for.
+    answer(child, { subtype: 'success', request_id: apply.request_id })
+    const [settings, ...more] = sent(child)
+    expect(more).toEqual([])
+    expect(settings).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'get_settings' }
+    })
+    expect(settings.request_id).not.toBe(apply.request_id)
+    expect(events.some((e) => e.type === 'effort')).toBe(false)
+    answer(child, {
+      subtype: 'success',
+      request_id: settings.request_id,
+      response: { applied: { effort: 'high' } }
+    })
+    expect(events.at(-1)).toEqual({ type: 'effort', effort: 'high' })
+    // A refusal is the CLI's own words, never fatal, and reads nothing back.
+    adapter.write(handle, { type: 'set_effort', effort: 'max' })
+    const [refused] = sent(child)
+    answer(child, { subtype: 'error', request_id: refused.request_id, error: 'max needs Opus' })
+    expect(events.at(-1)).toEqual({ type: 'error', message: 'max needs Opus', fatal: false })
+    expect(sent(child)).toEqual([])
+    adapter.write(handle, { type: 'set_effort', effort: 'xhigh' })
+    const [silent] = sent(child)
+    answer(child, { subtype: 'error', request_id: silent.request_id })
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      message: 'Claude refused the Extra high effort',
+      fatal: false
+    })
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it.each(['high;rm', '--x', 'High', ''])(
+    'refuses the level %j before anything starts',
+    async (effort) => {
+      const { adapter, handle } = await started(`effort-invalid-${effort}`)
+      expect(() => adapter.write(handle, { type: 'set_effort', effort })).toThrow()
+      expect(mock.spawn).not.toHaveBeenCalled()
+      await adapter.kill(handle)
+    }
+  )
+
+  it('asks for the settings at ready, and after a model switch only once the CLI took it', async () => {
+    const { adapter, handle, child } = await started('effort-ready')
+    adapter.ready(handle)
+    const [first, ...rest] = sent(child)
+    expect(rest).toEqual([])
+    expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'get_settings' } })
+    // A CLI too old to say what it applied: nothing is shown, and nothing leaks.
+    const before = events.length
+    answer(child, { subtype: 'success', request_id: first.request_id, response: {} })
+    expect(events.length).toBe(before)
+    adapter.write(handle, { type: 'set_model', model: 'claude-haiku-4-5-20251001' })
+    const switched = sent(child)
+    expect(switched).toHaveLength(1)
+    expect(switched[0]).toMatchObject({ request: { subtype: 'set_model' } })
+    answer(child, { subtype: 'success', request_id: switched[0].request_id })
+    const [after, ...none] = sent(child)
+    expect(none).toEqual([])
+    expect(after).toMatchObject({ request: { subtype: 'get_settings' } })
+    // A model that takes no effort runs at none, and says so as null.
+    answer(child, {
+      subtype: 'success',
+      request_id: after.request_id,
+      response: { applied: { effort: null } }
+    })
+    expect(events.at(-1)).toEqual({ type: 'effort', effort: null })
+    // A refused switch reads nothing back.
+    adapter.write(handle, { type: 'set_model', model: 'opus' })
+    const [refused] = sent(child)
+    answer(child, { subtype: 'error', request_id: refused.request_id, error: 'no' })
+    expect(sent(child)).toEqual([])
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+
+  it.each([['High;rm'], [3], [{ level: 'high' }]])(
+    'shows nothing for an applied effort %j that is not a level, and lets the request go',
+    async (effort) => {
+      const { adapter, handle, child } = await started(`effort-odd-${String(effort)}`)
+      adapter.ready(handle)
+      const [read] = sent(child)
+      const before = events.length
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      // Answered, so the id is released: the same answer again is not ours.
+      answer(child, {
+        subtype: 'success',
+        request_id: read.request_id,
+        response: { applied: { effort: 'low' } }
+      })
+      expect(events.slice(before).filter((e) => e.type === 'effort')).toEqual([])
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    }
+  )
+
+  it('launches on the effort last picked, and on none when there is none', async () => {
+    const picked = await started('effort-argv', { effort: 'high' })
+    picked.adapter.write(picked.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn.mock.calls[0][1][2]).toContain("'--effort' 'high'")
+    picked.child.emit('close', 0)
+    await picked.adapter.kill(picked.handle)
+    mock.spawn.mockClear()
+    const plain = await started('effort-argv-none')
+    plain.adapter.write(plain.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--effort')
+    plain.child.emit('close', 0)
+    await plain.adapter.kill(plain.handle)
+    // One that could reach a command line is refused at spawn.
+    const adapter = new ClaudeAdapter()
+    await expect(
+      adapter.spawn({ ...spec, id: 'effort-argv-bad', options: { effort: '--x' } })
+    ).rejects.toThrow()
+    await expect(
+      adapter.spawn({ ...spec, id: 'effort-argv-bad-2', options: { effort: 'high;rm' } })
+    ).rejects.toThrow()
+  })
+})

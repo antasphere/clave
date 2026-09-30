@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FolderIcon,
@@ -10,7 +10,7 @@ import {
   CheckIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 interface RemoteDirectoryPickerProps {
   locationId: string
@@ -40,7 +40,7 @@ export function RemoteDirectoryPicker({
   locationName,
   onSelect,
   onCancel
-}: RemoteDirectoryPickerProps) {
+}: RemoteDirectoryPickerProps): React.ReactPortal {
   const [currentPath, setCurrentPath] = useState('')
   const [homePath, setHomePath] = useState('')
   const [entries, setEntries] = useState<DirEntry[]>([])
@@ -54,7 +54,10 @@ export function RemoteDirectoryPicker({
   const inputRef = useRef<HTMLInputElement>(null)
   const highlightedRowRef = useRef<HTMLButtonElement>(null)
   const editingRef = useRef(editingPath)
-  editingRef.current = editingPath
+  // Mirrored at commit, before any keydown can read it.
+  useLayoutEffect(() => {
+    editingRef.current = editingPath
+  }, [editingPath])
 
   // Resolve home directory on mount
   useEffect(() => {
@@ -81,13 +84,19 @@ export function RemoteDirectoryPicker({
     }
   }, [locationId])
 
-  // Load directory contents when path changes
-  useEffect(() => {
-    if (!currentPath) return
-    let cancelled = false
+  // Load directory contents when path changes. The listing's state resets while
+  // rendering, against the path the last render saw; the effect fetches.
+  const [listedPath, setListedPath] = useState<{ locationId: string; path: string } | null>(null)
+  if (currentPath && (listedPath?.locationId !== locationId || listedPath.path !== currentPath)) {
+    setListedPath({ locationId, path: currentPath })
     setLoading(true)
     setError(null)
     setHighlight(-1)
+  }
+
+  useEffect(() => {
+    if (!currentPath) return
+    let cancelled = false
     ;(async () => {
       try {
         const items = await window.electronAPI.sftpReadDir(locationId, currentPath)
@@ -164,7 +173,7 @@ export function RemoteDirectoryPicker({
 
   // Global Escape: exit edit mode first, otherwise close the picker
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       if (editingRef.current) {
         setEditingPath(false)
@@ -212,7 +221,7 @@ export function RemoteDirectoryPicker({
         {/* Header */}
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border-subtle">
           <FolderIcon className="w-4 h-4 text-accent flex-shrink-0" />
-          <h3 className="flex-1 min-w-0 text-[13px] font-semibold text-text-primary">
+          <h3 className="flex-1 min-w-0 text-control font-semibold text-text-primary">
             Open folder
           </h3>
           <span
@@ -270,7 +279,7 @@ export function RemoteDirectoryPicker({
             <button
               onClick={startEditing}
               title="Edit path"
-              className="flex-1 min-w-0 flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-xs text-text-tertiary overflow-x-auto hover:bg-surface-100 transition-colors"
+              className="flex-1 min-w-0 flex items-center gap-0.5 h-control-md px-1.5 rounded-lg text-xs text-text-tertiary overflow-x-auto hover:bg-surface-100 transition-colors"
             >
               <span
                 onClick={(e) => {
@@ -306,7 +315,11 @@ export function RemoteDirectoryPicker({
             title={editingPath ? 'Go' : 'Edit path'}
             className="btn-icon btn-icon-sm flex-shrink-0"
           >
-            {editingPath ? <CheckIcon className="w-4 h-4" /> : <PencilSquareIcon className="w-4 h-4" />}
+            {editingPath ? (
+              <CheckIcon className="w-4 h-4" />
+            ) : (
+              <PencilSquareIcon className="w-4 h-4" />
+            )}
           </button>
         </div>
 
@@ -334,7 +347,7 @@ export function RemoteDirectoryPicker({
                 onClick={() => navigateTo(item.path)}
                 onMouseMove={() => setHighlight(i)}
                 className={cn(
-                  'group w-full flex items-center gap-2.5 px-2.5 h-8 rounded-lg text-left transition-colors',
+                  'group w-full flex items-center gap-2.5 px-2.5 h-control-lg rounded-lg text-left transition-colors',
                   i === highlight ? 'bg-surface-100' : 'hover:bg-surface-100'
                 )}
               >
@@ -348,7 +361,7 @@ export function RemoteDirectoryPicker({
                 />
                 <span
                   className={cn(
-                    'flex-1 min-w-0 truncate text-[13px]',
+                    'flex-1 min-w-0 truncate text-control',
                     item.kind === 'up' ? 'text-text-secondary' : 'text-text-primary'
                   )}
                 >

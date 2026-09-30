@@ -20,12 +20,19 @@
  * `will-redirect` handler in view-guests.ts and the matching checks go red;
  * delete the `will-attach-webview` hardening and the confinement checks do.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  callMcp,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync, symlinkSync, existsSync } from 'node:fs'
 import http from 'node:http'
 
 const DIR = userDataDir('view-navigation')
-const ROOT = '/tmp/clave-e2e-view-navigation-root'
+const ROOT = fixturePath('view-navigation-root')
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000000f',
   name: 'Views',

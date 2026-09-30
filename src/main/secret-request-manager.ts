@@ -232,9 +232,7 @@ function runWithSecret(
           ok: numericExit === 0,
           exitCode: numericExit,
           ...base,
-          ...(err && typeof exitCode !== 'number'
-            ? { error: redact(err.message, secret) }
-            : {})
+          ...(err && typeof exitCode !== 'number' ? { error: redact(err.message, secret) } : {})
         })
       }
     )

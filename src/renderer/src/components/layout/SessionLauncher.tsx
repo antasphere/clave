@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from 'react'
 import { useAgentStore } from '../../store/agent-store'
 import { useLocationStore } from '../../store/location-store'
+import { useClaudeProfileStore, describeClaudeProfileAuth } from '../../store/claude-profile-store'
 import {
-  useClaudeProfileStore,
-  describeClaudeProfileAuth,
-  type ClaudeProfile
-} from '../../store/claude-profile-store'
-import { useClaudeAccountsUsage, headroomLabel } from '../../store/usage-store'
+  useClaudeAccountsUsage,
+  useCodexAccountsUsage,
+  headroomLabel
+} from '../../store/usage-store'
+import { useCodexAccountStore, describeCodexAccountAuth } from '../../store/codex-account-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import {
   useLaunchPrefsStore,
@@ -43,7 +44,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent
-} from '../ui/dropdown-menu'
+} from '@clave/ui/components'
 import { useShortcutLabel } from '../../store/keymap-store'
 
 /** What the caret's remote entries hand back to the sidebar, which owns the
@@ -54,6 +55,14 @@ export interface RemoteLaunchRequest {
   claudeMode: boolean
   antigravityMode: boolean
   codexMode: boolean
+}
+
+/** An account row in the caret menu, whichever provider's pool it is from. */
+interface PooledAccount {
+  id: string
+  label: string
+  title: string
+  headroom: string | null
 }
 
 interface SessionLauncherProps {
@@ -130,6 +139,9 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
   const profiles = useClaudeProfileStore((s) => s.profiles)
   const selectedProfileId = useClaudeProfileStore((s) => s.selectedProfileId)
   const accountsUsage = useClaudeAccountsUsage((s) => s.byAccount)
+  const codexAccounts = useCodexAccountStore((s) => s.accounts)
+  const selectedCodexAccountId = useCodexAccountStore((s) => s.selectedAccountId)
+  const codexAccountsUsage = useCodexAccountsUsage((s) => s.byAccount)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const launchProfilePreferences = useLaunchProfileStore((s) => s.preferences)
   void launchProfilePreferences
@@ -199,83 +211,160 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
     [activeWorkspaceId, run]
   )
 
-  /** A Claude entry in the caret menu. With more than one account it becomes
-   *  a submenu, opened on hover, one row per account with that account's
-   *  headroom beside it; with more than one launch profile too, the rows are
-   *  grouped under each launch profile's name. */
-  const renderClaudeEntry = useCallback(
-    (kind: AgentKind, label: string, shortcut: string | undefined, dangerousMode: boolean) => {
-      const binaryProfiles = profilesFor('claude')
-      const selectedBinaryId = selectedLaunchProfile('claude', activeWorkspaceId).id
-      const launch = (launchProfileId: string, claudeProfileId?: string): void =>
-        launchAgent(
-          { kind, dangerousMode, claudeProfileId, launchProfileId },
-          { kind: 'workspace-root' }
-        )
-      if (!multiProfile && binaryProfiles.length === 1) {
+  /** A Claude or Codex entry in the caret menu: one level per choice left to
+   *  make. With a single launch profile and a single account it launches on a
+   *  click. Otherwise hovering it opens the launch profiles — the terminal
+   *  CLI, its chat view, every saved profile and its chat twin — and, with
+   *  more than one account, hovering a profile opens that provider's accounts
+   *  beside it, each with its headroom. With one profile and several accounts
+   *  the accounts come straight after the entry. */
+  const renderPooledEntry = useCallback(
+    (entry: {
+      family: 'claude' | 'codex'
+      label: string
+      shortcut: string | undefined
+      Logo: typeof ClaudeLogo
+      accounts: PooledAccount[]
+      selectedAccountId: string | null
+      launch: (launchProfileId: string, accountId?: string) => void
+    }) => {
+      const { family, label, shortcut, Logo, accounts, selectedAccountId, launch } = entry
+      const binaryProfiles = profilesFor(family)
+      const selectedBinaryId = selectedLaunchProfile(family, activeWorkspaceId).id
+      const multiAccount = accounts.length > 1
+      const entryAttr = { [`data-${family}-entry`]: label }
+      if (!multiAccount && binaryProfiles.length === 1) {
         return (
           <DropdownMenuItem onSelect={() => launch(binaryProfiles[0].id)}>
-            <ClaudeLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
             <span className="flex-1">{label}</span>
             {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
           </DropdownMenuItem>
         )
       }
-      const accountRow = (binary: { id: string }, account: ClaudeProfile): React.JSX.Element => {
-        const headroom = headroomLabel(accountsUsage[account.id])
-        return (
+      const accountRows = (binaryId: string): React.JSX.Element[] =>
+        accounts.map((account) => (
           <DropdownMenuItem
-            key={`${binary.id}:${account.id}`}
-            data-claude-account={account.id}
-            onSelect={() => launch(binary.id, account.id)}
-            title={`${account.label} · ${describeClaudeProfileAuth(account)}`}
+            key={account.id}
+            {...{ [`data-${family}-account`]: account.id }}
+            onSelect={() => launch(binaryId, account.id)}
+            title={account.title}
           >
             <span className="flex-1 truncate">{account.label}</span>
-            {headroom && (
+            {account.headroom && (
               <span className="text-[11px] text-text-tertiary tabular-nums flex-shrink-0">
-                {headroom}
+                {account.headroom}
               </span>
             )}
-            {binary.id === selectedBinaryId && account.id === selectedProfileId && (
+            {binaryId === selectedBinaryId && account.id === selectedAccountId && (
               <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
             )}
           </DropdownMenuItem>
-        )
-      }
+        ))
+      const profileCheck = (binaryId: string): React.JSX.Element | null =>
+        binaryId === selectedBinaryId ? (
+          <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+        ) : null
       return (
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger data-claude-entry={label}>
-            <ClaudeLogo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+          <DropdownMenuSubTrigger {...entryAttr}>
+            <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
             <span className="flex-1">{label}</span>
             <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            {multiProfile
-              ? binaryProfiles.map((binary) => (
-                  <div key={binary.id}>
-                    <DropdownMenuLabel>
-                      {binaryProfiles.length > 1 ? `${binary.name} · account` : 'Account'}
-                    </DropdownMenuLabel>
-                    {profiles.map((account) => accountRow(binary, account))}
-                  </div>
-                ))
-              : [
-                  <DropdownMenuLabel key="label">Launch profile</DropdownMenuLabel>,
-                  ...binaryProfiles.map((binary) => (
-                    <DropdownMenuItem key={binary.id} onSelect={() => launch(binary.id)}>
+            {binaryProfiles.length === 1 ? (
+              <>
+                <DropdownMenuLabel>Account</DropdownMenuLabel>
+                {accountRows(binaryProfiles[0].id)}
+              </>
+            ) : (
+              <>
+                <DropdownMenuLabel>Launch profile</DropdownMenuLabel>
+                {binaryProfiles.map((binary) =>
+                  multiAccount ? (
+                    <DropdownMenuSub key={binary.id}>
+                      <DropdownMenuSubTrigger data-launch-profile-entry={binary.id}>
+                        <span className="flex-1 truncate">{binary.name}</span>
+                        {profileCheck(binary.id)}
+                        <ChevronRightIcon className="w-3 h-3 flex-shrink-0 text-text-tertiary" />
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        <DropdownMenuLabel>Account</DropdownMenuLabel>
+                        {accountRows(binary.id)}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ) : (
+                    <DropdownMenuItem
+                      key={binary.id}
+                      data-launch-profile-entry={binary.id}
+                      onSelect={() => launch(binary.id)}
+                    >
                       <span className="flex-1 truncate">{binary.name}</span>
-                      {binary.id === selectedBinaryId && (
-                        <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
-                      )}
+                      {profileCheck(binary.id)}
                     </DropdownMenuItem>
-                  ))
-                ]}
+                  )
+                )}
+              </>
+            )}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
       )
     },
-    [accountsUsage, activeWorkspaceId, launchAgent, multiProfile, profiles, selectedProfileId]
+    [activeWorkspaceId]
   )
+
+  const claudeAccounts: PooledAccount[] = profiles.map((account) => ({
+    id: account.id,
+    label: account.label,
+    title: `${account.label} · ${describeClaudeProfileAuth(account)}`,
+    headroom: headroomLabel(accountsUsage[account.id])
+  }))
+  const codexPooledAccounts: PooledAccount[] = codexAccounts.map((account) => ({
+    id: account.id,
+    label: account.label,
+    title: `${account.label} · ${describeCodexAccountAuth(account)}`,
+    headroom: headroomLabel(codexAccountsUsage[account.id])
+  }))
+
+  const renderClaudeEntry = (
+    kind: AgentKind,
+    label: string,
+    shortcut: string | undefined,
+    dangerousMode: boolean
+  ): React.JSX.Element =>
+    renderPooledEntry({
+      family: 'claude',
+      label,
+      shortcut,
+      Logo: ClaudeLogo,
+      accounts: claudeAccounts,
+      selectedAccountId: selectedProfileId,
+      launch: (launchProfileId, claudeProfileId) =>
+        launchAgent(
+          { kind, dangerousMode, claudeProfileId, launchProfileId },
+          { kind: 'workspace-root' }
+        )
+    })
+
+  const renderCodexEntry = (
+    label: string,
+    shortcut: string | undefined,
+    dangerousMode: boolean
+  ): React.JSX.Element =>
+    renderPooledEntry({
+      family: 'codex',
+      label,
+      shortcut,
+      Logo: CodexLogo,
+      accounts: codexPooledAccounts,
+      selectedAccountId: selectedCodexAccountId,
+      launch: (launchProfileId, codexAccountId) =>
+        launchAgent(
+          { kind: 'codex', dangerousMode, codexAccountId, launchProfileId },
+          { kind: 'workspace-root' }
+        )
+    })
 
   const renderAgentEntry = useCallback(
     (
@@ -399,13 +488,8 @@ export function SessionLauncher({ onRemoteLaunch }: SessionLauncherProps): React
                   'Antigravity CLI',
                   antigravityShortcut ?? undefined
                 )}
-                {renderAgentEntry('codex', 'Codex CLI', codexShortcut ?? undefined)}
-                {renderAgentEntry(
-                  'codex',
-                  'Codex CLI (YOLO)',
-                  yoloCodexShortcut ?? undefined,
-                  true
-                )}
+                {renderCodexEntry('Codex CLI', codexShortcut ?? undefined, false)}
+                {renderCodexEntry('Codex CLI (YOLO)', yoloCodexShortcut ?? undefined, true)}
                 {renderAgentEntry('pi', 'Pi', piShortcut ?? undefined)}
 
                 {connectedRemoteLocations.map((loc) => (

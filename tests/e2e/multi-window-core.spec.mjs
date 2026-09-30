@@ -44,14 +44,15 @@ import {
   tmuxSessionAlive,
   until,
   persistedWindows,
-  windowLayout
+  windowLayout,
+  fixturePath
 } from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('multi-window-core')
-const ROOT_A = '/tmp/clave-e2e-mw-core-a'
-const ROOT_B = '/tmp/clave-e2e-mw-core-b'
+const ROOT_A = fixturePath('mw-core-a')
+const ROOT_B = fixturePath('mw-core-b')
 const ws = (letter, root) => ({
   id: `${letter}${letter}${letter}${letter}${letter}${letter}${letter}${letter}-0000-4000-8000-0000000000${letter}1`,
   name: `Core${letter.toUpperCase()}`,
@@ -147,7 +148,11 @@ export async function run(t) {
     const id2 = await identityOf(w2.page)
     t.equal('window 2 shows the same workspace A', id2?.workspaceId, WS_A.id)
     t.equal('window 2 is not the primary', id2?.isPrimary, false)
-    t.check('window 2 has its own key', typeof id2?.windowKey === 'string' && id2.windowKey !== key1, id2)
+    t.check(
+      'window 2 has its own key',
+      typeof id2?.windowKey === 'string' && id2.windowKey !== key1,
+      id2
+    )
     const key2 = id2.windowKey
     t.equal('two windows are open', (await windows(app)).length, 2)
     t.check(
@@ -176,7 +181,9 @@ export async function run(t) {
     t.equal('and its workspace', rec2?.workspaceId, WS_A.id)
     t.check(
       "window 1 never lists window 2's tab",
-      !(await callMcpIn(app, id1.windowId, 'list', {})).sessions.some((s) => s.id === opened2.sessionId)
+      !(await callMcpIn(app, id1.windowId, 'list', {})).sessions.some(
+        (s) => s.id === opened2.sessionId
+      )
     )
     t.check(
       "window 2's file carries its group and not window 1's",
@@ -214,7 +221,11 @@ export async function run(t) {
     )
     await sleep(800)
     const rawRec = sessionRecords().find((r) => r.id === rawId)
-    t.equal('a raw spawn from window 1 is stamped with A, not the last-active B', rawRec?.workspaceId, WS_A.id)
+    t.equal(
+      'a raw spawn from window 1 is stamped with A, not the last-active B',
+      rawRec?.workspaceId,
+      WS_A.id
+    )
     t.equal("and with window 1's key", rawRec?.windowKey, key1)
     await win1.evaluate((id) => window.electronAPI.killSession(id), rawId)
 
@@ -253,7 +264,11 @@ export async function run(t) {
     t.check('window 1 came back with its key, on A', back1?.workspaceId === WS_A.id, ids)
     t.check('window 2 came back with its key, on B', back2?.workspaceId === WS_B.id, ids)
     const r1 = await untilListed(app, back1.windowId, ['W1 lane'])
-    t.check("window 1 restored ITS group around its session", !!r1, listNames(await callMcpIn(app, back1.windowId, 'list', {})))
+    t.check(
+      'window 1 restored ITS group around its session',
+      !!r1,
+      listNames(await callMcpIn(app, back1.windowId, 'list', {}))
+    )
     t.check(
       'and the ticking session is back in it, alive',
       r1?.groups.find((g) => g.name === 'W1 lane')?.sessionIds.includes(tick.sessionId) &&
@@ -261,7 +276,11 @@ export async function run(t) {
       r1?.groups
     )
     const r2 = await untilListed(app, back2.windowId, ['W2 lane', 'B from W2'])
-    t.check('window 2 restored ITS two groups (the hidden A one included)', !!r2, listNames(await callMcpIn(app, back2.windowId, 'list', {})))
+    t.check(
+      'window 2 restored ITS two groups (the hidden A one included)',
+      !!r2,
+      listNames(await callMcpIn(app, back2.windowId, 'list', {}))
+    )
     t.check(
       'with their sessions in place',
       r2?.groups.find((g) => g.name === 'W2 lane')?.sessionIds.includes(opened2.sessionId) &&
@@ -277,16 +296,27 @@ export async function run(t) {
       const name = sessionRecords().find((r) => r.id === openedB.sessionId)?.tmuxName
       return name && tmuxSessionAlive(name) ? name : null
     })
-    t.check("window 2's session is tmux-backed and running (the hand-over case)", tmuxB !== null, tmuxB)
+    t.check(
+      "window 2's session is tmux-backed and running (the hand-over case)",
+      tmuxB !== null,
+      tmuxB
+    )
     await sleep(2000)
     const before = await lastTick(app, tick.sessionId, back1.windowId)
     await closeWindow(app, win2b)
     t.equal('window 2 is gone', (await windows(app)).length, 1)
     await sleep(1500)
     const after = await lastTick(app, tick.sessionId, back1.windowId)
-    t.check("window 1's terminal kept streaming across the close", after > before, { before, after })
+    t.check("window 1's terminal kept streaming across the close", after > before, {
+      before,
+      after
+    })
     const handed = await untilListed(app, back1.windowId, ['W1 lane', 'W2 lane', 'B from W2'])
-    t.check("window 1 took in window 2's groups", !!handed, listNames(await callMcpIn(app, back1.windowId, 'list', {})))
+    t.check(
+      "window 1 took in window 2's groups",
+      !!handed,
+      listNames(await callMcpIn(app, back1.windowId, 'list', {}))
+    )
     t.check(
       "and window 2's sessions, alive, in their groups",
       handed?.sessions.find((s) => s.id === opened2.sessionId)?.alive === true &&
@@ -295,7 +325,11 @@ export async function run(t) {
         handed?.groups.find((g) => g.name === 'B from W2')?.sessionIds.includes(openedB.sessionId),
       handed?.sessions.map((s) => [s.id, s.alive])
     )
-    t.check("window 2's tmux session survived (detached, not killed)", tmuxSessionAlive(tmuxB), tmuxB)
+    t.check(
+      "window 2's tmux session survived (detached, not killed)",
+      tmuxSessionAlive(tmuxB),
+      tmuxB
+    )
     t.equal('windows.json forgot window 2', persistedWindows(DIR).length, 1)
     t.check("window 2's layout file is gone", windowLayout(DIR, key2) === null)
     t.check(
@@ -318,14 +352,15 @@ export async function run(t) {
     const fin = await untilListed(app, idF.windowId, ['W1 lane', 'W2 lane', 'B from W2'])
     t.check('and every group', !!fin, listNames(await callMcpIn(app, idF.windowId, 'list', {})))
     t.check(
-      "including the hidden workspace-B one, scoped to B",
+      'including the hidden workspace-B one, scoped to B',
       fin?.groups.find((g) => g.name === 'B from W2')?.workspaceId === WS_B.id,
       fin?.groups
     )
     const state2 = JSON.parse(readFileSync(path.join(DIR, 'workspace-state.json'), 'utf-8'))
     t.check(
       'the new build writes both last-active keys (one-release downgrade safety)',
-      state2.lastActiveWorkspaceId === state2.activeWorkspaceId && typeof state2.activeWorkspaceId === 'string',
+      state2.lastActiveWorkspaceId === state2.activeWorkspaceId &&
+        typeof state2.activeWorkspaceId === 'string',
       state2
     )
     t.check('and window 1 came back on A', idF?.workspaceId === WS_A.id, idF)

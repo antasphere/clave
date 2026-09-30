@@ -1,3 +1,4 @@
+import { useSkinStore } from '../lib/skin'
 import { emitAgentStateWord, emitSessionExited } from '../lib/exchange-capture'
 import { codexStateFromTitle } from '../../../shared/codex-state'
 import { useEffect, useRef, useCallback } from 'react'
@@ -5,12 +6,14 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { useSessionStore } from '../store/session-store'
 import { shellEscape } from '../lib/shell'
+import { pathsFromDataTransfer } from '../lib/dropped-paths'
 import { getXtermTheme } from '../lib/terminal-theme'
 import { safePort } from '../lib/utils'
 import { stripAnsi, detectLocalhostUrl } from '../lib/localhost-url'
 import { registerTerminal, unregisterTerminal } from '../lib/terminal-registry'
 import { writeUserInput } from '../lib/user-input'
 import '@xterm/xterm/css/xterm.css'
+import { hasLifecycleState } from '../lib/tab-status'
 
 function detectPrompt(buffer: string): string | null {
   // Collapse whitespace for matching (ANSI stripping removes cursor positioning,
@@ -26,12 +29,17 @@ function detectPrompt(buffer: string): string | null {
   return null
 }
 
-export function useTerminal(sessionId: string) {
+export function useTerminal(sessionId: string): {
+  containerRef: React.RefObject<HTMLDivElement | null>
+  fit: () => void
+  focus: () => void
+} {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isVisibleRef = useRef(false)
   const theme = useSessionStore((s) => s.theme)
+  const skinRevision = useSkinStore((s) => s.revision)
 
   const fit = useCallback(() => {
     fitAddonRef.current?.fit()
@@ -63,8 +71,14 @@ export function useTerminal(sessionId: string) {
 
     terminal.open(container)
 
+    // A hidden tile keeps a real box (TerminalGrid hides it off screen, never
+    // with display:none), so a size no longer means the tab is on screen. The
+    // grid is fitted, and with it the PTY started, only once the tab is
+    // selected: a restored tab nobody has opened yet starts nothing, as when
+    // a hidden tile had no size at all.
+    const selectedAtMount = useSessionStore.getState().selectedSessionIds.includes(sessionId)
     let hasFit = false
-    if (container.offsetWidth > 0 && container.offsetHeight > 0) {
+    if (selectedAtMount && container.offsetWidth > 0 && container.offsetHeight > 0) {
       fitAddon.fit()
       hasFit = true
     }
@@ -141,7 +155,19 @@ export function useTerminal(sessionId: string) {
       window.electronAPI.resizeSession(sessionId, cols, rows)
     })
 
-    const { setSessionActivity, setAgentState, setSessionPromptWaiting, setSessionDetectedUrl, setSessionServerStatus, setSessionServerCommand, setSessionUnseenActivity, updateSessionAlive, autoRenameSession, resetSessionName, setSessionPlanFile } = useSessionStore.getState()
+    const {
+      setSessionActivity,
+      setAgentState,
+      setSessionPromptWaiting,
+      setSessionDetectedUrl,
+      setSessionServerStatus,
+      setSessionServerCommand,
+      setSessionUnseenActivity,
+      updateSessionAlive,
+      autoRenameSession,
+      resetSessionName,
+      setSessionPlanFile
+    } = useSessionStore.getState()
 
     // Listen for auto-generated titles from the main process
     const cleanupAutoTitle = window.electronAPI.onSessionAutoTitle(sessionId, (title) => {
@@ -154,17 +180,20 @@ export function useTerminal(sessionId: string) {
     })
 
     // Listen for /clear command — reset session name to folder name
-    const cleanupClearDetected = window.electronAPI.onClearDetected(sessionId, (newClaudeSessionId) => {
-      resetSessionName(sessionId)
-      // The tab follows its rotated transcript: store (Resume, the history
-      // ledger's diff) and record (a restart's re-adoption) alike.
-      // Same alphabet main enforces before touching the record: the store
-      // and the record must never disagree on which conversation this is.
-      if (newClaudeSessionId && /^[A-Za-z0-9_-]{1,128}$/.test(newClaudeSessionId)) {
-        useSessionStore.getState().setClaudeSessionId(sessionId, newClaudeSessionId)
-        void window.electronAPI.setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+    const cleanupClearDetected = window.electronAPI.onClearDetected(
+      sessionId,
+      (newClaudeSessionId) => {
+        resetSessionName(sessionId)
+        // The tab follows its rotated transcript: store (Resume, the history
+        // ledger's diff) and record (a restart's re-adoption) alike.
+        // Same alphabet main enforces before touching the record: the store
+        // and the record must never disagree on which conversation this is.
+        if (newClaudeSessionId && /^[A-Za-z0-9_-]{1,128}$/.test(newClaudeSessionId)) {
+          useSessionStore.getState().setClaudeSessionId(sessionId, newClaudeSessionId)
+          void window.electronAPI.setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+        }
       }
-    })
+    )
 
     // Codex's TUI publishes its runtime state through OSC titles. xterm handles
     // fragmented escape sequences and both BEL/ST terminators for us. This
@@ -230,9 +259,9 @@ export function useTerminal(sessionId: string) {
           // Capture the server command from the group terminal config (if available)
           const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
           if (!currentSession?.serverCommand) {
-            const group = useSessionStore.getState().groups.find((g) =>
-              g.terminals.some((t) => t.sessionId === sessionId)
-            )
+            const group = useSessionStore
+              .getState()
+              .groups.find((g) => g.terminals.some((t) => t.sessionId === sessionId))
             const terminalConfig = group?.terminals.find((t) => t.sessionId === sessionId)
             if (terminalConfig?.command) {
               setSessionServerCommand(sessionId, terminalConfig.command)
@@ -242,7 +271,9 @@ export function useTerminal(sessionId: string) {
       }
 
       // If a URL is set and we see signals the server was killed, verify immediately
-      const currentUrl = useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.detectedUrl
+      const currentUrl = useSessionStore
+        .getState()
+        .sessions.find((s) => s.id === sessionId)?.detectedUrl
       if (currentUrl && /(\^C|SIGINT|SIGTERM|EADDRINUSE)/.test(stripped)) {
         const port = safePort(currentUrl)
         if (port) {
@@ -258,9 +289,13 @@ export function useTerminal(sessionId: string) {
         }
       }
 
-      // Mark unseen activity if this session is not currently selected
-      const { selectedSessionIds } = useSessionStore.getState()
-      if (!selectedSessionIds.includes(sessionId)) {
+      // Mark unseen activity if this session is not currently selected. A
+      // session with a lifecycle marks it when its turn ends instead
+      // (`setAgentState`): its TUI repaints while idle, and that noise used to
+      // light tabs that had nothing new.
+      const { selectedSessionIds, sessions } = useSessionStore.getState()
+      const owner = sessions.find((s) => s.id === sessionId)
+      if (!selectedSessionIds.includes(sessionId) && !(owner && hasLifecycleState(owner))) {
         setSessionUnseenActivity(sessionId, true)
       }
 
@@ -281,7 +316,12 @@ export function useTerminal(sessionId: string) {
         // Check for prompt patterns after idle detection
         const promptType = detectPrompt(outputBuffer)
         setSessionPromptWaiting(sessionId, promptType)
-        console.log('[notification] Idle detected, prompt check:', promptType, '| buffer tail:', outputBuffer.slice(-100))
+        console.log(
+          '[notification] Idle detected, prompt check:',
+          promptType,
+          '| buffer tail:',
+          outputBuffer.slice(-100)
+        )
         if (promptType) {
           notificationTimer = setTimeout(() => {
             const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
@@ -320,6 +360,9 @@ export function useTerminal(sessionId: string) {
       }
 
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+      // An account switch stops the process to start it again (ADR 0002):
+      // the exit is a restart, not an end, and is not announced as one.
+      if (session?.restarting) return
       const title = session?.name ?? session?.folderName ?? 'Clave'
       window.electronAPI.showNotification?.({
         title,
@@ -342,6 +385,9 @@ export function useTerminal(sessionId: string) {
       if (!entry) return
       const { width, height } = entry.contentRect
       if (width === 0 || height === 0) return
+      // Hidden, the tile is sized to the whole pane rather than to its cell;
+      // the selection effect below fits it when it is shown again.
+      if (!isVisibleRef.current) return
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => {
         try {
@@ -387,47 +433,7 @@ export function useTerminal(sessionId: string) {
 
       if (!e.dataTransfer) return
 
-      let paths: string[] = []
-
-      // 1. Files from native file manager (Finder, etc.)
-      if (e.dataTransfer.files.length > 0) {
-        paths = Array.from(e.dataTransfer.files)
-          .map((f) => window.electronAPI.getPathForFile(f))
-          .filter(Boolean)
-      }
-
-      // 2. text/uri-list (VS Code, other apps)
-      if (paths.length === 0) {
-        const uriList = e.dataTransfer.getData('text/uri-list')
-        if (uriList) {
-          paths = uriList
-            .split(/\r?\n/)
-            .filter((line) => line.trim() && !line.startsWith('#'))
-            .map((uri) => {
-              try {
-                const url = new URL(uri.trim())
-                if (url.protocol === 'file:') {
-                  return decodeURIComponent(url.pathname)
-                }
-              } catch {
-                // not a valid URL
-              }
-              return ''
-            })
-            .filter(Boolean)
-        }
-      }
-
-      // 3. text/plain fallback (file paths as plain text)
-      if (paths.length === 0) {
-        const text = e.dataTransfer.getData('text/plain')
-        if (text) {
-          paths = text
-            .split(/\r?\n/)
-            .map((l) => l.trim())
-            .filter((l) => l.startsWith('/') || l.startsWith('~'))
-        }
-      }
+      const paths = pathsFromDataTransfer(e.dataTransfer)
 
       // Persist any transient sources (e.g. macOS screenshot previews that live
       // in a temp dir and get deleted before the agent reads them) into stable
@@ -453,7 +459,10 @@ export function useTerminal(sessionId: string) {
     const portCheckInterval = setInterval(() => {
       if (!document.hasFocus() || !isVisibleRef.current) return
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
-      if (!session?.detectedUrl || session.serverStatus !== 'running') { portCheckFailures = 0; return }
+      if (!session?.detectedUrl || session.serverStatus !== 'running') {
+        portCheckFailures = 0
+        return
+      }
       const port = safePort(session.detectedUrl)
       if (port) {
         window.electronAPI.checkPort(port).then((alive) => {
@@ -500,7 +509,7 @@ export function useTerminal(sessionId: string) {
     if (terminalRef.current) {
       terminalRef.current.options.theme = getXtermTheme(theme)
     }
-  }, [theme])
+  }, [theme, skinRevision])
 
   // Track visibility and toggle cursor blink for hidden terminals.
   // Also re-fit when anything that alters the terminal grid's available width
@@ -515,7 +524,7 @@ export function useTerminal(sessionId: string) {
       terminalRef.current.options.cursorBlink = isVisibleRef.current
     }
     let pendingFitTimer: ReturnType<typeof setTimeout> | null = null
-    const scheduleFit = () => {
+    const scheduleFit = (): void => {
       if (pendingFitTimer) clearTimeout(pendingFitTimer)
       // 300ms outlasts Framer Motion's 200ms panel/sidebar animation so the
       // final fit observes the settled width. We deliberately do NOT fit
@@ -527,7 +536,9 @@ export function useTerminal(sessionId: string) {
         try {
           fitAddonRef.current?.fit()
           terminalRef.current?.refresh(0, (terminalRef.current.rows ?? 1) - 1)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300)
     }
     const unsub = useSessionStore.subscribe((state, prevState) => {

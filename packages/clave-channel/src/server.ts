@@ -67,7 +67,8 @@ export class ClaveChannelServer {
       // Mandatory API-key auth, constant-time comparison.
       const url = new URL(req.url || '/', `http://localhost:${this.options.port}`)
       const headerKey = req.headers['x-api-key']
-      const key = url.searchParams.get('key') || (Array.isArray(headerKey) ? headerKey[0] : headerKey)
+      const key =
+        url.searchParams.get('key') || (Array.isArray(headerKey) ? headerKey[0] : headerKey)
       if (!key || !safeEqual(key, apiKey)) {
         ws.close(4001, 'Unauthorized')
         return

@@ -17,11 +17,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('claude-accounts')
-const ROOT = '/tmp/clave-e2e-claude-accounts-root'
+const ROOT = fixturePath('claude-accounts-root')
 const WS = { id: 'accounts-ws', name: 'Accounts', rootDir: ROOT, profileFile: null, createdAt: 1 }
 const WORK_TOKEN = 'sk-ant-oat01-work-token-for-the-e2e-run-0123456789'
 const PLAY_TOKEN = 'sk-ant-oat01-play-token-for-the-e2e-run-0123456789'
@@ -143,6 +144,8 @@ export async function run(t) {
     const back = () => win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
 
     // ── Settings: paste a token, see it proven ───────────────────────────
+    // Usage shows one card per account; the account itself is added on the
+    // Accounts page (ADR 0002), where a token can still be pasted.
     await footer().click()
     const claudePanel = win.locator('div[data-usage-provider="claude"]')
     await claudePanel.waitFor()
@@ -151,39 +154,87 @@ export async function run(t) {
       await claudePanel.locator('[data-claude-account-usage]').count(),
       1
     )
-    await claudePanel.getByRole('button', { name: 'Add account', exact: true }).click()
-    const form = claudePanel.locator('[data-claude-token-form]')
+    await win.locator('[data-settings-nav-row="accounts"]').click()
+    const accountsPage = win.locator('[data-settings-page="accounts"]')
+    await accountsPage.waitFor()
+    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
+    const form = accountsPage.locator('[data-claude-token-form]')
     await form.waitFor()
     await form.getByLabel('Account name').fill('Work')
     await form.getByLabel('Claude Code token').fill(WORK_TOKEN)
     await form.getByRole('button', { name: 'Add account', exact: true }).click()
     await form.locator('[data-claude-token-note]').waitFor()
     const note = await form.locator('[data-claude-token-note]').textContent()
-    t.equal('the paste was accepted', await form.locator('[data-claude-token-note]').getAttribute('data-claude-token-note'), 'ok')
-    t.check('the paste is proven by a read: 90% left on the 5-hour window', note.includes('90% left'), note)
-    t.check('the note says which window', note.includes('session'), note)
+    t.equal(
+      'the paste was accepted',
+      await form.locator('[data-claude-token-note]').getAttribute('data-claude-token-note'),
+      'ok'
+    )
+    t.check(
+      'the paste is proven by a read: 90% left on the 5-hour window',
+      note.includes('90% left'),
+      note
+    )
+    t.check('the note says which window', note.includes('5h'), note)
     let probes = (await fixture()).probes
     t.equal('the read went through the probe with that token', probes.length, 1)
-    t.check('the probe carries the token as a bearer', probes[0].token === WORK_TOKEN, probes[0].masked)
-    t.check('the probe is a message, not the usage endpoint', probes[0].url.endsWith('/v1/messages') && probes[0].method === 'POST', { url: probes[0].url, method: probes[0].method })
+    t.check(
+      'the probe carries the token as a bearer',
+      probes[0].token === WORK_TOKEN,
+      probes[0].masked
+    )
+    t.check(
+      'the probe is a message, not the usage endpoint',
+      probes[0].url.endsWith('/v1/messages') && probes[0].method === 'POST',
+      { url: probes[0].url, method: probes[0].method }
+    )
     await form.getByRole('button', { name: 'Done', exact: true }).click()
-
+    t.equal(
+      'two accounts: two rows on the Accounts page, the token dated',
+      await accountsPage.locator('[data-claude-account-row]').count(),
+      2
+    )
+    const tokenRowText = await accountsPage
+      .locator('[data-claude-account-row]')
+      .nth(1)
+      .textContent()
+    t.check(
+      'the row says how long the token has',
+      tokenRowText.includes('expires in 12 months'),
+      tokenRowText
+    )
+    await win.locator('[data-settings-nav-row="usage"]').click()
+    await claudePanel.waitFor()
     t.equal(
       'two accounts: two cards on the Claude tab',
       await claudePanel.locator('[data-claude-account-usage]').count(),
       2
     )
-    const workCard = claudePanel.locator('[data-claude-account-usage]').nth(1)
-    await workCard.locator('[data-usage-window]').first().waitFor()
+    // The accounts are ordered by their next weekly reset, not by the list:
+    // find the Work account's groups by name. Its 5-hour block is in the
+    // session chart, its credential under its weekly group.
+    const workCard = claudePanel.locator('[data-claude-account-usage]').filter({ hasText: 'Work' })
+    const workSession = claudePanel
+      .locator('[data-usage-chart="session"] [data-usage-account]')
+      .filter({ hasText: 'Work' })
+    await workSession.locator('[data-usage-window]').first().waitFor()
     t.equal(
       "the Work card shows the Work account's windows",
-      await workCard.locator('[data-usage-window="session:Current session (5h)"] [aria-label]').getAttribute('aria-label'),
+      await workSession
+        .locator('[data-usage-window="session:Current session (5h)"] [aria-label]')
+        .getAttribute('aria-label'),
       '10% used'
     )
-    t.check('the Work card names the account and its credential', (await workCard.textContent()).includes('Work') && (await workCard.textContent()).includes('Token'))
+    t.check(
+      'the Work card names the account and its credential',
+      (await workCard.textContent()).includes('Work') &&
+        (await workCard.textContent()).includes('Token')
+    )
 
     // A refused token leaves no half-account behind.
-    await claudePanel.getByRole('button', { name: 'Add account', exact: true }).click()
+    await win.locator('[data-settings-nav-row="accounts"]').click()
+    await accountsPage.waitFor()
+    await accountsPage.getByRole('button', { name: 'Add with a token', exact: true }).click()
     await form.getByLabel('Account name').fill('Broken')
     await form.getByLabel('Claude Code token').fill('not-a-token')
     await form.getByRole('button', { name: 'Add account', exact: true }).click()
@@ -195,7 +246,7 @@ export async function run(t) {
     await form.getByRole('button', { name: 'Cancel', exact: true }).click()
     t.equal(
       'the refused account was not kept',
-      await claudePanel.locator('[data-claude-account-row]').count(),
+      await accountsPage.locator('[data-claude-account-row]').count(),
       2
     )
     const accounts = await win.evaluate(() => window.electronAPI.claudeAccountsList())
@@ -214,14 +265,33 @@ export async function run(t) {
     } catch (e) {
       rejected = e.message
     }
-    t.check('an unknown account is refused, naming the ones that exist', rejected?.includes('Unknown Claude account "Nobody"') && rejected.includes('"Work"'), rejected)
+    t.check(
+      'an unknown account is refused, naming the ones that exist',
+      rejected?.includes('Unknown Claude account "Nobody"') && rejected.includes('"Work"'),
+      rejected
+    )
     let wrongMode = null
     try {
-      await callMcp(app, 'openSession', { cwd: ROOT, mode: 'codex', account: 'Work' })
+      await callMcp(app, 'openSession', { cwd: ROOT, mode: 'pi', account: 'Work' })
     } catch (e) {
       wrongMode = e.message
     }
-    t.check('an account on another agent is refused', wrongMode?.includes('claude mode only'), wrongMode)
+    t.check(
+      'an account on an agent without a pool is refused',
+      wrongMode?.includes('claude and codex modes only'),
+      wrongMode
+    )
+    let wrongProvider = null
+    try {
+      await callMcp(app, 'openSession', { cwd: ROOT, mode: 'codex', account: 'Work' })
+    } catch (e) {
+      wrongProvider = e.message
+    }
+    t.check(
+      'a Claude account is not a Codex account',
+      wrongProvider?.includes('Unknown Codex account "Work"'),
+      wrongProvider
+    )
 
     const opened = await callMcp(app, 'openSession', {
       cwd: ROOT,
@@ -232,7 +302,11 @@ export async function run(t) {
     await callMcp(app, 'focus', { sessionId: opened.sessionId })
     const printed = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: opened.sessionId, lines: 40, callerSessionId: opened.sessionId })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: opened.sessionId,
+          lines: 40,
+          callerSessionId: opened.sessionId
+        })
         // The terminal wraps a long line at its width: read it unwrapped.
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
@@ -241,14 +315,27 @@ export async function run(t) {
     )
     t.check('the session started on the account got its token in the environment', !!printed)
     const listed = (await callMcp(app, 'list', {})).sessions.find((s) => s.id === opened.sessionId)
-    t.check('clave_list names the account the tab runs on', listed?.account?.label === 'Work' && listed.account.id === work.id, listed?.account)
+    t.check(
+      'clave_list names the account the tab runs on',
+      listed?.account?.label === 'Work' && listed.account.id === work.id,
+      listed?.account
+    )
 
     t.check('the foot follows the focused tab onto its account', await textIs('90% left'))
     t.check('the foot names the account', (await footer().textContent()).includes('Work'))
-    t.equal('the foot carries the account for the tests', await footer().getAttribute('data-usage-account'), 'Work')
+    t.equal(
+      'the foot carries the account for the tests',
+      await footer().getAttribute('data-usage-account'),
+      'Work'
+    )
 
     // The Default account: the machine login, never probed.
-    const onDefault = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'claude', account: 'default', name: 'On Default' })
+    const onDefault = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      account: 'default',
+      name: 'On Default'
+    })
     await callMcp(app, 'focus', { sessionId: onDefault.sessionId })
     t.check('back on the machine login, the foot reads its own window', await textIs('70% left'), {
       foot: await footer().textContent(),
@@ -258,23 +345,45 @@ export async function run(t) {
     })
     const defaultPrinted = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: onDefault.sessionId, lines: 40, callerSessionId: onDefault.sessionId })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: onDefault.sessionId,
+          lines: 40,
+          callerSessionId: onDefault.sessionId
+        })
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes('TOKEN=') ? text : null
       },
       { tries: 60, gapMs: 500 }
     )
-    t.check('the Default tab printed its (empty) token line', !!defaultPrinted, defaultPrinted?.slice(0, 200))
-    t.check('the Default account injects no token', !(defaultPrinted ?? '').includes('sk-ant-'), defaultPrinted?.slice(0, 200))
+    t.check(
+      'the Default tab printed its (empty) token line',
+      !!defaultPrinted,
+      defaultPrinted?.slice(0, 200)
+    )
+    t.check(
+      'the Default account injects no token',
+      !(defaultPrinted ?? '').includes('sk-ant-'),
+      defaultPrinted?.slice(0, 200)
+    )
 
     // ── The session's menu says which account ───────────────────────────
     const workRow = win.locator('.sidebar-item', { hasText: 'On Work' }).first()
     await workRow.click({ button: 'right' })
     const header = win.locator('[data-claude-account-header]')
     await header.waitFor()
-    t.equal('the menu header carries the account id', await header.getAttribute('data-claude-account-header'), work.id)
+    t.equal(
+      'the menu header carries the account id',
+      await header.getAttribute('data-claude-account-header'),
+      work.id
+    )
     const headerText = await header.textContent()
-    t.check('the menu header names the account, its credential and its headroom', headerText.includes('Work') && headerText.includes('Token') && headerText.includes('90% left'), headerText)
+    t.check(
+      'the menu header names the account, its credential and its headroom',
+      headerText.includes('Work') &&
+        headerText.includes('Token') &&
+        headerText.includes('90% left'),
+      headerText
+    )
     await win.keyboard.press('Escape')
 
     // ── The launcher: aligned on the agent button, accounts on hover ─────
@@ -294,8 +403,12 @@ export async function run(t) {
         const shown = await win
           .locator('[data-claude-entry="Claude Code"]')
           .waitFor({ timeout: 1_500 })
-          .then(() => true, () => false)
-        if (shown && (await win.locator('.launcher-caret').getAttribute('data-state')) === 'open') return
+          .then(
+            () => true,
+            () => false
+          )
+        if (shown && (await win.locator('.launcher-caret').getAttribute('data-state')) === 'open')
+          return
       }
       throw new Error('the caret menu never opened')
     }
@@ -309,18 +422,50 @@ export async function run(t) {
     // A .menu-item's logo sits 13px into the menu, the button's 8px into the
     // button: the menu's left edge is 5px left of the button's.
     const drift = Math.abs(menuBox.x + 5 - buttonBox.x)
-    t.check('the menu hangs off the agent button, logos on one vertical', drift <= 1.5, { menu: menuBox.x, button: buttonBox.x })
+    t.check('the menu hangs off the agent button, logos on one vertical', drift <= 1.5, {
+      menu: menuBox.x,
+      button: buttonBox.x
+    })
     const claudeEntry = win.locator('[data-claude-entry="Claude Code"]')
     await claudeEntry.hover()
-    // Two launch profiles (the built-in claude and printenv), so the submenu
-    // groups the accounts under each; the rows read are printenv's.
-    const accountGroup = (menu) =>
-      menu.locator('div').filter({ has: win.locator('.menu-label', { hasText: 'printenv' }) })
-    const rows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
+    // Two launch profiles (the built-in claude and printenv) and two
+    // accounts: hovering Claude Code lists the profiles, and hovering a
+    // profile opens its accounts in a third menu beside the second.
+    const profilesMenu = win.locator('[role="menu"]').nth(1)
+    const printenvEntry = profilesMenu.locator('[data-launch-profile-entry="e2e-printenv"]')
+    await printenvEntry.waitFor()
+    const profileRows = await profilesMenu
+      .locator('[data-launch-profile-entry]')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-launch-profile-entry')))
+    t.check(
+      'hovering Claude Code lists the launch profiles, terminal and chat, not accounts',
+      profileRows.includes('builtin-claude') &&
+        profileRows.includes('e2e-printenv') &&
+        profileRows.some((id) => id.startsWith('chat:') || id === 'claude-chat') &&
+        (await profilesMenu.locator('[data-claude-account]').count()) === 0,
+      profileRows
+    )
+    await printenvEntry.hover()
+    const accountsMenu = win.locator('[role="menu"]').nth(2)
+    const rows = accountsMenu.locator('[data-claude-account]')
     await until(async () => (await rows.count()) === 2)
+    const boxes = await Promise.all(
+      [0, 1, 2].map((i) => win.locator('[role="menu"]').nth(i).boundingBox())
+    )
+    t.check(
+      'each menu opens beside the previous one, with a gap, never over it',
+      boxes.every(Boolean) &&
+        boxes[1].x >= boxes[0].x + boxes[0].width + 4 &&
+        boxes[2].x >= boxes[1].x + boxes[1].width + 4,
+      boxes
+    )
     t.equal('hovering Claude Code offers both accounts', await rows.count(), 2)
     const workRowText = await rows.filter({ hasText: 'Work' }).first().textContent()
-    t.check("the account row shows the account's headroom", workRowText.includes('Work') && workRowText.includes('90% left'), workRowText)
+    t.check(
+      "the account row shows the account's headroom",
+      workRowText.includes('Work') && workRowText.includes('90% left'),
+      workRowText
+    )
     await rows.filter({ hasText: 'Work' }).first().click()
     const spawned = await until(async () => {
       const list = await callMcp(app, 'list', {})
@@ -339,27 +484,49 @@ export async function run(t) {
       await win.locator('[data-claude-entry="Claude Agents"]').hover({ timeout: 8_000 })
     } catch (e) {
       const menus = await win.locator('[role="menu"]').evaluateAll((els) =>
-        els.map((el) => ({ open: el.getAttribute('data-state'), text: el.textContent?.slice(0, 200) }))
+        els.map((el) => ({
+          open: el.getAttribute('data-state'),
+          text: el.textContent?.slice(0, 200)
+        }))
       )
-      const entries = await win.locator('[data-claude-entry]').evaluateAll((els) => els.map((el) => el.getAttribute('data-claude-entry')))
-      t.check('the caret menu offers the Claude Agents entry', false, { menus, entries, error: e.message.split('\n')[0] })
+      const entries = await win
+        .locator('[data-claude-entry]')
+        .evaluateAll((els) => els.map((el) => el.getAttribute('data-claude-entry')))
+      t.check('the caret menu offers the Claude Agents entry', false, {
+        menus,
+        entries,
+        error: e.message.split('\n')[0]
+      })
       throw e
     }
-    // The Claude Code submenu the pointer crossed is still fading out: the
-    // Agents submenu is the newest menu in the document.
-    const agentsRows = accountGroup(win.locator('[role="menu"]').last()).locator('[data-claude-account]')
+    // The Claude Code submenus the pointer crossed may still be fading out:
+    // the Agents submenus are the newest menus in the document.
+    await win
+      .locator('[role="menu"]')
+      .last()
+      .locator('[data-launch-profile-entry="e2e-printenv"]')
+      .hover()
+    const agentsRows = win.locator('[role="menu"]').last().locator('[data-claude-account]')
     await until(async () => (await agentsRows.count()) === 2)
     await agentsRows.filter({ hasText: 'Work' }).first().click()
     const agents = await until(async () => {
       const list = await callMcp(app, 'list', {})
       return list.sessions.find((s) => !idsBeforeAgents.has(s.id)) ?? null
     })
-    t.check('the submenu started a claude agents tab on the account', agents?.mode === 'claude-agents' && agents.account?.label === 'Work', agents)
+    t.check(
+      'the submenu started a claude agents tab on the account',
+      agents?.mode === 'claude-agents' && agents.account?.label === 'Work',
+      agents
+    )
     await callMcp(app, 'rename', { target: 'session', id: agents.id, name: 'Agents on Work' })
     await callMcp(app, 'focus', { sessionId: agents.id })
     const agentsPrinted = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: agents.id, lines: 40, callerSessionId: agents.id })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: agents.id,
+          lines: 40,
+          callerSessionId: agents.id
+        })
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
       },
@@ -367,17 +534,28 @@ export async function run(t) {
     )
     t.check('the agents process got the account’s token', !!agentsPrinted)
     const idsBeforeAgentsDup = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
-    await win.locator('.sidebar-item', { hasText: 'Agents on Work' }).first().click({ button: 'right' })
+    await win
+      .locator('.sidebar-item', { hasText: 'Agents on Work' })
+      .first()
+      .click({ button: 'right' })
     await win.locator('[role="menuitem"]:has-text("Duplicate")').click()
     const agentsDup = await until(async () => {
       const list = await callMcp(app, 'list', {})
       return list.sessions.find((s) => !idsBeforeAgentsDup.has(s.id)) ?? null
     })
-    t.check('the agents duplicate is listed on the account', agentsDup?.account?.label === 'Work', agentsDup?.account)
+    t.check(
+      'the agents duplicate is listed on the account',
+      agentsDup?.account?.label === 'Work',
+      agentsDup?.account
+    )
     await callMcp(app, 'focus', { sessionId: agentsDup.id })
     const agentsDupPrinted = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: agentsDup.id, lines: 40, callerSessionId: agentsDup.id })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: agentsDup.id,
+          lines: 40,
+          callerSessionId: agentsDup.id
+        })
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
       },
@@ -396,11 +574,19 @@ export async function run(t) {
       return list.sessions.find((s) => !idsBefore.has(s.id)) ?? null
     })
     t.check('Duplicate made a tab', !!duplicate)
-    t.check('the duplicate is listed on the source’s account', duplicate?.account?.label === 'Work', duplicate?.account)
+    t.check(
+      'the duplicate is listed on the source’s account',
+      duplicate?.account?.label === 'Work',
+      duplicate?.account
+    )
     await callMcp(app, 'focus', { sessionId: duplicate.id })
     const dupPrinted = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: duplicate.id, lines: 40, callerSessionId: duplicate.id })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: duplicate.id,
+          lines: 40,
+          callerSessionId: duplicate.id
+        })
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
       },
@@ -420,32 +606,60 @@ export async function run(t) {
       })
       await window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'e2e-printexit')
     }, WS.id)
-    const mortal = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'claude', account: 'Work', name: 'On Work, dead' })
+    const mortal = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      account: 'Work',
+      name: 'On Work, dead'
+    })
     await callMcp(app, 'focus', { sessionId: mortal.sessionId })
-    const dead = await until(async () => {
-      const list = await callMcp(app, 'list', {})
-      const s = list.sessions.find((x) => x.id === mortal.sessionId)
-      return s && !s.alive ? s : null
-    }, { tries: 60, gapMs: 500 })
+    const dead = await until(
+      async () => {
+        const list = await callMcp(app, 'list', {})
+        const s = list.sessions.find((x) => x.id === mortal.sessionId)
+        return s && !s.alive ? s : null
+      },
+      { tries: 60, gapMs: 500 }
+    )
     t.check('the print-and-exit tab died', !!dead)
     const idsBeforeResume = new Set((await callMcp(app, 'list', {})).sessions.map((s) => s.id))
-    await win.locator('.sidebar-item', { hasText: 'On Work, dead' }).first().click({ button: 'right' })
+    await win
+      .locator('.sidebar-item', { hasText: 'On Work, dead' })
+      .first()
+      .click({ button: 'right' })
     await win.locator('[role="menuitem"]:has-text("Resume")').first().click()
     const resumed = await until(async () => {
       const list = await callMcp(app, 'list', {})
       return list.sessions.find((s) => !idsBeforeResume.has(s.id)) ?? null
     })
     t.check('Resume made a tab', !!resumed)
-    t.check('the resumed tab is listed on the account', resumed?.account?.label === 'Work', resumed?.account)
+    t.check(
+      'the resumed tab is listed on the account',
+      resumed?.account?.label === 'Work',
+      resumed?.account
+    )
     const resumedPrinted = await until(
       async () => {
-        const read = await callMcp(app, 'readSession', { sessionId: resumed.id, lines: 40, callerSessionId: resumed.id })
+        const read = await callMcp(app, 'readSession', {
+          sessionId: resumed.id,
+          lines: 40,
+          callerSessionId: resumed.id
+        })
         const text = (read?.text ?? '').replace(/\n/g, '')
         return text.includes(`TOKEN=${WORK_TOKEN}`) ? text : null
       },
       { tries: 60, gapMs: 500 }
     )
-    t.check('the resumed process got the account’s token', !!resumedPrinted, resumedPrinted ?? (await callMcp(app, 'readSession', { sessionId: resumed.id, lines: 40, callerSessionId: resumed.id }).catch((e) => e.message)))
+    t.check(
+      'the resumed process got the account’s token',
+      !!resumedPrinted,
+      resumedPrinted ??
+        (await callMcp(app, 'readSession', {
+          sessionId: resumed.id,
+          lines: 40,
+          callerSessionId: resumed.id
+        }).catch((e) => e.message))
+    )
 
     // ── A removed account keeps its name on the sessions still running on it ─
     await win.evaluate((id) => window.electronAPI.claudeAccountRemove(id), work.id)
@@ -454,14 +668,26 @@ export async function run(t) {
       const s = list.sessions.find((x) => x.id === opened.sessionId)
       return s?.account?.removed ? s : null
     })
-    t.check('a session on a removed account still names it, flagged removed', afterRemoval?.account?.label === 'Work' && afterRemoval.account.removed === true, afterRemoval?.account)
+    t.check(
+      'a session on a removed account still names it, flagged removed',
+      afterRemoval?.account?.label === 'Work' && afterRemoval.account.removed === true,
+      afterRemoval?.account
+    )
     await callMcp(app, 'focus', { sessionId: opened.sessionId })
     t.check('the foot still names the removed account', await textIs('Work'))
 
     // ── Nothing but a token account is ever probed ──────────────────────
     probes = (await fixture()).probes
-    t.check('the Default account was never probed', probes.every((p) => p.token !== ''), probes.map((p) => p.masked))
-    t.check('every probe went out with a pasted token, never the machine login', probes.every((p) => p.token === WORK_TOKEN || p.token === PLAY_TOKEN), probes.map((p) => p.masked))
+    t.check(
+      'the Default account was never probed',
+      probes.every((p) => p.token !== ''),
+      probes.map((p) => p.masked)
+    )
+    t.check(
+      'every probe went out with a pasted token, never the machine login',
+      probes.every((p) => p.token === WORK_TOKEN || p.token === PLAY_TOKEN),
+      probes.map((p) => p.masked)
+    )
 
     t.equal('no renderer exceptions', errors.length, 0, errors)
   } finally {

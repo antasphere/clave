@@ -59,9 +59,7 @@ function LocationCard({ location }: { location: Location }): React.JSX.Element {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="settings-row-title truncate">{location.name}</span>
-          {isLocal && (
-            <span className="badge badge-uppercase bg-surface-200 text-text-tertiary">Local</span>
-          )}
+          {isLocal && <span className="badge badge-muted">This Mac</span>}
         </div>
         {location.host && (
           <span className="settings-row-description">
@@ -69,7 +67,7 @@ function LocationCard({ location }: { location: Location }): React.JSX.Element {
           </span>
         )}
       </div>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
+      <div className="settings-row-controls">
         <span className="status-text" data-status={status}>
           {statusLabels[status]}
         </span>
@@ -82,11 +80,11 @@ function LocationCard({ location }: { location: Location }): React.JSX.Element {
               aria-label={location.status === 'connected' ? 'Disconnect' : 'Connect'}
             >
               {location.status === 'connected' ? (
-                <SignalSlashIcon className="w-4 h-4" />
+                <SignalSlashIcon className="w-3.5 h-3.5" />
               ) : location.status === 'connecting' ? (
-                <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                <ArrowPathIcon className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <SignalIcon className="w-4 h-4" />
+                <SignalIcon className="w-3.5 h-3.5" />
               )}
             </button>
             <button
@@ -95,7 +93,7 @@ function LocationCard({ location }: { location: Location }): React.JSX.Element {
               title="Remove location"
               aria-label="Remove location"
             >
-              <TrashIcon className="w-4 h-4" />
+              <TrashIcon className="w-3.5 h-3.5" />
             </button>
           </>
         )}
@@ -126,7 +124,7 @@ export function LocationsTab(): React.JSX.Element {
 
         <button onClick={() => setShowAddDialog(true)} className="settings-row-action">
           <PlusIcon className="w-4 h-4" />
-          Add Location
+          Add location
         </button>
       </SettingsCard>
 

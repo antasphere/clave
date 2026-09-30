@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { useSessionStore, type FileTab } from '../../store/session-store'
 import { useDiff } from '../../hooks/use-diff'
 import { useCopyFeedback } from '../../hooks/use-copy-feedback'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { CheckIcon } from '@heroicons/react/24/outline'
 import { DiffLinesView } from '../git/DiffLinesView'
 import { CopyIcon, FolderIcon, CloseIcon, fileActionButtonClass } from './FileActionIcons'
@@ -52,7 +52,7 @@ interface DiffViewerProps {
   fileTab: FileTab
 }
 
-export function DiffViewer({ fileTab }: DiffViewerProps) {
+export function DiffViewer({ fileTab }: DiffViewerProps): React.JSX.Element {
   const removeFileTab = useSessionStore((s) => s.removeFileTab)
   const triggerGitRefresh = useSessionStore((s) => s.triggerGitRefresh)
   const gitRefreshTrigger = useSessionStore((s) => s.gitRefreshTrigger)

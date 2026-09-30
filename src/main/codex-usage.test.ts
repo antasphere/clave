@@ -2,9 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { spawn } from 'node:child_process'
-import { normalizeCodexLimits, readCodexLimits } from './codex-usage'
+import { codexAppServerCommand, normalizeCodexLimits, readCodexLimits } from './codex-usage'
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+vi.mock('node:child_process', () => ({ spawn: vi.fn(), execFile: vi.fn() }))
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp/clave-codex-usage-test' },
+  safeStorage: { isEncryptionAvailable: () => false }
+}))
+
+describe('the app-server command', () => {
+  it("puts an account's home in the command, after the login profile, quoted", () => {
+    expect(codexAppServerCommand()).toBe('exec codex app-server')
+    expect(codexAppServerCommand("/data/it's/home")).toBe(
+      "exec env CODEX_HOME='/data/it'\\''s/home' codex app-server"
+    )
+  })
+})
 
 describe('Codex quota normalization', () => {
   it('uses actual durations, all buckets, and one copy of the legacy allowance', () => {
@@ -105,6 +118,19 @@ describe('Codex read-only connection', () => {
       'account/rateLimits/read'
     ])
     expect(child.kill).toHaveBeenCalled()
+  })
+
+  it('reads an account on its own home, in the command and the environment', async () => {
+    const result = readCodexLimits('/data/codex-homes/work')
+    const call = vi.mocked(spawn).mock.calls[0]
+    expect(String(call[1]?.at(-1))).toContain("CODEX_HOME='/data/codex-homes/work'")
+    expect((call[2] as { env: Record<string, string> }).env.CODEX_HOME).toBe(
+      '/data/codex-homes/work'
+    )
+    reply(1, {})
+    reply(2, { account: { type: 'chatgpt' } })
+    reply(3, { rateLimits: { primary: { usedPercent: 5, windowDurationMins: 300 } } })
+    expect(await result).toMatchObject({ windows: [{ usedPercentage: 5 }] })
   })
 
   it('explains API billing without querying subscription quota', async () => {

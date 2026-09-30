@@ -1,8 +1,20 @@
+import type {
+  Session,
+  SessionStream,
+  SessionInput,
+  SessionEvent,
+  ModelOption,
+  CommandOption,
+  HistoryPage
+} from '../shared/session-model'
+import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
+import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
+import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -16,7 +28,79 @@ function createIpcListener<T extends unknown[]>(
   }
 }
 
+// One main-process subscription per renderer/session; each view owns a ref.
+const sessionSubscriptionRefs = new Map<string, number>()
+
 const electronAPI = {
+  sessionsList: (): Promise<Session[]> => ipcRenderer.invoke('sessions:list'),
+  sessionsSubscribe: async (id: string): Promise<Session> => {
+    sessionSubscriptionRefs.set(id, (sessionSubscriptionRefs.get(id) ?? 0) + 1)
+    try {
+      return await ipcRenderer.invoke('sessions:subscribe', id)
+    } catch (error) {
+      const refs = (sessionSubscriptionRefs.get(id) ?? 1) - 1
+      if (refs > 0) sessionSubscriptionRefs.set(id, refs)
+      else sessionSubscriptionRefs.delete(id)
+      throw error
+    }
+  },
+  sessionsUnsubscribe: (id: string): Promise<void> => {
+    const refs = sessionSubscriptionRefs.get(id) ?? 0
+    if (refs > 1) {
+      sessionSubscriptionRefs.set(id, refs - 1)
+      return Promise.resolve()
+    }
+    sessionSubscriptionRefs.delete(id)
+    return ipcRenderer.invoke('sessions:unsubscribe', id)
+  },
+  sessionsWrite: (id: string, input: Uint8Array | SessionInput): Promise<void> =>
+    ipcRenderer.invoke('sessions:write', id, input),
+  sessionsSetView: (id: string, viewId: string | null): Promise<Session> =>
+    ipcRenderer.invoke('sessions:set-view', id, viewId),
+  sessionsModels: (id: string): Promise<ModelOption[]> => ipcRenderer.invoke('sessions:models', id),
+  sessionsCommands: (id: string): Promise<CommandOption[]> =>
+    ipcRenderer.invoke('sessions:commands', id),
+  sessionsCapabilities: (id: string): Promise<{ images: boolean }> =>
+    ipcRenderer.invoke('sessions:capabilities', id),
+  sessionsHistory: (id: string, before?: number, limit?: number): Promise<HistoryPage> =>
+    ipcRenderer.invoke('sessions:history', id, before, limit),
+  // The composer's files: prepared into a session's attachment records here,
+  // read again in main when the message is sent.
+  sessionsFiles: {
+    prepare: (sessionId: string, source: AttachmentSource): Promise<Attachment> =>
+      ipcRenderer.invoke('sessions:files', { type: 'prepare', sessionId, source }),
+    pick: (): Promise<string[]> => ipcRenderer.invoke('sessions:files', { type: 'pick' }),
+    preview: (file: Attachment): Promise<AttachmentPreview> =>
+      ipcRenderer.invoke('sessions:files', { type: 'preview', file }),
+    open: (file: Attachment): Promise<void> =>
+      ipcRenderer.invoke('sessions:files', { type: 'open', file })
+  },
+  onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
+    createIpcListener(`sessions:stream:${id}`, callback),
+  onSessionStreamExit: (id: string, callback: (code: number) => void) =>
+    createIpcListener(`sessions:exit:${id}`, callback),
+
+  pluginsList: () => ipcRenderer.invoke('plugins:list'),
+  pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
+    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
+  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) =>
+    ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
+  pluginsViewRevoke: (leaseId: string) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) =>
+    createIpcListener(`plugins:view-event:${leaseId}`, callback),
+  pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
+    ipcRenderer.invoke('plugins:enable', id, grants),
+  pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  pluginsLink: (folder?: string) => ipcRenderer.invoke('plugins:link', folder),
+  pluginsRemove: (id: string) => ipcRenderer.invoke('plugins:remove', id),
+  pluginsCommand: (id: string, command: string) =>
+    ipcRenderer.invoke('plugins:command', id, command),
+  pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
+  pluginsContext: (sessionId: string | null) => ipcRenderer.invoke('plugins:context', sessionId),
+  pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
+  pluginsSecretReply: (id: string, value: string | null) =>
+    ipcRenderer.invoke('plugins:secret-reply', id, value),
+  onPluginsChanged: (callback: () => void) => createIpcListener('plugins:changed', callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
@@ -135,6 +219,10 @@ const electronAPI = {
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) =>
     createIpcListener<[string]>(`session:plan-detected:${sessionId}`, callback),
 
+  // A chat session's CLI reported its account's limit (ADR 0002): the policy
+  // reads the account and proposes or makes the move.
+  onSessionLimitReported: (callback: (sessionId: string) => void) =>
+    createIpcListener<[string]>('session:limit-reported', callback),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
     createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),
 
@@ -253,6 +341,17 @@ const electronAPI = {
   ) => ipcRenderer.invoke('session:save-plan', cwd, claudeSessionId, sessionName, extras),
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  // The GitHub pull request panel (plugins/github). Main runs the user's own
+  // `gh`; every call answers with a GithubResult rather than throwing, so the
+  // panel can tell "gh is missing" from "not signed in" from "gh said no".
+  githubPull: (ref: PullRef) => ipcRenderer.invoke('github:pull', ref),
+  githubPullDiff: (ref: PullRef) => ipcRenderer.invoke('github:pull-diff', ref),
+  githubPullComment: (ref: PullRef, body: string) =>
+    ipcRenderer.invoke('github:pull-comment', ref, body),
+  githubPullReview: (ref: PullRef, event: ReviewEvent, body: string) =>
+    ipcRenderer.invoke('github:pull-review', ref, event, body),
+  githubPullMerge: (ref: PullRef, method: MergeMethod) =>
+    ipcRenderer.invoke('github:pull-merge', ref, method),
   checkPort: (port: number) => ipcRenderer.invoke('net:check-port', port) as Promise<boolean>,
   probeServerUrl: (url: string, timeoutMs?: number) =>
     ipcRenderer.invoke('net:probe-url', url, timeoutMs) as Promise<boolean>,
@@ -318,6 +417,16 @@ const electronAPI = {
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdaterState>,
   setPrereleaseUpdates: (enabled: boolean) =>
     ipcRenderer.invoke('updater:set-prerelease-updates', enabled) as Promise<UpdaterState>,
+
+  getAgentUpdates: () =>
+    ipcRenderer.invoke('agent-updates:get-state') as Promise<AgentUpdatesState>,
+  checkAgentUpdates: () => ipcRenderer.invoke('agent-updates:check') as Promise<AgentUpdatesState>,
+  updateAgent: (id: AgentUpdateId) =>
+    ipcRenderer.invoke('agent-updates:update', id) as Promise<AgentUpdatesState>,
+  setAgentAutoUpdate: (enabled: boolean) =>
+    ipcRenderer.invoke('agent-updates:set-auto', enabled) as Promise<AgentUpdatesState>,
+  onAgentUpdatesState: (callback: (state: AgentUpdatesState) => void) =>
+    createIpcListener<[AgentUpdatesState]>('agent-updates:state', callback),
 
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   persistDroppedFile: (sourcePath: string) =>
@@ -409,17 +518,59 @@ const electronAPI = {
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
   claudeAccountsList: () => ipcRenderer.invoke('claude-accounts:list'),
-  claudeAccountAdd: (input: { label: string; configDir?: string }) =>
-    ipcRenderer.invoke('claude-accounts:add', input),
-  claudeAccountUpdate: (id: string, updates: { label?: string; configDir?: string }) =>
+  claudeAccountsMigrated: () => ipcRenderer.invoke('claude-accounts:migrated'),
+  claudeAccountAdd: (input: { label: string }) => ipcRenderer.invoke('claude-accounts:add', input),
+  claudeAccountUpdate: (id: string, updates: { label?: string }) =>
     ipcRenderer.invoke('claude-accounts:update', id, updates),
+  claudeAccountReorder: (ids: string[]) => ipcRenderer.invoke('claude-accounts:reorder', ids),
   claudeAccountRemove: (id: string) => ipcRenderer.invoke('claude-accounts:remove', id),
   claudeAccountSetToken: (id: string, token: string) =>
     ipcRenderer.invoke('claude-accounts:set-token', id, token),
   claudeAccountClearToken: (id: string) => ipcRenderer.invoke('claude-accounts:clear-token', id),
   onClaudeAccountsChanged: (callback: (accounts: unknown[]) => void) =>
     createIpcListener<[unknown[]]>('claude-accounts:changed', callback),
-  getCodexUsageLimits: () => ipcRenderer.invoke('usage:get-codex-limits'),
+  // Codex accounts (ADR 0002): a home per account; no credential crosses.
+  codexAccountsList: () => ipcRenderer.invoke('codex-accounts:list'),
+  codexAccountAdd: (input: { label: string; kind?: 'chatgpt' | 'apiKey' }) =>
+    ipcRenderer.invoke('codex-accounts:add', input),
+  codexAccountUpdate: (id: string, updates: { label?: string }) =>
+    ipcRenderer.invoke('codex-accounts:update', id, updates),
+  codexAccountReorder: (ids: string[]) => ipcRenderer.invoke('codex-accounts:reorder', ids),
+  codexAccountRemove: (id: string) => ipcRenderer.invoke('codex-accounts:remove', id),
+  codexAccountClearCredential: (id: string) =>
+    ipcRenderer.invoke('codex-accounts:clear-credential', id),
+  onCodexAccountsChanged: (callback: (accounts: unknown[]) => void) =>
+    createIpcListener<[unknown[]]>('codex-accounts:changed', callback),
+  // The login flows: a job's status, link and reason cross; nothing else.
+  accountLoginStart: (provider: 'claude' | 'codex', accountId: string) =>
+    ipcRenderer.invoke('accounts:login-start', provider, accountId),
+  accountLoginApiKey: (accountId: string, apiKey: string) =>
+    ipcRenderer.invoke('accounts:login-api-key', accountId, apiKey),
+  accountLoginInput: (jobId: string, text: string) =>
+    ipcRenderer.invoke('accounts:login-input', jobId, text),
+  accountLoginCancel: (jobId: string) => ipcRenderer.invoke('accounts:login-cancel', jobId),
+  accountLoginList: () => ipcRenderer.invoke('accounts:login-list'),
+  onAccountLoginProgress: (callback: (job: unknown) => void) =>
+    createIpcListener<[unknown]>('accounts:login-progress', callback),
+  // Codex usage is per account like Claude's (the machine's home when omitted).
+  getCodexUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
+    ipcRenderer.invoke('usage:get-codex-limits', accountId, options),
+  getCodexUsageSnapshot: () => ipcRenderer.invoke('usage:codex-snapshot'),
+  onCodexAccountUsage: (callback: (update: { accountId: string; result: unknown }) => void) =>
+    createIpcListener<[{ accountId: string; result: unknown }]>('usage:codex-account', callback),
+  // A session moved to another account: the same tab, its process restarted
+  // on the account with the conversation resumed (ADR 0002).
+  restartSession: (
+    id: string,
+    overrides: {
+      claudeProfileId?: string
+      claudeProfileLabel?: string
+      codexAccountId?: string
+      codexAccountLabel?: string
+      /** Send the message the limit rejected again on the new account. */
+      resendRejected?: boolean
+    }
+  ) => ipcRenderer.invoke('pty:restart', id, overrides),
   getPiUsage: (range: 'today' | '7d' | '30d' | 'all') => ipcRenderer.invoke('usage:get-pi', range),
 
   // Git
@@ -556,6 +707,20 @@ const electronAPI = {
     } | null>,
   readImageAsDataUrl: (absolutePath: string) =>
     ipcRenderer.invoke('clave:read-image', absolutePath) as Promise<string | null>,
+  skinsList: () => ipcRenderer.invoke('skins:list'),
+  skinsActivate: (id: string) => ipcRenderer.invoke('skins:activate', id),
+  skinsImport: (source?: string) => ipcRenderer.invoke('skins:import', source),
+  skinsRemove: (id: string) => ipcRenderer.invoke('skins:remove', id),
+  onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: import('@clave/skins/types').SkinState
+    ): void => callback(state)
+    ipcRenderer.on('skins:changed', listener)
+    return () => {
+      ipcRenderer.removeListener('skins:changed', listener)
+    }
+  },
   preferencesGet: (key: string) => ipcRenderer.invoke('preferences:get', key),
   preferencesSet: (key: string, value: unknown) =>
     ipcRenderer.invoke('preferences:set', key, value),

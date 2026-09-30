@@ -1,11 +1,11 @@
 import { PlusIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import {
   type GroupTerminalConfig,
   TERMINAL_COLOR_VALUES,
   resolveColorHex
 } from '../../store/session-store'
-import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
+import { getTerminalIconComponent } from '../ui/terminal-icons'
 
 /** The group's terminals, listed one per row inside the header's hover panel:
  *  icon in the terminal's colour, the command it runs, and a dot that says
@@ -85,7 +85,9 @@ export function GroupTerminalsPanel({
             <span className="flex-1 min-w-0 flex flex-col leading-tight">
               <span className="truncate">{t.command || 'Shell'}</span>
               {folder && (
-                <span className="truncate text-[11px] font-normal text-text-tertiary">{folder}</span>
+                <span className="truncate text-[11px] font-normal text-text-tertiary">
+                  {folder}
+                </span>
               )}
             </span>
             <span

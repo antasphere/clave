@@ -7,20 +7,20 @@ import { usageManager } from '../usage-manager'
  *  the token, nothing more. */
 export function registerClaudeAccountHandlers(): void {
   ipcMain.handle('claude-accounts:list', () => claudeAccountsManager.list())
-  ipcMain.handle('claude-accounts:add', (_event, input: { label: string; configDir?: string }) =>
-    claudeAccountsManager.add({
-      label: typeof input?.label === 'string' ? input.label : '',
-      configDir: typeof input?.configDir === 'string' ? input.configDir : ''
+  ipcMain.handle('claude-accounts:migrated', () => claudeAccountsManager.migratedAccountIds())
+  ipcMain.handle('claude-accounts:add', (_event, input: { label: string }) =>
+    claudeAccountsManager.add({ label: typeof input?.label === 'string' ? input.label : '' })
+  )
+  ipcMain.handle('claude-accounts:update', (_event, id: string, updates: { label?: string }) =>
+    claudeAccountsManager.update(id, {
+      ...(typeof updates?.label === 'string' ? { label: updates.label } : {})
     })
   )
-  ipcMain.handle(
-    'claude-accounts:update',
-    (_event, id: string, updates: { label?: string; configDir?: string }) =>
-      claudeAccountsManager.update(id, {
-        ...(typeof updates?.label === 'string' ? { label: updates.label } : {}),
-        ...(typeof updates?.configDir === 'string' ? { configDir: updates.configDir } : {})
-      })
-  )
+  ipcMain.handle('claude-accounts:reorder', (_event, ids: unknown) => {
+    if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
+      claudeAccountsManager.reorder(ids as string[])
+    }
+  })
   ipcMain.handle('claude-accounts:remove', (_event, id: string) => claudeAccountsManager.remove(id))
   // Storing the token and reading the account's limits with it are one call:
   // the read is what tells the user the paste worked.

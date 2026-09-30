@@ -30,11 +30,12 @@ import {
   persistedWindows,
   until,
   killLeakedE2eTmux,
-  tmuxSessionAlive
+  tmuxSessionAlive,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('group-dissolve')
-const ROOT = '/tmp/clave-e2e-dissolve-root'
+const ROOT = fixturePath('dissolve-root')
 const WS = {
   id: 'eeeeeeee-0000-4000-8000-00000000000e',
   name: 'Dissolve',

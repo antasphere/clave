@@ -5,11 +5,12 @@ import {
   seedTrustedRoots,
   callMcp,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('provider-usage')
-const ROOT = '/tmp/clave-e2e-provider-usage-root'
+const ROOT = fixturePath('provider-usage-root')
 const WS = { id: 'usage-workspace', name: 'Usage', rootDir: ROOT, profileFile: null, createdAt: 1 }
 
 export async function run(t) {
@@ -95,6 +96,9 @@ export async function run(t) {
       !!(await until(async () => (await footer().textContent())?.includes(text)))
     const panel = (provider) => win.locator(`div[data-usage-provider="${provider}"]`)
     const back = () => win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    // The page's one Refresh, in its sticky header, outside the provider panel.
+    const refreshButton = () =>
+      win.locator('[data-settings-page="usage"]').getByRole('button', { name: 'Refresh usage' })
     const focus = (sessionId) => callMcp(app, 'focus', { sessionId })
 
     const claude = await callMcp(app, 'openSession', {
@@ -143,8 +147,28 @@ export async function run(t) {
     await app.evaluate(() => {
       globalThis.__usageFixture.used = 91
     })
-    await panel('codex').getByRole('button', { name: 'Refresh usage' }).click()
+    await refreshButton().click()
     await win.waitForSelector('[aria-label="91% used"]')
+    t.check(
+      'the header says the numbers were just read',
+      !!(await until(async () =>
+        (await win.locator('[data-usage-age]').textContent())?.includes('Updated just now')
+      ))
+    )
+    t.equal(
+      'the weekly chart holds the weekly cap',
+      await panel('codex').locator('[data-usage-chart="weekly"] [data-usage-window]').count(),
+      1
+    )
+    t.equal(
+      'the 5-hour block has a chart of its own',
+      await panel('codex').locator('[data-usage-chart="session"] [data-usage-window]').count(),
+      1
+    )
+    t.check(
+      'the headline names the cap closest to its limit',
+      (await panel('codex').locator('[data-usage-headlines]').textContent()).includes('91% used')
+    )
     await back()
     t.check('refresh updates the shared footer too', await textIs('9% left'))
 
@@ -177,7 +201,7 @@ export async function run(t) {
     await app.evaluate(() => {
       globalThis.__usageFixture.error = true
     })
-    await panel('codex').getByRole('button', { name: 'Refresh usage' }).click()
+    await refreshButton().click()
     await panel('codex')
       .getByText('Sign in to Codex CLI with ChatGPT to see your usage limits.')
       .waitFor()
@@ -215,10 +239,7 @@ export async function run(t) {
     // Check the same controls under every shipped theme in the real renderer.
     await footer().click()
     for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
-      await win.evaluate(
-        (value) => document.documentElement.setAttribute('data-theme', value),
-        theme
-      )
+      await win.evaluate((value) => window.electronAPI.skinsActivate(value), theme)
       const geometry = await panel('codex').evaluate((el) => ({
         width: el.clientWidth,
         scroll: el.scrollWidth
@@ -229,6 +250,45 @@ export async function run(t) {
         geometry
       )
     }
+
+    // The settings header stays in place while the page scrolls under it, and
+    // draws its hairline only once something has gone under.
+    await win.locator('[data-settings-nav-row="general"]').click()
+    const general = win.locator('[data-settings-page="general"]')
+    await general.waitFor()
+    const header = general.locator('.settings-page-header')
+    t.equal(
+      'at rest the header draws no hairline',
+      await header.getAttribute('data-scrolled'),
+      null
+    )
+    const stuck = await general.evaluate(async (page) => {
+      const scroller = page.closest('.settings-scroller')
+      const head = page.querySelector('.settings-page-header')
+      scroller.scrollTop = 600
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      return {
+        scrolled: scroller.scrollTop,
+        gap: Math.round(head.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
+      }
+    })
+    t.check(
+      'scrolled, the header stays at the top of the pane',
+      stuck.scrolled > 0 && stuck.gap === 0,
+      stuck
+    )
+    t.equal(
+      'scrolled, the header draws its hairline',
+      await header.getAttribute('data-scrolled'),
+      'true'
+    )
+    await general.evaluate((page) => {
+      page.closest('.settings-scroller').scrollTop = 0
+    })
+    t.check(
+      'back at the top, the hairline goes',
+      !!(await until(async () => (await header.getAttribute('data-scrolled')) === null))
+    )
     await back()
     await focus(pi.sessionId)
     await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'Plain terminal' })

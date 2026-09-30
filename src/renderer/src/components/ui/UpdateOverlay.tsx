@@ -14,7 +14,7 @@ function formatSpeed(bytesPerSecond: number): string {
   return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`
 }
 
-export function UpdateOverlay() {
+export function UpdateOverlay(): React.JSX.Element {
   const phase = useUpdaterStore((s) => s.phase)
   const version = useUpdaterStore((s) => s.availableVersion)
   const progress = useUpdaterStore((s) => s.progress)
@@ -40,9 +40,9 @@ export function UpdateOverlay() {
     }
   }, [phase])
 
-  const handleCancel = () => cancelDownload()
+  const handleCancel = (): void => cancelDownload()
 
-  const handleRetry = () => {
+  const handleRetry = (): void => {
     // 'retry' tells the main process to drop the differential download and
     // fetch the whole file. Retrying the identical request is what made a
     // failed update unescapable — see downloadStrategy() in auto-updater.ts.
@@ -80,9 +80,7 @@ export function UpdateOverlay() {
             {/* Logo */}
             <motion.div
               animate={
-                phase === 'downloaded'
-                  ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] }
-                  : undefined
+                phase === 'downloaded' ? { scale: [1, 1.05, 1], opacity: [1, 0.8, 1] } : undefined
               }
               transition={
                 phase === 'downloaded'
@@ -100,7 +98,7 @@ export function UpdateOverlay() {
                   <p className="text-[15px] font-medium text-text-primary">
                     Updating to {version ? `v${version}` : 'new version'}
                   </p>
-                  <p className="text-[13px] text-text-tertiary mt-1">
+                  <p className="text-control text-text-tertiary mt-1">
                     {progress.total > 0
                       ? `${formatBytes(progress.transferred)} / ${formatBytes(progress.total)}`
                       : 'Starting download...'}
@@ -113,7 +111,7 @@ export function UpdateOverlay() {
               {phase === 'downloaded' && (
                 <>
                   <p className="text-[15px] font-medium text-text-primary">Restarting...</p>
-                  <p className="text-[13px] text-text-tertiary mt-1">
+                  <p className="text-control text-text-tertiary mt-1">
                     {version ? `v${version}` : 'Update'} is ready to go
                   </p>
                 </>
@@ -121,7 +119,7 @@ export function UpdateOverlay() {
               {phase === 'error' && (
                 <>
                   <p className="text-[15px] font-medium text-text-primary">Update failed</p>
-                  <p className="text-[13px] text-text-tertiary mt-1 max-w-[280px]">
+                  <p className="text-control text-text-tertiary mt-1 max-w-[280px]">
                     {errorMessage || 'An unexpected error occurred'}
                   </p>
                   {/* Auto-update is the only distribution channel — no App Store,
@@ -169,7 +167,7 @@ export function UpdateOverlay() {
               {phase === 'downloading' && (
                 <button
                   onClick={handleCancel}
-                  className="px-4 py-2 text-[13px] font-medium text-text-secondary hover:text-text-primary rounded-lg border border-border hover:bg-surface-200 transition-colors"
+                  className="px-4 py-2 text-control font-medium text-text-secondary hover:text-text-primary rounded-lg border border-border hover:bg-surface-200 transition-colors"
                 >
                   Cancel
                 </button>
@@ -178,13 +176,13 @@ export function UpdateOverlay() {
                 <>
                   <button
                     onClick={acknowledgeError}
-                    className="px-4 py-2 text-[13px] font-medium text-text-secondary hover:text-text-primary rounded-lg border border-border hover:bg-surface-200 transition-colors"
+                    className="px-4 py-2 text-control font-medium text-text-secondary hover:text-text-primary rounded-lg border border-border hover:bg-surface-200 transition-colors"
                   >
                     Back
                   </button>
                   <button
                     onClick={handleRetry}
-                    className="px-4 py-2 text-[13px] font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
+                    className="px-4 py-2 text-control font-medium text-action-foreground bg-action hover:bg-action-hover rounded-lg transition-colors"
                   >
                     Retry
                   </button>

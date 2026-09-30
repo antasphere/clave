@@ -10,11 +10,11 @@
  * check here is the guard on the other side: a file WITH content never steals
  * the keyboard when you open it to read.
  */
-import { launchApp, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 
 const DIR = userDataDir('new-document')
-const ROOT = '/tmp/clave-e2e-root-newdoc'
+const ROOT = fixturePath('root-newdoc')
 const WS = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000d1',
   name: 'Docs',

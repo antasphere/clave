@@ -28,13 +28,17 @@ import {
   persistedWindows,
   windowLayout,
   until,
-  killLeakedE2eTmux
+  killLeakedE2eTmux,
+  fixturePath,
+  freePorts
 } from './harness.mjs'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('hidden-session-restore')
-const ROOT = '/tmp/clave-e2e-hidden-root'
+const ROOT = fixturePath('hidden-root')
+// A port nothing serves: asked of the OS, so another run's server is never on it.
+const [VIEW_PORT] = await freePorts(1)
 const CLAVE = `${ROOT}/toolbar.clave`
 const TOOLBAR_CMD = 'sleep 901'
 const WS = {
@@ -116,7 +120,7 @@ export async function run(t) {
     const viewer = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal' })
     await callMcp(app, 'setSessionView', {
       sessionId: viewer.sessionId,
-      url: 'http://127.0.0.1:45999',
+      url: `http://127.0.0.1:${VIEW_PORT}`,
       command: 'sleep 900',
       cwd: ROOT
     })
@@ -160,7 +164,7 @@ export async function run(t) {
     t.equal('the toolbar terminal left exactly one record', toolbarRecords.length, 1)
     const toolbarId = toolbarRecords[0]?.id
     t.check(
-      "and the record names the button it belongs to, not a tab",
+      'and the record names the button it belongs to, not a tab',
       typeof toolbarRecords[0]?.link?.key === 'string' && toolbarRecords[0].link.key.endsWith(':0'),
       toolbarRecords[0]?.link
     )
@@ -215,7 +219,7 @@ export async function run(t) {
 
     // ── The toolbar survivor: no row, and the button REATTACHES to it ──
     t.check(
-      "the toolbar terminal is not in the sidebar order either",
+      'the toolbar terminal is not in the sidebar order either',
       !!layout && !!toolbarId && !layout.displayOrder.includes(toolbarId),
       { toolbarId, displayOrder: layout?.displayOrder }
     )

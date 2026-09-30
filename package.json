@@ -17,9 +17,9 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
-    "dev": "npm run native:build && electron-vite dev",
+    "dev": "npm run native:build && node scripts/copy-private-fonts.mjs && electron-vite dev",
     "native:build": "bash scripts/build-native.sh",
-    "build": "npm run native:build && npm run typecheck && electron-vite build",
+    "build": "npm run native:build && node scripts/copy-private-fonts.mjs && npm run typecheck && electron-vite build",
     "postinstall": "node scripts/postinstall.cjs",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run typecheck && electron-vite build && electron-builder --win",
@@ -27,10 +27,11 @@
     "build:mac:test": "bash scripts/build-mac-local-test.sh",
     "build:linux": "electron-vite build && electron-builder --linux",
     "release": "bash scripts/release.sh",
-    "test": "vitest run",
+    "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs"
   },
   "dependencies": {
+    "@clave/plugin-sdk": "*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/language": "^6.12.3",
     "@codemirror/language-data": "^6.5.2",
@@ -63,14 +64,17 @@
     "htmlparser2": "^12.0.0",
     "node-pty": "^1.1.0",
     "nodemailer": "^10.0.1",
+    "postcss": "^8.5.28",
     "postcss-value-parser": "^4.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "sanitize-html": "^2.17.7",
+    "semver": "^7.8.5",
     "shiki": "^3.22.0",
     "simple-git": "^3.31.1",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.5.0",
+    "virtua": "^0.52.7",
     "ws": "^8.19.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.11"
@@ -85,6 +89,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@types/sanitize-html": "^2.16.1",
+    "@types/semver": "^7.8.0",
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
@@ -103,5 +108,10 @@
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vitest": "^3.2.7"
-  }
+  },
+  "workspaces": [
+    "packages/ui",
+    "packages/plugin-sdk",
+    "packages/skins"
+  ]
 }

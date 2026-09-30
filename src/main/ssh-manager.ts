@@ -134,7 +134,10 @@ class SSHManager {
     return this.connections.has(locationId)
   }
 
-  exec(locationId: string, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  exec(
+    locationId: string,
+    command: string
+  ): Promise<{ stdout: string; stderr: string; code: number }> {
     return new Promise((resolve, reject) => {
       const client = this.connections.get(locationId)
       if (!client) {

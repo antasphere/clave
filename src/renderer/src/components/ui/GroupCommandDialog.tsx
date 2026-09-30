@@ -1,60 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
-import { type GroupTerminalColor, type GroupTerminalIcon, GROUP_TERMINAL_ICONS } from '../../store/session-store'
-import ColorPicker from './ColorPicker'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import {
-  FolderIcon,
-  CommandLineIcon,
-  FireIcon,
-  BoltIcon,
-  RocketLaunchIcon,
-  EyeIcon,
-  GlobeAltIcon,
-  CubeIcon,
-  HeartIcon,
-  StarIcon,
-  UserIcon,
-  ShieldCheckIcon,
-  WrenchIcon,
-  BeakerIcon,
-  CpuChipIcon,
-  SignalIcon,
-  BugAntIcon,
-  SparklesIcon,
-  CloudIcon
-} from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
-
-const ICON_COMPONENTS: Record<GroupTerminalIcon, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
-  terminal: CommandLineIcon,
-  fire: FireIcon,
-  bolt: BoltIcon,
-  rocket: RocketLaunchIcon,
-  eye: EyeIcon,
-  globe: GlobeAltIcon,
-  cube: CubeIcon,
-  heart: HeartIcon,
-  star: StarIcon,
-  user: UserIcon,
-  shield: ShieldCheckIcon,
-  wrench: WrenchIcon,
-  beaker: BeakerIcon,
-  cpu: CpuChipIcon,
-  signal: SignalIcon,
-  bug: BugAntIcon,
-  sparkles: SparklesIcon,
-  cloud: CloudIcon
-}
-
-export function getTerminalIconComponent(icon?: GroupTerminalIcon): React.ComponentType<React.SVGProps<SVGSVGElement>> {
-  return ICON_COMPONENTS[icon ?? 'terminal'] ?? CommandLineIcon
-}
+  type GroupTerminalColor,
+  type GroupTerminalIcon,
+  GROUP_TERMINAL_ICONS
+} from '../../store/session-store'
+import ColorPicker from './ColorPicker'
+import { FolderIcon } from '@heroicons/react/24/outline'
+import { cn } from '@clave/ui/components'
+import { ICON_COMPONENTS } from './terminal-icons'
 
 interface GroupCommandDialogProps {
   isOpen: boolean
-  onSave: (command: string, mode: 'prefill' | 'auto', color: GroupTerminalColor, cwd: string | null, icon: GroupTerminalIcon) => void
+  onSave: (
+    command: string,
+    mode: 'prefill' | 'auto',
+    color: GroupTerminalColor,
+    cwd: string | null,
+    icon: GroupTerminalIcon
+  ) => void
   onCancel: () => void
   onDelete?: () => void
   initialCommand?: string | null
@@ -74,7 +40,7 @@ export function GroupCommandDialog({
   initialColor = 'blue',
   initialCwd = null,
   initialIcon = 'terminal'
-}: GroupCommandDialogProps) {
+}: GroupCommandDialogProps): React.JSX.Element {
   const [command, setCommand] = useState(initialCommand ?? '')
   const [mode, setMode] = useState<'prefill' | 'auto'>(initialMode)
   const [color, setColor] = useState<GroupTerminalColor>(initialColor)
@@ -82,22 +48,38 @@ export function GroupCommandDialog({
   const [icon, setIcon] = useState<GroupTerminalIcon>(initialIcon)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Opening (or new initial values while open) resets the form. Done while
+  // rendering, against what the last render saw, so the dialog never paints the
+  // previous values first.
+  const inputs = { isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon }
+  const [seen, setSeen] = useState(inputs)
+  if (
+    seen.isOpen !== isOpen ||
+    seen.initialCommand !== initialCommand ||
+    seen.initialMode !== initialMode ||
+    seen.initialColor !== initialColor ||
+    seen.initialCwd !== initialCwd ||
+    seen.initialIcon !== initialIcon
+  ) {
+    setSeen(inputs)
     if (isOpen) {
       setCommand(initialCommand ?? '')
       setMode(initialMode)
       setColor(initialColor)
       setCwd(initialCwd)
       setIcon(initialIcon)
-      setTimeout(() => inputRef.current?.focus(), 50)
     }
+  }
+
+  useEffect(() => {
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen, initialCommand, initialMode, initialColor, initialCwd, initialIcon])
 
-  const handleSave = () => {
+  const handleSave = (): void => {
     onSave(command.trim(), mode, color, cwd, icon)
   }
 
-  const handlePickFolder = async () => {
+  const handlePickFolder = async (): Promise<void> => {
     // Open the native picker at the group root (or the terminal's current cwd
     // when editing) instead of the OS default location.
     const folder = await window.electronAPI.openFolderDialog(cwd ?? undefined)
@@ -109,7 +91,12 @@ export function GroupCommandDialog({
   const folderName = cwd ? cwd.split('/').pop() || cwd : null
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => { if (!open) onCancel() }}>
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
       <AnimatePresence>
         {isOpen && (
           <DialogPrimitive.Portal forceMount>
@@ -124,7 +111,7 @@ export function GroupCommandDialog({
               <ModalPositioner className="w-[320px]">
                 <div className="modal-card">
                   <div className="px-4 pt-4 pb-3">
-                    <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                    <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                       {onDelete ? 'Edit terminal' : 'Add terminal'}
                     </DialogPrimitive.Title>
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
@@ -135,7 +122,7 @@ export function GroupCommandDialog({
                     <button
                       type="button"
                       onClick={handlePickFolder}
-                      className="mt-3 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
+                      className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
                       title={cwd ?? 'Select folder'}
                     >
                       <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -160,7 +147,7 @@ export function GroupCommandDialog({
                         }
                       }}
                       placeholder="e.g., npm run dev (optional)"
-                      className="mt-2 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
+                      className="mt-2 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle text-xs text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent transition-colors"
                     />
 
                     <div className="mt-3 flex items-center gap-3">
@@ -246,7 +233,7 @@ export function GroupCommandDialog({
                     <button
                       type="button"
                       onClick={handleSave}
-                      className="btn-dialog text-accent hover:brightness-110 outline-none"
+                      className="btn-dialog text-action hover:brightness-110 outline-none"
                     >
                       Save
                     </button>

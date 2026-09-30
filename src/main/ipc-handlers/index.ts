@@ -1,8 +1,11 @@
+import { registerPluginHandlers } from './plugin-ipc'
+import { registerSkinHandlers } from './skin-handlers'
 import { registerLinkedDocumentHandlers } from '../linked-documents/runtime'
 import { registerAppHandlers } from './app-handlers'
 import { registerUsageHandlers } from './usage-handlers'
 import { registerGitHandlers } from './git-handlers'
 import { registerUpdaterHandlers } from './updater-handlers'
+import { registerAgentUpdateHandlers } from './agent-update-handlers'
 import { registerTelemetryHandlers } from './telemetry-handlers'
 import { registerFeedbackHandlers } from './feedback-handlers'
 import { registerFsHandlers } from './fs-handlers'
@@ -14,6 +17,7 @@ import { registerAgentHandlers } from './agent-handlers'
 import { registerClaveFileHandlers } from './clave-file-handlers'
 import { registerSessionExportHandlers } from './session-export-handlers'
 import { registerDroppedFileHandlers } from './dropped-file-handlers'
+import { registerAttachmentHandlers } from './attachment-handlers'
 import { registerSidebarLayoutHandlers } from './sidebar-layout-handlers'
 import { registerSecretHandlers } from './secret-handlers'
 import { registerCopyOfferHandlers } from './copy-offer-handlers'
@@ -26,13 +30,21 @@ import { registerHistoryHandlers } from './history-handlers'
 import { registerKeymapHandlers, type KeymapHandlerDeps } from './keymap-handlers'
 import { registerLaunchProfileHandlers } from './launch-profile-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
+import { registerCodexAccountHandlers } from './codex-accounts-handlers'
+import { registerAccountLoginHandlers } from './account-login-handlers'
+import { registerGithubHandlers } from './github-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
+  registerPluginHandlers()
+  registerSkinHandlers()
   registerClaudeAccountHandlers()
+  registerCodexAccountHandlers()
+  registerAccountLoginHandlers()
   registerUsageHandlers()
   registerGitHandlers()
   registerUpdaterHandlers()
+  registerAgentUpdateHandlers()
   registerTelemetryHandlers()
   registerFeedbackHandlers()
   registerFsHandlers()
@@ -44,6 +56,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerClaveFileHandlers()
   registerSessionExportHandlers()
   registerDroppedFileHandlers()
+  registerAttachmentHandlers()
   registerSidebarLayoutHandlers()
   registerSecretHandlers()
   registerCopyOfferHandlers()
@@ -56,4 +69,5 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerHistoryHandlers()
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
+  registerGithubHandlers()
 }

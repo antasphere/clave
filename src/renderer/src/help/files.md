@@ -14,7 +14,7 @@ Press **Cmd+P** to open the file palette, a fuzzy search across all files in the
 
 ## File Preview
 
-Click any file in the tree to preview it:
+Double-click any file in the tree to preview it (a single click selects it, and right-click offers Open in Tab and Edit):
 
 - **Markdown**: Rendered with full formatting
 - **Code files**: Syntax-highlighted with line numbers
@@ -34,4 +34,4 @@ For remote sessions (SSH), the file tree works over SFTP. You can browse, previe
 ## Opening the Sidebar
 
 - **Cmd+E**: Toggle the right sidebar
-- The sidebar remembers which tab (Files, Git, or Help) you had open
+- The sidebar remembers which tab (Files or Git) you had open; Help opens with **Cmd+?**

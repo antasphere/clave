@@ -16,13 +16,20 @@
  * `/private/tmp` rather than `/tmp`, so git's resolved repo root matches the
  * discovered path (the symlink otherwise reparents every repo).
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir, until } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  until,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const DIR = userDataDir('git-worktree-rows-data')
-const ROOT = '/private/tmp/clave-e2e-worktree-rows'
+const ROOT = fixturePath('worktree-rows', { real: true })
 const APP = path.join(ROOT, 'app')
 const WT = path.join(ROOT, 'wt-feature')
 // A long name on a row with four badges (base, count, unpublished, changes):
@@ -43,8 +50,7 @@ const WS = {
   createdAt: 1
 }
 
-const git = (cwd, ...args) =>
-  execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' })
+const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' })
 // The reflog's creation moment has one-second resolution, so worktrees cut
 // in one run tie; a fixed committer date per cut sets them apart. Names run
 // one way, dates the other: what the order proves (PRDCT-2360).
@@ -112,7 +118,13 @@ function readRows(win) {
         // can run on beside the unfolded content.
         const line = el.parentElement?.querySelector(':scope > .git-worktree-line') ?? null
         const visible = (node) =>
-          node ? [...node.childNodes].filter((n) => n.nodeType !== 1 || getComputedStyle(n).display !== 'none').map((n) => n.textContent).join('').trim() : null
+          node
+            ? [...node.childNodes]
+                .filter((n) => n.nodeType !== 1 || getComputedStyle(n).display !== 'none')
+                .map((n) => n.textContent)
+                .join('')
+                .trim()
+            : null
         const rowStyle = getComputedStyle(el)
         const rowW = el.getBoundingClientRect().width
         return {
@@ -142,17 +154,21 @@ function readRows(win) {
           dotShown: guide ? getComputedStyle(guide, '::after').display !== 'none' : null,
           dotColor: guide ? getComputedStyle(guide, '::after').backgroundColor : null,
           nameColor: name ? getComputedStyle(name).color : null,
-          countMuted: el.querySelector('[data-git-sync-tone="worktree"]')?.dataset.gitSyncMuted === 'true',
+          countMuted:
+            el.querySelector('[data-git-sync-tone="worktree"]')?.dataset.gitSyncMuted === 'true',
           line: !!line,
           lineX: line?.getBoundingClientRect().left ?? null,
           lineH: line?.getBoundingClientRect().height ?? null,
           lineZ: line ? getComputedStyle(line).zIndex : null,
           blockH: el.parentElement?.getBoundingClientRect().height ?? null,
-          ruleAbove: el.parentElement?.querySelector(':scope > .tree-rule') ?? null
-            ? {
-                left: el.parentElement.querySelector(':scope > .tree-rule').getBoundingClientRect().left
-              }
-            : null,
+          ruleAbove:
+            (el.parentElement?.querySelector(':scope > .tree-rule') ?? null)
+              ? {
+                  left: el.parentElement
+                    .querySelector(':scope > .tree-rule')
+                    .getBoundingClientRect().left
+                }
+              : null,
           base: visible(badge),
           baseTitle: badge?.title ?? null,
           baseKind: badge?.dataset.gitBaseBadge ?? null,
@@ -200,7 +216,9 @@ export async function run(t) {
     await win.click('button[title^="File tree"]')
     await win.waitForTimeout(1500)
     await win.evaluate(() => {
-      ;[...document.querySelectorAll('.panel-tab')].find((b) => b.textContent.trim() === 'Git')?.click()
+      ;[...document.querySelectorAll('.panel-tab')]
+        .find((b) => b.textContent.trim() === 'Git')
+        ?.click()
     })
     // The worktree reading lands with the status batch; wait for the badge
     // rather than a fixed pause.
@@ -225,12 +243,17 @@ export async function run(t) {
         done?.countMuted &&
         done?.baseMuted &&
         others.every((r) => !r.baseMuted),
-      { done: { dotColor: done?.dotColor, nameColor: done?.nameColor }, other: { dotColor: others[0]?.dotColor, nameColor: others[0]?.nameColor } }
+      {
+        done: { dotColor: done?.dotColor, nameColor: done?.nameColor },
+        other: { dotColor: others[0]?.dotColor, nameColor: others[0]?.nameColor }
+      }
     )
     t.check(
       'the worktrees with work the base lacks show the plain dot and the plain name',
       others.every((r) => !r.merged && r.dotShown === true && !r.countMuted),
-      rows.filter((r) => r.kind === 'worktree').map((r) => ({ name: r.name, merged: r.merged, dotShown: r.dotShown }))
+      rows
+        .filter((r) => r.kind === 'worktree')
+        .map((r) => ({ name: r.name, merged: r.merged, dotShown: r.dotShown }))
     )
     const wt = rows.find((r) => r.name === 'wt-feature')
     const long = rows.find((r) => r.name === 'wt-long-feature-name-for-the-floor')
@@ -311,7 +334,9 @@ export async function run(t) {
     const narrow = (wt?.panelW ?? 0) < 300
     t.check(
       `the base badge reads ${narrow ? '−2, its title naming main,' : 'main−2'} (list ${wt?.panelW}px, row ${wt?.rowW}px)`,
-      wt?.baseKind === 'drift' && wt?.base === (narrow ? '−2' : 'main−2') && /main/.test(wt?.baseTitle ?? ''),
+      wt?.baseKind === 'drift' &&
+        wt?.base === (narrow ? '−2' : 'main−2') &&
+        /main/.test(wt?.baseTitle ?? ''),
       wt
     )
     t.check('the purple count reads +3', wt?.worktreeCount === '3', wt)
@@ -321,7 +346,9 @@ export async function run(t) {
     // a sideways scrollbar for it. The three-badge row beside it fits whole.
     t.check(
       'a long name behind four wide badges keeps at least five characters of room',
-      long?.badgeCount === 4 && (long?.nameW ?? 0) >= 38 && (long?.nameScroll ?? 0) > (long?.nameW ?? 0),
+      long?.badgeCount === 4 &&
+        (long?.nameW ?? 0) >= 38 &&
+        (long?.nameScroll ?? 0) > (long?.nameW ?? 0),
       { badgeCount: long?.badgeCount, nameW: long?.nameW, nameScroll: long?.nameScroll }
     )
     t.check('the three-badge worktree row fits whole', wt?.overflows === false, wt)
@@ -329,12 +356,20 @@ export async function run(t) {
       const el = document.querySelector('[data-tree-kind="repo"]')?.closest('.overflow-y-auto')
       return el ? { scrollW: el.scrollWidth, clientW: el.clientWidth } : null
     })
-    t.check('the panel does not scroll sideways', panel !== null && panel.scrollW <= panel.clientW, panel)
+    t.check(
+      'the panel does not scroll sideways',
+      panel !== null && panel.scrollW <= panel.clientW,
+      panel
+    )
     // The rule behind that, pinned directly: a five-badge row over budget
     // (which needs a remote this fixture has not) is contained by the row
     // clipping, and without the rule the panel would scroll (verifier round 3, gap 15).
     t.check('a row clips rather than scrolls', long?.rowOverflow === 'hidden', long?.rowOverflow)
-    t.check('the source row has neither badge', src?.base === null && src?.worktreeCount === null, src)
+    t.check(
+      'the source row has neither badge',
+      src?.base === null && src?.worktreeCount === null,
+      src
+    )
     // A short name's box is its text: no floor padding it out, no slack
     // before the name.
     t.check(
@@ -357,12 +392,20 @@ export async function run(t) {
 
     // A base with no drift: a label, with a label's cursor, whose click
     // neither opens a section nor unfolds the row (verifier round 1, findings 3 and 4).
-    t.check('a base that has not moved is a label with no count', still?.baseKind === 'label' && still?.worktreeCount === null, still)
+    t.check(
+      'a base that has not moved is a label with no count',
+      still?.baseKind === 'label' && still?.worktreeCount === null,
+      still
+    )
     t.check('the label has a label’s cursor', still?.baseCursor === 'default', still)
     // In a narrow row the label goes entirely, never an empty pill (verifier round 2, finding 10).
     t.check(
-      narrow ? 'in a narrow row the label is not displayed at all' : 'in a wide row the label shows the base',
-      narrow ? still?.baseDisplay === 'none' : still?.baseDisplay !== 'none' && still?.base === 'main',
+      narrow
+        ? 'in a narrow row the label is not displayed at all'
+        : 'in a wide row the label shows the base',
+      narrow
+        ? still?.baseDisplay === 'none'
+        : still?.baseDisplay !== 'none' && still?.base === 'main',
       { baseDisplay: still?.baseDisplay, base: still?.base }
     )
     await clickIn(win, 'wt-still', '[data-git-base-badge="label"]')
@@ -373,7 +416,9 @@ export async function run(t) {
       await win.hover('[data-tree-kind][data-tree-name="wt-still"] [data-git-base-badge="label"]')
       await win.waitForTimeout(300)
       const hovered = await win.evaluate(() => {
-        const el = document.querySelector('[data-tree-kind][data-tree-name="wt-still"] [data-git-base-badge="label"]')
+        const el = document.querySelector(
+          '[data-tree-kind][data-tree-name="wt-still"] [data-git-base-badge="label"]'
+        )
         return el ? getComputedStyle(el).backgroundColor : null
       })
       t.check('hovering the label fills nothing', hovered === 'rgba(0, 0, 0, 0)', hovered)
@@ -387,14 +432,20 @@ export async function run(t) {
     // read on a worktree that is not the last, whose line spans its block.
     await win.evaluate(() => {
       document
-        .querySelector('[data-tree-kind="worktree"][data-tree-name="wt-long-feature-name-for-the-floor"]')
+        .querySelector(
+          '[data-tree-kind="worktree"][data-tree-name="wt-long-feature-name-for-the-floor"]'
+        )
         ?.click()
     })
     await until(async () =>
-      (await readRows(win)).some((r) => r.name === 'wt-long-feature-name-for-the-floor' && !r.collapsed)
+      (await readRows(win)).some(
+        (r) => r.name === 'wt-long-feature-name-for-the-floor' && !r.collapsed
+      )
     )
     await win.waitForTimeout(500)
-    const unfolded = (await readRows(win)).find((r) => r.name === 'wt-long-feature-name-for-the-floor')
+    const unfolded = (await readRows(win)).find(
+      (r) => r.name === 'wt-long-feature-name-for-the-floor'
+    )
     const headerX = await win.evaluate(() => {
       const row = document.querySelector(
         '[data-tree-kind="worktree"][data-tree-name="wt-long-feature-name-for-the-floor"]'
@@ -404,7 +455,9 @@ export async function run(t) {
     })
     t.check(
       'the line runs on beside the unfolded content',
-      unfolded && unfolded.blockH > unfolded.guideH && Math.abs(unfolded.lineH - unfolded.blockH) <= 0.5,
+      unfolded &&
+        unfolded.blockH > unfolded.guideH &&
+        Math.abs(unfolded.lineH - unfolded.blockH) <= 0.5,
       { lineH: unfolded?.lineH, blockH: unfolded?.blockH }
     )
     t.check(
@@ -414,10 +467,14 @@ export async function run(t) {
     )
     const since = sections.findIndex((s) => s.kind === 'header' && s.text.startsWith('Since main'))
     t.check('the count opens a "Since main" section', since >= 0, sections)
-    const sinceRows = sections.slice(since + 1).filter((s) => s.kind === 'row').map((s) => s.text)
+    const sinceRows = sections
+      .slice(since + 1)
+      .filter((s) => s.kind === 'row')
+      .map((s) => s.text)
     t.check(
       'listing the three files the worktree added',
-      ['a.txt', 'b.txt', 'c.txt'].every((f) => sinceRows.some((r) => r.includes(f))) && sinceRows.length === 3,
+      ['a.txt', 'b.txt', 'c.txt'].every((f) => sinceRows.some((r) => r.includes(f))) &&
+        sinceRows.length === 3,
       sinceRows
     )
 
@@ -427,7 +484,9 @@ export async function run(t) {
       (await readSections(win)).some((s) => s.kind === 'header' && s.text.startsWith('Behind main'))
     )
     sections = await readSections(win)
-    const behind = sections.findIndex((s) => s.kind === 'header' && s.text.startsWith('Behind main'))
+    const behind = sections.findIndex(
+      (s) => s.kind === 'header' && s.text.startsWith('Behind main')
+    )
     const behindRows = []
     for (const s of sections.slice(behind + 1)) {
       if (s.kind === 'header') break
@@ -439,7 +498,11 @@ export async function run(t) {
       behindRows.length === 1 && behindRows[0].includes('base.txt'),
       behindRows
     )
-    t.check('the base section has no Pull or Push action', !sections.some((s) => s.kind === 'header' && /Pull|Push/.test(s.text)), sections)
+    t.check(
+      'the base section has no Pull or Push action',
+      !sections.some((s) => s.kind === 'header' && /Pull|Push/.test(s.text)),
+      sections
+    )
   } finally {
     await app.close()
     rmSync(ROOT, { recursive: true, force: true })

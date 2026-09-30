@@ -62,3 +62,40 @@ export function hasProvenanceHeader(text: string): boolean {
     trimmed.startsWith(NAMED_PROVENANCE_PREFIX) || trimmed.startsWith(ANONYMOUS_PROVENANCE_HEADER)
   )
 }
+
+/** A delivered message read back: who sent it, and what they wrote. */
+export interface ParsedDelivery {
+  /** The sending tab; null for the anonymous header. */
+  sender: ProvenanceSender | null
+  /** The message itself, the header and the line under it gone. */
+  body: string
+}
+
+// The named header, whole, as `buildProvenanceHeader` writes it. A tab name
+// cannot hold a newline (the delivery strips control bytes), so the header is
+// the first line; the name runs to the LAST `" — reply with`, so a name that
+// happens to contain a quote still reads whole.
+const NAMED_HEADER =
+  /^\[Message from Clave tab "([^\n]*)" — reply with clave_send_to_session sessionId="([^"\n]*)"\]/
+
+/**
+ * Split a message that arrived through clave_send_to_session into its sender
+ * and its body, so a view can show a sibling agent's message as one rather
+ * than as the human's words under a bracketed line. Null for anything the
+ * human typed — including a message that merely quotes a header further down.
+ */
+export function parseDelivery(text: string): ParsedDelivery | null {
+  const trimmed = text.trimStart()
+  const named = NAMED_HEADER.exec(trimmed)
+  if (named)
+    return {
+      sender: { name: named[1], id: named[2] },
+      body: trimmed.slice(named[0].length).replace(/^\n/, '')
+    }
+  if (trimmed.startsWith(ANONYMOUS_PROVENANCE_HEADER))
+    return {
+      sender: null,
+      body: trimmed.slice(ANONYMOUS_PROVENANCE_HEADER.length).replace(/^\n/, '')
+    }
+  return null
+}

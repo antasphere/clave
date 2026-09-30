@@ -244,12 +244,12 @@ async function channelToggle(t) {
       bannerText.includes('v2.0.0-beta.1'),
       bannerText
     )
-    const bannerMark = banner.locator('[data-testid="prerelease-mark"]')
-    t.equal('the prompt carries the pre-release mark', await bannerMark.count(), 1)
+    // The version names the beta itself; a separate mark pushed the buttons
+    // onto a second row at the sidebar's width (2026-09-22).
     t.equal(
-      'the mark names the channel',
-      (await bannerMark.innerText()).trim().toLowerCase(),
-      'beta'
+      'the prompt carries no separate mark, the version says beta',
+      await banner.locator('[data-testid="prerelease-mark"]').count(),
+      0
     )
 
     await win.evaluate(() =>

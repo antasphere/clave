@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
-import { IconButton } from '../ui/tooltip'
+import { IconButton } from '@clave/ui/components'
 import { useSessionStore } from '../../store/session-store'
 import type { PullStrategy } from './git-status-utils'
 
@@ -12,7 +12,7 @@ export function PullButton({
   cwd: string
   operating: boolean
   onOperation: (fn: () => Promise<void>) => void
-}) {
+}): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -39,10 +39,10 @@ export function PullButton({
   }, [menuOpen])
 
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="relative shrink-0" ref={menuRef}>
       <div className="flex items-center">
         <IconButton
-          className="text-xs font-medium pl-2 pr-1 py-1 rounded-l bg-surface-100 text-text-secondary hover:text-text-primary disabled:opacity-40 transition-all"
+          className="whitespace-nowrap text-xs font-medium pl-2 pr-1 py-1 rounded-l bg-surface-100 text-text-secondary hover:text-text-primary disabled:opacity-40 transition-all"
           disabled={operating}
           onClick={() => handlePull('auto')}
           tooltip="Pull remote changes"
@@ -66,12 +66,14 @@ export function PullButton({
           // Opens upward from the bar, so it grows from its bottom edge.
           style={{ transformOrigin: '100% 100%' }}
         >
-          {([
-            ['auto', 'Pull'],
-            ['merge', 'Pull (Merge)'],
-            ['rebase', 'Pull (Rebase)'],
-            ['ff-only', 'Pull (FF only)']
-          ] as [PullStrategy, string][]).map(([strategy, label]) => (
+          {(
+            [
+              ['auto', 'Pull'],
+              ['merge', 'Pull (Merge)'],
+              ['rebase', 'Pull (Rebase)'],
+              ['ff-only', 'Pull (FF only)']
+            ] as [PullStrategy, string][]
+          ).map(([strategy, label]) => (
             <button
               key={strategy}
               className="menu-item menu-item--muted"
@@ -106,7 +108,7 @@ export function CommitBar({
   hasUpstream: boolean
   operating: boolean
   onOperation: (fn: () => Promise<void>) => void
-}) {
+}): React.JSX.Element {
   const commitMessage = useSessionStore((s) => s.commitMessages[cwd] ?? '')
   const generating = useSessionStore((s) => s.generatingCommitCwds.has(cwd))
   const [generateError, setGenerateError] = useState<string | null>(null)
@@ -189,8 +191,19 @@ export function CommitBar({
         >
           {generating ? (
             <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="3"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
             </svg>
           ) : (
             <SparklesIcon className="w-3.5 h-3.5" />
@@ -203,28 +216,37 @@ export function CommitBar({
         </div>
       )}
       <div className="flex items-center gap-1.5">
+        {/* System buttons, not inline utilities: the bar used to paint its own
+            accent pill and a green tint the design system has no word for. */}
         <button
-          className="flex-1 text-xs font-medium px-2 py-1 rounded bg-accent text-white disabled:opacity-40 transition-opacity"
+          className="btn-primary flex-1"
           disabled={operating || stagedCount === 0 || !commitMessage.trim()}
           onClick={handleCommit}
+          title={
+            stagedCount === 0
+              ? 'Include at least one file first'
+              : !commitMessage.trim()
+                ? 'Write a commit message first'
+                : undefined
+          }
         >
           Commit
         </button>
         {!hasUpstream ? (
           <IconButton
-            className="text-xs font-medium px-2 py-1 rounded bg-green-500/15 text-green-400 hover:bg-green-500/25 disabled:opacity-40 transition-all"
+            className="btn-secondary"
             disabled={operating}
             onClick={handlePublishBranch}
-            tooltip="Publish branch to origin (git push -u)"
+            tooltip="Put this branch on the remote so it can be pushed and pulled (git push -u)"
             side="top"
           >
-            {'\u2191'} Publish Branch{ahead > 0 ? ` (${ahead})` : ''}
+            {'\u2191'} Publish{ahead > 0 ? ` (${ahead})` : ''}
           </IconButton>
         ) : (
           <>
             {ahead > 0 && (
               <IconButton
-                className="text-xs font-medium px-2 py-1 rounded bg-green-500/15 text-green-400 hover:bg-green-500/25 disabled:opacity-40 transition-all"
+                className="btn-secondary"
                 disabled={operating}
                 onClick={handlePush}
                 tooltip="Push to remote"
@@ -233,9 +255,7 @@ export function CommitBar({
                 {'\u2191'} Push
               </IconButton>
             )}
-            {behind > 0 && (
-              <PullButton cwd={cwd} operating={operating} onOperation={onOperation} />
-            )}
+            {behind > 0 && <PullButton cwd={cwd} operating={operating} onOperation={onOperation} />}
           </>
         )}
       </div>

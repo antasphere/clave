@@ -1,11 +1,19 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useSessionStore } from '../store/session-store'
 import type { GitStatusResult } from '../../../preload/index.d'
 
 const POLL_INTERVAL = 5000
 const FETCH_INTERVAL = 30000
 
-export function useGitStatus(cwd: string | null, active: boolean) {
+export function useGitStatus(
+  cwd: string | null,
+  active: boolean
+): {
+  status: GitStatusResult | null
+  loading: boolean
+  error: string | null
+  refresh: () => void
+} {
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,13 +35,25 @@ export function useGitStatus(cwd: string | null, active: boolean) {
     }
   }, [cwd])
 
-  // Reset state when cwd changes
-  useEffect(() => {
-    cwdRef.current = cwd
+  // Reset state when cwd changes. Done while rendering, against what the last
+  // render saw, so no frame shows the previous repo's status under the new cwd.
+  const [seen, setSeen] = useState<{ cwd: string | null; active: boolean } | null>(null)
+  if (!seen || seen.cwd !== cwd || seen.active !== active) {
+    setSeen({ cwd, active })
     setStatus(null)
     setError(null)
+    if (cwd && active) setLoading(true)
+  }
+
+  // The fetch guard's cwd moves at commit, before any in-flight fetch for the
+  // previous cwd can resolve against it.
+  useLayoutEffect(() => {
+    cwdRef.current = cwd
+  }, [cwd])
+
+  useEffect(() => {
     if (cwd && active) {
-      setLoading(true)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch is async: every setState in it lands after its await, never synchronously here
       fetch().finally(() => setLoading(false))
     }
   }, [cwd, active, fetch])
@@ -59,6 +79,7 @@ export function useGitStatus(cwd: string | null, active: boolean) {
   const gitRefreshTrigger = useSessionStore((s) => s.gitRefreshTrigger)
   useEffect(() => {
     if (gitRefreshTrigger > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch is async: every setState in it lands after its await, never synchronously here
       fetch()
     }
   }, [gitRefreshTrigger, fetch])

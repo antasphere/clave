@@ -3,7 +3,7 @@ import { useRemoteTerminal } from '../../hooks/use-remote-terminal'
 import { useSessionStore } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
 import { TerminalHeader } from './TerminalHeader'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { GlobeAltIcon } from '@heroicons/react/24/outline'
 
 interface RemoteTerminalPanelProps {
@@ -12,7 +12,11 @@ interface RemoteTerminalPanelProps {
   locationId: string
 }
 
-export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTerminalPanelProps) {
+export function RemoteTerminalPanel({
+  sessionId,
+  shellId,
+  locationId
+}: RemoteTerminalPanelProps): React.JSX.Element {
   const { containerRef, focus } = useRemoteTerminal(shellId)
   const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
   const setFocusedSession = useSessionStore((s) => s.setFocusedSession)
@@ -32,7 +36,7 @@ export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTe
 
   // Auto-focus xterm when the window regains focus (Cmd+Tab, clicking from another app)
   useEffect(() => {
-    const handleWindowFocus = () => {
+    const handleWindowFocus = (): void => {
       if (useSessionStore.getState().focusedSessionId === sessionId) {
         focus()
       }
@@ -50,10 +54,7 @@ export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTe
 
   return (
     <div
-      className={cn(
-        'flex flex-col h-full bg-surface-0 transition-shadow',
-        ''
-      )}
+      className={cn('flex flex-col h-full bg-surface-0 transition-shadow', '')}
       onMouseDown={handleClick}
     >
       <TerminalHeader sessionId={sessionId} />
@@ -61,7 +62,8 @@ export function RemoteTerminalPanel({ sessionId, shellId, locationId }: RemoteTe
         <div className="flex items-center gap-2 px-3 py-1 bg-accent/5 border-b border-border-subtle text-xs text-text-tertiary">
           <GlobeAltIcon className="w-3.5 h-3.5" />
           <span>
-            {isClaudeMode ? 'Claude Code on' : 'Connected to'} {location.name} &middot; {location.host} via SSH
+            {isClaudeMode ? 'Claude Code on' : 'Connected to'} {location.name} &middot;{' '}
+            {location.host} via SSH
           </span>
         </div>
       )}

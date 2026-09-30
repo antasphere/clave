@@ -10,11 +10,17 @@
  * Asserted on the panel's measured height, not on the absence of a string: a
  * placeholder that comes back under a new class name has to fail this.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('switcher-collapse')
-const ROOT = '/tmp/clave-e2e-switcher-collapse-root'
+const ROOT = fixturePath('switcher-collapse-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'dddddddd-0000-4000-8000-00000000000d',
@@ -24,8 +30,18 @@ const WS = {
   createdAt: 1
 }
 
-/** The panel's head row alone: --toolbar-h, which the panel's min-height is. */
-const HEAD_ONLY = 34
+/** The panel's head row alone: --toolbar-h, which the panel's min-height is.
+ *  Read from the token at run time (it is derived from the frame spec), never
+ *  pinned as a number. */
+const headOnly = (win) =>
+  win.evaluate(() => {
+    const pr = document.createElement('div')
+    pr.style.height = 'var(--toolbar-h)'
+    document.body.appendChild(pr)
+    const h = Math.round(pr.getBoundingClientRect().height)
+    pr.remove()
+    return h
+  })
 
 /** What the switcher measures to, and what it is showing. */
 const measure = (win) =>
@@ -76,6 +92,7 @@ export async function run(t) {
   seedTrustedRoots(DIR, [ROOT])
 
   const { app, win } = await launchApp(DIR)
+  const HEAD_ONLY = await headOnly(win)
   try {
     // ── At rest with nothing running: the head row and nothing else ──
     const rest = await measure(win)

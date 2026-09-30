@@ -37,6 +37,98 @@ export function treeRuleMultiplier(intensity: TreeRuleIntensity): number {
 }
 
 /**
+ * How tight the app's chrome is drawn: one of five presets, written on the
+ * root element as `data-density` and resolved in
+ * `packages/ui/src/density.css`. Each preset is a table of literal values, not
+ * a multiplier — `compact` is the spec as set on 2026-09-21 and `comfortable`
+ * the chrome as tuned before it, both exactly, and no single ratio maps one
+ * onto the other. The three others are derived from those two.
+ *
+ * Ids are stored, not numbers, so a preset can be retuned without stranding
+ * what is already in a user's localStorage.
+ */
+export const DENSITY_LEVELS = [
+  { id: 'tight', label: 'Tight' },
+  { id: 'compact', label: 'Compact' },
+  { id: 'balanced', label: 'Balanced' },
+  { id: 'comfortable', label: 'Comfortable' },
+  { id: 'spacious', label: 'Spacious' }
+] as const
+
+export type Density = (typeof DENSITY_LEVELS)[number]['id']
+
+/** The preset the app opens at, and what an unknown id falls back to. */
+export const DEFAULT_DENSITY: Density = 'comfortable'
+
+/** Where the preset is saved. A new key, because the old one (`clave-density`)
+ *  stored the 2026-09-21 multiplier stops, and its `compact` meant 0.875. */
+export const DENSITY_STORAGE_KEY = 'clave-density-preset'
+export const LEGACY_DENSITY_STORAGE_KEY = 'clave-density'
+
+/** A stop of the old multiplier slider → the preset that looks like it.
+ *  `regular` (scale 1) IS `compact`: the same spec, byte for byte. */
+const LEGACY_DENSITY: Record<string, Density> = {
+  compact: 'tight',
+  snug: 'tight',
+  regular: 'compact',
+  relaxed: 'balanced',
+  spacious: 'comfortable'
+}
+
+/**
+ * The preset a saved string names, CHECKED against the table rather than cast
+ * to it: the value ends up as an attribute a stylesheet matches on, and an id
+ * no block matches silently draws the Compact spec. `legacy` is the old
+ * multiplier key, read only when nothing was saved under the new one.
+ */
+export function resolveDensity(saved: string | null, legacy: string | null = null): Density {
+  if (DENSITY_LEVELS.some((level) => level.id === saved)) return saved as Density
+  if (
+    saved === null &&
+    legacy !== null &&
+    Object.prototype.hasOwnProperty.call(LEGACY_DENSITY, legacy)
+  ) {
+    return LEGACY_DENSITY[legacy]
+  }
+  return DEFAULT_DENSITY
+}
+
+/** The preset's position on the slider; an unknown id sits on the default. */
+export function densityIndex(density: Density): number {
+  const i = DENSITY_LEVELS.findIndex((d) => d.id === density)
+  return i === -1 ? DENSITY_LEVELS.findIndex((d) => d.id === DEFAULT_DENSITY) : i
+}
+
+/**
+ * Appearance → Text size: px added to the chrome's label sizes on top of the
+ * density preset, written as `--ui-text-offset`. Additive, so the presets'
+ * own sizes (12px bar labels at Comfortable, 13px at Compact) keep their
+ * relation to each other at every step. Capped at +2: the rows keep their
+ * height, and a Compact 24px control holds nothing larger than ~15px text.
+ */
+export const TEXT_SIZE_LEVELS = [
+  { id: 'smaller', label: 'Smaller', offset: -1 },
+  { id: 'default', label: 'Default', offset: 0 },
+  { id: 'larger', label: 'Larger', offset: 1 },
+  { id: 'largest', label: 'Largest', offset: 2 }
+] as const
+
+export type TextSize = (typeof TEXT_SIZE_LEVELS)[number]['id']
+
+export const DEFAULT_TEXT_SIZE: TextSize = 'default'
+
+export function resolveTextSize(saved: string | null): TextSize {
+  return TEXT_SIZE_LEVELS.some((level) => level.id === saved)
+    ? (saved as TextSize)
+    : DEFAULT_TEXT_SIZE
+}
+
+/** The px a text size adds; unknown ids add nothing. */
+export function textSizeOffset(size: TextSize): number {
+  return TEXT_SIZE_LEVELS.find((level) => level.id === size)?.offset ?? 0
+}
+
+/**
  * Which folder the side panel hangs from — the Files tab, the Git tab, and the
  * root chip that switches between them. `session` is the focused tab's own
  * folder, `group` the folder its group was declared on, `workspace` the
@@ -209,6 +301,9 @@ export interface Session {
   activityStatus: ActivityStatus
   /** Deterministic Claude run state from CC hooks; undefined until first signal. */
   agentState?: AgentRunState
+  /** How many background shells/subagents a chat session left running past its
+   *  turn, from the provider's own list. Runtime only; absent means none. */
+  backgroundTasks?: number
   promptWaiting: string | null
   claudeMode: boolean
   antigravityMode: boolean
@@ -237,6 +332,35 @@ export interface Session {
   claudeProfileId?: string
   claudeProfileLabel?: string
   claudeConfigDir?: string
+  /** Codex account this session runs on (ADR 0002). Undefined = the Default,
+   *  the machine's own `~/.codex`. `codexAccountLabel` drives the badge. */
+  codexAccountId?: string
+  codexAccountLabel?: string
+  /** Bumped by a restart on another account: the pane remounts on it, so
+   *  the terminal reconnects to the new process under the same id. */
+  restartEpoch?: number
+  /** Runtime: when this window first saw the tab's process (its add, its
+   *  adoption, or its last restart), not when the process started: a tab
+   *  moved between windows is stamped again, so it loses a restart hint it
+   *  had. A tab older than its agent's last upgrade is offered a restart onto
+   *  the new release (`AgentUpdateHint`). */
+  spawnedAt?: number
+  /** Pinned to its account (ADR 0002): never moved by the policy, never
+   *  proposed a move; the menu can still switch it by hand. Session-lifetime. */
+  accountPinned?: boolean
+  /** This session's own switching mode, over the workspace's. */
+  accountSwitchMode?: 'propose' | 'automatic'
+  /** The move the policy proposes (or, in automatic mode, will make once the
+   *  agent is idle): the account to go to. Null = nothing proposed. */
+  accountProposal?: { accountId: string; label: string; reason: 'limit' | 'reported' } | null
+  /** The proposal the user dismissed, by account, so it is not re-raised
+   *  until the account changes. */
+  accountProposalDismissed?: string | null
+  /** The CLI itself reported the account's limit (a chat stream event). */
+  limitReported?: boolean
+  /** True between the kill and the respawn of an account switch, so the
+   *  exit is not announced as the session ending. */
+  restarting?: boolean
   /** One-shot prompt this session was launched with (agent modes only), so
    *  Duplicate can re-prime the clone. Not persisted to the tmux sidecar, so a
    *  session re-adopted after an app restart loses it (the resumed conversation
@@ -345,7 +469,15 @@ export interface FileTab {
 
 export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
-export type SettingsSection = 'general' | 'agents' | 'appearance' | 'keymaps' | 'updates' | 'usage'
+export type SettingsSection =
+  | 'plugins'
+  | 'general'
+  | 'accounts'
+  | 'agents'
+  | 'appearance'
+  | 'keymaps'
+  | 'updates'
+  | 'usage'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 
@@ -367,6 +499,11 @@ export interface PinnedGroupSession {
    *  was rooted at) instead of at `cwd`. `cwd` still defines the project dir that
    *  feeds the prompt path tokens. No-op if the pin has no workspaceRoot. */
   rootSession?: boolean
+  /** The account (subscription) the session starts on, by LABEL as set in
+   *  Settings → Accounts, or `any` for the pool's pick (ADR 0002). Labels,
+   *  not ids: a `.clave` is shared between machines. Claude and Codex
+   *  sessions only. An unknown label falls back to the Default with a note. */
+  account?: string
 }
 
 export interface PinnedGroupTerminal {
@@ -403,10 +540,10 @@ export interface PinnedGroup {
   terminals: PinnedGroupTerminal[]
   createdAt: number
   filePath?: string | null
-  rootDir?: string | null  // Root dir for resolving paths (null = file's parent dir)
-  workspaceRoot?: string | null  // Absolute root of the workspace that discovered this pin; feeds rootSession spawn + prompt path tokens. null = standalone import.
-  groupIndex?: number  // Position in multi-group .clave file (0-based)
-  toolbar?: boolean    // Show this group's terminals as toolbar quick-actions
+  rootDir?: string | null // Root dir for resolving paths (null = file's parent dir)
+  workspaceRoot?: string | null // Absolute root of the workspace that discovered this pin; feeds rootSession spawn + prompt path tokens. null = standalone import.
+  groupIndex?: number // Position in multi-group .clave file (0-based)
+  toolbar?: boolean // Show this group's terminals as toolbar quick-actions
   logo?: string | null // Absolute path to logo image
   category?: string | null // Category label for organizing pins in the sidebar
   discoveredBy?: string | null // filePath of workspace profile that auto-discovered this pin

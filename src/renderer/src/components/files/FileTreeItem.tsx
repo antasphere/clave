@@ -27,7 +27,7 @@ export function FileTreeItem({
   onToggleDir,
   onContextMenu,
   onDragStart
-}: FileTreeItemProps) {
+}: FileTreeItemProps): React.JSX.Element {
   const lastClickRef = useRef<{ time: number; path: string }>({ time: 0, path: '' })
 
   const handleClick = useCallback(
@@ -102,7 +102,16 @@ export function FileTreeItem({
             viewBox="0 0 12 12"
             className="flex-shrink-0 animate-spin text-[color:var(--tree-chevron-color)]"
           >
-            <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="20" strokeDashoffset="10" />
+            <circle
+              cx="6"
+              cy="6"
+              r="5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              fill="none"
+              strokeDasharray="20"
+              strokeDashoffset="10"
+            />
           </svg>
         ) : (
           <svg
@@ -112,7 +121,13 @@ export function FileTreeItem({
             fill="none"
             className={`flex-shrink-0 text-[color:var(--tree-chevron-color)] transition-transform duration-100 ${node.expanded ? 'rotate-90' : ''}`}
           >
-            <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M3 1.5L7 5L3 8.5"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         )
       ) : (
@@ -129,7 +144,9 @@ export function FileTreeItem({
       <span className="truncate text-xs font-medium">
         <span className="text-[color:var(--sidebar-item-text)]">{node.name}</span>
         {node.type === 'file' && node.path.includes('/') && node.depth === 0 && (
-          <span className="text-text-tertiary ml-1.5">{node.path.slice(0, node.path.lastIndexOf('/'))}</span>
+          <span className="text-text-tertiary ml-1.5">
+            {node.path.slice(0, node.path.lastIndexOf('/'))}
+          </span>
         )}
       </span>
     </div>

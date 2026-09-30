@@ -19,6 +19,7 @@ import {
 } from './ipc-handlers/window-handlers'
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
+import { agentUpdateManager } from './agent-updates'
 import { buildAppMenu } from './app-menu'
 import { initTelemetry, cleanupTelemetry } from './telemetry'
 import { initNotificationManager } from './notification-manager'
@@ -40,6 +41,8 @@ import {
 import { cleanupClaveWatchers } from './ipc-handlers/clave-file-handlers'
 import { startMcpServer, stopMcpServer, registerMcpWindowOpener } from './mcp/mcp-server'
 import { usageManager } from './usage-manager'
+import { codexUsageManager } from './codex-usage'
+import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
@@ -322,6 +325,7 @@ app.whenReady().then(() => {
     },
     snapshot: prereleaseSnapshotOutcome()
   })
+  agentUpdateManager.start()
   initTelemetry()
   initMissionControl()
 
@@ -355,14 +359,32 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
+let quitReady = false
+let quitCleanup: Promise<void> | undefined
+app.on('before-quit', (event) => {
+  if (quitReady) return
+  event.preventDefault()
+  if (quitCleanup) return
   quitting = true
   cleanupClaveWatchers()
   cleanupAutoUpdater()
+  agentUpdateManager.stop()
   cleanupTelemetry()
   cleanupMissionControl()
   usageManager.stopPolling()
+  codexUsageManager.stopPolling()
+  accountLoginManager.cancelAll()
   stopMcpServer()
+  // Keep the event loop alive until owned event children finish their escalation.
+  quitCleanup = ptyManager
+    .killAll()
+    .catch((error) => {
+      console.error('Session shutdown failed:', error)
+    })
+    .finally(() => {
+      quitReady = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {

@@ -15,6 +15,8 @@ export interface AgentSetup {
   /** Claude account. Applies to `claude` and `claude-agents` only — the other
    *  kinds ignore it, matching the spawn paths. */
   claudeProfileId?: string
+  /** Codex account (ADR 0002). Applies to `codex` only. */
+  codexAccountId?: string
   /** Local binary-wrapper profile, independent from the Claude account. */
   launchProfileId?: string
 }
@@ -75,6 +77,9 @@ export function parseSetup(raw: unknown): AgentSetup | null {
     dangerousMode: value.dangerousMode === true,
     ...(typeof value.claudeProfileId === 'string' && (kind === 'claude' || kind === 'claude-agents')
       ? { claudeProfileId: value.claudeProfileId }
+      : {}),
+    ...(typeof value.codexAccountId === 'string' && kind === 'codex'
+      ? { codexAccountId: value.codexAccountId }
       : {}),
     ...(typeof value.launchProfileId === 'string' ? { launchProfileId: value.launchProfileId } : {})
   }

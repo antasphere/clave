@@ -10,12 +10,13 @@ import {
   launchApp,
   seedWorkspaces,
   until,
-  userDataDir
+  userDataDir,
+  fixturePath
 } from './harness.mjs'
 
 const DIR = userDataDir('agent-launch-profiles')
-const ROOT = '/tmp/clave-e2e-agent-launch-profiles-root'
-const PI_ROOT = '/tmp/clave-e2e-agent-launch-profiles-pi'
+const ROOT = fixturePath('agent-launch-profiles-root')
+const PI_ROOT = fixturePath('agent-launch-profiles-pi')
 const USER_SHELL = `${ROOT}/fake-user-shell.sh`
 const RECORDER = `${ROOT}/fake-codex.sh`
 const RECORDED = `${ROOT}/fake-codex.argv`

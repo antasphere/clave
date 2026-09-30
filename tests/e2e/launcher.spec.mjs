@@ -12,13 +12,15 @@ import {
   userDataDir,
   stubFolderDialog,
   sidebarRows,
-  agentButtonLabel
+  agentButtonLabel,
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
 const DIR = userDataDir('launcher')
-const ROOT_A = '/tmp/clave-e2e-root-a'
-const ROOT_B = '/tmp/clave-e2e-root-b'
+const ROOT_A = fixturePath('root-a')
+const ROOT_B = fixturePath('root-b')
 const WS_A = {
   id: 'aaaaaaaa-0000-4000-8000-00000000000a',
   name: 'Alpha',
@@ -82,7 +84,7 @@ export async function run(t) {
     t.equal('the agent button starts on Claude', await agentButtonLabel(win), 'Claude')
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Codex CLI")')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
     await win.waitForTimeout(4000)
     t.equal('picking Codex makes it the remembered agent', await agentButtonLabel(win), 'Codex')
     t.equal('and still no folder dialog', await dialogCalls(), 0)

@@ -59,13 +59,20 @@ function readImageAsDataUrl(absolutePath: string): string | null {
   try {
     if (!fs.existsSync(absolutePath)) return null
     const ext = path.extname(absolutePath).toLowerCase().slice(1)
-    const mime = ext === 'svg' ? 'image/svg+xml'
-      : ext === 'png' ? 'image/png'
-      : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-      : ext === 'gif' ? 'image/gif'
-      : ext === 'webp' ? 'image/webp'
-      : ext === 'ico' ? 'image/x-icon'
-      : 'application/octet-stream'
+    const mime =
+      ext === 'svg'
+        ? 'image/svg+xml'
+        : ext === 'png'
+          ? 'image/png'
+          : ext === 'jpg' || ext === 'jpeg'
+            ? 'image/jpeg'
+            : ext === 'gif'
+              ? 'image/gif'
+              : ext === 'webp'
+                ? 'image/webp'
+                : ext === 'ico'
+                  ? 'image/x-icon'
+                  : 'application/octet-stream'
     const data = fs.readFileSync(absolutePath)
     return `data:${mime};base64,${data.toString('base64')}`
   } catch {
@@ -219,7 +226,22 @@ interface ClaveFileWriteData {
   }>
 }
 
-function resolveGroup(raw: { name?: string; cwd?: string; color?: string | null; toolbar?: boolean; category?: string; logo?: string; prompt?: string; sessions?: ClaveGroupData['sessions']; terminals?: ClaveGroupData['terminals']; view?: string }, dir: string, fallbackName: string): ClaveGroupData {
+function resolveGroup(
+  raw: {
+    name?: string
+    cwd?: string
+    color?: string | null
+    toolbar?: boolean
+    category?: string
+    logo?: string
+    prompt?: string
+    sessions?: ClaveGroupData['sessions']
+    terminals?: ClaveGroupData['terminals']
+    view?: string
+  },
+  dir: string,
+  fallbackName: string
+): ClaveGroupData {
   return {
     name: raw.name || fallbackName,
     cwd: path.resolve(dir, raw.cwd || '.'),
@@ -227,7 +249,9 @@ function resolveGroup(raw: { name?: string; cwd?: string; color?: string | null;
     toolbar: raw.toolbar ?? undefined,
     category: raw.category ?? undefined,
     logo: raw.logo
-      ? raw.logo.startsWith('data:') ? raw.logo : readImageAsDataUrl(path.resolve(dir, raw.logo)) ?? undefined
+      ? raw.logo.startsWith('data:')
+        ? raw.logo
+        : (readImageAsDataUrl(path.resolve(dir, raw.logo)) ?? undefined)
       : undefined,
     // Free text, like a session prompt: kept as the raw template, @-tokens
     // substituted at spawn, never path-resolved here.
@@ -251,7 +275,9 @@ function resolveGroup(raw: { name?: string; cwd?: string; color?: string | null;
       // Kept as the raw template; @-tokens are substituted at spawn, not here.
       ...(s.prompt ? { prompt: s.prompt } : {}),
       // cwd stays the project dir; the spawn-at-root override happens at spawn.
-      ...(s.rootSession ? { rootSession: true } : {})
+      ...(s.rootSession ? { rootSession: true } : {}),
+      // The account by label (or `any`), resolved at launch, never here.
+      ...(typeof s.account === 'string' && s.account.trim() ? { account: s.account.trim() } : {})
     })),
     terminals: (raw.terminals || []).map((t) => ({
       command: t.command || '',
@@ -281,7 +307,10 @@ export function registerClaveFileHandlers(): void {
 
         // Multi-group format
         const result: ClaveFileReadResult = Array.isArray(data.groups)
-          ? { type: 'multi', groups: data.groups.map((g, i) => resolveGroup(g, dir, `Group ${i + 1}`)) }
+          ? {
+              type: 'multi',
+              groups: data.groups.map((g, i) => resolveGroup(g, dir, `Group ${i + 1}`))
+            }
           : { type: 'single', ...resolveGroup(data, dir, fallbackName) }
 
         // Trust gate: a file requesting auto-run or dangerousMode that the user
@@ -306,14 +335,18 @@ export function registerClaveFileHandlers(): void {
           if (prompts.length > 0) {
             if (detailLines.length > 0) detailLines.push('')
             detailLines.push('Instructions that would be auto-submitted to an agent:')
-            detailLines.push(...prompts.map((p) => {
-              const flat = p.replace(/\s+/g, ' ').trim()
-              return `  • ${flat.length > 120 ? flat.slice(0, 117) + '…' : flat}`
-            }))
+            detailLines.push(
+              ...prompts.map((p) => {
+                const flat = p.replace(/\s+/g, ' ').trim()
+                return `  • ${flat.length > 120 ? flat.slice(0, 117) + '…' : flat}`
+              })
+            )
           }
           if (dangerous) {
             detailLines.push('')
-            detailLines.push('One or more agents would start with permission prompts disabled (--dangerously-skip-permissions).')
+            detailLines.push(
+              'One or more agents would start with permission prompts disabled (--dangerously-skip-permissions).'
+            )
           }
           const folderForTrust = rootDir || path.dirname(absolutePath)
           const { response, checkboxChecked } = await dialog.showMessageBox(win!, {
@@ -326,7 +359,9 @@ export function registerClaveFileHandlers(): void {
             checkboxChecked: false,
             title: 'Review workspace file',
             message: `“${path.basename(absolutePath)}” wants to run content automatically.`,
-            detail: detailLines.join('\n') + '\n\nOnly trust this file if you recognise and understand what it would run.'
+            detail:
+              detailLines.join('\n') +
+              '\n\nOnly trust this file if you recognise and understand what it would run.'
           })
           if (response === 2) return null // Cancel
           if (checkboxChecked) addTrustedRoot(folderForTrust)
@@ -350,7 +385,12 @@ export function registerClaveFileHandlers(): void {
   // Optional rootDir overrides the default (file's parent dir) for path resolution
   ipcMain.handle(
     'clave:write-file',
-    async (_event, absolutePath: string, pinned: ClaveFileWriteData, rootDir?: string): Promise<void> => {
+    async (
+      _event,
+      absolutePath: string,
+      pinned: ClaveFileWriteData,
+      rootDir?: string
+    ): Promise<void> => {
       try {
         const dir = rootDir || path.dirname(absolutePath)
 
@@ -360,7 +400,18 @@ export function registerClaveFileHandlers(): void {
           return rel === '' ? '.' : rel
         }
 
-        const serializeGroup = (g: { name: string; cwd: string | null; color: string | null; toolbar?: boolean; category?: string; logo?: string; prompt?: string; view?: string; sessions: ClaveGroupData['sessions']; terminals: ClaveGroupData['terminals'] }): NonNullable<ClaveFileRaw['groups']>[number] => ({
+        const serializeGroup = (g: {
+          name: string
+          cwd: string | null
+          color: string | null
+          toolbar?: boolean
+          category?: string
+          logo?: string
+          prompt?: string
+          view?: string
+          sessions: ClaveGroupData['sessions']
+          terminals: ClaveGroupData['terminals']
+        }): NonNullable<ClaveFileRaw['groups']>[number] => ({
           name: g.name,
           cwd: toRelative(g.cwd),
           color: g.color,
@@ -380,7 +431,8 @@ export function registerClaveFileHandlers(): void {
             claudeAgentsMode: s.claudeAgentsMode,
             dangerousMode: s.dangerousMode,
             ...(s.prompt ? { prompt: s.prompt } : {}),
-            ...(s.rootSession ? { rootSession: true } : {})
+            ...(s.rootSession ? { rootSession: true } : {}),
+            ...(s.account ? { account: s.account } : {})
           })),
           terminals: g.terminals.map((t) => ({
             command: t.command,
@@ -439,7 +491,10 @@ export function registerClaveFileHandlers(): void {
   // For .clave/workspaces/*.clave, rootDir is the selected folder
   ipcMain.handle(
     'clave:discover-files',
-    async (_event, folderPath: string): Promise<{ name: string; path: string; rootDir: string | null }[]> => {
+    async (
+      _event,
+      folderPath: string
+    ): Promise<{ name: string; path: string; rootDir: string | null }[]> => {
       const results: { name: string; path: string; rootDir: string | null }[] = []
 
       // Legacy: direct workspace.clave in the folder (paths relative to its own dir = folderPath)
@@ -475,9 +530,23 @@ export function registerClaveFileHandlers(): void {
   // Used by workspaces with autoDiscover enabled
   ipcMain.handle(
     'clave:discover-files-recursive',
-    async (_event, rootDir: string, config?: { patterns?: string[]; exclude?: string[]; maxDepth?: number; workspaceId?: string }): Promise<{ name: string; path: string; rootDir: string }[]> => {
+    async (
+      _event,
+      rootDir: string,
+      config?: { patterns?: string[]; exclude?: string[]; maxDepth?: number; workspaceId?: string }
+    ): Promise<{ name: string; path: string; rootDir: string }[]> => {
       const patterns = config?.patterns ?? ['workspace.clave', '.clave/workspace.clave']
-      const exclude = new Set(config?.exclude ?? ['node_modules', '.git', 'references', 'build', 'dist', '.next', '.turbo'])
+      const exclude = new Set(
+        config?.exclude ?? [
+          'node_modules',
+          '.git',
+          'references',
+          'build',
+          'dist',
+          '.next',
+          '.turbo'
+        ]
+      )
       // Depth 6 covers a workspace like ~/.antasphere, where checkouts sit at
       // labs/products/<family>/<tool>/<repo> and skills nest a level deeper
       // still. Affordable because a directory holding a workspace file is not
@@ -505,7 +574,9 @@ export function registerClaveFileHandlers(): void {
             const defaultFile = files.find((f) => f === 'default.clave')
             return path.join(wsDir, defaultFile ?? files[0])
           }
-        } catch { /* not a directory, or unreadable */ }
+        } catch {
+          /* not a directory, or unreadable */
+        }
         return null
       }
 
@@ -533,7 +604,9 @@ export function registerClaveFileHandlers(): void {
         }
 
         // Recurse into subdirectories
-        const subdirs = entries.filter((e) => e.isDirectory() && !exclude.has(e.name) && !e.name.startsWith('.'))
+        const subdirs = entries.filter(
+          (e) => e.isDirectory() && !exclude.has(e.name) && !e.name.startsWith('.')
+        )
         await Promise.all(subdirs.map((d) => scan(path.join(dir, d.name), depth + 1)))
       }
 
@@ -547,7 +620,15 @@ export function registerClaveFileHandlers(): void {
   // Read autoDiscover config from a .clave file (lightweight, no group parsing)
   ipcMain.handle(
     'clave:read-auto-discover',
-    async (_event, filePath: string): Promise<{ enabled: boolean; patterns?: string[]; exclude?: string[]; maxDepth?: number } | null> => {
+    async (
+      _event,
+      filePath: string
+    ): Promise<{
+      enabled: boolean
+      patterns?: string[]
+      exclude?: string[]
+      maxDepth?: number
+    } | null> => {
       try {
         const raw = fs.readFileSync(filePath, 'utf-8')
         const data = JSON.parse(raw)

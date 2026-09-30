@@ -4,7 +4,7 @@
  * and the native menu reads the same accepted configuration.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { launchApp, openWindow, seedWorkspaces, userDataDir } from './harness.mjs'
+import { launchApp, openWindow, seedWorkspaces, userDataDir, fixturePath } from './harness.mjs'
 /** The shipped master key, read out of the source rather than hardcoded here, so
  *  this spec cannot pass against a chord the app no longer uses. Read as text: a
  *  spec that imports TypeScript would depend on the runner's type stripping. */
@@ -20,7 +20,7 @@ const MASTER_GLYPH = MASTER.split('+')
 const MASTER_PRESS = MASTER.replace('Mod', 'Meta').replace('Ctrl', 'Control')
 
 const DIR = userDataDir('keymaps')
-const ROOT = '/tmp/clave-e2e-keymaps-root'
+const ROOT = fixturePath('keymaps-root')
 const IMPORT_FILE = `${DIR}/import-keymaps.json`
 const EXPORT_FILE = `${DIR}/exported-keymaps.json`
 const WORKSPACE = {

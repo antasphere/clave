@@ -1,10 +1,13 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { emitTabClosed } from '../lib/exchange-capture'
+import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
   Theme,
   AppIcon,
+  Density,
+  TextSize,
   TreeRuleIntensity,
   PanelScope,
   ActivityStatus,
@@ -21,9 +24,16 @@ import type {
   ExtensionsSection,
   SessionType
 } from './session-types'
-import { PANEL_ROOTS } from './session-types'
+import {
+  PANEL_ROOTS,
+  resolveDensity,
+  resolveTextSize,
+  DENSITY_STORAGE_KEY,
+  LEGACY_DENSITY_STORAGE_KEY
+} from './session-types'
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
+import { resolveUiFont, type UiFont } from '../lib/ui-font'
 import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
 import { moveLayoutItems } from '../lib/sidebar-layout-ops'
 import { withDirToggled } from '../lib/panel-expansion'
@@ -46,6 +56,8 @@ export type {
   ExtensionsSection,
   SessionType,
   TreeRuleIntensity,
+  Density,
+  TextSize,
   PanelScope
 }
 export {
@@ -54,8 +66,16 @@ export {
   TERMINAL_COLOR_VALUES,
   TREE_RULE_INTENSITIES,
   PANEL_ROOTS,
+  DENSITY_LEVELS,
+  DEFAULT_DENSITY,
+  resolveDensity,
+  TEXT_SIZE_LEVELS,
+  DEFAULT_TEXT_SIZE,
+  resolveTextSize,
+  textSizeOffset,
   resolveColorHex,
   treeRuleMultiplier,
+  densityIndex,
   panelRootLadder
 } from './session-types'
 
@@ -90,6 +110,12 @@ interface SessionState {
   appIcon: AppIcon
   /** How heavily every tree draws the hairlines between its rows. */
   treeRuleIntensity: TreeRuleIntensity
+  /** How tight the chrome is drawn — the preset written as `data-density`. */
+  density: Density
+  /** Px added to the chrome's labels on top of the preset (`--ui-text-offset`). */
+  textSize: TextSize
+  /** The face the chrome is set in (`data-ui-font`). */
+  uiFont: UiFont
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -262,11 +288,46 @@ interface SessionState {
   setTheme: (theme: Theme) => void
   setAppIcon: (icon: AppIcon) => void
   setTreeRuleIntensity: (intensity: TreeRuleIntensity) => void
+  setDensity: (density: Density) => void
+  setTextSize: (textSize: TextSize) => void
+  setUiFont: (uiFont: UiFont) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
+  /** An account switch in flight (ADR 0002): the exit that follows is a
+   *  restart, not an end. */
+  setSessionRestarting: (id: string, restarting: boolean) => void
+  /** The session as it came back from `pty:restart`: alive again on the new
+   *  account, the conversation id it resumed with, its epoch bumped so the
+   *  pane remounts on the new process. */
+  applySessionRestart: (
+    id: string,
+    patch: Pick<Session, 'claudeSessionId'> &
+      Partial<
+        Pick<
+          Session,
+          | 'claudeProfileId'
+          | 'claudeProfileLabel'
+          | 'claudeConfigDir'
+          | 'codexAccountId'
+          | 'codexAccountLabel'
+          | 'launchProfileId'
+          | 'model'
+        >
+      >
+  ) => void
+  /** The policy's knobs and its proposal on a session (ADR 0002). */
+  setAccountPinned: (id: string, pinned: boolean) => void
+  setAccountSwitchMode: (id: string, mode: 'propose' | 'automatic' | null) => void
+  setAccountProposal: (
+    id: string,
+    proposal: { accountId: string; label: string; reason: 'limit' | 'reported' } | null
+  ) => void
+  setAccountProposalDismissed: (id: string, accountId: string | null) => void
+  setLimitReported: (id: string, reported: boolean) => void
   setSessionActivity: (id: string, status: ActivityStatus) => void
   setAgentState: (id: string, state: import('./session-types').AgentRunState) => void
+  setBackgroundTaskCount: (id: string, count: number) => void
   setSessionPromptWaiting: (id: string, promptType: string | null) => void
   setSessionDetectedUrl: (id: string, url: string | null) => void
   setSessionServerStatus: (id: string, status: import('./session-types').ServerStatus) => void
@@ -352,6 +413,7 @@ function normalizeSession(session: Session): Session {
   return {
     ...session,
     workspaceId,
+    spawnedAt: Date.now(),
     antigravityMode: session.antigravityMode ?? false,
     codexMode: session.codexMode ?? false,
     piMode: session.piMode ?? false,
@@ -546,6 +608,12 @@ export const useSessionStore = create<SessionState>((set) => ({
   appIcon: (localStorage.getItem('clave-app-icon') as AppIcon) || 'dark',
   treeRuleIntensity:
     (localStorage.getItem('clave-tree-rule-intensity') as TreeRuleIntensity) || 'normal',
+  density: resolveDensity(
+    localStorage.getItem(DENSITY_STORAGE_KEY),
+    localStorage.getItem(LEGACY_DENSITY_STORAGE_KEY)
+  ),
+  textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
+  uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -1163,15 +1231,14 @@ export const useSessionStore = create<SessionState>((set) => ({
       const snap = state.sidebarUndoStack[state.sidebarUndoStack.length - 1]
       const sidebarUndoStack = state.sidebarUndoStack.slice(0, -1)
       const validSessionIds = new Set(state.sessions.map((s) => s.id))
-      const restoredGroups = snap.groups
-        .map((g) => ({
-          ...g,
-          sessionIds: g.sessionIds.filter((sid) => validSessionIds.has(sid)),
-          terminals: g.terminals.map((t) => ({
-            ...t,
-            sessionId: t.sessionId && validSessionIds.has(t.sessionId) ? t.sessionId : null
-          }))
+      const restoredGroups = snap.groups.map((g) => ({
+        ...g,
+        sessionIds: g.sessionIds.filter((sid) => validSessionIds.has(sid)),
+        terminals: g.terminals.map((t) => ({
+          ...t,
+          sessionId: t.sessionId && validSessionIds.has(t.sessionId) ? t.sessionId : null
         }))
+      }))
       // A restored group whose members have since closed comes back empty —
       // an empty group is a normal state, exactly as closing its last tab
       // leaves it (see mergeLayoutForKeys).
@@ -1208,6 +1275,21 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ treeRuleIntensity })
   },
 
+  setDensity: (density) => {
+    localStorage.setItem(DENSITY_STORAGE_KEY, density)
+    set({ density })
+  },
+
+  setTextSize: (textSize) => {
+    localStorage.setItem('clave-text-size', textSize)
+    set({ textSize })
+  },
+
+  setUiFont: (uiFont) => {
+    localStorage.setItem('clave-ui-font', uiFont)
+    set({ uiFont })
+  },
+
   setAppIcon: (appIcon) => {
     localStorage.setItem('clave-app-icon', appIcon)
     set({ appIcon })
@@ -1233,6 +1315,76 @@ export const useSessionStore = create<SessionState>((set) => ({
       )
     })),
 
+  setSessionRestarting: (id, restarting) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === id ? { ...s, restarting } : s))
+    })),
+
+  applySessionRestart: (id, patch) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              ...patch,
+              alive: true,
+              restarting: false,
+              activityStatus: 'idle' as const,
+              agentState: undefined,
+              promptWaiting: null,
+              restartEpoch: (s.restartEpoch ?? 0) + 1,
+              spawnedAt: Date.now()
+            }
+          : s
+      )
+    })),
+
+  setAccountPinned: (id, pinned) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id
+          ? { ...s, accountPinned: pinned, ...(pinned ? { accountProposal: null } : {}) }
+          : s
+      )
+    })),
+
+  setAccountSwitchMode: (id, mode) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, accountSwitchMode: mode ?? undefined } : s
+      )
+    })),
+
+  setAccountProposal: (id, proposal) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session) return state
+      const same =
+        (session.accountProposal ?? null) === proposal ||
+        (session.accountProposal?.accountId === proposal?.accountId &&
+          session.accountProposal?.reason === proposal?.reason)
+      if (same) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, accountProposal: proposal } : s))
+      }
+    }),
+
+  setAccountProposalDismissed: (id, accountId) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, accountProposalDismissed: accountId } : s
+      )
+    })),
+
+  setLimitReported: (id, reported) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session || (session.limitReported ?? false) === reported) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, limitReported: reported } : s))
+      }
+    }),
+
   setSessionActivity: (id, status) =>
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
@@ -1246,8 +1398,25 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       if (!session || session.agentState === agentState) return state
+      // A turn that comes to rest while its tab is out of view leaves something
+      // to read — for every transport, since this is the one place a state lands.
+      const unread =
+        finishesTurn(session.agentState, agentState) && !state.selectedSessionIds.includes(id)
       return {
-        sessions: state.sessions.map((s) => (s.id === id ? { ...s, agentState } : s))
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, agentState, ...(unread ? { hasUnseenActivity: true } : {}) } : s
+        )
+      }
+    }),
+
+  setBackgroundTaskCount: (id, count) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session || (session.backgroundTasks ?? 0) === count) return state
+      return {
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, backgroundTasks: count || undefined } : s
+        )
       }
     }),
 

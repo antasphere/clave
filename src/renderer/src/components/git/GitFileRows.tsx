@@ -1,7 +1,6 @@
 import { Fragment, useCallback, useMemo } from 'react'
 import { FileIcon } from '../files/file-icons'
-import { ArrowUturnLeftIcon } from '@heroicons/react/24/outline'
-import { statusLetter, statusColor, splitPath } from './git-status-utils'
+import { statusWord, statusColor, splitPath } from './git-status-utils'
 import { buildGitTree, compactTree, flattenGitTree } from '../../lib/git-file-tree'
 import type { GitFileStatus } from '../../../../preload/index.d'
 import type { FlatGitTreeNode } from '../../lib/git-file-tree'
@@ -39,7 +38,6 @@ export function FileRow({
   onClickName,
   onSelect,
   onStageToggle,
-  onDiscard,
   onContextMenu,
   disabled,
   selectedPaths,
@@ -55,6 +53,8 @@ export function FileRow({
   onClickName?: (clickY: number) => void
   onSelect?: (path: string, metaKey: boolean) => void
   onStageToggle?: () => void
+  /** Kept for callers; the row no longer shows a discard button. Discard lives in
+      the row's context menu only, one deliberate step away from the hover strip. */
   onDiscard?: () => void
   onContextMenu?: (file: GitFileStatus, clientX: number, clientY: number) => void
   disabled?: boolean
@@ -67,7 +67,7 @@ export function FileRow({
   overlap?: boolean
   /** Close the block above this one with a rule at this row's own indentation. */
   rule?: boolean
-}) {
+}): React.JSX.Element {
   const { name, dir } = splitPath(file.path)
   const isStaged = file.staged
 
@@ -113,7 +113,13 @@ export function FileRow({
       <div
         data-git-row="file"
         className={`flex items-center gap-1.5 pr-3 h-[var(--panel-row-h)] text-xs transition-colors cursor-pointer group ${
-          disabled ? 'opacity-50 pointer-events-none' : isActiveDiff ? 'bg-accent/15 border-l-2 border-l-accent' : isSelected ? 'bg-surface-200 border-l-2 border-l-transparent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+          disabled
+            ? 'opacity-50 pointer-events-none'
+            : isActiveDiff
+              ? 'bg-accent/15 border-l-2 border-l-accent'
+              : isSelected
+                ? 'bg-surface-200 border-l-2 border-l-transparent'
+                : 'hover:bg-surface-100 border-l-2 border-l-transparent'
         }`}
         style={{ paddingLeft: indentPx ?? 12 }}
         onClick={handleClick}
@@ -121,12 +127,14 @@ export function FileRow({
         draggable
         onDragStart={handleDragStart}
       >
-        <span className={`font-mono w-3 flex-shrink-0 ${statusColor(file.status)}`}>
-          {statusLetter(file.status)}
-        </span>
-        <span className="text-text-primary truncate hover:underline">
-          {name}
-        </span>
+        <span
+          className={`git-status-dot ${statusColor(file.status)}`}
+          data-status={file.status}
+          role="img"
+          aria-label={statusWord(file.status)}
+          title={statusWord(file.status)}
+        />
+        <span className="text-text-primary truncate hover:underline">{name}</span>
         {dir && <span className="text-text-tertiary truncate text-[10px]">{dir}</span>}
         {overlap && (
           <span
@@ -139,22 +147,12 @@ export function FileRow({
         {!readOnly && (
           <div className="ml-auto flex-shrink-0 flex items-center gap-0.5">
             <button
-              className="btn-icon btn-icon-xs opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDiscard?.()
-              }}
-              title="Discard changes"
-            >
-              <ArrowUturnLeftIcon className="w-3 h-3" />
-            </button>
-            <button
               className="btn-icon btn-icon-xs opacity-0 group-hover:opacity-100 transition-opacity"
               onClick={(e) => {
                 e.stopPropagation()
                 onStageToggle?.()
               }}
-              title={isStaged ? 'Unstage' : 'Stage'}
+              title={isStaged ? 'Exclude from commit' : 'Include in commit'}
             >
               {isStaged ? '\u2212' : '+'}
             </button>
@@ -179,7 +177,7 @@ export function GitTreeDirRow({
   onToggle: (path: string) => void
   onSelect?: (path: string, metaKey: boolean) => void
   baseIndentPx?: number
-}) {
+}): React.JSX.Element {
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.metaKey && onSelect) {
@@ -219,7 +217,13 @@ export function GitTreeDirRow({
           fill="none"
           className={`transition-transform duration-100 ${node.expanded ? 'rotate-90' : ''}`}
         >
-          <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M3 1.5L7 5L3 8.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </span>
       <FileIcon name="" isDirectory className="flex-shrink-0 text-text-tertiary" />
@@ -236,7 +240,6 @@ export function GitTreeFileRow({
   onClickName,
   onSelect,
   onStageToggle,
-  onDiscard,
   onContextMenu,
   disabled,
   selectedPaths,
@@ -251,6 +254,8 @@ export function GitTreeFileRow({
   onClickName?: (clickY: number) => void
   onSelect?: (path: string, metaKey: boolean) => void
   onStageToggle?: () => void
+  /** Kept for callers; the row no longer shows a discard button. Discard lives in
+      the row's context menu only, one deliberate step away from the hover strip. */
   onDiscard?: () => void
   onContextMenu?: (file: GitFileStatus, clientX: number, clientY: number) => void
   disabled?: boolean
@@ -258,7 +263,7 @@ export function GitTreeFileRow({
   baseIndentPx?: number
   readOnly?: boolean
   overlap?: boolean
-}) {
+}): React.JSX.Element {
   const file = node.file!
   const isStaged = file.staged
 
@@ -302,7 +307,13 @@ export function GitTreeFileRow({
     <div
       data-git-row="file"
       className={`flex items-center gap-1.5 h-[var(--panel-row-h)] text-xs transition-colors cursor-pointer group pr-3 ${
-        disabled ? 'opacity-50 pointer-events-none' : isActiveDiff ? 'bg-accent/15 border-l-2 border-l-accent' : isSelected ? 'bg-surface-200 border-l-2 border-l-transparent' : 'hover:bg-surface-100 border-l-2 border-l-transparent'
+        disabled
+          ? 'opacity-50 pointer-events-none'
+          : isActiveDiff
+            ? 'bg-accent/15 border-l-2 border-l-accent'
+            : isSelected
+              ? 'bg-surface-200 border-l-2 border-l-transparent'
+              : 'hover:bg-surface-100 border-l-2 border-l-transparent'
       }`}
       style={{ paddingLeft: `${baseIndentPx + 8 + node.depth * 8}px` }}
       onClick={handleClick}
@@ -311,12 +322,14 @@ export function GitTreeFileRow({
       onDragStart={handleDragStart}
     >
       <span className="w-4 flex-shrink-0" />
-      <span className={`font-mono w-3 flex-shrink-0 ${statusColor(file.status)}`}>
-        {statusLetter(file.status)}
-      </span>
-      <span className="text-text-primary truncate hover:underline">
-        {node.name}
-      </span>
+      <span
+        className={`git-status-dot ${statusColor(file.status)}`}
+        data-status={file.status}
+        role="img"
+        aria-label={statusWord(file.status)}
+        title={statusWord(file.status)}
+      />
+      <span className="text-text-primary truncate hover:underline">{node.name}</span>
       {overlap && (
         <span
           className="text-orange-400 text-[10px] flex-shrink-0"
@@ -328,22 +341,12 @@ export function GitTreeFileRow({
       {!readOnly && (
         <div className="ml-auto flex-shrink-0 flex items-center gap-0.5">
           <button
-            className="btn-icon btn-icon-xs opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDiscard?.()
-            }}
-            title="Discard changes"
-          >
-            <ArrowUturnLeftIcon className="w-3 h-3" />
-          </button>
-          <button
             className="btn-icon btn-icon-xs opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={(e) => {
               e.stopPropagation()
               onStageToggle?.()
             }}
-            title={isStaged ? 'Unstage' : 'Stage'}
+            title={isStaged ? 'Exclude from commit' : 'Include in commit'}
           >
             {isStaged ? '\u2212' : '+'}
           </button>
@@ -388,7 +391,7 @@ export function GitTreeSection({
   readOnly?: boolean
   /** Files that also have local changes — flagged on their rows. */
   overlapPaths?: Set<string>
-}) {
+}): React.JSX.Element {
   const flatNodes = useMemo(() => {
     if (files.length === 0) return []
     const tree = compactTree(buildGitTree(files))

@@ -1,0 +1,20 @@
+{
+  "id": "clave.github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "engines": { "clave": ">=1.90.0 <3.0.0" },
+  "ui": "native",
+  "main": "main.mjs",
+  "contributes": {
+    "panels": [
+      {
+        "id": "pull-request",
+        "title": "GitHub",
+        "icon": "ArrowsRightLeftIcon",
+        "placement": "side"
+      }
+    ]
+  },
+  "permissions": []
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { AnimatePresence } from 'framer-motion'
-import { ModalScrim, ModalPositioner } from './dialog'
+import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { FolderIcon } from '@heroicons/react/24/outline'
 
 interface ExportClaveDialogProps {
@@ -16,34 +16,43 @@ export function ExportClaveDialog({
   defaultFileName,
   onExport,
   onCancel
-}: ExportClaveDialogProps) {
+}: ExportClaveDialogProps): React.JSX.Element {
   const [folder, setFolder] = useState<string | null>(null)
   const [fileName, setFileName] = useState(defaultFileName)
   const [keepSynced, setKeepSynced] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Opening (or a new default name while open) resets the form; closing forgets
+  // the folder. Done while rendering, against what the last render saw, so the
+  // dialog never paints the previous values first.
+  const [seen, setSeen] = useState({ isOpen, defaultFileName })
+  if (seen.isOpen !== isOpen || seen.defaultFileName !== defaultFileName) {
+    setSeen({ isOpen, defaultFileName })
     if (isOpen) {
       setFileName(defaultFileName)
       setKeepSynced(false)
-      // Load downloads path as default
-      window.electronAPI?.getDownloadsPath().then((p) => {
-        setFolder((prev) => prev ?? p)
-      })
-      setTimeout(() => inputRef.current?.focus(), 50)
     } else {
       setFolder(null)
     }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return
+    // Load downloads path as default
+    window.electronAPI?.getDownloadsPath().then((p) => {
+      setFolder((prev) => prev ?? p)
+    })
+    setTimeout(() => inputRef.current?.focus(), 50)
   }, [isOpen, defaultFileName])
 
-  const handleExport = () => {
+  const handleExport = (): void => {
     const name = fileName.trim()
     if (!name || !folder) return
     const finalName = name.endsWith('.clave') ? name : `${name}.clave`
     onExport(folder, finalName, keepSynced)
   }
 
-  const handlePickFolder = async () => {
+  const handlePickFolder = async (): Promise<void> => {
     const selected = await window.electronAPI.openFolderDialog()
     if (selected) setFolder(selected)
   }
@@ -51,7 +60,12 @@ export function ExportClaveDialog({
   const folderName = folder ? folder.split('/').pop() || folder : null
 
   return (
-    <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => { if (!open) onCancel() }}>
+    <DialogPrimitive.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
       <AnimatePresence>
         {isOpen && (
           <DialogPrimitive.Portal forceMount>
@@ -66,7 +80,7 @@ export function ExportClaveDialog({
               <ModalPositioner className="w-[320px]">
                 <div className="modal-card">
                   <div className="px-4 pt-4 pb-3">
-                    <DialogPrimitive.Title className="text-[13px] font-semibold text-text-primary">
+                    <DialogPrimitive.Title className="text-control font-semibold text-text-primary">
                       Export as .clave
                     </DialogPrimitive.Title>
                     <DialogPrimitive.Description className="mt-1 text-xs text-text-secondary">
@@ -77,7 +91,7 @@ export function ExportClaveDialog({
                     <button
                       type="button"
                       onClick={handlePickFolder}
-                      className="mt-3 w-full h-8 px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
+                      className="mt-3 w-full h-control-lg px-3 rounded-lg bg-surface-100 border border-border-subtle flex items-center gap-2 text-xs hover:bg-surface-200 transition-colors group"
                       title={folder ?? 'Select folder'}
                     >
                       <FolderIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
@@ -111,14 +125,18 @@ export function ExportClaveDialog({
                       onClick={() => setKeepSynced(!keepSynced)}
                       className="mt-3 w-full flex items-center gap-2.5 text-left"
                     >
-                      <div className={`
+                      <div
+                        className={`
                         w-8 h-[18px] rounded-full transition-colors flex-shrink-0 relative
                         ${keepSynced ? 'bg-accent' : 'bg-surface-200'}
-                      `}>
-                        <div className={`
+                      `}
+                      >
+                        <div
+                          className={`
                           absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-sm transition-transform
                           ${keepSynced ? 'translate-x-[16px]' : 'translate-x-[2px]'}
-                        `} />
+                        `}
+                        />
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="text-xs text-text-primary">Keep synced</span>
@@ -140,7 +158,7 @@ export function ExportClaveDialog({
                     <button
                       type="button"
                       onClick={handleExport}
-                      className="btn-dialog text-accent hover:brightness-110 outline-none"
+                      className="btn-dialog text-action hover:brightness-110 outline-none"
                     >
                       Export
                     </button>

@@ -1,4 +1,4 @@
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 
 interface SidebarItemProps {
   icon: React.ReactNode
@@ -16,7 +16,7 @@ export function SidebarItem({
   onClick,
   rightContent,
   className
-}: SidebarItemProps) {
+}: SidebarItemProps): React.JSX.Element {
   return (
     <button
       onClick={onClick}

@@ -24,11 +24,17 @@
  *    surface the line lands, and a token swap that keeps the number but changes
  *    the surface would pass a string comparison and fail the eye.
  */
-import { launchApp, seedWorkspaces, seedTrustedRoots, userDataDir } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  userDataDir,
+  fixturePath
+} from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('sidebar-whats-new')
-const ROOT = '/tmp/clave-e2e-whats-new-root'
+const ROOT = fixturePath('whats-new-root')
 const CLAVE = `${ROOT}/lanes.clave`
 const WS = {
   id: 'cccccccc-0000-4000-8000-00000000000c',
@@ -195,9 +201,9 @@ export async function run(t) {
     )
 
     // ── 2. The tree hairline in light mode ───────────────────────────────
-    const rule = await win.evaluate(() => {
-      const prev = document.documentElement.getAttribute('data-theme')
-      document.documentElement.setAttribute('data-theme', 'light')
+    const rule = await win.evaluate(async () => {
+      const prev = (await window.electronAPI.skinsList()).activeId
+      await window.electronAPI.skinsActivate('light')
       const probe = document.createElement('div')
       probe.className = 'tree-rule'
       document.body.appendChild(probe)
@@ -212,8 +218,7 @@ export async function run(t) {
         borderSubtle: root.getPropertyValue('--border-subtle-color').trim()
       }
       probe.remove()
-      if (prev) document.documentElement.setAttribute('data-theme', prev)
-      else document.documentElement.removeAttribute('data-theme')
+      if (prev) await window.electronAPI.skinsActivate(prev)
       return out
     })
 

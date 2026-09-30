@@ -16,6 +16,7 @@ vi.mock('./mcp/mcp-runtime', () => ({
 import {
   buildSpawnEnv,
   accountTokenForSpawn,
+  codexHomeForSpawn,
   tmuxEnvironmentReconcileArgs,
   TMUX_SESSION_ENV_VARS
 } from './pty-manager'
@@ -46,6 +47,27 @@ describe('accountTokenForSpawn', () => {
 })
 
 /**
+ * The same boundary for a Codex account's home (ADR 0002): a Claude tab or a
+ * terminal handed a Codex account id must not have its environment pointed
+ * at another home, and the sync runs only when a home is going to be used.
+ */
+describe('codexHomeForSpawn', () => {
+  it('syncs and hands the home to a Codex session only', () => {
+    const synced: (string | undefined)[] = []
+    const syncHome = (id: string | undefined): string | undefined => {
+      synced.push(id)
+      return id === 'work' ? '/data/codex-homes/work' : undefined
+    }
+    expect(codexHomeForSpawn('codex', 'work', syncHome)).toBe('/data/codex-homes/work')
+    expect(codexHomeForSpawn('codex', 'default', syncHome)).toBeUndefined()
+    expect(codexHomeForSpawn('claude', 'work', syncHome)).toBeUndefined()
+    expect(codexHomeForSpawn(null, 'work', syncHome)).toBeUndefined()
+    expect(codexHomeForSpawn('pi', 'work', syncHome)).toBeUndefined()
+    expect(synced).toEqual(['work', 'default'])
+  })
+})
+
+/**
  * A tmux server copies its own environment into a new session; the account
  * variables cross from the client only when `update-environment` names them.
  * Found on the real app: the token reached a plain session and never a
@@ -55,12 +77,13 @@ describe('tmuxEnvironmentReconcileArgs', () => {
   it('appends every account variable a live server does not list yet', () => {
     expect(tmuxEnvironmentReconcileArgs(['DISPLAY', 'SSH_AUTH_SOCK'])).toEqual([
       ['set-option', '-ga', 'update-environment', 'CLAUDE_CONFIG_DIR'],
-      ['set-option', '-ga', 'update-environment', 'CLAUDE_CODE_OAUTH_TOKEN']
+      ['set-option', '-ga', 'update-environment', 'CLAUDE_CODE_OAUTH_TOKEN'],
+      ['set-option', '-ga', 'update-environment', 'CODEX_HOME']
     ])
   })
   it('does nothing on a server that already lists them', () => {
     expect(tmuxEnvironmentReconcileArgs(['DISPLAY', ...TMUX_SESSION_ENV_VARS])).toEqual([])
-    expect(tmuxEnvironmentReconcileArgs(['CLAUDE_CODE_OAUTH_TOKEN'])).toEqual([
+    expect(tmuxEnvironmentReconcileArgs(['CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_HOME'])).toEqual([
       ['set-option', '-ga', 'update-environment', 'CLAUDE_CONFIG_DIR']
     ])
   })
@@ -81,6 +104,14 @@ describe('buildSpawnEnv', () => {
     const plain = buildSpawnEnv(base, {})
     expect(plain).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN')
     expect(plain).not.toHaveProperty('CLAUDE_CONFIG_DIR')
+    expect(plain).not.toHaveProperty('CODEX_HOME')
+  })
+
+  it("sets a Codex account's home only when the session has one", () => {
+    expect(buildSpawnEnv(base, { codexHome: '/data/codex-homes/work' }).CODEX_HOME).toBe(
+      '/data/codex-homes/work'
+    )
+    expect(buildSpawnEnv({ ...base, CODEX_HOME: '/mine' }, {}).CODEX_HOME).toBe('/mine')
   })
 
   it('keeps the terminal and strips the nesting marker', () => {

@@ -103,7 +103,8 @@ const SUBJECT_SESSION_COMMANDS = new Set([
   'focus',
   'rename',
   'moveSession',
-  'setSessionView'
+  'setSessionView',
+  'switchAccount'
 ])
 
 /** A workspace ref (id or name) → its id, main-side (the registry is global). */
@@ -399,7 +400,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_list',
     {
       description:
-        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude session also carries its account ({ id, label }, the subscription it runs on).',
+        'List the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; a Claude or Codex session also carries its account ({ id, label, exhausted }, the subscription it runs on and whether it is about to hit its limit).',
       inputSchema: {
         workspace: z
           .string()
@@ -441,7 +442,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_session',
     {
       description:
-        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
+        'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
       inputSchema: {
         cwd: z.string().describe('Absolute path of the working directory for the new session'),
         mode: z
@@ -455,10 +456,18 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .optional()
           .describe('Target group: a group id, an exact group name, or "mine"'),
         name: z.string().optional().describe('Display name for the new tab'),
+        chat: z
+          .boolean()
+          .optional()
+          .describe(
+            'Open the agent in Clave\'s chat view instead of the terminal: "chat", "chat mode", "chat session", "the chat UI". claude and codex modes only (Claude chat is macOS/Linux only); errors for any other mode. Takes the place of profile — it is the "claude-chat" / "codex-chat" launch profile.'
+          ),
         dangerous: z
           .boolean()
           .optional()
-          .describe('Start claude with --dangerously-skip-permissions (claude mode only)'),
+          .describe(
+            'Start the agent without approval prompts: claude with --dangerously-skip-permissions, codex with --yolo. Ignored for antigravity, pi and terminal.'
+          ),
         model: z
           .string()
           .min(1)
@@ -472,14 +481,16 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .min(1)
           .max(128)
           .optional()
-          .describe('Named local launch profile id or name. Omit to use the workspace default.'),
+          .describe(
+            'Named local launch profile id or name. Omit to use the workspace default. For the chat view, use chat: true.'
+          ),
         account: z
           .string()
           .min(1)
           .max(128)
           .optional()
           .describe(
-            'Claude account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Usage → Claude accounts ("default" is the machine login). claude mode only. Omit to use the account selected in settings. Unknown names error with the list. clave_list reports each session\'s account.'
+            'Account (subscription) the new tab runs on: an account id or its exact name as set in Settings → Accounts ("default" is the machine login), or "any" for whichever account of the pool has headroom. claude and codex modes only. Omit to use the account selected in settings, moved along the pool when that one is about to hit its limit. Unknown names error with the list. clave_list reports each session\'s account.'
           ),
         provider: z.string().min(1).max(200).optional().describe('Pi provider id. Pi mode only.'),
         thinking: z
@@ -689,8 +700,11 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_close_session',
     {
-      description: 'Close a Clave tab and terminate its underlying process.',
-      inputSchema: { sessionId: z.string().describe('Id of the session to close') }
+      description:
+        'Close a Clave tab and terminate its underlying process. "mine" closes your own tab: use it last, when the user asked you to close yourself once your work is done.',
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to close, or "mine" for the calling tab')
+      }
     },
     // callerSessionId rides along so the close is recorded with its closer.
     (args) => run('closeSession', { ...args, callerSessionId })
@@ -716,6 +730,23 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       inputSchema: { sessionId: z.string().describe('Id of the session to focus') }
     },
     (args) => run('focus', args)
+  )
+
+  server.registerTool(
+    'clave_switch_account',
+    {
+      description:
+        'Switch a tab to another account (subscription) when the one it runs on is about to hit its limit, or when the user asks to move it: the same tab, its agent restarted on the other account with the conversation resumed. Claude and Codex tabs only. "mine" moves your own tab (your process restarts; finish what you are writing first). The account is an id, an exact name from Settings → Accounts, or "any" for whichever account of the pool has headroom. Per the mode set in Settings the switch is made at once or proposed to the user first; the answer says which.',
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
+        account: z
+          .string()
+          .min(1)
+          .max(128)
+          .describe('Account id, exact name, or "any" for the pool\'s next account with headroom')
+      }
+    },
+    (args) => run('switchAccount', args)
   )
 
   server.registerTool(

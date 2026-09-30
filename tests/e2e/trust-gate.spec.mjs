@@ -24,12 +24,13 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  stubReviewDialog
+  stubReviewDialog,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('trust-gate')
-const ROOT = '/tmp/clave-e2e-untrusted-root'
+const ROOT = fixturePath('untrusted-root')
 const CLAVE = `${ROOT}/untrusted.clave`
 const MULTI = `${ROOT}/untrusted-multi.clave`
 const MULTI_PROMPT_A = 'MULTI-BRIEF-A drive the first lane'

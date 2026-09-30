@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   resolveClaudeProfile,
   describeClaudeProfileAuth,
+  describeTokenLife,
+  claudeProfileUsable,
   claudeProfileSpawnFields,
   accountSpawnFields,
   accountSessionFields,
@@ -10,11 +12,27 @@ import {
   type ClaudeProfile
 } from './claude-profile-store'
 
+const bare = { tokenSetAt: null, tokenExpiresAt: null, tokenInvalid: false }
+const DAY = 86_400_000
 const profiles: ClaudeProfile[] = [
-  { id: 'default', label: 'Default', configDir: '', hasToken: false },
-  { id: 'w1', label: 'Work', configDir: '', hasToken: true },
-  { id: 'p1', label: 'Personal', configDir: '/Users/x/.claude-personal', hasToken: false },
-  { id: 'p2', label: 'personal', configDir: '', hasToken: false }
+  { id: 'default', label: 'Default', hasToken: false, ...bare },
+  {
+    id: 'w1',
+    label: 'Work',
+    hasToken: true,
+    tokenSetAt: 0,
+    tokenExpiresAt: 365 * DAY,
+    tokenInvalid: false
+  },
+  {
+    id: 'p1',
+    label: 'Personal',
+    hasToken: true,
+    tokenSetAt: 0,
+    tokenExpiresAt: 365 * DAY,
+    tokenInvalid: true
+  },
+  { id: 'p2', label: 'personal', hasToken: false, ...bare }
 ]
 
 /**
@@ -43,14 +61,27 @@ describe('describeClaudeProfileAuth', () => {
   it('names each credential story', () => {
     expect(describeClaudeProfileAuth(profiles[0])).toBe('Machine login')
     expect(describeClaudeProfileAuth(profiles[1])).toBe('Token')
-    expect(describeClaudeProfileAuth(profiles[2])).toBe('Config directory')
+    expect(describeClaudeProfileAuth(profiles[2])).toBe('Token refused')
     expect(describeClaudeProfileAuth(profiles[3])).toBe('No credential yet')
   })
-  it('names the token first when an account has both a token and a directory', () => {
-    // The spawn takes the token ahead of the directory; the badge says the same.
-    expect(
-      describeClaudeProfileAuth({ id: 'b', label: 'Both', configDir: '/x', hasToken: true })
-    ).toBe('Token')
+})
+
+describe('describeTokenLife', () => {
+  it('says how long the token has, in months then days, then that it is gone', () => {
+    expect(describeTokenLife(profiles[0])).toBeNull()
+    expect(describeTokenLife(profiles[1], 0)).toBe('expires in 12 months')
+    expect(describeTokenLife(profiles[1], 365 * DAY - 45 * DAY)).toBe('expires in 45 days')
+    expect(describeTokenLife(profiles[1], 365 * DAY - DAY / 2)).toBe('expires in 1 day')
+    expect(describeTokenLife(profiles[1], 366 * DAY)).toBe('expired')
+  })
+})
+
+describe('claudeProfileUsable', () => {
+  it('is the machine login, or a token that has not been refused', () => {
+    expect(claudeProfileUsable(profiles[0])).toBe(true)
+    expect(claudeProfileUsable(profiles[1])).toBe(true)
+    expect(claudeProfileUsable(profiles[2])).toBe(false)
+    expect(claudeProfileUsable(profiles[3])).toBe(false)
   })
 })
 
@@ -77,6 +108,8 @@ describe('accountSpawnFields', () => {
     expect(
       accountSpawnFields({ claudeProfileId: 'w1', claudeProfileLabel: 'Work', claudeConfigDir: '' })
     ).toEqual({ configDir: undefined, claudeProfileId: 'w1', claudeProfileLabel: 'Work' })
+    // A session started on the retired config-dir shape keeps its directory
+    // for its own life.
     expect(accountSpawnFields({ claudeProfileId: 'p1', claudeConfigDir: '/d' }).configDir).toBe(
       '/d'
     )
@@ -90,13 +123,14 @@ describe('accountSpawnFields', () => {
 })
 
 describe('claudeProfileSpawnFields', () => {
-  it('never sets a config dir on a passthrough or a token account', () => {
+  it('names the account and nothing else: the token is read by id in main', () => {
     expect(claudeProfileSpawnFields(profiles[0])).toEqual({
-      configDir: undefined,
       claudeProfileId: 'default',
       claudeProfileLabel: 'Default'
     })
-    expect(claudeProfileSpawnFields(profiles[1]).configDir).toBeUndefined()
-    expect(claudeProfileSpawnFields(profiles[2]).configDir).toBe('/Users/x/.claude-personal')
+    expect(claudeProfileSpawnFields(profiles[1])).toEqual({
+      claudeProfileId: 'w1',
+      claudeProfileLabel: 'Work'
+    })
   })
 })

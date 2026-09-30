@@ -11,6 +11,8 @@ export interface LaunchProfile {
   command: string[]
   additionalArgs: string[]
   builtIn?: boolean
+  /** Host-derived chat variant; edit the source profile to change its command. */
+  sourceProfileId?: string
   pi?: {
     provider?: string
     model?: string
@@ -72,6 +74,14 @@ const THINKING_VALUES = new Set<PiThinkingLevel>([
 ])
 const TOKEN_MAX_LENGTH = 4_096
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const CHAT_PROFILE_ID_RE = /^chat:(claude|codex):([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/
+
+export function chatProfileSource(
+  id?: string | null
+): { family: 'claude' | 'codex'; id: string } | undefined {
+  const match = id ? CHAT_PROFILE_ID_RE.exec(id) : null
+  return match ? { family: match[1] as 'claude' | 'codex', id: match[2] } : undefined
+}
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/
 
@@ -179,8 +189,9 @@ function cleanDefaults(value: unknown): Partial<Record<LauncherFamily, string>> 
   const raw = value as Record<string, unknown>
   const result: Partial<Record<LauncherFamily, string>> = {}
   for (const family of FAMILY_VALUES) {
-    const id = cleanText(raw[family], 128)
-    if (id && PROFILE_ID_RE.test(id)) result[family] = id
+    const id = cleanText(raw[family], 140)
+    if (id && (PROFILE_ID_RE.test(id) || chatProfileSource(id)?.family === family))
+      result[family] = id
   }
   return result
 }
@@ -270,9 +281,15 @@ export function buildAgentArgv(input: {
     if (input.claudeSettings) argv.push('--settings', input.claudeSettings)
     if (input.mcpConfigPath) argv.push('--mcp-config', input.mcpConfigPath)
   } else if (input.kind === 'codex') {
-    if (input.dangerousMode) argv.push('--yolo')
+    // A resumed thread goes through the `resume` subcommand, which takes the
+    // long spelling of the approvals flag and the thread id last.
+    if (input.resumeSessionId) argv.push('resume')
+    if (input.dangerousMode) {
+      argv.push(input.resumeSessionId ? '--dangerously-bypass-approvals-and-sandbox' : '--yolo')
+    }
     if (input.model) argv.push('-m', input.model)
     argv.push('-c', CODEX_TITLE_CONFIG)
+    if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
     if (input.initialPrompt) argv.push('-i', input.initialPrompt)
     return argv
@@ -290,6 +307,72 @@ export function buildAgentArgv(input: {
   }
   if (input.initialPrompt) argv.push('--', input.initialPrompt)
   return argv
+}
+
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+export interface CodexThreadPolicy {
+  sandbox?: CodexSandboxMode
+  approvalPolicy?: CodexApprovalPolicy
+  approvalsReviewer?: 'user' | 'auto_review'
+}
+const CODEX_SANDBOX_VALUES = new Set<string>(['read-only', 'workspace-write', 'danger-full-access'])
+const CODEX_APPROVAL_VALUES = new Set<string>(['untrusted', 'on-request', 'never'])
+
+/**
+ * The permissions a Codex profile's own flags ask for, as a chat thread's
+ * settings. The TUI reads `--yolo`, `-s` and `-a`; `codex app-server` accepts
+ * them before its subcommand and ignores them (codex-cli 0.157), so a chat
+ * thread started on a yolo profile ran in the config's sandbox. thread/start
+ * and thread/resume take the same settings as parameters, which is where
+ * they have to go. Later flags win, as they do on the command line.
+ */
+export function codexProfilePolicy(profile: LaunchProfile): CodexThreadPolicy {
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  const policy: CodexThreadPolicy = {}
+  const valueOf = (index: number, long: string, short: string): string | undefined => {
+    const token = tokens[index]
+    if (token === long || token === short) return tokens[index + 1]
+    return token.startsWith(`${long}=`) ? token.slice(long.length + 1) : undefined
+  }
+  tokens.forEach((token, index) => {
+    if (token === '--yolo' || token === '--dangerously-bypass-approvals-and-sandbox') {
+      policy.sandbox = 'danger-full-access'
+      policy.approvalPolicy = 'never'
+    } else if (token === '--approve-for-me') {
+      policy.sandbox = 'workspace-write'
+      policy.approvalsReviewer = 'auto_review'
+    }
+    const sandbox = valueOf(index, '--sandbox', '-s')
+    if (sandbox && CODEX_SANDBOX_VALUES.has(sandbox)) policy.sandbox = sandbox as CodexSandboxMode
+    const approval = valueOf(index, '--ask-for-approval', '-a')
+    if (approval && CODEX_APPROVAL_VALUES.has(approval))
+      policy.approvalPolicy = approval as CodexApprovalPolicy
+  })
+  return policy
+}
+
+/**
+ * The permission mode a Claude profile's own flags start the CLI on, and
+ * whether they make bypass reachable. The CLI obeys them in a chat as in a
+ * terminal; the chat reads them so it shows that mode from the first frame
+ * and offers bypass where the CLI will accept the switch.
+ */
+export function claudeProfilePermissions(profile: LaunchProfile): {
+  mode?: string
+  bypassAvailable: boolean
+} {
+  const tokens = [...profile.command, ...profile.additionalArgs]
+  let mode: string | undefined
+  tokens.forEach((token, index) => {
+    if (token === '--permission-mode') mode = tokens[index + 1]
+    else if (token.startsWith('--permission-mode=')) mode = token.slice('--permission-mode='.length)
+  })
+  return {
+    ...(mode ? { mode } : {}),
+    bypassAvailable:
+      mode === 'bypassPermissions' || tokens.includes('--allow-dangerously-skip-permissions')
+  }
 }
 
 export const AGENT_CAPABILITIES = {

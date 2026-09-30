@@ -111,6 +111,7 @@ Set at most one agent mode. If `antigravityMode`, `codexMode`, `piMode`, or `cla
 
 > **Deprecated:** `geminiMode` is the retired name for `antigravityMode`. Files using it still load (it is read as an alias), but Clave writes `antigravityMode` whenever it saves the file back. Don't emit `geminiMode` in new files.
 | `prompt` | string | Optional. A one-shot message auto-submitted to the agent the moment the session launches, so it starts already primed. Agent modes only (claude / antigravity / codex / pi) — ignored for plain terminals and `claude agents`. Free text; supports the path tokens below. |
+| `account` | string | Optional. The account (subscription) the session starts on, by its **name** as set in Settings → Accounts (`"Work"`), or `"any"` for whichever account of the pool has headroom. Claude and Codex sessions only. Names, not ids: the file is shared between machines. A name that does not exist on this machine falls back to the Default account, and Clave says so. |
 | `rootSession` | boolean | Optional. `true` = spawn the session at the **workspace root** (the folder whose `.clave/workspaces/` the umbrella auto-discovered), instead of at `cwd`. `cwd` still names the project dir that feeds the prompt tokens. It also anchors the group's `+`: a tab opened there later starts at the root too, so every tab in the group sits where the declared one does. No effect when the file is opened standalone (no umbrella root known). |
 
 **Prompt path tokens** (substituted at launch, only useful with `rootSession: true`):

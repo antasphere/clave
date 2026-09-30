@@ -183,8 +183,11 @@ describe('a forced read after a token paste', () => {
     claudeAccountsManager.setToken(bad.id, TOKEN)
     const result = await usageManager.getLimits(bad.id, { force: true })
     expect(result).toEqual({
-      error: 'This token was refused. Generate a new one with `claude setup-token`.'
+      error: 'This token was refused. Sign in again to get a new one.',
+      reason: 'unauthorized'
     })
+    // The refusal marks the account dead (out of the pool) until a new token.
+    expect(claudeAccountsManager.get(bad.id)?.tokenInvalid).toBe(true)
   })
 
   it('forgets a read in flight, so a cleared token’s answer never lands', async () => {
@@ -252,7 +255,7 @@ describe('a forced read after a token paste', () => {
     const gone = claudeAccountsManager.add({ label: 'Gone' })
     claudeAccountsManager.remove(gone.id)
     expect(await usageManager.getLimits(gone.id, { force: true })).toEqual({
-      error: 'This Claude account no longer exists.'
+      error: 'This account no longer exists.'
     })
   })
 })

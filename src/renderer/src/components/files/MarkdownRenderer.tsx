@@ -72,7 +72,7 @@ const STYLES = {
     ul: 'mb-4 pl-6 list-disc space-y-1.5',
     ol: 'mb-4 pl-6 list-decimal space-y-1.5',
     blockquote: 'border-l-3 border-accent/40 pl-4 my-4 text-text-secondary italic',
-    codeText: 'text-[13px]',
+    codeText: 'text-control',
     tableWrap: 'overflow-x-auto mb-4',
     table: 'w-full text-sm border-collapse',
     hr: 'my-8 border-border-subtle',

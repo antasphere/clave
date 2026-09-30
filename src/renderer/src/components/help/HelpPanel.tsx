@@ -62,10 +62,7 @@ export function HelpPanel(): ReactNode {
     return (
       <div className="flex flex-col h-full">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle flex-shrink-0">
-          <button
-            onClick={() => setSelectedDocId(null)}
-            className="btn-icon btn-icon-xs"
-          >
+          <button onClick={() => setSelectedDocId(null)} className="btn-icon btn-icon-xs">
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
           <span className="text-xs font-medium text-text-primary truncate">{selectedTitle}</span>
@@ -85,7 +82,7 @@ export function HelpPanel(): ReactNode {
           placeholder="Search help..."
           value={filterText}
           onChange={(e) => setFilterText(e.target.value)}
-          className="flex-1 h-[20px] px-2 rounded bg-surface-100 text-[11px] text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-border transition-colors min-w-0"
+          className="flex-1 h-control-xs px-2 rounded bg-surface-100 text-[11px] text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-border transition-colors min-w-0"
         />
       </div>
       <div className="flex-1 overflow-y-auto pb-12">

@@ -1,11 +1,24 @@
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useCallback, useState, type ReactElement } from 'react'
-import { ArrowTopRightOnSquareIcon, PlayIcon, ArrowDownTrayIcon, DocumentTextIcon, ChatBubbleBottomCenterTextIcon, StopIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import {
+  ArrowTopRightOnSquareIcon,
+  PlayIcon,
+  ArrowDownTrayIcon,
+  DocumentTextIcon,
+  ChatBubbleBottomCenterTextIcon,
+  StopIcon,
+  XMarkIcon
+} from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../store/session-store'
 import { useClaudeProfileStore } from '../../store/claude-profile-store'
-import { cn, safePort } from '../../lib/utils'
-import { ConfirmDialog } from '../ui/ConfirmDialog'
+import { useCodexAccountStore } from '../../store/codex-account-store'
+import { cn } from '@clave/ui/components'
+import { safePort } from '../../lib/utils'
+import { ConfirmDialog } from '@clave/ui/components'
 import { SessionCopyOffers } from './SessionCopyOffers'
+import { AccountProposal } from './AccountProposal'
+import { AgentUpdateHint } from './AgentUpdateHint'
+import { LinkedDocumentReopen } from '../files/LinkedDocumentReopen'
 
 interface TerminalHeaderProps {
   sessionId: string
@@ -14,6 +27,7 @@ interface TerminalHeaderProps {
 export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement | null {
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
   const multiProfile = useClaudeProfileStore((s) => s.profiles.length > 1)
+  const multiCodex = useCodexAccountStore((s) => s.accounts.length > 1)
   const removeSession = useSessionStore((s) => s.removeSession)
   const setSessionServerStatus = useSessionStore((s) => s.setSessionServerStatus)
   const messageTrailEnabled = useSessionStore((s) => s.messageTrailEnabled)
@@ -59,26 +73,39 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
 
   return (
     <>
-      <div className="flex items-center justify-between pl-3 pr-0.5 py-0.5 bg-surface-0 border-b border-border-subtle flex-shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="pane-header">
+        <div className="pane-header-lead">
           <span
-            className={cn(
-              'w-1.5 h-1.5 rounded-full flex-shrink-0',
-              session.activityStatus === 'active' && 'bg-status-working',
-              session.activityStatus === 'idle' && 'bg-status-ready',
-              session.activityStatus === 'ended' && 'bg-status-inactive'
-            )}
-            style={session.activityStatus === 'active' ? { animation: 'pulse-dot 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite' } : undefined}
+            className="pane-status-dot"
+            data-status={
+              session.activityStatus === 'active'
+                ? 'working'
+                : session.activityStatus === 'idle'
+                  ? 'ready'
+                  : 'inactive'
+            }
           />
-          <span className="text-xs font-medium text-text-secondary truncate">{session.name}</span>
-          {multiProfile && session.claudeProfileLabel && (session.claudeMode || session.claudeAgentsMode) && (
+          <span className="pane-header-title">{session.name}</span>
+          {multiProfile &&
+            session.claudeProfileLabel &&
+            (session.claudeMode || session.claudeAgentsMode) && (
+              <span
+                className="badge flex-shrink-0"
+                title={`Claude account: ${session.claudeProfileLabel}${session.claudeConfigDir ? ` (${session.claudeConfigDir})` : ''}`}
+              >
+                {session.claudeProfileLabel}
+              </span>
+            )}
+          {multiCodex && session.codexAccountLabel && session.codexMode && (
             <span
               className="badge flex-shrink-0"
-              title={`Claude account: ${session.claudeProfileLabel}${session.claudeConfigDir ? ` (${session.claudeConfigDir})` : ''}`}
+              title={`Codex account: ${session.codexAccountLabel}`}
             >
-              {session.claudeProfileLabel}
+              {session.codexAccountLabel}
             </span>
           )}
+          <AccountProposal sessionId={sessionId} />
+          <AgentUpdateHint sessionId={sessionId} />
           {hasServer && (
             <div className="flex items-center gap-0.5 flex-shrink-0">
               <button
@@ -91,9 +118,11 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
                   serverStatus === 'starting' && 'text-amber-400 cursor-wait'
                 )}
                 title={
-                  serverStatus === 'running' ? `Open ${session.detectedUrl}` :
-                  serverStatus === 'stopped' ? `Restart server (${session.serverCommand})` :
-                  'Starting server…'
+                  serverStatus === 'running'
+                    ? `Open ${session.detectedUrl}`
+                    : serverStatus === 'stopped'
+                      ? `Restart server (${session.serverCommand})`
+                      : 'Starting server…'
                 }
               >
                 {/* Status dot */}
@@ -130,7 +159,8 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
           )}
         </div>
 
-        <div className="flex items-center gap-0.5 flex-shrink-0">
+        <div className="pane-header-actions">
+          <LinkedDocumentReopen sessionId={sessionId} />
           <SessionCopyOffers sessionId={sessionId} />
           {session.claudeSessionId && (
             <button
@@ -146,10 +176,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
             <>
               <button
                 onClick={() =>
-                  window.electronAPI.saveDiscussion(session.cwd, session.claudeSessionId!, session.name, {
-                    sessionType: session.sessionType,
-                    locationId: session.locationId ?? null
-                  })
+                  window.electronAPI.saveDiscussion(
+                    session.cwd,
+                    session.claudeSessionId!,
+                    session.name,
+                    {
+                      sessionType: session.sessionType,
+                      locationId: session.locationId ?? null
+                    }
+                  )
                 }
                 className="panel-icon-btn"
                 title="Save discussion"
@@ -159,10 +194,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               {session.planFilePath && (
                 <button
                   onClick={() =>
-                    window.electronAPI.savePlan(session.cwd, session.claudeSessionId!, session.name, {
-                      sessionType: session.sessionType,
-                      locationId: session.locationId ?? null
-                    })
+                    window.electronAPI.savePlan(
+                      session.cwd,
+                      session.claudeSessionId!,
+                      session.name,
+                      {
+                        sessionType: session.sessionType,
+                        locationId: session.locationId ?? null
+                      }
+                    )
                   }
                   className="panel-icon-btn"
                   title="Save plan"

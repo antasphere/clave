@@ -1,3 +1,4 @@
+import { initializeSkins } from '../../lib/skin'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -9,7 +10,8 @@ import {
   enableSidebarPersistence
 } from '../../store/session-store'
 import type { SessionGroup, SettingsSection } from '../../store/session-store'
-import { treeRuleMultiplier } from '../../store/session-types'
+import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
+import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
@@ -23,6 +25,7 @@ import { ExtensionsPanel } from '../extensions/ExtensionsPanel'
 import { ExtensionsSidebar } from '../extensions/ExtensionsSidebar'
 import { UpdateOverlay } from '../ui/UpdateOverlay'
 import { connectUpdaterStore } from '../../store/updater-store'
+import { connectAgentUpdatesStore } from '../../store/agent-updates-store'
 import { MissionControlOverlay } from '../ui/MissionControlOverlay'
 import { SessionHistoryDialog } from '../session/SessionHistoryDialog'
 import { useHistoryStore } from '../../store/history-store'
@@ -35,7 +38,7 @@ import { FilePreview } from '../files/FilePreview'
 import { GitDiffPreview } from '../git/GitDiffPreview'
 import { GitJourneyPanel } from '../git/GitJourneyPanel'
 import { Bars3BottomLeftIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { usePinnedStore, initClaveFileWatchers } from '../../store/pinned-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import {
@@ -55,9 +58,13 @@ import { initCopyOfferStore } from '../../store/copy-offer-store'
 import { ToolbarSecretPopover } from './ToolbarSecretPopover'
 import { ToolbarWorkspacePopover } from './ToolbarWorkspacePopover'
 import { resolveColorHex } from '../../store/session-types'
-import { getTerminalIconComponent } from '../ui/GroupCommandDialog'
+import { getTerminalIconComponent } from '../ui/terminal-icons'
 import { ToolbarTerminalPopover } from './ToolbarTerminalPopover'
-import { ConfirmDialog } from '../ui/ConfirmDialog'
+import { PluginToolbar } from '../plugins/PluginToolbar'
+import { PluginMainPanel } from '../plugins/PluginMainPanel'
+import { usePluginMainPanelOpen, initPluginUI } from '../plugins/plugin-ui-store'
+import { ConfirmDialog } from '@clave/ui/components'
+import { requestArchiveAndKill } from '../../lib/archive-session'
 import { useKeymapManager, type KeymapActionHandlers } from '../../hooks/use-keymap-manager'
 import { KeymapCommandHud } from '../ui/KeymapCommandHud'
 import { connectKeymapStore, useShortcutLabel } from '../../store/keymap-store'
@@ -75,15 +82,17 @@ let tmuxAdoptionStarted = false
  *  per process, or concurrent tool calls would get duplicate responses. */
 let mcpDispatcherStarted = false
 
-export function AppShell() {
+export function AppShell(): React.JSX.Element {
   const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
   // No traffic lights in fullscreen, so no clearance to hold for them.
   const trafficLights = useTrafficLights()
   const sidebarWidth = useSessionStore((s) => s.sidebarWidth)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
   const setSidebarWidth = useSessionStore((s) => s.setSidebarWidth)
-  const theme = useSessionStore((s) => s.theme)
   const treeRuleIntensity = useSessionStore((s) => s.treeRuleIntensity)
+  const density = useSessionStore((s) => s.density)
+  const textSize = useSessionStore((s) => s.textSize)
+  const uiFont = useSessionStore((s) => s.uiFont)
   const toggleFilePalette = useSessionStore((s) => s.toggleFilePalette)
   const fileTreeOpen = useSessionStore((s) => s.fileTreeOpen)
   const fileTreeWidth = useSessionStore((s) => s.fileTreeWidth)
@@ -95,6 +104,25 @@ export function AppShell() {
   const previewSource = useSessionStore((s) => s.previewSource)
   const filePaletteShortcut = useShortcutLabel('openFilePalette')
   const sidePanelShortcut = useShortcutLabel('toggleSidePanel')
+  const pluginMainPanelOpen = usePluginMainPanelOpen()
+  const terminalsShown = activeView === 'terminals' && !pluginMainPanelOpen
+
+  // Which session the user is looking at is a renderer fact; the plugin host needs it to
+  // push `context.changed` to plugins holding sessions.read, so this window reports its own
+  // focus on every change and clears the report when it goes away. A window that never
+  // reports leaves the plugins with the last report from whichever window did.
+  const focusedSessionId = useSessionStore((s) => s.focusedSessionId)
+  useEffect(() => {
+    void window.electronAPI.pluginsContext(focusedSessionId ?? null).catch(() => {
+      /* The plugin registry reports its own failures in Settings. */
+    })
+  }, [focusedSessionId])
+  useEffect(
+    () => () => {
+      void window.electronAPI.pluginsContext(null).catch(() => {})
+    },
+    []
+  )
 
   const addSession = useSessionStore((s) => s.addSession)
   const removeSession = useSessionStore((s) => s.removeSession)
@@ -123,6 +151,7 @@ export function AppShell() {
     initMcpDispatcher()
     initSecretStore()
     initCopyOfferStore()
+    initPluginUI()
     // Re-homing: take in what another window hands over — a closing window's
     // sessions with its groups, a tab or a group moved here — and drop a tab
     // whose session moved AWAY (moved, not died — never kill the pty). The
@@ -277,14 +306,14 @@ export function AppShell() {
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onMouseMove = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(480, ev.clientX))
         if (sidebarRef.current) {
           sidebarRef.current.style.width = `${w}px`
         }
       }
 
-      const onMouseUp = (ev: MouseEvent) => {
+      const onMouseUp = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(480, ev.clientX))
         setSidebarWidth(w)
         // Keep skipTransition true briefly so Framer doesn't animate to the committed value
@@ -312,14 +341,14 @@ export function AppShell() {
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onMouseMove = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(400, window.innerWidth - ev.clientX))
         if (fileTreeRef.current) {
           fileTreeRef.current.style.width = `${w}px`
         }
       }
 
-      const onMouseUp = (ev: MouseEvent) => {
+      const onMouseUp = (ev: MouseEvent): void => {
         const w = Math.max(180, Math.min(400, window.innerWidth - ev.clientX))
         setFileTreeWidth(w)
         requestAnimationFrame(() => {
@@ -414,8 +443,10 @@ export function AppShell() {
         if (sid && isFileTabId(sid)) removeFileTab(sid)
         else window.close()
       },
-      killFocusedSession: () => {
-        const sid = useSessionStore.getState().focusedSessionId
+      // Session actions: the row a mouse binding was clicked on, else the
+      // focused session (see `targetsSession` in shared/keymaps.ts).
+      killFocusedSession: (_event, target) => {
+        const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
         if (!sid) return
         if (isFileTabId(sid)) removeFileTab(sid)
         else {
@@ -425,6 +456,13 @@ export function AppShell() {
           void window.electronAPI.killSession(sid).catch(() => {})
           removeSession(sid)
         }
+      },
+      archiveAndKillSession: (_event, target) => {
+        const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
+        if (!sid || isFileTabId(sid)) return
+        void requestArchiveAndKill(sid).catch((error) =>
+          console.error('[keymaps] archive and kill failed', error)
+        )
       },
       previousWorkspace: () => cycleWorkspace(-1),
       nextWorkspace: () => cycleWorkspace(1),
@@ -465,10 +503,7 @@ export function AppShell() {
   }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
   const commandHud = useKeymapManager(keymapActions)
 
-  // Sync data-theme attribute to root element
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-  }, [theme])
+  useEffect(() => initializeSkins(), [])
 
   // The weight of every tree's row rules, as a multiplier on the theme's own
   // --rule-alpha. One property on the root element is the whole mechanism: the
@@ -481,10 +516,34 @@ export function AppShell() {
     )
   }, [treeRuleIntensity])
 
+  // How tight the chrome is drawn, and how large its labels are. The density
+  // preset is an attribute packages/ui/src/density.css matches on; the text
+  // size is a px offset tokens.css adds to the label sizes. Both are the USER's
+  // settings, not the skin's, which is why they are written here rather than
+  // in applySkin(): a skin change never resets them.
+  useEffect(() => {
+    document.documentElement.dataset.density = density
+  }, [density])
+  useEffect(() => {
+    document.documentElement.style.setProperty('--ui-text-offset', `${textSizeOffset(textSize)}px`)
+  }, [textSize])
+  // The face goes on once it has loaded, so the chrome never flashes the
+  // fallback: until then the attribute keeps the previous font.
+  useEffect(() => {
+    let cancelled = false
+    void loadUiFont(uiFont).then(() => {
+      if (!cancelled) document.documentElement.dataset.uiFont = uiFont
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [uiFont])
+
   // Updater: subscribe to main's state and pull the current truth on mount.
   // The pull is the point — a push-only updater loses the "an update exists"
   // fact for 30 minutes if the renderer was not listening when it fired.
   useEffect(() => connectUpdaterStore(), [])
+  useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
 
   // Open Settings → Updates when asked from the native menu.
@@ -681,11 +740,11 @@ export function AppShell() {
         {/* Toolbar — its own floating card. Its row height is a token because
             the sidebar derives from it: --content-top-offset, and with it the
             launcher panel's top edge, is measured off this bar. */}
-        <div className="floating-card flex-shrink-0 !bg-surface-0/70">
+        <div className="frame flex-shrink-0">
           <div
             data-toolbar-row
             className={cn(
-              'h-[var(--toolbar-row-h)] flex items-center justify-between px-0.5 flex-shrink-0',
+              'h-[var(--toolbar-row-h)] flex items-center justify-between px-[var(--frame-inset)] flex-shrink-0',
               // With the sidebar closed the toolbar is what runs under the
               // traffic lights, so it holds their width open. Whenever they are
               // not there — macOS fullscreen, or any Windows or Linux window,
@@ -721,6 +780,10 @@ export function AppShell() {
             >
               <ToolbarQuickActions />
               <ToolbarSecretPopover />
+              {/* Plugin contributions sit with the app's own toolbar controls, left of the
+                  search and file-tree pair: a plugin configures this bar, it does not get
+                  a bar of its own. */}
+              <PluginToolbar />
               {/* File palette button */}
               <button
                 onClick={toggleFilePalette}
@@ -741,33 +804,63 @@ export function AppShell() {
           </div>
         </div>
 
-        {/* Non-terminal views — single floating card */}
-        <div
-          className={cn(
-            'flex-1 min-h-0 floating-card',
-            activeView === 'terminals' ? 'hidden' : 'flex'
-          )}
-        >
-          {/* view-fade-in re-fires each time a hidden panel is shown (display:none
-              kills the animation, re-display restarts it). Terminals stay instant. */}
+        {/* The stage: the terminal grid is ALWAYS laid out here, at its real size,
+            and every other view the column shows (a main-placement plugin panel,
+            Settings, Agents, Extensions) is laid OVER it. Collapsing the grid
+            with `display: none` while one of those views was open gave every
+            terminal a zero width, and xterm's DOM renderer cannot cache a glyph
+            width of zero: each repaint of a terminal nobody could see forced a
+            full layout of the window per glyph, and agents starting behind
+            Settings froze the window for minutes (the tile loop in TerminalGrid
+            has the whole story). Covered rather than collapsed, the grid keeps
+            its box, so coming back also resizes no terminal and no PTY. */}
+        <div className="relative flex-1 min-h-0 flex">
+          {/* Terminal grid — each terminal is its own floating card */}
           <div
-            className={activeView === 'settings' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
+            className="flex-1 flex min-h-0"
+            style={terminalsShown ? undefined : { visibility: 'hidden', pointerEvents: 'none' }}
+            inert={!terminalsShown}
+            aria-hidden={terminalsShown ? undefined : true}
           >
-            <SettingsPanel />
+            <TerminalGrid />
           </div>
-          <div className={activeView === 'agents' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}>
-            <AgentChatPanel />
-          </div>
-          <div
-            className={activeView === 'extensions' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
-          >
-            <ExtensionsPanel />
-          </div>
-        </div>
 
-        {/* Terminal grid — each terminal is its own floating card */}
-        <div className={activeView === 'terminals' ? 'flex-1 flex min-h-0' : 'hidden'}>
-          <TerminalGrid />
+          {/* A main-placement plugin panel takes the content column while it is
+              open: it is one of the places this column shows, like Settings or
+              the mosaic. */}
+          {pluginMainPanelOpen && (
+            <div className="absolute inset-0 flex flex-col">
+              <PluginMainPanel />
+            </div>
+          )}
+
+          {/* Non-terminal views — single floating card */}
+          <div
+            className={cn(
+              'absolute inset-0 min-h-0 floating-card',
+              activeView === 'terminals' || pluginMainPanelOpen ? 'hidden' : 'flex'
+            )}
+          >
+            {/* view-fade-in re-fires each time a hidden panel is shown (display:none
+                kills the animation, re-display restarts it). Terminals stay instant. */}
+            <div
+              className={activeView === 'settings' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
+            >
+              <SettingsPanel />
+            </div>
+            <div
+              className={activeView === 'agents' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'}
+            >
+              <AgentChatPanel />
+            </div>
+            <div
+              className={
+                activeView === 'extensions' ? 'flex-1 flex min-h-0 view-fade-in' : 'hidden'
+              }
+            >
+              <ExtensionsPanel />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -847,7 +940,7 @@ function DissolveConfirmDialog(): React.JSX.Element {
   )
 }
 
-function ToolbarQuickActions() {
+function ToolbarQuickActions(): React.JSX.Element | null {
   const pinnedGroups = usePinnedStore((s) => s.pinnedGroups)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const [openId, setOpenId] = useState<string | null>(null)

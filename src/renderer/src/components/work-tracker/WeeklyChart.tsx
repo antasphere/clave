@@ -1,5 +1,5 @@
 // src/renderer/src/components/work-tracker/WeeklyChart.tsx
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import { formatDuration } from './utils'
 
 const DAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
@@ -9,7 +9,10 @@ interface WeeklyChartProps {
   avgDailyMinutes: number
 }
 
-export function WeeklyChart({ dailyMinutes, avgDailyMinutes }: WeeklyChartProps) {
+export function WeeklyChart({
+  dailyMinutes,
+  avgDailyMinutes
+}: WeeklyChartProps): React.JSX.Element {
   const max = Math.max(...dailyMinutes, 1)
   const todayIndex = (new Date().getDay() + 6) % 7 // 0=Mon
 

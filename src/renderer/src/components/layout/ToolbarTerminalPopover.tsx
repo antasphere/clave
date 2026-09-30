@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { XMarkIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import { useToolbarTerminal, type ToolbarTerminalStatus } from '../../hooks/use-toolbar-terminal'
 import { useServerButton, type ServerButtonApi } from '../../hooks/use-server-button'
@@ -8,7 +8,8 @@ import {
   getPersistentToolbarSession,
   takeToolbarSurvivor
 } from '../../lib/toolbar-terminal-registry'
-import { cn, safePort } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
+import { safePort } from '../../lib/utils'
 
 interface ToolbarTerminalPopoverProps {
   cwd: string
@@ -79,6 +80,7 @@ export function ToolbarTerminalPopover({
     // Reattach to the registry's live session, if any
     const existing = persistent ? getPersistentToolbarSession(registryKey) : null
     if (existing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the session comes from a module-level registry outside React, read when the popover opens
       setStatus('running')
       setSessionId(existing)
       return

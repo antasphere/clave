@@ -69,13 +69,17 @@ async function spawnFromRecord(
           ? { resumeSessionId: s.claudeSessionId }
           : s.piMode && s.piSessionId
             ? { resumeSessionId: s.piSessionId }
-          : {}),
+            : s.codexMode && s.codexThreadId
+              ? { resumeSessionId: s.codexThreadId }
+              : {}),
       launchProfileId: s.launchProfileId,
       piProvider: s.piProvider,
       piThinking: s.piThinking,
       configDir: s.configDir,
       claudeProfileId: s.claudeProfileId,
       claudeProfileLabel: s.claudeProfileLabel,
+      codexAccountId: s.codexAccountId,
+      codexAccountLabel: s.codexAccountLabel,
       workspaceId,
       // Carry the ownership forward: an adoption rewrites the record, and a
       // hidden half that came back unstamped would be a tab at the NEXT boot.
@@ -105,6 +109,8 @@ async function spawnFromRecord(
       claudeProfileId: s.claudeProfileId,
       claudeProfileLabel: s.claudeProfileLabel,
       claudeConfigDir: s.configDir,
+      codexAccountId: s.codexAccountId,
+      codexAccountLabel: s.codexAccountLabel,
       sessionType: 'local',
       workspaceId,
       view: s.view ? { ...s.view } : undefined,
@@ -154,11 +160,7 @@ export async function adoptHiddenRecord(
       ? (state.sessions.find((o) => o.id === link.ownerId)?.view ?? null)
       : null
   if (resolveHiddenOwner(link, state) === 'discard') {
-    console.warn(
-      '[boot] discarding hidden session record with no owner:',
-      s.tmuxName ?? s.id,
-      link
-    )
+    console.warn('[boot] discarding hidden session record with no owner:', s.tmuxName ?? s.id, link)
     void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
     return null
   }
@@ -193,8 +195,7 @@ export async function adoptRehomed(
 ): Promise<void> {
   if (ids.length === 0) return
   const already = new Set(useSessionStore.getState().sessions.map((s) => s.id))
-  const records =
-    (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
+  const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   // A deliberate move focuses ONE tab that lands: a group member or a
   // single moved tab, never a quick-launch terminal riding along (the
   // records come back in directory order, which would otherwise put the

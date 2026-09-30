@@ -1,7 +1,44 @@
+import type {
+  Session,
+  SessionStream,
+  SessionInput,
+  SessionEvent,
+  ModelOption,
+  CommandOption,
+  HistoryPage
+} from '../shared/session-model'
+import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type {
+  GithubResult,
+  MergeMethod,
+  PullDiffFile,
+  PullRef,
+  PullRequestView,
+  ReviewEvent
+} from '../shared/github-pull'
+
+/** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface SessionIPC {
+  'sessions:list': { args: []; result: Session[] }
+  'sessions:subscribe': { args: [sessionId: string]; result: Session }
+  'sessions:unsubscribe': { args: [sessionId: string]; result: void }
+  'sessions:write': { args: [sessionId: string, input: Uint8Array | SessionInput]; result: void }
+  'sessions:capabilities': { args: [sessionId: string]; result: { images: boolean } }
+  'sessions:history': {
+    args: [sessionId: string, before?: number, limit?: number]
+    result: HistoryPage
+  }
+}
+export interface SessionIPCEvents {
+  [channel: `sessions:stream:${string}`]: SessionStream
+  [channel: `sessions:exit:${string}`]: number
+}
+
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
+import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   LaunchProfile,
@@ -171,6 +208,8 @@ export interface ClaveFileGroupData {
     dangerousMode: boolean
     prompt?: string
     rootSession?: boolean
+    /** The account by label, or `any` (ADR 0002). */
+    account?: string
   }[]
   terminals: {
     command: string
@@ -204,6 +243,7 @@ export interface ClaveFileWriteData {
     dangerousMode: boolean
     prompt?: string
     rootSession?: boolean
+    account?: string
   }[]
   terminals?: {
     command: string
@@ -223,6 +263,7 @@ export interface ClaveFileWriteData {
     category?: string
     logo?: string
     prompt?: string
+    view?: string
     sessions: {
       cwd: string
       name: string
@@ -234,6 +275,7 @@ export interface ClaveFileWriteData {
       dangerousMode: boolean
       prompt?: string
       rootSession?: boolean
+      account?: string
     }[]
     terminals: {
       command: string
@@ -244,6 +286,7 @@ export interface ClaveFileWriteData {
       autoLaunchLocalhost?: boolean
       persistent?: boolean
       serverUrl?: string
+      groupView?: boolean
     }[]
   }>
 }
@@ -294,6 +337,10 @@ export interface SessionRecord {
   configDir?: string
   claudeProfileId?: string
   claudeProfileLabel?: string
+  codexAccountId?: string
+  codexAccountLabel?: string
+  /** The thread a Codex chat tab resumes on relaunch. */
+  codexThreadId?: string
   /** Workspace this session belongs to (stamped at spawn, inferred from cwd
    *  for legacy records). Absent → unstamped; the renderer assigns active. */
   workspaceId?: string
@@ -353,9 +400,34 @@ export interface UsageLimits {
 export interface ClaudeAccount {
   id: string
   label: string
-  /** Absolute `CLAUDE_CONFIG_DIR`, or '' for the shared `~/.claude`. */
-  configDir: string
   hasToken: boolean
+  /** When the token was captured, or null without one. */
+  tokenSetAt: number | null
+  /** When the token is assumed to stop working (a year), or null. */
+  tokenExpiresAt: number | null
+  /** The service refused the token on its last read. */
+  tokenInvalid: boolean
+}
+
+/** A Codex account as the renderer sees it (ADR 0002): a home per account,
+ *  the Default being the machine's own `~/.codex`. */
+export interface CodexAccount {
+  id: string
+  label: string
+  kind: 'chatgpt' | 'apiKey'
+  hasCredential: boolean
+}
+
+/** A login in flight, or just finished: never the credential it captured. */
+export interface AccountLoginJob {
+  id: string
+  provider: 'claude' | 'codex'
+  accountId: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  url: string | null
+  awaitingCode: boolean
+  message: string | null
+  startedAt: number
 }
 
 export interface PiUsageTotals {
@@ -371,6 +443,8 @@ export interface PiUsageTotals {
 
 export interface UsageError {
   error: string
+  /** The service refused the credential itself. */
+  reason?: 'unauthorized'
 }
 
 export interface GitFileStatus {
@@ -476,7 +550,65 @@ export interface MagicPullResult {
   error: string | null
 }
 
+export interface PluginSecretPrompt {
+  id: string
+  pluginId: string
+  title: string
+  description?: string
+}
 export interface ElectronAPI {
+  sessionsList: () => Promise<Session[]>
+  /** Register stream/exit listeners first, then await this before writing. */
+  sessionsSubscribe: (id: string) => Promise<Session>
+  /** Release this view's subscription, then remove its stream/exit listeners. */
+  sessionsUnsubscribe: (id: string) => Promise<void>
+  sessionsWrite: (id: string, input: Uint8Array | SessionInput) => Promise<void>
+  /** Set the view a session is read in (`<pluginId>/<viewId>`), null to clear
+   *  it; returns the updated record. */
+  sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
+  sessionsModels: (id: string) => Promise<ModelOption[]>
+  sessionsCommands: (id: string) => Promise<CommandOption[]>
+  sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
+  /** A resumed conversation's past: the page ending at `before` (the end when
+   *  absent), oldest first, with what to ask for the page older than it. */
+  sessionsHistory: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
+  sessionsFiles: {
+    prepare(sessionId: string, source: AttachmentSource): Promise<Attachment>
+    pick(): Promise<string[]>
+    preview(file: Attachment): Promise<AttachmentPreview>
+    open(file: Attachment): Promise<void>
+  }
+  onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
+  onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
+
+  pluginsList: () => Promise<import('../main/plugins/plugin-store').PluginRecord[]>
+  /** Open a plugin's surface view on one session. The returned lease is the
+   *  only name a later call gives; the session id never travels again. */
+  pluginsViewLease: (
+    pluginId: string,
+    viewId: string,
+    sessionId: string
+  ) => Promise<{ leaseId: string; url: string; sessionId: string }>
+  /** One call from a guest page, relayed by the pane holding the lease. Main
+   *  re-checks the plugin's grants on every one of them. */
+  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) => Promise<unknown>
+  pluginsViewRevoke: (leaseId: string) => Promise<void>
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => () => void
+  pluginsEnable: (
+    id: string,
+    grants: import('@clave/plugin-sdk').PluginPermission[]
+  ) => Promise<void>
+  pluginsDisable: (id: string) => Promise<void>
+  pluginsLink: (folder?: string) => Promise<string | null>
+  pluginsRemove: (id: string) => Promise<void>
+  pluginsCommand: (id: string, command: string) => Promise<void>
+  pluginsPanel: (id: string, panel: string) => Promise<{ url: string }>
+  /** Report the focused session to the plugin host, which pushes it to plugins as
+   *  `context.changed`. Null clears this window's report. */
+  pluginsContext: (sessionId: string | null) => Promise<void>
+  pluginsSecrets: () => Promise<PluginSecretPrompt[]>
+  pluginsSecretReply: (id: string, value: string | null) => Promise<void>
+  onPluginsChanged: (callback: () => void) => () => void
   /** `process.platform` of the main process. The renderer reads it only to
    *  decide whether to hold room for window buttons drawn inside our own
    *  chrome — macOS does, Windows and Linux do not. */
@@ -519,6 +651,9 @@ export interface ElectronAPI {
       configDir?: string
       claudeProfileId?: string
       claudeProfileLabel?: string
+      /** The Codex account (ADR 0002); codex mode only. */
+      codexAccountId?: string
+      codexAccountLabel?: string
       workspaceId?: string
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */
@@ -549,6 +684,7 @@ export interface ElectronAPI {
   ackRehomed: (sessionIds: string[]) => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
+  onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) => () => void
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) => () => void
   onClearDetected: (
@@ -648,6 +784,13 @@ export interface ElectronAPI {
     extras?: { sessionType?: string | null; locationId?: string | null }
   ) => Promise<{ success: boolean; error?: string }>
   openExternal: (url: string) => Promise<void>
+  /** The GitHub pull request panel's reads and writes, through the user's own
+   *  `gh`. A failure is a result, never a rejection: the panel names the kind. */
+  githubPull: (ref: PullRef) => Promise<GithubResult<PullRequestView>>
+  githubPullDiff: (ref: PullRef) => Promise<GithubResult<PullDiffFile[]>>
+  githubPullComment: (ref: PullRef, body: string) => Promise<GithubResult<void>>
+  githubPullReview: (ref: PullRef, event: ReviewEvent, body: string) => Promise<GithubResult<void>>
+  githubPullMerge: (ref: PullRef, method: MergeMethod) => Promise<GithubResult<void>>
   checkPort: (port: number) => Promise<boolean>
   /** HTTP liveness probe (any HTTP response = true). Stricter than checkPort:
    *  proves a server answers, not just that something bound the port. */
@@ -681,6 +824,12 @@ export interface ElectronAPI {
   checkForUpdates: () => Promise<UpdaterState>
   /** "Receive pre-release builds": persisted, applied, and a check run at once. */
   setPrereleaseUpdates: (enabled: boolean) => Promise<UpdaterState>
+  /** The agent CLIs Clave keeps current (`src/main/agent-updates/`). */
+  getAgentUpdates: () => Promise<AgentUpdatesState>
+  checkAgentUpdates: () => Promise<AgentUpdatesState>
+  updateAgent: (id: AgentUpdateId) => Promise<AgentUpdatesState>
+  setAgentAutoUpdate: (enabled: boolean) => Promise<AgentUpdatesState>
+  onAgentUpdatesState: (callback: (state: AgentUpdatesState) => void) => () => void
   getPathForFile: (file: File) => string
   persistDroppedFile: (sourcePath: string) => Promise<string | null>
   showNotification: (options: {
@@ -730,17 +879,53 @@ export interface ElectronAPI {
     callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void
   ) => () => void
   claudeAccountsList: () => Promise<ClaudeAccount[]>
-  claudeAccountAdd: (input: { label: string; configDir?: string }) => Promise<ClaudeAccount>
+  /** Accounts whose config-dir shape was dropped at this boot: they need a login. */
+  claudeAccountsMigrated: () => Promise<string[]>
+  claudeAccountAdd: (input: { label: string }) => Promise<ClaudeAccount>
   claudeAccountUpdate: (
     id: string,
-    updates: { label?: string; configDir?: string }
+    updates: { label?: string }
   ) => Promise<ClaudeAccount | undefined>
+  claudeAccountReorder: (ids: string[]) => Promise<void>
   claudeAccountRemove: (id: string) => Promise<boolean>
   /** Stores the token and reads the account's limits with it in one call. */
   claudeAccountSetToken: (id: string, token: string) => Promise<UsageLimits | UsageError>
   claudeAccountClearToken: (id: string) => Promise<void>
   onClaudeAccountsChanged: (callback: (accounts: ClaudeAccount[]) => void) => () => void
-  getCodexUsageLimits: () => Promise<UsageLimits | UsageError>
+  codexAccountsList: () => Promise<CodexAccount[]>
+  codexAccountAdd: (input: { label: string; kind?: 'chatgpt' | 'apiKey' }) => Promise<CodexAccount>
+  codexAccountUpdate: (id: string, updates: { label?: string }) => Promise<CodexAccount | undefined>
+  codexAccountReorder: (ids: string[]) => Promise<void>
+  codexAccountRemove: (id: string) => Promise<boolean>
+  codexAccountClearCredential: (id: string) => Promise<void>
+  onCodexAccountsChanged: (callback: (accounts: CodexAccount[]) => void) => () => void
+  accountLoginStart: (provider: 'claude' | 'codex', accountId: string) => Promise<AccountLoginJob>
+  accountLoginApiKey: (accountId: string, apiKey: string) => Promise<AccountLoginJob>
+  accountLoginInput: (jobId: string, text: string) => Promise<void>
+  accountLoginCancel: (jobId: string) => Promise<void>
+  accountLoginList: () => Promise<AccountLoginJob[]>
+  onAccountLoginProgress: (callback: (job: AccountLoginJob) => void) => () => void
+  getCodexUsageLimits: (
+    accountId?: string,
+    options?: { force?: boolean }
+  ) => Promise<UsageLimits | UsageError>
+  getCodexUsageSnapshot: () => Promise<Record<string, UsageLimits | UsageError>>
+  onCodexAccountUsage: (
+    callback: (update: { accountId: string; result: UsageLimits | UsageError }) => void
+  ) => () => void
+  /** The same tab restarted on another account, its conversation resumed;
+   *  `resumed` false means it started fresh (nothing found to resume). */
+  restartSession: (
+    id: string,
+    overrides: {
+      claudeProfileId?: string
+      claudeProfileLabel?: string
+      codexAccountId?: string
+      codexAccountLabel?: string
+      /** Send the message the limit rejected again on the new account. */
+      resendRejected?: boolean
+    }
+  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
@@ -875,6 +1060,11 @@ export interface ElectronAPI {
     maxDepth?: number
   } | null>
   readImageAsDataUrl: (absolutePath: string) => Promise<string | null>
+  skinsList: () => Promise<import('@clave/skins/types').SkinState>
+  skinsActivate: (id: string) => Promise<import('@clave/skins/types').SkinState>
+  skinsImport: (source?: string) => Promise<import('@clave/skins/types').SkinState>
+  skinsRemove: (id: string) => Promise<import('@clave/skins/types').SkinState>
+  onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
   keymapsLoad: () => Promise<unknown>

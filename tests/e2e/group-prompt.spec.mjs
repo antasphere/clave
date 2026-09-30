@@ -18,12 +18,14 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn
+  spyPtySpawn,
+  selectBuiltIn,
+  fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const DIR = userDataDir('group-prompt')
-const ROOT = '/tmp/clave-e2e-group-root'
+const ROOT = fixturePath('group-root')
 const CLAVE = `${ROOT}/lane.clave`
 const MARKER = 'e2e-group-brief-marker'
 const WS = {
@@ -78,7 +80,7 @@ export async function run(t) {
     // AND puts it on a command line this spec can read.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Codex CLI")')
+    await selectBuiltIn(win, 'Codex CLI', 'Codex', 'codex')
     await win.waitForTimeout(4000)
 
     // Add the group through the picker.
@@ -154,7 +156,7 @@ export async function run(t) {
     // arrived.
     await win.click('.launcher-caret')
     await win.waitForTimeout(800)
-    await win.click('[role="menuitem"]:has-text("Claude Agents")')
+    await selectBuiltIn(win, 'Claude Agents', 'Claude', 'claude')
     await win.waitForTimeout(4000)
 
     const agentsTooltip = await win.evaluate(

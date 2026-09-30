@@ -7,13 +7,22 @@ import { useWorkspaceStore } from '../../store/workspace-store'
 import { FileTree } from '../files/FileTree'
 import { RemoteFileTree } from '../files/RemoteFileTree'
 import { GitStatusPanel, MultiRepoGitPanel } from './GitStatusPanel'
-import { MagicPullButton, MagicSyncButton, ViewModeToggle, PanelModeToggle, CollapseAllButton, CommitBarToggle, JourneyButton, GitSyncBadge } from './GitPanelControls'
+import {
+  MagicPullButton,
+  MagicSyncButton,
+  ViewModeToggle,
+  PanelModeToggle,
+  CollapseAllButton,
+  CommitBarToggle,
+  JourneyButton,
+  GitSyncBadge
+} from './GitPanelControls'
 import { GitBatchProvider, GitBatchProgressBar } from './GitBatchProgress'
 import { useMultiRepoStatus } from '../../hooks/use-multi-repo-status'
 import { useGitStatus } from '../../hooks/use-git-status'
 import { shortenPath } from '../../lib/utils'
 import { HelpPanel } from '../help/HelpPanel'
-import { Tooltip, TooltipTrigger, TooltipContent, IconButton } from '../ui/tooltip'
+import { Tooltip, TooltipTrigger, TooltipContent, IconButton } from '@clave/ui/components'
 import {
   InformationCircleIcon,
   ChevronLeftIcon,
@@ -22,6 +31,9 @@ import {
   ArrowUturnLeftIcon,
   DocumentTextIcon
 } from '@heroicons/react/24/outline'
+import { PluginIcon } from '../plugins/plugin-icon'
+import { PluginPanelHost } from '../plugins/PluginPanelHost'
+import { usePluginRecords, pluginPanels, usePluginUIStore } from '../plugins/plugin-ui-store'
 
 /** Which root the panel hangs from. The rungs, their glyphs and the phrase the
  *  tooltips read all come from PANEL_ROOTS, so the panel and the Settings pane
@@ -107,13 +119,27 @@ function SidePanelBody(): React.JSX.Element {
   const sessions = useSessionStore((s) => s.sessions)
   const sidePanelTab = useSessionStore((s) => s.sidePanelTab)
   const setSidePanelTab = useSessionStore((s) => s.setSidePanelTab)
-
+  // Plugin panels declared `placement: 'side'` are tabs of this panel. The selection lives
+  // in the plugin store, not in `sidePanelTab`: Files and Git stay what that field means,
+  // and a plugin tab is the choice layered over it. A selection whose plugin has since
+  // stopped resolves to nothing and the panel falls back to Files, which is what the user
+  // sees when a plugin is disabled while its tab is open.
+  const pluginPanelSelection = usePluginUIStore((s) => s.sidePanel)
+  const openPluginPanel = usePluginUIStore((s) => s.openSidePanel)
+  const sidePlugins = pluginPanels(usePluginRecords(), 'side')
+  const activePluginPanel =
+    sidePlugins.find(
+      (panel) =>
+        panel.pluginId === pluginPanelSelection?.pluginId &&
+        panel.panelId === pluginPanelSelection?.panelId
+    ) ?? null
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
   const sessionCwd = focusedSession?.cwd ?? null
 
   // Determine if focused session is remote
-  const isRemoteSession = focusedSession?.sessionType === 'remote-terminal' ||
+  const isRemoteSession =
+    focusedSession?.sessionType === 'remote-terminal' ||
     focusedSession?.sessionType === 'remote-claude' ||
     focusedSession?.sessionType === 'agent'
   const remoteLocationId = isRemoteSession ? focusedSession?.locationId : undefined
@@ -125,12 +151,14 @@ function SidePanelBody(): React.JSX.Element {
     return agent?.cwd ?? null
   }, [focusedSession?.sessionType, focusedSession?.agentId])
 
-  const effectiveCwd = isRemoteSession ? (sessionCwd || agentCwd || '~') : sessionCwd
+  const effectiveCwd = isRemoteSession ? sessionCwd || agentCwd || '~' : sessionCwd
 
   // Resolve location name for remote sessions
   const locationName = useMemo(() => {
     if (!remoteLocationId) return null
-    return useLocationStore.getState().locations.find((l) => l.id === remoteLocationId)?.name ?? null
+    return (
+      useLocationStore.getState().locations.find((l) => l.id === remoteLocationId)?.name ?? null
+    )
   }, [remoteLocationId])
 
   // ── The root: which of the three folders the panel hangs from ──────────
@@ -141,7 +169,7 @@ function SidePanelBody(): React.JSX.Element {
   const focusedGroup = useMemo(
     () =>
       focusedSessionId
-        ? groups.find((g) => g.sessionIds.includes(focusedSessionId)) ?? null
+        ? (groups.find((g) => g.sessionIds.includes(focusedSessionId)) ?? null)
         : null,
     [groups, focusedSessionId]
   )
@@ -154,7 +182,7 @@ function SidePanelBody(): React.JSX.Element {
   // not it, so the chip stays hidden there and the panel follows the session.
   const scopeRoots: Record<PanelScope, string | null> = {
     session: sessionCwd,
-    group: isRemoteSession ? null : focusedGroup?.cwd ?? null,
+    group: isRemoteSession ? null : (focusedGroup?.cwd ?? null),
     workspace: isRemoteSession ? null : workspaceRoot
   }
 
@@ -166,21 +194,18 @@ function SidePanelBody(): React.JSX.Element {
   // the one folder the group is about (usually the repo the work is in) rather
   // than on whichever subfolder each tab happens to be launched in; a tab
   // outside any group has no group rung and falls to its own folder.
-  const [scopeChoices, setScopeChoices] = useState<ReadonlyMap<string, PanelScope>>(
-    () => new Map()
-  )
+  const [scopeChoices, setScopeChoices] = useState<ReadonlyMap<string, PanelScope>>(() => new Map())
   const navKey = focusedSessionId ?? NO_SESSION_KEY
   const defaultPanelRoot = useSessionStore((s) => s.defaultPanelRoot)
   const defaultScope: PanelScope =
     panelRootLadder(defaultPanelRoot).find((s) => scopeRoots[s]) ?? 'workspace'
   const chosenScope = scopeChoices.get(navKey)
-  const scope: PanelScope =
-    chosenScope && scopeRoots[chosenScope] ? chosenScope : defaultScope
+  const scope: PanelScope = chosenScope && scopeRoots[chosenScope] ? chosenScope : defaultScope
   const rootCwd = scopeRoots[scope]
 
   const [customCwd, _setCustomCwd] = useState<string | null>(null)
-  const navMapRef = useRef(new Map<string, string>())        // navKey -> current customCwd
-  const navStackRef = useRef(new Map<string, string[]>())    // navKey -> back stack
+  const navMapRef = useRef(new Map<string, string>()) // navKey -> current customCwd
+  const navStackRef = useRef(new Map<string, string[]>()) // navKey -> back stack
   const prevNavKeyRef = useRef(navKey)
   const [canGoBack, setCanGoBack] = useState(false)
   const [pathMenuOpen, setPathMenuOpen] = useState(false)
@@ -270,6 +295,7 @@ function SidePanelBody(): React.JSX.Element {
 
   // Force files tab for remote sessions
   const effectiveTab = isRemoteSession ? 'files' : sidePanelTab
+  const pluginTab = isRemoteSession ? null : activePluginPanel
   const isGitTabActive = effectiveTab === 'git'
   const multiRepo = useMultiRepoStatus(cwd, isGitTabActive)
 
@@ -293,7 +319,6 @@ function SidePanelBody(): React.JSX.Element {
 
   // The repo's dirt, driving the toolbar's + badge.
   const singleRepoChangeCount = singleRepoGit.status?.files.length ?? 0
-
 
   // Every repo the panel lists — what Magic sync acts on, since committing and
   // pushing is about each repo's own local work.
@@ -319,9 +344,11 @@ function SidePanelBody(): React.JSX.Element {
     if (isSingleRepo) singleRepoGit.refresh()
   }, [multiRepo, isSingleRepo, singleRepoGit])
 
-  const displayPath = useMemo(() => {
-    if (!cwd) return ''
-    return shortenPath(cwd)
+  const [displayPathHead, displayPathTail] = useMemo(() => {
+    if (!cwd) return ['', '']
+    const shown = shortenPath(cwd)
+    const cut = shown.lastIndexOf('/')
+    return cut === -1 ? ['', shown] : [shown.slice(0, cut + 1), shown.slice(cut + 1)]
   }, [cwd])
 
   const handleChangeFolder = useCallback(async () => {
@@ -344,7 +371,10 @@ function SidePanelBody(): React.JSX.Element {
 
   // Are we navigated into a subfolder of the root?
   const isNavigatedSubfolder = !!(
-    cwd && rootCwd && cwd !== rootCwd && cwd.startsWith(rootCwd + '/')
+    cwd &&
+    rootCwd &&
+    cwd !== rootCwd &&
+    cwd.startsWith(rootCwd + '/')
   )
 
   // Breadcrumb segments when navigated into a subfolder
@@ -353,9 +383,7 @@ function SidePanelBody(): React.JSX.Element {
     const rootFolderName = rootCwd.split('/').pop() ?? rootCwd
     const relativePath = cwd.slice(rootCwd.length + 1)
     const parts = relativePath.split('/')
-    const segments: { label: string; path: string }[] = [
-      { label: rootFolderName, path: rootCwd }
-    ]
+    const segments: { label: string; path: string }[] = [{ label: rootFolderName, path: rootCwd }]
     for (let i = 0; i < parts.length; i++) {
       segments.push({
         label: parts[i],
@@ -392,27 +420,37 @@ function SidePanelBody(): React.JSX.Element {
             two belong to WHERE the panel is pointed, which is the row below, and
             help was a button in the panel's corner for a panel that is not
             about help — ⌘? still opens it. What is left is the one choice this
-            row was ever for, so the bar is the width of that choice and sits
-            centred, rather than a full-width box with two buttons adrift in
-            it. */}
+            row was ever for: a segmented switch the width of that choice,
+            one control tall, centred — not a full-width box with two buttons
+            adrift in it, and not a bar-height frame around a word. */}
         <div
-          className="panel-bar panel-bar--hug"
+          // A contributed tab makes this bar as wide as the panel: the app's own two
+          // tabs left room for one, and a second plugin would have wrapped it onto a
+          // second row — the one thing the row below it is written never to do. It
+          // scrolls instead, and only when it has to.
+          className="panel-tabs max-w-full overflow-x-auto"
           data-panel-bar="tabs"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <button
-            onClick={() => setSidePanelTab('files')}
+            onClick={() => {
+              openPluginPanel(null)
+              setSidePanelTab('files')
+            }}
             className="panel-tab"
-            data-selected={effectiveTab === 'files' ? 'true' : undefined}
+            data-selected={!pluginTab && effectiveTab === 'files' ? 'true' : undefined}
           >
             <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />
             <span>Files</span>
           </button>
           {!isRemoteSession && (
             <button
-              onClick={() => setSidePanelTab('git')}
+              onClick={() => {
+                openPluginPanel(null)
+                setSidePanelTab('git')
+              }}
               className="panel-tab"
-              data-selected={effectiveTab === 'git' ? 'true' : undefined}
+              data-selected={!pluginTab && effectiveTab === 'git' ? 'true' : undefined}
             >
               {/* Heroicons has no branch glyph — the one hand-rolled icon the
                   convention leaves room for. */}
@@ -427,6 +465,26 @@ function SidePanelBody(): React.JSX.Element {
               <span>Git</span>
             </button>
           )}
+          {!isRemoteSession &&
+            sidePlugins.map((panel) => (
+              <button
+                key={`${panel.pluginId}:${panel.panelId}`}
+                onClick={() =>
+                  openPluginPanel({ pluginId: panel.pluginId, panelId: panel.panelId })
+                }
+                className="panel-tab"
+                data-plugin-tab={panel.panelId}
+                data-selected={
+                  pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId
+                    ? 'true'
+                    : undefined
+                }
+                title={`${panel.title} (${panel.pluginName})`}
+              >
+                <PluginIcon name={panel.icon} className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="truncate">{panel.title}</span>
+              </button>
+            ))}
         </div>
 
         {/* Row 2 — where you are, as one control. The root chip says which
@@ -438,7 +496,7 @@ function SidePanelBody(): React.JSX.Element {
             naked line of text with its own controls stranded a row above. It
             does not wrap — a long path truncates, which is what a path is for;
             wrapping would drop collapse-all onto a second line at every width. */}
-        {effectiveTab !== 'help' && (
+        {effectiveTab !== 'help' && !pluginTab && (
           <div
             className="panel-bar panel-bar--nowrap relative"
             data-panel-bar="path"
@@ -464,7 +522,7 @@ function SidePanelBody(): React.JSX.Element {
                 ref={scopeButtonRef}
                 onClick={() => setScopeMenuOpen((v) => !v)}
                 className="panel-icon-btn panel-scope-btn"
-                aria-label="Choose the panel's root"
+                aria-label={`Rooted at ${SCOPE_HOME[scope]}. Choose the panel's root`}
                 aria-expanded={scopeMenuOpen}
                 data-panel-scope={scope}
                 data-active={scopeMenuOpen ? 'true' : undefined}
@@ -480,7 +538,10 @@ function SidePanelBody(): React.JSX.Element {
                 Everything readable inside it opts back in, the way every other
                 control in the panel's chrome does. */}
             <div
-              className="flex-1 min-w-0 px-0.5"
+              // A flex row so the path's 16px line box is centred in the bar
+              // like the root chip's glyph beside it; as inline content in a
+              // 24px line it sat on that line's baseline, 1.5px low.
+              className="flex-1 min-w-0 px-0.5 flex items-center"
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             >
               {isRemoteSession && locationName ? (
@@ -504,11 +565,21 @@ function SidePanelBody(): React.JSX.Element {
                   onDoubleClick={() => setCustomCwd(null)}
                   title={`Double-click to go back to ${SCOPE_HOME[scope]}`}
                 >
+                  {/* The last segment is the row's whole point, so it never
+                      shrinks (capped so a long name still leaves the ancestors
+                      a trace); the ancestors truncate first. It used to be the
+                      one word destroyed: every segment shrank alike and the
+                      current folder read "a…" at 240px (2026-09-21). */}
                   {breadcrumbSegments.map((seg, i) => (
-                    <span key={seg.path} className="flex items-center min-w-0">
-                      {i > 0 && (
-                        <span className="text-text-tertiary mx-0.5 flex-shrink-0">/</span>
-                      )}
+                    <span
+                      key={seg.path}
+                      className={
+                        i === breadcrumbSegments.length - 1
+                          ? 'flex items-center flex-shrink-0 min-w-0 max-w-[60%]'
+                          : 'flex items-center min-w-0'
+                      }
+                    >
+                      {i > 0 && <span className="text-text-tertiary mx-0.5 flex-shrink-0">/</span>}
                       <button
                         onClick={() => {
                           if (seg.path === rootCwd) {
@@ -533,10 +604,16 @@ function SidePanelBody(): React.JSX.Element {
                   ref={pathButtonRef}
                   onClick={() => cwd && setPathMenuOpen((v) => !v)}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-                  className="max-w-full text-left text-xs text-text-secondary font-medium truncate hover:text-text-primary cursor-pointer transition-colors"
+                  className="panel-path"
                   title={cwd ?? ''}
                 >
-                  {displayPath}
+                  {/* Where you are is the LAST word of the path, so it stays
+                      whole and the way there ellipsizes; the old single span
+                      cut from the right and hid the folder name first. The
+                      two spans still spell the exact path for anything that
+                      reads the bar's text. */}
+                  <span className="panel-path-head">{displayPathHead}</span>
+                  <span className="panel-path-tail">{displayPathTail}</span>
                 </button>
               )}
             </div>
@@ -640,33 +717,33 @@ function SidePanelBody(): React.JSX.Element {
                 {/* The scroll lives one level in: the surface clips its own
                     corners, so it cannot also be the thing that scrolls. */}
                 <div className="max-h-[60vh] overflow-y-auto">
-                {parentPaths.map((item) => (
-                  <button
-                    key={item.path}
-                    onClick={() => {
-                      setCustomCwd(item.path)
-                      setPathMenuOpen(false)
-                    }}
-                    className="menu-item"
-                    data-selected={item.path === cwd}
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      className="flex-shrink-0"
+                  {parentPaths.map((item) => (
+                    <button
+                      key={item.path}
+                      onClick={() => {
+                        setCustomCwd(item.path)
+                        setPathMenuOpen(false)
+                      }}
+                      className="menu-item"
+                      data-selected={item.path === cwd}
                     >
-                      <path
-                        d="M1.5 2.5a1 1 0 0 1 1-1h2.172a1 1 0 0 1 .707.293L6.5 2.914a1 1 0 0 0 .707.293H9.5a1 1 0 0 1 1 1v5.293a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V2.5Z"
-                        stroke="currentColor"
-                        strokeWidth="1.1"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span className="truncate">{item.name}</span>
-                  </button>
-                ))}
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        className="flex-shrink-0"
+                      >
+                        <path
+                          d="M1.5 2.5a1 1 0 0 1 1-1h2.172a1 1 0 0 1 .707.293L6.5 2.914a1 1 0 0 0 .707.293H9.5a1 1 0 0 1 1 1v5.293a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V2.5Z"
+                          stroke="currentColor"
+                          strokeWidth="1.1"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span className="truncate">{item.name}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -679,122 +756,159 @@ function SidePanelBody(): React.JSX.Element {
           name, three badges and six controls do not fit the 240px default
           width, and a second line inside the panel reads as intended where the
           old loose row running toward the edge did not. */}
-      {isGitTabActive && !isRemoteSession && multiRepo.result.mode !== 'none' && multiRepo.result.mode !== 'loading' && (
-        <div className="px-2 pb-1.5 flex-shrink-0">
-          <div className="panel-bar" data-panel-bar="git">
-            {/* Everything that NAMES the repo is one flex item, and the controls
+      {isGitTabActive &&
+        !pluginTab &&
+        !isRemoteSession &&
+        multiRepo.result.mode !== 'none' &&
+        multiRepo.result.mode !== 'loading' && (
+          <div className="px-2 pb-1.5 flex-shrink-0">
+            <div className="panel-bar" data-panel-bar="git">
+              {/* Everything that NAMES the repo is one flex item, and the controls
                 are the other. That is what makes the bar wrap into two readable
                 lines instead of three ragged ones: the label group takes the
                 slack on its line and truncates inside it, so a long branch name
                 never claims a line of its own and never pushes the badges off
                 the one it is on. */}
-            <span className="panel-bar-label">
-            {/* Branch name (single-repo only). The badges sit outside the
+              <span
+                className="panel-bar-label"
+                data-text-only={multiRepo.result.mode === 'multi' ? 'true' : undefined}
+              >
+                {/* Branch name (single-repo only). The badges sit outside the
                 truncating name so a long branch never clips them away — they are
                 the toolbar's controls, the name is only a label. */}
-            {isSingleRepo && singleRepoGit.status?.branch && (
-              <span className="flex items-center gap-1 pl-1.5 text-xs text-text-secondary min-w-0">
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="flex-shrink-0 text-text-tertiary">
-                  <circle cx="6" cy="2.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <circle cx="6" cy="9.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path d="M6 4v4" stroke="currentColor" strokeWidth="1.2" />
-                </svg>
-                <span className="truncate min-w-0">{singleRepoGit.status.branch}</span>
-              </span>
-            )}
-            {/* A folder of repos has no one branch, so the bar's left half says
+                {isSingleRepo && singleRepoGit.status?.branch && (
+                  <span className="flex items-center gap-1 pl-1.5 text-xs text-text-secondary min-w-0">
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      className="flex-shrink-0 text-text-tertiary"
+                    >
+                      <circle cx="6" cy="2.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+                      <circle cx="6" cy="9.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+                      <path d="M6 4v4" stroke="currentColor" strokeWidth="1.2" />
+                    </svg>
+                    <span className="truncate min-w-0">{singleRepoGit.status.branch}</span>
+                  </span>
+                )}
+                {/* A folder of repos has no one branch, so the bar's left half says
                 what it does have. The per-repo change counts are on the rows
                 themselves — a total here only cost the label its own word. */}
-            {multiRepo.result.mode === 'multi' && (
-              <span className="pl-1.5 text-xs text-text-secondary truncate min-w-0">
-                {multiRepo.result.repos.length} repo{multiRepo.result.repos.length === 1 ? '' : 's'}
+                {multiRepo.result.mode === 'multi' && (
+                  <span className="pl-1.5 text-xs text-text-secondary truncate min-w-0">
+                    {multiRepo.result.repos.length} repo
+                    {multiRepo.result.repos.length === 1 ? '' : 's'}
+                  </span>
+                )}
+                {isSingleRepo && singleRepoGit.status && (
+                  <span className="flex items-center gap-1 flex-shrink-0">
+                    {singleRepoGit.status.ahead > 0 && (
+                      <GitSyncBadge
+                        tone="outgoing"
+                        count={singleRepoGit.status.ahead}
+                        active={showOutgoingSingle}
+                        onToggle={() => setShowOutgoingSingle((v) => !v)}
+                        title={
+                          singleRepoGit.status.hasUpstream
+                            ? 'Show what a push will send'
+                            : `${singleRepoGit.status.ahead} commit${singleRepoGit.status.ahead === 1 ? '' : 's'} not published anywhere yet`
+                        }
+                      />
+                    )}
+                    {singleRepoGit.status.behind > 0 && (
+                      <GitSyncBadge
+                        tone="incoming"
+                        count={singleRepoGit.status.behind}
+                        active={showIncomingSingle}
+                        onToggle={() => setShowIncomingSingle((v) => !v)}
+                        title="Show what a pull will bring"
+                      />
+                    )}
+                    {singleRepoChangeCount > 0 && (
+                      <GitSyncBadge
+                        tone="changes"
+                        count={singleRepoChangeCount}
+                        active={showChangesSingle}
+                        onToggle={() => setShowChangesSingle((v) => !v)}
+                        title={showChangesSingle ? 'Hide local changes' : 'Show local changes'}
+                      />
+                    )}
+                  </span>
+                )}
+                {/* Parent-repo notice — opened folder isn't a repo, changes come from above */}
+                {isSingleRepo &&
+                  !isNavigatedSubfolder &&
+                  singleRepoGit.status?.repoRoot &&
+                  cwd &&
+                  singleRepoGit.status.repoRoot !== cwd && (
+                    <span className="flex items-center gap-1 text-[10px] text-text-tertiary truncate min-w-0">
+                      <InformationCircleIcon className="w-3 h-3 flex-shrink-0" />
+                      <Tooltip delayDuration={300}>
+                        <TooltipTrigger asChild>
+                          <span className="truncate cursor-default">
+                            Part of{' '}
+                            {singleRepoGit.status.repoRoot.split(/[\\/]/).pop() ||
+                              singleRepoGit.status.repoRoot}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="font-mono max-w-[300px]">
+                          This folder isn’t a git repository. The changes shown belong to the parent
+                          repository {shortenPath(singleRepoGit.status.repoRoot)}, which contains
+                          it.
+                        </TooltipContent>
+                      </Tooltip>
+                    </span>
+                  )}
               </span>
-            )}
-            {isSingleRepo && singleRepoGit.status && (
-              <span className="flex items-center gap-1 flex-shrink-0">
-                {singleRepoGit.status.ahead > 0 && (
-                  <GitSyncBadge
-                    tone="outgoing"
-                    count={singleRepoGit.status.ahead}
-                    active={showOutgoingSingle}
-                    onToggle={() => setShowOutgoingSingle((v) => !v)}
-                    title="Show what a push will send"
-                  />
-                )}
-                {singleRepoGit.status.behind > 0 && (
-                  <GitSyncBadge
-                    tone="incoming"
-                    count={singleRepoGit.status.behind}
-                    active={showIncomingSingle}
-                    onToggle={() => setShowIncomingSingle((v) => !v)}
-                    title="Show what a pull will bring"
-                  />
-                )}
-                {singleRepoChangeCount > 0 && (
-                  <GitSyncBadge
-                    tone="changes"
-                    count={singleRepoChangeCount}
-                    active={showChangesSingle}
-                    onToggle={() => setShowChangesSingle((v) => !v)}
-                    title={showChangesSingle ? 'Hide local changes' : 'Show local changes'}
-                  />
-                )}
-              </span>
-            )}
-            {/* Parent-repo notice — opened folder isn't a repo, changes come from above */}
-            {isSingleRepo &&
-              !isNavigatedSubfolder &&
-              singleRepoGit.status?.repoRoot &&
-              cwd &&
-              singleRepoGit.status.repoRoot !== cwd && (
-                <span className="flex items-center gap-1 text-[10px] text-text-tertiary truncate min-w-0">
-                  <InformationCircleIcon className="w-3 h-3 flex-shrink-0" />
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <span className="truncate cursor-default">
-                        Part of {singleRepoGit.status.repoRoot.split(/[\\/]/).pop() || singleRepoGit.status.repoRoot}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="font-mono max-w-[300px]">
-                      This folder isn’t a git repository. The changes shown belong to the parent repository {shortenPath(singleRepoGit.status.repoRoot)}, which contains it.
-                    </TooltipContent>
-                  </Tooltip>
-                </span>
-              )}
-            </span>
-            {/* Three segments, hairlined apart: what reaches the remote, what
+              {/* Three segments, hairlined apart: what reaches the remote, what
                 opens a panel over the repo, what changes how the list is drawn.
                 Collapse-all is gone from here — it is in the tab bar above,
                 where the file tree can reach it too. */}
-            {/* One cluster that never breaks apart: it wraps to the next line
+              {/* One cluster that never breaks apart: it wraps to the next line
                 whole, or not at all. The hairline that used to lead it is gone
                 with the spacer — on one line the label group's slack separates
                 them, and on two the line break already has. */}
-            <span className="panel-bar-controls">
-              <MagicPullButton repoPaths={behindRepoPaths} onDone={gitRefresh} />
-              <MagicSyncButton repoPaths={allRepoPaths} onDone={gitRefresh} />
-              <span className="panel-sep" aria-hidden="true" />
-              <CommitBarToggle />
-              {isSingleRepo && cwd && (
-                <JourneyButton cwd={cwd} repoName={cwd.split('/').pop() ?? cwd} />
-              )}
-              <span className="panel-sep" aria-hidden="true" />
-              <PanelModeToggle />
-              <ViewModeToggle />
-  </span>
-            {/* The batch progress row. A sibling of the controls, not a child
+              <span className="panel-bar-controls">
+                <MagicPullButton repoPaths={behindRepoPaths} onDone={gitRefresh} />
+                <MagicSyncButton repoPaths={allRepoPaths} onDone={gitRefresh} />
+                <span className="panel-sep" aria-hidden="true" />
+                <CommitBarToggle />
+                {isSingleRepo && cwd && (
+                  <JourneyButton cwd={cwd} repoName={cwd.split('/').pop() ?? cwd} />
+                )}
+                <span className="panel-sep" aria-hidden="true" />
+                <PanelModeToggle />
+                <ViewModeToggle />
+              </span>
+              {/* The batch progress row. A sibling of the controls, not a child
                 of either button: the bar wraps, so a full-width item lands on
                 its own line underneath without moving anything above it. It
                 renders nothing at all when no batch is running. */}
-            <GitBatchProgressBar />
+              <GitBatchProgressBar />
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Active tab content */}
-      {effectiveTab === 'help' ? (
+      {pluginTab ? (
+        <div className="flex flex-col flex-1 min-h-0" data-plugin-side-panel={pluginTab.panelId}>
+          <PluginPanelHost
+            key={`${pluginTab.pluginId}:${pluginTab.panelId}:${pluginTab.generation}`}
+            pluginId={pluginTab.pluginId}
+            panelId={pluginTab.panelId}
+            title={pluginTab.title}
+            generation={pluginTab.generation}
+          />
+        </div>
+      ) : effectiveTab === 'help' ? (
         <HelpPanel />
-      ) : isRemoteSession && remoteLocationId && effectiveCwd && effectiveCwd !== '' && effectiveCwd !== '~' && effectiveCwd.startsWith('/') ? (
+      ) : isRemoteSession &&
+        remoteLocationId &&
+        effectiveCwd &&
+        effectiveCwd !== '' &&
+        effectiveCwd !== '~' &&
+        effectiveCwd.startsWith('/') ? (
         <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
       ) : isRemoteSession ? (
         <div className="flex-1 flex items-center justify-center px-3">
@@ -806,8 +920,8 @@ function SidePanelBody(): React.JSX.Element {
           <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
             <FileTree cwd={cwd} onNavigateToFolder={handleNavigateToFolder} />
           </div>
-          {sidePanelTab === 'git' && (
-            multiRepo.result.mode === 'multi' ? (
+          {sidePanelTab === 'git' &&
+            (multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
                 repos={multiRepo.result.repos}
                 rootPath={multiRepo.hasNestedRepos ? cwd : null}
@@ -833,8 +947,7 @@ function SidePanelBody(): React.JSX.Element {
                 showOutgoing={showOutgoingSingle}
                 showChanges={showChangesSingle}
               />
-            )
-          )}
+            ))}
         </>
       )}
     </div>

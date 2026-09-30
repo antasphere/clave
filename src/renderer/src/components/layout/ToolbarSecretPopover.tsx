@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { KeyIcon, XMarkIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover'
+import { Popover, PopoverTrigger, PopoverContent } from '@clave/ui/components'
 import { useSecretStore } from '../../store/secret-store'
 import { useSessionStore } from '../../store/session-store'
-import { cn } from '../../lib/utils'
+import { cn } from '@clave/ui/components'
 import type { SecretRequestView } from '../../../../preload/index.d'
 
 /**
@@ -68,10 +68,7 @@ export function ToolbarSecretPopover(): React.JSX.Element | null {
         </div>
         <div className="max-h-[400px] overflow-y-auto">
           {visible.map((request, i) => (
-            <div
-              key={request.id}
-              className={cn(i > 0 && 'border-t border-border-subtle')}
-            >
+            <div key={request.id} className={cn(i > 0 && 'border-t border-border-subtle')}>
               <SecretRequestCard
                 request={request}
                 onHide={() =>
@@ -174,7 +171,11 @@ function SecretRequestCard({
               className="btn-icon btn-icon-xs absolute right-1 top-1/2 -translate-y-1/2"
               tabIndex={-1}
             >
-              {reveal ? <EyeSlashIcon className="w-3.5 h-3.5" /> : <EyeIcon className="w-3.5 h-3.5" />}
+              {reveal ? (
+                <EyeSlashIcon className="w-3.5 h-3.5" />
+              ) : (
+                <EyeIcon className="w-3.5 h-3.5" />
+              )}
             </button>
           </div>
           <button
