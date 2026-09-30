@@ -46,7 +46,7 @@ export function isExhausted(summary: AccountUsageSummary | undefined): boolean {
   return 100 - tightest.usedPercentage <= EXHAUSTED_LEFT_PERCENT
 }
 
-/** "5% left · session", or null without a reading. */
+/** The percent left of the tightest window, or null without a reading. */
 export function headroomOf(summary: AccountUsageSummary | undefined): number | null {
   const tightest = summary?.tightest
   return tightest ? Math.max(0, Math.round(100 - tightest.usedPercentage)) : null
@@ -118,15 +118,50 @@ export function pickAccount(input: PickInput): string {
   return soonest?.id ?? preferredId
 }
 
+/** The soonest reset among a read's weekly caps, or null when none says.
+ *  Weekly headroom is use-it-or-lose-it: the cap that renews first is the
+ *  one to spend first. */
+export function soonestWeeklyReset(summary: AccountUsageSummary | undefined): number | null {
+  const resets = (summary?.windows ?? [])
+    .filter((w) => w.kind.startsWith('weekly') && w.resetsAt != null)
+    .map((w) => w.resetsAt as number)
+  return resets.length > 0 ? Math.min(...resets) : null
+}
+
 /** The accounts a session could move to from the one it is on: every other
- *  usable one, those with headroom first. For the menu. */
+ *  usable one, those with headroom first, each side by its soonest weekly
+ *  reset (an account that renews first is spent first; an exhausted one
+ *  that renews first comes back first), the list's order breaking ties.
+ *  The first one with headroom is SUGGESTED. For the menu. */
 export function switchTargets(
   accounts: PoolAccount[],
   usage: Record<string, AccountUsageSummary | undefined>,
   currentId: string
-): { id: string; exhausted: boolean }[] {
-  return accounts
-    .filter((a) => a.id !== currentId && a.usable)
-    .map((a) => ({ id: a.id, exhausted: !a.fallback && isExhausted(usage[a.id]) }))
-    .sort((a, b) => Number(a.exhausted) - Number(b.exhausted))
+): { id: string; exhausted: boolean; suggested: boolean; weeklyResetAt: number | null }[] {
+  const ranked = accounts
+    .map((a, index) => ({ a, index }))
+    .filter(({ a }) => a.id !== currentId && a.usable)
+    .map(({ a, index }) => ({
+      id: a.id,
+      index,
+      fallback: a.fallback === true,
+      exhausted: !a.fallback && isExhausted(usage[a.id]),
+      weeklyResetAt: soonestWeeklyReset(usage[a.id])
+    }))
+    .sort((x, y) => {
+      if (x.exhausted !== y.exhausted) return Number(x.exhausted) - Number(y.exhausted)
+      // A fallback (an API key) is the last resort among the open ones.
+      if (x.fallback !== y.fallback) return Number(x.fallback) - Number(y.fallback)
+      const rx = x.weeklyResetAt ?? Number.POSITIVE_INFINITY
+      const ry = y.weeklyResetAt ?? Number.POSITIVE_INFINITY
+      if (rx !== ry) return rx < ry ? -1 : 1
+      return x.index - y.index
+    })
+  const suggested = ranked.find((t) => !t.exhausted && !t.fallback)?.id
+  return ranked.map(({ id, exhausted, weeklyResetAt }) => ({
+    id,
+    exhausted,
+    suggested: id === suggested,
+    weeklyResetAt
+  }))
 }

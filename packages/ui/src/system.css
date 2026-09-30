@@ -210,6 +210,13 @@ body,
   color: var(--text-primary);
   background-color: var(--surface-100);
 }
+/* The row's close button sits as far from the row's right edge as from its
+   top and bottom: its box is pulled into the row's side padding by the
+   difference, so the glyph's inset is (row height - button) / 2 on all three
+   sides, at every density. */
+.sidebar-item-close {
+  margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
+}
 
 /* The row an emptied group shows in place of its sessions ("No sessions").
    Cut to .sidebar-item's exact height and side padding so a group of none is
@@ -243,6 +250,70 @@ body,
 .sidebar-tab-icon > svg {
   width: var(--sidebar-tab-icon-size);
   height: var(--sidebar-tab-icon-size);
+}
+
+/* The tab's status, carried by its logo one signal at a time
+   (`lib/tab-status.ts`): motion means working, colour means "go look". No
+   dots, no pulses. The ring sits just outside the logo so the mark keeps its
+   size in every state. */
+.tab-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 300ms,
+    opacity 300ms;
+}
+.tab-status[data-status='needs-you'] {
+  color: var(--color-status-waiting);
+}
+.tab-status[data-status='unread'] {
+  color: var(--color-status-working);
+}
+.tab-status[data-status='ended'] {
+  opacity: 0.45;
+}
+.tab-status[data-status='working']::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: tab-status-spin 0.9s linear infinite;
+}
+@keyframes tab-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-status[data-status='working']::before {
+    animation-duration: 2.4s;
+  }
+}
+
+/* The row's right side, before the close button: what still runs in the
+   background, and a warning when the account is at its limit. */
+.tab-background-count {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: var(--color-surface-100);
+  font-size: 10.5px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+}
+.tab-limit-warning {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-status-waiting);
+}
+.tab-limit-warning > svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ── Session launcher ── */
@@ -1899,13 +1970,34 @@ body,
 }
 
 /* The page's head: a title, a one-line description, the page's own actions on
-   the right where it has some (Keymaps' import and export). */
+   the right where it has some (Keymaps' import and export).
+
+   It stays in place while the sections scroll under it. A sticky box sticks to
+   the scroller's padding edge, not its border, so `top` is minus the
+   scroller's 2rem padding and the header carries that padding itself: stuck,
+   it covers the strip above it and nothing shows through. The hairline under
+   it appears only once the page has scrolled (`data-scrolled`, set by
+   `SettingsPage`), so a page at rest reads exactly as it did. The gap to the
+   first section is split: 1rem inside the header, 1.25rem below it, the same
+   2.25rem at rest, and a stuck header no taller than it needs to be. */
 .settings-page-header {
+  position: sticky;
+  top: -2rem;
+  z-index: 10;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 2.25rem;
+  margin-top: -2rem;
+  padding-top: 2rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  background-color: var(--color-surface-0);
+  box-shadow: 0 1px 0 0 transparent;
+  transition: box-shadow 150ms;
+}
+.settings-page-header[data-scrolled='true'] {
+  box-shadow: 0 1px 0 0 var(--color-border);
 }
 .settings-page-title {
   font-size: calc(var(--control-text) + 0.5rem);
@@ -4213,30 +4305,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
-}
-
-/* The sidebar's view badge on an events session's row */
-.chat-sidebar-row {
-  position: relative;
-}
-.chat-sidebar-row:has(.chat-view-badge) .sidebar-item {
-  padding-right: var(--control-h-md);
-}
-.chat-view-badge {
-  position: absolute;
-  right: var(--spacing);
-  top: var(--spacing);
-  pointer-events: none;
-  width: var(--control-h-xs);
-  height: var(--control-h-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-}
-.chat-view-badge svg {
-  width: calc(var(--spacing) * 3);
-  height: calc(var(--spacing) * 3);
 }
 
 /* ── Terminal view ────────────────────────────────────────────────────────

@@ -72,7 +72,7 @@ for line in sys.stdin:
           id,
           value
         })
-      const blue = () => icon.locator('svg.text-status-working').count()
+      const blue = async () => ((await icon.getAttribute('data-status')) === 'working' ? 1 : 0)
       const expectBlue = async (name, expected) => {
         const matched = await until(async () => (await blue()) === expected)
         t.check(`${label}: ${name}`, matched === true, await icon.innerHTML())
@@ -87,15 +87,16 @@ for line in sys.stdin:
         await expectBlue(`${status} lights the icon`, 1)
       }
       t.check(
-        `${label}: blue icon uses Claude’s pulse`,
-        (await icon.getAttribute('style')).includes('pulse-dot')
+        `${label}: a working logo spins its ring`,
+        (await icon.evaluate((el) => getComputedStyle(el, '::before').animationName)) ===
+          'tab-status-spin'
       )
       await send('[ ! ] Action Required | codex')
       await expectBlue('waiting for the user clears the glow', 0)
       t.equal(
-        `${label}: action required has an amber dot`,
-        await icon.locator('.bg-status-waiting').count(),
-        1
+        `${label}: action required turns the logo amber`,
+        await icon.getAttribute('data-status'),
+        'needs-you'
       )
       await send('codex | Working')
       await expectBlue('work resumes after a question', 1)
@@ -116,11 +117,16 @@ for line in sys.stdin:
       await expectBlue('background work still lights the Codex row', 1)
       await send('codex | Ready')
       await expectBlue('background completion clears it too', 0)
+      t.check(
+        `${label}: a turn that ends out of view leaves the logo unread`,
+        await until(async () => (await icon.getAttribute('data-status')) === 'unread'),
+        await icon.getAttribute('data-status')
+      )
       await send('codex | Working')
       await expectBlue('working before exit', 1)
       await send('exit')
       await expectBlue('process exit clears the glow', 0)
-      t.equal(`${label}: ended Codex icon dims`, await icon.locator('svg.opacity-50').count(), 1)
+      t.equal(`${label}: ended Codex icon dims`, await icon.getAttribute('data-status'), 'ended')
       await callMcp(app, 'closeSession', { sessionId: other.sessionId })
       await callMcp(app, 'closeSession', { sessionId: id })
     }

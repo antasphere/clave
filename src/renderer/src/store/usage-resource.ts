@@ -25,6 +25,11 @@ export function createUsageResource<T>(
   fetcher: (opts: { force: boolean }) => Promise<T>
 ): UseBoundStore<StoreApi<UsageResource<T>>> {
   let inFlight: Promise<void> | null = null
+  // Whether the read in flight was forced. A forced load (the Refresh button)
+  // must not settle for an ordinary one already under way: that read may be
+  // answered from main's five-minute cache, and the click would change
+  // nothing. It waits for it, then reads live.
+  let inFlightForced = false
   let failures = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   const store = create<UsageResource<T>>((set, get) => ({
@@ -34,7 +39,11 @@ export function createUsageResource<T>(
     fetchedAt: null,
     refreshing: false,
     load: async ({ force = false } = {}) => {
-      if (inFlight) return inFlight
+      if (inFlight) {
+        if (!force || inFlightForced) return inFlight
+        await inFlight.catch(() => {})
+        return store.getState().load({ force: true })
+      }
       const { fetchedAt, data } = get()
       if (!force && fetchedAt !== null && Date.now() - fetchedAt < FRESH_MS) return
       if (retryTimer) {
@@ -42,6 +51,7 @@ export function createUsageResource<T>(
         retryTimer = null
       }
       set({ status: data === null ? 'loading' : 'ready', refreshing: true, error: null })
+      inFlightForced = force
       inFlight = (async () => {
         try {
           const result = await Promise.resolve().then(() => fetcher({ force }))

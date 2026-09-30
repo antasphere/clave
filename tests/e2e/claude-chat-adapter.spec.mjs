@@ -141,11 +141,11 @@ setInterval(()=>{},1000);
       await window.electronAPI.sessionsWrite(id, { type: 'user_message', text: 'fixture prompt' })
     }, session.id)
     assert.ok(
-      await until(() => win.locator('.sidebar-tab-icon .text-status-working').count()),
+      await until(() => win.locator('.sidebar-tab-icon[data-status="working"]').count()),
       'working state reaches sidebar'
     )
     assert.ok(
-      await until(() => win.locator('.sidebar-tab-icon .bg-status-waiting').count()),
+      await until(() => win.locator('.sidebar-tab-icon[data-status="needs-you"]').count()),
       'blocked state reaches sidebar'
     )
     const request = await win.evaluate(() =>
@@ -187,8 +187,8 @@ setInterval(()=>{},1000);
           )
           return (
             record?.state === 'working' &&
-            (await win.locator('.sidebar-tab-icon .text-status-working').count()) === 1 &&
-            (await win.locator('.sidebar-tab-icon .bg-status-waiting').count()) === 0
+            (await win.locator('.sidebar-tab-icon[data-status="working"]').count()) === 1 &&
+            (await win.locator('.sidebar-tab-icon[data-status="needs-you"]').count()) === 0
           )
         },
         { gapMs: 25 }
@@ -239,9 +239,9 @@ setInterval(()=>{},1000);
       ['working', 'blocked', 'working', 'done']
     )
     assert.equal(
-      await win.locator('.sidebar-tab-icon .bg-status-waiting').count(),
+      await win.locator('.sidebar-tab-icon[data-status="needs-you"]').count(),
       0,
-      'the waiting dot stays clear when the kernel finishes the external answer'
+      'the amber logo clears when the kernel finishes the external answer'
     )
     const inputs = readFileSync(`${ROOT}/input.ndjson`, 'utf8').trim().split('\n').map(JSON.parse)
     assert.equal(inputs[1].response.request_id, request.id)

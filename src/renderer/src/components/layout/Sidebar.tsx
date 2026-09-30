@@ -1,4 +1,3 @@
-import { SessionViewBadge } from '../../views/registry'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -62,6 +61,7 @@ import {
   switchSessionAccount
 } from '../../lib/switch-account'
 import { AccountMenuHeader } from './AccountMenuHeader'
+import { AccountSwitchRow, AccountUsagePreview } from './AccountSwitchMenu'
 import { effectiveSwitchMode, loadAccountPolicy } from '../../store/account-policy-store'
 import { startAccountPolicy } from '../../lib/account-policy'
 import { WordmarkStrip } from './Wordmark'
@@ -1176,8 +1176,10 @@ export function Sidebar(): React.JSX.Element {
       // window runs out and the question is "which subscription is this on".
       const header =
         session && accountProviderOf(session) ? <AccountMenuHeader session={session} /> : undefined
-      // Every other account of the tab's provider, those with headroom first,
-      // in one submenu beside the menu: picking one restarts the tab's agent
+      // Every other account of the tab's provider, those with headroom first
+      // and the one whose week renews soonest on top (Suggested), in one
+      // submenu beside the menu, a card of its caps beside the highlighted
+      // row: picking one restarts the tab's agent
       // on it with the conversation resumed (ADR 0002). Only for a live tab:
       // a dead one has Resume.
       if (session?.alive && accountProviderOf(session)) {
@@ -1188,8 +1190,9 @@ export function Sidebar(): React.JSX.Element {
             icon: <ArrowsRightLeftIcon className="w-3.5 h-3.5" />,
             onClick: () => {},
             submenu: targets.map((target) => ({
-              label: `${target.label}${target.exhausted ? ' (at limit)' : ''}`,
-              shortcut: target.headroom ?? undefined,
+              label: target.label,
+              content: <AccountSwitchRow target={target} />,
+              preview: <AccountUsagePreview target={target} />,
               onClick: () => void switchSessionAccount(sessionId, target.id)
             }))
           })
@@ -2250,10 +2253,5 @@ function PinnedSection({
 }
 
 function SessionItem(props: React.ComponentProps<typeof BaseSessionItem>): React.JSX.Element {
-  return (
-    <div className="chat-sidebar-row">
-      <BaseSessionItem {...props} />
-      <SessionViewBadge sessionId={props.session.id} />
-    </div>
-  )
+  return <BaseSessionItem {...props} />
 }

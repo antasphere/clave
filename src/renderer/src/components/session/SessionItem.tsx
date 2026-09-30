@@ -1,8 +1,13 @@
 import { memo } from 'react'
-import { cn } from '@clave/ui/components'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
-import { CommandLineIcon, BoltIcon, RectangleGroupIcon } from '@heroicons/react/24/outline'
+import {
+  CommandLineIcon,
+  BoltIcon,
+  RectangleGroupIcon,
+  ExclamationTriangleIcon
+} from '@heroicons/react/24/outline'
 import {
   ClaudeLogo,
   AntigravityLogo,
@@ -14,11 +19,13 @@ import { SidebarTabItem } from './SidebarTabItem'
 import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
+import { tabIndicators } from '../../lib/tab-status'
+import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 
-/** "At limit" on a row whose account is about to stop it (ADR 0002): the
- *  one word that says why the next turn will fail, before it does. Its own
- *  component, subscribed to the usage mirror, because the row itself only
- *  re-renders on its session object. */
+/** A warning on a row whose account is about to stop it (ADR 0002), before
+ *  the next turn fails. Hovering shows the account card the tab's context menu
+ *  opens with. Its own component, subscribed to the usage mirror, because the
+ *  row itself only re-renders on its session object. */
 function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element | null {
   const provider = accountProviderOf(session)
   const accountId = provider ? sessionAccountId(session, provider) : ''
@@ -27,13 +34,23 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   const summary = provider === 'codex' ? codex : provider === 'claude' ? claude : undefined
   if (!provider || !session.alive || !isExhausted(summary)) return null
   return (
-    <span
-      className="badge flex-shrink-0 bg-surface-100 text-status-waiting"
-      title="This account is about to hit its limit. Right-click to switch the tab to another."
-      data-account-limit={accountId}
-    >
-      At limit
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="tab-limit-warning"
+          data-account-limit={accountId}
+          aria-label="This account is at its limit"
+        >
+          <ExclamationTriangleIcon />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="max-w-64">
+        <AccountMenuHeader session={session} />
+        <div className="mt-1.5 text-text-tertiary">
+          At its limit. Right-click the tab to switch it to another account.
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -103,82 +120,43 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
             : session.claudeMode || session.claudeAgentsMode
               ? ClaudeLogo
               : CommandLineIcon
-
-  // Lifecycle-aware providers share these complementary status visuals:
-  // the ICON color carries "is it running" and the DOT carries "does it need me".
-  //   working → blue pulsing icon, no dot
-  //   background → blue icon, slow pulse (turn over, shells/subagents still running)
-  //   blocked → neutral icon, amber dot (waiting on a permission/selection prompt)
-  //   done & unseen → neutral icon, green dot (finished while you were away; clears on view)
-  //   idle / done-seen / empty → neutral icon, no dot
-  //   ended → dimmed icon, no dot
-  // Antigravity/terminals/agents have no deterministic state signal, so they stay
-  // fully neutral — no color, no dot (see ROADMAP.md).
-  const isClaudeCode =
-    session.claudeMode === true &&
-    !session.claudeAgentsMode &&
-    !session.antigravityMode &&
-    !session.codexMode &&
-    !session.piMode &&
-    session.sessionType === 'local'
-  const isCodex = session.codexMode === true && session.sessionType === 'local'
-  const hasLifecycleState =
-    isClaudeCode || isCodex || (session.piMode === true && session.sessionType === 'local')
-
-  const state = !session.alive ? 'ended' : (session.agentState ?? 'idle')
-  const working = hasLifecycleState && state === 'working'
-  const blocked = (isClaudeCode || isCodex) && state === 'blocked'
-  const doneUnseen = hasLifecycleState && state === 'done' && session.hasUnseenActivity
-  const ended = hasLifecycleState && state === 'ended'
-  const background =
-    hasLifecycleState && !working && !blocked && !ended && (session.backgroundTasks ?? 0) > 0
-
-  // A pending cross-tab message (accent dot) is provider-agnostic and takes
-  // precedence over the Claude-only status dots — it's an explicit "another
-  // agent wrote here" signal the user hasn't seen yet.
-  const injectedFrom = session.injectedFrom
-  const dotColor = injectedFrom
-    ? 'bg-accent'
-    : blocked
-      ? 'bg-status-waiting'
-      : doneUnseen
-        ? 'bg-status-ready'
-        : null
-
+  // The logo carries one signal at a time (`lib/tab-status.ts`): a ring while
+  // it works, amber when it needs the reader, blue when there is something new
+  // to read. Background work is the row's counter, never the logo's.
+  const { status } = tabIndicators(session)
   return (
     <span
-      className="sidebar-tab-icon relative flex-shrink-0"
+      className="sidebar-tab-icon tab-status relative flex-shrink-0"
+      data-status={status}
       title={
-        injectedFrom
-          ? `Message from ${injectedFrom}`
-          : background
-            ? `${session.backgroundTasks} running in the background`
-            : undefined
-      }
-      data-background={background ? 'true' : undefined}
-      style={
-        working
-          ? { animation: 'pulse-dot 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite' }
-          : background
-            ? { animation: 'pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite' }
-            : undefined
+        status === 'needs-you'
+          ? 'Waiting on you'
+          : status === 'working'
+            ? 'Working'
+            : status === 'unread'
+              ? session.injectedFrom
+                ? `Message from ${session.injectedFrom}`
+                : 'Finished while you were away'
+              : undefined
       }
     >
-      <Icon
-        className={cn(
-          'transition-colors duration-300',
-          (working || background) && 'text-status-working',
-          ended && 'text-text-tertiary opacity-50'
-        )}
-      />
-      {dotColor && (
-        <span
-          className={cn(
-            'absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-surface-50',
-            dotColor
-          )}
-        />
-      )}
+      <Icon />
+    </span>
+  )
+}
+
+/** Background shells and subagents a turn left running, in words on the row's
+ *  right, so a finished tab with a server up still reads as finished. */
+function BackgroundCounter({ session }: { session: Session }): React.JSX.Element | null {
+  const { background } = tabIndicators(session)
+  if (!background) return null
+  return (
+    <span
+      className="tab-background-count"
+      data-background={background}
+      title={`${background} ${background === 1 ? 'task' : 'tasks'} still running in the background`}
+    >
+      {background} running
     </span>
   )
 }
@@ -229,8 +207,9 @@ function SessionItemImpl({
       icon={<SessionIcon session={session} />}
       extraContent={
         <>
-          <AccountLimitBadge session={session} />
           {session.view ? <SessionViewIcon session={session} /> : null}
+          <BackgroundCounter session={session} />
+          <AccountLimitBadge session={session} />
           {session.locationId && session.sessionType !== 'local' ? (
             <LocationBadge locationId={session.locationId} />
           ) : getClaudeVariant(session) ? (

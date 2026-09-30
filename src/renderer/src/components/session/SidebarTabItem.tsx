@@ -166,7 +166,7 @@ export function SidebarTabItem({
               e.stopPropagation()
               onDelete()
             }}
-            className="btn-icon btn-icon-xs flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="btn-icon btn-icon-xs sidebar-item-close opacity-0 group-hover:opacity-100 transition-opacity"
           >
             <XMarkIcon className="w-3.5 h-3.5" />
           </span>

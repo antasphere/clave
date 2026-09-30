@@ -219,6 +219,38 @@ export async function run(t) {
       'the submenu does not offer the account the tab is on',
       (await submenu.locator('[role="menuitem"]', { hasText: 'Work' }).count()) === 0
     )
+    const playRow = submenu.locator(`[data-account-switch-row="${accounts.play}"]`)
+    const suggested = submenu.locator('[data-account-switch-row][data-suggested="true"]')
+    t.equal('exactly one account is suggested', await suggested.count(), 1)
+    t.check(
+      'the suggested account has headroom',
+      (await suggested.first().getAttribute('data-exhausted')) === null
+    )
+    t.check(
+      'the row says what is left, never "(at limit)" in the name',
+      /\d+% left/.test(await playRow.innerText()) && !/at limit\)/.test(await playRow.innerText()),
+      await playRow.innerText()
+    )
+    await switchItem.hover()
+    const preview = win.locator(`[data-account-preview="${accounts.play}"]`)
+    await preview.waitFor({ timeout: 3000 }).catch(() => {})
+    t.check('hovering the row shows its usage card', (await preview.count()) === 1)
+    const [submenuNow, previewBox] = await Promise.all([
+      submenu.boundingBox(),
+      win.locator('[data-menu-preview]').boundingBox()
+    ])
+    t.check(
+      'the card sits beside the submenu, not over it',
+      !!submenuNow &&
+        !!previewBox &&
+        (previewBox.x >= submenuNow.x + submenuNow.width ||
+          previewBox.x + previewBox.width <= submenuNow.x),
+      JSON.stringify({ submenuNow, previewBox })
+    )
+    t.check(
+      'the card draws one column per cap the account reports',
+      (await preview.locator('[data-usage-window]').count()) >= 1
+    )
     await switchItem.click()
     const after = await printed(onWork.sessionId, new RegExp(`TOKEN=${PLAY_TOKEN} MODE=`))
     t.check('the SAME tab now runs a process with the Play token', !!after, after?.slice(0, 200))

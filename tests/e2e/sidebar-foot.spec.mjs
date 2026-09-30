@@ -675,10 +675,10 @@ export async function run(t) {
         nav.find((el) => el.textContent?.trim() === 'Usage')?.click()
       })
       await win
-        .waitForSelector('.settings-card .rounded-full', { timeout: 15000 })
+        .waitForSelector('[data-usage-chart] .usage-column-value', { timeout: 15000 })
         .catch(() => null)
       const paneMax = await win.evaluate(() => {
-        const bars = Array.from(document.querySelectorAll('.settings-card .space-y-1\\.5'))
+        const bars = Array.from(document.querySelectorAll('[data-usage-chart] .usage-column-value'))
         const pcts = bars
           .map((b) => Number(b.textContent?.match(/(\d+)%/)?.[1]))
           .filter((n) => Number.isFinite(n))

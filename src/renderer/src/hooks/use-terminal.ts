@@ -13,6 +13,7 @@ import { stripAnsi, detectLocalhostUrl } from '../lib/localhost-url'
 import { registerTerminal, unregisterTerminal } from '../lib/terminal-registry'
 import { writeUserInput } from '../lib/user-input'
 import '@xterm/xterm/css/xterm.css'
+import { hasLifecycleState } from '../lib/tab-status'
 
 function detectPrompt(buffer: string): string | null {
   // Collapse whitespace for matching (ANSI stripping removes cursor positioning,
@@ -288,9 +289,13 @@ export function useTerminal(sessionId: string): {
         }
       }
 
-      // Mark unseen activity if this session is not currently selected
-      const { selectedSessionIds } = useSessionStore.getState()
-      if (!selectedSessionIds.includes(sessionId)) {
+      // Mark unseen activity if this session is not currently selected. A
+      // session with a lifecycle marks it when its turn ends instead
+      // (`setAgentState`): its TUI repaints while idle, and that noise used to
+      // light tabs that had nothing new.
+      const { selectedSessionIds, sessions } = useSessionStore.getState()
+      const owner = sessions.find((s) => s.id === sessionId)
+      if (!selectedSessionIds.includes(sessionId) && !(owner && hasLifecycleState(owner))) {
         setSessionUnseenActivity(sessionId, true)
       }
 
