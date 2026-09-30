@@ -245,6 +245,71 @@ body,
   height: var(--sidebar-tab-icon-size);
 }
 
+/* The tab's status, carried by its logo one signal at a time
+   (`lib/tab-status.ts`): motion means working, colour means "go look". No
+   dots, no pulses. The ring sits just outside the logo so the mark keeps its
+   size in every state. */
+.tab-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 300ms,
+    opacity 300ms;
+}
+.tab-status[data-status='needs-you'] {
+  color: var(--color-status-waiting);
+}
+.tab-status[data-status='unread'] {
+  color: var(--color-status-working);
+}
+.tab-status[data-status='ended'] {
+  opacity: 0.45;
+}
+.tab-status[data-status='working']::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: tab-status-spin 0.9s linear infinite;
+}
+@keyframes tab-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-status[data-status='working']::before {
+    animation-duration: 2.4s;
+  }
+}
+
+/* The row's right side, before the close button: what still runs in the
+   background, and a warning when the account is at its limit. */
+.tab-background-count {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.tab-background-count > svg {
+  width: 12px;
+  height: 12px;
+}
+.tab-limit-warning {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-status-waiting);
+}
+.tab-limit-warning > svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Session launcher ── */
 
 /* The pinned launch row at the top of the sidebar: a plain-terminal button, an

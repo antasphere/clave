@@ -1,5 +1,6 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { emitTabClosed } from '../lib/exchange-capture'
+import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import type { GitRangeDirection } from '../../../shared/git-range'
 import type {
@@ -1397,8 +1398,14 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => {
       const session = state.sessions.find((s) => s.id === id)
       if (!session || session.agentState === agentState) return state
+      // A turn that comes to rest while its tab is out of view leaves something
+      // to read — for every transport, since this is the one place a state lands.
+      const unread =
+        finishesTurn(session.agentState, agentState) && !state.selectedSessionIds.includes(id)
       return {
-        sessions: state.sessions.map((s) => (s.id === id ? { ...s, agentState } : s))
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, agentState, ...(unread ? { hasUnseenActivity: true } : {}) } : s
+        )
       }
     }),
 

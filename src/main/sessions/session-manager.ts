@@ -6,7 +6,8 @@ import {
   type SessionInput,
   type ModelOption,
   type CommandOption,
-  type HistoryPage
+  type HistoryPage,
+  type BackgroundTask
 } from '../../shared/session-model'
 import { pageHistory } from './history'
 import type { SessionAdapter, SessionHandle, SpawnSpec, Unsubscribe } from './adapter'
@@ -21,6 +22,10 @@ interface Entry {
   exits: Set<Listener<number>>
   exited: boolean
   ready: boolean
+  /** The provider's last `background_tasks` snapshot: what still runs past the
+   *  turn. Held here, not only in a pane's log, so a pane that subscribes late
+   *  reads the live list and a process that goes away takes its list with it. */
+  background: BackgroundTask[]
 }
 
 /** Process-independent registry: closing a view never kills its provider. */
@@ -79,7 +84,8 @@ export class SessionManager {
       streams: new Set(),
       exits: new Set(),
       exited: false,
-      ready: false
+      ready: false,
+      background: []
     }
     this.entries.set(parsed.id, entry)
     try {
@@ -98,7 +104,11 @@ export class SessionManager {
       adapter.on(handle, 'stream', (stream) => {
         if (stream.kind === 'event' && stream.event.type === 'state_change') {
           this.setState(session.id, stream.event.state)
-        } else this.publish(entry, stream)
+        } else {
+          if (stream.kind === 'event' && stream.event.type === 'background_tasks')
+            entry.background = stream.event.tasks
+          this.publish(entry, stream)
+        }
       })
     )
     entry.off.push(adapter.on(handle, 'state', (state) => this.setState(session.id, state)))
@@ -106,6 +116,7 @@ export class SessionManager {
       adapter.on(handle, 'exit', (code) => {
         if (entry.exited) return
         entry.exited = true
+        this.clearBackground(entry)
         this.setState(session.id, 'ended')
         for (const listener of [...entry.exits]) this.notify(() => listener.callback(code))
         for (const off of entry.off) off()
@@ -118,6 +129,10 @@ export class SessionManager {
     const entry = this.require(id)
     const handle = await entry.adapter.attach(id)
     for (const off of entry.off) off()
+    // The old process's own end is no longer heard once its listeners are
+    // off, so its background list would outlive it: the new process reports
+    // its own.
+    this.clearBackground(entry)
     entry.handle = handle
     entry.exited = false
     this.bind(entry)
@@ -287,6 +302,17 @@ export class SessionManager {
     } catch (error) {
       console.error('Session consumer failed:', error)
     }
+  }
+
+  /** What the session still runs in the background, as its provider last said. */
+  background(id: string): BackgroundTask[] {
+    return [...(this.entries.get(id)?.background ?? [])]
+  }
+
+  private clearBackground(entry: Entry): void {
+    if (!entry.background.length) return
+    entry.background = []
+    this.publish(entry, { kind: 'event', event: { type: 'background_tasks', tasks: [] } })
   }
 
   private publish(entry: Entry, stream: SessionStream): void {

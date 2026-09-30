@@ -141,6 +141,13 @@ export function RegisteredSessionView({
   useEffect(() => {
     useViewSessionStore.getState().setBackgroundTaskCount(sessionId, backgroundTasks.length)
   }, [sessionId, backgroundTasks.length])
+  // The pane is the only writer of that count, so it takes it with it: a pane
+  // gone while tasks ran used to leave the tab counting them for good. A new
+  // pane reads the live list from main on subscribing.
+  useEffect(
+    () => () => useViewSessionStore.getState().setBackgroundTaskCount(sessionId, 0),
+    [sessionId]
+  )
   // Every view this session can be read in is mounted for the pane's lifetime
   // and all but one are hidden. Switching therefore finds a view exactly as it
   // was left — including the state a view keeps privately rather than reading
