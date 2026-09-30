@@ -1970,13 +1970,34 @@ body,
 }
 
 /* The page's head: a title, a one-line description, the page's own actions on
-   the right where it has some (Keymaps' import and export). */
+   the right where it has some (Keymaps' import and export).
+
+   It stays in place while the sections scroll under it. A sticky box sticks to
+   the scroller's padding edge, not its border, so `top` is minus the
+   scroller's 2rem padding and the header carries that padding itself: stuck,
+   it covers the strip above it and nothing shows through. The hairline under
+   it appears only once the page has scrolled (`data-scrolled`, set by
+   `SettingsPage`), so a page at rest reads exactly as it did. The gap to the
+   first section is split: 1rem inside the header, 1.25rem below it, the same
+   2.25rem at rest, and a stuck header no taller than it needs to be. */
 .settings-page-header {
+  position: sticky;
+  top: -2rem;
+  z-index: 10;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 2.25rem;
+  margin-top: -2rem;
+  padding-top: 2rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  background-color: var(--color-surface-0);
+  box-shadow: 0 1px 0 0 transparent;
+  transition: box-shadow 150ms;
+}
+.settings-page-header[data-scrolled='true'] {
+  box-shadow: 0 1px 0 0 var(--color-border);
 }
 .settings-page-title {
   font-size: calc(var(--control-text) + 0.5rem);

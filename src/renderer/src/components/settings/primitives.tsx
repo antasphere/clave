@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { CheckIcon, ChevronUpDownIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
@@ -12,7 +13,9 @@ import { cn } from '@clave/ui/components'
  */
 
 /** The page: one width for every page, a title, a one-line description, the
- *  page's own actions on the right where it has some. */
+ *  page's own actions on the right where it has some. The header stays put
+ *  while the sections scroll under it, and draws its hairline only once
+ *  something has actually gone under (`data-scrolled`). */
 export function SettingsPage({
   title,
   description,
@@ -26,9 +29,23 @@ export function SettingsPage({
   children: React.ReactNode
   testId?: string
 }): React.JSX.Element {
+  const headerRef = useRef<HTMLElement>(null)
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const scroller = headerRef.current?.closest('.settings-scroller')
+    if (!scroller) return
+    const update = (): void => setScrolled(scroller.scrollTop > 0)
+    update()
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [])
   return (
     <div data-settings-page={testId ?? title.toLowerCase()}>
-      <header className="settings-page-header">
+      <header
+        ref={headerRef}
+        className="settings-page-header"
+        data-scrolled={scrolled ? 'true' : undefined}
+      >
         <div className="min-w-0">
           <h2 className="settings-page-title">{title}</h2>
           {description && <p className="settings-page-description">{description}</p>}

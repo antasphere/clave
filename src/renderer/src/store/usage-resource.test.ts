@@ -106,3 +106,41 @@ describe('a pushed result', () => {
     expect(seen).toEqual([false, true])
   })
 })
+
+/**
+ * The Refresh button used to join whatever read was already under way. When
+ * that read was an ordinary one (the page's own load, the five-minute tick),
+ * main could answer it from its cache and the click changed nothing.
+ */
+describe('a forced load while an ordinary one is in flight', () => {
+  it('waits for it, then reads live', async () => {
+    const seen: boolean[] = []
+    let release: () => void = () => {}
+    const store = createUsageResource(async ({ force }) => {
+      seen.push(force)
+      if (!force) await new Promise<void>((r) => (release = r))
+      return { force }
+    })
+    const ordinary = store.getState().load()
+    const forced = store.getState().load({ force: true })
+    // The fetcher starts a microtask later; release it once it is waiting.
+    await new Promise((r) => setTimeout(r, 0))
+    release()
+    await Promise.all([ordinary, forced])
+    expect(seen).toEqual([false, true])
+    expect(store.getState().data).toEqual({ force: true })
+  })
+
+  it('joins a forced one already in flight rather than reading twice', async () => {
+    let fetches = 0
+    const store = createUsageResource(async () => {
+      fetches++
+      return { n: fetches }
+    })
+    await Promise.all([
+      store.getState().load({ force: true }),
+      store.getState().load({ force: true })
+    ])
+    expect(fetches).toBe(1)
+  })
+})

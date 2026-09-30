@@ -105,6 +105,13 @@ export interface AccountUsageSummary {
   /** All returned windows, including the 5-hour session window used for balancing. */
   windows?: UsageWindow[]
   error: string | null
+  /** When main actually read these numbers (not when this window received
+   *  them), or null before the first read. */
+  fetchedAt?: number | null
+  /** A read is under way. */
+  refreshing?: boolean
+  /** The service's own word when a read came back with no windows. */
+  message?: string
 }
 
 /** One subscription for every account's read, mirrored from the resources. */
@@ -120,7 +127,10 @@ function summarize(state: UsageResource<UsageLimits>): AccountUsageSummary {
     status: state.status,
     tightest: state.status === 'error' ? null : tightestWindow(state.data?.windows ?? []),
     windows: state.status === 'error' ? undefined : (state.data?.windows ?? []),
-    error: state.error
+    error: state.error,
+    fetchedAt: state.data?.fetchedAt ?? (state.status === 'error' ? state.fetchedAt : null),
+    refreshing: state.refreshing,
+    message: state.data?.message
   }
 }
 
@@ -245,6 +255,62 @@ export function shortLabel(w: UsageWindow): string {
   if (w.kind === 'session') return 'session'
   if (w.kind === 'weekly_all') return 'weekly'
   return w.label
+}
+
+/** Whether a window is a weekly cap — the one that decides the week, which
+ *  the Usage page puts first. By the service's own kind, never by a name. */
+export function isWeeklyWindow(w: UsageWindow): boolean {
+  return w.kind.startsWith('weekly')
+}
+
+/** "Thu 2 Oct, 14:00" — the moment a window resets, as a date a person can
+ *  plan around. Null when the service did not say. */
+export function formatResetAt(resetsAt: number | null): string | null {
+  if (resetsAt == null) return null
+  const at = new Date(resetsAt)
+  const day = at.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return `${day}, ${time}`
+}
+
+/** "in 2d 5h" / "in 3h 12m" / "in 4m": the distance to a reset, one unit
+ *  finer than `formatReset`, which rounds a week down to its days. */
+export function formatResetIn(resetsAt: number | null, now: number = Date.now()): string | null {
+  if (resetsAt == null) return null
+  const secs = Math.max(0, Math.round((resetsAt - now) / 1000))
+  const d = Math.floor(secs / 86400)
+  const h = Math.floor((secs % 86400) / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  if (d >= 1) return h > 0 ? `in ${d}d ${h}h` : `in ${d}d`
+  if (h >= 1) return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`
+  if (m >= 1) return `in ${m}m`
+  return 'shortly'
+}
+
+/** "just now" / "4 min ago" / "2 h ago": how old a read is. */
+export function formatAge(at: number | null | undefined, now: number = Date.now()): string | null {
+  if (at == null) return null
+  const secs = Math.max(0, Math.round((now - at) / 1000))
+  if (secs < 45) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  return `${Math.round(mins / 60)} h ago`
+}
+
+/** Read every account of both quota providers again, live, and the Pi
+ *  ranges already on screen: the Usage page's one Refresh. Resolves when
+ *  every read has landed, failed ones included. */
+export async function refreshAllUsage(
+  claudeAccountIds: string[],
+  codexAccountIds: string[]
+): Promise<void> {
+  await Promise.all([
+    ...claudeAccountIds.map((id) => claudeUsageStore(id).getState().load({ force: true })),
+    ...codexAccountIds.map((id) => codexUsageStore(id).getState().load({ force: true })),
+    ...Object.values(piUsageStores)
+      .filter((store) => store.getState().status !== 'idle')
+      .map((store) => store.getState().load({ force: true }))
+  ])
 }
 
 /** "resets in 3h12m" / "resets in 2d". Null when the service did not say. */

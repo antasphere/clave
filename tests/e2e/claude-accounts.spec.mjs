@@ -210,11 +210,17 @@ export async function run(t) {
       await claudePanel.locator('[data-claude-account-usage]').count(),
       2
     )
-    const workCard = claudePanel.locator('[data-claude-account-usage]').nth(1)
-    await workCard.locator('[data-usage-window]').first().waitFor()
+    // The accounts are ordered by their next weekly reset, not by the list:
+    // find the Work account's groups by name. Its 5-hour block is in the
+    // session chart, its credential under its weekly group.
+    const workCard = claudePanel.locator('[data-claude-account-usage]').filter({ hasText: 'Work' })
+    const workSession = claudePanel
+      .locator('[data-usage-chart="session"] [data-usage-account]')
+      .filter({ hasText: 'Work' })
+    await workSession.locator('[data-usage-window]').first().waitFor()
     t.equal(
       "the Work card shows the Work account's windows",
-      await workCard
+      await workSession
         .locator('[data-usage-window="session:Current session (5h)"] [aria-label]')
         .getAttribute('aria-label'),
       '10% used'
