@@ -175,7 +175,7 @@ export async function run(t) {
       note.includes('90% left'),
       note
     )
-    t.check('the note says which window', note.includes('session'), note)
+    t.check('the note says which window', note.includes('5h'), note)
     let probes = (await fixture()).probes
     t.equal('the read went through the probe with that token', probes.length, 1)
     t.check(

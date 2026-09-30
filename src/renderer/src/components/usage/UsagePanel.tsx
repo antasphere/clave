@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
 import type { PiUsageTotals, UsageWindow, CodexAccount } from '../../../../preload/index.d'
 import {
   codexUsageStore,
@@ -15,6 +14,8 @@ import {
   formatResetAt,
   formatResetIn,
   formatAge,
+  capLevel,
+  columnLabel,
   type AccountUsageSummary
 } from '../../store/usage-store'
 import {
@@ -25,6 +26,8 @@ import {
 import { ClaudeLogo, CodexLogo, AntigravityLogo, PiLogo } from '../icons/cli-logos'
 import { useCodexAccountStore, describeCodexAccountAuth } from '../../store/codex-account-store'
 import { SettingsCallout, SettingsRow, SettingsSection } from '../settings/primitives'
+import { UsageColumn } from './UsageColumn'
+import { useNow } from '../../lib/use-now'
 
 type Tool = 'claude' | 'codex' | 'antigravity' | 'pi'
 
@@ -34,28 +37,6 @@ const TOOLS: { key: Tool; label: string; Logo: (p: { className?: string }) => Re
   { key: 'antigravity', label: 'Antigravity', Logo: AntigravityLogo },
   { key: 'pi', label: 'Pi', Logo: PiLogo }
 ]
-
-// Fill color tracks urgency, so a near-full cap reads at a glance. The service sends
-// its own plan-aware severity; we take whichever of the two reads more urgent so a
-// scoped cap the percentage alone would understate still shows red.
-function barLevel(window: UsageWindow): 'normal' | 'warning' | 'critical' {
-  const fromPct =
-    window.usedPercentage >= 90 ? 'critical' : window.usedPercentage >= 70 ? 'warning' : 'normal'
-  const rank = { normal: 0, warning: 1, critical: 2 }
-  const own = window.severity ?? 'normal'
-  return rank[own] >= rank[fromPct] ? own : fromPct
-}
-
-/** A clock for the relative times ("in 2d 5h", "4 min ago"), so they move
- *  while the page is open instead of freezing at the moment it rendered. */
-function useNow(intervalMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
-}
 
 /** The provider switch: the side panel's tab bar, at page width. */
 function ToolToggle({ tool, onChange }: { tool: Tool; onChange: (t: Tool) => void }): ReactElement {
@@ -140,55 +121,6 @@ function orderAccounts(accounts: AccountRead[]): AccountRead[] {
       return a.index - b.index
     })
     .map(({ account }) => account)
-}
-
-/** The name a column has room for under its bar. */
-function columnLabel(w: UsageWindow): string {
-  if (w.kind === 'session') return '5h'
-  if (w.kind === 'weekly_all') return 'All models'
-  return w.scope ?? w.label
-}
-
-/** One cap as a column: the percent used over it, the track the height of
- *  the whole cap, the fill anchored to its floor, the cap's name and its
- *  reset under it. The tooltip carries the full sentence. */
-function UsageColumn({ window: w, now }: { window: UsageWindow; now: number }): ReactElement {
-  const pct = Math.round(w.usedPercentage)
-  const level = barLevel(w)
-  const at = formatResetAt(w.resetsAt)
-  const inTime = formatResetIn(w.resetsAt, now)
-  const full = w.usedPercentage >= 100
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="usage-column" data-usage-window={w.key} data-level={level} tabIndex={0}>
-          <span className="usage-column-value" aria-label={`${pct}% used`}>
-            {level === 'critical' && <ExclamationTriangleIcon aria-hidden />}
-            {pct}%
-          </span>
-          <span className="usage-column-track">
-            <span
-              className={`usage-column-fill usage-meter-fill--${level}`}
-              style={{ height: `${Math.min(100, Math.max(w.usedPercentage, pct === 0 ? 0 : 3))}%` }}
-            />
-          </span>
-          <span className="usage-column-label">{columnLabel(w)}</span>
-          {inTime && <span className="usage-column-reset">{inTime}</span>}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        <div className="font-medium">{w.label}</div>
-        <div>
-          {pct}% used{full ? ' — limit reached' : ''}
-        </div>
-        {at && (
-          <div className="text-text-tertiary">
-            Resets {at} ({inTime})
-          </div>
-        )}
-      </TooltipContent>
-    </Tooltip>
-  )
 }
 
 /** One account's group in a chart: its columns, then its name under them. */
@@ -340,7 +272,7 @@ function QuotaHeadlines({ accounts, now }: { accounts: AccountRead[]; now: numbe
       <StatTile
         label="Closest to its limit"
         value={closest ? `${Math.round(closest.w.usedPercentage)}% used` : '—'}
-        level={closest ? barLevel(closest.w) : undefined}
+        level={closest ? capLevel(closest.w) : undefined}
         detail={
           closest
             ? `${closest.account.label} · ${closest.w.label}${

@@ -17,7 +17,7 @@ import {
   headroomLabel,
   formatReset
 } from '../../store/usage-store'
-import { isExhausted } from '../../lib/account-pool'
+import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
 
 /**
@@ -37,7 +37,19 @@ export function AccountMenuHeader({ session }: { session: Session }): React.JSX.
   const codexSummary = useCodexAccountsUsage((s) => s.byAccount[own.id])
   const summary = codex ? codexSummary : claudeSummary
   const headroom = headroomLabel(summary)
-  const reset = summary?.tightest ? formatReset(summary.tightest.resetsAt) : null
+  const exhausted = isExhausted(summary)
+  // At its limit the question is when it comes back (the stopping cap's
+  // reset); otherwise when its week renews, which is what ranks the pool.
+  const weekly = soonestWeeklyReset(summary)
+  const reset = exhausted
+    ? summary?.tightest
+      ? formatReset(summary.tightest.resetsAt)
+      : null
+    : weekly != null
+      ? formatReset(weekly)?.replace(/^resets/, 'week renews')
+      : summary?.tightest
+        ? formatReset(summary.tightest.resetsAt)
+        : null
   const single = (codex ? codexAccounts : claudeProfiles).length <= 1
   const Logo = codex ? CodexLogo : ClaudeLogo
   return (
@@ -46,7 +58,7 @@ export function AccountMenuHeader({ session }: { session: Session }): React.JSX.
       data-claude-account-header={codex ? undefined : own.id}
       data-account-header={own.id}
       data-account-provider={codex ? 'codex' : 'claude'}
-      data-account-exhausted={isExhausted(summary) ? 'true' : undefined}
+      data-account-exhausted={exhausted ? 'true' : undefined}
     >
       <Logo className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
       <div className="min-w-0">
@@ -56,9 +68,7 @@ export function AccountMenuHeader({ session }: { session: Session }): React.JSX.
         </div>
         <div className="text-[11px] text-text-tertiary truncate tabular-nums">
           {headroom
-            ? [headroom, reset, isExhausted(summary) ? 'at limit' : null]
-                .filter(Boolean)
-                .join(' · ')
+            ? [headroom, reset, exhausted ? 'at limit' : null].filter(Boolean).join(' · ')
             : summary?.status === 'error'
               ? 'Usage unavailable'
               : 'Reading usage…'}
