@@ -31,6 +31,12 @@ interface Preferences {
    */
   chatModels: Record<string, string>
   /**
+   * The reasoning effort the reader last picked in a chat composer, per chat
+   * adapter. A fresh chat starts on it (`sessions/chat-model-default.ts`);
+   * the adapter drops it for a model that does not take it.
+   */
+  chatEfforts: Record<string, string>
+  /**
    * The view the reader last picked in a chat pane (`<pluginId>/<viewId>`).
    * A fresh chat opens in it (`sessions/chat-view-default.ts`).
    */
@@ -49,6 +55,7 @@ const DEFAULTS: Preferences = {
   prereleaseUpdates: false,
   agentAutoUpdate: true,
   chatModels: {},
+  chatEfforts: {},
   chatView: null
 }
 

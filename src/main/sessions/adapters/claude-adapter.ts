@@ -21,6 +21,7 @@ import {
 } from '../../../shared/session-model'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
+import { effortLabel, isValidEffort } from '../../../shared/effort'
 import {
   CLAUDE_MODELS,
   claudeContextWindow,
@@ -54,6 +55,8 @@ const envelope = object.and(z.object({ type: z.string() }))
 const optionsSchema = z.object({
   resume: z.string().optional(),
   model: z.string().optional(),
+  /** The reasoning effort to start on (`--effort`), the one last picked. */
+  effort: z.string().refine(isValidEffort).optional(),
   permissionMode: z
     .enum(['manual', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
     .optional()
@@ -154,6 +157,15 @@ export class ClaudeStreamTranslator {
   readonly modeRequests = new Map<string, string>()
   /** request_id → the task a stop_task control request asked to stop. */
   readonly stopRequests = new Map<string, string>()
+  /** request_id → the level an apply_flag_settings request asked for. */
+  readonly effortRequests = new Map<string, string>()
+  /** The get_settings requests in flight: each answer names the effort the
+   *  session really runs at, which is what the composer shows. */
+  readonly settingsRequests = new Set<string>()
+  /** Ask the CLI for its settings; the adapter sets it once the process can
+   *  be written to. Called after every switch the CLI confirmed, since a
+   *  model switch can change the effort too (Haiku runs at none). */
+  requestSettings: () => void = () => {}
   /** What a `permission_mode` event offers; the adapter sets it at launch. */
   modes: PermissionModeOption[] = PERMISSION_MODES
   /** The main thread's context after its last call, and the model's window. */
@@ -327,6 +339,53 @@ export class ClaudeStreamTranslator {
       })
     return true
   }
+  /** A control_response answering one of our apply_flag_settings requests
+   *  (an effort switch); false for any other. The CLI acknowledges any value
+   *  without saying what it applied, so the answer is read back from its
+   *  settings rather than taken from the request. */
+  private effortRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        error: z.string().optional()
+      })
+      .safeParse(p.response)
+    if (!response.success || !this.effortRequests.has(response.data.request_id)) return false
+    const effort = this.effortRequests.get(response.data.request_id)!
+    this.effortRequests.delete(response.data.request_id)
+    if (response.data.subtype === 'success') this.requestSettings()
+    else
+      this.emit({
+        type: 'error',
+        message: response.data.error ?? `Claude refused the ${effortLabel(effort)} effort`,
+        fatal: false
+      })
+    return true
+  }
+  /** A control_response answering one of our get_settings requests; false for
+   *  any other. `applied.effort` is the level the session runs at, null for a
+   *  model that takes none. */
+  private settingsRequest(p: Record<string, unknown>): boolean {
+    const response = z
+      .object({
+        request_id: z.string(),
+        subtype: z.enum(['success', 'error']),
+        response: z.unknown().optional()
+      })
+      .safeParse(p.response)
+    if (!response.success || !this.settingsRequests.has(response.data.request_id)) return false
+    this.settingsRequests.delete(response.data.request_id)
+    const applied = object.safeParse(object.safeParse(response.data.response).data?.applied).data
+    const effort = applied?.effort
+    // A CLI too old to report what it applied says nothing, and nothing is shown;
+    // neither is a value that is not a level.
+    if (response.data.subtype !== 'success' || !applied || !('effort' in applied)) return true
+    if (effort === null || effort === undefined) this.emit({ type: 'effort', effort: null })
+    else if (typeof effort === 'string' && isValidEffort(effort))
+      this.emit({ type: 'effort', effort })
+    return true
+  }
   /** A control_response answering one of our set_model requests; false for any other. */
   private modelRequest(p: Record<string, unknown>): boolean {
     const response = z
@@ -339,9 +398,12 @@ export class ClaudeStreamTranslator {
     if (!response.success || !this.modelRequests.has(response.data.request_id)) return false
     const model = this.modelRequests.get(response.data.request_id) ?? null
     this.modelRequests.delete(response.data.request_id)
-    if (response.data.subtype === 'success')
+    if (response.data.subtype === 'success') {
       this.emit({ type: 'session_meta', model, providerSessionId: null })
-    else
+      // The CLI answers set_model once the switch is done, not before: only
+      // now does get_settings describe the new model.
+      this.requestSettings()
+    } else
       this.emit({
         type: 'error',
         message:
@@ -546,7 +608,12 @@ export class ClaudeStreamTranslator {
       fallback()
     } else if (
       p.type === 'control_response' &&
-      (this.modelRequest(p) || this.modeRequest(p) || this.stopRequest(p) || this.listRequest(p))
+      (this.modelRequest(p) ||
+        this.modeRequest(p) ||
+        this.stopRequest(p) ||
+        this.effortRequest(p) ||
+        this.settingsRequest(p) ||
+        this.listRequest(p))
     ) {
       // Answered above: the switch took or the CLI said why not; the list arrived or did not.
     } else if (p.type === 'control_request' && object.parse(p.request).subtype === 'can_use_tool') {
@@ -763,6 +830,14 @@ interface CliModel {
   displayName: string
   description?: string
   resolvedModel?: string
+  supportsEffort?: boolean
+  supportedEffortLevels?: string[]
+}
+/** The efforts a listed model takes, as the menu offers them. */
+function cliEfforts(model: CliModel | undefined): Pick<ModelOption, 'efforts'> {
+  const levels = model?.supportsEffort === false ? [] : (model?.supportedEffortLevels ?? [])
+  const efforts = levels.filter(isValidEffort).map((id) => ({ id, label: effortLabel(id) }))
+  return efforts.length ? { efforts } : {}
 }
 /** The CLI's list made the menu: Default first, as the CLI glosses it
  *  ("Opus 5.5 · Best for everyday, complex tasks"), then every listed version
@@ -777,7 +852,8 @@ export function claudeModelOptions(cli: CliModel[]): ModelOption[] {
       id: 'default',
       label: 'Default',
       ...(fallback.description ? { hint: fallback.description } : {}),
-      ...(fallback.resolvedModel ? { resolved: fallback.resolvedModel } : {})
+      ...(fallback.resolvedModel ? { resolved: fallback.resolvedModel } : {}),
+      ...cliEfforts(fallback)
     })
   const glossed = new Set<string>()
   for (const model of CLAUDE_MODELS) {
@@ -788,11 +864,23 @@ export function claudeModelOptions(cli: CliModel[]): ModelOption[] {
     const gloss = family?.description?.replace(/^[^·]*·\s*/, '')
     const newest = !glossed.has(model.alias)
     glossed.add(model.alias)
+    // The efforts are the version's own when the CLI lists it (Opus 4.6 takes
+    // no xhigh), else its family's.
+    const resolved = model.id.replace(/\[[^\]]*\]$/, '')
+    // The family's own row is its alias ("fable", "fable[1m]"), wherever the
+    // CLI lists it; a dated version of the family is not.
+    const alias = cli.find((m) => m.value.replace(/\[[^\]]*\]$/, '') === model.alias)
+    const version = cli.find(
+      (m) =>
+        m.value !== 'default' &&
+        (m.resolvedModel ?? m.value).replace(/\[[^\]]*\]$/, '') === resolved
+    )
     options.push({
       id: model.id,
       label: model.name,
       ...(newest && gloss ? { hint: gloss } : !newest ? { hint: 'Earlier version' } : {}),
-      resolved: model.id.replace(/\[[^\]]*\]$/, '')
+      resolved,
+      ...cliEfforts(version ?? alias ?? family)
     })
   }
   for (const model of cli) {
@@ -801,7 +889,8 @@ export function claudeModelOptions(cli: CliModel[]): ModelOption[] {
       id: model.value,
       label: claudeModelName(model.resolvedModel ?? model.value) ?? model.displayName,
       ...(model.description ? { hint: model.description } : {}),
-      ...(model.resolvedModel ? { resolved: model.resolvedModel } : {})
+      ...(model.resolvedModel ? { resolved: model.resolvedModel } : {}),
+      ...cliEfforts(model)
     })
   }
   return options
@@ -932,6 +1021,8 @@ export class ClaudeAdapter implements SessionAdapter {
           'stdio'
         )
         if (options.permissionMode) argv.push('--permission-mode', options.permissionMode)
+        // A model that takes no effort (Haiku) runs at none whatever this says.
+        if (options.effort) argv.push('--effort', options.effort)
         const env: Record<string, string> = {
           ...buildSpawnEnv(getLoginShellEnv(), {
             configDir: context.configDir,
@@ -992,6 +1083,14 @@ export class ClaudeAdapter implements SessionAdapter {
     }
     if (launchMode === 'bypassPermissions' || profilePermissions.bypassAvailable)
       live.translator.modes = [...PERMISSION_MODES, BYPASS_MODE]
+    live.translator.requestSettings = () => {
+      if (!live.process || live.ended) return
+      const requestId = randomUUID()
+      live.translator.settingsRequests.add(requestId)
+      live.process.stdin.write(
+        `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'get_settings' } })}\n`
+      )
+    }
     this.handles.set(spec.id, live)
     return live.handle
   }
@@ -1020,6 +1119,9 @@ export class ClaudeAdapter implements SessionAdapter {
     // CLI's init frame only follows the first message. A start that throws
     // leaves readiness unconsumed, so the next subscribe retries it.
     live.process ??= live.start()
+    // The effort it starts at, in the CLI's own word: the launch's, else the
+    // user's settings, else the model's default.
+    live.translator.requestSettings()
     const initialInput = live.initialInput
     const initialPrompt = live.initialPrompt
     if (initialInput !== undefined) this.write(handle, initialInput)
@@ -1060,7 +1162,7 @@ export class ClaudeAdapter implements SessionAdapter {
       throw new Error('Invalid model name')
     // A model can be chosen before the first message, as /model can in the
     // TUI: the switch starts the process, which accepts it before any turn.
-    if (input.type === 'set_model') live.process ??= live.start()
+    if (input.type === 'set_model' || input.type === 'set_effort') live.process ??= live.start()
     if (input.type !== 'user_message' && !live.process)
       throw new Error('Claude session has not started')
     const send = (payload: unknown): void => {
@@ -1108,6 +1210,16 @@ export class ClaudeAdapter implements SessionAdapter {
         type: 'control_request',
         request_id: requestId,
         request: { subtype: 'set_model', model: input.model }
+      })
+    } else if (input.type === 'set_effort') {
+      // Applied to the session only, as /effort does in the TUI: the user's
+      // settings file is never written.
+      const requestId = randomUUID()
+      live.translator.effortRequests.set(requestId, input.effort)
+      send({
+        type: 'control_request',
+        request_id: requestId,
+        request: { subtype: 'apply_flag_settings', settings: { effortLevel: input.effort } }
       })
     } else if (input.type === 'stop_task') {
       const requestId = randomUUID()
@@ -1173,7 +1285,9 @@ export class ClaudeAdapter implements SessionAdapter {
           value: z.string(),
           displayName: z.string(),
           description: z.string().optional(),
-          resolvedModel: z.string().optional()
+          resolvedModel: z.string().optional(),
+          supportsEffort: z.boolean().optional(),
+          supportedEffortLevels: z.array(z.string()).optional()
         })
       )
       .safeParse((await this.initialize(this.live(handle))).models)

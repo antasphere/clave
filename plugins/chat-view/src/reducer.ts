@@ -65,6 +65,9 @@ export interface Conversation {
   first: number
   state: AgentState
   model: string | null
+  /** The reasoning effort the provider last reported; null while it has not
+   *  said, or for a model that runs at none. */
+  effort: string | null
   /** The mode the agent asks in and the modes it can switch to; null for a
    *  provider that has none, and the view shows no switch. */
   permissionMode: { mode: string; modes: PermissionModeOption[] } | null
@@ -75,6 +78,7 @@ export const emptyConversation: Conversation = {
   first: 0,
   state: 'idle',
   model: null,
+  effort: null,
   permissionMode: null
 }
 export type Action =
@@ -209,6 +213,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       return { ...state, entries, state: 'blocked' }
     case 'session_meta':
       return { ...state, model: event.model }
+    case 'effort':
+      return { ...state, effort: event.effort }
     case 'permission_mode':
       return { ...state, permissionMode: { mode: event.mode, modes: event.modes } }
     case 'error':

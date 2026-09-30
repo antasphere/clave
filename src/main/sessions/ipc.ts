@@ -4,7 +4,7 @@ import { SessionInputSchema } from '../../shared/session-model'
 import { preparePrompt } from './attachments'
 import { windowRegistry } from '../window-registry'
 import * as titleGenerator from '../title-generator'
-import { rememberChatModel } from './chat-model-default'
+import { rememberChatEffort, rememberChatModel } from './chat-model-default'
 import { rememberChatView } from './chat-view-default'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
@@ -116,6 +116,12 @@ export function registerSessionIpc(): void {
       sessionManager.write(id, value)
       const adapterId = sessionManager.get(id)?.adapterId
       if (adapterId) rememberChatModel(adapterId, value.model)
+      return
+    }
+    if (value.type === 'set_effort') {
+      sessionManager.write(id, value)
+      const adapterId = sessionManager.get(id)?.adapterId
+      if (adapterId) rememberChatEffort(adapterId, value.effort)
       return
     }
     if (value.type !== 'user_message') return sessionManager.write(id, value)

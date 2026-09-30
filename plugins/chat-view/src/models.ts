@@ -1,4 +1,4 @@
-import type { ModelOption } from '../../../src/shared/session-model'
+import type { EffortOption, ModelOption } from '../../../src/shared/session-model'
 import { claudeModelName } from '../../../src/shared/claude-models'
 
 // The provider may report a dated id (claude-haiku-4-5-20251001) or one with
@@ -33,3 +33,20 @@ export const modelChipLabel = (model: string | null, options: ModelOption[] | nu
     /\s*\([^)]*\)\s*$/,
     ''
   )
+/** What the effort chip offers for the model the session is on: that
+ *  model's levels, and the one to mark — the level the provider reported
+ *  while the model lists it, else the model's own default, else none marked.
+ *  Null hides the chip: the list is not in yet, the model is not in it, or
+ *  it takes no effort. */
+export const effortChoice = (
+  model: string | null,
+  effort: string | null,
+  options: ModelOption[] | null
+): { efforts: EffortOption[]; current: EffortOption | undefined } | null => {
+  const option = currentOption(model, options)
+  const efforts = option?.efforts
+  if (!option || !efforts?.length) return null
+  const current =
+    efforts.find((e) => e.id === effort) ?? efforts.find((e) => e.id === option.defaultEffort)
+  return { efforts, current }
+}

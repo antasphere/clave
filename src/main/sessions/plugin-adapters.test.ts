@@ -558,3 +558,36 @@ describe('prefixIds', () => {
     expect(prefixIds(event, 'clave.p')).toBe(event)
   })
 })
+
+describe('plugin reasoning effort', () => {
+  it('routes set_effort to setEffort, the level verbatim, and hands the launch its effort', async () => {
+    const registry = new PluginAdapterRegistry()
+    const record = plugin({
+      source: `exports.createAdapter = (launch, emit) => ({
+        start() { emit({ type: 'effort', effort: launch.options.effort ?? null }) },
+        send() {}, interrupt() {}, respond() {}, dispose() {},
+        setEffort(effort) { emit({ type: 'effort', effort: 'set:' + effort }) }
+      })`
+    })
+    const { adapter, handle, seen } = await start(registry, record, { effort: 'low' })
+    adapter.write(handle, { type: 'set_effort', effort: 'xhigh' })
+    expect(events(seen)).toEqual([
+      { type: 'effort', effort: 'low' },
+      { type: 'effort', effort: 'set:xhigh' }
+    ])
+  })
+
+  it('says so, without ending the session, when the plugin has no setEffort', async () => {
+    const registry = new PluginAdapterRegistry()
+    const record = plugin()
+    const { adapter, handle, seen } = await start(registry, record)
+    adapter.write(handle, { type: 'set_effort', effort: 'high' })
+    expect(events(seen).at(-1)).toEqual({
+      type: 'error',
+      message: `${adapter.id} does not offer a reasoning effort choice`,
+      fatal: false
+    })
+    adapter.write(handle, { type: 'user_message', text: 'still here' })
+    expect(events(seen).at(-1)).toMatchObject({ type: 'tool_result', output: 'still here' })
+  })
+})

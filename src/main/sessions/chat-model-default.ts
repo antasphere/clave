@@ -1,4 +1,5 @@
 import { isValidModelName } from '../../shared/model-name'
+import { isValidEffort } from '../../shared/effort'
 import { preferencesManager } from '../preferences-manager'
 
 /**
@@ -21,4 +22,22 @@ export function rememberedChatModel(adapterId: string): string | undefined {
   const model = preferencesManager.get('chatModels')[adapterId]
   // The file is the user's to edit: a value that would not pass a launch is ignored.
   return typeof model === 'string' && isValidModelName(model) ? model : undefined
+}
+
+/** The reasoning effort last picked in a chat composer on this adapter, which
+ *  a new chat starts on. One per adapter rather than per model: the adapter
+ *  checks it against the model the chat runs (Claude runs a model that takes
+ *  none at none, Codex drops a level its model does not list). */
+export function rememberChatEffort(adapterId: string, effort: string): void {
+  if (!isValidEffort(effort)) return
+  preferencesManager.set('chatEfforts', {
+    ...preferencesManager.get('chatEfforts'),
+    [adapterId]: effort
+  })
+}
+
+/** The remembered effort for a fresh chat on this adapter, when there is one. */
+export function rememberedChatEffort(adapterId: string): string | undefined {
+  const effort = preferencesManager.get('chatEfforts')?.[adapterId]
+  return typeof effort === 'string' && isValidEffort(effort) ? effort : undefined
 }
