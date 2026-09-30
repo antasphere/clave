@@ -155,12 +155,20 @@ export class CodexTranslator {
         return
       }
       case 'thread/tokenUsage/updated': {
-        // After every call: `last` is what that call's context held (the
-        // figure Codex's own status line counts), `total` the thread's sum.
+        // After every call: `last` is that call, `total` the thread's sum.
+        // Its context is what it read and wrote, less the reasoning, which
+        // the next call does not carry. Raw tokens, like the Claude meter:
+        // Codex's own status line also drops a fixed baseline, so its
+        // percentage reads a few points apart by design.
         const usage = object(p.tokenUsage)
-        const used = object(usage.last).totalTokens
+        const last = object(usage.last)
+        const reasoning = last.reasoningOutputTokens
+        const used =
+          typeof last.totalTokens === 'number'
+            ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
+            : NaN
         const window = usage.modelContextWindow
-        if (typeof used !== 'number' || !Number.isFinite(used) || used <= 0) {
+        if (!Number.isFinite(used) || used <= 0) {
           fallback()
           return
         }

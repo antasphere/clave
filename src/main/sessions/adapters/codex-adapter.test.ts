@@ -54,7 +54,9 @@ describe('Codex translation', () => {
         expect(added).toEqual([
           {
             type: 'context_usage',
-            used: frame.params.tokenUsage.last.totalTokens,
+            used:
+              frame.params.tokenUsage.last.totalTokens -
+              frame.params.tokenUsage.last.reasoningOutputTokens,
             window: frame.params.tokenUsage.modelContextWindow
           }
         ])
@@ -149,7 +151,7 @@ describe('Codex translation', () => {
       })
     usage({
       total: { totalTokens: 90000 },
-      last: { totalTokens: 30000 },
+      last: { totalTokens: 30000, reasoningOutputTokens: 2000 },
       modelContextWindow: 258400
     })
     usage({ total: { totalTokens: 95000 }, last: { totalTokens: 31000 }, modelContextWindow: null })
@@ -161,7 +163,8 @@ describe('Codex translation', () => {
       'provider_event',
       'provider_event'
     ])
-    expect(events[0]).toEqual({ type: 'context_usage', used: 30000, window: 258400 })
+    // The call's reasoning is not carried into the next one.
+    expect(events[0]).toEqual({ type: 'context_usage', used: 28000, window: 258400 })
     // No window named: the meter keeps the one it already knows.
     expect(events[1]).toEqual({ type: 'context_usage', used: 31000, window: null })
   })
