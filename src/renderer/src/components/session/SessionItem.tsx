@@ -2,12 +2,7 @@ import { memo } from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
 import { useLocationStore } from '../../store/location-store'
-import {
-  CommandLineIcon,
-  BoltIcon,
-  RectangleGroupIcon,
-  ExclamationTriangleIcon
-} from '@heroicons/react/24/outline'
+import { CommandLineIcon, BoltIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import {
   ClaudeLogo,
   AntigravityLogo,
@@ -69,38 +64,11 @@ function LocationBadge({ locationId }: { locationId: string }): React.JSX.Elemen
 
 // Distinguish `claude agents` without touching the brand logo: a faint
 // trailing glyph after the name. Plain Claude Code stays unmarked as the
-// baseline; skip-permissions no longer gets a glyph — its slot is where the
-// session view's dashboard icon lives (see SessionViewIcon).
+// baseline; skip-permissions gets no glyph.
 function getClaudeVariant(session: Session): 'agents' | null {
   if (session.sessionType === 'agent') return null
   if (session.claudeAgentsMode) return 'agents'
   return null
-}
-
-/** The dashboard icon on a row carrying an attached web view (session.view):
- *  clicking it shows the view in the main pane; clicking the row itself still
- *  shows the terminal. A span, not a button — the row is already a button. */
-function SessionViewIcon({ session }: { session: Session }): React.JSX.Element {
-  return (
-    <span
-      role="button"
-      tabIndex={0}
-      className="flex-shrink-0 text-text-tertiary hover:text-text-primary cursor-pointer"
-      title={session.view?.title || 'Open view'}
-      onClick={(e) => {
-        e.stopPropagation()
-        useSessionStore.getState().openSessionView(session.id)
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.stopPropagation()
-          useSessionStore.getState().openSessionView(session.id)
-        }
-      }}
-    >
-      <RectangleGroupIcon className="w-3.5 h-3.5" />
-    </span>
-  )
 }
 
 function SessionIcon({ session }: { session: Session }): React.JSX.Element {
@@ -124,20 +92,44 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
   // it works, amber when it needs the reader, blue when there is something new
   // to read. Background work is the row's counter, never the logo's.
   const { status } = tabIndicators(session)
+  // A row carrying an attached web view (session.view) makes its logo the way
+  // to it: the logo grows on hover and a click shows the view in the main pane,
+  // while a click anywhere else on the row still shows the terminal. A span,
+  // not a button — the row is already a button.
+  const view = session.view
+  const openView = (e: React.SyntheticEvent): void => {
+    e.stopPropagation()
+    useSessionStore.getState().openSessionView(session.id)
+  }
   return (
     <span
       className="sidebar-tab-icon tab-status relative flex-shrink-0"
       data-status={status}
+      {...(view
+        ? {
+            'data-view': '',
+            role: 'button',
+            tabIndex: 0,
+            'aria-label': view.title || 'Open view',
+            onClick: openView,
+            onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') openView(e)
+            }
+          }
+        : {})}
       title={
-        status === 'needs-you'
-          ? 'Waiting on you'
-          : status === 'working'
-            ? 'Working'
-            : status === 'unread'
-              ? session.injectedFrom
-                ? `Message from ${session.injectedFrom}`
-                : 'Finished while you were away'
-              : undefined
+        view
+          ? view.title || 'Open view'
+          : status === 'needs-you'
+            ? 'Waiting on you'
+            : status === 'working'
+              ? 'Working'
+              : status === 'unread'
+                ? session.injectedFrom
+                  ? `Message from ${session.injectedFrom}`
+                  : 'Finished while you were away'
+                : undefined
       }
     >
       <Icon />
@@ -207,7 +199,6 @@ function SessionItemImpl({
       icon={<SessionIcon session={session} />}
       extraContent={
         <>
-          {session.view ? <SessionViewIcon session={session} /> : null}
           <BackgroundCounter session={session} />
           <AccountLimitBadge session={session} />
           {session.locationId && session.sessionType !== 'local' ? (

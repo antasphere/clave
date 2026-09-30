@@ -100,14 +100,14 @@ export async function run(t) {
     const icon = await win.evaluate(
       () =>
         [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] span[role="button"]')
+          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
         ].filter((s) => s.getAttribute('title') === 'Dash').length
     )
-    t.equal('and puts a dashboard icon on the row', icon, 1)
+    t.equal("and makes the row's logo open it", icon, 1)
 
     // Open it.
     await win.evaluate(() =>
-      [...document.querySelectorAll('[data-sidebar-item-type="session"] span[role="button"]')]
+      [...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')]
         .find((s) => s.getAttribute('title') === 'Dash')
         ?.click()
     )
