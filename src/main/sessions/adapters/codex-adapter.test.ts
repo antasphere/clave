@@ -50,7 +50,21 @@ describe('Codex translation', () => {
       }
       if (frame.method === 'turn/started')
         expect(added).toEqual([{ type: 'state_change', state: 'working' }])
+      if (frame.method === 'thread/tokenUsage/updated')
+        expect(added).toEqual([
+          {
+            type: 'context_usage',
+            used: frame.params.tokenUsage.last.totalTokens,
+            window: frame.params.tokenUsage.modelContextWindow
+          }
+        ])
     }
+    // The recording's last call held 34,859 tokens of a 258,400-token window.
+    expect(events.findLast((e) => e.type === 'context_usage')).toEqual({
+      type: 'context_usage',
+      used: 34859,
+      window: 258400
+    })
     const text = events
       .filter((e) => e.type === 'assistant_text')
       .map((e) => e.delta)
@@ -124,6 +138,32 @@ describe('Codex translation', () => {
         output: item.changes ?? item.result
       })
     }
+  })
+  it('reads the context off the last call, never the thread total, and forwards a report it cannot read', () => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((e) => events.push(SessionEventSchema.parse(e)))
+    const usage = (tokenUsage: unknown): void =>
+      translator.notification({
+        method: 'thread/tokenUsage/updated',
+        params: { threadId: 't', turnId: 'u', tokenUsage }
+      })
+    usage({
+      total: { totalTokens: 90000 },
+      last: { totalTokens: 30000 },
+      modelContextWindow: 258400
+    })
+    usage({ total: { totalTokens: 95000 }, last: { totalTokens: 31000 }, modelContextWindow: null })
+    usage({ total: { totalTokens: 95000 }, last: {}, modelContextWindow: 258400 })
+    usage({ total: { totalTokens: 95000 }, last: { totalTokens: 0 }, modelContextWindow: 258400 })
+    expect(events.map((e) => e.type)).toEqual([
+      'context_usage',
+      'context_usage',
+      'provider_event',
+      'provider_event'
+    ])
+    expect(events[0]).toEqual({ type: 'context_usage', used: 30000, window: 258400 })
+    // No window named: the meter keeps the one it already knows.
+    expect(events[1]).toEqual({ type: 'context_usage', used: 31000, window: null })
   })
   it('forwards unknowns and reports errors instead of silently swallowing requests', () => {
     const events: SessionEvent[] = []

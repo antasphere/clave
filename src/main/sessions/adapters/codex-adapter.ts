@@ -154,6 +154,23 @@ export class CodexTranslator {
         this.emit({ type: 'state_change', state: 'done' })
         return
       }
+      case 'thread/tokenUsage/updated': {
+        // After every call: `last` is what that call's context held (the
+        // figure Codex's own status line counts), `total` the thread's sum.
+        const usage = object(p.tokenUsage)
+        const used = object(usage.last).totalTokens
+        const window = usage.modelContextWindow
+        if (typeof used !== 'number' || !Number.isFinite(used) || used <= 0) {
+          fallback()
+          return
+        }
+        this.emit({
+          type: 'context_usage',
+          used,
+          window: typeof window === 'number' && window > 0 ? window : null
+        })
+        return
+      }
       case 'serverRequest/resolved': {
         this.approvals.delete(JSON.stringify(p.requestId))
         fallback()
