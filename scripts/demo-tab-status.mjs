@@ -212,6 +212,16 @@ const rows = await win.evaluate(() =>
   }))
 )
 console.log(JSON.stringify(rows.filter((r) => r.name)))
+// The close button's glyph should sit as far from the row's right edge as
+// from its top and bottom.
+const idleRow = win.locator('.sidebar-item').filter({ hasText: 'Idle' }).first()
+await idleRow.hover()
+const insets = await idleRow.evaluate((row) => {
+  const r = row.getBoundingClientRect()
+  const x = row.querySelector('.sidebar-item-close svg')?.getBoundingClientRect()
+  return x && { top: x.top - r.top, bottom: r.bottom - x.bottom, right: r.right - x.right }
+})
+console.log('close glyph insets', JSON.stringify(insets))
 await win.screenshot({ path: '/tmp/tab-status-demo.png' })
 console.log('Demo running. Close the Clave window to stop it.')
 let closed = false

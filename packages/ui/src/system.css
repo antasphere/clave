@@ -210,6 +210,13 @@ body,
   color: var(--text-primary);
   background-color: var(--surface-100);
 }
+/* The row's close button sits as far from the row's right edge as from its
+   top and bottom: its box is pulled into the row's side padding by the
+   difference, so the glyph's inset is (row height - button) / 2 on all three
+   sides, at every density. */
+.sidebar-item-close {
+  margin-right: calc((var(--sidebar-row-h) - var(--control-h-xs)) / 2 - var(--sidebar-row-px));
+}
 
 /* The row an emptied group shows in place of its sessions ("No sessions").
    Cut to .sidebar-item's exact height and side padding so a group of none is
