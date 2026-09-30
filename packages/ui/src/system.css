@@ -289,16 +289,15 @@ body,
 /* The row's right side, before the close button: what still runs in the
    background, and a warning when the account is at its limit. */
 .tab-background-count {
-  display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: var(--color-surface-100);
+  font-size: 10.5px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--color-text-tertiary);
-}
-.tab-background-count > svg {
-  width: 12px;
-  height: 12px;
 }
 .tab-limit-warning {
   display: inline-flex;
@@ -4278,30 +4277,6 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
   color: var(--text-tertiary);
-}
-
-/* The sidebar's view badge on an events session's row */
-.chat-sidebar-row {
-  position: relative;
-}
-.chat-sidebar-row:has(.chat-view-badge) .sidebar-item {
-  padding-right: var(--control-h-md);
-}
-.chat-view-badge {
-  position: absolute;
-  right: var(--spacing);
-  top: var(--spacing);
-  pointer-events: none;
-  width: var(--control-h-xs);
-  height: var(--control-h-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-}
-.chat-view-badge svg {
-  width: calc(var(--spacing) * 3);
-  height: calc(var(--spacing) * 3);
 }
 
 /* ── Terminal view ────────────────────────────────────────────────────────

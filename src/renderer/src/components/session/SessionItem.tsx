@@ -6,7 +6,6 @@ import {
   CommandLineIcon,
   BoltIcon,
   RectangleGroupIcon,
-  ArrowPathIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
 import {
@@ -146,7 +145,7 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
   )
 }
 
-/** Background shells and subagents a turn left running: a count on the row's
+/** Background shells and subagents a turn left running, in words on the row's
  *  right, so a finished tab with a server up still reads as finished. */
 function BackgroundCounter({ session }: { session: Session }): React.JSX.Element | null {
   const { background } = tabIndicators(session)
@@ -155,10 +154,9 @@ function BackgroundCounter({ session }: { session: Session }): React.JSX.Element
     <span
       className="tab-background-count"
       data-background={background}
-      title={`${background} running in the background`}
+      title={`${background} ${background === 1 ? 'task' : 'tasks'} still running in the background`}
     >
-      <span className="tabular-nums">{background}</span>
-      <ArrowPathIcon />
+      {background} running
     </span>
   )
 }

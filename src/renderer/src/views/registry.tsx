@@ -3,13 +3,7 @@ import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
 import { paneIsTerminal } from './pane-kind'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import {
-  ChatBubbleLeftRightIcon,
-  CheckIcon,
-  CommandLineIcon,
-  Squares2X2Icon,
-  XMarkIcon
-} from '@heroicons/react/24/outline'
+import { CheckIcon, CommandLineIcon, Squares2X2Icon, XMarkIcon } from '@heroicons/react/24/outline'
 import type { AgentState } from '../../../shared/session-model'
 import { claudeModelName } from '../../../shared/claude-models'
 import { TerminalPanel } from '../components/terminal/TerminalPanel'
@@ -34,23 +28,6 @@ function dotStatus(state: string, background = 0): DotStatus {
   if (state === 'ended') return 'inactive'
   if (background > 0) return 'background'
   return 'ready'
-}
-export function SessionViewBadge({ sessionId }: { sessionId: string }): React.JSX.Element | null {
-  const registry = useRegistry()
-  const record = registry.sessions.find((s) => s.id === sessionId)
-  if (record?.transport !== 'events') return null
-  const chat =
-    resolveView(record, registry.plugins, implemented) && !registry.terminal.has(sessionId)
-  const Icon = chat ? ChatBubbleLeftRightIcon : CommandLineIcon
-  return (
-    <span
-      className="chat-view-badge"
-      title={chat ? 'Chat view' : 'Terminal view'}
-      aria-label={chat ? 'Chat view' : 'Terminal view'}
-    >
-      <Icon />
-    </span>
-  )
 }
 /** The pane's view picker: every view that renders this session, the current
  *  one checked. Hidden when a session has only one view to be read in — a menu
