@@ -1,5 +1,10 @@
 [
   {
+    "version": "2.0.0",
+    "title": "Clave 2.0: your agents in a chat, not only a terminal",
+    "description": "Claude Code and Codex sessions can now open as a conversation: answers rendered as Markdown, tool calls as quiet rows, questions answered with a click, permissions above the composer, and files or screenshots dropped straight onto a message. The same session can also be read in the Terminal view, one readable turn per exchange. Pick the view from the pane header.\n\nAdd several Claude and Codex subscriptions in Settings → Accounts. A tab switches to another account without losing its conversation, and a tab stopped by a usage limit comes back on the next account by itself. The Usage page shows them all as charts.\n\nPlugins can now bring their own agents, views and panels, starting with a GitHub side panel for pull request links. Skins, five density presets, a text size, a font choice and mouse-button bindings round it out. Your sessions, groups and settings carry over from 1.x."
+  },
+  {
     "version": "1.91.0",
     "title": "A project group opens on its board, and waits for it",
     "description": "Click a group whose page is served by one of its terminals — an Exos board, a wave page — and the page comes up by itself: a terminal the workspace file declares auto-run is started the first time the view finds its server down, instead of showing a dead page and a button after every restart.\n\nA start is now patient. An Exos board refreshes from the hub before it serves, forty seconds on a good day and up to two minutes; the view used to give up at sixty and show \"Server not responding\" with the same Start button, whose click interrupted the refresh still running. It now stays on \"Starting server…\" with the seconds counting, and after a while offers the serving terminal (\"Show terminal\") and an explicit Restart — never a silent give-up. A start that cannot even spawn says why."

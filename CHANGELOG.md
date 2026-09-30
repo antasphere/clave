@@ -6,13 +6,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
-### Changed
+## [2.0.0] — 2026-09-30
 
-- **The provider's logo shows only while the agent works** — the mark at the end of a chat transcript used to stay under the finished answer, so a Claude or Codex logo sat there for as long as the reply did and read as decoration. It is the agent at work now, nothing else: it appears the moment a turn starts, breathes until the turn ends, and leaves with it.
+Clave 2.0. A session is no longer only a terminal: Claude Code and Codex now open in a native chat view, the same session can be read as a terminal or as a Terminal view, and plugins can add agents, views and chrome of their own. Your sessions, groups and settings from 1.x carry over as they are.
 
 ### Added
 
+- **A chat view for Claude Code and Codex** — a session can open as a conversation instead of a terminal: messages, answers rendered as Markdown, tool calls as quiet grouped rows, questions answered with a click, and permissions docked above the composer. The model menu lists the CLI's own models, the reasoning effort switches with the model, slash commands and `/resume` work before the first message, and a tab names itself from its first message. Chat tabs survive a restart, Claude and Codex alike, and a long conversation opens on its end and loads further back as you scroll up, rendering only the rows near the viewport.
+
+- **A Terminal view** — the same session read as turns: each exchange in a readable column, tool runs folded, questions in a dock, and the permission mode changeable mid-session. Pick the view per session from the pane header; a new chat opens in the view you last picked.
+
+- **Account pools for Claude and Codex** — add several subscriptions and switch a tab to another one without losing it: the tab resumes on the new account. When a limit ends a chat tab, it comes back on the next account with its message resent. The Switch account menu says which account to spend next, and the Usage page shows every account as charts.
+
+- **Plugins that shape the app** — the Clave plugin SDK runs each plugin in an isolated host. A plugin can bring its own agent provider, offer several views for a session, and configure the side panel, toolbar and main area. The first one ships in the box: pull request links in a chat open in a GitHub side panel.
+
+- **Skins** — installable palettes for the interface and the terminal.
+
+- **Appearance** — density is five presets, Comfortable and Compact among them, plus a text size and a choice of font.
+
+- **Mouse buttons are key bindings**, with a new "Archive and kill session" action; a middle click on a sidebar row closes it, as it closes a browser tab.
+
+- **`clave_open_session` opens Claude and Codex in the chat view** when an agent passes `chat: true`.
+
+- **Copy a session's id** from its context menu in the sidebar.
+
 - **Files on a chat message** — drop a file anywhere on a chat tab, paste a screenshot into the composer, or pick files with the paperclip, and each becomes a chip above the textarea to preview or remove before sending. Images go to Claude and Codex as image content, so a screenshot is seen rather than read off disk; anything else goes as a file reference, its path appended to the message for the agent to open with its own tools. The chip says which, and where an adapter cannot take an image directly the reader chooses **Send as file reference** rather than the app deciding quietly. A pasted screenshot and any file dragged out of a temp folder are copied under the app's profile first, since macOS deletes an unsaved screenshot preview the moment it commits. The bytes never pass through the renderer: the main process reads each file when the message is sent, checks it against the adapter's capabilities, and streams the transcript the message as written, attachments named and no image payload in it. Ten files per message, 5 MiB per image, 20 MiB of images in one message. Paths dragged from Clave's own file and git panels still land at the caret as text.
+
+### Changed
+
+- **One visual system** — every control and frame is cut from one density spec, Settings pages are rebuilt on the same rows, values and callouts, and the accent is a per-theme signal colour: verbs in ink, states in blue.
+
+- **The tab logo carries one status at a time**, so a working, waiting or finished tab reads at a glance.
+
+- **The provider's logo shows only while the agent works** — the mark at the end of a chat transcript used to stay under the finished answer, so a Claude or Codex logo sat there for as long as the reply did and read as decoration. It is the agent at work now, nothing else: it appears the moment a turn starts, breathes until the turn ends, and leaves with it.
 
 ### Fixed
 
