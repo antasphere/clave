@@ -195,6 +195,22 @@ export async function run(t) {
       await header.getAttribute('data-account-header'),
       accounts.work
     )
+    // The header's chart raises the menu above the cursor; on a row near the
+    // top of the sidebar that lift must never carry it off the window.
+    await win.waitForTimeout(300)
+    const [tabMenuBox, viewport] = await Promise.all([
+      win.locator('[role="menu"]').first().boundingBox(),
+      win.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+    ])
+    t.check(
+      'the tab menu, raised by its chart, stays inside the window',
+      !!tabMenuBox &&
+        tabMenuBox.y >= 0 &&
+        tabMenuBox.x >= 0 &&
+        tabMenuBox.y + tabMenuBox.height <= viewport.height &&
+        tabMenuBox.x + tabMenuBox.width <= viewport.width,
+      JSON.stringify({ tabMenuBox, viewport })
+    )
     const switchEntry = win.locator('[role="menuitem"]', { hasText: 'Switch account' })
     t.check('the menu offers one Switch account entry', (await switchEntry.count()) === 1)
     t.check(

@@ -220,12 +220,15 @@ function StatTile({
   label,
   value,
   detail,
-  level
+  level,
+  full = false
 }: {
   label: string
   value: string
   detail: string
   level?: 'normal' | 'warning' | 'critical'
+  /** At its limit already: the value says so, the warning icon would repeat it. */
+  full?: boolean
 }): ReactElement {
   return (
     <div className="settings-card" data-level={level}>
@@ -233,7 +236,7 @@ function StatTile({
       <div className="usage-tile">
         <span className="usage-tile-label">{label}</span>
         <span className="usage-tile-value">
-          {level === 'critical' && <ExclamationTriangleIcon aria-hidden />}
+          {level === 'critical' && !full && <ExclamationTriangleIcon aria-hidden />}
           {value}
         </span>
         <span className="usage-tile-detail">{detail}</span>
@@ -273,6 +276,7 @@ function QuotaHeadlines({ accounts, now }: { accounts: AccountRead[]; now: numbe
         label="Closest to its limit"
         value={closest ? `${Math.round(closest.w.usedPercentage)}% used` : '—'}
         level={closest ? capLevel(closest.w) : undefined}
+        full={!!closest && closest.w.usedPercentage >= 100}
         detail={
           closest
             ? `${closest.account.label} · ${closest.w.label}${

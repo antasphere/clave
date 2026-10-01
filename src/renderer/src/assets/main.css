@@ -1493,6 +1493,10 @@ html[data-ui-font='synonym'] {
 .account-preview-plot .usage-column-track {
   width: 1.5rem;
 }
+.account-preview-plot--even {
+  justify-content: space-evenly;
+  gap: 0;
+}
 .account-preview-divider {
   align-self: stretch;
   width: 1px;

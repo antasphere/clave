@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { ChevronRightIcon } from '@heroicons/react/24/outline'
 import { cn, SUBMENU_ALIGN_OFFSET, SUBMENU_SIDE_OFFSET } from '@clave/ui/components'
+import { MENU_EDGE_PADDING, placeMenu } from '../../lib/menu-placement'
 
 export interface ContextMenuItem {
   label: string
@@ -28,13 +29,12 @@ interface ContextMenuProps {
   y: number
   onClose: () => void
   header?: React.ReactNode
+  /** How far the menu rises when it opens downward: a tall header then sits
+   *  above the cursor and the first item opens under the pointer. */
+  headerLift?: number
   /** Extra classes on the surface — a dialog above the default z-50 passes its own. */
   className?: string
 }
-
-// Estimated menu footprint, used to decide which side of the cursor to open on.
-const ESTIMATED_MENU_WIDTH = 220
-const ESTIMATED_MENU_HEIGHT = 280
 
 export function ContextMenu({
   items,
@@ -42,12 +42,24 @@ export function ContextMenu({
   y,
   onClose,
   header,
+  headerLift = 0,
   className
 }: ContextMenuProps): React.JSX.Element {
-  // Open leftward / upward when the cursor is too close to the viewport edge,
-  // so the menu is never cropped off-screen.
-  const align = x > window.innerWidth - ESTIMATED_MENU_WIDTH ? 'end' : 'start'
-  const side = y > window.innerHeight - ESTIMATED_MENU_HEIGHT ? 'top' : 'bottom'
+  // The menu measures itself, then the anchor moves so the whole surface
+  // lands inside the window: Radix only flips and slides along the side, so
+  // a menu raised above the cursor could still leave the top of the screen.
+  // Hidden until measured, so it never paints at a position it then leaves.
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (!contentEl) return
+    const measure = (): void => setSize({ w: contentEl.offsetWidth, h: contentEl.offsetHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(contentEl)
+    return () => observer.disconnect()
+  }, [contentEl])
+  const at = size ? placeMenu(x, y, size.w, size.h, headerLift) : { left: x, top: y }
 
   return (
     <DropdownMenuPrimitive.Root
@@ -59,8 +71,8 @@ export function ContextMenu({
       <DropdownMenuPrimitive.Trigger
         style={{
           position: 'fixed',
-          left: x,
-          top: y,
+          left: at.left,
+          top: at.top,
           width: 0,
           height: 0,
           padding: 0,
@@ -72,13 +84,19 @@ export function ContextMenu({
       />
       <DropdownMenuPrimitive.Portal>
         <DropdownMenuPrimitive.Content
-          side={side}
-          align={align}
+          ref={setContentEl}
+          side="bottom"
+          align="start"
           sideOffset={0}
           alignOffset={0}
-          avoidCollisions
-          collisionPadding={8}
+          avoidCollisions={false}
+          updatePositionStrategy="always"
           className={cn('menu-surface menu-pop z-50 min-w-[180px] p-1', className)}
+          style={{
+            visibility: size ? undefined : 'hidden',
+            maxHeight: `calc(100vh - ${MENU_EDGE_PADDING * 2}px)`,
+            overflowY: 'auto'
+          }}
           onCloseAutoFocus={(e) => e.preventDefault()}
         >
           {header && (

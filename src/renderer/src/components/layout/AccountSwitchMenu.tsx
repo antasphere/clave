@@ -83,15 +83,57 @@ export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactEle
   )
 }
 
+/** Every cap of an account as columns on the Usage page's 0–100% scale, the
+ *  weekly ones first, then the 5-hour block. Drawn in the card beside a
+ *  Switch account row and at the top of a tab's own context menu. */
+export function AccountUsagePlot({
+  summary,
+  now,
+  even = false
+}: {
+  summary: AccountUsageSummary | undefined
+  now: number
+  /** Columns spread at equal distances over the width, no divider between
+   *  the weekly caps and the 5-hour block. */
+  even?: boolean
+}): ReactElement {
+  const windows = summary?.status === 'error' ? [] : (summary?.windows ?? [])
+  const weekly = windows.filter((w) => w.kind !== 'session')
+  const session = windows.filter((w) => w.kind === 'session')
+  if (windows.length === 0)
+    return (
+      <div className="account-preview-empty">
+        {summary?.status === 'error'
+          ? 'Usage could not be read'
+          : summary?.status === 'ready'
+            ? (summary.message ?? 'No limits reported')
+            : 'Reading usage…'}
+      </div>
+    )
+  return (
+    <div
+      className={even ? 'account-preview-plot account-preview-plot--even' : 'account-preview-plot'}
+      data-usage-chart="preview"
+    >
+      {weekly.map((w) => (
+        <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
+      ))}
+      {!even && weekly.length > 0 && session.length > 0 && (
+        <span className="account-preview-divider" aria-hidden />
+      )}
+      {session.map((w) => (
+        <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
+      ))}
+    </div>
+  )
+}
+
 /** The card beside a highlighted row: every cap of the account as columns on
  *  the Usage page's 0–100% scale, the weekly ones first, then the 5-hour
  *  block, and the date its week renews. */
 export function AccountUsagePreview({ target }: { target: SwitchTarget }): ReactElement {
   const now = useNow()
   const summary = useTargetSummary(target)
-  const windows = summary?.status === 'error' ? [] : (summary?.windows ?? [])
-  const weekly = windows.filter((w) => w.kind !== 'session')
-  const session = windows.filter((w) => w.kind === 'session')
   const renews = soonestWeeklyReset(summary)
   return (
     <div className="account-preview" data-account-preview={target.id}>
@@ -101,27 +143,7 @@ export function AccountUsagePreview({ target }: { target: SwitchTarget }): React
           <span className="account-preview-meta">{target.auth}</span>
         )}
       </div>
-      {windows.length > 0 ? (
-        <div className="account-preview-plot" data-usage-chart="preview">
-          {weekly.map((w) => (
-            <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
-          ))}
-          {weekly.length > 0 && session.length > 0 && (
-            <span className="account-preview-divider" aria-hidden />
-          )}
-          {session.map((w) => (
-            <UsageColumn key={w.key} window={w} now={now} tooltip={false} />
-          ))}
-        </div>
-      ) : (
-        <div className="account-preview-empty">
-          {summary?.status === 'error'
-            ? 'Usage could not be read'
-            : summary?.status === 'ready'
-              ? (summary.message ?? 'No limits reported')
-              : 'Reading usage…'}
-        </div>
-      )}
+      <AccountUsagePlot summary={summary} now={now} />
       <div className="account-preview-foot">
         % used
         {renews && (
