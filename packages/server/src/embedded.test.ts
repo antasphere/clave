@@ -68,12 +68,14 @@ describe('the HTTP API behind the token', () => {
     expect(answered.status).toBe(200)
     expect(answered.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173')
     expect(answered.headers.get('vary')).toBe('Origin')
-    const stranger = await fetch(`${server.url}/sessions`, {
-      method: 'OPTIONS',
-      headers: { origin: 'http://evil.example', 'access-control-request-method': 'GET' }
-    })
-    expect(stranger.status).toBe(401)
-    expect(stranger.headers.get('access-control-allow-origin')).toBeNull()
+    for (const origin of ['http://evil.example', 'http://localhost.evil.com:5173', 'file://']) {
+      const stranger = await fetch(`${server.url}/sessions`, {
+        method: 'OPTIONS',
+        headers: { origin, 'access-control-request-method': 'GET' }
+      })
+      expect(stranger.status, origin).toBe(401)
+      expect(stranger.headers.get('access-control-allow-origin'), origin).toBeNull()
+    }
     const strangerGet = await fetch(`${server.url}/sessions`, {
       headers: { ...headers(server.token), origin: 'http://evil.example' }
     })
@@ -120,6 +122,48 @@ describe('the HTTP API behind the token', () => {
     expect(first.type).toBe('bytes')
     expect(Array.from(first.data)).toEqual([104, 105])
     expect(source.writes[1].input).toEqual({ type: 'interrupt' })
+  })
+  it('allows every header the typed client really sends, on a preflight that names them', async () => {
+    // What the client puts on the wire is measured, not assumed: a server
+    // that records the request headers, one call of the typed client.
+    const { createServer } = await import('node:http')
+    const { createApiClient } = await import('@clave/client')
+    let sent: string[] = []
+    const recorder = createServer((request, response) => {
+      sent = Object.keys(request.headers)
+      response.writeHead(200, { 'content-type': 'application/json' }).end('[]')
+    })
+    await new Promise<void>((resolve) => recorder.listen(0, '127.0.0.1', resolve))
+    const port = (recorder.address() as { port: number }).port
+    const client = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    await client.clients.list()
+    await client.dispose()
+    await new Promise((resolve) => recorder.close(resolve))
+    const browserOwn = new Set([
+      'host',
+      'connection',
+      'accept',
+      'accept-language',
+      'accept-encoding',
+      'user-agent',
+      'sec-fetch-mode',
+      'content-length'
+    ])
+    const asked = sent.filter((h) => !browserOwn.has(h))
+    expect(asked).toEqual(expect.arrayContaining(['authorization', 'traceparent', 'b3']))
+    const preflight = await fetch(`${server.url}/clients`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': asked.join(',')
+      }
+    })
+    expect(preflight.status).toBe(204)
+    const allowed = (preflight.headers.get('access-control-allow-headers') ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+    for (const header of asked) expect(allowed, header).toContain(header)
   })
   it('answers a declared failure, not a 500, for a write to an unknown session', async () => {
     const missing = await fetch(`${server.url}/sessions/write`, {
@@ -228,12 +272,22 @@ describe('the push channel', () => {
       (error: Error) => error.message
     )
     expect(refused).toContain('403')
-    const local = new Peer(pushUrl(), { origin: 'http://localhost:5173' })
-    await local.opened
-    local.send({ _tag: 'hello', token: server.token })
-    expect((await local.next())._tag).toBe('welcome')
-    local.ws.close()
-    await local.closed
+    const lookalike = new Peer(pushUrl(), { origin: 'http://localhost.evil.com:5173' })
+    expect(
+      await lookalike.opened.then(
+        () => 'opened',
+        (error: Error) => error.message
+      )
+    ).toContain('403')
+    // The dev renderer is a loopback page, the packaged renderer a file:// one.
+    for (const origin of ['http://localhost:5173', 'file://', 'null']) {
+      const own = new Peer(pushUrl(), { origin })
+      await own.opened
+      own.send({ _tag: 'hello', token: server.token })
+      expect((await own.next())._tag, origin).toBe('welcome')
+      own.ws.close()
+      await own.closed
+    }
   })
   it('welcomes the right token, answers pings, and counts the peer', async () => {
     const peer = await welcomed()

@@ -70,6 +70,21 @@ describe('the method router', () => {
     expect(calls).toBe(3)
     expect(connect).toHaveBeenCalledTimes(1)
   })
+  it('a connect that fails fails that call, is forgotten, and the next call connects', async () => {
+    let connects = 0
+    const router = createMethodRouter({
+      resolve: async () => ({ url: 'http://127.0.0.1:1', token: 't' }),
+      connect: () => {
+        connects += 1
+        if (connects === 1) throw new Error('import failed')
+        return backing()
+      }
+    })
+    const list = router.route({ ipc: async () => 'ipc', server: async () => 'server' })
+    await expect(list()).rejects.toThrow('import failed')
+    expect(await list()).toBe('server')
+    expect(connects).toBe(2)
+  })
   it('asks once for concurrent calls, and again after a reset', async () => {
     let calls = 0
     const router = createMethodRouter({

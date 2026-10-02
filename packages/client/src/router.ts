@@ -51,18 +51,28 @@ export function createMethodRouter(options: MethodRouterOptions): MethodRouter {
   let backing: Promise<Backing | null> | null = null
   const acquire = (): Promise<Backing | null> => {
     if (!backing) {
-      const attempt = options
+      const forget = (): void => {
+        if (backing === attempt) backing = null
+      }
+      const attempt: Promise<Backing | null> = options
         .resolve()
         .then(
           (endpoint) => (endpoint ? options.connect(endpoint) : null),
           () => null
         )
-        .then((built) => {
-          // No endpoint yet, or none reachable: nothing is remembered, the
-          // next call asks again.
-          if (!built && backing === attempt) backing = null
-          return built
-        })
+        .then(
+          (built) => {
+            // No endpoint yet: nothing is remembered, the next call asks again.
+            if (!built) forget()
+            return built
+          },
+          (error: unknown) => {
+            // The backing could not be built (the client failed to load): this
+            // call fails, loudly, and the next one tries again.
+            forget()
+            throw error
+          }
+        )
       backing = attempt
     }
     return backing

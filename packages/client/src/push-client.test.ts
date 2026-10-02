@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
 import { startEmbedded, type EmbeddedServer } from '@clave/server'
 import { FakeSource, aSession, sleep } from '@clave/server/test-support'
@@ -200,6 +200,49 @@ describe('the push client against the server', () => {
     await server.publish({ _tag: 'session.state_changed', id: 's1', state: 'working' })
     await until(() => events.length === 1)
     expect(events).toEqual(['session.state_changed'])
+  })
+})
+
+describe('the push client with fake time and a fake socket', () => {
+  class FakeSocket {
+    static instances: FakeSocket[] = []
+    onopen: ((event: unknown) => void) | null = null
+    onmessage: ((event: { data: unknown }) => void) | null = null
+    onclose: ((event: { code: number; reason: string }) => void) | null = null
+    onerror: ((event: unknown) => void) | null = null
+    readyState = 0
+    constructor(readonly url: string) {
+      FakeSocket.instances.push(this)
+    }
+    send(): void {
+      /* a fake socket keeps nothing */
+    }
+    close(): void {
+      this.readyState = 3
+    }
+  }
+  it('close() leaves no timer behind, mid-backoff included', () => {
+    vi.useFakeTimers()
+    try {
+      FakeSocket.instances = []
+      const client = new PushClient({
+        url: 'http://127.0.0.1:1',
+        token: 't',
+        WebSocket: FakeSocket as unknown as PushSocketConstructor,
+        backoff: { baseMs: 1000, maxMs: 1000 }
+      }).connect()
+      const socket = FakeSocket.instances[0]
+      socket.onopen?.({})
+      socket.onclose?.({ code: 1006, reason: '' })
+      expect(client.status).toBe('reconnecting')
+      expect(vi.getTimerCount()).toBe(1)
+      client.close()
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(5000)
+      expect(FakeSocket.instances).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

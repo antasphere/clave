@@ -81,6 +81,14 @@ describe('the server started by the shell', () => {
     // Nothing listens there any more: the one server stopped is the one started.
     await expect(fetch(`${a.url}/health/live`)).rejects.toThrow()
   })
+  it('a stop during a start in flight leaves nothing listening', async () => {
+    const manager = new SessionManager()
+    const starting = startClaveServer({ manager })
+    await stopClaveServer()
+    const started = await starting
+    expect(getClaveServerEndpoint()).toBeNull()
+    await expect(fetch(`${started.url}/health/live`)).rejects.toThrow()
+  })
   it('stopping removes the listener it put on the manager', async () => {
     const manager = new SessionManager()
     const listeners = (): number => (manager as unknown as { all: Set<unknown> }).all.size

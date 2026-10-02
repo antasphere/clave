@@ -16,7 +16,8 @@ import type { Wrap } from './auth'
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
-/** A page on this machine: `http(s)://localhost:*`, `127.0.0.1:*`, `[::1]:*`. */
+/** A page on this machine: `http(s)://localhost:*`, `127.0.0.1:*`, `[::1]:*`,
+ *  the hostname whole (a lookalike such as `localhost.evil.com` is not one). */
 export const isLoopbackOrigin = (origin: string | undefined): boolean => {
   if (!origin) return false
   let url: URL
@@ -28,9 +29,22 @@ export const isLoopbackOrigin = (origin: string | undefined): boolean => {
   return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname)
 }
 
+/** The packaged renderer is a `file://` page; Chromium names its origin
+ *  `file://` on a WebSocket handshake and `null` where the origin is opaque.
+ *  Such a page is this machine's own as much as a loopback one; the token in
+ *  the hello is what proves the client, the origin only keeps a page off this
+ *  machine from trying. */
+export const isOwnPageOrigin = (origin: string | undefined): boolean =>
+  origin === 'file://' || origin === 'null' || isLoopbackOrigin(origin)
+
 const ALLOW_METHODS = 'GET, POST, OPTIONS'
+/** What the typed client sends with every request, besides what a browser
+ *  adds on its own: the token, the JSON body, the framework's idempotency and
+ *  correlation headers, and the tracing headers the Effect HTTP client
+ *  propagates (`traceparent`, `b3`). A preflight that names more is answered
+ *  with what it named: the request behind it still meets the token check. */
 const ALLOW_HEADERS =
-  'authorization, content-type, x-idempotency-key, x-correlation-id, x-request-id'
+  'authorization, content-type, x-idempotency-key, x-correlation-id, x-request-id, traceparent, tracestate, b3'
 
 export const corsForLoopback: Wrap = <E, R>(app: HttpApp.Default<E, R>) =>
   Effect.gen(function* () {
@@ -47,7 +61,8 @@ export const corsForLoopback: Wrap = <E, R>(app: HttpApp.Default<E, R>) =>
         headers: {
           ...allow,
           'access-control-allow-methods': ALLOW_METHODS,
-          'access-control-allow-headers': ALLOW_HEADERS,
+          'access-control-allow-headers':
+            request.headers['access-control-request-headers'] ?? ALLOW_HEADERS,
           'access-control-max-age': '600'
         }
       })
