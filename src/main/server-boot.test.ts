@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import {
   resolveServerLaunch,
+  takeServerLaunch,
   startServer,
   readDiscovery,
   ServerBootError,
@@ -28,6 +29,51 @@ describe('resolveServerLaunch', () => {
       url: 'http://127.0.0.1:4790',
       token: null
     })
+  })
+})
+
+describe('takeServerLaunch', () => {
+  it('reads the pair and removes it from the environment, so nothing spawned inherits it', () => {
+    const env: NodeJS.ProcessEnv = {
+      CLAVE_SERVER_URL: 'http://127.0.0.1:4790',
+      CLAVE_SERVER_TOKEN: 'abc',
+      PATH: '/usr/bin'
+    }
+    expect(takeServerLaunch(env)).toEqual({
+      mode: 'attached',
+      url: 'http://127.0.0.1:4790',
+      token: 'abc'
+    })
+    expect('CLAVE_SERVER_URL' in env).toBe(false)
+    expect('CLAVE_SERVER_TOKEN' in env).toBe(false)
+    expect(env.PATH).toBe('/usr/bin')
+  })
+  it('is in-process on a bare environment, which it leaves as it is', () => {
+    const env: NodeJS.ProcessEnv = { PATH: '/usr/bin' }
+    expect(takeServerLaunch(env)).toEqual({ mode: 'in-process' })
+    expect(env).toEqual({ PATH: '/usr/bin' })
+  })
+  it('startServer takes the decision over the environment when both are given', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-launch-'))
+    const owned: StubServer[] = []
+    try {
+      const handle = await startServer({
+        launch: { mode: 'in-process' },
+        env: { CLAVE_SERVER_URL: 'http://127.0.0.1:1', CLAVE_SERVER_TOKEN: 'x' },
+        userData,
+        identity,
+        startInProcess: async () => {
+          const s = await startStubServer({ port: 0 })
+          owned.push(s)
+          return s
+        }
+      })
+      expect(handle.mode).toBe('in-process')
+      await handle.stop()
+    } finally {
+      for (const s of owned) await s.stop()
+      rmSync(userData, { recursive: true, force: true })
+    }
   })
 })
 

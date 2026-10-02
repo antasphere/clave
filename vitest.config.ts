@@ -19,6 +19,7 @@ export default defineConfig({
     include: [
       'src/**/*.test.{ts,tsx}',
       'scripts/**/*.test.mjs',
+      'tests/e2e/**/*.test.mjs',
       'packages/{contract,server,client}/src/**/*.test.ts'
     ],
     environment: 'node',

@@ -65,16 +65,47 @@ export interface ServerDiscovery {
 
 export const DISCOVERY_FILE = 'clave-server.json'
 
+// The names shared with the renderer side, as lane A's contract declares them
+// in `@clave/contract/env` (1bd2717 on lane/split-a): the two variables an
+// attach is asked with, and the IPC channel main answers the endpoint on,
+// `{ url, token } | null`. Literal here, in ONE place, until that package is
+// on dev; then these three lines become the import.
+export const ENV_SERVER_URL = 'CLAVE_SERVER_URL'
+export const ENV_SERVER_TOKEN = 'CLAVE_SERVER_TOKEN'
+export const IPC_SERVER_ENDPOINT = 'server:endpoint'
+
 export type ServerLaunch =
   | { mode: 'in-process' }
   | { mode: 'attached'; url: string; token: string | null }
 
 /** Read the launch decision off the environment. Pure. */
 export function resolveServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
-  const url = env.CLAVE_SERVER_URL?.trim()
+  const url = env[ENV_SERVER_URL]?.trim()
   if (!url) return { mode: 'in-process' }
-  const token = env.CLAVE_SERVER_TOKEN?.trim()
+  const token = env[ENV_SERVER_TOKEN]?.trim()
   return { mode: 'attached', url: url.replace(/\/+$/, ''), token: token || null }
+}
+
+/**
+ * Read the launch decision off the environment and TAKE the two variables
+ * out of it. The shell reads them once, at its own boot, and nothing it
+ * spawns afterwards (sessions, git, gh, the Codex app-server, the plugin
+ * runner, the login-shell probe) inherits them: the token belongs to what is
+ * meant to call the server, and a Clave launched from a Clave tab must not
+ * find the outer app's server in its environment. Call it before anything
+ * spawns.
+ */
+export function takeServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
+  const launch = resolveServerLaunch(env)
+  delete env[ENV_SERVER_URL]
+  delete env[ENV_SERVER_TOKEN]
+  return launch
+}
+
+/** What main answers on `IPC_SERVER_ENDPOINT`: where the renderer's client
+ *  finds the server, or null while there is none. */
+export function endpointOf(handle: ServerHandle | null): { url: string; token: string } | null {
+  return handle ? { url: handle.url, token: handle.token } : null
 }
 
 export interface InProcessServer {
@@ -84,7 +115,10 @@ export interface InProcessServer {
 }
 
 export interface StartServerOptions {
-  env: NodeJS.ProcessEnv
+  /** The decision, when already taken off the environment (`takeServerLaunch`). */
+  launch?: ServerLaunch
+  /** The environment to read the decision from, when `launch` is not given. */
+  env?: NodeJS.ProcessEnv
   /** The user-data directory the discovery file is written into. */
   userData: string
   identity: ShellIdentity
@@ -147,7 +181,7 @@ async function call(
 export async function startServer(options: StartServerOptions): Promise<ServerHandle> {
   const doFetch = options.fetch ?? fetch
   const timeoutMs = options.timeoutMs ?? 5000
-  const launch = resolveServerLaunch(options.env)
+  const launch = options.launch ?? resolveServerLaunch(options.env ?? {})
   const pid = options.identity.pid
 
   let server: InProcessServer | null = null
@@ -177,13 +211,16 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   }
 
   // Is anything there? The probe needs no token, so a wrong token and a dead
-  // url are told apart in the message.
+  // url are told apart in the message. The status is read OUTSIDE the try:
+  // a `fail` inside it would be caught by the same catch and reported as
+  // "nothing answers".
+  let live: Response
   try {
-    const live = await call(doFetch, timeoutMs, `${url}/health/live`)
-    if (!live.ok) return fail(`${url} answered ${live.status} on /health/live`)
+    live = await call(doFetch, timeoutMs, `${url}/health/live`)
   } catch (err) {
     return fail(`nothing answers at ${url}: ${(err as Error).message}`)
   }
+  if (!live.ok) return fail(`${url} answered ${live.status} on /health/live`)
 
   let clientId: string | null = null
   try {

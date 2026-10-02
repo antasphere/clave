@@ -54,6 +54,7 @@ async function main(): Promise<void> {
     { encoding: 'utf-8', mode: 0o600 }
   )
   fs.renameSync(tmp, file)
+  fs.chmodSync(file, 0o600)
 
   process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
   process.stderr.write(`clave-server: listening on ${server.url} (data in ${dataDir})\n`)
@@ -63,6 +64,13 @@ async function main(): Promise<void> {
     if (stopping) return
     stopping = true
     process.stderr.write(`clave-server: ${signal}, stopping\n`)
+    // The discovery file goes with the process: a reader must never find
+    // the url and the token of a server that is gone.
+    try {
+      fs.rmSync(file, { force: true })
+    } catch {
+      /* nothing to remove */
+    }
     server.stop().then(
       () => process.exit(0),
       () => process.exit(1)
