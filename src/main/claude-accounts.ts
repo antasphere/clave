@@ -1,7 +1,6 @@
-import { app, safeStorage } from 'electron'
-import fs from 'fs'
-import path from 'path'
 import { randomUUID } from 'crypto'
+import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
+import { readJson, writeJson } from './ports/storage'
 
 /**
  * The Claude accounts a session can run on, owned by the main process.
@@ -20,10 +19,11 @@ import { randomUUID } from 'crypto'
  * accounts.
  *
  * The list (`claude-accounts.json`) is public and crosses IPC; the tokens live
- * apart in `claude-accounts-credentials.json`, encrypted by the OS through
- * `safeStorage` like the OpenClaw tokens in `location-manager.ts`, and NEVER
- * leave this process: the renderer sees `hasToken`, the spawn path reads the
- * value at the moment it builds the environment, and nothing else does.
+ * apart in `claude-accounts-credentials.json` as the opaque strings the secret
+ * port hands back (Electron's OS encryption in the app, the macOS Keychain for
+ * the standalone server; `ports/secrets.ts`), and NEVER leave this process:
+ * the renderer sees `hasToken`, the spawn path reads the value at the moment
+ * it builds the environment, and nothing else does.
  *
  * Before this manager the list lived in the renderer's preference file
  * (`claudeProfiles` in `clave-preferences.json`); the first load imports it
@@ -48,6 +48,10 @@ export const DEFAULT_CLAUDE_ACCOUNT_ID = 'default'
 /** What a `claude setup-token` token is good for, as observed; the read that
  *  fails is the truth, this only drives the "expires in" line. */
 export const CLAUDE_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
+
+const ACCOUNTS_FILE = 'claude-accounts.json'
+const CREDENTIALS_FILE = 'claude-accounts-credentials.json'
+const LEGACY_PREFERENCES_FILE = 'clave-preferences.json'
 
 const DEFAULT_ACCOUNT: ClaudeAccount = {
   id: DEFAULT_CLAUDE_ACCOUNT_ID,
@@ -101,31 +105,20 @@ function readStoredAccount(value: unknown): StoredAccount | null {
 
 type ChangeListener = (accounts: ClaudeAccount[]) => void
 
-class ClaudeAccountsManager {
+export class ClaudeAccountsManager {
   private accounts: StoredAccount[] | null = null
   private credentials: CredentialsFile | null = null
   private listeners = new Set<ChangeListener>()
   /** Ids whose config-dir shape was dropped at this load: they need a login. */
   private migrated = new Set<string>()
 
-  private accountsPath(): string {
-    return path.join(app.getPath('userData'), 'claude-accounts.json')
-  }
+  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
-  private credentialsPath(): string {
-    return path.join(app.getPath('userData'), 'claude-accounts-credentials.json')
-  }
-
-  // Lazy on purpose: `app.getPath` and `safeStorage` are only usable after
-  // app-ready, and this module is imported at boot.
+  // Lazy on purpose: the ports are resolved on first use, never at import, so
+  // a `--user-data-dir` override set at boot is honoured.
   private loadAccounts(): StoredAccount[] {
     if (this.accounts) return this.accounts
-    let parsed: unknown = null
-    try {
-      parsed = JSON.parse(fs.readFileSync(this.accountsPath(), 'utf-8'))
-    } catch {
-      parsed = null
-    }
+    const parsed = readJson(this.ports.storage, ACCOUNTS_FILE)
     const file = parsed as Partial<AccountsFile> | null
     if (file && Array.isArray(file.accounts)) {
       this.accounts = this.importList(file.accounts)
@@ -155,43 +148,25 @@ class ClaudeAccountsManager {
    *  `clave-preferences.json`). The old key is left in place: an older build
    *  reading the same profile still finds its accounts. */
   private legacyProfiles(): unknown[] {
-    try {
-      const raw = JSON.parse(
-        fs.readFileSync(path.join(app.getPath('userData'), 'clave-preferences.json'), 'utf-8')
-      ) as Record<string, unknown>
-      const legacy = raw.claudeProfiles
-      return Array.isArray(legacy) ? legacy : []
-    } catch {
-      return []
-    }
+    const raw = readJson(this.ports.storage, LEGACY_PREFERENCES_FILE)
+    const legacy = (raw as Record<string, unknown> | null)?.claudeProfiles
+    return Array.isArray(legacy) ? legacy : []
   }
 
   private saveAccounts(): void {
     const file: AccountsFile = { v: 1, accounts: this.accounts ?? [] }
-    const target = this.accountsPath()
-    const tmp = `${target}.tmp`
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 })
-    fs.renameSync(tmp, target)
+    writeJson(this.ports.storage, ACCOUNTS_FILE, file, { mode: 0o600 })
   }
 
   private loadCredentials(): CredentialsFile {
     if (this.credentials) return this.credentials
-    try {
-      const parsed = JSON.parse(fs.readFileSync(this.credentialsPath(), 'utf-8'))
-      this.credentials = parsed && typeof parsed === 'object' ? (parsed as CredentialsFile) : {}
-    } catch {
-      this.credentials = {}
-    }
+    const parsed = readJson(this.ports.storage, CREDENTIALS_FILE)
+    this.credentials = parsed && typeof parsed === 'object' ? (parsed as CredentialsFile) : {}
     return this.credentials
   }
 
   private saveCredentials(): void {
-    const target = this.credentialsPath()
-    const tmp = `${target}.tmp`
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify(this.credentials ?? {}, null, 2), { mode: 0o600 })
-    fs.renameSync(tmp, target)
+    writeJson(this.ports.storage, CREDENTIALS_FILE, this.credentials ?? {}, { mode: 0o600 })
   }
 
   private emit(): void {
@@ -297,6 +272,8 @@ class ClaudeAccountsManager {
     this.saveAccounts()
     const credentials = this.loadCredentials()
     if (credentials[id]) {
+      const sealed = credentials[id].token
+      if (typeof sealed === 'string') this.ports.secrets.discard(sealed)
       delete credentials[id]
       this.saveCredentials()
     }
@@ -316,14 +293,13 @@ class ClaudeAccountsManager {
     if (!isPlausibleOauthToken(trimmed)) {
       throw new Error('That does not look like a Claude Code token (expected sk-ant-…).')
     }
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('OS encryption is unavailable, so the token cannot be stored securely.')
+    if (!this.ports.secrets.available()) {
+      throw new Error('OS encryption is unavailable here, so the token cannot be stored securely.')
     }
     const credentials = this.loadCredentials()
-    credentials[id] = {
-      token: safeStorage.encryptString(trimmed).toString('base64'),
-      setAt: Date.now()
-    }
+    const previous = credentials[id]?.token
+    if (typeof previous === 'string') this.ports.secrets.discard(previous)
+    credentials[id] = { token: this.ports.secrets.seal(trimmed), setAt: Date.now() }
     this.migrated.delete(id)
     this.saveCredentials()
     this.emit()
@@ -332,6 +308,8 @@ class ClaudeAccountsManager {
   clearToken(id: string): void {
     const credentials = this.loadCredentials()
     if (!credentials[id]) return
+    const sealed = credentials[id].token
+    if (typeof sealed === 'string') this.ports.secrets.discard(sealed)
     delete credentials[id]
     this.saveCredentials()
     this.emit()
@@ -358,11 +336,7 @@ class ClaudeAccountsManager {
     if (!id) return undefined
     const stored = this.loadCredentials()[id]?.token
     if (typeof stored !== 'string') return undefined
-    try {
-      return safeStorage.decryptString(Buffer.from(stored, 'base64'))
-    } catch {
-      return undefined
-    }
+    return this.ports.secrets.open(stored)
   }
 }
 
