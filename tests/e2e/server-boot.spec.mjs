@@ -84,7 +84,7 @@ export async function run(t) {
       t.equal('/health/live answers', (await client.live()).status, 200)
       const listed = await client.clients()
       t.equal('the client list answers with the token', listed.status, 200)
-      const mine = listed.body?.clients?.find((c) => c.kind === 'electron' && c.pid === pid)
+      const mine = listed.body?.find?.((c) => c.kind === 'shell' && c.pid === pid)
       t.check('and lists this app by its pid', !!mine, { pid, listed })
       t.equal('the id in the file is the id the server gave', disc?.clientId, mine?.id)
       t.equal(
@@ -106,13 +106,13 @@ export async function run(t) {
       seed(DIR)
       const client = serverClient(own.url, own.token)
       const before = await client.clients()
-      t.equal('the server starts with no client', before.body?.clients?.length, 0)
+      t.equal('the server starts with no client', before.body?.length, 0)
       const { app } = await launchApp(DIR, { server: { url: own.url, token: own.token } })
       const pid = app.process().pid
       let closed = false
       try {
         const seen = await until(async () =>
-          (await client.clients()).body?.clients?.find((c) => c.pid === pid)
+          (await client.clients()).body?.find?.((c) => c.pid === pid)
         )
         t.check('an app attached by CLAVE_SERVER_URL registers on that server', !!seen, { pid })
         const disc = await decided(DIR)
@@ -121,7 +121,7 @@ export async function run(t) {
         await app.close()
         closed = true
         const gone = await until(async () => {
-          const list = (await client.clients()).body?.clients ?? []
+          const list = (await client.clients()).body ?? []
           return list.some((c) => c.pid === pid) ? null : true
         })
         t.check('on quit the app deregisters', gone === true)

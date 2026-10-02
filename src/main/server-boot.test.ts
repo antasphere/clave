@@ -12,7 +12,7 @@ import {
 } from './server-boot'
 import { startStubServer, type StubServer } from './server-stub'
 
-const identity = { kind: 'electron' as const, pid: 777, version: '2.0.0' }
+const identity = { kind: 'shell' as const, name: 'clave-shell 2.0.0', pid: 777 }
 
 describe('resolveServerLaunch', () => {
   it('is in-process when CLAVE_SERVER_URL is unset or blank', () => {
