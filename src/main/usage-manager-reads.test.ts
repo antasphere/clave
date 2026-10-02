@@ -2,17 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { installSettingsPorts } from './ports/registry'
+import { electronTestPorts } from './ports/testing'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-usage-reads-'))
 
-vi.mock('electron', () => ({
-  app: { getPath: () => dir },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (value: string) => Buffer.from(`enc:${value}`),
-    decryptString: (buffer: Buffer) => buffer.toString().replace(/^enc:/, '')
-  }
-}))
+installSettingsPorts(electronTestPorts(dir))
 
 // The keychain, answering the machine login's credential after a while: the
 // slow read that must never outrank a token's.

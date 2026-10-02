@@ -14,7 +14,6 @@ export * as Push from './push'
 export { ClaveApi, clientsGroup, sessionsGroup } from './api'
 
 // ── Lane C: settings (packages/contract/src/settings/) ──
-// Exported here once C's modules exist on dev; until then the folder is C's
-// alone and nothing in the root refers to it.
+export * as Settings from './settings'
 
 // ── Lane F: the shell ──
