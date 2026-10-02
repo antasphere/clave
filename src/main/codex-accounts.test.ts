@@ -134,6 +134,9 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       const work = manager.add({ label: 'Persisted', kind: 'chatgpt' })
       const raw = JSON.parse(fs.readFileSync(path.join(dir, 'codex-accounts.json'), 'utf-8'))
       expect(raw.accounts).toEqual([{ id: work.id, label: 'Persisted', kind: 'chatgpt' }])
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(path.join(dir, 'codex-accounts.json')).mode & 0o777).toBe(0o600)
+      }
     })
   })
 

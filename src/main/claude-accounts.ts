@@ -297,11 +297,15 @@ export class ClaudeAccountsManager {
       throw new Error('OS encryption is unavailable here, so the token cannot be stored securely.')
     }
     const credentials = this.loadCredentials()
+    // Seal first, forget the old one after: a seal that fails (a locked
+    // keychain, a denied prompt) must leave the working token in place
+    // rather than an account that says it holds one and opens to nothing.
+    const sealed = this.ports.secrets.seal(trimmed)
     const previous = credentials[id]?.token
-    if (typeof previous === 'string') this.ports.secrets.discard(previous)
-    credentials[id] = { token: this.ports.secrets.seal(trimmed), setAt: Date.now() }
+    credentials[id] = { token: sealed, setAt: Date.now() }
     this.migrated.delete(id)
     this.saveCredentials()
+    if (typeof previous === 'string') this.ports.secrets.discard(previous)
     this.emit()
   }
 

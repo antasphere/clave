@@ -93,6 +93,15 @@ describe('keychainSecrets', () => {
     expect(security.calls.filter((c) => c.args[0] === 'delete-generic-password')).toHaveLength(2)
   })
 
+  it('refuses a value with a line break or another control character, and stores nothing', () => {
+    const security = fakeSecurity()
+    const p = port(security)
+    expect(() => p.seal('first\nadd-generic-password -s x -a y -w z')).toThrow(/control character/)
+    expect(() => p.seal('tab\there')).toThrow(/control character/)
+    expect(security.calls).toEqual([])
+    expect(security.items.size).toBe(0)
+  })
+
   it('is unavailable off macOS, and sealing there throws rather than storing plaintext', () => {
     const security = fakeSecurity()
     const p = port(security, 'linux')

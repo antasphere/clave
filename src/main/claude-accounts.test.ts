@@ -120,6 +120,33 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       expect(JSON.stringify(manager.list())).not.toContain(TOKEN)
     })
 
+    it('writes the credentials file and the account list readable by this user only', () => {
+      const work = manager.add({ label: 'Work' })
+      manager.setToken(work.id, TOKEN)
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(credentialsPath()).mode & 0o777).toBe(0o600)
+        expect(fs.statSync(path.join(ports.dir, 'claude-accounts.json')).mode & 0o777).toBe(0o600)
+      }
+    })
+
+    it('a seal that fails leaves the working token in place', () => {
+      const work = manager.add({ label: 'Work' })
+      manager.setToken(work.id, TOKEN)
+      const locked = new ClaudeAccountsManager({
+        ...ports,
+        secrets: {
+          ...ports.secrets,
+          seal: () => {
+            throw new Error('the keychain is locked')
+          }
+        }
+      })
+      expect(() => locked.setToken(work.id, TOKEN + 'x')).toThrow(/locked/)
+      // Nothing moved: the file still names the old value, and it still opens.
+      expect(new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
+      if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
+    })
+
     it('the file holds what the port handed back, never the value', () => {
       const work = manager.add({ label: 'Work' })
       manager.setToken(work.id, TOKEN)

@@ -73,6 +73,12 @@ export function keychainSecrets(options: {
     available: () => platform === 'darwin' && exists(SECURITY),
     seal(plain) {
       if (!port.available()) throw new Error('The macOS Keychain is unavailable here.')
+      // `security -i` reads one command per line: a value with a line break
+      // or another control character would be read as a second command.
+      // eslint-disable-next-line no-control-regex
+      if (/[\x00-\x1f\x7f]/.test(plain)) {
+        throw new Error('A secret with a control character cannot be filed in the Keychain.')
+      }
       const handle = randomUUID()
       run(
         ['-i'],

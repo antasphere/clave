@@ -44,6 +44,9 @@ export function fileStorage(dir: string): StoragePort {
       // Write-then-rename: a kill mid-write can never leave a truncated file.
       const tmp = `${file}.tmp`
       fs.mkdirSync(path.dirname(file), { recursive: true })
+      // A mode is applied when the file is created, never to a file that is
+      // already there: a temp file left by a kill mid-write is dropped first.
+      fs.rmSync(tmp, { force: true })
       fs.writeFileSync(tmp, text, options?.mode === undefined ? 'utf-8' : { mode: options.mode })
       fs.renameSync(tmp, file)
     },

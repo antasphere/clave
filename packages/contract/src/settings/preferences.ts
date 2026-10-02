@@ -1,14 +1,20 @@
 /**
- * Settings domain: preferences. The app-wide key-value preferences and the
- * app icon. The app's version, the Mission Control overlay and the haptics are
- * the shell's own and stay on Electron's IPC.
+ * Settings domain: preferences. Main's own typed preferences, `preferences.json`
+ * (`src/main/preferences-manager.ts`): the app icon, the telemetry ids, the
+ * pre-release toggle, the chat defaults. Every key is written by the feature
+ * that owns it (the icon through `SetAppIcon` here, the pre-release toggle
+ * through the updater, the chat defaults through the sessions), never through
+ * a free get/set. The free-key store the renderer reaches with
+ * `preferences:get` / `preferences:set` is another file, `clave-preferences.json`,
+ * owned by the `.clave` trust boundary (`ipc-handlers/clave-file-handlers.ts`)
+ * and not part of this module.
  *
- * Mirrors the preload's preference and app methods as of this change
- * (`src/preload/index.ts`). The types in `src/main/preferences-manager.ts`
- * are the originals until the renderer reads this contract instead; then this
- * module becomes the original.
+ * Mirrors the preload's app-icon method as of this change
+ * (`src/preload/index.ts`). The `Preferences` interface in
+ * `src/main/preferences-manager.ts` is the original until the renderer reads
+ * this contract instead; then this module becomes the original.
  */
-import { Command, Query } from '@structure-ai/cqrs'
+import { Command } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
 
 // ---------------------------------------------------------------------------
@@ -17,9 +23,7 @@ import { Schema } from 'effect'
 
 export const AppIconSchema = Schema.Literal('dark', 'light', 'claude')
 
-/** The typed keys of `preferences.json`. The file also holds keys the
- *  renderer owns (`tmuxMode`, `selectedClaudeProfileId`, …), which is why
- *  `GetPreference` / `SetPreference` take any string key. */
+/** The keys of `preferences.json`, main's own. */
 export const PreferencesView = Schema.Struct({
   activeSkinId: Schema.NullOr(Schema.String),
   appIcon: AppIconSchema,
@@ -41,25 +45,11 @@ export const PreferencesView = Schema.Struct({
   chatView: Schema.NullOr(Schema.String)
 })
 
-export const PreferenceKey = Schema.keyof(PreferencesView)
-
 // ---------------------------------------------------------------------------
-// Commands and queries
+// Commands
 // ---------------------------------------------------------------------------
 
-/** `preferences:get` */
-export const GetPreference = Query.define('GetPreference', {
-  payload: Schema.Struct({ key: Schema.String }),
-  success: Schema.Unknown
-})
-
-/** `preferences:set` */
-export const SetPreference = Command.define('SetPreference', {
-  payload: Schema.Struct({ key: Schema.String, value: Schema.Unknown }),
-  success: Schema.Void
-})
-
-/** `app:set-icon` — also stores the `appIcon` preference. */
+/** `app:set-icon`: stores the `appIcon` preference and repaints the Dock tile. */
 export const SetAppIcon = Command.define('SetAppIcon', {
   payload: Schema.Struct({ icon: AppIconSchema }),
   success: Schema.Void

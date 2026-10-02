@@ -28,6 +28,28 @@ describe('fileStorage', () => {
     expect(fs.readdirSync(path.join(dir, 'deep/er'))).toEqual(['file.json'])
   })
 
+  it('replaces the document rather than rewriting it in place', () => {
+    const dir = tempDataDir()
+    const storage = fileStorage(dir)
+    storage.write('state.json', '{"v":1}')
+    const before = fs.statSync(path.join(dir, 'state.json')).ino
+    storage.write('state.json', '{"v":2}')
+    // A rename swaps the directory entry for a new file: a reader holding
+    // the old one keeps a complete document, and a kill mid-write leaves the
+    // old document, never a truncated new one. Rewriting in place keeps the
+    // inode.
+    expect(fs.statSync(path.join(dir, 'state.json')).ino).not.toBe(before)
+    expect(storage.read('state.json')).toBe('{"v":2}')
+  })
+
+  it('does not let a stale temp file keep its old mode', () => {
+    const dir = tempDataDir()
+    const storage = fileStorage(dir)
+    fs.writeFileSync(path.join(dir, 'secret.json.tmp'), 'stale', { mode: 0o644 })
+    storage.write('secret.json', '{}', { mode: 0o600 })
+    expect(fs.statSync(path.join(dir, 'secret.json')).mode & 0o777).toBe(0o600)
+  })
+
   it('applies the mode asked for', () => {
     const dir = tempDataDir()
     const storage = fileStorage(dir)

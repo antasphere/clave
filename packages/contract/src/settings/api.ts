@@ -39,7 +39,7 @@ import {
   SetWorkspaceLaunchProfile,
   UpsertLaunchProfile
 } from './launch-profiles'
-import { GetPreference, SetAppIcon, SetPreference } from './preferences'
+import { SetAppIcon } from './preferences'
 import {
   LoadWorkspaceState,
   SetLastActiveWorkspace,
@@ -161,8 +161,6 @@ export const settingsGroup = ApiGroup.make('settings')
     )
   )
   // Preferences
-  .add(HttpCqrs.queryEndpoint('getPreference', '/preferences', GetPreference))
-  .add(HttpCqrs.commandEndpoint('setPreference', '/preferences', SetPreference))
   .add(HttpCqrs.commandEndpoint('setAppIcon', '/preferences/app-icon', SetAppIcon))
   // Workspaces
   .add(HttpCqrs.queryEndpoint('loadWorkspaceState', '/workspaces', LoadWorkspaceState))
