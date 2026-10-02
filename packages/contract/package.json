@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
     "./clients": "./src/clients.ts",
+    "./env": "./src/env.ts",
     "./events": "./src/events.ts",
     "./push": "./src/push.ts",
     "./sessions": "./src/sessions.ts"

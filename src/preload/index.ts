@@ -16,8 +16,8 @@ import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity } from '../shared/workspace-types'
-import { createApiClient, createMethodRouter, PushClient, type Endpoint } from '@clave/client'
-import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract'
+import { createMethodRouter, type Endpoint } from '@clave/client/router'
+import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract/env'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -40,6 +40,9 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // shell has started the server (`server:endpoint` answers null, the
 // environment carries no address) every method goes over IPC as before; once
 // the server is in use, its failure reaches the caller and nothing falls back.
+// The client itself (Effect and the framework underneath) loads on the first
+// routed call that finds an endpoint, never at window start: measured at about
+// 700 ms of synchronous requires per window when it was a static import.
 const serverRouter = createMethodRouter({
   resolve: async (): Promise<Endpoint | null> => {
     const fromMain = (await ipcRenderer.invoke('server:endpoint')) as Endpoint | null
@@ -48,11 +51,14 @@ const serverRouter = createMethodRouter({
     const token = process.env[ENV_SERVER_TOKEN]
     return url && token ? { url, token } : null
   },
-  connect: (endpoint) => ({
-    api: createApiClient(endpoint),
-    // Opened by the first routed subscription, not before.
-    push: new PushClient({ ...endpoint, client: 'clave-preload' })
-  })
+  connect: async (endpoint) => {
+    const { createApiClient, PushClient } = await import('@clave/client')
+    return {
+      api: createApiClient(endpoint),
+      // Opened by the first routed subscription, not before.
+      push: new PushClient({ ...endpoint, client: 'clave-preload' })
+    }
+  }
 })
 const viaServer = serverRouter.route
 /** The window's own key: the server lists sessions per window the way

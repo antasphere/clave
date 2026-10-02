@@ -6,7 +6,8 @@
   "license": "MIT",
   "description": "The typed client of Clave's server: requests over @structure-ai/client, subscriptions over the push channel, and the adapter the preload routes a method through.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./router": "./src/router.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

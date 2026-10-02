@@ -5,6 +5,9 @@
  * server once an endpoint is known; a method without one, or any method
  * before an endpoint exists, goes over IPC. Once the server is in use, its
  * failure is the caller's to see: nothing here falls back to IPC on an error.
+ *
+ * This module imports nothing at runtime, on purpose: it is what a preload
+ * loads at window start, and the client proper comes in through `connect`.
  */
 import type { ClaveApiClient } from './api'
 import type { PushClient } from './push-client'
@@ -27,7 +30,10 @@ export interface MethodRoute<A extends unknown[], R> {
 export interface MethodRouterOptions {
   /** Where the server is, or null while there is none. Asked once per backing. */
   readonly resolve: () => Promise<Endpoint | null>
-  readonly connect: (endpoint: Endpoint) => Backing
+  /** Builds the backing for an endpoint; may load the client lazily, which is
+   *  why it may answer a promise: a preload that imports Effect at window
+   *  start pays for it on every window, needed or not. */
+  readonly connect: (endpoint: Endpoint) => Backing | Promise<Backing>
 }
 
 export interface MethodRouter {

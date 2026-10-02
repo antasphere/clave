@@ -5,10 +5,7 @@
  * lane adds its own file (or folder) and one line in its section here, and
  * never edits a module that is not its own.
  */
-export const CONTRACT_VERSION = 1
-/** Where a client finds the server: set by the shell that started it. */
-export const ENV_SERVER_URL = 'CLAVE_SERVER_URL'
-export const ENV_SERVER_TOKEN = 'CLAVE_SERVER_TOKEN'
+export { CONTRACT_VERSION, ENV_SERVER_TOKEN, ENV_SERVER_URL } from './env'
 
 export * as Sessions from './sessions'
 export * as Clients from './clients'

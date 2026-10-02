@@ -20,8 +20,8 @@ vi.mock('electron', () => ({
   ipcRenderer: { invoke: mocks.invoke, on: mocks.on, removeListener: mocks.removeListener },
   webUtils: {}
 }))
-vi.mock('@clave/client', async (importActual) => {
-  const actual = await importActual<typeof import('@clave/client')>()
+vi.mock('@clave/client/router', async (importActual) => {
+  const actual = await importActual<typeof import('@clave/client/router')>()
   return {
     ...actual,
     // The preload builds its router once at import; the tests reset it.
@@ -29,13 +29,21 @@ vi.mock('@clave/client', async (importActual) => {
       const router = actual.createMethodRouter(options)
       mocks.router = router
       return router
-    },
+    }
+  }
+})
+vi.mock('@clave/client', async (importActual) => {
+  const actual = await importActual<typeof import('@clave/client')>()
+  return {
+    ...actual,
     createApiClient: mocks.createApiClient,
     PushClient: class {
       connect(): this {
         return this
       }
-      close(): void {}
+      close(): void {
+        /* nothing to close in a test double */
+      }
     }
   }
 })

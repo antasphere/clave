@@ -8,19 +8,24 @@
  * shell spawns through the environment (`CLAVE_SERVER_URL`,
  * `CLAVE_SERVER_TOKEN`). The strangler shape of the spec: the same package
  * later runs as its own process and nothing a client sees changes.
+ *
+ * The server package, and Effect and the framework under it, load on the
+ * first start, never when main boots: this file imports only types from it.
  */
-import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract'
+import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract/env'
+import type { EmbeddedServer, SessionSourceService } from '@clave/server'
 import type { SessionInput } from '../../shared/session-model'
-import { type EmbeddedServer, type SessionSourceService, startEmbedded } from '@clave/server'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
+import {
+  type ClaveServerEndpoint,
+  getClaveServerEndpoint,
+  setClaveServerEndpoint
+} from './endpoint'
 
-export interface ClaveServerEndpoint {
-  url: string
-  token: string
-}
+export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
 let running: EmbeddedServer | null = null
-let endpoint: ClaveServerEndpoint | null = null
+let starting: Promise<ClaveServerEndpoint> | null = null
 let stopStates: (() => void) | null = null
 
 /**
@@ -54,24 +59,37 @@ export function sessionSourceFromManager(manager: SessionManager): SessionSource
   }
 }
 
-/** Start the server once; a second call answers the running one's address. */
-export async function startClaveServer(
-  options: {
-    port?: number
-    token?: string
-    manager?: SessionManager
-    env?: NodeJS.ProcessEnv
-  } = {}
-): Promise<ClaveServerEndpoint> {
-  if (running && endpoint) return endpoint
+export interface StartOptions {
+  port?: number
+  token?: string
+  manager?: SessionManager
+  env?: NodeJS.ProcessEnv
+}
+
+/** Start the server once; a second call, concurrent or later, answers the
+ *  same address. */
+export function startClaveServer(options: StartOptions = {}): Promise<ClaveServerEndpoint> {
+  const current = getClaveServerEndpoint()
+  if (running && current) return Promise.resolve(current)
+  if (!starting) {
+    starting = start(options).finally(() => {
+      starting = null
+    })
+  }
+  return starting
+}
+
+async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
+  const { startEmbedded } = await import('@clave/server')
   const server = await startEmbedded({
     sessions: sessionSourceFromManager(manager),
     ...(options.port !== undefined && { port: options.port }),
     ...(options.token !== undefined && { token: options.token })
   })
   running = server
-  endpoint = { url: server.url, token: server.token }
+  const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token }
+  setClaveServerEndpoint(endpoint)
   const env = options.env ?? process.env
   env[ENV_SERVER_URL] = server.url
   env[ENV_SERVER_TOKEN] = server.token
@@ -86,14 +104,11 @@ export async function startClaveServer(
   return endpoint
 }
 
-export function getClaveServerEndpoint(): ClaveServerEndpoint | null {
-  return endpoint
-}
-
 export async function stopClaveServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  if (starting) await starting.catch(() => undefined)
   const server = running
   running = null
-  endpoint = null
+  setClaveServerEndpoint(null)
   stopStates?.()
   stopStates = null
   delete env[ENV_SERVER_URL]
