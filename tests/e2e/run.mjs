@@ -28,14 +28,16 @@ const OFF = '\u001b[0m'
 const YELLOW = '\u001b[33m'
 
 // Known failures (PRDCT-1711, PRDCT-3154). Some checks fail on dev whatever
-// the change (the machine's keychain, a CLI the runner lacks), and a suite
-// that is red on a healthy branch is a gate nobody reads. They are NAMED in
-// known-failures.json beside the specs, spec by spec and check by check, with
-// why; a listed check that fails counts as KNOWN, printed as such, never as
-// a pass and never hidden, and a listed check that passes is reported at the
-// end so the list shrinks. Anything not listed fails the run as before.
+// the change, and a suite that is red on a healthy branch is a gate nobody
+// reads. They are NAMED in known-failures.json beside the specs:
+// `{ "why": "...", "specs": { "<spec file>": ["<check name>", ...] } }`.
+// A listed check that fails counts as KNOWN, printed as such, never as a
+// pass and never hidden; a listed check that passes is reported at the end
+// so the list shrinks. Anything not listed fails the run as before.
 const KNOWN_FILE = path.join(DIR, 'known-failures.json')
-const known = existsSync(KNOWN_FILE) ? JSON.parse(readFileSync(KNOWN_FILE, 'utf-8')) : {}
+const known = existsSync(KNOWN_FILE)
+  ? (JSON.parse(readFileSync(KNOWN_FILE, 'utf-8')).specs ?? {})
+  : {}
 
 /** Assertion collector handed to each spec. `knownChecks` are the names of
  *  this spec's checks known to fail. */
@@ -94,7 +96,7 @@ const recovered = []
 
 for (const file of specs) {
   console.log(`\n${BOLD}${file}${OFF}`)
-  const t = createT(file, known[file]?.checks ?? [])
+  const t = createT(file, known[file] ?? [])
   try {
     const mod = await import(pathToFileURL(path.join(DIR, file)).href)
     await mod.run(t)
