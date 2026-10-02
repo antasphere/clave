@@ -4,7 +4,7 @@ import './user-data-override'
 // SECOND, before any manager: a pre-release's first run on a stable data
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
-import { app, BrowserWindow, shell, nativeImage, nativeTheme } from 'electron'
+import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -46,6 +46,14 @@ import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
+import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { startClaveServer, stopClaveServer } from './server/clave-server'
+
+// The server to attach to, if any, read ONCE off the environment and taken
+// out of it here, before anything in this process spawns: the token belongs
+// to what is meant to call the server, and no session, helper or nested Clave
+// may inherit it (ADR 0003).
+const serverLaunch = takeServerLaunch(process.env)
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -74,6 +82,59 @@ if (TEST_NO_ACTIVATE && process.platform === 'darwin') {
  *    one of them comes back at the next launch, with its own content.
  */
 let quitting = false
+
+/**
+ * The server the shell runs on (ADR 0003). In-process by default; attached to
+ * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`. In
+ * this wave nothing the window shows comes from it yet, so a failure is not
+ * fatal — but it is never silent: an attach that fails is logged, written to
+ * `clave-server.json` as `ok: false`, and shown as a notification, and the
+ * app does NOT start an in-process server in its place (server-boot.ts says
+ * why). The url and the token live in `clave-server.json` (owner-only) and in
+ * the handle, and NOWHERE in this process's environment: an export there
+ * would reach every helper main spawns off `process.env` (git, gh, the Codex
+ * app-server, the plugin runner) and none of the sessions, which get their
+ * environment from the cached login shell and from tmux's own list. What
+ * needs the server is handed the pair deliberately, when it moves (wave 2).
+ *
+ * `serverBoot` is the boot's promise: a quit waits on it before stopping, so
+ * a registration still in flight is deregistered rather than left as a
+ * ghost on an attached server.
+ */
+let serverHandle: ServerHandle | null = null
+let serverBoot: Promise<void> = Promise.resolve()
+
+async function bootServer(): Promise<void> {
+  try {
+    serverHandle = await startServer({
+      launch: serverLaunch,
+      userData: app.getPath('userData'),
+      identity: { kind: 'shell', name: `clave-shell ${app.getVersion()}`, pid: process.pid },
+      // The in-process server: `@clave/server` over the session manager
+      // (server/clave-server.ts), which publishes its address to the windows.
+      startInProcess: async () => {
+        const endpoint = await startClaveServer()
+        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+      }
+    })
+    console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+  } catch (err) {
+    const message = err instanceof ServerBootError ? err.message : String(err)
+    console.error(`[server] not available: ${message}`)
+    if (
+      err instanceof ServerBootError &&
+      err.mode === 'attached' &&
+      !TEST_NO_ACTIVATE &&
+      Notification.isSupported()
+    ) {
+      new Notification({
+        title: 'Clave could not reach its server',
+        body: `${message}. The app runs without it.`,
+        silent: false
+      }).show()
+    }
+  }
+}
 
 function onWindowClosed(windowId: number, windowKey: string): void {
   // Only CLAVE windows count (the registry's), never a stray BrowserWindow a
@@ -312,6 +373,9 @@ app.whenReady().then(() => {
   installViewGuestPolicy()
   // MCP failure must not break the app — spawns just omit the --mcp-config flag.
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
+  // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
+  // the preload asks `ipc-handlers/server-handlers.ts`, registered above.
+  serverBoot = bootServer()
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()
   initNotificationManager()
@@ -376,11 +440,20 @@ app.on('before-quit', (event) => {
   accountLoginManager.cancelAll()
   stopMcpServer()
   // Keep the event loop alive until owned event children finish their escalation.
-  quitCleanup = ptyManager
-    .killAll()
-    .catch((error) => {
+  // The server goes with them: the boot awaited first (a registration still
+  // in flight must land before it is undone), then deregistered, and stopped
+  // when it is ours.
+  quitCleanup = Promise.all([
+    ptyManager.killAll().catch((error) => {
       console.error('Session shutdown failed:', error)
-    })
+    }),
+    serverBoot
+      .then(() => serverHandle?.stop())
+      .catch((error) => {
+        console.error('[server] stop failed:', error)
+      })
+  ])
+    .then(() => undefined)
     .finally(() => {
       quitReady = true
       app.quit()

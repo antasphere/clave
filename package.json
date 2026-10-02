@@ -18,6 +18,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "npm run native:build && node scripts/copy-private-fonts.mjs && electron-vite dev",
+    "dev:attached": "npm run native:build && node scripts/copy-private-fonts.mjs && node scripts/dev-attached.mjs",
+    "dev:server": "node scripts/dev-attached.mjs --server-only",
     "native:build": "bash scripts/build-native.sh",
     "build": "npm run native:build && node scripts/copy-private-fonts.mjs && npm run typecheck && electron-vite build",
     "postinstall": "node scripts/postinstall.cjs",

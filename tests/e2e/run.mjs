@@ -5,11 +5,12 @@
 // JSON and exits 0 whatever happened is a probe, not a check — it verifies
 // nothing the moment nobody is reading the output. Every spec here asserts, and
 // a failed assertion fails the run.
-import { readdirSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
-import { finishRun, killLeakedE2eTmux } from './harness.mjs'
+import { finishRun, killLeakedE2eTmux, serverMode, SERVER_MODE_ENV } from './harness.mjs'
+import { loadKnown, classify, summarize } from './known-failures.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -19,11 +20,29 @@ const DIR = path.dirname(fileURLToPath(import.meta.url))
 // two worktrees running the suite at once never share a /tmp folder.
 if (!process.env[NAMESPACE_ENV] || process.env[NAMESPACE_ENV].trim() === '')
   process.env[NAMESPACE_ENV] = defaultNamespace(path.resolve(DIR, '..', '..'))
-const only = process.argv[2]
+// Every argument is a filter; a spec runs when its file name contains any of
+// them. No argument runs the whole suite.
+const only = process.argv.slice(2).filter((a) => a.trim() !== '')
 const GREEN = '\u001b[32m'
 const RED = '\u001b[31m'
+const YELLOW = '\u001b[33m'
 const BOLD = '\u001b[1m'
 const OFF = '\u001b[0m'
+
+// Known failures (PRDCT-1711, PRDCT-3154): see known-failures.mjs for what
+// the file may say and why a crash can never be "known". A file that would
+// hide something is refused here, before any spec runs.
+const KNOWN_FILE = path.join(DIR, 'known-failures.json')
+const known = loadKnown(
+  existsSync(KNOWN_FILE) ? JSON.parse(readFileSync(KNOWN_FILE, 'utf-8')) : null
+)
+
+const TAG = {
+  pass: GREEN + '  PASS',
+  fail: RED + '  FAIL',
+  known: YELLOW + ' KNOWN',
+  unstable: YELLOW + ' UNSTABLE'
+}
 
 /** Assertion collector handed to each spec. */
 function createT(specName) {
@@ -34,7 +53,8 @@ function createT(specName) {
     /** Assert `cond`. `detail` is printed on failure — make it the actual value. */
     check(name, cond, detail) {
       results.push({ name, ok: !!cond, detail })
-      console.log(`${cond ? GREEN + '  PASS' : RED + '  FAIL'}${OFF}  ${name}`)
+      const { kind } = classify(specName, name, !!cond, known)
+      console.log(`${TAG[kind]}${OFF}  ${name}`)
       if (!cond && detail !== undefined) {
         console.log(`        ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
       }
@@ -51,15 +71,22 @@ function createT(specName) {
 
 const specs = readdirSync(DIR)
   .filter((f) => f.endsWith('.spec.mjs'))
-  .filter((f) => !only || f.includes(only))
+  .filter((f) => only.length === 0 || only.some((o) => f.includes(o)))
   .sort()
 
 if (specs.length === 0) {
-  console.error(only ? `No spec matches "${only}"` : 'No specs found')
+  console.error(only.length ? `No spec matches ${only.join(', ')}` : 'No specs found')
   process.exit(1)
 }
 
 console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
+// The server mode is read ONCE here and named on both ends of the run: a
+// suite that ran attached and one that ran in-process must never be confused
+// in a log. A bad value throws before any spec runs.
+const mode = serverMode()
+console.log(`server: ${mode}  (${SERVER_MODE_ENV}=${mode})`)
+if (known.unstable.length > 0)
+  console.log(`unstable specs, not a gate: ${known.unstable.join(', ')}`)
 
 // Several specs spawn tmux sessions and leave them to a later sweep, and the
 // sweep is scoped to this run's namespace (harness killLeakedE2eTmux), so no
@@ -67,8 +94,7 @@ console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NA
 // the start catches what an interrupted run of this checkout left.
 killLeakedE2eTmux()
 
-let failed = 0
-let passed = 0
+const results = {}
 
 for (const file of specs) {
   console.log(`\n${BOLD}${file}${OFF}`)
@@ -87,11 +113,25 @@ for (const file of specs) {
   if (t.results.length === 0) {
     t.check(`${file} made at least one assertion`, false, 'the spec ran but asserted nothing')
   }
-  passed += t.results.filter((r) => r.ok).length
-  failed += t.results.filter((r) => !r.ok).length
+  results[file] = t.results
 }
 
-finishRun({ failed })
+const { totals, recovered, unstablePassed, exitCode } = summarize(results, known)
 
-console.log(`\n${passed} passed, ${failed} failed`)
-process.exit(failed > 0 ? 1 : 0)
+finishRun({ failed: totals.failed })
+
+if (recovered.length > 0) {
+  console.log(
+    `\n${YELLOW}${recovered.length} known failure(s) passed this run; remove them from known-failures.json:${OFF}`
+  )
+  for (const r of recovered) console.log(`  ${r}`)
+}
+if (unstablePassed.length > 0) {
+  console.log(
+    `\n${YELLOW}${unstablePassed.length} unstable spec(s) passed in full this run (still listed as unstable):${OFF} ${unstablePassed.join(', ')}`
+  )
+}
+console.log(
+  `\n${totals.passed} passed, ${totals.failed} failed, ${totals.known} known failures, ${totals.unstable} unstable  (server: ${mode})`
+)
+process.exit(exitCode)

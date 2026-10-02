@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 - **Clave's server apart from its client, the foundation** — three packages on the `@structure-ai` framework: `packages/contract` (the wire contract in Effect Schema: the session model, the clients domain, the event envelope, the push frames, the shared API), `packages/server` (the command and query buses, the in-memory event store, the HTTP API behind a token on loopback, and the push channel on the same listener) and `packages/client` (the typed request client, the reconnecting push client, the router a preload moves methods through one at a time). The server runs inside the app once the shell starts it (the boot wiring is the next lane's); nothing changes for the person using Clave yet.
 
+- **The app runs on a server** — Clave main boots a server beside the window (in-process for now) or attaches to one started on its own under `CLAVE_SERVER_URL`; `npm run dev:attached` runs the two side by side, the end-to-end suite runs both ways (`CLAVE_E2E_SERVER=attached`) and in CI, and ADR 0003 records the architecture of the split. Nothing changes on screen.
+
 ## [2.0.0] — 2026-09-30
 
 Clave 2.0. A session is no longer only a terminal: Claude Code and Codex now open in a native chat view, the same session can be read as a terminal or as a Terminal view, and plugins can add agents, views and chrome of their own. Your sessions, groups and settings from 1.x carry over as they are.

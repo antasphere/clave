@@ -35,6 +35,12 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # The unit tests of the server's own process (scripts/server-process.test.mjs)
+      # start it under Bun.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
       - name: Install dependencies
         run: npm ci
 
@@ -46,3 +52,71 @@ jobs:
 
       - name: Unit tests
         run: npx vitest run
+
+  # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
+  # Electron on an isolated user-data directory, hidden (--test-no-activate),
+  # one tmux socket of its own. That needs macOS: the app is a macOS app, and
+  # the specs spawn tmux sessions and the login shell. Bun runs the server's
+  # own process for the attached mode (ADR 0003).
+  #
+  # Two kinds of step. The GATE: the server spec, in-process and attached,
+  # fails the job (it is deterministic, and proven to go red under mutation).
+  # The REPORT: the whole suite in-process, with continue-on-error, its
+  # result line in the job summary. On 2 October 2026 the suite on dev fails
+  # 25 checks on a laptop and 28 on this runner with 15 in common, and the
+  # unstable specs are named in tests/e2e/known-failures.json; a full-suite
+  # gate would be red on a healthy branch, which is a gate nobody reads.
+  # The report step turns into a gate (drop continue-on-error) once the
+  # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
+  # thread). Nothing here touches the release rail.
+  e2e:
+    name: End-to-end (the real app, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: tmux
+        run: brew install tmux
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        id: build
+        run: npx electron-vite build
+
+      - name: Gate, the server spec with the server in-process
+        run: node tests/e2e/run.mjs server-boot
+
+      - name: Gate, the server spec with the server attached
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs server-boot
+        env:
+          CLAVE_E2E_SERVER: attached
+
+      - name: Report, the whole suite with the server in-process
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set +e
+          node tests/e2e/run.mjs | tee e2e-in-process.log
+          status=${PIPESTATUS[0]}
+          line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
+          {
+            echo "## End-to-end, whole suite, server in-process"
+            echo
+            echo "\`${line:-no result line: the runner did not finish}\` (exit ${status})"
+            echo
+            echo "A report, not a gate: see the comment on this job in checks.yml."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
