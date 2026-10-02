@@ -288,7 +288,9 @@ describe('the push channel', () => {
       'http://foo127.0.0.1:5173',
       'file:///Users/someone/page.html',
       'FILE://',
-      'null'
+      'null',
+      'ws://localhost:5173',
+      'clave-preview://localhost'
     ]) {
       const refused = new Peer(pushUrl(), { origin })
       expect(

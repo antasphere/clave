@@ -21,6 +21,10 @@ const read = (file: string): string => readFileSync(join(root, file), 'utf8')
 const staticImports = (source: string): string[] =>
   [...source.matchAll(/^import\s(?!type\s)[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
 
+/** What must never be reached at window start or at boot: Effect itself,
+ *  its platform packages, the framework, and OpenTelemetry under it. The
+ *  guard is only as wide as this pattern; a package the framework adds
+ *  under a new scope belongs here too. */
 const HEAVY = /node_modules\/(effect|@effect|@structure-ai|@opentelemetry)\//
 
 /** The modules an entry pulls in statically: esbuild's metafile for the entry's
@@ -87,7 +91,14 @@ describe('the client and the server load lazily', () => {
         /^(effect|@effect\/|@structure-ai\/)/.test(spec)
     )
     expect(heavy).toEqual([])
-    expect(read('src/preload/index.ts')).toMatch(/await import\('@clave\/client'\)/)
+    const source = read('src/preload/index.ts')
+    expect(source).toMatch(/await import\('@clave\/client'\)/)
+    // One runtime dynamic import, the awaited one inside connect: an eager
+    // top-level `void import(...)` would pass the artefact walk and still
+    // cost the window start (measured at about 400 ms). A type position's
+    // `import('x').Name` is erased and does not count.
+    const dynamic = [...source.matchAll(/\bimport\(['"]([^'"]+)['"]\)(?!\.)/g)].map((m) => m[1])
+    expect(dynamic).toEqual(['@clave/client'])
   })
   it('main names the server package only in a dynamic import (the source says so too)', () => {
     const source = read('src/main/server/clave-server.ts')
