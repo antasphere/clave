@@ -12,6 +12,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
 import { fixturePath, fixtureRoot, fixtureTmuxName, namespaceOf } from './namespace.mjs'
+import { startServerProcess } from '../../scripts/server-process.mjs'
 
 // Where a run keeps its fixtures (PRDCT-2615): every path a spec seeds goes
 // through `fixturePath`, so a CLAVE_E2E_NS set by the runner moves the whole
@@ -74,27 +75,163 @@ export function seedTrustedRoots(dir, roots) {
   writeFileSync(path.join(dir, 'clave-trusted-roots.json'), JSON.stringify(roots))
 }
 
+// ── The server (ADR 0003, PRDCT-3154) ────────────────────────────────────────
+// The app runs on a server: in-process by default, or ATTACHED to one started
+// elsewhere (`CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`). The suite runs both
+// ways, and the way is `CLAVE_E2E_SERVER`: `in-process` (the default, what the
+// shipped app does) or `attached` (one server per spec, its own process on its
+// own data directory and port, started before the app and stopped with it).
+// The server's HTTP API is how a spec asserts on it (`serverClient`), never a
+// hook inside the main process; `clave-server.json` in the app's user data
+// says which server the app ended up on (`serverEndpoint`).
+
+export const SERVER_MODE_ENV = 'CLAVE_E2E_SERVER'
+
+/** The suite's server mode. Anything but the two names is refused loudly: a
+ *  typo must not silently run the suite the default way. */
+export function serverMode(env = process.env) {
+  const raw = (env[SERVER_MODE_ENV] ?? 'in-process').trim() || 'in-process'
+  if (raw !== 'in-process' && raw !== 'attached')
+    throw new Error(
+      `${SERVER_MODE_ENV} must be "in-process" or "attached", got ${JSON.stringify(raw)}`
+    )
+  return raw
+}
+
+// The servers this run started and has not stopped yet, so the end of the
+// run can sweep what a spec that threw before `app.close()` left behind.
+const liveServers = new Set()
+
+/** Start a server of this spec's own, on `<fixture>/clave-e2e-<name>-server`.
+ *  Resolves once it announced its url and token. */
+export async function startE2eServer(name, { timeoutMs = 15_000 } = {}) {
+  const dataDir = fixturePath(`${name}-server`)
+  rmSync(dataDir, { recursive: true, force: true })
+  const started = await startServerProcess({ repo: REPO, dataDir, timeoutMs })
+  const server = {
+    ...started,
+    stop: async () => {
+      liveServers.delete(server)
+      await started.stop()
+    }
+  }
+  liveServers.add(server)
+  return server
+}
+
+/** SIGTERM every server a spec left running (sync, for the end of the run). */
+export function killLeakedServers() {
+  for (const s of [...liveServers]) {
+    liveServers.delete(s)
+    try {
+      process.kill(s.pid, 'SIGTERM')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** What `clave-server.json` says in an isolated instance's user data: the
+ *  url, the token, the mode, `ok`, or null while the app has not written it. */
+export function serverEndpoint(dir) {
+  const f = path.join(dir, 'clave-server.json')
+  return existsSync(f) ? JSON.parse(readFileSync(f, 'utf-8')) : null
+}
+
+/** A client of the server's HTTP API, bound to one token (null = none). Every
+ *  call answers `{ status, body }` and never throws on a non-2xx, so a spec
+ *  asserts the status it expects (a 401 included). */
+export function serverClient(url, token) {
+  const base = String(url).replace(/\/+$/, '')
+  const headers = token ? { authorization: `Bearer ${token}` } : {}
+  const request = async (method, p, body) => {
+    const res = await fetch(base + p, {
+      method,
+      headers: {
+        ...headers,
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {})
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    })
+    const text = await res.text()
+    let parsed = null
+    try {
+      parsed = text ? JSON.parse(text) : null
+    } catch {
+      parsed = { raw: text }
+    }
+    return { status: res.status, body: parsed }
+  }
+  return {
+    live: () => request('GET', '/health/live'),
+    ready: () => request('GET', '/health/ready'),
+    clients: () => request('GET', '/clients'),
+    register: (identity) => request('POST', '/clients', identity),
+    deregister: (id) => request('DELETE', `/clients/${id}`)
+  }
+}
+
 /** Launch the built app. Run `npx electron-vite build` first — these read `out/`.
  *
  *  `--test-no-activate` is always passed: the run must not steal the machine's
  *  focus from whoever is working while it goes. Its cost is that OS focus is
  *  gone — `BrowserWindow.getFocusedWindow()` can be null and `win.isFocused()`
- *  false all run — so assert Clave-internal focus, never the window manager's. */
-export async function launchApp(dir, { settleMs = 4000, env = {}, args = [] } = {}) {
-  const app = await electron.launch({
-    executablePath: ELECTRON_BIN,
-    // `args` are extra main-process flags a spec needs (`--test-version=…`,
-    // see src/main/test-mode.ts); the three fixed ones always come first.
-    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
-    cwd: REPO,
-    // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
-    // a spec seeds transcripts without touching the real ~/.claude/projects).
-    env: { ...process.env, ...env }
-  })
+ *  false all run — so assert Clave-internal focus, never the window manager's.
+ *
+ *  `server` is the suite's mode by default (`serverMode()`); a spec that must
+ *  prove one path whatever the suite runs passes `'attached'`, `'in-process'`,
+ *  or `{ url, token }` to attach to a server of its own (a dead one included).
+ *  In attached mode the server is started here and stopped by `app.close()`;
+ *  in in-process mode a stray `CLAVE_SERVER_URL` in the caller's shell is
+ *  dropped, so the app never attaches by accident. */
+export async function launchApp(
+  dir,
+  { settleMs = 4000, env = {}, args = [], server = serverMode() } = {}
+) {
+  const base = { ...process.env }
+  delete base.CLAVE_SERVER_URL
+  delete base.CLAVE_SERVER_TOKEN
+  let started = null
+  let serverEnv = {}
+  if (server === 'attached') {
+    started = await startE2eServer(path.basename(dir))
+    serverEnv = { CLAVE_SERVER_URL: started.url, CLAVE_SERVER_TOKEN: started.token }
+  } else if (server && typeof server === 'object') {
+    serverEnv = { CLAVE_SERVER_URL: server.url, CLAVE_SERVER_TOKEN: server.token ?? '' }
+  } else if (server !== 'in-process') {
+    throw new Error(`launchApp: unknown server option ${JSON.stringify(server)}`)
+  }
+  let app
+  try {
+    app = await electron.launch({
+      executablePath: ELECTRON_BIN,
+      // `args` are extra main-process flags a spec needs (`--test-version=…`,
+      // see src/main/test-mode.ts); the three fixed ones always come first.
+      args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
+      cwd: REPO,
+      // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
+      // a spec seeds transcripts without touching the real ~/.claude/projects).
+      env: { ...base, ...serverEnv, ...env }
+    })
+  } catch (err) {
+    await started?.stop()
+    throw err
+  }
+  if (started) {
+    // The server lives exactly as long as the app it was started for.
+    const close = app.close.bind(app)
+    app.close = async () => {
+      try {
+        await close()
+      } finally {
+        await started.stop()
+      }
+    }
+  }
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')
   await win.waitForTimeout(settleMs)
-  return { app, win }
+  return { app, win, server: started }
 }
 
 /** Replace the native folder picker in the MAIN process so a spec can tell
@@ -296,6 +433,7 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
  *  socket directory). Returns whether the folder was removed. */
 export function finishRun({ failed, env = process.env }) {
   killLeakedE2eTmux({ env })
+  killLeakedServers()
   if (failed !== 0 || !namespaceOf(env).startsWith('clave-e2e-')) return false
   rmSync(fixtureRoot({ env }), { recursive: true, force: true })
   return true
