@@ -10,26 +10,37 @@
  * framework: when `packages/server` merges, `server-boot.ts` starts that
  * instead and this file goes.
  *
- * The HTTP shape is the one ADR 0003 records as the shell's expectation:
+ * The HTTP shape follows lane A's contract (`packages/contract/src/clients.ts`
+ * and `api.ts` at 7f4acfe on lane/split-a: the clients group, the framework's
+ * health group), so the switch is a swap, not a rewrite:
  *
- *   GET  /health/live        -> 200 { status: "live" }          (no token)
- *   GET  /health/ready       -> 200 { ready, checks }           (no token)
- *   POST /clients            -> 201 { id, kind, pid, version, since }
- *   GET  /clients            -> 200 { clients: [...] }
- *   DELETE /clients/:id      -> 204
+ *   GET  /health/live           -> 200 { status: "live" }                (no token)
+ *   GET  /health/ready          -> 200 { ready, checks }                 (no token)
+ *   POST /clients               -> 201 Client, from { kind, name, pid? }
+ *   GET  /clients               -> 200 Client[]  (oldest first)
+ *   POST /clients/unregister    -> 204, from { id }; 404 when unknown
+ *
+ *   Client = { id, kind: shell|browser|agent|other, name, pid?, registeredAt }
  *
  * Everything but the probes needs `Authorization: Bearer <token>`; a wrong or
  * missing token is a 401, compared in constant time as the MCP server does.
+ * Nothing here upgrades a connection: the push channel (`/push`) is lane A's
+ * on the real server, and a second WebSocket handler on the port would
+ * corrupt its frames.
  */
 import * as http from 'http'
 import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 
+export const CLIENT_KINDS = ['shell', 'browser', 'agent', 'other'] as const
+export type ClientKind = (typeof CLIENT_KINDS)[number]
+
 export interface ServerClientRecord {
   id: string
-  kind: string
-  pid: number
-  version: string
-  since: string
+  kind: ClientKind
+  name: string
+  pid?: number
+  /** Epoch milliseconds, the server's clock. */
+  registeredAt: number
 }
 
 export interface StubServer {
@@ -88,6 +99,10 @@ function send(res: http.ServerResponse, status: number, body?: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
 }
 
+function isKind(value: unknown): value is ClientKind {
+  return typeof value === 'string' && (CLIENT_KINDS as readonly string[]).includes(value)
+}
+
 /** Start the stub on the loopback. Resolves once the port is bound. */
 export async function startStubServer(options: StubServerOptions = {}): Promise<StubServer> {
   const token = options.token ?? randomBytes(32).toString('hex')
@@ -106,7 +121,7 @@ export async function startStubServer(options: StubServerOptions = {}): Promise<
     if (!sameToken(bearerOf(req), token)) return send(res, 401, { error: 'unauthorized' })
 
     if (url.pathname === '/clients') {
-      if (method === 'GET') return send(res, 200, { clients: [...clients.values()] })
+      if (method === 'GET') return send(res, 200, [...clients.values()])
       if (method === 'POST') {
         let body: Record<string, unknown>
         try {
@@ -114,16 +129,21 @@ export async function startStubServer(options: StubServerOptions = {}): Promise<
         } catch {
           return send(res, 400, { error: 'invalid json' })
         }
-        const pid = Number(body.pid)
-        const kind = typeof body.kind === 'string' ? body.kind : ''
-        if (!kind || !Number.isInteger(pid) || pid <= 0)
-          return send(res, 400, { error: 'kind and pid are required' })
+        const name = typeof body.name === 'string' ? body.name : ''
+        if (!isKind(body.kind) || !name)
+          return send(res, 400, { error: 'kind (shell|browser|agent|other) and name are required' })
+        let pid: number | undefined
+        if (body.pid !== undefined) {
+          if (!Number.isInteger(body.pid) || (body.pid as number) < 0)
+            return send(res, 400, { error: 'pid must be a non-negative integer' })
+          pid = body.pid as number
+        }
         const record: ServerClientRecord = {
           id: `c${nextId++}`,
-          kind,
-          pid,
-          version: typeof body.version === 'string' ? body.version : '',
-          since: new Date().toISOString()
+          kind: body.kind,
+          name,
+          ...(pid !== undefined ? { pid } : {}),
+          registeredAt: Date.now()
         }
         clients.set(record.id, record)
         return send(res, 201, record)
@@ -131,9 +151,15 @@ export async function startStubServer(options: StubServerOptions = {}): Promise<
       return send(res, 405, { error: 'method not allowed' })
     }
 
-    const client = /^\/clients\/([^/]+)$/.exec(url.pathname)
-    if (client && method === 'DELETE') {
-      if (!clients.delete(client[1])) return send(res, 404, { error: 'no such client' })
+    if (url.pathname === '/clients/unregister' && method === 'POST') {
+      let body: Record<string, unknown>
+      try {
+        body = (await readJson(req)) as Record<string, unknown>
+      } catch {
+        return send(res, 400, { error: 'invalid json' })
+      }
+      const id = typeof body.id === 'string' ? body.id : ''
+      if (!clients.delete(id)) return send(res, 404, { error: 'ClientNotFound', id })
       return send(res, 204)
     }
 

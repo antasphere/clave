@@ -45,17 +45,17 @@ An attach that fails (nothing answers the url, or the token is refused) is never
 
 ### What the shell expects of the server
 
-The shape the placeholder answers and lane A's server carries in its contract:
+The shape lane A's contract carries (`packages/contract/src/clients.ts` and `api.ts`: the clients group beside the framework's health group) and the placeholder answers:
 
-| Call                                     | Answer                                  | Token  |
-| ---------------------------------------- | --------------------------------------- | ------ |
-| `GET /health/live`                       | 200 `{ status: "live" }`                | none   |
-| `GET /health/ready`                      | 200 `{ ready, checks }`                 | none   |
-| `POST /clients` `{ kind, pid, version }` | 201 `{ id, kind, pid, version, since }` | bearer |
-| `GET /clients`                           | 200 `{ clients: [...] }`                | bearer |
-| `DELETE /clients/:id`                    | 204                                     | bearer |
+| Call                                   | Answer                                       | Token  |
+| -------------------------------------- | -------------------------------------------- | ------ |
+| `GET /health/live`                     | 200 `{ status: "live" }`                     | none   |
+| `GET /health/ready`                    | 200 `{ ready, checks }`                      | none   |
+| `POST /clients` `{ kind, name, pid? }` | 201 `{ id, kind, name, pid?, registeredAt }` | bearer |
+| `GET /clients`                         | 200 an array of those, oldest first          | bearer |
+| `POST /clients/unregister` `{ id }`    | 204, or `ClientNotFound`                     | bearer |
 
-Bound to 127.0.0.1. A wrong or missing token is a 401, compared in constant time.
+`kind` is one of `shell`, `browser`, `agent`, `other`; the Electron shell registers as `shell`, named `clave-shell <version>`, with its pid. Bound to 127.0.0.1. A wrong or missing token is a 401, compared in constant time. The push channel is a WebSocket upgrade at `/push` on that same listener, lane A's; the shell and the harness never upgrade it.
 
 ### The server as its own process
 

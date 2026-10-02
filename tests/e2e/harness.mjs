@@ -167,7 +167,7 @@ export function serverClient(url, token) {
     ready: () => request('GET', '/health/ready'),
     clients: () => request('GET', '/clients'),
     register: (identity) => request('POST', '/clients', identity),
-    deregister: (id) => request('DELETE', `/clients/${id}`)
+    deregister: (id) => request('POST', '/clients/unregister', { id })
   }
 }
 

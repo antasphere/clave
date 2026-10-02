@@ -43,11 +43,13 @@ export interface ServerHandle {
   stop: () => Promise<void>
 }
 
-/** What the shell says about itself when it registers. */
+/** What the shell says about itself when it registers: the contract's
+ *  RegisterClient payload (`packages/contract/src/clients.ts`). */
 export interface ShellIdentity {
-  kind: 'electron'
+  kind: 'shell'
+  /** How the client names itself (`clave-shell 2.0.0`). */
+  name: string
   pid: number
-  version: string
 }
 
 /** What `clave-server.json` carries. `ok: false` is an attach that failed. */
@@ -220,9 +222,11 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       stopped = true
       if (clientId) {
         // Best effort, bounded: a quit must not wait on a server that is gone.
-        await call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/${clientId}`, {
-          method: 'DELETE',
-          token
+        await call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/unregister`, {
+          method: 'POST',
+          token,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: clientId })
         }).catch(() => {})
       }
       if (server) await server.stop()

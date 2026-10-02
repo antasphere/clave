@@ -94,7 +94,7 @@ async function bootServer(): Promise<void> {
     serverHandle = await startServer({
       env: process.env,
       userData: app.getPath('userData'),
-      identity: { kind: 'electron', pid: process.pid, version: app.getVersion() },
+      identity: { kind: 'shell', name: `clave-shell ${app.getVersion()}`, pid: process.pid },
       // The in-process server: the stub until lane A's package merges, then
       // that package's own start(). One line to swap.
       startInProcess: () => startStubServer({ port: 0 })
