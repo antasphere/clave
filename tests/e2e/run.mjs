@@ -5,11 +5,11 @@
 // JSON and exits 0 whatever happened is a probe, not a check — it verifies
 // nothing the moment nobody is reading the output. Every spec here asserts, and
 // a failed assertion fails the run.
-import { readdirSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
-import { finishRun, killLeakedE2eTmux } from './harness.mjs'
+import { finishRun, killLeakedE2eTmux, serverMode, SERVER_MODE_ENV } from './harness.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 
@@ -25,16 +25,31 @@ const RED = '\u001b[31m'
 const BOLD = '\u001b[1m'
 const OFF = '\u001b[0m'
 
-/** Assertion collector handed to each spec. */
-function createT(specName) {
+const YELLOW = '\u001b[33m'
+
+// Known failures (PRDCT-1711, PRDCT-3154). Some checks fail on dev whatever
+// the change (the machine's keychain, a CLI the runner lacks), and a suite
+// that is red on a healthy branch is a gate nobody reads. They are NAMED in
+// known-failures.json beside the specs, spec by spec and check by check, with
+// why; a listed check that fails counts as KNOWN, printed as such, never as
+// a pass and never hidden, and a listed check that passes is reported at the
+// end so the list shrinks. Anything not listed fails the run as before.
+const KNOWN_FILE = path.join(DIR, 'known-failures.json')
+const known = existsSync(KNOWN_FILE) ? JSON.parse(readFileSync(KNOWN_FILE, 'utf-8')) : {}
+
+/** Assertion collector handed to each spec. `knownChecks` are the names of
+ *  this spec's checks known to fail. */
+function createT(specName, knownChecks = []) {
   const results = []
   return {
     specName,
     results,
     /** Assert `cond`. `detail` is printed on failure — make it the actual value. */
     check(name, cond, detail) {
-      results.push({ name, ok: !!cond, detail })
-      console.log(`${cond ? GREEN + '  PASS' : RED + '  FAIL'}${OFF}  ${name}`)
+      const isKnown = !cond && knownChecks.includes(name)
+      results.push({ name, ok: !!cond, known: isKnown, listed: knownChecks.includes(name), detail })
+      const tag = cond ? GREEN + '  PASS' : isKnown ? YELLOW + ' KNOWN' : RED + '  FAIL'
+      console.log(`${tag}${OFF}  ${name}`)
       if (!cond && detail !== undefined) {
         console.log(`        ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
       }
@@ -60,6 +75,11 @@ if (specs.length === 0) {
 }
 
 console.log(`fixtures under ${fixtureRoot()}  (${NAMESPACE_ENV}=${process.env[NAMESPACE_ENV]})`)
+// The server mode is read ONCE here and named on both ends of the run: a
+// suite that ran attached and one that ran in-process must never be confused
+// in a log. A bad value throws before any spec runs.
+const mode = serverMode()
+console.log(`server: ${mode}  (${SERVER_MODE_ENV}=${mode})`)
 
 // Several specs spawn tmux sessions and leave them to a later sweep, and the
 // sweep is scoped to this run's namespace (harness killLeakedE2eTmux), so no
@@ -69,10 +89,12 @@ killLeakedE2eTmux()
 
 let failed = 0
 let passed = 0
+let knownFailed = 0
+const recovered = []
 
 for (const file of specs) {
   console.log(`\n${BOLD}${file}${OFF}`)
-  const t = createT(file)
+  const t = createT(file, known[file]?.checks ?? [])
   try {
     const mod = await import(pathToFileURL(path.join(DIR, file)).href)
     await mod.run(t)
@@ -88,10 +110,20 @@ for (const file of specs) {
     t.check(`${file} made at least one assertion`, false, 'the spec ran but asserted nothing')
   }
   passed += t.results.filter((r) => r.ok).length
-  failed += t.results.filter((r) => !r.ok).length
+  failed += t.results.filter((r) => !r.ok && !r.known).length
+  knownFailed += t.results.filter((r) => r.known).length
+  for (const r of t.results) if (r.ok && r.listed) recovered.push(`${file}: ${r.name}`)
 }
 
 finishRun({ failed })
 
-console.log(`\n${passed} passed, ${failed} failed`)
+if (recovered.length > 0) {
+  console.log(
+    `\n${YELLOW}${recovered.length} known failure(s) passed this run; remove them from known-failures.json:${OFF}`
+  )
+  for (const r of recovered) console.log(`  ${r}`)
+}
+console.log(
+  `\n${passed} passed, ${failed} failed, ${knownFailed} known failures  (server: ${mode})`
+)
 process.exit(failed > 0 ? 1 : 0)
