@@ -1,6 +1,6 @@
 # ADR 0003: the server apart from the client
 
-Status: accepted, 2026-10-02 (wave 1 of the split: the shell boots or attaches to a server, an in-process placeholder stands in for the server package until it lands); amended the same day from lane A's gate (runtime-agnostic server layers, the push channel on the server's own port)
+Status: accepted, 2026-10-02 (wave 1 of the split: the shell boots `@clave/server` in-process or attaches to one running on its own, and the suite drives both); amended the same day from lane A's gate (runtime-agnostic server layers, the push channel on the server's own port)
 
 ## Context
 
@@ -36,7 +36,7 @@ Windows (`window-registry.ts`, `window-routing.ts`, `window-state.ts`), the app 
 
 `src/main/server-boot.ts`, called once at `app.whenReady`:
 
-- **In-process**, the default and what the shipped app does: the shell calls the server's `start()` and gets the address and the token back. Today that is the placeholder in `src/main/server-stub.ts`; when `packages/server` merges, the one line in `src/main/index.ts` that names `startStubServer` names the package instead.
+- **In-process**, the default and what the shipped app does: the shell calls `startClaveServer` (`src/main/server/clave-server.ts`, lane A's), which starts `@clave/server` on Node's own listener over the session manager, publishes the address to the windows, and gives the boot the url, the token and `stopClaveServer`.
 - **Attached**, under `CLAVE_SERVER_URL` with `CLAVE_SERVER_TOKEN`: the shell uses a server somebody else started and starts none of its own.
 
 Either way the shell then registers itself with the server (`POST /clients`, as `shell`, named `clave-shell <version>`, with its pid) and writes `clave-server.json` in the user-data directory (the url, the token, the mode, `ok`, the client id; mode 0600, write-then-rename, after `mcp-server.json`). On quit it waits for a boot still in flight, deregisters, and, when the server is its own, stops it.
@@ -47,7 +47,7 @@ An attach that fails (nothing answers the url, or the token is refused) is never
 
 ### What the shell expects of the server
 
-The shape lane A's contract carries (`packages/contract/src/clients.ts` and `api.ts`: the clients group beside the framework's health group) and the placeholder answers:
+The shape lane A's contract carries (`packages/contract/src/clients.ts` and `api.ts`: the clients group beside the framework's health group), as the server answers it in both shapes:
 
 | Call                                   | Answer                                       | Token  |
 | -------------------------------------- | -------------------------------------------- | ------ |
@@ -61,7 +61,7 @@ The shape lane A's contract carries (`packages/contract/src/clients.ts` and `api
 
 ### The server as its own process
 
-`scripts/server-process.mjs` is the one place that names the command, for the dev script and the harness alike. The process binds the loopback, writes `clave-server.json` into its `--data-dir`, and prints one JSON line `{"url","token"}` on stdout once it listens; whoever started it hands the pair to the app. Today the command runs `src/main/server-entry.ts` under Bun, which runs the TypeScript as it is; it is a placeholder, and lane A's entry replaces it under whatever runtime that package chose. `npm run dev:attached` starts the server and `electron-vite dev` attached to it and stops both together; `npm run dev:server` starts the server alone and prints the two variables for a dev app started by hand. The server's dev data lives under `~/.clave/server-dev`.
+`scripts/server-process.mjs` is the one place that names the command, for the dev script and the harness alike. The process binds the loopback, writes `clave-server.json` into its `--data-dir`, and prints one JSON line `{"url","token"}` on stdout once it listens; whoever started it hands the pair to the app. The command runs `src/main/server-entry.ts` under Bun, which runs the TypeScript as it is: `@clave/server`, the same package the app runs in-process, over an empty session source, because until the sessions move to the server (wave 2) a standalone server has none to answer for; a client sees the same API, the same token check and the same push channel either way. `npm run dev:attached` starts the server and `electron-vite dev` attached to it and stops both together; `npm run dev:server` starts the server alone and prints the two variables for a dev app started by hand. The server's dev data lives under `~/.clave/server-dev`.
 
 ### The harness
 

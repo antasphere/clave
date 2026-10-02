@@ -2,13 +2,13 @@
 // The server as its own process, started from a checkout (ADR 0003).
 //
 // ONE place names the command, for the dev script (scripts/dev-attached.mjs)
-// and the e2e harness (tests/e2e/harness.mjs) alike. Today the command runs
-// the placeholder entry `src/main/server-entry.ts` under Bun, which runs the
-// TypeScript as it is; when lane A's `packages/server` merges, `serverCommand`
-// points at that package's own entry under whatever runtime it chose, and
-// nothing that calls it changes. The contract that stays: the process binds
-// 127.0.0.1, and prints ONE JSON line `{"url","token"}` on stdout once it
-// listens.
+// and the e2e harness (tests/e2e/harness.mjs) alike. The command runs
+// `src/main/server-entry.ts` under Bun, which runs the TypeScript as it is:
+// `@clave/server`, the same package the app runs in-process, over an empty
+// session source. When the sessions move to the server (wave 2) the entry
+// grows a source of its own and nothing that calls it changes. The contract
+// that stays: the process binds 127.0.0.1, and prints ONE JSON line
+// `{"url","token"}` on stdout once it listens.
 //
 // Nothing here listens on, or upgrades, the server's port: the push channel
 // is a WebSocket upgrade on that same port (lane A), and a second handler

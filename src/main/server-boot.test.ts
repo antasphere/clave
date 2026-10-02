@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
+import { startEmbedded, SessionSource, type EmbeddedServer } from '@clave/server'
 import {
   resolveServerLaunch,
   takeServerLaunch,
@@ -11,9 +12,22 @@ import {
   DISCOVERY_FILE,
   type InProcessServer
 } from './server-boot'
-import { startStubServer, type StubServer } from './server-stub'
+import { getClaveServerEndpoint, setClaveServerEndpoint } from './server/endpoint'
 
 const identity = { kind: 'shell' as const, name: 'clave-shell 2.0.0', pid: 777 }
+
+/** The real server, over no sessions: what the standalone entry runs too. */
+const aServer = (token?: string): Promise<EmbeddedServer> =>
+  startEmbedded({ sessions: SessionSource.empty, port: 0, ...(token !== undefined && { token }) })
+
+/** Who the server lists, through its own API. */
+const clientsOf = async (server: { url: string; token: string }): Promise<{ pid?: number }[]> => {
+  const res = await fetch(`${server.url}/clients`, {
+    headers: { authorization: `Bearer ${server.token}` }
+  })
+  expect(res.status).toBe(200)
+  return (await res.json()) as { pid?: number }[]
+}
 
 describe('resolveServerLaunch', () => {
   it('is in-process when CLAVE_SERVER_URL is unset or blank', () => {
@@ -53,68 +67,67 @@ describe('takeServerLaunch', () => {
     expect(takeServerLaunch(env)).toEqual({ mode: 'in-process' })
     expect(env).toEqual({ PATH: '/usr/bin' })
   })
-  it('startServer takes the decision over the environment when both are given', async () => {
-    const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-launch-'))
-    const owned: StubServer[] = []
-    try {
-      const handle = await startServer({
-        launch: { mode: 'in-process' },
-        env: { CLAVE_SERVER_URL: 'http://127.0.0.1:1', CLAVE_SERVER_TOKEN: 'x' },
-        userData,
-        identity,
-        startInProcess: async () => {
-          const s = await startStubServer({ port: 0 })
-          owned.push(s)
-          return s
-        }
-      })
-      expect(handle.mode).toBe('in-process')
-      await handle.stop()
-    } finally {
-      for (const s of owned) await s.stop()
-      rmSync(userData, { recursive: true, force: true })
-    }
-  })
 })
 
 describe('startServer', () => {
   let userData: string
-  let stub: StubServer | null
+  const owned: EmbeddedServer[] = []
   beforeEach(() => {
     userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-'))
-    stub = null
+    setClaveServerEndpoint(null)
   })
   afterEach(async () => {
-    await stub?.stop()
+    for (const s of owned.splice(0)) await s.stop().catch(() => undefined)
     rmSync(userData, { recursive: true, force: true })
+    setClaveServerEndpoint(null)
   })
 
-  /** An in-process starter that records whether it was asked. */
-  const inProcess = (): { start: () => Promise<InProcessServer>; calls: number } => {
+  /** An in-process starter that records whether it was asked, on the real server. */
+  const inProcess = (): {
+    start: () => Promise<InProcessServer>
+    calls: number
+    server: () => EmbeddedServer
+  } => {
+    let started: EmbeddedServer | null = null
     const rec = {
       calls: 0,
+      server: () => started!,
       start: async (): Promise<InProcessServer> => {
         rec.calls++
-        stub = await startStubServer({ port: 0 })
-        return stub
+        started = await aServer()
+        owned.push(started)
+        return started
       }
     }
     return rec
   }
+
+  it('takes the decision over the environment when both are given', async () => {
+    const starter = inProcess()
+    const handle = await startServer({
+      launch: { mode: 'in-process' },
+      env: { CLAVE_SERVER_URL: 'http://127.0.0.1:1', CLAVE_SERVER_TOKEN: 'x' },
+      userData,
+      identity,
+      startInProcess: starter.start
+    })
+    expect(handle.mode).toBe('in-process')
+    await handle.stop()
+  })
 
   it('in-process: starts the server, registers the app on it, writes the discovery file', async () => {
     const starter = inProcess()
     const handle = await startServer({ env: {}, userData, identity, startInProcess: starter.start })
     expect(starter.calls).toBe(1)
     expect(handle.mode).toBe('in-process')
-    expect(handle.url).toBe(stub!.url)
+    expect(handle.url).toBe(starter.server().url)
     expect(handle.clientId).toBeTruthy()
-    expect(stub!.clients().map((c) => c.pid)).toEqual([777])
+    expect((await clientsOf(starter.server())).map((c) => c.pid)).toEqual([777])
 
     const disc = readDiscovery(userData)
     expect(disc).toMatchObject({
-      url: stub!.url,
-      token: stub!.token,
+      url: starter.server().url,
+      token: starter.server().token,
       mode: 'in-process',
       ok: true,
       pid: 777,
@@ -122,41 +135,42 @@ describe('startServer', () => {
     })
     // The file carries the token: owner-only.
     expect(statSync(path.join(userData, DISCOVERY_FILE)).mode & 0o777).toBe(0o600)
+    // The in-process start publishes its own address (clave-server.ts does);
+    // the boot leaves the endpoint store alone in this mode.
+    expect(getClaveServerEndpoint()).toBeNull()
 
     await handle.stop()
-    expect(stub!.clients()).toEqual([])
-    await expect(fetch(`${stub!.url}/health/live`)).rejects.toThrow()
+    await expect(fetch(`${starter.server().url}/health/live`)).rejects.toThrow()
     await handle.stop() // idempotent
   })
 
-  it('attached: uses the server given, never starts one of its own', async () => {
-    const other = await startStubServer({ port: 0 })
-    try {
-      const starter = inProcess()
-      const handle = await startServer({
-        env: { CLAVE_SERVER_URL: other.url, CLAVE_SERVER_TOKEN: other.token },
-        userData,
-        identity,
-        startInProcess: starter.start
-      })
-      expect(starter.calls).toBe(0)
-      expect(handle.mode).toBe('attached')
-      expect(handle.url).toBe(other.url)
-      expect(other.clients().map((c) => c.pid)).toEqual([777])
-      expect(readDiscovery(userData)).toMatchObject({ url: other.url, mode: 'attached', ok: true })
+  it('attached: uses the server given, never starts one of its own, publishes the endpoint', async () => {
+    const other = await aServer()
+    owned.push(other)
+    const starter = inProcess()
+    const handle = await startServer({
+      env: { CLAVE_SERVER_URL: other.url, CLAVE_SERVER_TOKEN: other.token },
+      userData,
+      identity,
+      startInProcess: starter.start
+    })
+    expect(starter.calls).toBe(0)
+    expect(handle.mode).toBe('attached')
+    expect(handle.url).toBe(other.url)
+    expect((await clientsOf(other)).map((c) => c.pid)).toEqual([777])
+    expect(readDiscovery(userData)).toMatchObject({ url: other.url, mode: 'attached', ok: true })
+    expect(getClaveServerEndpoint()).toEqual({ url: other.url, token: other.token })
 
-      // Stopping an attached handle deregisters and leaves the server up.
-      await handle.stop()
-      expect(other.clients()).toEqual([])
-      expect((await fetch(`${other.url}/health/live`)).status).toBe(200)
-    } finally {
-      await other.stop()
-    }
+    // Stopping an attached handle deregisters, unpublishes, and leaves the server up.
+    await handle.stop()
+    expect(await clientsOf(other)).toEqual([])
+    expect(getClaveServerEndpoint()).toBeNull()
+    expect((await fetch(`${other.url}/health/live`)).status).toBe(200)
   })
 
   it('attached to a dead url: rejects, writes ok:false, and does NOT fall back in-process', async () => {
     // A port nobody listens on: bind one, read it, release it.
-    const probe = await startStubServer({ port: 0 })
+    const probe = await aServer()
     const dead = probe.url
     await probe.stop()
 
@@ -174,32 +188,32 @@ describe('startServer', () => {
     const disc = readDiscovery(userData)
     expect(disc).toMatchObject({ url: dead, mode: 'attached', ok: false, token: null })
     expect(disc?.error).toMatch(/nothing answers/)
+    expect(getClaveServerEndpoint()).toBeNull()
   })
 
   it('attached with a wrong token: rejects naming the token, nothing registered', async () => {
-    const other = await startStubServer({ port: 0 })
-    try {
-      const starter = inProcess()
-      await expect(
-        startServer({
-          env: { CLAVE_SERVER_URL: other.url, CLAVE_SERVER_TOKEN: 'wrong' },
-          userData,
-          identity,
-          startInProcess: starter.start
-        })
-      ).rejects.toThrow(/refused the token/)
-      expect(starter.calls).toBe(0)
-      expect(other.clients()).toEqual([])
-      expect(readDiscovery(userData)).toMatchObject({ ok: false, mode: 'attached' })
-    } finally {
-      await other.stop()
-    }
+    const other = await aServer()
+    owned.push(other)
+    const starter = inProcess()
+    await expect(
+      startServer({
+        env: { CLAVE_SERVER_URL: other.url, CLAVE_SERVER_TOKEN: 'wrong' },
+        userData,
+        identity,
+        startInProcess: starter.start
+      })
+    ).rejects.toThrow(/refused the token/)
+    expect(starter.calls).toBe(0)
+    expect(await clientsOf(other)).toEqual([])
+    expect(readDiscovery(userData)).toMatchObject({ ok: false, mode: 'attached' })
+    expect(getClaveServerEndpoint()).toBeNull()
   })
 
   it('in-process whose registration fails: stops what it started and reports', async () => {
-    let started: StubServer | null = null
+    let started: EmbeddedServer | null = null
     const starter = async (): Promise<InProcessServer> => {
-      started = await startStubServer({ port: 0, token: 'real' })
+      started = await aServer('real')
+      owned.push(started)
       // Hand back a handle whose token is wrong: the registration is refused.
       return { url: started.url, token: 'not-the-token', stop: started.stop }
     }
