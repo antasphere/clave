@@ -108,6 +108,65 @@ describe('the push client against the server', () => {
     expect(statuses.slice(2, -1).every((s) => s === 'reconnecting')).toBe(true)
   })
 
+  it('does not subscribe again, after a reconnect, to a session the server said had exited', async () => {
+    client = new PushClient({
+      url: server.url,
+      token: server.token,
+      WebSocket: Socket,
+      backoff: { baseMs: 20, maxMs: 100 }
+    }).connect()
+    await client.whenOpen()
+    const errors: string[] = []
+    client.onError((message) => errors.push(message))
+    const exits: number[] = []
+    client.subscribe(
+      's1',
+      () => {},
+      (code) => exits.push(code)
+    )
+    await until(() => source.listeners('s1') === 2)
+    source.exit('s1', 0)
+    await until(() => exits.length === 1)
+    const port = Number(new URL(server.url).port)
+    await server.stop()
+    await until(() => client!.status === 'reconnecting')
+    const sourceB = new FakeSource()
+    await sleep(100)
+    server = await startEmbedded({ sessions: sourceB, port, token: server.token })
+    await client.whenOpen()
+    await sleep(150)
+    expect(errors).toEqual([])
+    // A new listener asks again, and the server answers for the id it knows now.
+    client.subscribe('s1', () => {})
+    await until(() => errors.length === 1)
+    expect(errors[0]).toBe('Unknown session')
+  })
+
+  it('a closed client constructs no further socket, even mid-backoff', async () => {
+    let constructed = 0
+    class Counting extends WebSocket {
+      constructor(url: string) {
+        super(url)
+        constructed += 1
+      }
+    }
+    client = new PushClient({
+      url: server.url,
+      token: server.token,
+      WebSocket: Counting as unknown as PushSocketConstructor,
+      backoff: { baseMs: 30, maxMs: 30 }
+    }).connect()
+    await client.whenOpen()
+    await server.stop()
+    await until(() => client!.status === 'reconnecting')
+    const before = constructed
+    client.close()
+    await sleep(200)
+    expect(constructed).toBe(before)
+    expect(client.status).toBe('closed')
+    server = await startEmbedded({ sessions: source })
+  })
+
   it('stops for good when the server refuses the token', async () => {
     const statuses: Array<[PushStatus, unknown]> = []
     client = new PushClient({

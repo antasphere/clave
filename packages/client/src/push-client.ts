@@ -54,6 +54,9 @@ export type Unsubscribe = () => void
 interface Subscription {
   readonly streams: Set<(stream: SessionStream) => void>
   readonly exits: Set<(code: number) => void>
+  /** The server said the session exited: there is nothing to subscribe to
+   *  again after a reconnect, and the listeners stay until their views leave. */
+  ended: boolean
 }
 
 export const pushUrlOf = (url: string): string => {
@@ -146,11 +149,14 @@ export class PushClient {
     onExit?: (code: number) => void
   ): Unsubscribe {
     let subscription = this.subscriptions.get(sessionId)
-    const fresh = !subscription
+    // A new listener on a session the server said had exited asks again: the
+    // id may be a resumed session now, and the server is the one to say.
+    const fresh = !subscription || subscription.ended
     if (!subscription) {
-      subscription = { streams: new Set(), exits: new Set() }
+      subscription = { streams: new Set(), exits: new Set(), ended: false }
       this.subscriptions.set(sessionId, subscription)
     }
+    subscription.ended = false
     subscription.streams.add(onStream)
     if (onExit) subscription.exits.add(onExit)
     if (fresh && this.status_ === 'open') this.send({ _tag: 'subscribe', sessionId })
@@ -249,8 +255,8 @@ export class PushClient {
       case 'welcome': {
         this.attempts = 0
         this.setStatus('open', {})
-        for (const sessionId of this.subscriptions.keys())
-          this.send({ _tag: 'subscribe', sessionId })
+        for (const [sessionId, subscription] of this.subscriptions)
+          if (!subscription.ended) this.send({ _tag: 'subscribe', sessionId })
         const waiters = this.openWaiters
         this.openWaiters = []
         for (const waiter of waiters) waiter.resolve()
@@ -264,6 +270,7 @@ export class PushClient {
       }
       case 'exit': {
         const subscription = this.subscriptions.get(frame.sessionId)
+        if (subscription) subscription.ended = true
         for (const listener of subscription?.exits ?? []) this.safely(() => listener(frame.code))
         return
       }

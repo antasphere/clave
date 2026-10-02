@@ -11,6 +11,7 @@ import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
 import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import { PUSH_PATH } from '@clave/contract/push'
 import { type Wrap, pathOf } from '../auth'
+import { isLoopbackOrigin } from '../cors'
 import { ServerEvents } from '../events'
 import { SessionSource } from '../ports'
 import { PushHub } from './hub'
@@ -45,6 +46,15 @@ export const pushRoute =
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       if (pathOf(request.url) !== PUSH_PATH) return yield* app
+      // A browser page sends its Origin on the handshake and the browser
+      // applies no same-origin rule to a WebSocket: a page off this machine
+      // is refused here. A client with no Origin (Node, the preload's own
+      // socket) still proves itself with the hello token.
+      const origin = request.headers['origin']
+      if (origin !== undefined && !isLoopbackOrigin(origin))
+        return HttpServerResponse.text('The push channel takes no page from off this machine.', {
+          status: 403
+        })
       const upgraded = yield* Effect.either(HttpServerRequest.upgrade)
       if (Either.isLeft(upgraded))
         return HttpServerResponse.text('The push channel is a WebSocket.', { status: 426 })

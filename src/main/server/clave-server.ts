@@ -4,15 +4,16 @@
  * (lane F wires the call in `src/main/index.ts`), on loopback with a fresh
  * token, and the sessions it answers for are the session manager's own,
  * through the `SessionSource` port. The address reaches the preload over
- * `server:endpoint` (`ipc-handlers/server-handlers.ts`) and any process the
- * shell spawns through the environment (`CLAVE_SERVER_URL`,
- * `CLAVE_SERVER_TOKEN`). The strangler shape of the spec: the same package
- * later runs as its own process and nothing a client sees changes.
+ * IPC (`ipc-handlers/server-handlers.ts`) and nothing else: it is never
+ * written into main's own environment, so no process the shell spawns
+ * inherits it (the wave's ruling of 2 October 2026; a Clave started from a
+ * Clave tab would otherwise reach the outer server). The strangler shape of
+ * the spec: the same package later runs as its own process and nothing a
+ * client sees changes.
  *
  * The server package, and Effect and the framework under it, load on the
  * first start, never when main boots: this file imports only types from it.
  */
-import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract/env'
 import type { EmbeddedServer, SessionSourceService } from '@clave/server'
 import type { SessionInput } from '../../shared/session-model'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
@@ -30,11 +31,12 @@ let stopStates: (() => void) | null = null
 
 /**
  * The session manager as the server's session source. A write that comes in
- * over the wire reaches the manager as written, minus `prepared`: that field
- * is main's to build from attachment records (`sessions/ipc.ts`), never a
- * caller's to supply, and the server's write path does not prepare
- * attachments yet. The lane that moves sessions onto the server brings that
- * preparation with it.
+ * over the wire reaches the manager as the contract decoded it: the wire's
+ * input union carries no `prepared` prompt (that field is main's to build
+ * from attachment records, `sessions/ipc.ts`, never a caller's to supply),
+ * so a smuggled one is dropped at the server's boundary before this code
+ * sees it. The server's write path does not prepare attachments yet; the
+ * lane that moves sessions onto the server brings that preparation with it.
  */
 export function sessionSourceFromManager(manager: SessionManager): SessionSourceService {
   return {
@@ -42,20 +44,11 @@ export function sessionSourceFromManager(manager: SessionManager): SessionSource
     get: (id) => manager.get(id),
     subscribe: (id, listener) => manager.subscribe(id, listener),
     subscribeExit: (id, listener) => manager.subscribeExit(id, listener),
-    write: (id, input) => {
-      if (input.type === 'bytes') return manager.write(id, input.data)
-      const message =
-        input.type === 'user_message'
-          ? {
-              type: input.type,
-              text: input.text,
-              ...(input.attachments && { attachments: input.attachments })
-            }
-          : input
+    write: (id, input) =>
       // The contract's types are readonly, the renderer's zod types are not;
-      // the shapes are the same, the test beside this file holds them so.
-      return manager.write(id, message as SessionInput)
-    }
+      // the shapes are the same, `packages/contract/src/sessions.test.ts`
+      // holds the two models together.
+      manager.write(id, input.type === 'bytes' ? input.data : (input as SessionInput))
   }
 }
 
@@ -63,7 +56,6 @@ export interface StartOptions {
   port?: number
   token?: string
   manager?: SessionManager
-  env?: NodeJS.ProcessEnv
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -90,9 +82,6 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   running = server
   const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token }
   setClaveServerEndpoint(endpoint)
-  const env = options.env ?? process.env
-  env[ENV_SERVER_URL] = server.url
-  env[ENV_SERVER_TOKEN] = server.token
   // Every attached client hears a session change state, whether or not it
   // follows that session's stream.
   stopStates = manager.subscribeAll((id, stream) => {
@@ -104,14 +93,12 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   return endpoint
 }
 
-export async function stopClaveServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function stopClaveServer(): Promise<void> {
   if (starting) await starting.catch(() => undefined)
   const server = running
   running = null
   setClaveServerEndpoint(null)
   stopStates?.()
   stopStates = null
-  delete env[ENV_SERVER_URL]
-  delete env[ENV_SERVER_TOKEN]
   await server?.stop()
 }

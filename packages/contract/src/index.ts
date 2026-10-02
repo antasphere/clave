@@ -5,7 +5,7 @@
  * lane adds its own file (or folder) and one line in its section here, and
  * never edits a module that is not its own.
  */
-export { CONTRACT_VERSION, ENV_SERVER_TOKEN, ENV_SERVER_URL } from './env'
+export { CONTRACT_VERSION, ENV_SERVER_TOKEN, ENV_SERVER_URL, IPC_SERVER_ENDPOINT } from './env'
 
 export * as Sessions from './sessions'
 export * as Clients from './clients'

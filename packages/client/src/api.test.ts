@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createServer } from 'node:http'
 import { startEmbedded, type EmbeddedServer } from '@clave/server'
 import { FakeSource, aSession } from '@clave/server/test-support'
 import { SessionNotFound } from '@clave/contract/sessions'
@@ -47,6 +48,20 @@ describe('the typed request client', () => {
     expect(error).toBeInstanceOf(ServerRefused)
     expect(error).toMatchObject({ status: 401, url: server.url })
     await wrong.dispose()
+  })
+  it('makes one attempt and no more, so a command never runs twice behind its back', async () => {
+    let hits = 0
+    const failing = createServer((_request, response) => {
+      hits += 1
+      response.writeHead(500, { 'content-type': 'text/plain' }).end('down')
+    })
+    await new Promise<void>((resolve) => failing.listen(0, '127.0.0.1', resolve))
+    const port = (failing.address() as { port: number }).port
+    const once = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    await expect(once.clients.list()).rejects.toThrow()
+    expect(hits).toBe(1)
+    await once.dispose()
+    await new Promise((resolve) => failing.close(resolve))
   })
   it('says the server is unreachable, at once, when nothing listens', async () => {
     const stopped = await startEmbedded({ sessions: source })

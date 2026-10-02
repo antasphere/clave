@@ -50,19 +50,38 @@ describe('the method router', () => {
     await expect(list()).rejects.toThrow('server down')
     expect(ipc).not.toHaveBeenCalled()
   })
-  it('treats a failed endpoint lookup as no endpoint, and asks again after a reset', async () => {
+  it('asks again on the next call while there is no endpoint, and keeps the backing once there is', async () => {
     let calls = 0
+    const connect = vi.fn(backing)
     const router = createMethodRouter({
       resolve: async () => {
         calls += 1
         if (calls === 1) throw new Error('no main yet')
+        if (calls === 2) return null
+        return { url: 'http://127.0.0.1:1', token: 't' }
+      },
+      connect
+    })
+    const list = router.route({ ipc: async () => 'ipc', server: async () => 'server' })
+    expect(await list()).toBe('ipc')
+    expect(await list()).toBe('ipc')
+    expect(await list()).toBe('server')
+    expect(await list()).toBe('server')
+    expect(calls).toBe(3)
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+  it('asks once for concurrent calls, and again after a reset', async () => {
+    let calls = 0
+    const router = createMethodRouter({
+      resolve: async () => {
+        calls += 1
         return { url: 'http://127.0.0.1:1', token: 't' }
       },
       connect: backing
     })
     const list = router.route({ ipc: async () => 'ipc', server: async () => 'server' })
-    expect(await list()).toBe('ipc')
-    expect(await list()).toBe('ipc')
+    expect(await Promise.all([list(), list(), list()])).toEqual(['server', 'server', 'server'])
+    expect(calls).toBe(1)
     router.reset()
     expect(await list()).toBe('server')
     expect(calls).toBe(2)

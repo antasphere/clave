@@ -29,7 +29,7 @@ afterEach(async () => {
 })
 
 describe('the session manager as the server’s session source', () => {
-  it('lists per window, hands out records, and strips a prepared prompt from a write', () => {
+  it('lists per window, hands out records, and passes a write to the adapter as written', () => {
     const manager = new SessionManager()
     const adapter = new EchoAdapter()
     manager.registerAdapter(adapter)
@@ -47,12 +47,11 @@ describe('the session manager as the server’s session source', () => {
     expect(source.get('zz')).toBeUndefined()
     const seen: unknown[] = []
     const off = source.subscribe('a', (stream) => seen.push(stream))
-    source.write('a', {
-      type: 'user_message',
-      text: 'hi',
-      prepared: { text: 'never this', images: [] }
-    })
+    source.write('a', { type: 'user_message', text: 'hi' })
     expect(seen[0]).toEqual({ kind: 'event', event: { type: 'user_message', text: 'hi' } })
+    source.write('a', { type: 'bytes', data: new Uint8Array([104, 105]) })
+    // The echo adapter takes no raw bytes and says so without ending the session.
+    expect(seen.some((s) => (s as { kind: string }).kind === 'event')).toBe(true)
     off()
     expect(() => source.subscribe('zz', () => {})).toThrow('Unknown session')
     manager.kill('a')
@@ -61,25 +60,42 @@ describe('the session manager as the server’s session source', () => {
 })
 
 describe('the server started by the shell', () => {
-  it('publishes its address over the endpoint and the environment, once', async () => {
-    const env: NodeJS.ProcessEnv = {}
+  it('publishes its address over the endpoint, once, and never into the environment', async () => {
     const manager = new SessionManager()
-    const first = await startClaveServer({ manager, env })
+    const before = { ...process.env }
+    const first = await startClaveServer({ manager })
     expect(first.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
-    expect(env.CLAVE_SERVER_URL).toBe(first.url)
-    expect(env.CLAVE_SERVER_TOKEN).toBe(first.token)
     expect(getClaveServerEndpoint()).toEqual(first)
-    expect(await startClaveServer({ manager, env })).toEqual(first)
-    await stopClaveServer(env)
+    expect(process.env.CLAVE_SERVER_URL).toBe(before.CLAVE_SERVER_URL)
+    expect(process.env.CLAVE_SERVER_TOKEN).toBe(before.CLAVE_SERVER_TOKEN)
+    expect(await startClaveServer({ manager })).toEqual(first)
+    await stopClaveServer()
     expect(getClaveServerEndpoint()).toBeNull()
-    expect(env.CLAVE_SERVER_URL).toBeUndefined()
+  })
+  it('two concurrent starts share one server', async () => {
+    const manager = new SessionManager()
+    const [a, b] = await Promise.all([startClaveServer({ manager }), startClaveServer({ manager })])
+    expect(a).toEqual(b)
+    expect(getClaveServerEndpoint()).toEqual(a)
+    await stopClaveServer()
+    // Nothing listens there any more: the one server stopped is the one started.
+    await expect(fetch(`${a.url}/health/live`)).rejects.toThrow()
+  })
+  it('stopping removes the listener it put on the manager', async () => {
+    const manager = new SessionManager()
+    const listeners = (): number => (manager as unknown as { all: Set<unknown> }).all.size
+    const idle = listeners()
+    await startClaveServer({ manager })
+    expect(listeners()).toBe(idle + 1)
+    await stopClaveServer()
+    expect(listeners()).toBe(idle)
   })
   it('answers the manager’s sessions over HTTP and their state changes over the push channel', async () => {
     const manager = new SessionManager()
     const adapter = new EchoAdapter()
     manager.registerAdapter(adapter)
     manager.adopt(record('a'), adapter.prepare(record('a')), adapter)
-    const endpoint = await startClaveServer({ manager, env: {} })
+    const endpoint = await startClaveServer({ manager })
     const api = createApiClient(endpoint)
     expect((await api.sessions.list()).map((s) => s.id)).toEqual(['a'])
     const push = new PushClient({ ...endpoint, WebSocket: Socket }).connect()

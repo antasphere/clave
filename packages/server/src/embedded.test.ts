@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from './embedded'
 import { FakeSource, Peer, aSession, sleep } from './test-support'
 
@@ -38,6 +38,46 @@ describe('the HTTP API behind the token', () => {
       headers: headers(server.token.slice(0, -1) + 'x')
     })
     expect(almost.status).toBe(401)
+    // A prefix, a longer string, odd spacing, the lowercase scheme: all refused.
+    for (const header of [
+      `Bearer ${server.token.slice(0, 8)}`,
+      `Bearer ${server.token}x`,
+      `Bearer  ${server.token}`,
+      `bearer ${server.token}`,
+      server.token
+    ]) {
+      const response = await fetch(`${server.url}/sessions`, { headers: { authorization: header } })
+      expect(response.status, header).toBe(401)
+    }
+  })
+  it('answers a preflight and marks responses for a loopback page, and for no other origin', async () => {
+    const preflight = await fetch(`${server.url}/sessions`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization'
+      }
+    })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('http://localhost:5173')
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('authorization')
+    const answered = await fetch(`${server.url}/sessions`, {
+      headers: { ...headers(server.token), origin: 'http://127.0.0.1:5173' }
+    })
+    expect(answered.status).toBe(200)
+    expect(answered.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173')
+    expect(answered.headers.get('vary')).toBe('Origin')
+    const stranger = await fetch(`${server.url}/sessions`, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://evil.example', 'access-control-request-method': 'GET' }
+    })
+    expect(stranger.status).toBe(401)
+    expect(stranger.headers.get('access-control-allow-origin')).toBeNull()
+    const strangerGet = await fetch(`${server.url}/sessions`, {
+      headers: { ...headers(server.token), origin: 'http://evil.example' }
+    })
+    expect(strangerGet.headers.get('access-control-allow-origin')).toBeNull()
   })
   it('lists the sessions, every one or one window’s', async () => {
     const all = await fetch(`${server.url}/sessions`, { headers: headers(server.token) })
@@ -80,6 +120,28 @@ describe('the HTTP API behind the token', () => {
     expect(first.type).toBe('bytes')
     expect(Array.from(first.data)).toEqual([104, 105])
     expect(source.writes[1].input).toEqual({ type: 'interrupt' })
+  })
+  it('answers a declared failure, not a 500, for a write to an unknown session', async () => {
+    const missing = await fetch(`${server.url}/sessions/write`, {
+      method: 'POST',
+      headers: headers(server.token),
+      body: JSON.stringify({ id: 'ghost', input: { type: 'interrupt' } })
+    })
+    expect(missing.status).toBe(422)
+    expect(await json(missing)).toMatchObject({ _tag: 'SessionNotFound', id: 'ghost' })
+  })
+  it('drops a prepared prompt from a wire write before it reaches the session', async () => {
+    const smuggled = await fetch(`${server.url}/sessions/write`, {
+      method: 'POST',
+      headers: headers(server.token),
+      body: JSON.stringify({
+        id: 's1',
+        input: { type: 'user_message', text: 'hi', prepared: { text: 'injected', images: [] } }
+      })
+    })
+    expect(smuggled.status).toBe(204)
+    expect(source.writes).toEqual([{ id: 's1', input: { type: 'user_message', text: 'hi' } }])
+    expect('prepared' in (source.writes[0].input as object)).toBe(false)
   })
   it('refuses a malformed write before it reaches the session', async () => {
     const bad = await fetch(`${server.url}/sessions/write`, {
@@ -159,6 +221,20 @@ describe('the push channel', () => {
     const response = await fetch(`${server.url}/push`)
     expect(response.status).toBe(426)
   })
+  it('refuses a handshake from a page off this machine, and takes one from a loopback page', async () => {
+    const stranger = new Peer(pushUrl(), { origin: 'http://evil.example' })
+    const refused = await stranger.opened.then(
+      () => 'opened',
+      (error: Error) => error.message
+    )
+    expect(refused).toContain('403')
+    const local = new Peer(pushUrl(), { origin: 'http://localhost:5173' })
+    await local.opened
+    local.send({ _tag: 'hello', token: server.token })
+    expect((await local.next())._tag).toBe('welcome')
+    local.ws.close()
+    await local.closed
+  })
   it('welcomes the right token, answers pings, and counts the peer', async () => {
     const peer = await welcomed()
     expect(server.connections()).toBe(1)
@@ -168,6 +244,64 @@ describe('the push channel', () => {
     await peer.closed
     await sleep(50)
     expect(server.connections()).toBe(0)
+  })
+  it('counts only the peers that said hello', async () => {
+    const peer = await welcomed()
+    const silent = new Peer(pushUrl())
+    await silent.opened
+    expect(server.connections()).toBe(1)
+    peer.ws.close()
+    silent.ws.close()
+    await Promise.all([peer.closed, silent.closed])
+  })
+  it('after the welcome, a second hello and a malformed frame are errors, not the end', async () => {
+    const peer = await welcomed()
+    peer.send({ _tag: 'hello', token: server.token })
+    expect(await peer.next()).toEqual({ _tag: 'error', message: 'Already welcomed' })
+    peer.raw('{"_tag":"shutdown"}')
+    expect(await peer.next()).toEqual({ _tag: 'error', message: 'Malformed frame' })
+    peer.raw('not json')
+    expect(await peer.next()).toEqual({ _tag: 'error', message: 'Malformed frame' })
+    peer.send({ _tag: 'ping' })
+    expect(await peer.next()).toEqual({ _tag: 'pong' })
+    expect(server.connections()).toBe(1)
+  })
+  it('subscribing twice is one subscription on the source', async () => {
+    const peer = await welcomed()
+    peer.send({ _tag: 'subscribe', sessionId: 's1' })
+    peer.send({ _tag: 'subscribe', sessionId: 's1' })
+    expect((await peer.next())._tag).toBe('subscribed')
+    expect((await peer.next())._tag).toBe('subscribed')
+    expect(source.listeners('s1')).toBe(2)
+    source.emit('s1', { kind: 'event', event: { type: 'turn_interrupted' } })
+    expect((await peer.next())._tag).toBe('stream')
+    expect(await peer.silence()).toBe(true)
+  })
+  it('a source that throws ends that peer, detaches its listeners, and the server still stops', async () => {
+    await server.stop()
+    const throwing = new FakeSource(aSession('s1'))
+    const original = throwing.subscribeExit
+    throwing.subscribeExit = (id, listener) => {
+      if (id === 's1') throw new Error(`gone: ${id}`)
+      return original(id, listener)
+    }
+    server = await startEmbedded({ sessions: throwing, helloTimeoutMs: 200 })
+    const victim = await welcomed()
+    const bystander = await welcomed()
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {})
+    victim.send({ _tag: 'subscribe', sessionId: 's1' })
+    expect((await victim.closed).code).toBe(1011)
+    quiet.mockRestore()
+    expect(throwing.listeners('s1')).toBe(0)
+    expect(server.connections()).toBe(1)
+    bystander.send({ _tag: 'ping' })
+    expect(await bystander.next()).toEqual({ _tag: 'pong' })
+    const stopped = await Promise.race([
+      server.stop().then(() => 'stopped'),
+      sleep(3000).then(() => 'hung')
+    ])
+    expect(stopped).toBe('stopped')
+    server = await startEmbedded({ sessions: source })
   })
   it('streams a subscribed session’s bytes and events, then its exit', async () => {
     const peer = await welcomed()

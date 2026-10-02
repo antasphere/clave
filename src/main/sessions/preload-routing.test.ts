@@ -104,15 +104,21 @@ describe('the preload routes sessionsList', () => {
     await expect(api.sessionsList()).rejects.toThrow('server down')
     expect(mocks.invoke.mock.calls.map(([c]) => c)).not.toContain('sessions:list')
   })
-  it('reads the endpoint from the environment when main does not name one', async () => {
-    process.env.CLAVE_SERVER_URL = endpoint.url
-    process.env.CLAVE_SERVER_TOKEN = endpoint.token
+  it('never reads an endpoint from its own environment: main over IPC is the only source', async () => {
+    process.env.CLAVE_SERVER_URL = 'http://127.0.0.1:9/outer'
+    process.env.CLAVE_SERVER_TOKEN = 'outer'
+    answer({ 'server:endpoint': null, 'sessions:list': [{ id: 'ipc' }] })
+    expect(await api.sessionsList()).toEqual([{ id: 'ipc' }])
+    expect(mocks.createApiClient).not.toHaveBeenCalled()
+  })
+  it('asks main again on the next call while there is no server yet', async () => {
+    answer({ 'server:endpoint': null, 'sessions:list': [{ id: 'ipc' }] })
+    expect(await api.sessionsList()).toEqual([{ id: 'ipc' }])
     answer({
-      'server:endpoint': null,
-      'window:identity': { windowId: 1, windowKey: 'w-1', workspaceId: null, isPrimary: true }
+      'server:endpoint': endpoint,
+      'window:identity': { windowId: 1, windowKey: 'w-7', workspaceId: null, isPrimary: true }
     })
-    mocks.apiList.mockResolvedValue([])
-    await api.sessionsList()
-    expect(mocks.createApiClient).toHaveBeenCalledExactlyOnceWith(endpoint)
+    mocks.apiList.mockResolvedValue([{ id: 'server' }])
+    expect(await api.sessionsList()).toEqual([{ id: 'server' }])
   })
 })

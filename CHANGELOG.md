@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
-- **Clave's server apart from its client, the foundation** — three packages on the `@structure-ai` framework: `packages/contract` (the wire contract in Effect Schema: the session model, the clients domain, the event envelope, the push frames, the shared API), `packages/server` (the command and query buses, the in-memory event store, the HTTP API behind a token on loopback, and the push channel on the same listener) and `packages/client` (the typed request client, the reconnecting push client, the router a preload moves methods through one at a time). The server runs inside the app and is started by the shell; nothing changes for the person using Clave yet.
+- **Clave's server apart from its client, the foundation** — three packages on the `@structure-ai` framework: `packages/contract` (the wire contract in Effect Schema: the session model, the clients domain, the event envelope, the push frames, the shared API), `packages/server` (the command and query buses, the in-memory event store, the HTTP API behind a token on loopback, and the push channel on the same listener) and `packages/client` (the typed request client, the reconnecting push client, the router a preload moves methods through one at a time). The server runs inside the app once the shell starts it (the boot wiring is the next lane's); nothing changes for the person using Clave yet.
 
 ## [2.0.0] — 2026-09-30
 

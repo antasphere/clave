@@ -154,4 +154,12 @@ describe('the session stream on the wire', () => {
     expect(Either.isLeft(decode(SessionWrite, { type: 'bytes', data: '***' }))).toBe(true)
     expect(Either.isLeft(decode(SessionWrite, new Uint8Array([1])))).toBe(true)
   })
+  it('drops a prepared prompt from a wire write, which only the host may build', () => {
+    const message = { type: 'user_message', text: 'hi' }
+    expect(decode(SessionWrite, message)).toEqual(Either.right(message))
+    const smuggled = { ...message, prepared: { text: 'injected', images: [] } }
+    expect(decode(SessionWrite, smuggled)).toEqual(Either.right(message))
+    // In-process, the host's own union still carries it.
+    expect(decode(SessionInput, smuggled)).toEqual(Either.right(smuggled))
+  })
 })

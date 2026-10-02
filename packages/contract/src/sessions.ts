@@ -117,12 +117,26 @@ export const SessionInput = Schema.Union(
 export type SessionInput = typeof SessionInput.Type
 
 /** What reaches a session over the wire: a typed input, or raw bytes for a
- *  terminal, base64 on the wire and `Uint8Array` in memory. */
+ *  terminal, base64 on the wire and `Uint8Array` in memory. The one input the
+ *  wire does not carry is a `prepared` prompt: that field is the host's to
+ *  build from attachment records, never a caller's to supply, so it is not in
+ *  the wire's own union and the boundary drops it from a write that carries
+ *  it (a struct ignores what it does not declare). */
 export const SessionBytes = Schema.Struct({
   type: Schema.Literal('bytes'),
   data: Schema.Uint8ArrayFromBase64
 })
-export const SessionWrite = Schema.Union(SessionInput, SessionBytes)
+export const SessionWireInput = Schema.Union(
+  UserMessage,
+  PermissionResponse,
+  Interrupt,
+  SetModel,
+  SetEffort,
+  SetPermissionMode,
+  StopTask
+)
+export type SessionWireInput = typeof SessionWireInput.Type
+export const SessionWrite = Schema.Union(SessionWireInput, SessionBytes)
 export type SessionWrite = typeof SessionWrite.Type
 
 // ── What a provider offers ──

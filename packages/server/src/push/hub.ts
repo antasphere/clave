@@ -92,6 +92,18 @@ export class PushHub {
 
   private receive(peer: Peer, text: string): void {
     if (peer.closed) return
+    try {
+      this.handle(peer, text)
+    } catch (error) {
+      // Nothing a peer sends may take the server down: a source that throws
+      // ends that peer's connection, with its listeners detached, and the
+      // hub goes on serving the others.
+      console.error('[clave-server] push peer failed', error)
+      this.close(peer, 1011, 'server error')
+    }
+  }
+
+  private handle(peer: Peer, text: string): void {
     const decoded = decodeClientFrame(text)
     if (Either.isLeft(decoded)) {
       if (!peer.welcomed) return this.close(peer, CLOSE_MALFORMED, 'malformed frame')
@@ -133,11 +145,18 @@ export class PushHub {
       const offStream = this.options.source.subscribe(sessionId, (stream) =>
         this.send(peer, { _tag: 'stream', sessionId, stream })
       )
-      const offExit = this.options.source.subscribeExit(sessionId, (code) => {
-        this.send(peer, { _tag: 'exit', sessionId, code })
-        peer.subscriptions.get(sessionId)?.()
-        peer.subscriptions.delete(sessionId)
-      })
+      let offExit: Unsubscribe
+      try {
+        offExit = this.options.source.subscribeExit(sessionId, (code) => {
+          this.send(peer, { _tag: 'exit', sessionId, code })
+          peer.subscriptions.get(sessionId)?.()
+          peer.subscriptions.delete(sessionId)
+        })
+      } catch (error) {
+        // Half a subscription is none: the stream listener goes too.
+        offStream()
+        throw error
+      }
       peer.subscriptions.set(sessionId, () => {
         offStream()
         offExit()

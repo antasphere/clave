@@ -28,7 +28,10 @@ export interface MethodRoute<A extends unknown[], R> {
 }
 
 export interface MethodRouterOptions {
-  /** Where the server is, or null while there is none. Asked once per backing. */
+  /** Where the server is, or null while there is none. Asked again on every
+   *  routed call until it answers an endpoint; a backing, once built, is
+   *  kept until `reset`. A window whose first call lands before the server
+   *  is up therefore joins it on its next call, not on its next reload. */
   readonly resolve: () => Promise<Endpoint | null>
   /** Builds the backing for an endpoint; may load the client lazily, which is
    *  why it may answer a promise: a preload that imports Effect at window
@@ -38,7 +41,7 @@ export interface MethodRouterOptions {
 
 export interface MethodRouter {
   readonly route: <A extends unknown[], R>(route: MethodRoute<A, R>) => (...args: A) => Promise<R>
-  /** The backing in use, null when every call goes over IPC. */
+  /** The backing in use, null when this call goes over IPC. */
   readonly backing: () => Promise<Backing | null>
   /** Forget the backing, so the next call asks for the endpoint again. */
   readonly reset: () => void
@@ -48,10 +51,19 @@ export function createMethodRouter(options: MethodRouterOptions): MethodRouter {
   let backing: Promise<Backing | null> | null = null
   const acquire = (): Promise<Backing | null> => {
     if (!backing) {
-      backing = options.resolve().then(
-        (endpoint) => (endpoint ? options.connect(endpoint) : null),
-        () => null
-      )
+      const attempt = options
+        .resolve()
+        .then(
+          (endpoint) => (endpoint ? options.connect(endpoint) : null),
+          () => null
+        )
+        .then((built) => {
+          // No endpoint yet, or none reachable: nothing is remembered, the
+          // next call asks again.
+          if (!built && backing === attempt) backing = null
+          return built
+        })
+      backing = attempt
     }
     return backing
   }

@@ -81,8 +81,8 @@ export class Peer {
   readonly closed: Promise<{ code: number; reason: string }>
   readonly opened: Promise<void>
 
-  constructor(url: string) {
-    this.ws = new WebSocket(url)
+  constructor(url: string, headers?: Record<string, string>) {
+    this.ws = new WebSocket(url, { headers })
     this.opened = new Promise((resolve, reject) => {
       this.ws.once('open', () => resolve())
       this.ws.once('error', reject)

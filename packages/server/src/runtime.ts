@@ -17,6 +17,7 @@ import { Middleware } from '@structure-ai/http'
 import { Readiness } from '@structure-ai/runtime'
 import { ApiLive } from './api'
 import { bearerAuth } from './auth'
+import { corsForLoopback } from './cors'
 import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
 import { SessionSource, type SessionSourceService } from './ports'
@@ -60,11 +61,12 @@ export const BusesLive = busesLayer.pipe(
   Layer.provide(HandlerRegistry.layer(...sessionHandlers, ...clientHandlers))
 )
 
-/** The middleware outside the router: the push upgrade, then the token check. */
+/** The middleware outside the router, outermost first: the loopback CORS
+ *  answer, the push upgrade, then the token check. */
 const outer =
   (token: string) =>
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
-    Effect.flatMap(PushHubService, (hub) => pushRoute(hub)(bearerAuth(token)(app)))
+    Effect.flatMap(PushHubService, (hub) => corsForLoopback(pushRoute(hub)(bearerAuth(token)(app))))
 
 /**
  * The served API over the services, needing only an `HttpServer` (and the

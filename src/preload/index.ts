@@ -17,7 +17,7 @@ import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity } from '../shared/workspace-types'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
-import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract/env'
+import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -37,20 +37,17 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // ── The server client (lane A) ──
 // The renderer keeps calling `electronAPI` by the same names; a method moves
 // to Clave's server here, one at a time, by taking a `server` arm. Until the
-// shell has started the server (`server:endpoint` answers null, the
-// environment carries no address) every method goes over IPC as before; once
-// the server is in use, its failure reaches the caller and nothing falls back.
+// shell has started the server (main answers null) every method goes over IPC
+// as before; once the server is in use, its failure reaches the caller and
+// nothing falls back. Main over IPC is the ONLY source of the address: an
+// address in this process's environment is somebody else's server (a Clave
+// started from a Clave tab inherits the outer one's) and is never read.
 // The client itself (Effect and the framework underneath) loads on the first
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
 const serverRouter = createMethodRouter({
-  resolve: async (): Promise<Endpoint | null> => {
-    const fromMain = (await ipcRenderer.invoke('server:endpoint')) as Endpoint | null
-    if (fromMain) return fromMain
-    const url = process.env[ENV_SERVER_URL]
-    const token = process.env[ENV_SERVER_TOKEN]
-    return url && token ? { url, token } : null
-  },
+  resolve: async (): Promise<Endpoint | null> =>
+    ((await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as Endpoint | null) ?? null,
   connect: async (endpoint) => {
     const { createApiClient, PushClient } = await import('@clave/client')
     return {
