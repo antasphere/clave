@@ -25,6 +25,8 @@ describe('the HTTP API behind the token', () => {
   })
   it('answers the health probes without a token', async () => {
     expect(await json(await fetch(`${server.url}/health/live`))).toEqual({ status: 'live' })
+    // The open path is the path, whatever query rides on it.
+    expect((await fetch(`${server.url}/health/live?x=1`)).status).toBe(200)
     const ready = await fetch(`${server.url}/health/ready`)
     expect(ready.status).toBe(200)
     expect(await json(ready)).toMatchObject({ ready: true })
@@ -68,7 +70,14 @@ describe('the HTTP API behind the token', () => {
     expect(answered.status).toBe(200)
     expect(answered.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173')
     expect(answered.headers.get('vary')).toBe('Origin')
-    for (const origin of ['http://evil.example', 'http://localhost.evil.com:5173', 'file://']) {
+    for (const origin of [
+      'http://evil.example',
+      'http://localhost.evil.com:5173',
+      'http://evil.localhost:5173',
+      'http://foo127.0.0.1:5173',
+      'null',
+      'file://'
+    ]) {
       const stranger = await fetch(`${server.url}/sessions`, {
         method: 'OPTIONS',
         headers: { origin, 'access-control-request-method': 'GET' }
@@ -272,15 +281,26 @@ describe('the push channel', () => {
       (error: Error) => error.message
     )
     expect(refused).toContain('403')
-    const lookalike = new Peer(pushUrl(), { origin: 'http://localhost.evil.com:5173' })
-    expect(
-      await lookalike.opened.then(
-        () => 'opened',
-        (error: Error) => error.message
-      )
-    ).toContain('403')
+    // Lookalikes of the loopback form, a file path, the opaque origin: none is this app's page.
+    for (const origin of [
+      'http://localhost.evil.com:5173',
+      'http://evil.localhost:5173',
+      'http://foo127.0.0.1:5173',
+      'file:///Users/someone/page.html',
+      'FILE://',
+      'null'
+    ]) {
+      const refused = new Peer(pushUrl(), { origin })
+      expect(
+        await refused.opened.then(
+          () => 'opened',
+          (error: Error) => error.message
+        ),
+        origin
+      ).toContain('403')
+    }
     // The dev renderer is a loopback page, the packaged renderer a file:// one.
-    for (const origin of ['http://localhost:5173', 'file://', 'null']) {
+    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5173', 'file://']) {
       const own = new Peer(pushUrl(), { origin })
       await own.opened
       own.send({ _tag: 'hello', token: server.token })

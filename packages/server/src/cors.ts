@@ -29,20 +29,25 @@ export const isLoopbackOrigin = (origin: string | undefined): boolean => {
   return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname)
 }
 
-/** The packaged renderer is a `file://` page; Chromium names its origin
- *  `file://` on a WebSocket handshake and `null` where the origin is opaque.
- *  Such a page is this machine's own as much as a loopback one; the token in
- *  the hello is what proves the client, the origin only keeps a page off this
- *  machine from trying. */
+/** The packaged renderer is a `file://` page, and Chromium names its origin
+ *  exactly `file://` on a WebSocket handshake (measured in the built app, by
+ *  the verifier's round 3). Such a page is this machine's own as much as a
+ *  loopback one; the token in the hello is what proves the client, the origin
+ *  only keeps a page off this machine from trying. `null`, the opaque origin
+ *  of a sandboxed frame or a `data:` page, is not accepted: the app presents
+ *  no such page, and any site on this machine could otherwise open and hold
+ *  pre-hello sockets through a sandboxed iframe and tell the port apart. */
 export const isOwnPageOrigin = (origin: string | undefined): boolean =>
-  origin === 'file://' || origin === 'null' || isLoopbackOrigin(origin)
+  origin === 'file://' || isLoopbackOrigin(origin)
 
 const ALLOW_METHODS = 'GET, POST, OPTIONS'
 /** What the typed client sends with every request, besides what a browser
  *  adds on its own: the token, the JSON body, the framework's idempotency and
  *  correlation headers, and the tracing headers the Effect HTTP client
  *  propagates (`traceparent`, `b3`). A preflight that names more is answered
- *  with what it named: the request behind it still meets the token check. */
+ *  with what it named, a deliberate choice: the allow-list only says which
+ *  header names a loopback page may put on a request, and the request behind
+ *  the preflight still meets the token check whatever it carries. */
 const ALLOW_HEADERS =
   'authorization, content-type, x-idempotency-key, x-correlation-id, x-request-id, traceparent, tracestate, b3'
 
