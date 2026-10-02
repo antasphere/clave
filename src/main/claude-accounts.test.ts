@@ -147,6 +147,26 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
     })
 
+    it('a write that fails after the seal leaves the working token in place too', () => {
+      const work = manager.add({ label: 'Work' })
+      manager.setToken(work.id, TOKEN)
+      const full = new ClaudeAccountsManager({
+        ...ports,
+        storage: {
+          ...ports.storage,
+          write: () => {
+            throw new Error('no space left on device')
+          }
+        }
+      })
+      expect(() => full.setToken(work.id, TOKEN + 'x')).toThrow(/no space/)
+      // The old handle is still what the file names, so the old item must still
+      // open; the item sealed for the write that failed is not left behind.
+      expect(new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
+      expect(full.getToken(work.id)).toBe(TOKEN)
+      if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
+    })
+
     it('the file holds what the port handed back, never the value', () => {
       const work = manager.add({ label: 'Work' })
       manager.setToken(work.id, TOKEN)

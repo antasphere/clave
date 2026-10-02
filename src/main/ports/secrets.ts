@@ -56,7 +56,8 @@ function quoteForSecurity(value: string): string {
  * Each sealed value is one generic-password item under `service`, its
  * account a fresh handle; the handle is what the domain keeps. The value
  * goes in through `security -i`'s standard input, never on the command line,
- * so it is not readable in the process list while the write runs.
+ * so it is not readable in the process list while the write runs. Printable
+ * ASCII values only: that is what `security` reads back verbatim.
  */
 export function keychainSecrets(options: {
   service: string
@@ -73,11 +74,17 @@ export function keychainSecrets(options: {
     available: () => platform === 'darwin' && exists(SECURITY),
     seal(plain) {
       if (!port.available()) throw new Error('The macOS Keychain is unavailable here.')
-      // `security -i` reads one command per line: a value with a line break
-      // or another control character would be read as a second command.
+      // Printable ASCII only. `security -i` reads one command per line, so a
+      // line break or another control character would be read as a second
+      // command; and `find-generic-password -w` prints anything beyond ASCII
+      // as hex, so a value with an accent would open to a different string.
+      // The tokens this port carries are ASCII; anything else is refused
+      // rather than filed and read back wrong.
       // eslint-disable-next-line no-control-regex
-      if (/[\x00-\x1f\x7f]/.test(plain)) {
-        throw new Error('A secret with a control character cannot be filed in the Keychain.')
+      if (/[^\x20-\x7e]/.test(plain)) {
+        throw new Error(
+          'A secret outside printable ASCII cannot be filed in the Keychain through security.'
+        )
       }
       const handle = randomUUID()
       run(

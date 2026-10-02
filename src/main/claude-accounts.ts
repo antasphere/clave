@@ -301,11 +301,20 @@ export class ClaudeAccountsManager {
     // keychain, a denied prompt) must leave the working token in place
     // rather than an account that says it holds one and opens to nothing.
     const sealed = this.ports.secrets.seal(trimmed)
-    const previous = credentials[id]?.token
+    const previous = credentials[id]
     credentials[id] = { token: sealed, setAt: Date.now() }
+    try {
+      this.saveCredentials()
+    } catch (error) {
+      // The file still names the old value: the cache goes back to it, and
+      // the item just sealed is forgotten rather than left orphaned.
+      if (previous) credentials[id] = previous
+      else delete credentials[id]
+      this.ports.secrets.discard(sealed)
+      throw error
+    }
     this.migrated.delete(id)
-    this.saveCredentials()
-    if (typeof previous === 'string') this.ports.secrets.discard(previous)
+    if (previous) this.ports.secrets.discard(previous.token)
     this.emit()
   }
 

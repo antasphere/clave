@@ -93,13 +93,20 @@ describe('keychainSecrets', () => {
     expect(security.calls.filter((c) => c.args[0] === 'delete-generic-password')).toHaveLength(2)
   })
 
-  it('refuses a value with a line break or another control character, and stores nothing', () => {
+  it('refuses a value outside printable ASCII, and stores nothing', () => {
     const security = fakeSecurity()
     const p = port(security)
-    expect(() => p.seal('first\nadd-generic-password -s x -a y -w z')).toThrow(/control character/)
-    expect(() => p.seal('tab\there')).toThrow(/control character/)
+    // A line break would be read by `security -i` as a second command.
+    expect(() => p.seal('first\nadd-generic-password -s x -a y -w z')).toThrow(/printable ASCII/)
+    expect(() => p.seal('tab\there')).toThrow(/printable ASCII/)
+    // An accent is filed, but read back as hex by `find-generic-password -w`.
+    expect(() => p.seal('p\u00e4ssword')).toThrow(/printable ASCII/)
+    expect(() => p.seal('line\u2028separator')).toThrow(/printable ASCII/)
     expect(security.calls).toEqual([])
     expect(security.items.size).toBe(0)
+    expect(p.open(p.seal('sk-ant-oat01-abc_DEF-123 "quoted" \\slash'))).toBe(
+      'sk-ant-oat01-abc_DEF-123 "quoted" \\slash'
+    )
   })
 
   it('is unavailable off macOS, and sealing there throws rather than storing plaintext', () => {
