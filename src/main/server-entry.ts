@@ -12,13 +12,15 @@
  * started it reads that line and hands the pair to the app as
  * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
  *
- * Today the process runs the stub (`server-stub.ts`); when lane A's package
- * merges this entry starts that instead, and the line it prints does not
- * change. Nothing here imports Electron.
+ * The process runs `@clave/server`, the same package the app runs in-process,
+ * over an EMPTY session source: until the sessions move to the server (wave
+ * 2) a standalone server has none to answer for, and a client sees the same
+ * API, the same token check and the same push channel as in-process. Nothing
+ * here imports Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { startStubServer } from './server-stub'
+import { startEmbedded, SessionSource } from '@clave/server'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -39,7 +41,12 @@ async function main(): Promise<void> {
     process.exit(2)
   }
 
-  const server = await startStubServer({ port, token: arg('token') })
+  const token = arg('token')
+  const server = await startEmbedded({
+    sessions: SessionSource.empty,
+    port,
+    ...(token !== undefined && { token })
+  })
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')

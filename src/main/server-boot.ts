@@ -4,12 +4,13 @@
  * Two ways, decided by the environment the app was launched with:
  *
  *  - IN-PROCESS (the default, what the shipped app does): the server starts
- *    inside Electron main on a loopback port with a fresh token. Today that is
- *    the stub in `server-stub.ts`; once lane A's `packages/server` merges it is
- *    that package, and nothing else in this file changes.
+ *    inside Electron main on a loopback port with a fresh token: `@clave/server`
+ *    over the session manager, through `server/clave-server.ts` (lane A's),
+ *    which also publishes the address to the windows over IPC.
  *  - ATTACHED (`CLAVE_SERVER_URL`, with `CLAVE_SERVER_TOKEN`): the app uses a
  *    server somebody else started, the standalone entry under Bun (`npm run
- *    dev:attached`, or the e2e harness, one server per spec).
+ *    dev:attached`, or the e2e harness, one server per spec); the address is
+ *    published the same way once the registration landed.
  *
  * Either way the shell then REGISTERS itself with the server (`POST /clients`,
  * its pid and version), so the server knows which app is on it, and writes
@@ -29,6 +30,8 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import { ENV_SERVER_URL, ENV_SERVER_TOKEN } from '@clave/contract/env'
+import { setClaveServerEndpoint } from './server/endpoint'
 
 export type ServerMode = 'in-process' | 'attached'
 
@@ -65,15 +68,6 @@ export interface ServerDiscovery {
 
 export const DISCOVERY_FILE = 'clave-server.json'
 
-// The names shared with the renderer side, as lane A's contract declares them
-// in `@clave/contract/env` (1bd2717 on lane/split-a): the two variables an
-// attach is asked with, and the IPC channel main answers the endpoint on,
-// `{ url, token } | null`. Literal here, in ONE place, until that package is
-// on dev; then these three lines become the import.
-export const ENV_SERVER_URL = 'CLAVE_SERVER_URL'
-export const ENV_SERVER_TOKEN = 'CLAVE_SERVER_TOKEN'
-export const IPC_SERVER_ENDPOINT = 'server:endpoint'
-
 export type ServerLaunch =
   | { mode: 'in-process' }
   | { mode: 'attached'; url: string; token: string | null }
@@ -100,12 +94,6 @@ export function takeServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
   delete env[ENV_SERVER_URL]
   delete env[ENV_SERVER_TOKEN]
   return launch
-}
-
-/** What main answers on `IPC_SERVER_ENDPOINT`: where the renderer's client
- *  finds the server, or null while there is none. */
-export function endpointOf(handle: ServerHandle | null): { url: string; token: string } | null {
-  return handle ? { url: handle.url, token: handle.token } : null
 }
 
 export interface InProcessServer {
@@ -247,6 +235,10 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     pid,
     clientId
   })
+  // The in-process start publishes its own address to the windows; an
+  // attached one is published here, once the server has taken us. The
+  // registration answered, so the token is the right one.
+  if (launch.mode === 'attached') setClaveServerEndpoint({ url, token: token ?? '' })
 
   let stopped = false
   return {
@@ -257,6 +249,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     stop: async () => {
       if (stopped) return
       stopped = true
+      if (launch.mode === 'attached') setClaveServerEndpoint(null)
       if (clientId) {
         // Best effort, bounded: a quit must not wait on a server that is gone.
         await call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/unregister`, {

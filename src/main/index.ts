@@ -4,15 +4,7 @@ import './user-data-override'
 // SECOND, before any manager: a pre-release's first run on a stable data
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
-import {
-  app,
-  BrowserWindow,
-  shell,
-  nativeImage,
-  nativeTheme,
-  Notification,
-  ipcMain
-} from 'electron'
+import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -54,15 +46,8 @@ import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
-import {
-  startServer,
-  takeServerLaunch,
-  endpointOf,
-  IPC_SERVER_ENDPOINT,
-  ServerBootError,
-  type ServerHandle
-} from './server-boot'
-import { startStubServer } from './server-stub'
+import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { startClaveServer, stopClaveServer } from './server/clave-server'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -125,9 +110,12 @@ async function bootServer(): Promise<void> {
       launch: serverLaunch,
       userData: app.getPath('userData'),
       identity: { kind: 'shell', name: `clave-shell ${app.getVersion()}`, pid: process.pid },
-      // The in-process server: the stub until lane A's package merges, then
-      // that package's own start(). One line to swap.
-      startInProcess: () => startStubServer({ port: 0 })
+      // The in-process server: `@clave/server` over the session manager
+      // (server/clave-server.ts), which publishes its address to the windows.
+      startInProcess: async () => {
+        const endpoint = await startClaveServer()
+        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+      }
     })
     console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
   } catch (err) {
@@ -386,8 +374,7 @@ app.whenReady().then(() => {
   // MCP failure must not break the app — spawns just omit the --mcp-config flag.
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
   // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
-  // the preload asks on this channel and lane A's client takes it from there.
-  ipcMain.handle(IPC_SERVER_ENDPOINT, () => endpointOf(serverHandle))
+  // the preload asks `ipc-handlers/server-handlers.ts`, registered above.
   serverBoot = bootServer()
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()
