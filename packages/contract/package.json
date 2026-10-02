@@ -1,0 +1,26 @@
+{
+  "name": "@clave/contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Clave's wire contract: the commands, queries, events, session stream and push frames both the server and the client are built from, in Effect Schema.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./clients": "./src/clients.ts",
+    "./env": "./src/env.ts",
+    "./events": "./src/events.ts",
+    "./push": "./src/push.ts",
+    "./sessions": "./src/sessions.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform": "0.97.1",
+    "@structure-ai/cqrs": "0.2.1",
+    "@structure-ai/http": "0.2.1",
+    "effect": "3.22.1"
+  }
+}

@@ -33,6 +33,10 @@ import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
 import { registerGithubHandlers } from './github-handlers'
+// ── Lane A: the server ──
+import { registerServerHandlers } from './server-handlers'
+// ── Lane C: settings behind ports ──
+// ── Lane F: the shell ──
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -70,4 +74,8 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
   registerGithubHandlers()
+  // ── Lane A: the server ──
+  registerServerHandlers()
+  // ── Lane C: settings behind ports ──
+  // ── Lane F: the shell ──
 }

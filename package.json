@@ -31,12 +31,19 @@
     "test:e2e": "node tests/e2e/run.mjs"
   },
   "dependencies": {
+    "@clave/client": "*",
+    "@clave/contract": "*",
     "@clave/plugin-sdk": "*",
+    "@clave/server": "*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/language": "^6.12.3",
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
+    "@effect/opentelemetry": "0.64.0",
+    "@effect/platform": "0.97.1",
+    "@effect/platform-bun": "0.91.2",
+    "@effect/platform-node": "0.108.1",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@fontsource/geist-sans": "^5.2.5",
@@ -53,10 +60,19 @@
     "@radix-ui/react-separator": "^1.1.8",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@resvg/resvg-js": "^2.6.2",
+    "@structure-ai/client": "0.2.1",
+    "@structure-ai/config": "0.2.1",
+    "@structure-ai/cqrs": "0.2.1",
+    "@structure-ai/domain": "0.2.1",
+    "@structure-ai/eventsourcing": "0.2.1",
+    "@structure-ai/http": "0.2.1",
+    "@structure-ai/observability": "0.2.1",
+    "@structure-ai/runtime": "0.2.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "effect": "3.22.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.7.3",
     "fast-glob": "^3.3.3",
@@ -96,6 +112,7 @@
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
+    "esbuild": "^0.25.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -112,6 +129,9 @@
   "workspaces": [
     "packages/ui",
     "packages/plugin-sdk",
-    "packages/skins"
+    "packages/skins",
+    "packages/contract",
+    "packages/server",
+    "packages/client"
   ]
 }

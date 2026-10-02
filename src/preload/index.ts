@@ -15,6 +15,9 @@ import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import type { WindowIdentity } from '../shared/workspace-types'
+import { createMethodRouter, type Endpoint } from '@clave/client/router'
+import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -31,8 +34,45 @@ function createIpcListener<T extends unknown[]>(
 // One main-process subscription per renderer/session; each view owns a ref.
 const sessionSubscriptionRefs = new Map<string, number>()
 
+// ── The server client (lane A) ──
+// The renderer keeps calling `electronAPI` by the same names; a method moves
+// to Clave's server here, one at a time, by taking a `server` arm. Until the
+// shell has started the server (main answers null) every method goes over IPC
+// as before; once the server is in use, its failure reaches the caller and
+// nothing falls back. Main over IPC is the ONLY source of the address: an
+// address in this process's environment is somebody else's server (a Clave
+// started from a Clave tab inherits the outer one's) and is never read.
+// The client itself (Effect and the framework underneath) loads on the first
+// routed call that finds an endpoint, never at window start: measured at about
+// 700 ms of synchronous requires per window when it was a static import.
+const serverRouter = createMethodRouter({
+  resolve: async (): Promise<Endpoint | null> =>
+    ((await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as Endpoint | null) ?? null,
+  connect: async (endpoint) => {
+    const { createApiClient, PushClient } = await import('@clave/client')
+    return {
+      api: createApiClient(endpoint),
+      // Opened by the first routed subscription, not before.
+      push: new PushClient({ ...endpoint, client: 'clave-preload' })
+    }
+  }
+})
+const viaServer = serverRouter.route
+/** The window's own key: the server lists sessions per window the way
+ *  `sessions:list` answers for the asking window. */
+const windowKey = (): Promise<string | null> =>
+  ipcRenderer
+    .invoke('window:identity')
+    .then((identity: WindowIdentity | null) => identity?.windowKey ?? null)
+
 const electronAPI = {
-  sessionsList: (): Promise<Session[]> => ipcRenderer.invoke('sessions:list'),
+  sessionsList: viaServer<[], Session[]>({
+    ipc: () => ipcRenderer.invoke('sessions:list'),
+    server: async ({ api }) => {
+      const key = await windowKey()
+      return key ? [...(await api.sessions.list(key))] : []
+    }
+  }),
   sessionsSubscribe: async (id: string): Promise<Session> => {
     sessionSubscriptionRefs.set(id, (sessionSubscriptionRefs.get(id) ?? 0) + 1)
     try {
@@ -773,6 +813,10 @@ const electronAPI = {
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
     >
+
+  // ── Lane C: settings behind ports ──
+
+  // ── Lane F: the shell ──
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

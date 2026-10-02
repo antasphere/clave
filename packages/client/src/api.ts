@@ -1,0 +1,104 @@
+/**
+ * The typed request client: every endpoint of `@clave/contract/api`, derived
+ * from the shared `ClaveApi` type through `@structure-ai/client`, exposed as
+ * promises so the preload and the renderer call it the way they call IPC. A
+ * drift between server and client is a type error here.
+ */
+import { Effect, Either, ManagedRuntime, Schema } from 'effect'
+import * as FetchHttpClient from '@effect/platform/FetchHttpClient'
+import * as HttpClientError from '@effect/platform/HttpClientError'
+import * as StructureClient from '@structure-ai/client'
+import { ForbiddenProblem, UnauthorizedProblem } from '@structure-ai/http'
+import { ClaveApi } from '@clave/contract/api'
+import type { Client, ClientKind } from '@clave/contract/clients'
+import { type Session, SessionWrite } from '@clave/contract/sessions'
+import { ServerRefused, ServerUnreachable } from './errors'
+
+export interface ApiClientOptions {
+  readonly url: string
+  readonly token: string
+  /** Per-request deadline. Default: 10 seconds. */
+  readonly timeoutMs?: number
+}
+
+export interface RegisterClientInput {
+  readonly kind: ClientKind
+  readonly name: string
+  readonly pid?: number
+}
+
+export interface ClaveApiClient {
+  readonly url: string
+  readonly sessions: {
+    readonly list: (windowKey?: string) => Promise<ReadonlyArray<Session>>
+    readonly get: (id: string) => Promise<Session>
+    readonly write: (id: string, input: SessionWrite) => Promise<void>
+  }
+  readonly clients: {
+    readonly register: (input: RegisterClientInput) => Promise<Client>
+    readonly list: () => Promise<ReadonlyArray<Client>>
+    readonly unregister: (id: string) => Promise<void>
+  }
+  readonly health: {
+    readonly live: () => Promise<boolean>
+  }
+  readonly dispose: () => Promise<void>
+}
+
+/** Network failures and refusals become the two errors above; a declared
+ *  business failure (a `SessionNotFound`) is thrown as the tagged error it
+ *  is. A refusal arrives decoded as the API's own problem class (every
+ *  endpoint declares them), not as a raw status. */
+const translate = (url: string, error: unknown): Error => {
+  if (HttpClientError.isHttpClientError(error) && error._tag === 'RequestError')
+    return new ServerUnreachable(url, error)
+  if (Schema.is(UnauthorizedProblem)(error)) return new ServerRefused(url, 401)
+  if (Schema.is(ForbiddenProblem)(error)) return new ServerRefused(url, 403)
+  if (error instanceof Error) return error
+  return new Error(String(error))
+}
+
+/** A write goes over the wire in its encoded form: bytes as base64. */
+const encodeWrite = Schema.encodeSync(SessionWrite)
+
+export function createApiClient(options: ApiClientOptions): ClaveApiClient {
+  const runtime = ManagedRuntime.make(FetchHttpClient.layer)
+  const derive = StructureClient.make(ClaveApi, {
+    baseUrl: options.url,
+    bearer: () => options.token,
+    timeout: options.timeoutMs ?? 10_000,
+    // One attempt: a command retried blindly runs twice, and a server that
+    // does not answer is something the caller must hear about at once.
+    retry: { attempts: 1 }
+  })
+  type Derived = Effect.Effect.Success<typeof derive>
+  const client: Promise<Derived> = runtime.runPromise(derive)
+  const call = async <A, E>(run: (c: Derived) => Effect.Effect<A, E>): Promise<A> => {
+    const c = await client
+    const result = await runtime.runPromise(Effect.either(run(c)))
+    if (Either.isLeft(result)) throw translate(options.url, result.left)
+    return result.right
+  }
+  return {
+    url: options.url,
+    sessions: {
+      list: (windowKey) =>
+        call((c) => c.sessions.list({ payload: windowKey === undefined ? {} : { windowKey } })),
+      get: (id) => call((c) => c.sessions.get({ payload: { id } })),
+      write: (id, input) =>
+        call((c) => c.sessions.write({ payload: { id, input: encodeWrite(input) } })).then(
+          () => undefined
+        )
+    },
+    clients: {
+      register: (input) => call((c) => c.clients.register({ payload: input })),
+      list: () => call((c) => c.clients.list({ payload: {} })),
+      unregister: (id) =>
+        call((c) => c.clients.unregister({ payload: { id } })).then(() => undefined)
+    },
+    health: {
+      live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
+    },
+    dispose: () => runtime.dispose()
+  }
+}

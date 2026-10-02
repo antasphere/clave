@@ -1108,6 +1108,10 @@ export interface ElectronAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+
+  // ── Lane C: settings behind ports ──
+
+  // ── Lane F: the shell ──
 }
 
 declare global {

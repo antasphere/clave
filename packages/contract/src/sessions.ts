@@ -1,0 +1,297 @@
+/**
+ * The sessions domain of the wire contract: the session record, what a view
+ * writes to a session, what a session streams back, and the commands and
+ * queries that reach them.
+ *
+ * Ported field by field from `src/shared/session-model.ts` (zod), which stays
+ * the renderer's copy until a lane moves the renderer onto this one. The two
+ * must agree: `session-model.test.ts` holds the zod side, `sessions.test.ts`
+ * here holds this one, and a change to one event is a change to both files.
+ */
+import { Schema } from 'effect'
+import { Command, Query } from '@structure-ai/cqrs'
+
+export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
+export type AgentState = typeof AgentState.Type
+export const Transport = Schema.Literal('pty', 'events')
+export type Transport = typeof Transport.Type
+
+export const Session = Schema.Struct({
+  id: Schema.NonEmptyString,
+  provider: Schema.NonEmptyString,
+  transport: Transport,
+  cwd: Schema.String,
+  windowKey: Schema.String,
+  groupId: Schema.optional(Schema.String),
+  state: AgentState,
+  createdAt: Schema.Number,
+  adapterId: Schema.NonEmptyString,
+  title: Schema.String,
+  /** The view this session is read in, `<pluginId>/<viewId>`. Absent means
+   *  the host picks the first view that renders this transport. */
+  viewId: Schema.optional(Schema.NonEmptyString)
+})
+export type Session = typeof Session.Type
+
+// ── Attachments (src/shared/attachments.ts) ──
+
+export const MAX_ATTACHMENTS = 10
+
+export const Attachment = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  path: Schema.String.pipe(
+    Schema.minLength(1),
+    Schema.maxLength(4096),
+    Schema.filter((value) => !value.includes('\0'), { message: () => 'a path holds no NUL byte' })
+  ),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
+  mimeType: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  size: Schema.NonNegativeInt,
+  delivery: Schema.Literal('reference', 'image')
+})
+export type Attachment = typeof Attachment.Type
+export const Attachments = Schema.Array(Attachment).pipe(Schema.maxItems(MAX_ATTACHMENTS))
+
+/** An image as the provider receives it, base64; main's own, never a renderer's. */
+export const ProviderImage = Schema.Struct({
+  name: Schema.String,
+  mimeType: Schema.String,
+  data: Schema.String
+})
+export type ProviderImage = typeof ProviderImage.Type
+
+// ── What a view writes ──
+
+export const UserMessage = Schema.Struct({
+  type: Schema.Literal('user_message'),
+  text: Schema.String,
+  /** The files the reader attached, as the transcript shows them: never bytes. */
+  attachments: Schema.optional(Attachments)
+})
+export type UserMessage = typeof UserMessage.Type
+export const PreparedPrompt = Schema.Struct({
+  text: Schema.String,
+  images: Schema.Array(ProviderImage)
+})
+export type PreparedPrompt = typeof PreparedPrompt.Type
+export const UserMessageInput = Schema.Struct({
+  ...UserMessage.fields,
+  prepared: Schema.optional(PreparedPrompt)
+})
+export type UserMessageInput = typeof UserMessageInput.Type
+export const PermissionResponse = Schema.Struct({
+  type: Schema.Literal('permission_response'),
+  id: Schema.String,
+  optionId: Schema.String,
+  answers: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+})
+export const Interrupt = Schema.Struct({ type: Schema.Literal('interrupt') })
+export const SetModel = Schema.Struct({
+  type: Schema.Literal('set_model'),
+  model: Schema.NullOr(Schema.String)
+})
+export type SetModel = typeof SetModel.Type
+/** A level as a provider spells it: a short lowercase word (src/shared/effort.ts). */
+export const Effort = Schema.String.pipe(
+  Schema.pattern(/^[a-z][a-z0-9_-]{0,31}$/, { message: () => 'Invalid reasoning effort' })
+)
+export const SetEffort = Schema.Struct({ type: Schema.Literal('set_effort'), effort: Effort })
+export type SetEffort = typeof SetEffort.Type
+export const SetPermissionMode = Schema.Struct({
+  type: Schema.Literal('set_permission_mode'),
+  mode: Schema.String
+})
+export const StopTask = Schema.Struct({
+  type: Schema.Literal('stop_task'),
+  taskId: Schema.NonEmptyString
+})
+export const SessionInput = Schema.Union(
+  UserMessageInput,
+  PermissionResponse,
+  Interrupt,
+  SetModel,
+  SetEffort,
+  SetPermissionMode,
+  StopTask
+)
+export type SessionInput = typeof SessionInput.Type
+
+/** What reaches a session over the wire: a typed input, or raw bytes for a
+ *  terminal, base64 on the wire and `Uint8Array` in memory. The one input the
+ *  wire does not carry is a `prepared` prompt: that field is the host's to
+ *  build from attachment records, never a caller's to supply, so it is not in
+ *  the wire's own union and the boundary drops it from a write that carries
+ *  it (a struct ignores what it does not declare). */
+export const SessionBytes = Schema.Struct({
+  type: Schema.Literal('bytes'),
+  data: Schema.Uint8ArrayFromBase64
+})
+export const SessionWireInput = Schema.Union(
+  UserMessage,
+  PermissionResponse,
+  Interrupt,
+  SetModel,
+  SetEffort,
+  SetPermissionMode,
+  StopTask
+)
+export type SessionWireInput = typeof SessionWireInput.Type
+export const SessionWrite = Schema.Union(SessionWireInput, SessionBytes)
+export type SessionWrite = typeof SessionWrite.Type
+
+// ── What a provider offers ──
+
+export const PermissionModeOption = Schema.Struct({ id: Schema.String, label: Schema.String })
+export type PermissionModeOption = typeof PermissionModeOption.Type
+export const AgentQuestion = Schema.Struct({
+  question: Schema.String,
+  header: Schema.optional(Schema.String),
+  options: Schema.Array(
+    Schema.Struct({ label: Schema.String, description: Schema.optional(Schema.String) })
+  ),
+  multiSelect: Schema.optional(Schema.Boolean)
+})
+export type AgentQuestion = typeof AgentQuestion.Type
+export const EffortOption = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  hint: Schema.optional(Schema.String)
+})
+export type EffortOption = typeof EffortOption.Type
+export const ModelOption = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  hint: Schema.optional(Schema.String),
+  resolved: Schema.optional(Schema.String),
+  efforts: Schema.optional(Schema.Array(EffortOption)),
+  defaultEffort: Schema.optional(Schema.String)
+})
+export type ModelOption = typeof ModelOption.Type
+export const CommandOption = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  insert: Schema.String
+})
+export type CommandOption = typeof CommandOption.Type
+export const BackgroundTask = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literal('shell', 'agent', 'other'),
+  description: Schema.String,
+  toolUseId: Schema.optional(Schema.String),
+  startedAt: Schema.Number,
+  outputFile: Schema.optional(Schema.String)
+})
+export type BackgroundTask = typeof BackgroundTask.Type
+
+// ── What a session streams ──
+
+export const SessionEvent = Schema.Union(
+  UserMessage,
+  Schema.Struct({
+    type: Schema.Literal('assistant_text'),
+    delta: Schema.String,
+    final: Schema.Boolean
+  }),
+  Schema.Struct({
+    type: Schema.Literal('tool_call'),
+    id: Schema.String,
+    name: Schema.String,
+    input: Schema.Unknown,
+    parent: Schema.optional(Schema.String)
+  }),
+  Schema.Struct({
+    type: Schema.Literal('tool_result'),
+    id: Schema.String,
+    output: Schema.Unknown,
+    error: Schema.optional(Schema.Boolean)
+  }),
+  Schema.Struct({
+    type: Schema.Literal('permission_request'),
+    id: Schema.String,
+    description: Schema.String,
+    options: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+    toolName: Schema.optional(Schema.String),
+    input: Schema.optional(Schema.Unknown),
+    detail: Schema.optional(Schema.String),
+    questions: Schema.optional(Schema.Array(AgentQuestion))
+  }),
+  Schema.Struct({ type: Schema.Literal('state_change'), state: AgentState }),
+  Schema.Struct({
+    type: Schema.Literal('session_meta'),
+    model: Schema.NullOr(Schema.String),
+    providerSessionId: Schema.NullOr(Schema.String)
+  }),
+  Schema.Struct({ type: Schema.Literal('effort'), effort: Schema.NullOr(Schema.String) }),
+  Schema.Struct({ type: Schema.Literal('error'), message: Schema.String, fatal: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal('turn_interrupted') }),
+  Schema.Struct({
+    type: Schema.Literal('context_usage'),
+    used: Schema.Number,
+    window: Schema.NullOr(Schema.Number),
+    parent: Schema.optional(Schema.String)
+  }),
+  Schema.Struct({
+    type: Schema.Literal('subagent_model'),
+    parent: Schema.String,
+    model: Schema.String
+  }),
+  Schema.Struct({
+    type: Schema.Literal('permission_mode'),
+    mode: Schema.String,
+    modes: Schema.Array(PermissionModeOption)
+  }),
+  Schema.Struct({ type: Schema.Literal('background_tasks'), tasks: Schema.Array(BackgroundTask) }),
+  Schema.Struct({
+    type: Schema.Literal('provider_event'),
+    provider: Schema.String,
+    payload: Schema.Unknown
+  })
+)
+export type SessionEvent = typeof SessionEvent.Type
+
+/** One frame of a session's stream: terminal bytes (base64 on the wire,
+ *  `Uint8Array` in memory) or one typed event. */
+export const SessionStream = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal('pty'), data: Schema.Uint8ArrayFromBase64 }),
+  Schema.Struct({ kind: Schema.Literal('event'), event: SessionEvent })
+)
+export type SessionStream = typeof SessionStream.Type
+export type SessionStreamEncoded = typeof SessionStream.Encoded
+
+export const HistoryItem = Schema.Struct({
+  event: SessionEvent,
+  at: Schema.optional(Schema.Number)
+})
+export type HistoryItem = typeof HistoryItem.Type
+export const HistoryPage = Schema.Struct({
+  items: Schema.Array(HistoryItem),
+  before: Schema.NullOr(Schema.Number)
+})
+export type HistoryPage = typeof HistoryPage.Type
+
+// ── Failures ──
+
+/** No session carries that id on this server. */
+export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()('SessionNotFound', {
+  id: Schema.String
+}) {}
+
+// ── Commands and queries ──
+
+/** The sessions the server knows, every one or those of one window. */
+export const ListSessions = Query.define('ListSessions', {
+  payload: Schema.Struct({ windowKey: Schema.optional(Schema.String) }),
+  success: Schema.Array(Session)
+})
+/** One session by id. */
+export const GetSession = Query.define('GetSession', {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Session,
+  failure: SessionNotFound
+})
+/** Hand a session what a view wrote: a typed input or terminal bytes. */
+export const WriteSession = Command.define('WriteSession', {
+  payload: Schema.Struct({ id: Schema.String, input: SessionWrite }),
+  success: Schema.Void,
+  failure: SessionNotFound
+})
