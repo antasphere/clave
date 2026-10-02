@@ -1,0 +1,20 @@
+{
+  "name": "@clave/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "The typed client of Clave's server: requests over @structure-ai/client, subscriptions over the push channel, and the adapter the preload routes a method through.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clave/contract": "*",
+    "@effect/platform": "0.97.1",
+    "@structure-ai/client": "0.2.1",
+    "effect": "3.22.1"
+  }
+}

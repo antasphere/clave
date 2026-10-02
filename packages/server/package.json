@@ -1,0 +1,25 @@
+{
+  "name": "@clave/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Clave's server on @structure-ai: the command and query buses, the event store, the HTTP API and the push channel. Runs inside Electron main in this wave, alone later.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./embedded": "./src/embedded.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clave/contract": "*",
+    "@effect/platform": "0.97.1",
+    "@effect/platform-node": "0.108.1",
+    "@structure-ai/cqrs": "0.2.1",
+    "@structure-ai/eventsourcing": "0.2.1",
+    "@structure-ai/http": "0.2.1",
+    "@structure-ai/runtime": "0.2.1",
+    "effect": "3.22.1"
+  }
+}
