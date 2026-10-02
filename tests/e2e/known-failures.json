@@ -1,0 +1,38 @@
+{
+  "why": "These checks fail on dev at fb8abba with no change applied: the baseline run of 2 October 2026 (lane F of the server split, PRDCT-3154, 1797 passed and these 25 failed). Their causes were not investigated by that lane; the list is here so the suite can be a gate on everything else, and a listed check that passes again is reported by run.mjs so it can be removed.",
+  "specs": {
+    "agent-launch-profiles.spec.mjs": [
+      "every profile token arrived as its own argument, spaces intact",
+      "the spawned Codex command receives --yolo after profile arguments"
+    ],
+    "chat-draft-plugin-toggle.spec.mjs": ["chat-draft-plugin-toggle.spec.mjs ran to completion"],
+    "chat-limit-switch.spec.mjs": ["the pane offers to continue on Play"],
+    "chat-tab-restore.spec.mjs": [
+      "launch 2: the restored tab started the CLI on its first message",
+      "launch 2: the CLI was launched with --resume <claudeSessionId>",
+      "launch 2: and not as a fresh --session-id conversation"
+    ],
+    "chat-view.spec.mjs": ["chat-view.spec.mjs ran to completion"],
+    "claude-chat-adapter.spec.mjs": ["claude-chat-adapter.spec.mjs ran to completion"],
+    "group-dissolve.spec.mjs": [
+      "the legitimate sibling tab came back",
+      "the ownerless terminal is NOT a tab",
+      "and its record removed",
+      "the dead orphan's record was discarded too",
+      "and the discard was EXACT: the -2 sibling is still alive"
+    ],
+    "group-placement.spec.mjs": ["the session landed in the group whose + was pressed"],
+    "group-prompt.spec.mjs": ["the + launches one session"],
+    "multi-window-core.spec.mjs": ["the terminal in window 1 is streaming (positive control)"],
+    "multi-window-routing.spec.mjs": [
+      "a move into a GROUP of another window succeeds",
+      "childC is in the target group in window A",
+      "the same cross-window move succeeds a second time",
+      "and childC is in the target group again"
+    ],
+    "plugin-surface-view.spec.mjs": ["plugin-surface-view.spec.mjs ran to completion"],
+    "plugin-views.spec.mjs": ["plugin-views.spec.mjs ran to completion"],
+    "side-panel.spec.mjs": ["no theme still declares a tree-guide colour"],
+    "view-navigation.spec.mjs": ["the view is a web view, painted at the centre of the pane"]
+  }
+}
