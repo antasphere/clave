@@ -314,7 +314,9 @@ export class ClaudeAccountsManager {
       throw error
     }
     this.migrated.delete(id)
-    if (previous) this.ports.secrets.discard(previous.token)
+    // An entry can lack a string token (a hand-edited or an older file):
+    // there is nothing of it to forget, and the new token must still land.
+    if (typeof previous?.token === 'string') this.ports.secrets.discard(previous.token)
     this.emit()
   }
 

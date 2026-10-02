@@ -147,9 +147,29 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
     })
 
+    it('replaces an entry that holds no token without tripping on it', () => {
+      const work = manager.add({ label: 'Work' })
+      fs.writeFileSync(credentialsPath(), JSON.stringify({ [work.id]: { setAt: 1 } }))
+      const fresh = new ClaudeAccountsManager(ports)
+      expect(fresh.hasToken(work.id)).toBe(false)
+      const seen: number[] = []
+      const off = fresh.onChange((list) => seen.push(list.length))
+      fresh.setToken(work.id, TOKEN)
+      off()
+      expect(fresh.getToken(work.id)).toBe(TOKEN)
+      expect(seen).toEqual([2])
+      if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
+      // The suite's own manager never saw this token: forget it through the
+      // instance that holds it, so the shared keychain stand-in ends empty.
+      fresh.clearToken(work.id)
+    })
+
     it('a write that fails after the seal leaves the working token in place too', () => {
       const work = manager.add({ label: 'Work' })
       manager.setToken(work.id, TOKEN)
+      // The old token was refused by the service: that mark must survive the
+      // failed re-paste too, so the pool does not re-admit a dead token.
+      manager.markTokenInvalid(work.id)
       const full = new ClaudeAccountsManager({
         ...ports,
         storage: {
@@ -164,7 +184,34 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
       // open; the item sealed for the write that failed is not left behind.
       expect(new ClaudeAccountsManager(ports).getToken(work.id)).toBe(TOKEN)
       expect(full.getToken(work.id)).toBe(TOKEN)
+      expect(full.get(work.id)?.tokenInvalid).toBe(true)
       if (standalone) expect([...security().items.values()]).toEqual([TOKEN])
+    })
+
+    it('an account still waiting for its first login stays listed as such when the write fails', () => {
+      const other = tempDataDir('clave-accounts-migrate-fail-')
+      fs.writeFileSync(
+        path.join(other, 'claude-accounts.json'),
+        JSON.stringify({
+          v: 1,
+          accounts: [{ id: 'dir-1', label: 'Old dir', configDir: '/Users/x/.claude-work' }]
+        })
+      )
+      const base = freshPorts(other)
+      const fresh = new ClaudeAccountsManager({
+        ...base,
+        storage: {
+          ...base.storage,
+          write: (name, text, options) => {
+            if (name === 'claude-accounts-credentials.json') throw new Error('disk full')
+            base.storage.write(name, text, options)
+          }
+        }
+      })
+      expect(fresh.migratedAccountIds()).toEqual(['dir-1'])
+      expect(() => fresh.setToken('dir-1', TOKEN)).toThrow(/disk full/)
+      expect(fresh.migratedAccountIds()).toEqual(['dir-1'])
+      expect(fresh.hasToken('dir-1')).toBe(false)
     })
 
     it('the file holds what the port handed back, never the value', () => {

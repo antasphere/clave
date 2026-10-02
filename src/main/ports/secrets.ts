@@ -80,7 +80,6 @@ export function keychainSecrets(options: {
       // as hex, so a value with an accent would open to a different string.
       // The tokens this port carries are ASCII; anything else is refused
       // rather than filed and read back wrong.
-      // eslint-disable-next-line no-control-regex
       if (/[^\x20-\x7e]/.test(plain)) {
         throw new Error(
           'A secret outside printable ASCII cannot be filed in the Keychain through security.'
