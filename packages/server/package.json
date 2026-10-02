@@ -7,7 +7,8 @@
   "description": "Clave's server on @structure-ai: the command and query buses, the event store, the HTTP API and the push channel. Runs inside Electron main in this wave, alone later.",
   "exports": {
     ".": "./src/index.ts",
-    "./embedded": "./src/embedded.ts"
+    "./embedded": "./src/embedded.ts",
+    "./test-support": "./src/test-support.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

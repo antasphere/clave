@@ -264,9 +264,9 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()('Sess
 
 // ── Commands and queries ──
 
-/** Every session the server knows, in no particular order. */
+/** The sessions the server knows, every one or those of one window. */
 export const ListSessions = Query.define('ListSessions', {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({ windowKey: Schema.optional(Schema.String) }),
   success: Schema.Array(Session)
 })
 /** One session by id. */

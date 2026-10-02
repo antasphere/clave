@@ -15,6 +15,9 @@ import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
+import type { WindowIdentity } from '../shared/workspace-types'
+import { createApiClient, createMethodRouter, PushClient, type Endpoint } from '@clave/client'
+import { ENV_SERVER_TOKEN, ENV_SERVER_URL } from '@clave/contract'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -31,8 +34,42 @@ function createIpcListener<T extends unknown[]>(
 // One main-process subscription per renderer/session; each view owns a ref.
 const sessionSubscriptionRefs = new Map<string, number>()
 
+// ── The server client (lane A) ──
+// The renderer keeps calling `electronAPI` by the same names; a method moves
+// to Clave's server here, one at a time, by taking a `server` arm. Until the
+// shell has started the server (`server:endpoint` answers null, the
+// environment carries no address) every method goes over IPC as before; once
+// the server is in use, its failure reaches the caller and nothing falls back.
+const serverRouter = createMethodRouter({
+  resolve: async (): Promise<Endpoint | null> => {
+    const fromMain = (await ipcRenderer.invoke('server:endpoint')) as Endpoint | null
+    if (fromMain) return fromMain
+    const url = process.env[ENV_SERVER_URL]
+    const token = process.env[ENV_SERVER_TOKEN]
+    return url && token ? { url, token } : null
+  },
+  connect: (endpoint) => ({
+    api: createApiClient(endpoint),
+    // Opened by the first routed subscription, not before.
+    push: new PushClient({ ...endpoint, client: 'clave-preload' })
+  })
+})
+const viaServer = serverRouter.route
+/** The window's own key: the server lists sessions per window the way
+ *  `sessions:list` answers for the asking window. */
+const windowKey = (): Promise<string | null> =>
+  ipcRenderer
+    .invoke('window:identity')
+    .then((identity: WindowIdentity | null) => identity?.windowKey ?? null)
+
 const electronAPI = {
-  sessionsList: (): Promise<Session[]> => ipcRenderer.invoke('sessions:list'),
+  sessionsList: viaServer<[], Session[]>({
+    ipc: () => ipcRenderer.invoke('sessions:list'),
+    server: async ({ api }) => {
+      const key = await windowKey()
+      return key ? [...(await api.sessions.list(key))] : []
+    }
+  }),
   sessionsSubscribe: async (id: string): Promise<Session> => {
     sessionSubscriptionRefs.set(id, (sessionSubscriptionRefs.get(id) ?? 0) + 1)
     try {
@@ -773,6 +810,10 @@ const electronAPI = {
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
     >
+
+  // ── Lane C: settings behind ports ──
+
+  // ── Lane F: the shell ──
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
