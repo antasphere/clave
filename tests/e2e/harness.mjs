@@ -171,6 +171,31 @@ export function serverClient(url, token) {
   }
 }
 
+/** The TCP ports a process is LISTENING on, sorted, asked of the OS (`lsof`).
+ *  This is how a spec proves what a main process serves: the MCP server's
+ *  port, the in-process server's port, and nothing else; in particular no
+ *  server started "in place of" one that could not be reached. A probe of
+ *  the url that failed proves nothing about a fallback on another port. */
+export function listeningPorts(pid) {
+  let out
+  try {
+    out = execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid), '-Fn'], {
+      encoding: 'utf-8'
+    })
+  } catch (err) {
+    // lsof exits 1 when the process has no matching descriptor at all.
+    if (err?.status === 1 && !(err.stderr || '').trim()) return []
+    throw err
+  }
+  const ports = new Set()
+  for (const line of out.split('\n')) {
+    // `-Fn` prints one `n<address>` line per descriptor: `n127.0.0.1:54321`.
+    const m = /^n.*:(\d+)$/.exec(line.trim())
+    if (m) ports.add(Number(m[1]))
+  }
+  return [...ports].sort((a, b) => a - b)
+}
+
 /** Launch the built app. Run `npx electron-vite build` first — these read `out/`.
  *
  *  `--test-no-activate` is always passed: the run must not steal the machine's

@@ -1,38 +1,32 @@
 {
-  "why": "These checks fail on dev at fb8abba with no change applied: the baseline run of 2 October 2026 (lane F of the server split, PRDCT-3154, 1797 passed and these 25 failed). Their causes were not investigated by that lane; the list is here so the suite can be a gate on everything else, and a listed check that passes again is reported by run.mjs so it can be removed.",
+  "why": "Measured on 2 October 2026 on dev at fb8abba with no change applied, by lane F of the server split (PRDCT-3154): the baseline run on a laptop (1797 passed, 25 failed) and the first CI run on macos-latest (1797 passed, 28 failed), 15 failures in common. `specs` lists the checks that failed on both, by name: deterministic on dev, cause not investigated by that lane. `unstable` lists the specs that crashed before finishing on both (a crash can never be a known check: it would hide every regression before it) and the specs whose failures differed between the two machines or between two runs on one; their results are counted and printed as UNSTABLE and are not a gate until the spec is fixed (PRDCT-1762 names the boot race behind several of them). A listed check that passes, or an unstable spec that passes in full, is reported by run.mjs so this file shrinks.",
   "specs": {
     "agent-launch-profiles.spec.mjs": [
       "every profile token arrived as its own argument, spaces intact",
       "the spawned Codex command receives --yolo after profile arguments"
     ],
-    "chat-draft-plugin-toggle.spec.mjs": ["chat-draft-plugin-toggle.spec.mjs ran to completion"],
     "chat-limit-switch.spec.mjs": ["the pane offers to continue on Play"],
     "chat-tab-restore.spec.mjs": [
       "launch 2: the restored tab started the CLI on its first message",
       "launch 2: the CLI was launched with --resume <claudeSessionId>",
       "launch 2: and not as a fresh --session-id conversation"
     ],
-    "chat-view.spec.mjs": ["chat-view.spec.mjs ran to completion"],
-    "claude-chat-adapter.spec.mjs": ["claude-chat-adapter.spec.mjs ran to completion"],
-    "group-dissolve.spec.mjs": [
-      "the legitimate sibling tab came back",
-      "the ownerless terminal is NOT a tab",
-      "and its record removed",
-      "the dead orphan's record was discarded too",
-      "and the discard was EXACT: the -2 sibling is still alive"
-    ],
     "group-placement.spec.mjs": ["the session landed in the group whose + was pressed"],
     "group-prompt.spec.mjs": ["the + launches one session"],
-    "multi-window-core.spec.mjs": ["the terminal in window 1 is streaming (positive control)"],
-    "multi-window-routing.spec.mjs": [
-      "a move into a GROUP of another window succeeds",
-      "childC is in the target group in window A",
-      "the same cross-window move succeeds a second time",
-      "and childC is in the target group again"
-    ],
-    "plugin-surface-view.spec.mjs": ["plugin-surface-view.spec.mjs ran to completion"],
-    "plugin-views.spec.mjs": ["plugin-views.spec.mjs ran to completion"],
     "side-panel.spec.mjs": ["no theme still declares a tree-guide colour"],
     "view-navigation.spec.mjs": ["the view is a web view, painted at the centre of the pane"]
-  }
+  },
+  "unstable": [
+    "chat-draft-plugin-toggle.spec.mjs",
+    "chat-view.spec.mjs",
+    "claude-chat-adapter.spec.mjs",
+    "codex-chat-tab-restore.spec.mjs",
+    "group-dissolve.spec.mjs",
+    "group-view-start.spec.mjs",
+    "multi-window-core.spec.mjs",
+    "multi-window-move.spec.mjs",
+    "multi-window-routing.spec.mjs",
+    "plugin-surface-view.spec.mjs",
+    "plugin-views.spec.mjs"
+  ]
 }

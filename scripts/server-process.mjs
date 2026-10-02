@@ -66,6 +66,11 @@ export async function startServerProcess({
     stderr += d
   })
 
+  // A child that never announces itself (a timeout, an unreadable line, an
+  // exit) is stopped HERE before the rejection: nobody else holds its pid,
+  // so nothing else could sweep it, and a late server would otherwise live
+  // on past the run on a random port with its token on disk. The rejection
+  // carries `pid` for the record.
   const announced = await new Promise((resolve, reject) => {
     let out = ''
     let settled = false
@@ -73,6 +78,14 @@ export async function startServerProcess({
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (fn === reject) {
+        if (value instanceof Error) value.pid = child.pid
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }
       fn(value)
     }
     const timer = setTimeout(
