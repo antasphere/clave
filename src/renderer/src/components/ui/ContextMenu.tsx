@@ -233,7 +233,7 @@ const VIEWPORT_PAD = 8
 /** The preview card: beside the submenu on whichever side has room, level
  *  with the highlighted row, kept inside the window. It takes no pointer
  *  events, so the menu under the cursor stays the menu. */
-function MenuPreview({
+export function MenuPreview({
   row,
   children
 }: {

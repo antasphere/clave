@@ -29,6 +29,7 @@ import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
+import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
@@ -1065,6 +1066,7 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
               claudeContextWindow(conversation.model)
             }
           />
+          <AccountChip sessionId={session.id} />
           {status.agents.length > 0 && (
             <span className="term-dim">
               · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}

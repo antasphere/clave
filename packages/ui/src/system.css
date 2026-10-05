@@ -4909,6 +4909,61 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   background-color: var(--color-destructive);
 }
 
+/* The account chip: the session's account and what is left of it, a dot by
+   level, a triangle and red once at its limit. Its menu is the tab's account
+   menu, opened above the bar. */
+.term-account {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.term-account .chat-model-trigger {
+  gap: calc(var(--spacing) * 1.5);
+  max-inline-size: calc(var(--spacing) * 64);
+  color: var(--text-secondary);
+}
+.term-account-dot {
+  flex-shrink: 0;
+  inline-size: calc(var(--spacing) * 1.5);
+  block-size: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+}
+.term-account[data-level='unknown'] .term-account-dot {
+  background-color: var(--text-tertiary);
+}
+.term-account[data-level='warning'] .term-account-dot {
+  background-color: var(--color-warning);
+}
+.term-account-headroom {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.term-account[data-level='warning'] .term-account-headroom {
+  color: var(--color-warning);
+}
+.term-account[data-level='critical'] .chat-model-trigger,
+.term-account[data-level='critical'] .term-account-headroom {
+  color: var(--color-destructive);
+}
+.term-account-menu {
+  min-inline-size: calc(var(--spacing) * 72);
+  max-inline-size: calc(var(--spacing) * 96);
+  padding: var(--spacing);
+}
+.term-account-head {
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+}
+.term-account-menu .menu-item {
+  gap: calc(var(--spacing) * 2);
+}
+.term-account-item-icon {
+  inline-size: calc(var(--spacing) * 3.5);
+  block-size: calc(var(--spacing) * 3.5);
+  flex-shrink: 0;
+}
+
 /* The subagents, stacked under the status line while they run. Each row
    folds open as its agent starts and shut as it ends (a grid track going
    from 0fr to 1fr), and the stack's own rule and room go with its last row. */
