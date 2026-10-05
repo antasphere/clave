@@ -29,16 +29,17 @@ export const isLoopbackOrigin = (origin: string | undefined): boolean => {
   return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname)
 }
 
-/** The packaged renderer is a `file://` page, and Chromium names its origin
- *  exactly `file://` on a WebSocket handshake (measured in the built app, by
- *  the verifier's round 3). Such a page is this machine's own as much as a
- *  loopback one; the token in the hello is what proves the client, the origin
- *  only keeps a page off this machine from trying. `null`, the opaque origin
- *  of a sandboxed frame or a `data:` page, is not accepted: the app presents
- *  no such page, and any site on this machine could otherwise open and hold
- *  pre-hello sockets through a sandboxed iframe and tell the port apart. */
-export const isOwnPageOrigin = (origin: string | undefined): boolean =>
-  origin === 'file://' || isLoopbackOrigin(origin)
+/** A page whose push handshake the server takes: a loopback page (the dev
+ *  renderer on `http://localhost:5173`, a browser client later). The packaged
+ *  renderer is a `file://` page, but its push socket no longer leaves from the
+ *  page: the preload opens it through Node's `ws` (`@clave/client/node`), which
+ *  sends no Origin at all, so `file://` is refused like any other non-loopback
+ *  origin. Accepting it would let any HTML file opened locally in a browser
+ *  hold pre-hello sockets on the port and tell it apart (lane F's round-3
+ *  verifier measured it), the same reason `null`, the opaque origin of a
+ *  sandboxed frame or a `data:` page, is refused. A client with no Origin
+ *  still proves itself with the hello token, as every peer does. */
+export const isOwnPageOrigin = (origin: string | undefined): boolean => isLoopbackOrigin(origin)
 
 const ALLOW_METHODS = 'GET, POST, OPTIONS'
 /** What the typed client sends with every request, besides what a browser

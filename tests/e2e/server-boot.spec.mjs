@@ -235,10 +235,12 @@ export async function run(t) {
           { published: published && { ...published, token: published.token ? '<set>' : null } }
         )
       } else {
-        t.equal(
+        // Masked like the in-process line: a failing check must not print the
+        // token into the run's log (CI's included).
+        t.check(
           'server:endpoint answers the windows null: a standalone server has no sessions yet',
-          published,
-          null
+          published === null,
+          { published: published && { ...published, token: published.token ? '<set>' : null } }
         )
       }
       // A renderer-routed call succeeds: over the server in-process (through

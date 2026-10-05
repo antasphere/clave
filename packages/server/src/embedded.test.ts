@@ -291,6 +291,9 @@ describe('the push channel', () => {
       'http://foo127.0.0.1:5173',
       'file:///Users/someone/page.html',
       'FILE://',
+      // A local HTML file opened in a browser: the packaged renderer's socket
+      // leaves through Node with no Origin, so nothing legitimate sends this.
+      'file://',
       'null',
       'ws://localhost:5173',
       'clave-preview://localhost'
@@ -304,9 +307,10 @@ describe('the push channel', () => {
         origin
       ).toContain('403')
     }
-    // The dev renderer is a loopback page, the packaged renderer a file:// one.
-    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5173', 'file://']) {
-      const own = new Peer(pushUrl(), { origin })
+    // The dev renderer is a loopback page; the packaged renderer's socket goes
+    // through Node and sends no Origin (the `undefined` case).
+    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5173', undefined]) {
+      const own = new Peer(pushUrl(), origin === undefined ? {} : { origin })
       await own.opened
       own.send({ _tag: 'hello', token: server.token })
       expect((await own.next())._tag, origin).toBe('welcome')

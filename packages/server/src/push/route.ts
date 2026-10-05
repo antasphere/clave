@@ -48,9 +48,10 @@ export const pushRoute =
       if (pathOf(request.url) !== PUSH_PATH) return yield* app
       // A browser page sends its Origin on the handshake and the browser
       // applies no same-origin rule to a WebSocket: a page off this machine
-      // is refused here. The packaged renderer's page is `file://`, the dev
-      // renderer's a loopback one, and a client with no Origin (Node) still
-      // proves itself with the hello token, as every peer does.
+      // is refused here, and so is a local `file://` page. The dev renderer's
+      // page is a loopback one; the packaged renderer's socket leaves through
+      // the preload's Node side with no Origin, and a client with no Origin
+      // still proves itself with the hello token, as every peer does.
       const origin = request.headers['origin']
       if (origin !== undefined && !isOwnPageOrigin(origin))
         return HttpServerResponse.text('The push channel takes no page from off this machine.', {

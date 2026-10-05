@@ -62,6 +62,36 @@ describe('stop, when the pooled connection is dead', () => {
     }
   })
 
+  it('does not retry a deregistration that timed out: the quit stays bounded by one attempt', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-timeout-'))
+    let unregisterAttempts = 0
+    const fakeFetch = (async (input: string | URL | Request) => {
+      const u = String(input)
+      if (u.endsWith('/health/live')) return new Response('{"status":"live"}', { status: 200 })
+      if (u.endsWith('/clients/unregister')) {
+        unregisterAttempts++
+        // What AbortSignal.timeout makes fetch reject with.
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      }
+      return new Response('{"id":"c-1"}', { status: 201 })
+    }) as typeof fetch
+    try {
+      const handle = await startServer({
+        launch: { mode: 'attached', url: 'http://127.0.0.1:1', token: 't' },
+        userData,
+        identity,
+        fetch: fakeFetch,
+        startInProcess: async () => {
+          throw new Error('must not be called')
+        }
+      })
+      await handle.stop()
+      expect(unregisterAttempts).toBe(1)
+    } finally {
+      rmSync(userData, { recursive: true, force: true })
+    }
+  })
+
   it('does not retry on a server answer, only on a network error', async () => {
     const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-reset2-'))
     let unregisterAttempts = 0

@@ -54,7 +54,9 @@ describe('the server as its own process', () => {
       expect(err).toBeInstanceOf(Error)
       expect(err.message).toMatch(/did not announce itself/)
       expect(typeof err.pid).toBe('number')
-      expect(await untilDead(err.pid)).toBe(true)
+      // Gone AT the rejection, not some time after: a caller that removes its
+      // data directory on the rejection must find nothing still writing there.
+      expect(alive(err.pid)).toBe(false)
     } finally {
       rmSync(dataDir, { recursive: true, force: true })
     }
