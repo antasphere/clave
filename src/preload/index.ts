@@ -49,12 +49,18 @@ const serverRouter = createMethodRouter({
   resolve: async (): Promise<Endpoint | null> =>
     ((await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as Endpoint | null) ?? null,
   connect: async (endpoint) => {
-    const { createApiClient, PushClient } = await import('@clave/client')
-    return {
-      api: createApiClient(endpoint),
-      // Opened by the first routed subscription, not before.
-      push: new PushClient({ ...endpoint, client: 'clave-preload' })
-    }
+    // The calls leave through NODE, not the page: this preload runs with
+    // Node available (`sandbox: false`), so the request client goes out
+    // through `@effect/platform-node` and the push socket through `ws`
+    // (`@clave/client/node`). Nothing of the window's origin travels: the
+    // packaged `file://` page sends no Origin, meets no Content Security
+    // Policy and no preflight, and the server's CORS rules are for browser
+    // pages only (ADR 0003; the round-2 verifier of lane F watched the
+    // page's own fetch be refused by its CSP, with the chat view never
+    // mounting behind it). The push socket is opened by the first routed
+    // subscription, not before.
+    const { connectThroughNode } = await import('@clave/client/node')
+    return connectThroughNode(endpoint, { client: 'clave-preload' })
   }
 })
 const viaServer = serverRouter.route

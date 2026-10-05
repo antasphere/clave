@@ -4,8 +4,9 @@
  * promises so the preload and the renderer call it the way they call IPC. A
  * drift between server and client is a type error here.
  */
-import { Effect, Either, ManagedRuntime, Schema } from 'effect'
+import { Effect, Either, type Layer, ManagedRuntime, Schema } from 'effect'
 import * as FetchHttpClient from '@effect/platform/FetchHttpClient'
+import type * as HttpClient from '@effect/platform/HttpClient'
 import * as HttpClientError from '@effect/platform/HttpClientError'
 import * as StructureClient from '@structure-ai/client'
 import { ForbiddenProblem, UnauthorizedProblem } from '@structure-ai/http'
@@ -19,6 +20,16 @@ export interface ApiClientOptions {
   readonly token: string
   /** Per-request deadline. Default: 10 seconds. */
   readonly timeoutMs?: number
+  /**
+   * The HTTP client the requests go out through. The browser's `fetch` by
+   * default (a page served from a loopback origin, with the server's CORS
+   * answer). A preload running with Node available passes
+   * `@effect/platform-node`'s client instead: the request then leaves
+   * through Node's HTTP stack, with no Origin, no Content Security Policy
+   * and no preflight, so the packaged `file://` window reaches the server
+   * without the browser's cross-origin rules (ADR 0003).
+   */
+  readonly httpClient?: Layer.Layer<HttpClient.HttpClient>
 }
 
 export interface RegisterClientInput {
@@ -62,7 +73,7 @@ const translate = (url: string, error: unknown): Error => {
 const encodeWrite = Schema.encodeSync(SessionWrite)
 
 export function createApiClient(options: ApiClientOptions): ClaveApiClient {
-  const runtime = ManagedRuntime.make(FetchHttpClient.layer)
+  const runtime = ManagedRuntime.make(options.httpClient ?? FetchHttpClient.layer)
   const derive = StructureClient.make(ClaveApi, {
     baseUrl: options.url,
     bearer: () => options.token,

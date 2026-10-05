@@ -7,7 +7,8 @@
   "description": "The typed client of Clave's server: requests over @structure-ai/client, subscriptions over the push channel, and the adapter the preload routes a method through.",
   "exports": {
     ".": "./src/index.ts",
-    "./router": "./src/router.ts"
+    "./router": "./src/router.ts",
+    "./node": "./src/node.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -16,10 +17,11 @@
     "@clave/contract": "*",
     "@effect/platform": "0.97.1",
     "@structure-ai/client": "0.2.1",
-    "effect": "3.22.1"
+    "effect": "3.22.1",
+    "@effect/platform-node": "0.108.1",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@clave/server": "*",
-    "ws": "^8.19.0"
+    "@clave/server": "*"
   }
 }
