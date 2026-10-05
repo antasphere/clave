@@ -4434,8 +4434,9 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 /* The question stays pinned while its answer scrolls: the message row is
    plain `position: sticky` within its exchange, so the browser alone moves it,
    in the frame of the scroll, and the next exchange's question pushes it out
-   over the top edge. No script touches it. Its height is bounded by
-   question-height.ts, so a pinned question never fills the pane. The
+   over the top edge. No script touches it. A message too tall to pin
+   (question-height.ts) is left in the flow, so a pinned question never fills
+   the pane. The
    browser's scroll anchoring is off here: it would chase the pinned row. */
 .terminal-view[data-pin] .chat-scroll {
   overflow-anchor: none;
@@ -4505,50 +4506,16 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   order: 1;
   margin: calc(var(--spacing) * 1.5) 0 0;
 }
-/* A long message stands at most --term-question-max tall (question-height.ts:
-   a share of the pane, the reader's to move) and scrolls inside past it, so a
-   pinned question never covers the answer and every line of it stays
-   readable. The grip on its bottom edge shows on a message long enough for
-   the cap to matter. */
+/* A message always stands whole, never scrolling inside its own box. One
+   taller than a share of the pane (question-height.ts sets data-tall) is not
+   pinned: stuck under the top edge it would cover the answer, and its part
+   below the pane could never be read. It scrolls away with its exchange. */
 .term-question {
-  position: relative;
   display: flex;
   flex-direction: column;
 }
-.terminal-view .chat-turn-wrap[data-side='end'] .term-question .chat-turn[data-role='user'] {
-  max-height: var(--term-question-max, 40vh);
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.term-question-grip {
-  display: none;
-  position: absolute;
-  bottom: calc(var(--spacing) * -1);
-  left: 50%;
-  width: calc(var(--spacing) * 12);
-  height: calc(var(--spacing) * 2);
-  translate: -50% 0;
-  cursor: ns-resize;
-  touch-action: none;
-}
-.term-question-grip::before {
-  content: '';
-  position: absolute;
-  inset: calc(var(--spacing) * 0.75) calc(var(--spacing) * 2);
-  border-radius: var(--radius-full);
-  background-color: var(--text-tertiary);
-  opacity: 0;
-  transition: opacity var(--default-transition-duration);
-}
-.terminal-view .chat-turn-wrap[data-tall] .term-question-grip {
-  display: block;
-}
-.terminal-view .chat-turn-wrap[data-tall]:hover .term-question-grip::before,
-.terminal-view .chat-turn-wrap[data-resizing] .term-question-grip::before {
-  opacity: 0.6;
-}
-.terminal-view .chat-turn-wrap[data-resizing] .term-question-grip::before {
-  opacity: 1;
+.terminal-view[data-pin] .term-turn > .chat-turn-wrap[data-side='end'][data-tall] {
+  position: relative;
 }
 /* Tool runs in the Terminal view (TerminalTools.tsx): a title that counts
    what was done, opening onto one row per call. The title has no kind icon,

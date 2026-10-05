@@ -266,8 +266,8 @@ const EntryRow = memo(function EntryRow({
       >
         <Attachments files={entry.attachments ?? []} />
         {text.trim() !== '' && (
-          // The message is capped in height and scrolls inside past it; the
-          // grip on its bottom edge moves the cap (question-height.ts).
+          // The message stands whole; one too tall to pin scrolls away with
+          // its exchange instead (question-height.ts).
           <div className="term-question">
             <article
               className="chat-turn"
@@ -278,13 +278,6 @@ const EntryRow = memo(function EntryRow({
               {delivery && <SenderChip sender={delivery.sender} />}
               {text.replace(/\s+$/, '')}
             </article>
-            <div
-              className="term-question-grip"
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="Resize long messages"
-              title="Drag to show more or less of long messages · double-click to reset"
-            />
           </div>
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
