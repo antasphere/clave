@@ -9,8 +9,11 @@
  *    which also publishes the address to the windows over IPC.
  *  - ATTACHED (`CLAVE_SERVER_URL`, with `CLAVE_SERVER_TOKEN`): the app uses a
  *    server somebody else started, the standalone entry under Bun (`npm run
- *    dev:attached`, or the e2e harness, one server per spec); the address is
- *    published the same way once the registration landed.
+ *    dev:attached`, or the e2e harness, one server per spec). The shell
+ *    registers on it and the harness proves the boot; the address is NOT
+ *    published to the windows in this wave: a standalone server has no
+ *    sessions until the sessions move to the server (wave 2), and a window
+ *    routed to it would list none. The windows stay on IPC.
  *
  * Either way the shell then REGISTERS itself with the server (`POST /clients`,
  * its pid and version), so the server knows which app is on it, and writes
@@ -31,7 +34,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { ENV_SERVER_URL, ENV_SERVER_TOKEN } from '@clave/contract/env'
-import { setClaveServerEndpoint } from './server/endpoint'
 
 export type ServerMode = 'in-process' | 'attached'
 
@@ -179,7 +181,24 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     url = launch.url
     token = launch.token
   } else {
-    server = await options.startInProcess()
+    try {
+      server = await options.startInProcess()
+    } catch (err) {
+      // A start that throws (a listener that could not bind, the package
+      // failing to load) must not leave a previous boot's `ok: true` file
+      // behind: a reader would find a live-looking server that is not there.
+      const message = `the in-process server did not start: ${(err as Error).message}`
+      writeDiscovery(options.userData, {
+        url: '',
+        token: null,
+        mode: 'in-process',
+        ok: false,
+        error: message,
+        pid,
+        clientId: null
+      })
+      throw new ServerBootError(message, 'in-process', '')
+    }
     url = server.url
     token = server.token
   }
@@ -235,10 +254,9 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     pid,
     clientId
   })
-  // The in-process start publishes its own address to the windows; an
-  // attached one is published here, once the server has taken us. The
-  // registration answered, so the token is the right one.
-  if (launch.mode === 'attached') setClaveServerEndpoint({ url, token: token ?? '' })
+  // The in-process start publishes its own address to the windows
+  // (server/clave-server.ts); an attached one publishes nothing in this wave,
+  // the header says why.
 
   let stopped = false
   return {
@@ -249,15 +267,25 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     stop: async () => {
       if (stopped) return
       stopped = true
-      if (launch.mode === 'attached') setClaveServerEndpoint(null)
       if (clientId) {
         // Best effort, bounded: a quit must not wait on a server that is gone.
-        await call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/unregister`, {
-          method: 'POST',
-          token,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id: clientId })
-        }).catch(() => {})
+        // ONE retry on a network error: the main process can stall for
+        // seconds during a quit, the server drops the idle keep-alive socket
+        // meanwhile (Node's default is 5 s), and `fetch` then reuses the dead
+        // socket and fails with ECONNRESET without ever sending the request.
+        // Measured in the e2e harness (lane F, round 3): the client stayed
+        // registered on the server after the app was gone. The retry opens a
+        // fresh connection; a duplicate answers ClientNotFound, harmless.
+        const unregister = (): Promise<Response> =>
+          call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/unregister`, {
+            method: 'POST',
+            token,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: clientId })
+          })
+        await unregister()
+          .catch((err) => (err instanceof TypeError ? unregister() : undefined))
+          .catch(() => {})
       }
       if (server) await server.stop()
     }

@@ -82,7 +82,10 @@ describe('the HTTP API behind the token', () => {
         method: 'OPTIONS',
         headers: { origin, 'access-control-request-method': 'GET' }
       })
-      expect(stranger.status, origin).toBe(401)
+      // A stranger's preflight is decided before the token check and refused
+      // with no CORS header: never a 401 for a request that carries no token
+      // by definition (ADR 0003, the round-2 verifier of lane F).
+      expect(stranger.status, origin).toBe(403)
       expect(stranger.headers.get('access-control-allow-origin'), origin).toBeNull()
     }
     const strangerGet = await fetch(`${server.url}/sessions`, {

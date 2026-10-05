@@ -55,7 +55,20 @@ export const corsForLoopback: Wrap = <E, R>(app: HttpApp.Default<E, R>) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const origin = request.headers['origin']
-    if (!isLoopbackOrigin(origin)) return yield* app
+    if (!isLoopbackOrigin(origin)) {
+      // A preflight is decided HERE, whatever the origin, and never reaches
+      // the token check: a preflight carries no token by definition, so a
+      // 401 would be the wrong answer to the wrong question. A stranger's
+      // preflight (a page off this machine, or the opaque `null` origin of a
+      // sandboxed frame or a `data:` page) is refused with no CORS header,
+      // which is what keeps such a page from reaching the server; an
+      // OPTIONS with no Origin is not a preflight and goes on as any request.
+      if (request.method === 'OPTIONS' && origin !== undefined)
+        return HttpServerResponse.text('This server answers no page from off this machine.', {
+          status: 403
+        })
+      return yield* app
+    }
     const allow = {
       'access-control-allow-origin': origin as string,
       vary: 'Origin'

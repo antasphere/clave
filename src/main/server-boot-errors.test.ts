@@ -21,6 +21,77 @@ function answering(status: number): Promise<{ url: string; stop: () => Promise<v
   })
 }
 
+describe('stop, when the pooled connection is dead', () => {
+  it('retries the deregistration once on a network error, so no ghost client stays', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-reset-'))
+    const calls: string[] = []
+    let unregisterAttempts = 0
+    // A fetch that answers the probe and the registration, then fails the
+    // first deregistration as undici does on a socket the server closed.
+    const fakeFetch = (async (input: string | URL | Request) => {
+      const u = String(input)
+      calls.push(u.replace(/^http:\/\/[^/]+/, ''))
+      if (u.endsWith('/health/live')) return new Response('{"status":"live"}', { status: 200 })
+      if (u.endsWith('/clients/unregister')) {
+        unregisterAttempts++
+        if (unregisterAttempts === 1) throw new TypeError('fetch failed')
+        return new Response(null, { status: 204 })
+      }
+      if (u.endsWith('/clients'))
+        return new Response('{"id":"c-1"}', {
+          status: 201,
+          headers: { 'content-type': 'application/json' }
+        })
+      return new Response(null, { status: 404 })
+    }) as typeof fetch
+    try {
+      const handle = await startServer({
+        launch: { mode: 'attached', url: 'http://127.0.0.1:1', token: 't' },
+        userData,
+        identity,
+        fetch: fakeFetch,
+        startInProcess: async () => {
+          throw new Error('must not be called')
+        }
+      })
+      await handle.stop()
+      expect(unregisterAttempts).toBe(2)
+      expect(calls.filter((c) => c === '/clients/unregister')).toHaveLength(2)
+    } finally {
+      rmSync(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('does not retry on a server answer, only on a network error', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-reset2-'))
+    let unregisterAttempts = 0
+    const fakeFetch = (async (input: string | URL | Request) => {
+      const u = String(input)
+      if (u.endsWith('/health/live')) return new Response('{"status":"live"}', { status: 200 })
+      if (u.endsWith('/clients/unregister')) {
+        unregisterAttempts++
+        return new Response('{"error":"ClientNotFound"}', { status: 422 })
+      }
+      return new Response('{"id":"c-1"}', { status: 201 })
+    }) as typeof fetch
+    try {
+      const handle = await startServer({
+        launch: { mode: 'attached', url: 'http://127.0.0.1:1', token: 't' },
+        userData,
+        identity,
+        fetch: fakeFetch,
+        startInProcess: async () => {
+          throw new Error('must not be called')
+        }
+      })
+      await handle.stop()
+      expect(unregisterAttempts).toBe(1)
+    } finally {
+      rmSync(userData, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('startServer, the attach error paths', () => {
   it('a server that answers /health/live with a 503 is reported as that, not as "nothing answers"', async () => {
     const userData = mkdtempSync(path.join(tmpdir(), 'clave-server-boot-503-'))

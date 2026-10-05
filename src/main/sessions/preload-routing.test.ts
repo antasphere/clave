@@ -32,21 +32,22 @@ vi.mock('@clave/client/router', async (importActual) => {
     }
   }
 })
-vi.mock('@clave/client', async (importActual) => {
-  const actual = await importActual<typeof import('@clave/client')>()
-  return {
-    ...actual,
-    createApiClient: mocks.createApiClient,
-    PushClient: class {
-      connect(): this {
+// The preload builds its backing through the Node transport
+// (`@clave/client/node`, ADR 0003); the double hands back the mocked request
+// client for the endpoint it was given, and a push client that never opens.
+vi.mock('@clave/client/node', () => ({
+  connectThroughNode: async (endpoint: { url: string; token: string }) => ({
+    api: mocks.createApiClient(endpoint),
+    push: {
+      connect(): unknown {
         return this
-      }
+      },
       close(): void {
         /* nothing to close in a test double */
       }
     }
-  }
-})
+  })
+}))
 import '../../preload/index'
 const api = mocks.exposed.get('electronAPI') as ElectronAPI
 

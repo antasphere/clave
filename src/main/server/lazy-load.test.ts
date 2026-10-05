@@ -88,17 +88,21 @@ describe('the client and the server load lazily', () => {
       (spec) =>
         /^@clave\/(client|server)(\/(?!router$)|$)/.test(spec) ||
         /^@clave\/contract(?!\/env$)/.test(spec) ||
-        /^(effect|@effect\/|@structure-ai\/)/.test(spec)
+        /^(effect|@effect\/|@structure-ai\/|ws$)/.test(spec)
     )
     expect(heavy).toEqual([])
     const source = read('src/preload/index.ts')
-    expect(source).toMatch(/await import\('@clave\/client'\)/)
+    // The client through Node (`@clave/client/node`, ADR 0003): the request
+    // client over @effect/platform-node and the push socket over ws, so the
+    // packaged page sends no Origin and meets no CSP.
+    expect(source).toMatch(/await import\('@clave\/client\/node'\)/)
     // One runtime dynamic import, the awaited one inside connect: an eager
     // top-level `void import(...)` would pass the artefact walk and still
     // cost the window start (measured at about 400 ms). A type position's
-    // `import('x').Name` is erased and does not count.
+    // `import('x').Name` is erased and does not count. The Node packages the
+    // transport needs are imported inside that module, not here.
     const dynamic = [...source.matchAll(/\bimport\(['"]([^'"]+)['"]\)(?!\.)/g)].map((m) => m[1])
-    expect(dynamic).toEqual(['@clave/client'])
+    expect(dynamic).toEqual(['@clave/client/node'])
   })
   it('main names the server package only in a dynamic import (the source says so too)', () => {
     const source = read('src/main/server/clave-server.ts')

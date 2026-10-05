@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, statSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { startEmbedded, SessionSource, type EmbeddedServer } from '@clave/server'
@@ -144,7 +144,28 @@ describe('startServer', () => {
     await handle.stop() // idempotent
   })
 
-  it('attached: uses the server given, never starts one of its own, publishes the endpoint', async () => {
+  it('a start that throws writes ok:false over any previous file and rejects', async () => {
+    writeFileSync(
+      path.join(userData, DISCOVERY_FILE),
+      JSON.stringify({
+        url: 'http://127.0.0.1:59999',
+        token: 'STALE',
+        mode: 'in-process',
+        ok: true
+      })
+    )
+    const starter = async (): Promise<InProcessServer> => {
+      throw new Error('EADDRINUSE: the listener could not bind')
+    }
+    await expect(
+      startServer({ env: {}, userData, identity, startInProcess: starter })
+    ).rejects.toThrow(/did not start: EADDRINUSE/)
+    const disc = readDiscovery(userData)
+    expect(disc).toMatchObject({ ok: false, mode: 'in-process', token: null, url: '' })
+    expect(disc?.error).toMatch(/EADDRINUSE/)
+  })
+
+  it('attached: uses the server given, never starts one of its own, publishes nothing to the windows', async () => {
     const other = await aServer()
     owned.push(other)
     const starter = inProcess()
@@ -159,9 +180,11 @@ describe('startServer', () => {
     expect(handle.url).toBe(other.url)
     expect((await clientsOf(other)).map((c) => c.pid)).toEqual([777])
     expect(readDiscovery(userData)).toMatchObject({ url: other.url, mode: 'attached', ok: true })
-    expect(getClaveServerEndpoint()).toEqual({ url: other.url, token: other.token })
+    // A standalone server has no sessions in this wave: the windows stay on
+    // IPC, so nothing is published for them to route to.
+    expect(getClaveServerEndpoint()).toBeNull()
 
-    // Stopping an attached handle deregisters, unpublishes, and leaves the server up.
+    // Stopping an attached handle deregisters and leaves the server up.
     await handle.stop()
     expect(await clientsOf(other)).toEqual([])
     expect(getClaveServerEndpoint()).toBeNull()

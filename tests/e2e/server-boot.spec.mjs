@@ -85,31 +85,34 @@ const seed = (dir) => {
   seedTrustedRoots(dir, [ROOT])
 }
 
-/** The ports of the main process that are the DRIVER's, not the app's: the
- *  two debugging endpoints Playwright launches Electron with (`--inspect=0`,
- *  the Node inspector, and `--remote-debugging-port=0`, Chrome's), told apart
- *  by what answers there: `/json/version` with a `Protocol-Version`, which
- *  both speak and nothing of the app's does (the MCP server answers 404,
- *  the server 401). Everything else main listens on is the app's own and is
- *  what the ports checks are about. */
-async function driverPorts(ports) {
-  const out = []
-  for (const port of ports) {
-    const isDriver = await fetch(`http://127.0.0.1:${port}/json/version`, {
-      signal: AbortSignal.timeout(1500)
-    })
-      .then(async (r) => r.ok && typeof (await r.json())?.['Protocol-Version'] === 'string')
-      .catch(() => false)
-    if (isDriver) out.push(port)
-  }
-  return out
-}
-
-/** What main serves, by the OS, minus the driver's ports. */
-async function servedPorts(pid) {
+/** What the main process serves, told by what each listening port ANSWERS:
+ *  a Clave server answers `/health/live` 200 `{ status: "live" }` with no
+ *  token, the MCP server answers `/health` 200 with `{ app: "clave" }`. The
+ *  driver's two debugging endpoints (`--inspect=0`, `--remote-debugging-port=0`)
+ *  answer neither (a 400 or a 404, or they hang), so they never count, and
+ *  a server started "in place of" one that could not be reached would
+ *  answer the live probe on its own port and show up here. Positive
+ *  identification, so a debugging endpoint that stops answering (Chrome's
+ *  did, mid-lane) cannot turn the check red for the wrong reason. */
+async function appPorts(pid) {
   const all = listeningPorts(pid)
-  const driver = await driverPorts(all)
-  return { all, driver, served: all.filter((p) => !driver.includes(p)) }
+  const answers = async (port, p, want) => {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}${p}`, { signal: AbortSignal.timeout(5000) })
+      if (r.status !== 200) return false
+      const body = await r.json().catch(() => null)
+      return want(body)
+    } catch {
+      return false
+    }
+  }
+  const servers = []
+  const mcp = []
+  for (const port of all) {
+    if (await answers(port, '/health/live', (b) => b?.status === 'live')) servers.push(port)
+    else if (await answers(port, '/health', (b) => b?.app === 'clave')) mcp.push(port)
+  }
+  return { all, servers, mcp }
 }
 
 /** A loopback proxy in front of `target` that holds `POST /clients` for
@@ -192,19 +195,65 @@ export async function run(t) {
       )
       t.equal('and no token at all', (await serverClient(disc.url, null).clients()).status, 401)
 
-      // What the main process listens on, by the OS: the MCP port, plus the
-      // server's own port when it runs in-process, and nothing else.
+      // What the main process serves, by the OS and by what answers: the MCP
+      // server, plus exactly one Clave server when it runs in-process, none
+      // when attached (the server is another process), and never a second.
       const mcp = await mcpPort(DIR)
-      const expected = [mcp, ...(MODE === 'in-process' ? [Number(new URL(disc.url).port)] : [])]
-        .filter((p) => Number.isInteger(p))
-        .sort((a, b) => a - b)
-      const ports = await servedPorts(pid)
+      const ports = await appPorts(pid)
+      t.check('main serves the MCP server on its port', ports.mcp.includes(mcp), { ...ports, mcp })
+      if (MODE === 'in-process') {
+        t.check(
+          'main serves exactly one Clave server, on the published port',
+          JSON.stringify(ports.servers) === JSON.stringify([Number(new URL(disc.url).port)]),
+          { ...ports, published: disc.url }
+        )
+      } else {
+        t.check(
+          'main serves no Clave server of its own (the server is another process)',
+          ports.servers.length === 0,
+          ports
+        )
+      }
+
+      // What main tells the windows on the contract's channel: in-process the
+      // published url and token, the same as the file's; attached, nothing
+      // in this wave (a standalone server has no sessions, the windows stay
+      // on IPC). The handler is lane A's; it is read the way `spyPtySpawn`
+      // reads main's invoke handlers, and fails loudly if that map moves.
+      const published = await app.evaluate(({ ipcMain }) => {
+        const handlers = ipcMain._invokeHandlers
+        const handler =
+          handlers && typeof handlers.get === 'function' && handlers.get('server:endpoint')
+        if (!handler)
+          return { error: 'no server:endpoint handler, or ipcMain._invokeHandlers moved' }
+        return handler({})
+      })
+      if (MODE === 'in-process') {
+        t.check(
+          'server:endpoint answers the windows the published url and token',
+          published && published.url === disc.url && published.token === disc.token,
+          { published: published && { ...published, token: published.token ? '<set>' : null } }
+        )
+      } else {
+        t.equal(
+          'server:endpoint answers the windows null: a standalone server has no sessions yet',
+          published,
+          null
+        )
+      }
+      // A renderer-routed call succeeds: over the server in-process (through
+      // the preload's Node side, so no page origin, no CSP, no preflight),
+      // over IPC attached. This is the line the round-2 blocker needed.
+      const routed = await win.evaluate(() =>
+        window.electronAPI.sessionsList().then(
+          (sessions) => ({ ok: true, count: Array.isArray(sessions) ? sessions.length : -1 }),
+          (error) => ({ ok: false, error: String(error && error.message ? error.message : error) })
+        )
+      )
       t.check(
-        MODE === 'in-process'
-          ? 'main serves exactly the MCP port and the server port'
-          : 'main serves exactly the MCP port (the server is another process)',
-        JSON.stringify(ports.served) === JSON.stringify(expected),
-        { ...ports, expected }
+        'a renderer-routed sessionsList() succeeds',
+        routed.ok === true && routed.count >= 0,
+        routed
       )
 
       // A terminal the app spawns sees neither variable: the token is not
@@ -292,11 +341,12 @@ export async function run(t) {
       t.check('and says nothing answers there', /nothing answers/.test(disc?.error ?? ''), disc)
       t.equal('no token is left in the file', disc?.token, null)
       const mcp = await mcpPort(DIR)
-      const ports = await servedPorts(pid)
+      const ports = await appPorts(pid)
+      t.check('main still serves the MCP server', ports.mcp.includes(mcp), { ...ports, mcp })
       t.check(
-        'main serves the MCP port only: no server of its own took the place of the one asked for',
-        JSON.stringify(ports.served) === JSON.stringify([mcp]),
-        { ...ports, mcp }
+        'and no Clave server of its own took the place of the one asked for, on any port',
+        ports.servers.length === 0,
+        ports
       )
     } finally {
       await app.close()

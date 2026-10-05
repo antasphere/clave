@@ -80,11 +80,23 @@ export async function startServerProcess({
       clearTimeout(timer)
       if (fn === reject) {
         if (value instanceof Error) value.pid = child.pid
+        // Kill, then WAIT for the exit before rejecting: a caller that
+        // cleans up on the rejection (a test removing its data directory)
+        // must find the process gone and nothing of its still being written.
+        const finish = () => fn(value)
+        if (child.exitCode !== null || child.signalCode !== null) return finish()
+        const grace = setTimeout(finish, 2_000)
+        child.once('exit', () => {
+          clearTimeout(grace)
+          finish()
+        })
         try {
           child.kill('SIGKILL')
         } catch {
-          /* already gone */
+          clearTimeout(grace)
+          finish()
         }
+        return
       }
       fn(value)
     }
