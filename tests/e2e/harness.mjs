@@ -232,13 +232,7 @@ export async function launchApp(
       executablePath: ELECTRON_BIN,
       // `args` are extra main-process flags a spec needs (`--test-version=…`,
       // see src/main/test-mode.ts); the three fixed ones always come first.
-      args: [
-        '.',
-        `--user-data-dir=${dir}`,
-        '--test-no-activate',
-        `--terminal-journal=${terminalJournalPath(dir)}`,
-        ...args
-      ],
+      args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
       cwd: REPO,
       // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
       // a spec seeds transcripts without touching the real ~/.claude/projects).
@@ -592,9 +586,9 @@ export async function spyPtySpawn(app) {
   return async () => app.evaluate(() => globalThis.__e2eSpawns ?? [])
 }
 
-/** Where the app journals its terminal spawns and writes for a user-data
- *  directory (`--terminal-journal`, `src/main/test-mode.ts`); `launchApp`
- *  always passes it. */
+/** Where a test instance journals its terminal spawns and writes: under its
+ *  user-data directory, under `--test-no-activate` (`src/main/terminal-journal.ts`,
+ *  which also names the file on `globalThis.__claveE2E.terminalJournal`). */
 export function terminalJournalPath(dir) {
   return path.join(dir, 'terminal-journal.jsonl')
 }
