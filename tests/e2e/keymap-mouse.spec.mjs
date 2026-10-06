@@ -2,6 +2,7 @@
 // PRDCT-3239): this spec starts a session through the app, and a standalone
 // server refuses every start until its terminal process exists (wave 3);
 // the shared attached-mode fixture seam comes with it. Not a known failure.
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * Mouse buttons are keymap bindings, and a session action bound to one acts on
  * the sidebar tab under the pointer.
@@ -18,7 +19,15 @@
  *     itself, ignores a plain terminal, and the tab's own close ("mine") works.
  */
 import { mkdirSync, rmSync } from 'node:fs'
-import { launchApp, seedWorkspaces, userDataDir, fixturePath, until, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  userDataDir,
+  fixturePath,
+  until,
+  callMcp,
+  writeJournal
+} from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
 const DIR = userDataDir('keymap-mouse')
@@ -36,23 +45,6 @@ const liveIds = (win) =>
 const rowOf = (id) => `[data-sidebar-item-id="${id}"] button.sidebar-item`
 const dialogOpen = (win) => win.evaluate(() => document.querySelector('.modal-card') !== null)
 
-/** Every byte the renderer writes into any PTY, recorded in main. */
-async function recordPtyWrites(app) {
-  await app.evaluate(({ ipcMain }) => {
-    globalThis.__ptyWrites = []
-    ipcMain.on('pty:write', (_event, id, data) => globalThis.__ptyWrites.push({ id, data }))
-  })
-  return (id) =>
-    app.evaluate(
-      (_electron, id) =>
-        globalThis.__ptyWrites
-          .filter((w) => w.id === id)
-          .map((w) => w.data)
-          .join(''),
-      id
-    )
-}
-
 async function newTerminal(win) {
   const before = new Set(await liveIds(win))
   await win.click('.launcher-row button')
@@ -68,7 +60,8 @@ async function terminals(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
-    const writesTo = await recordPtyWrites(app)
+    // Every byte the renderer writes into any PTY, read from the terminal journal.
+    const writesTo = writeJournal(DIR)
     const first = await newTerminal(win)
     const second = await newTerminal(win)
     await win.click(rowOf(second))

@@ -232,7 +232,13 @@ export async function launchApp(
       executablePath: ELECTRON_BIN,
       // `args` are extra main-process flags a spec needs (`--test-version=…`,
       // see src/main/test-mode.ts); the three fixed ones always come first.
-      args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
+      args: [
+        '.',
+        `--user-data-dir=${dir}`,
+        '--test-no-activate',
+        `--terminal-journal=${terminalJournalPath(dir)}`,
+        ...args
+      ],
       cwd: REPO,
       // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
       // a spec seeds transcripts without touching the real ~/.claude/projects).
@@ -584,6 +590,71 @@ export async function spyPtySpawn(app) {
     )
   }
   return async () => app.evaluate(() => globalThis.__e2eSpawns ?? [])
+}
+
+/** Where the app journals its terminal spawns and writes for a user-data
+ *  directory (`--terminal-journal`, `src/main/test-mode.ts`); `launchApp`
+ *  always passes it. */
+export function terminalJournalPath(dir) {
+  return path.join(dir, 'terminal-journal.jsonl')
+}
+
+function readTerminalJournal(dir) {
+  const file = terminalJournalPath(dir)
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line))
+}
+
+/** Every spawn the terminal manager is asked for from this moment on, as the
+ *  renderer decided it: which agent, which directory, which prompt with its
+ *  tokens already substituted, which conversation resumed.
+ *
+ *  This is the assertion point for prompt delivery. A spawn creates the
+ *  session record; the command itself does not run until the terminal mounts
+ *  and reports its size, so a tab that is not on screen has no process and a
+ *  `ps` check answers on which tab happened to be mounted rather than on the
+ *  code. The journal is written by the terminal manager itself, below IPC
+ *  (`src/main/terminal-journal.ts`), so it sees the launch whether the window
+ *  asked over IPC or over the server, and it exists only under
+ *  `--test-no-activate`. It replaces `spyPtySpawn`, which tapped
+ *  `ipcMain._invokeHandlers` inside the main process (PRDCT-3240); a spec
+ *  that reads it pins `server: 'in-process'`, because an attached server has
+ *  no terminals until wave 3.
+ *
+ *  Returns a reader of the spawns journaled AFTER this call. */
+export function spawnJournal(dir) {
+  const seen = readTerminalJournal(dir).length
+  return async () =>
+    readTerminalJournal(dir)
+      .slice(seen)
+      .filter((line) => line.kind === 'spawn')
+      .map(({ cwd, options }) => ({
+        cwd,
+        initialPrompt: options?.initialPrompt ?? null,
+        claudeMode: options?.claudeMode ?? false,
+        claudeAgentsMode: options?.claudeAgentsMode ?? false,
+        codexMode: options?.codexMode ?? false,
+        antigravityMode: options?.antigravityMode ?? false,
+        // A resume from the history dialog: the conversation id, verbatim.
+        resumeSessionId: options?.resumeSessionId ?? null,
+        dangerousMode: options?.dangerousMode ?? false,
+        workspaceId: options?.workspaceId ?? null
+      }))
+}
+
+/** Every byte the renderer writes into a PTY from this moment on, read from
+ *  the same journal: `writesTo(id)` is the text written to that session. */
+export function writeJournal(dir) {
+  const seen = readTerminalJournal(dir).length
+  return async (id) =>
+    readTerminalJournal(dir)
+      .slice(seen)
+      .filter((line) => line.kind === 'write' && line.id === id)
+      .map((line) => line.data)
+      .join('')
 }
 
 // ── MCP over HTTP (PRDCT-1703 slice 2 routing) ───────────────────────────────

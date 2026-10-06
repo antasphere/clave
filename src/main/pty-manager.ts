@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { accountOverrides } from './restart-overrides'
+import { dismissSessionOffers } from './copy-offer-manager'
+import { terminalJournal } from './terminal-journal'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -115,6 +117,10 @@ class PtyManager {
   }
 
   async spawn(cwd: string, options?: PtySpawnOptions): Promise<PtySession> {
+    // The journal (test mode only) sees every spawn here, below IPC and the
+    // server alike, before anything can refuse it: the specs that assert a
+    // launch read it where they used to tap `pty:spawn` inside main.
+    terminalJournal()?.spawn(cwd, options)
     const family = options?.piMode
       ? 'pi'
       : options?.antigravityMode
@@ -373,6 +379,7 @@ class PtyManager {
     if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
   }
   write(id: string, data: string): void {
+    terminalJournal()?.write(id, data)
     if (sessionManager.get(id)?.transport === 'pty')
       sessionManager.write(id, new TextEncoder().encode(data))
   }
@@ -392,6 +399,9 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.rejected.delete(id)
+      // Copy offers are surfaced in the tab's own header: once the tab is
+      // gone they are unreachable, so their values leave memory with it.
+      dismissSessionOffers(id)
     }
     sessionManager.forget(id)
   }

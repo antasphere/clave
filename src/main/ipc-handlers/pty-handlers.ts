@@ -5,6 +5,9 @@ import {
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
+import { installTerminalPorts } from '../ports/terminals'
+import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../mcp/mcp-runtime'
+import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
@@ -17,6 +20,20 @@ import {
 } from '../sessions/lifecycle'
 
 export function registerPtyHandlers(): void {
+  // The shell wires the terminal layer's MCP config port to its own MCP
+  // server: a Claude session's `--mcp-config` file is the MCP runtime's
+  // (`mcp-runtime.ts`), written when the server is up and omitted before.
+  // The storage and the terminal process keep the layer's defaults here (the
+  // app's data folder, node-pty in this process).
+  installTerminalPorts({
+    mcpConfig: {
+      write: (sessionId) => (getMcpRuntime() ? writeSessionMcpConfig(sessionId) : null),
+      remove: deleteSessionMcpConfig
+    }
+  })
+  // The session stream's IPC, registered once with the terminal handlers (the
+  // agent state manager used to do it from the watch below and owns no IPC).
+  registerSessionIpc()
   // Deterministic Claude session state (from CC lifecycle hooks) → renderer.
   // With the server running the same state travels as `session.state_changed`
   // on the push channel (the manager publishes it, server/clave-server.ts):

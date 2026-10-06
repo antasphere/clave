@@ -47,3 +47,20 @@ export const TEST_VERSION: string | null = TEST_NO_ACTIVATE
   ? (process.argv.find((a) => a.startsWith('--test-version='))?.slice('--test-version='.length) ??
     null)
   : null
+
+/**
+ * `--terminal-journal=<file>`: where the terminal layer appends one JSON line
+ * per spawn it is asked for and per write it passes on, and only under
+ * `--test-no-activate`. The end-to-end specs that used to tap `pty:spawn`
+ * inside the main process read this file instead (`spawnJournal` in
+ * `tests/e2e/harness.mjs`): the journal is written below IPC, by the
+ * manager every transport goes through, so it sees a launch whether the
+ * window asked over IPC or over the server. A spawn's options carry the
+ * prompt, which is why the file exists only in test mode and never by
+ * default.
+ */
+export const TERMINAL_JOURNAL: string | null = TEST_NO_ACTIVATE
+  ? (process.argv
+      .find((a) => a.startsWith('--terminal-journal='))
+      ?.slice('--terminal-journal='.length) ?? null)
+  : null
