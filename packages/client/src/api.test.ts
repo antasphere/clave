@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createServer } from 'node:http'
-import { startEmbedded, type EmbeddedServer } from '@clave/server'
+import { SessionHost, startEmbedded, type EmbeddedServer } from '@clave/server'
 import { FakeSource, aSession } from '@clave/server/test-support'
-import { SessionNotFound } from '@clave/contract/sessions'
+import { SessionNotFound, SessionWriteRefused } from '@clave/contract/sessions'
+import { CapabilityUnavailable } from '@clave/contract/errors'
 import { type ClaveApiClient, createApiClient } from './api'
 import { ServerRefused, ServerUnreachable } from './errors'
 
@@ -12,7 +13,7 @@ let api: ClaveApiClient
 
 beforeEach(async () => {
   source = new FakeSource(aSession('s1'), aSession('s2', 'w2'))
-  server = await startEmbedded({ sessions: source })
+  server = await startEmbedded({ ports: { sessions: source } })
   api = createApiClient({ url: server.url, token: server.token })
 })
 afterEach(async () => {
@@ -42,6 +43,72 @@ describe('the typed request client', () => {
     expect(error).toBeInstanceOf(SessionNotFound)
     expect(error).toMatchObject({ _tag: 'SessionNotFound', id: 'ghost' })
   })
+  it('starts and stops a session, typed end to end', async () => {
+    const info = await api.sessions.start({
+      cwd: '/work/app',
+      windowKey: 'w1',
+      options: { claudeMode: true, link: { kind: 'toolbar', key: 'k1' } }
+    })
+    expect(info).toEqual({
+      id: 'started-1',
+      cwd: '/work/app',
+      folderName: 'app',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    })
+    expect(source.starts).toEqual([
+      {
+        cwd: '/work/app',
+        windowKey: 'w1',
+        options: { claudeMode: true, link: { kind: 'toolbar', key: 'k1' } }
+      }
+    ])
+    expect(await api.sessions.stop('started-1')).toBeUndefined()
+    expect(source.stops).toEqual(['started-1'])
+  })
+  it('sets a session’s view and reads its models, commands, capabilities and history', async () => {
+    expect(await api.sessions.setView('s1', 'clave.chat/chat')).toMatchObject({
+      id: 's1',
+      viewId: 'clave.chat/chat'
+    })
+    const back = await api.sessions.setView('s1', null)
+    expect(back.id).toBe('s1')
+    expect(back.viewId).toBeUndefined()
+    expect(await api.sessions.models('s1')).toEqual(source.modelsOf)
+    expect(await api.sessions.commands('s1')).toEqual(source.commandsOf)
+    expect(await api.sessions.capabilities('s1')).toEqual({ images: true })
+    source.historyOf = {
+      items: [{ event: { type: 'state_change', state: 'working' }, at: 7 }],
+      before: 2
+    }
+    expect(await api.sessions.history('s1', 12, 40)).toEqual(source.historyOf)
+    expect(source.historyAsked).toEqual([{ id: 's1', before: 12, limit: 40 }])
+    expect(typeof source.historyAsked[0].before).toBe('number')
+    expect(typeof source.historyAsked[0].limit).toBe('number')
+    await api.sessions.history('s1')
+    expect(source.historyAsked[1]).toEqual({ id: 's1', before: undefined, limit: undefined })
+  })
+  it('throws a missing capability as the tagged error it is, on a server with no sessions', async () => {
+    const bare = await startEmbedded({ ports: { sessions: SessionHost.none } })
+    const bareApi = createApiClient({ url: bare.url, token: bare.token })
+    try {
+      const error = await bareApi.sessions.start({ cwd: '/work' }).catch((e) => e)
+      expect(error).toBeInstanceOf(CapabilityUnavailable)
+      expect(error).toMatchObject({ _tag: 'CapabilityUnavailable', capability: 'sessions' })
+    } finally {
+      await bareApi.dispose()
+      await bare.stop()
+    }
+  })
+  it('throws a refused view and an unknown session as their tagged errors', async () => {
+    const refused = await api.sessions.setView('s1', 'nonsense').catch((e) => e)
+    expect(refused).toBeInstanceOf(SessionWriteRefused)
+    expect(refused).toMatchObject({ _tag: 'SessionWriteRefused', id: 's1' })
+    const missing = await api.sessions.get('nope').catch((e) => e)
+    expect(missing).toBeInstanceOf(SessionNotFound)
+    expect(missing).toMatchObject({ _tag: 'SessionNotFound', id: 'nope' })
+  })
   it('says the server refused a wrong token', async () => {
     const wrong = createApiClient({ url: server.url, token: 'wrong' })
     const error = await wrong.sessions.list().catch((e) => e)
@@ -69,7 +136,7 @@ describe('the typed request client', () => {
     await new Promise((resolve) => silent.close(resolve))
   })
   it('says the server is unreachable, at once, when nothing listens', async () => {
-    const stopped = await startEmbedded({ sessions: source })
+    const stopped = await startEmbedded({ ports: { sessions: source } })
     const url = stopped.url
     await stopped.stop()
     const gone = createApiClient({ url, token: 't', timeoutMs: 2000 })

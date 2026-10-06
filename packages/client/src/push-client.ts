@@ -14,7 +14,7 @@ import {
   encodeClientFrame
 } from '@clave/contract/push'
 import type { ServerEventEnvelope } from '@clave/contract/events'
-import type { SessionStream } from '@clave/contract/sessions'
+import type { Session, SessionStream } from '@clave/contract/sessions'
 import { Either } from 'effect'
 
 export type PushStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
@@ -57,6 +57,11 @@ interface Subscription {
   /** The server said the session exited: there is nothing to subscribe to
    *  again after a reconnect, and the listeners stay until their views leave. */
   ended: boolean
+  /** The record the server answered the subscribe with, null until it does
+   *  (and again after a reconnect, until the new answer). */
+  acked: Session | null
+  /** Who waits for the next answer: the record, or the server's refusal. */
+  waiters: Array<{ resolve: (session: Session) => void; reject: (error: Error) => void }>
 }
 
 export const pushUrlOf = (url: string): string => {
@@ -136,6 +141,8 @@ export class PushClient {
     } catch {
       /* already gone */
     }
+    for (const subscription of this.subscriptions.values())
+      this.failSubscribers(subscription, new Error('This push client was closed'))
     this.subscriptions.clear()
     this.setStatus('closed', { final: 'closed' })
     this.failWaiters(new Error('This push client was closed'))
@@ -153,9 +160,16 @@ export class PushClient {
     // id may be a resumed session now, and the server is the one to say.
     const fresh = !subscription || subscription.ended
     if (!subscription) {
-      subscription = { streams: new Set(), exits: new Set(), ended: false }
+      subscription = {
+        streams: new Set(),
+        exits: new Set(),
+        ended: false,
+        acked: null,
+        waiters: []
+      }
       this.subscriptions.set(sessionId, subscription)
     }
+    if (fresh) subscription.acked = null
     subscription.ended = false
     subscription.streams.add(onStream)
     if (onExit) subscription.exits.add(onExit)
@@ -167,9 +181,28 @@ export class PushClient {
       if (onExit) current.exits.delete(onExit)
       if (current.streams.size === 0 && current.exits.size === 0) {
         this.subscriptions.delete(sessionId)
+        this.failSubscribers(current, new Error('Unsubscribed before the server answered'))
         if (this.status_ === 'open') this.send({ _tag: 'unsubscribe', sessionId })
       }
     }
+  }
+
+  /**
+   * The server's answer to this client's subscription on `sessionId`: the
+   * session's record, once the `subscribed` frame has arrived (at once when it
+   * already has), or a rejection with the server's refusal (an unknown
+   * session). This is what makes a subscription something a caller can wait
+   * on before writing, as the shell's own subscribe call was: the listener
+   * is bound and the session made ready before the promise resolves. There
+   * must be a subscription (`subscribe` called first); without one the
+   * promise rejects, since nothing was asked of the server.
+   */
+  subscribed(sessionId: string): Promise<Session> {
+    const subscription = this.subscriptions.get(sessionId)
+    if (!subscription) return Promise.reject(new Error(`Not subscribed to ${sessionId}`))
+    if (subscription.acked) return Promise.resolve(subscription.acked)
+    if (this.stopped) return Promise.reject(new Error('This push client was closed'))
+    return new Promise((resolve, reject) => subscription.waiters.push({ resolve, reject }))
   }
 
   onEvent(listener: (envelope: ServerEventEnvelope) => void): Unsubscribe {
@@ -256,7 +289,11 @@ export class PushClient {
         this.attempts = 0
         this.setStatus('open', {})
         for (const [sessionId, subscription] of this.subscriptions)
-          if (!subscription.ended) this.send({ _tag: 'subscribe', sessionId })
+          if (!subscription.ended) {
+            // The new socket answers the subscription anew.
+            subscription.acked = null
+            this.send({ _tag: 'subscribe', sessionId })
+          }
         const waiters = this.openWaiters
         this.openWaiters = []
         for (const waiter of waiters) waiter.resolve()
@@ -280,10 +317,21 @@ export class PushClient {
         return
       }
       case 'error': {
+        // A refusal of a subscription answers whoever waits on it; the
+        // subscription itself stays, so a later retry asks again.
+        const subscription = frame.sessionId ? this.subscriptions.get(frame.sessionId) : undefined
+        if (subscription) this.failSubscribers(subscription, new Error(frame.message))
         for (const listener of this.errorListeners) listener(frame.message, frame.sessionId)
         return
       }
-      case 'subscribed':
+      case 'subscribed': {
+        const subscription = this.subscriptions.get(frame.sessionId)
+        if (!subscription) return
+        subscription.acked = frame.session
+        const waiters = subscription.waiters.splice(0)
+        for (const waiter of waiters) waiter.resolve(frame.session)
+        return
+      }
       case 'unsubscribed':
       case 'pong':
         return
@@ -303,6 +351,11 @@ export class PushClient {
   private setStatus(status: PushStatus, detail: PushStatusDetail): void {
     this.status_ = status
     for (const listener of this.statusListeners) this.safely(() => listener(status, detail))
+  }
+
+  private failSubscribers(subscription: Subscription, error: Error): void {
+    const waiters = subscription.waiters.splice(0)
+    for (const waiter of waiters) waiter.reject(error)
   }
 
   private failWaiters(error: Error): void {

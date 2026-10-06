@@ -2,18 +2,19 @@
  * The typed request client: every endpoint of `@clave/contract/api`, derived
  * from the shared `ClaveApi` type through `@structure-ai/client`, exposed as
  * promises so the preload and the renderer call it the way they call IPC. A
- * drift between server and client is a type error here.
+ * drift between server and client is a type error here. One namespace per
+ * domain, each built in its own module (`sessions.ts`, `clients.ts`) from
+ * the one `call`; a lane adds its module and its line below.
  */
 import { Effect, Either, type Layer, ManagedRuntime, Schema } from 'effect'
 import * as FetchHttpClient from '@effect/platform/FetchHttpClient'
 import type * as HttpClient from '@effect/platform/HttpClient'
 import * as HttpClientError from '@effect/platform/HttpClientError'
-import * as StructureClient from '@structure-ai/client'
 import { ForbiddenProblem, UnauthorizedProblem } from '@structure-ai/http'
-import { ClaveApi } from '@clave/contract/api'
-import type { Client, ClientKind } from '@clave/contract/clients'
-import { type Session, SessionWrite } from '@clave/contract/sessions'
+import { type Call, type DerivedClient, deriveClient } from './call'
+import { type ClientsClient, clientsClient } from './clients'
 import { ServerRefused, ServerUnreachable } from './errors'
+import { type SessionsClient, sessionsClient } from './sessions'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -32,24 +33,12 @@ export interface ApiClientOptions {
   readonly httpClient?: Layer.Layer<HttpClient.HttpClient>
 }
 
-export interface RegisterClientInput {
-  readonly kind: ClientKind
-  readonly name: string
-  readonly pid?: number
-}
-
 export interface ClaveApiClient {
   readonly url: string
-  readonly sessions: {
-    readonly list: (windowKey?: string) => Promise<ReadonlyArray<Session>>
-    readonly get: (id: string) => Promise<Session>
-    readonly write: (id: string, input: SessionWrite) => Promise<void>
-  }
-  readonly clients: {
-    readonly register: (input: RegisterClientInput) => Promise<Client>
-    readonly list: () => Promise<ReadonlyArray<Client>>
-    readonly unregister: (id: string) => Promise<void>
-  }
+  // ── Lane A ──
+  readonly sessions: SessionsClient
+  readonly clients: ClientsClient
+  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
   readonly health: {
     readonly live: () => Promise<boolean>
   }
@@ -57,9 +46,10 @@ export interface ClaveApiClient {
 }
 
 /** Network failures and refusals become the two errors above; a declared
- *  business failure (a `SessionNotFound`) is thrown as the tagged error it
- *  is. A refusal arrives decoded as the API's own problem class (every
- *  endpoint declares them), not as a raw status. */
+ *  business failure (a `SessionNotFound`, a `CapabilityUnavailable`) is
+ *  thrown as the tagged error it is, with its fields and its `_tag`. A
+ *  refusal arrives decoded as the API's own problem class (every endpoint
+ *  declares them), not as a raw status. */
 const translate = (url: string, error: unknown): Error => {
   if (HttpClientError.isHttpClientError(error) && error._tag === 'RequestError')
     return new ServerUnreachable(url, error)
@@ -69,12 +59,9 @@ const translate = (url: string, error: unknown): Error => {
   return new Error(String(error))
 }
 
-/** A write goes over the wire in its encoded form: bytes as base64. */
-const encodeWrite = Schema.encodeSync(SessionWrite)
-
 export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   const runtime = ManagedRuntime.make(options.httpClient ?? FetchHttpClient.layer)
-  const derive = StructureClient.make(ClaveApi, {
+  const derive = deriveClient({
     baseUrl: options.url,
     bearer: () => options.token,
     timeout: options.timeoutMs ?? 10_000,
@@ -82,9 +69,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     // does not answer is something the caller must hear about at once.
     retry: { attempts: 1 }
   })
-  type Derived = Effect.Effect.Success<typeof derive>
-  const client: Promise<Derived> = runtime.runPromise(derive)
-  const call = async <A, E>(run: (c: Derived) => Effect.Effect<A, E>): Promise<A> => {
+  const client: Promise<DerivedClient> = runtime.runPromise(derive)
+  const call: Call = async (run) => {
     const c = await client
     const result = await runtime.runPromise(Effect.either(run(c)))
     if (Either.isLeft(result)) throw translate(options.url, result.left)
@@ -92,21 +78,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   }
   return {
     url: options.url,
-    sessions: {
-      list: (windowKey) =>
-        call((c) => c.sessions.list({ payload: windowKey === undefined ? {} : { windowKey } })),
-      get: (id) => call((c) => c.sessions.get({ payload: { id } })),
-      write: (id, input) =>
-        call((c) => c.sessions.write({ payload: { id, input: encodeWrite(input) } })).then(
-          () => undefined
-        )
-    },
-    clients: {
-      register: (input) => call((c) => c.clients.register({ payload: input })),
-      list: () => call((c) => c.clients.list({ payload: {} })),
-      unregister: (id) =>
-        call((c) => c.clients.unregister({ payload: { id } })).then(() => undefined)
-    },
+    sessions: sessionsClient(call),
+    clients: clientsClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

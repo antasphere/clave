@@ -1,7 +1,8 @@
 /**
  * The clients domain on the server: who is attached. The registry is
  * in-memory for the life of the server; registering and leaving are commands
- * whose events every other client hears.
+ * whose events every other client hears. The registry is this domain's own
+ * service rather than a port: nothing outside the server owns the list.
  */
 import { Context, Effect, Layer, Ref } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
@@ -12,7 +13,7 @@ import {
   RegisterClient,
   UnregisterClient
 } from '@clave/contract/clients'
-import { ServerEvents } from './events'
+import { ServerEvents } from '../events'
 
 export interface RegisterInput {
   readonly kind: Client['kind']

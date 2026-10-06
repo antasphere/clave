@@ -1,10 +1,18 @@
 /**
- * What the server tests stand on: a session source the test drives by hand,
+ * What the server tests stand on: a session host the test drives by hand,
  * and a WebSocket peer that hands frames back one at a time. Test-only; the
  * tests import it, nothing else does.
  */
 import { WebSocket } from 'ws'
-import type { Session, SessionStream } from '@clave/contract/sessions'
+import type {
+  CommandOption,
+  HistoryPage,
+  ModelOption,
+  Session,
+  SessionInfo,
+  SessionStream,
+  SessionWrite
+} from '@clave/contract/sessions'
 import {
   type ServerFrame,
   decodeServerFrame,
@@ -12,7 +20,7 @@ import {
   type ClientFrame
 } from '@clave/contract/push'
 import { Either } from 'effect'
-import type { SessionSourceService, Unsubscribe } from './ports'
+import type { SessionHostService, StartInput, Unsubscribe } from './ports'
 
 export const aSession = (id: string, windowKey = 'w1'): Session => ({
   id,
@@ -26,12 +34,22 @@ export const aSession = (id: string, windowKey = 'w1'): Session => ({
   title: id
 })
 
-/** A source whose sessions the test emits into and exits by hand. */
-export class FakeSource implements SessionSourceService {
+/** A host whose sessions the test emits into and exits by hand. Every
+ *  call is recorded; a start mints a record under the cwd's last segment. */
+export class FakeSource implements SessionHostService {
   readonly sessions = new Map<string, Session>()
   readonly streams = new Map<string, Set<(stream: SessionStream) => void>>()
   readonly exits = new Map<string, Set<(code: number) => void>>()
   readonly writes: Array<{ id: string; input: unknown }> = []
+  readonly starts: StartInput[] = []
+  readonly stops: string[] = []
+  readonly views: Array<{ id: string; viewId: string | null }> = []
+  /** What `models`, `commands` and `history` answer. */
+  modelsOf: ModelOption[] = [{ id: 'm1', label: 'Model one' }]
+  commandsOf: CommandOption[] = [{ name: 'help', insert: '/help ' }]
+  historyOf: HistoryPage = { items: [], before: null }
+  /** Set to make the next write or start refuse. */
+  refuse: Error | null = null
 
   constructor(...sessions: Session[]) {
     for (const session of sessions) this.sessions.set(session.id, session)
@@ -57,10 +75,56 @@ export class FakeSource implements SessionSourceService {
       set.delete(listener)
     }
   }
-  write = (id: string, input: unknown): void => {
+  write = async (id: string, input: SessionWrite): Promise<void> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
     this.writes.push({ id, input })
   }
+  start = async (input: StartInput): Promise<SessionInfo> => {
+    if (this.refuse) throw this.refuse
+    this.starts.push(input)
+    const id = `started-${this.starts.length}`
+    const folderName = input.cwd.split('/').pop() || input.cwd
+    this.sessions.set(id, {
+      ...aSession(id, input.windowKey ?? ''),
+      cwd: input.cwd,
+      title: folderName
+    })
+    return { id, cwd: input.cwd, folderName, alive: true, claudeSessionId: null, piSessionId: null }
+  }
+  stop = async (id: string): Promise<void> => {
+    this.stops.push(id)
+    this.sessions.delete(id)
+  }
+  setView = (id: string, viewId: string | null): Session => {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown session: ${id}`)
+    if (viewId !== null && viewId.split('/').length !== 2)
+      throw new Error(`Invalid view id: ${viewId}`)
+    this.views.push({ id, viewId })
+    const next = viewId === null ? { ...session, viewId: undefined } : { ...session, viewId }
+    if (viewId === null) delete (next as { viewId?: string }).viewId
+    this.sessions.set(id, next)
+    return next
+  }
+  models = async (id: string): Promise<ModelOption[]> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    return this.modelsOf
+  }
+  commands = async (id: string): Promise<CommandOption[]> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    return this.commandsOf
+  }
+  capabilities = (id: string): { images: boolean } => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    return { images: true }
+  }
+  history = (id: string, before?: number, limit?: number): HistoryPage => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    this.historyAsked.push({ id, before, limit })
+    return this.historyOf
+  }
+  readonly historyAsked: Array<{ id: string; before?: number; limit?: number }> = []
   /** What the test does to a session. */
   emit(id: string, stream: SessionStream): void {
     for (const listener of [...(this.streams.get(id) ?? [])]) listener(stream)

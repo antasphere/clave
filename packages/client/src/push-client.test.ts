@@ -20,7 +20,7 @@ describe('the push client against the server', () => {
   let client: PushClient | null
   beforeEach(async () => {
     source = new FakeSource(aSession('s1'))
-    server = await startEmbedded({ sessions: source })
+    server = await startEmbedded({ ports: { sessions: source } })
     client = null
   })
   afterEach(async () => {
@@ -91,7 +91,7 @@ describe('the push client against the server', () => {
     // The same port and token, a fresh server with a fresh source.
     const sourceB = new FakeSource(aSession('s1'))
     await sleep(100)
-    server = await startEmbedded({ sessions: sourceB, port, token: server.token })
+    server = await startEmbedded({ ports: { sessions: sourceB }, port, token: server.token })
     await client.whenOpen()
     await until(() => sourceB.listeners('s1') === 2)
     sourceB.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
@@ -106,6 +106,63 @@ describe('the push client against the server', () => {
     expect(statuses[1]).toBe('open')
     expect(statuses.at(-1)).toBe('open')
     expect(statuses.slice(2, -1).every((s) => s === 'reconnecting')).toBe(true)
+  })
+
+  it('subscribed() resolves with the session’s record once the server answers, and at once after', async () => {
+    client = new PushClient({ url: server.url, token: server.token, WebSocket: Socket }).connect()
+    await client.whenOpen()
+    client.subscribe('s1', () => {})
+    const first = await client.subscribed('s1')
+    expect(first.id).toBe('s1')
+    expect(first).toEqual(source.get('s1'))
+    // The answer is kept: a second call settles before anything else can.
+    const again = await Promise.race([client.subscribed('s1'), Promise.resolve('pending')])
+    expect(again).toBe(first)
+  })
+
+  it('subscribed() rejects with the server’s refusal for a session it does not know', async () => {
+    client = new PushClient({ url: server.url, token: server.token, WebSocket: Socket }).connect()
+    await client.whenOpen()
+    client.subscribe('ghost', () => {})
+    await expect(client.subscribed('ghost')).rejects.toThrow(/^Unknown session$/)
+  })
+
+  it('subscribed() rejects when nothing was subscribed', async () => {
+    client = new PushClient({ url: server.url, token: server.token, WebSocket: Socket }).connect()
+    await client.whenOpen()
+    await expect(client.subscribed('s1')).rejects.toThrow('Not subscribed')
+  })
+
+  it('subscribed() still waiting when the client closes rejects', async () => {
+    client = new PushClient({ url: server.url, token: server.token, WebSocket: Socket }).connect()
+    // Subscribed before the welcome: the server has not been asked yet.
+    client.subscribe('s1', () => {})
+    const pending = client.subscribed('s1')
+    client.close()
+    await expect(pending).rejects.toThrow('This push client was closed')
+  })
+
+  it('subscribed() answers with the new server’s record after a reconnect', async () => {
+    client = new PushClient({
+      url: server.url,
+      token: server.token,
+      WebSocket: Socket,
+      backoff: { baseMs: 20, maxMs: 100 }
+    }).connect()
+    await client.whenOpen()
+    client.subscribe('s1', () => {})
+    expect((await client.subscribed('s1')).title).toBe('s1')
+    const port = Number(new URL(server.url).port)
+    await server.stop()
+    await until(() => client!.status === 'reconnecting')
+    const sourceB = new FakeSource({ ...aSession('s1'), title: 'from the new server' })
+    await sleep(100)
+    server = await startEmbedded({ ports: { sessions: sourceB }, port, token: server.token })
+    await client.whenOpen()
+    const record = await client.subscribed('s1')
+    expect(record.id).toBe('s1')
+    expect(record.title).toBe('from the new server')
+    expect(sourceB.listeners('s1')).toBe(2)
   })
 
   it('does not subscribe again, after a reconnect, to a session the server said had exited', async () => {
@@ -132,7 +189,7 @@ describe('the push client against the server', () => {
     await until(() => client!.status === 'reconnecting')
     const sourceB = new FakeSource()
     await sleep(100)
-    server = await startEmbedded({ sessions: sourceB, port, token: server.token })
+    server = await startEmbedded({ ports: { sessions: sourceB }, port, token: server.token })
     await client.whenOpen()
     await sleep(150)
     expect(errors).toEqual([])
@@ -164,7 +221,7 @@ describe('the push client against the server', () => {
     await sleep(200)
     expect(constructed).toBe(before)
     expect(client.status).toBe('closed')
-    server = await startEmbedded({ sessions: source })
+    server = await startEmbedded({ ports: { sessions: source } })
   })
 
   it('stops for good when the server refuses the token', async () => {

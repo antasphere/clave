@@ -13,14 +13,16 @@
  * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
  *
  * The process runs `@clave/server`, the same package the app runs in-process,
- * over an EMPTY session source: until the sessions move to the server (wave
- * 2) a standalone server has none to answer for, and a client sees the same
- * API, the same token check and the same push channel as in-process. Nothing
- * here imports Electron.
+ * with NO session host: the sessions domain is on the server (wave 2), but a
+ * standalone server has no terminal process to run them until wave 3, so it
+ * lists none and answers every start with a declared `CapabilityUnavailable`
+ * that names what is missing. A client sees the same API, the same token
+ * check and the same push channel as in-process. Nothing here imports
+ * Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { startEmbedded, SessionSource } from '@clave/server'
+import { startEmbedded, SessionHost } from '@clave/server'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -43,7 +45,9 @@ async function main(): Promise<void> {
 
   const token = arg('token')
   const server = await startEmbedded({
-    sessions: SessionSource.empty,
+    // No terminal process beside this server yet (wave 3): a start answers
+    // `CapabilityUnavailable` and says so, the reads answer empty.
+    ports: { sessions: SessionHost.none },
     port,
     ...(token !== undefined && { token })
   })

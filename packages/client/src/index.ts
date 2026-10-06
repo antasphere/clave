@@ -8,12 +8,11 @@
 import { type ApiClientOptions, type ClaveApiClient, createApiClient } from './api'
 import { PushClient, type PushClientOptions } from './push-client'
 
-export {
-  createApiClient,
-  type ApiClientOptions,
-  type ClaveApiClient,
-  type RegisterClientInput
-} from './api'
+export { createApiClient, type ApiClientOptions, type ClaveApiClient } from './api'
+// ── Lane A ──
+export { type SessionsClient, type StartSessionInput } from './sessions'
+export { type ClientsClient, type RegisterClientInput } from './clients'
+// ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
 export {
   PushClient,
   pushUrlOf,

@@ -19,7 +19,7 @@ import {
 import { Either } from 'effect'
 import { safeEqual } from '../auth'
 import type { ServerEventsService } from '../events'
-import type { SessionSourceService, Unsubscribe } from '../ports'
+import type { SessionStreamSource, Unsubscribe } from '../sessions/port'
 
 export interface PushSocket {
   send(text: string): void
@@ -34,7 +34,7 @@ export interface PushPeer {
 export interface PushHubOptions {
   readonly token: string
   readonly serverId: string
-  readonly source: SessionSourceService
+  readonly source: SessionStreamSource
   readonly events: ServerEventsService
   readonly helloTimeoutMs?: number
 }

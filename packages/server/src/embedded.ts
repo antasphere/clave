@@ -1,7 +1,8 @@
 /**
- * The in-process entry: Electron main starts the server here, on Node's own
- * http server, loopback, a random port and a fresh token, and gets back the
- * address the clients read and the handle it stops the server with.
+ * The in-process entry: Electron main starts the server here (and the
+ * standalone entry too, under Bun), on Node's own http server, loopback, a
+ * random port and a fresh token, and gets back the address the clients read
+ * and the handle it stops the server with.
  */
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -12,12 +13,13 @@ import { Readiness } from '@structure-ai/runtime'
 import type { ServerEvent } from '@clave/contract/events'
 import { CLOSE_SERVER_STOPPING } from '@clave/contract/push'
 import { ServerEvents } from './events'
-import type { SessionSourceService } from './ports'
+import type { ServerPorts } from './ports'
 import { PushHubService } from './push/route'
 import { ServerLive } from './runtime'
 
 export interface EmbeddedOptions {
-  readonly sessions: SessionSourceService
+  /** What this entry can do, one port per domain (`ports.ts`). */
+  readonly ports: ServerPorts
   /** Loopback unless told otherwise; nothing here is meant for a network. */
   readonly host?: string
   /** 0, the default, takes a free port. */
@@ -47,7 +49,7 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
   const layer = ServerLive({
     token,
     serverId,
-    sessions: options.sessions,
+    ports: options.ports,
     ...(options.helloTimeoutMs !== undefined && { helloTimeoutMs: options.helloTimeoutMs })
   }).pipe(
     Layer.provideMerge(

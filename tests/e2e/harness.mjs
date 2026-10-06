@@ -526,7 +526,7 @@ export async function spyPtySpawn(app) {
     const original = handlers.get('pty:spawn')
     if (!original) return false
     globalThis.__e2eSpawns = []
-    handlers.set('pty:spawn', async (event, cwd, options) => {
+    const record = (cwd, options) =>
       globalThis.__e2eSpawns.push({
         cwd,
         initialPrompt: options?.initialPrompt ?? null,
@@ -539,8 +539,24 @@ export async function spyPtySpawn(app) {
         dangerousMode: options?.dangerousMode ?? false,
         workspaceId: options?.workspaceId ?? null
       })
+    // A window the server has not reached starts its sessions over IPC...
+    handlers.set('pty:spawn', async (event, cwd, options) => {
+      record(cwd, options)
       return original(event, cwd, options)
     })
+    // ...and a window on the server starts them through the session host
+    // (`src/main/sessions/host.ts`, exposed under --test-no-activate by
+    // `sessions/e2e-hooks.ts`): the same spawn, wrapped the same way. Both are
+    // tapped because which one a spawn takes depends on whether the server was
+    // up when the window made its first call.
+    const host = globalThis.__claveE2E?.sessionHost
+    if (host) {
+      const start = host.start
+      host.start = async (input) => {
+        record(input.cwd, input.options)
+        return start.call(host, input)
+      }
+    }
     return true
   })
   if (!installed) {

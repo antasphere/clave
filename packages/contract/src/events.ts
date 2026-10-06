@@ -2,15 +2,33 @@
  * The event envelope: what the server tells every attached client, as it
  * happens, over the push channel. Each domain adds its own members to
  * `ServerEvent`; the envelope around them is one shape for all.
+ *
+ * The sessions domain's events replace what the shell used to send to one
+ * window at a time: a session's state, the title its first message earned,
+ * the plan its agent wrote, the conversation it cleared. Every attached
+ * client hears them, and a window keeps the ones about its own sessions.
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
 import { AgentState } from './sessions'
 
 export const ServerEvent = Schema.Union(
+  // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
-  Schema.TaggedStruct('session.state_changed', { id: Schema.String, state: AgentState })
+  // ── Sessions (lane A) ──
+  Schema.TaggedStruct('session.state_changed', { id: Schema.String, state: AgentState }),
+  /** The tab's name, earned from its first message. */
+  Schema.TaggedStruct('session.title_changed', { id: Schema.String, title: Schema.String }),
+  /** The agent wrote a plan; `path` is where it is on the shell's disk. */
+  Schema.TaggedStruct('session.plan_detected', { id: Schema.String, path: Schema.String }),
+  /** The conversation was cleared; `providerSessionId` is the conversation
+   *  the tab follows from now on, null when the provider rotated to none. */
+  Schema.TaggedStruct('session.cleared', {
+    id: Schema.String,
+    providerSessionId: Schema.NullOr(Schema.String)
+  })
+  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
 )
 export type ServerEvent = typeof ServerEvent.Type
 

@@ -2,8 +2,12 @@
  * The server composed, runtime-agnostic: the buses over the handlers, the
  * event store, the client registry, readiness, the API and the push hub,
  * served by whatever `HttpServer` the entry provides. `embedded.ts` gives it
- * Node's server for the in-process shape of this wave; a standalone entry
- * gives it Bun's and nothing else changes.
+ * Node's server for the in-process shape; a standalone entry gives it Bun's
+ * and nothing else changes.
+ *
+ * The pattern, per domain: its port comes in through `ports` (`ports.ts`),
+ * its handlers are one spread in `BusesLive`, its services one line in
+ * `ServicesLive`. A lane adds its lines in its section and edits no other.
  */
 import { Effect, Layer } from 'effect'
 import type * as HttpApi from '@effect/platform/HttpApi'
@@ -20,7 +24,7 @@ import { bearerAuth } from './auth'
 import { corsForLoopback } from './cors'
 import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
-import { SessionSource, type SessionSourceService } from './ports'
+import { PortsLive, type ServerPorts, SessionHost } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { sessionHandlers } from './sessions'
 
@@ -29,7 +33,8 @@ export interface ServerOptions {
   readonly token: string
   /** Names this server in the `welcome` frame and in its event stream. */
   readonly serverId: string
-  readonly sessions: SessionSourceService
+  /** What the entry can do, one port per domain; a domain's `none` otherwise. */
+  readonly ports: ServerPorts
   /** How long a push peer has to say hello. The contract's default otherwise. */
   readonly helloTimeoutMs?: number
 }
@@ -38,15 +43,17 @@ export type ServerServices =
   | ServerEvents
   | ClientRegistry
   | Readiness
-  | SessionSource
+  | SessionHost
   | PushHubService
   | EventStore
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
   const foundations = Layer.mergeAll(
-    SessionSource.layer(options.sessions),
+    PortsLive(options.ports),
+    // ── Lane A: the clients the shell registers as ──
     ClientRegistry.layer,
+    // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
     Readiness.layer,
     InMemoryAll
   )
@@ -58,7 +65,13 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
 
 /** The buses, with every handler of every domain registered once. */
 export const BusesLive = busesLayer.pipe(
-  Layer.provide(HandlerRegistry.layer(...sessionHandlers, ...clientHandlers))
+  Layer.provide(
+    HandlerRegistry.layer(
+      ...sessionHandlers,
+      ...clientHandlers
+      // ── Lane B: ...terminalHandlers · Lane C: ...sidebarHandlers · Lane D: ...settingsHandlers ──
+    )
+  )
 )
 
 /** The middleware outside the router, outermost first: the loopback CORS

@@ -10,6 +10,7 @@
  */
 import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
+import { CapabilityUnavailable } from './errors'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -269,12 +270,95 @@ export const HistoryPage = Schema.Struct({
 })
 export type HistoryPage = typeof HistoryPage.Type
 
+// ── Starting and stopping ──
+
+/** Who owns a session that is not a tab of its own, as the shell records it
+ *  (`src/shared/session-link.ts`): a group's terminal, a pane's attached web
+ *  view, a toolbar command. */
+export const SessionLink = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal('group-terminal'),
+    groupId: Schema.String,
+    terminalId: Schema.String
+  }),
+  Schema.Struct({ kind: Schema.Literal('session-view'), ownerId: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal('toolbar'), key: Schema.String })
+)
+export type SessionLink = typeof SessionLink.Type
+
+/**
+ * What a client asks a session to start with: the preload's `spawnSession`
+ * options, field by field, every one optional. A field the shell adds for
+ * itself (a restart's resend) is not here: the wire never carries it.
+ */
+export const SpawnOptions = Schema.Struct({
+  dangerousMode: Schema.optional(Schema.Boolean),
+  model: Schema.optional(Schema.String),
+  claudeMode: Schema.optional(Schema.Boolean),
+  antigravityMode: Schema.optional(Schema.Boolean),
+  codexMode: Schema.optional(Schema.Boolean),
+  piMode: Schema.optional(Schema.Boolean),
+  claudeAgentsMode: Schema.optional(Schema.Boolean),
+  resumeSessionId: Schema.optional(Schema.String),
+  claudeSessionId: Schema.optional(Schema.String),
+  piSessionId: Schema.optional(Schema.String),
+  launchProfileId: Schema.optional(Schema.String),
+  piProvider: Schema.optional(Schema.String),
+  /** A level as Pi spells it (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). */
+  piThinking: Schema.optional(Schema.String),
+  initialCommand: Schema.optional(Schema.String),
+  autoExecute: Schema.optional(Schema.Boolean),
+  initialPrompt: Schema.optional(Schema.String),
+  tmuxMode: Schema.optional(Schema.Boolean),
+  adoptTmuxName: Schema.optional(Schema.String),
+  adoptSessionId: Schema.optional(Schema.String),
+  configDir: Schema.optional(Schema.String),
+  claudeProfileId: Schema.optional(Schema.String),
+  claudeProfileLabel: Schema.optional(Schema.String),
+  codexAccountId: Schema.optional(Schema.String),
+  codexAccountLabel: Schema.optional(Schema.String),
+  workspaceId: Schema.optional(Schema.String),
+  link: Schema.optional(SessionLink)
+})
+export type SpawnOptions = typeof SpawnOptions.Type
+
+/** What a started session answers with: the shell's `SessionInfo`, the
+ *  record a sidebar tab is made from. */
+export const SessionInfo = Schema.Struct({
+  id: Schema.NonEmptyString,
+  cwd: Schema.String,
+  folderName: Schema.String,
+  alive: Schema.Boolean,
+  claudeSessionId: Schema.NullOr(Schema.String),
+  piSessionId: Schema.NullOr(Schema.String),
+  launchProfileId: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  piProvider: Schema.optional(Schema.String),
+  piThinking: Schema.optional(Schema.String)
+})
+export type SessionInfo = typeof SessionInfo.Type
+
 // ── Failures ──
 
 /** No session carries that id on this server. */
 export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()('SessionNotFound', {
   id: Schema.String
 }) {}
+
+/** The session's provider refused the write, or the shell could not prepare
+ *  it (a file an attachment names is gone): the message is the provider's or
+ *  the shell's own, and the composer keeps its draft. */
+export class SessionWriteRefused extends Schema.TaggedError<SessionWriteRefused>()(
+  'SessionWriteRefused',
+  { id: Schema.String, message: Schema.String }
+) {}
+
+/** The shell could not start the session: a path that is not there, a
+ *  provider that refused, an adapter that is disabled. */
+export class SessionStartFailed extends Schema.TaggedError<SessionStartFailed>()(
+  'SessionStartFailed',
+  { message: Schema.String }
+) {}
 
 // ── Commands and queries ──
 
@@ -289,9 +373,72 @@ export const GetSession = Query.define('GetSession', {
   success: Session,
   failure: SessionNotFound
 })
-/** Hand a session what a view wrote: a typed input or terminal bytes. */
+/**
+ * Start a session in `cwd` for the window named by `windowKey` (the asking
+ * window is the session's home; a windowless caller passes none and the
+ * shell falls back as it does for an agent's launch). A server with no
+ * terminal process answers `CapabilityUnavailable`.
+ */
+export const StartSession = Command.define('StartSession', {
+  payload: Schema.Struct({
+    cwd: Schema.String,
+    windowKey: Schema.optional(Schema.String),
+    options: Schema.optional(SpawnOptions)
+  }),
+  success: SessionInfo,
+  failure: Schema.Union(CapabilityUnavailable, SessionStartFailed)
+})
+/** Stop a session: its process ended, its record released. Idempotent on a
+ *  session already gone, as the shell's own kill is. */
+export const StopSession = Command.define('StopSession', {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Schema.Void,
+  failure: CapabilityUnavailable
+})
+/** Hand a session what a view wrote: a typed input or terminal bytes. A
+ *  user message's attachments are prepared by the shell at the write, from
+ *  the files they name. */
 export const WriteSession = Command.define('WriteSession', {
   payload: Schema.Struct({ id: Schema.String, input: SessionWrite }),
   success: Schema.Void,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+})
+/** The view a session is read in, `<pluginId>/<viewId>`; null hands it back
+ *  to the host's default. Answers the record as it stands. */
+export const SetSessionView = Command.define('SetSessionView', {
+  payload: Schema.Struct({ id: Schema.String, viewId: Schema.NullOr(Schema.NonEmptyString) }),
+  success: Session,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+})
+/** The models the session may switch to; empty when its provider offers none. */
+export const GetSessionModels = Query.define('GetSessionModels', {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Schema.Array(ModelOption),
+  failure: SessionNotFound
+})
+/** The commands the composer offers under "/"; empty when the provider has none. */
+export const GetSessionCommands = Query.define('GetSessionCommands', {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Schema.Array(CommandOption),
+  failure: SessionNotFound
+})
+/** What the session's adapter takes beyond text. */
+export const SessionCapabilities = Schema.Struct({ images: Schema.Boolean })
+export type SessionCapabilities = typeof SessionCapabilities.Type
+export const GetSessionCapabilities = Query.define('GetSessionCapabilities', {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: SessionCapabilities,
+  failure: SessionNotFound
+})
+/** A page of a resumed conversation's past, newest first, ending at `before`
+ *  (its end when absent), about `limit` events long. A GET carries its
+ *  numbers as strings, so they are decoded from strings here. */
+export const GetSessionHistory = Query.define('GetSessionHistory', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    before: Schema.optional(Schema.NumberFromString.pipe(Schema.nonNegative(), Schema.int())),
+    limit: Schema.optional(Schema.NumberFromString.pipe(Schema.nonNegative(), Schema.int()))
+  }),
+  success: HistoryPage,
   failure: SessionNotFound
 })

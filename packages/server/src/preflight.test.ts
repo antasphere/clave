@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from './embedded'
-import { SessionSource } from './ports'
+import { SessionHost } from './ports'
 
 /**
  * The preflight is decided before the token check, for every origin (ADR
@@ -12,7 +12,7 @@ import { SessionSource } from './ports'
 describe('the preflight and the token check', () => {
   let server: EmbeddedServer
   beforeAll(async () => {
-    server = await startEmbedded({ sessions: SessionSource.empty, port: 0 })
+    server = await startEmbedded({ ports: { sessions: SessionHost.none }, port: 0 })
   })
   afterAll(async () => {
     await server.stop()

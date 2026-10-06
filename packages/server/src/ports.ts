@@ -1,46 +1,26 @@
 /**
- * The ports: what the server needs from whoever runs it. In this wave the
- * server runs inside Electron main and the shell implements these over the
- * managers it already has (the session manager first); a later lane moves an
- * implementation into the server and the port stays as the seam.
+ * The ports, one per domain: what the server needs from whoever runs it.
+ * Inside the app the shell implements each over the managers it already has
+ * (`src/main/server/*`); a standalone entry gives the ones it can and the
+ * domain's `none` for the rest, which answers `CapabilityUnavailable`.
+ *
+ * The pattern a lane follows: the port lives in its domain folder
+ * (`<domain>/port.ts`, a `Context.Tag` with a `layer(service)` and a `none`),
+ * is re-exported here, and gets one optional field in `ServerPorts`. The
+ * composition root (`runtime.ts`) provides every port from this object.
  */
-import { Context, Layer } from 'effect'
-import type { Session, SessionStream, SessionWrite } from '@clave/contract/sessions'
+import { Layer } from 'effect'
+import { SessionHost, type SessionHostService } from './sessions/port'
 
-export type Unsubscribe = () => void
+export type { StartInput, Unsubscribe } from './sessions/port'
+export { SessionHost, type SessionHostService } from './sessions/port'
 
-/** Where sessions live today: a synchronous registry the shell owns. */
-export interface SessionSourceService {
-  /** Every session, or those of one window when `windowKey` is given. */
-  readonly list: (windowKey?: string) => ReadonlyArray<Session>
-  readonly get: (id: string) => Session | undefined
-  /** Frames of a session as they come; throws when the session is unknown. */
-  readonly subscribe: (id: string, listener: (stream: SessionStream) => void) => Unsubscribe
-  /** The session's exit code, once; throws when the session is unknown. */
-  readonly subscribeExit: (id: string, listener: (code: number) => void) => Unsubscribe
-  /** Hand the session a typed input or terminal bytes; throws when it is unknown. */
-  readonly write: (id: string, input: SessionWrite) => void
+export interface ServerPorts {
+  /** Lane A: the sessions. `SessionHost.none` when absent. */
+  readonly sessions?: SessionHostService
+  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
 }
 
-export class SessionSource extends Context.Tag('@clave/server/SessionSource')<
-  SessionSource,
-  SessionSourceService
->() {
-  static layer(service: SessionSourceService): Layer.Layer<SessionSource> {
-    return Layer.succeed(SessionSource, service)
-  }
-  /** A source with no sessions: a server with nothing attached, and the tests' default. */
-  static readonly empty: SessionSourceService = {
-    list: () => [],
-    get: () => undefined,
-    subscribe: (id) => {
-      throw new Error(`Unknown session: ${id}`)
-    },
-    subscribeExit: (id) => {
-      throw new Error(`Unknown session: ${id}`)
-    },
-    write: (id) => {
-      throw new Error(`Unknown session: ${id}`)
-    }
-  }
-}
+/** Every port as a layer, the domain's `none` where the entry gave nothing. */
+export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost> =>
+  Layer.mergeAll(SessionHost.layer(ports.sessions ?? SessionHost.none))

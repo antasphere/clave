@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Effect, Layer, Stream } from 'effect'
 import { EventStore, InMemoryAll } from '@structure-ai/eventsourcing'
 import { ServerEvents } from './events'
-import { SessionSource } from './ports'
+import { SessionHost } from './ports'
 import { ServicesLive } from './runtime'
 
 describe('the server event log', () => {
@@ -23,7 +23,9 @@ describe('the server event log', () => {
       const stored = yield* Stream.runCollect(store.read(events.stream))
       return [...stored]
     }).pipe(
-      Effect.provide(ServicesLive({ token: 't', serverId: 'srv', sessions: SessionSource.empty })),
+      Effect.provide(
+        ServicesLive({ token: 't', serverId: 'srv', ports: { sessions: SessionHost.none } })
+      ),
       Effect.scoped
     )
     const stored = await Effect.runPromise(program)

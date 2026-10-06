@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from './embedded'
+import { SessionHost } from './ports'
 import { FakeSource, Peer, aSession, sleep } from './test-support'
 
 let server: EmbeddedServer
@@ -9,10 +10,14 @@ const headers = (token: string): Record<string, string> => ({
   authorization: `Bearer ${token}`,
   'content-type': 'application/json'
 })
+const post = (url: string, token: string, body: unknown): Promise<Response> =>
+  fetch(url, { method: 'POST', headers: headers(token), body: JSON.stringify(body) })
+const get = (url: string, token: string): Promise<Response> =>
+  fetch(url, { headers: headers(token) })
 
 beforeEach(async () => {
   source = new FakeSource(aSession('s1'), aSession('s2', 'w2'))
-  server = await startEmbedded({ sessions: source, helloTimeoutMs: 200 })
+  server = await startEmbedded({ ports: { sessions: source }, helloTimeoutMs: 200 })
 })
 afterEach(async () => {
   await server.stop()
@@ -235,6 +240,147 @@ describe('the HTTP API behind the token', () => {
     })
     expect(twice.status).toBe(422)
   })
+  it('starts a session with what the caller sent, and lists it after', async () => {
+    const started = await post(`${server.url}/sessions/start`, server.token, {
+      cwd: '/work/app',
+      windowKey: 'w1',
+      options: { claudeMode: false }
+    })
+    expect(started.status).toBe(200)
+    expect(await json(started)).toEqual({
+      id: 'started-1',
+      cwd: '/work/app',
+      folderName: 'app',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    })
+    expect(source.starts).toHaveLength(1)
+    expect(source.starts[0]).toMatchObject({
+      cwd: '/work/app',
+      windowKey: 'w1',
+      options: { claudeMode: false }
+    })
+    const listed = (await json(await get(`${server.url}/sessions`, server.token))) as Array<{
+      id: string
+    }>
+    expect(listed.map((s) => s.id)).toContain('started-1')
+  })
+  it('answers a declared failure when the start itself fails', async () => {
+    source.refuse = new Error('no such folder')
+    const failed = await post(`${server.url}/sessions/start`, server.token, { cwd: '/nowhere' })
+    expect(failed.status).toBe(422)
+    expect(await json(failed)).toMatchObject({
+      _tag: 'SessionStartFailed',
+      message: 'no such folder'
+    })
+    expect(source.starts).toHaveLength(0)
+  })
+  it('on a host with no sessions, says the capability is missing rather than failing', async () => {
+    const bare = await startEmbedded({ ports: { sessions: SessionHost.none } })
+    try {
+      const start = await post(`${bare.url}/sessions/start`, bare.token, { cwd: '/work' })
+      expect(start.status).toBe(422)
+      const body = (await json(start)) as { _tag: string; capability: string; message: string }
+      expect(body).toMatchObject({ _tag: 'CapabilityUnavailable', capability: 'sessions' })
+      expect(body.message).toContain('no sessions')
+      expect(await json(await get(`${bare.url}/sessions`, bare.token))).toEqual([])
+      const stop = await post(`${bare.url}/sessions/stop`, bare.token, { id: 's1' })
+      expect(stop.status).toBe(422)
+      expect(await json(stop)).toMatchObject({
+        _tag: 'CapabilityUnavailable',
+        capability: 'sessions'
+      })
+    } finally {
+      await bare.stop()
+    }
+  })
+  it('stops a session through the command', async () => {
+    const stopped = await post(`${server.url}/sessions/stop`, server.token, { id: 's1' })
+    expect(stopped.status).toBe(204)
+    expect(source.stops).toEqual(['s1'])
+  })
+  it('sets a session’s view, hands it back to the default, and refuses a malformed one', async () => {
+    const set = await post(`${server.url}/sessions/view`, server.token, {
+      id: 's1',
+      viewId: 'clave.chat/chat'
+    })
+    expect(set.status).toBe(200)
+    expect(await json(set)).toMatchObject({ id: 's1', viewId: 'clave.chat/chat' })
+    const cleared = await post(`${server.url}/sessions/view`, server.token, {
+      id: 's1',
+      viewId: null
+    })
+    expect(cleared.status).toBe(200)
+    const record = (await json(cleared)) as Record<string, unknown>
+    expect(record.id).toBe('s1')
+    expect('viewId' in record).toBe(false)
+    const malformed = await post(`${server.url}/sessions/view`, server.token, {
+      id: 's1',
+      viewId: 'nonsense'
+    })
+    expect(malformed.status).toBe(422)
+    expect(await json(malformed)).toMatchObject({ _tag: 'SessionWriteRefused', id: 's1' })
+    const unknown = await post(`${server.url}/sessions/view`, server.token, {
+      id: 'ghost',
+      viewId: 'clave.chat/chat'
+    })
+    expect(unknown.status).toBe(422)
+    expect(await json(unknown)).toMatchObject({ _tag: 'SessionNotFound', id: 'ghost' })
+    expect(source.views).toEqual([
+      { id: 's1', viewId: 'clave.chat/chat' },
+      { id: 's1', viewId: null }
+    ])
+  })
+  it('answers a session’s models, commands and capabilities, and a declared failure for an unknown id', async () => {
+    const models = await get(`${server.url}/sessions/models?id=s1`, server.token)
+    expect(models.status).toBe(200)
+    expect(await json(models)).toEqual(source.modelsOf)
+    const commands = await get(`${server.url}/sessions/commands?id=s1`, server.token)
+    expect(commands.status).toBe(200)
+    expect(await json(commands)).toEqual(source.commandsOf)
+    const capabilities = await get(`${server.url}/sessions/capabilities?id=s1`, server.token)
+    expect(capabilities.status).toBe(200)
+    expect(await json(capabilities)).toEqual({ images: true })
+    for (const path of ['models', 'commands', 'capabilities']) {
+      const missing = await get(`${server.url}/sessions/${path}?id=ghost`, server.token)
+      expect(missing.status, path).toBe(422)
+      expect(await json(missing), path).toMatchObject({ _tag: 'SessionNotFound', id: 'ghost' })
+    }
+  })
+  it('answers a page of history with its numbers decoded, and refuses a negative one', async () => {
+    source.historyOf = {
+      items: [{ event: { type: 'assistant_text', delta: 'hi', final: true }, at: 5 }],
+      before: 3
+    }
+    const page = await get(`${server.url}/sessions/history?id=s1&before=12&limit=40`, server.token)
+    expect(page.status).toBe(200)
+    expect(await json(page)).toEqual(source.historyOf)
+    expect(source.historyAsked[0]).toEqual({ id: 's1', before: 12, limit: 40 })
+    const bare = await get(`${server.url}/sessions/history?id=s1`, server.token)
+    expect(bare.status).toBe(200)
+    expect(source.historyAsked[1]).toEqual({ id: 's1', before: undefined, limit: undefined })
+    const negative = await get(`${server.url}/sessions/history?id=s1&before=-1`, server.token)
+    expect(negative.status).toBe(400)
+    expect(source.historyAsked).toHaveLength(2)
+    const missing = await get(`${server.url}/sessions/history?id=ghost`, server.token)
+    expect(missing.status).toBe(422)
+    expect(await json(missing)).toMatchObject({ _tag: 'SessionNotFound', id: 'ghost' })
+  })
+  it('answers a declared failure, with the provider’s words, for a write the session refused', async () => {
+    source.refuse = new Error('provider said no')
+    const refused = await post(`${server.url}/sessions/write`, server.token, {
+      id: 's1',
+      input: { type: 'interrupt' }
+    })
+    expect(refused.status).toBe(422)
+    expect(await json(refused)).toMatchObject({
+      _tag: 'SessionWriteRefused',
+      id: 's1',
+      message: 'provider said no'
+    })
+    expect(source.writes).toHaveLength(0)
+  })
 })
 
 describe('the push channel', () => {
@@ -368,7 +514,7 @@ describe('the push channel', () => {
       if (id === 's1') throw new Error(`gone: ${id}`)
       return original(id, listener)
     }
-    server = await startEmbedded({ sessions: throwing, helloTimeoutMs: 200 })
+    server = await startEmbedded({ ports: { sessions: throwing }, helloTimeoutMs: 200 })
     const victim = await welcomed()
     const bystander = await welcomed()
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -384,7 +530,7 @@ describe('the push channel', () => {
       sleep(3000).then(() => 'hung')
     ])
     expect(stopped).toBe('stopped')
-    server = await startEmbedded({ sessions: source })
+    server = await startEmbedded({ ports: { sessions: source } })
   })
   it('streams a subscribed session’s bytes and events, then its exit', async () => {
     const peer = await welcomed()
@@ -411,6 +557,16 @@ describe('the push channel', () => {
     expect(source.listeners('s1')).toBe(0)
     source.emit('s1', { kind: 'event', event: { type: 'state_change', state: 'done' } })
     expect(await peer.silence()).toBe(true)
+  })
+  it('answers a subscription with the session’s whole record', async () => {
+    const peer = await welcomed()
+    peer.send({ _tag: 'subscribe', sessionId: 's1' })
+    const answer = await peer.next()
+    expect(answer._tag).toBe('subscribed')
+    if (answer._tag !== 'subscribed') return
+    expect(answer.sessionId).toBe('s1')
+    expect(answer.session.id).toBe('s1')
+    expect(answer.session).toEqual(source.get('s1'))
   })
   it('an unsubscribed session goes quiet, and an unknown one is an error frame', async () => {
     const peer = await welcomed()
@@ -469,6 +625,6 @@ describe('the push channel', () => {
     const peer = await welcomed()
     await server.stop()
     expect(await peer.closed).toEqual({ code: 4010, reason: 'server stopping' })
-    server = await startEmbedded({ sessions: source })
+    server = await startEmbedded({ ports: { sessions: source } })
   })
 })

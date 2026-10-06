@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   notifyChatMessage: vi.fn(),
   rememberChatModel: vi.fn(),
   rememberChatEffort: vi.fn(),
-  rememberChatView: vi.fn()
+  rememberChatView: vi.fn(),
+  windowByKey: vi.fn()
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
@@ -22,15 +23,30 @@ vi.mock('./chat-model-default', () => ({
   rememberChatEffort: mocks.rememberChatEffort
 }))
 vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView }))
+vi.mock('./lifecycle', () => ({
+  spawnSessionForWindow: vi.fn(),
+  stopSession: vi.fn(),
+  trackInput: vi.fn()
+}))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
+import { createSessionHost, setSessionHost } from './host'
 
 let sequence = 0
 beforeEach(() => {
   registerSessionIpc()
   mocks.fromWebContents.mockReturnValue({ id: 1 })
   mocks.keyForWindow.mockReturnValue('window')
+  // The handlers answer from the same host the server does; here it is built
+  // over the test's manager, with a lifecycle that never spawns.
+  setSessionHost(
+    createSessionHost({
+      manager: sessionManager,
+      lifecycle: { spawn: vi.fn(), stop: vi.fn() },
+      windowByKey: (key) => mocks.windowByKey(key)
+    })
+  )
 })
 
 it('fans out through production IPC and detaches the consumer when its WebContents dies', () => {
@@ -329,9 +345,8 @@ it('prepares attachments at the write: the provider gets references and images, 
   ).rejects.toThrow('Send as file reference')
   expect(events.filter((e) => e.type === 'user_message')).toHaveLength(1)
   expect(mocks.handlers.get('sessions:capabilities')(event, id)).toEqual({ images: false })
-  // A message with no attachments still writes synchronously, as every caller
-  // before attachments existed expects.
-  expect(write(event, id, { type: 'user_message', text: 'plain' })).toBeUndefined()
+  // A message with no attachments writes without a preparation step.
+  await expect(write(event, id, { type: 'user_message', text: 'plain' })).resolves.toBeUndefined()
   rmSync(dir, { recursive: true, force: true })
   sessionManager.kill(id)
   sessionManager.forget(id)
@@ -357,6 +372,8 @@ it('hands each user message to the title generator with the sending window', () 
   sessionManager.adopt(session, adapter.prepare(session), adapter)
   const win = { id: 7 }
   mocks.fromWebContents.mockReturnValue(win)
+  // The host finds the tab's window from the record's key, not from the sender.
+  mocks.windowByKey.mockReturnValue(win)
   mocks.notifyChatMessage.mockClear()
   const event = { sender: { id: sequence, isDestroyed: () => false, send: vi.fn() } }
   const write = mocks.handlers.get('sessions:write')
@@ -456,7 +473,7 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   mocks.keyForWindow.mockReturnValue('window')
 })
 
-it('remembers a composer model pick for the next chat, only once the session took it', () => {
+it('remembers a composer model pick for the next chat, only once the session took it', async () => {
   const id = `ipc-model-${++sequence}`
   const adapter = new EchoAdapter()
   const session = {
@@ -481,15 +498,15 @@ it('remembers a composer model pick for the next chat, only once the session too
   vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
     throw new Error('Invalid model name')
   })
-  expect(() =>
+  await expect(
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'bad' })
-  ).toThrow('Invalid model name')
+  ).rejects.toThrow('Invalid model name')
   expect(mocks.rememberChatModel).not.toHaveBeenCalled()
   sessionManager.kill(id)
   sessionManager.forget(id)
 })
 
-it('remembers a composer effort pick for the next chat, only once the session took it', () => {
+it('remembers a composer effort pick for the next chat, only once the session took it', async () => {
   const id = `ipc-effort-${++sequence}`
   const adapter = new EchoAdapter()
   const session = {
@@ -511,7 +528,7 @@ it('remembers a composer effort pick for the next chat, only once the session to
     order.push('write')
   })
   mocks.rememberChatEffort.mockImplementationOnce(() => order.push('remember'))
-  mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
+  await mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
   expect(write).toHaveBeenCalledWith(expect.anything(), { type: 'set_effort', effort: 'high' })
   expect(mocks.rememberChatEffort).toHaveBeenCalledWith('echo', 'high')
   expect(order).toEqual(['write', 'remember'])
@@ -520,9 +537,9 @@ it('remembers a composer effort pick for the next chat, only once the session to
   vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
     throw new Error('refused')
   })
-  expect(() =>
+  await expect(
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'max' })
-  ).toThrow('refused')
+  ).rejects.toThrow('refused')
   expect(() =>
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high;rm' })
   ).toThrow()
