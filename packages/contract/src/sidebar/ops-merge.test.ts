@@ -5,7 +5,7 @@ import {
   placeAdopted,
   type LayoutGroupLike,
   type LayoutSessionLike
-} from './sidebar-layout-partition'
+} from './ops-merge'
 
 const A = 'ws-a'
 const B = 'ws-b'

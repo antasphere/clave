@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { moveLayoutItems, type OpsLayout, type OpsGroup } from './sidebar-layout-ops'
+import { moveLayoutItems, type OpsLayout, type OpsGroup } from './ops-move'
 
 const g = (id: string, sessionIds: string[]): OpsGroup => ({ id, sessionIds })
 const layout = (groups: OpsGroup[], displayOrder: string[]): OpsLayout<OpsGroup> => ({
