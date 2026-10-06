@@ -102,7 +102,7 @@ export async function run(t) {
   const first = await launchApp(DIR, { server: 'in-process' })
   let id
   try {
-    const { app, win } = first
+    const { win } = first
     const before = new Set(await liveIds(win))
     const writesTo = writeJournal(DIR)
     await win.click('.launcher-row button')
