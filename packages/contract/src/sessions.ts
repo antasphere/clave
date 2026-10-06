@@ -362,10 +362,13 @@ export class SessionStartFailed extends Schema.TaggedError<SessionStartFailed>()
 
 // ── Commands and queries ──
 
-/** The sessions the server knows, every one or those of one window. */
+/** The sessions the server knows, every one or those of one window. A server
+ *  that runs no sessions says so rather than answering an empty list a window
+ *  would take for "none open". */
 export const ListSessions = Query.define('ListSessions', {
   payload: Schema.Struct({ windowKey: Schema.optional(Schema.String) }),
-  success: Schema.Array(Session)
+  success: Schema.Array(Session),
+  failure: CapabilityUnavailable
 })
 /** One session by id. */
 export const GetSession = Query.define('GetSession', {

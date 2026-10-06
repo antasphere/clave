@@ -11,9 +11,13 @@
  *     file says so, the server answers, it lists THIS app by its pid, and it
  *     refuses a wrong token. The main process listens on exactly the MCP port
  *     and (in-process) the server's port. Attached: the server is the one the
- *     harness started. And a terminal the app spawns sees neither
- *     CLAVE_SERVER_URL nor CLAVE_SERVER_TOKEN: the token belongs to what is
- *     meant to call the server, never to a session or a helper by inheritance.
+ *     harness started, and the windows are told its address in both modes
+ *     (wave 2: the sessions live on the server; attached, the standalone
+ *     server refuses a list and a start with a declared CapabilityUnavailable
+ *     until its terminal process exists). In-process, a terminal the app
+ *     spawns sees neither CLAVE_SERVER_URL nor CLAVE_SERVER_TOKEN: the token
+ *     belongs to what is meant to call the server, never to a session or a
+ *     helper by inheritance.
  *  2. Whatever the suite's mode, an app attached by CLAVE_SERVER_URL to a
  *     server of this spec's own registers on it, and deregisters on quit,
  *     leaving that server up.
@@ -215,11 +219,12 @@ export async function run(t) {
         )
       }
 
-      // What main tells the windows on the contract's channel: in-process the
-      // published url and token, the same as the file's; attached, nothing
-      // in this wave (a standalone server has no sessions, the windows stay
-      // on IPC). The handler is lane A's; it is read the way `spyPtySpawn`
-      // reads main's invoke handlers, and fails loudly if that map moves.
+      // What main tells the windows on the contract's channel: the published
+      // url and token, the same as the file's, in BOTH modes since wave 2
+      // (the sessions live on the server, so an attached window asks the
+      // attached server, which says what it cannot do). The handler is lane
+      // A's; it is read the way `spyPtySpawn` reads main's invoke handlers,
+      // and fails loudly if that map moves.
       const published = await app.evaluate(({ ipcMain }) => {
         const handlers = ipcMain._invokeHandlers
         const handler =
@@ -228,63 +233,86 @@ export async function run(t) {
           return { error: 'no server:endpoint handler, or ipcMain._invokeHandlers moved' }
         return handler({})
       })
-      if (MODE === 'in-process') {
-        t.check(
-          'server:endpoint answers the windows the published url and token',
-          published && published.url === disc.url && published.token === disc.token,
-          { published: published && { ...published, token: published.token ? '<set>' : null } }
-        )
-      } else {
-        // Masked like the in-process line: a failing check must not print the
-        // token into the run's log (CI's included).
-        t.check(
-          'server:endpoint answers the windows null: a standalone server has no sessions yet',
-          published === null,
-          { published: published && { ...published, token: published.token ? '<set>' : null } }
-        )
-      }
-      // A renderer-routed call succeeds: over the server in-process (through
-      // the preload's Node side, so no page origin, no CSP, no preflight),
-      // over IPC attached. This is the line the round-2 blocker needed.
+      // Masked: a failing check must not print the token into the run's log
+      // (CI's included).
+      t.check(
+        `server:endpoint answers the windows the ${MODE} server's url and token`,
+        published && published.url === disc.url && published.token === disc.token,
+        { published: published && { ...published, token: published.token ? '<set>' : null } }
+      )
+      // A renderer-routed call reaches the server through the preload's Node
+      // side (no page origin, no CSP, no preflight; the round-2 blocker of
+      // wave 1): in-process it lists the sessions; attached, the standalone
+      // server has none to run until wave 3 and says so with a declared
+      // refusal, which the preload lets through and the window shows
+      // (server-sessions-attached.spec.mjs pins the notice).
       const routed = await win.evaluate(() =>
         window.electronAPI.sessionsList().then(
           (sessions) => ({ ok: true, count: Array.isArray(sessions) ? sessions.length : -1 }),
           (error) => ({ ok: false, error: String(error && error.message ? error.message : error) })
         )
       )
-      t.check(
-        'a renderer-routed sessionsList() succeeds',
-        routed.ok === true && routed.count >= 0,
-        routed
-      )
+      if (MODE === 'in-process') {
+        t.check(
+          'a renderer-routed sessionsList() succeeds over the server',
+          routed.ok === true && routed.count >= 0,
+          routed
+        )
+      } else {
+        t.check(
+          'attached: a renderer-routed sessionsList() is refused by the standalone server, naming the missing terminal process',
+          routed.ok === false && /no sessions/.test(routed.error),
+          routed
+        )
+      }
 
       // A terminal the app spawns sees neither variable: the token is not
-      // inherited by sessions, nor by anything else main starts.
+      // inherited by sessions, nor by anything else main starts. Attached, no
+      // terminal can start (the standalone server refuses the start, pinned
+      // here), so the environment claim is held by the in-process run.
       const id = await identityOf(win)
       const g = await callMcp(app, 'createGroup', { name: 'probe' })
-      const s = await callMcp(app, 'openSession', {
-        cwd: ROOT,
-        mode: 'terminal',
-        groupId: g.groupId,
-        command: 'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] END"',
-        autoRun: true
-      })
-      const probe = await until(
-        async () => {
-          const read = await callMcpIn(app, id.windowId, 'readSession', {
-            sessionId: s.sessionId,
-            lines: 80,
-            callerSessionId: s.sessionId
-          })
-          const text = typeof read === 'string' ? read : JSON.stringify(read)
-          const m = /PROBE url=\[([^\]]*)\] tokenlen=\[(\d*)\] END/.exec(text)
-          return m ? { url: m[1], tokenLen: Number(m[2]) } : null
-        },
-        { tries: 60, gapMs: 500 }
-      )
-      t.check('a spawned terminal printed the probe line', !!probe, probe)
-      t.equal('and saw no CLAVE_SERVER_URL', probe?.url, '')
-      t.equal('and no CLAVE_SERVER_TOKEN', probe?.tokenLen, 0)
+      if (MODE === 'attached') {
+        const refusal = await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'terminal',
+          groupId: g.groupId,
+          command: 'true',
+          autoRun: true
+        }).then(
+          () => null,
+          (error) => String(error && error.message ? error.message : error)
+        )
+        t.check(
+          'attached: a start through the agent tools is refused by the standalone server, naming the missing terminal process',
+          refusal !== null && /no sessions/.test(refusal),
+          refusal
+        )
+      } else {
+        const s = await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'terminal',
+          groupId: g.groupId,
+          command: 'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] END"',
+          autoRun: true
+        })
+        const probe = await until(
+          async () => {
+            const read = await callMcpIn(app, id.windowId, 'readSession', {
+              sessionId: s.sessionId,
+              lines: 80,
+              callerSessionId: s.sessionId
+            })
+            const text = typeof read === 'string' ? read : JSON.stringify(read)
+            const m = /PROBE url=\[([^\]]*)\] tokenlen=\[(\d*)\] END/.exec(text)
+            return m ? { url: m[1], tokenLen: Number(m[2]) } : null
+          },
+          { tries: 60, gapMs: 500 }
+        )
+        t.check('a spawned terminal printed the probe line', !!probe, probe)
+        t.equal('and saw no CLAVE_SERVER_URL', probe?.url, '')
+        t.equal('and no CLAVE_SERVER_TOKEN', probe?.tokenLen, 0)
+      }
     } finally {
       await app.close()
     }

@@ -44,7 +44,8 @@ export interface SessionStreamSource {
 }
 
 export interface SessionHostService extends SessionStreamSource {
-  /** Every session, or those of one window when `windowKey` is given. */
+  /** Every session, or those of one window when `windowKey` is given; throws
+   *  `CapabilityUnavailable` on a host that runs no sessions at all. */
   readonly list: (windowKey?: string) => ReadonlyArray<Session>
   /** Start a session; rejects with `CapabilityUnavailable` when this host
    *  runs none, with any other error when the start itself failed. */
@@ -75,10 +76,13 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     return Layer.succeed(SessionHost, service)
   }
   /** A host with no sessions: a standalone server before its terminal
-   *  process exists, and the tests' default. Reads answer empty, writes
-   *  answer unknown, a start says what is missing. */
+   *  process exists, and the tests' default. The list and a start say what is
+   *  missing (a window shows it where the sessions would be); a call on one
+   *  session answers unknown, since there is none. */
   static readonly none: SessionHostService = {
-    list: () => [],
+    list: () => {
+      throw NO_SESSIONS
+    },
     get: () => undefined,
     subscribe: (id) => {
       throw new Error(`Unknown session: ${id}`)

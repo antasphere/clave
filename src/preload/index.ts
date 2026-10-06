@@ -66,7 +66,53 @@ const serverRouter = createMethodRouter({
     return connectThroughNode(endpoint, { client: 'clave-preload' })
   }
 })
-const viaServer = serverRouter.route
+/**
+ * What the server said it cannot do, for the page. A declared
+ * `CapabilityUnavailable` (a standalone server with no terminal process
+ * refusing the sessions) is caught here, at the client boundary, because the
+ * page cannot read it off the rejection: an Error crossing the context bridge
+ * keeps its message and loses every other property, the tag included. The
+ * refusal still rejects the call; the page's notice hears it through
+ * `onServerRefusal`, and hears `null` when a routed call next succeeds.
+ */
+type ServerRefusal = { capability: string; message: string }
+const refusalListeners = new Set<(refusal: ServerRefusal | null) => void>()
+let refused = false
+const refusalOf = (error: unknown): ServerRefusal | null => {
+  if (!error || typeof error !== 'object') return null
+  const tagged = error as { _tag?: unknown; capability?: unknown; message?: unknown }
+  return tagged._tag === 'CapabilityUnavailable' &&
+    typeof tagged.capability === 'string' &&
+    typeof tagged.message === 'string'
+    ? { capability: tagged.capability, message: tagged.message }
+    : null
+}
+const tellRefusal = (refusal: ServerRefusal | null): void => {
+  for (const listener of refusalListeners) listener(refusal)
+}
+/** `serverRouter.route`, with the refusal relay around every routed call. */
+const viaServer = <A extends unknown[], R>(
+  route: Parameters<typeof serverRouter.route<A, R>>[0]
+): ((...args: A) => Promise<R>) => {
+  const routed = serverRouter.route<A, R>(route)
+  return async (...args) => {
+    try {
+      const result = await routed(...args)
+      if (refused) {
+        refused = false
+        tellRefusal(null)
+      }
+      return result
+    } catch (error) {
+      const refusal = refusalOf(error)
+      if (refusal) {
+        refused = true
+        tellRefusal(refusal)
+      }
+      throw error
+    }
+  }
+}
 /** One subscription on the server's push channel, held until the matching
  *  unsubscribe; the answer is the server's own `subscribed` frame, which
  *  comes once the session is ready and its listeners bound, as the IPC
@@ -148,6 +194,13 @@ const heldSubscriptions = new Map<string, () => void>()
 const noop = (): void => {}
 
 const electronAPI = {
+  // ── The server (lane A): what it refused, for the page's notice ──
+  onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
+    refusalListeners.add(callback)
+    return () => {
+      refusalListeners.delete(callback)
+    }
+  },
   // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),

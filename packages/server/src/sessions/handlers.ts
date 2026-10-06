@@ -37,7 +37,16 @@ const known = (host: SessionHostService, id: string): Effect.Effect<Session, Ses
 
 export const sessionHandlers = [
   QueryHandler.make(ListSessions, (payload) =>
-    Effect.map(SessionHost, (host) => host.list(payload.windowKey))
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => host.list(payload.windowKey),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : // Anything else a host throws on a list is a bug in the host.
+              new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
   ),
   QueryHandler.make(GetSession, (payload) =>
     Effect.flatMap(SessionHost, (host) => known(host, payload.id))

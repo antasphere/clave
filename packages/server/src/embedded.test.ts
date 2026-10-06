@@ -276,7 +276,7 @@ describe('the HTTP API behind the token', () => {
     })
     expect(source.starts).toHaveLength(0)
   })
-  it('on a host with no sessions, says the capability is missing rather than failing', async () => {
+  it('on a host with no sessions, says the capability is missing on a start, a stop and the list', async () => {
     const bare = await startEmbedded({ ports: { sessions: SessionHost.none } })
     try {
       const start = await post(`${bare.url}/sessions/start`, bare.token, { cwd: '/work' })
@@ -284,7 +284,13 @@ describe('the HTTP API behind the token', () => {
       const body = (await json(start)) as { _tag: string; capability: string; message: string }
       expect(body).toMatchObject({ _tag: 'CapabilityUnavailable', capability: 'sessions' })
       expect(body.message).toContain('no sessions')
-      expect(await json(await get(`${bare.url}/sessions`, bare.token))).toEqual([])
+      // The list says so too: an empty answer would read as "nothing open".
+      const list = await get(`${bare.url}/sessions`, bare.token)
+      expect(list.status).toBe(422)
+      expect(await json(list)).toMatchObject({
+        _tag: 'CapabilityUnavailable',
+        capability: 'sessions'
+      })
       const stop = await post(`${bare.url}/sessions/stop`, bare.token, { id: 's1' })
       expect(stop.status).toBe(422)
       expect(await json(stop)).toMatchObject({

@@ -14,6 +14,7 @@ import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
 import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
+import { ServerNotice } from './ServerNotice'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
@@ -815,6 +816,7 @@ export function AppShell(): React.JSX.Element {
             has the whole story). Covered rather than collapsed, the grid keeps
             its box, so coming back also resizes no terminal and no PTY. */}
         <div className="relative flex-1 min-h-0 flex">
+          <ServerNotice />
           {/* Terminal grid — each terminal is its own floating card */}
           <div
             className="flex-1 flex min-h-0"

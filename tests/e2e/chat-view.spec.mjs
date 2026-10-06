@@ -1,3 +1,9 @@
+// The chat view on the echo fixture. This spec and every spec built on its
+// `openChat` need a fixture INSIDE the main process (the echo adapter, the
+// session host wrapped to see what the composer wrote, synthetic frames sent to
+// the window), so they run the app with its in-process server and never attach
+// to a separate one: the wave's rule for wave 2, the shared attached-mode seam
+// being wave 3's, beside the terminal process.
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
@@ -34,14 +40,21 @@ export async function openChat(
     cwd: REPO,
     env: { ...process.env, ...env }
   })
-  await app.evaluate(({ ipcMain }) => {
+  // The session calls cross the server, not IPC (PRDCT-3239): what a spec
+  // wraps is the session host main exposes under --test-no-activate, the one
+  // object both transports answer from. A subscription is recorded when the
+  // host binds it and when the view's unsubscribe releases it.
+  await app.evaluate(() => {
     globalThis.__chatSubscriptions = []
-    for (const channel of ['sessions:subscribe', 'sessions:unsubscribe']) {
-      const original = ipcMain._invokeHandlers.get(channel)
-      ipcMain._invokeHandlers.set(channel, (event, id) => {
-        globalThis.__chatSubscriptions.push({ channel, id })
-        return original(event, id)
-      })
+    const host = globalThis.__claveE2E.sessionHost
+    const subscribe = host.subscribe
+    host.subscribe = (id, listener) => {
+      globalThis.__chatSubscriptions.push({ channel: 'sessions:subscribe', id })
+      const off = subscribe.call(host, id, listener)
+      return () => {
+        globalThis.__chatSubscriptions.push({ channel: 'sessions:unsubscribe', id })
+        off()
+      }
     }
   })
   const win = await app.firstWindow()
@@ -154,14 +167,16 @@ export async function run(t) {
       )
     )
     t.check('markdown links use the host external-link handler', true)
-    await app.evaluate(({ ipcMain }) => {
-      const original = ipcMain._invokeHandlers.get('sessions:write')
+    await app.evaluate(() => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
       globalThis.__chatWrites = []
-      ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+      host.write = (id, input) => {
         globalThis.__chatWrites.push(input)
-        if (input.type === 'permission_response' || input.type === 'interrupt') return
-        return original(event, id, input)
-      })
+        if (input.type === 'permission_response' || input.type === 'interrupt')
+          return Promise.resolve()
+        return write.call(host, id, input)
+      }
     })
     await inject(app, record.id, [
       { type: 'session_meta', model: 'fixture-model', providerSessionId: 'fixture' },
