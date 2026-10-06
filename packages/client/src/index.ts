@@ -14,7 +14,9 @@ export { type SessionsClient, type StartSessionInput } from './sessions'
 export { type ClientsClient, type RegisterClientInput } from './clients'
 // ── Lane D: settings ──
 export { settingsClient, type SettingsClient } from './settings'
-// ── Lane B: terminals · Lane C: sidebar ──
+// ── Lane C: the sidebar ──
+export { sidebarClient, type SidebarClient } from './sidebar'
+// ── Lane B: terminals ──
 export {
   PushClient,
   pushUrlOf,

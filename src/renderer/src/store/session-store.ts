@@ -34,8 +34,12 @@ import {
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
-import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
-import { moveLayoutItems } from '../lib/sidebar-layout-ops'
+import {
+  mergeLayoutForKeys,
+  absorbLayout,
+  placeAdopted,
+  moveLayoutItems
+} from '@clave/contract/sidebar/ops'
 import { withDirToggled } from '../lib/panel-expansion'
 
 // Re-export types and constants so existing imports continue to work
@@ -276,7 +280,7 @@ interface SessionState {
    *  launched from the group's own `+` start on. */
   setGroupPrompt: (groupId: string, prompt: string | null) => void
   /** Move rows or groups relative to `targetId`; `null` = the top level, at
-   *  the end (the explicit ungroup). Rules in lib/sidebar-layout-ops.ts. */
+   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops. */
   moveItems: (
     itemIds: string[],
     targetId: string | null,
@@ -429,26 +433,50 @@ function normalizeSession(session: Session): Session {
 
 let groupCounter = 0
 
-// Groups (and the sidebar ordering that nests them) live only in memory during
-// a run. tmux-backed sessions survive an app restart and get re-adopted, but
-// the group objects that organize them would otherwise be lost. They are
-// persisted from the main process (see sidebar-layout-manager) — written to a
-// file synchronously on every change so they survive a hard kill (Ctrl+C /
-// crash) that drops Chromium's lazily-flushed localStorage.
+// Groups (and the sidebar ordering that nests them) are the SERVER's since
+// PRDCT-3241: one layout per window key, with a revision. This store holds
+// the window's working copy: it edits it as the user drags and types, hands
+// the whole layout back with the revision it last saw (persistSidebarLayout),
+// and applies what the server pushes (applyServerLayout) when somebody else
+// changed it, an agent command, a move between windows, a window closing.
+// A save on a stale revision is REFUSED with the current snapshot, never
+// merged last-writer-wins: the store applies that snapshot and, if its own
+// state still differs, the subscription below saves again on the new base.
 //
-// Persistence stays disabled until `enableSidebarPersistence()` runs on launch,
-// AFTER the previous layout has been read and groups restored. This prevents the
-// empty initial state — written as sessions re-adopt — from clobbering the file
-// before we've had a chance to load it.
+// Persistence stays disabled until `enableSidebarPersistence()` runs on
+// launch, AFTER the saved layout has been read and the groups restored. This
+// prevents the empty initial state, written as sessions re-adopt, from
+// clobbering the server's copy before it was loaded.
 let sidebarPersistEnabled = false
 let lastPersistedGroups: SessionGroup[] | null = null
 let lastPersistedOrder: string[] | null = null
-/** The JSON last accepted by main — re-sent only on change. */
+/** The JSON last accepted by the server, or last applied from it; re-sent
+ *  only on change. */
 let lastPersistedJson: string | null = null
+/** The server's revision of this window's layout, as last read, saved or
+ *  applied. Every save names it; a push below it is already known. */
+let knownRevision = 0
 
-/** This window's whole sidebar, to its own file (one file per window — main
- *  resolves it from the sender). Every group carries its workspace stamp
- *  inside the file, so the window comes back showing the right ones. */
+export interface SidebarLayoutSnapshot {
+  windowKey: string
+  revision: number
+  groups: SessionGroup[]
+  displayOrder: string[]
+}
+
+/** The revision the boot read came back with, before any save. */
+export function setSidebarRevision(revision: number): void {
+  knownRevision = revision
+}
+
+/** Tests only. */
+export function sidebarRevisionForTests(): number {
+  return knownRevision
+}
+
+/** This window's whole sidebar to the server, with the revision it last
+ *  saw. Every group carries its workspace stamp inside, so the window comes
+ *  back showing the right ones. */
 function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: string[] }): void {
   const { groups, displayOrder } = state
   if (groups === lastPersistedGroups && displayOrder === lastPersistedOrder) return
@@ -458,13 +486,67 @@ function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: str
   const json = JSON.stringify(data)
   if (json === lastPersistedJson) return
   window.electronAPI
-    ?.sidebarLayoutSave?.(data)
+    ?.sidebarLayoutSave?.(data, knownRevision)
     .then((res) => {
-      if (res?.ok) lastPersistedJson = json
+      if (!res) return
+      if (res.ok) {
+        knownRevision = res.layout.revision
+        lastPersistedJson = json
+        return
+      }
+      // Somebody wrote this window's layout since we last saw it: theirs is
+      // the truth, ours re-applies on top of it on the next change.
+      if (res.reason === 'conflict') applyServerLayout(res.current as SidebarLayoutSnapshot)
     })
     .catch(() => {
-      // Persistence failures are non-fatal — groups stay in memory for this run.
+      // Persistence failures are non-fatal: the groups stay in memory for this run.
     })
+}
+
+/**
+ * What the server holds for this window, applied over the working copy: the
+ * groups and the order become the server's, then every session this window
+ * holds that the server's layout does not place (a tab spawned since, whose
+ * save has not landed) is appended at the top level so no tab disappears,
+ * and the file tabs likewise. A snapshot at or below the known revision is
+ * already here and ignored, which is what makes a window's own save, echoed
+ * back on the push channel, a no-op.
+ */
+export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
+  if (snapshot.revision <= knownRevision) return
+  knownRevision = snapshot.revision
+  useSessionStore.setState((state) => {
+    const groups = cloneGroupsForSnapshot(snapshot.groups)
+    const nested = new Set<string>()
+    for (const g of groups) {
+      for (const sid of g.sessionIds) nested.add(sid)
+      for (const t of g.terminals) if (t.sessionId) nested.add(t.sessionId)
+    }
+    for (const s of state.sessions) if (s.view?.serverSessionId) nested.add(s.view.serverSessionId)
+    const displayOrder = [...snapshot.displayOrder]
+    const placed = new Set(displayOrder)
+    for (const s of state.sessions) {
+      if (!nested.has(s.id) && !placed.has(s.id)) {
+        placed.add(s.id)
+        displayOrder.push(s.id)
+      }
+    }
+    for (const f of state.fileTabs) {
+      if (!placed.has(f.id)) {
+        placed.add(f.id)
+        displayOrder.push(f.id)
+      }
+    }
+    groupCounter = Math.max(groupCounter, groups.length)
+    // What was applied is what the server has: the subscription below sees
+    // no change to send unless the appends above made one.
+    lastPersistedGroups = groups
+    lastPersistedOrder = displayOrder
+    if (displayOrder.length === snapshot.displayOrder.length) {
+      lastPersistedJson = JSON.stringify({ groups, displayOrder })
+    }
+    return { groups, displayOrder }
+  })
 }
 
 /** Mirror a session's tab name into its tmux sidecar (main process), so the
@@ -491,6 +573,10 @@ function persistSessionName(
 export function enableSidebarPersistence(): void {
   sidebarPersistEnabled = true
   persistSidebarLayout(useSessionStore.getState())
+}
+
+export function isSidebarPersistenceEnabled(): boolean {
+  return sidebarPersistEnabled
 }
 
 type SidebarSnapshot = {

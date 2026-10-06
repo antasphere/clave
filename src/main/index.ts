@@ -14,8 +14,7 @@ import { cleanupDroppedFiles } from './ipc-handlers/dropped-file-handlers'
 import {
   registerWindowHandlers,
   broadcastIdentities,
-  moveSessionsToWindow,
-  takeClosingLayout
+  rehomeSessions
 } from './ipc-handlers/window-handlers'
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
@@ -31,6 +30,7 @@ import { workspaceManager } from './workspace-manager'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
+import { sidebarLayouts, setSidebarTransport } from './sidebar-layouts'
 import { sessionWorkspaceResolver } from './session-records-index'
 import type { PersistedWindow } from '../shared/workspace-types'
 import {
@@ -110,6 +110,11 @@ let serverHandle: ServerHandle | null = null
 let serverBoot: Promise<void> = Promise.resolve()
 
 async function bootServer(): Promise<void> {
+  // A test seam, under --test-no-activate only: the suite makes the server
+  // come up late (`CLAVE_E2E_SERVER_BOOT_DELAY_MS`) to prove a window that
+  // booted before it still hears the sidebar once it answers.
+  const bootDelay = TEST_NO_ACTIVATE ? Number(process.env.CLAVE_E2E_SERVER_BOOT_DELAY_MS ?? 0) : 0
+  if (bootDelay > 0) await new Promise((resolve) => setTimeout(resolve, bootDelay))
   try {
     serverHandle = await startServer({
       launch: serverLaunch,
@@ -125,14 +130,19 @@ async function bootServer(): Promise<void> {
             // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──
             settings: shellSettingsSource,
             // ── Lane B: terminals (node-pty in this process, src/main/ports/terminal.ts) ──
-            terminals: terminalPorts().terminals
-            // ── Lane C: sidebar ──
+            terminals: terminalPorts().terminals,
+            // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
+            sidebar: sidebarLayouts()
           }
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
       }
     })
     console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+    // The sidebar's transport follows the boot: through the server's client
+    // when the server runs in this process (the same instance main holds),
+    // over IPC when the app is attached to a server that cannot host windows.
+    setSidebarTransport(serverHandle.mode === 'in-process' ? 'server' : 'shell')
     // An attached server is published to the windows too (wave 2): the
     // sessions domain lives on the server now, so a window on an attached
     // app asks that server, which says what it cannot do (a standalone
@@ -143,6 +153,7 @@ async function bootServer(): Promise<void> {
   } catch (err) {
     const message = err instanceof ServerBootError ? err.message : String(err)
     console.error(`[server] not available: ${message}`)
+    setSidebarTransport('shell')
     if (
       err instanceof ServerBootError &&
       err.mode === 'attached' &&
@@ -180,7 +191,10 @@ function onWindowClosed(windowId: number, windowKey: string): void {
   const primary = windowRegistry.getPrimaryWindow()
   if (!primary) return
   const primaryKey = windowRegistry.getKeyForWindow(primary.id)
-  const layout = takeClosingLayout(windowKey)
+  // The closing window's groups go to the primary through the sidebar
+  // domain (its layout absorbed, its file removed), and its live sessions
+  // follow them in the same hand-over.
+  const layout = sidebarLayouts().windowClosed(windowKey, primaryKey)
   // Plain-pty sessions die with their renderer (as on close before); their
   // records follow the primary so the next boot offers them there.
   const tmuxBacked: string[] = []
@@ -191,7 +205,7 @@ function onWindowClosed(windowId: number, windowKey: string): void {
       ptyManager.kill(id, false)
     }
   }
-  moveSessionsToWindow(tmuxBacked, primary.id, layout, false)
+  if (primaryKey) rehomeSessions(tmuxBacked, primaryKey, { layout, focus: false })
   broadcastIdentities()
 }
 

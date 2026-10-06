@@ -1,10 +1,13 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import type { MoveResult } from '@clave/contract/sidebar'
 import { windowRegistry, type WindowIdentity } from '../window-registry'
 import { workspaceManager } from '../workspace-manager'
 import { windowState } from '../window-state'
-import { ptyManager } from '../pty-manager'
-import { sidebarLayoutManager, type SidebarLayout } from '../sidebar-layout-manager'
 import { rehomeAck } from '../rehome-ack'
+import { rehomeSessions, sidebarLayouts, type RehomePayload } from '../sidebar-layouts'
+
+export type { MoveResult, RehomePayload }
+export { rehomeSessions }
 
 /** What a renderer learns about itself, and only itself: its window id, its
  *  persisted key, the workspace it shows, whether it is the primary. Pushed
@@ -29,23 +32,6 @@ export interface WindowHandlerDeps {
   openWindow: (workspaceId: string | null) => { windowId: number }
 }
 
-/** What a target window receives to take in sessions (and, on a window
- *  close, the closing window's groups with them). */
-export interface RehomePayload {
-  sessionIds: string[]
-  layout: SidebarLayout | null
-  /** A deliberate move (the user's, an agent's) takes focus in its new
-   *  window like a spawn does; a window-close hand-over stays neutral. */
-  focus: boolean
-}
-
-export interface MoveResult {
-  moved: string[]
-  /** Sessions that could not move and why: not live, or not tmux-backed (a
-   *  plain pty's scrollback lives in one renderer and cannot be re-attached). */
-  refused: { sessionId: string; reason: 'not-live' | 'not-tmux' | 'same-window' }[]
-}
-
 // ── Re-homing ────────────────────────────────────────────────────────────────
 
 /** Renderers acknowledge `session:rehome` once the adoption ran (see
@@ -56,54 +42,23 @@ export function awaitRehomed(sessionIds: string[], timeoutMs = 10_000): Promise<
 }
 
 /**
- * Move live sessions to the window `targetWindowId`. For each tmux-backed
- * session hosted elsewhere: tell its old host to drop the tab (a MOVE, not a
- * death — the tab is removed without touching the pty), detach the pty
- * (`kill(id, false)` keeps the tmux session and its record alive), unbind,
- * then hand the ids to the target, whose renderer re-adopts them
- * (reattaching to the same tmux session, scrollback intact, the id preserved
- * so MCP addressing and exchange capture survive). A plain-pty session is
- * refused: its process would die with the detach.
+ * Move live sessions to the window `targetWindowId`, through the sidebar
+ * domain: it decides which window's layout loses each session and which
+ * gains it, and asks the shell (`rehomeSessions`) to detach and hand them
+ * over. A target that is not a live Clave window refuses every id.
  */
 export function moveSessionsToWindow(
   sessionIds: string[],
   targetWindowId: number,
-  layout: SidebarLayout | null = null,
   focus = true
 ): MoveResult {
-  const target = windowRegistry.getWindow(targetWindowId)
-  const result: MoveResult = { moved: [], refused: [] }
-  if (!target) {
-    for (const id of sessionIds) result.refused.push({ sessionId: id, reason: 'not-live' })
-    return result
+  const targetKey = windowRegistry.getKeyForWindow(targetWindowId)
+  if (!targetKey) {
+    return { moved: [], refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' })) }
   }
-  for (const id of sessionIds) {
-    const session = ptyManager.getSession(id)
-    if (!session) {
-      result.refused.push({ sessionId: id, reason: 'not-live' })
-      continue
-    }
-    const oldHost = windowRegistry.getWindowForSession(id)
-    if (oldHost && oldHost.id === target.id) {
-      result.refused.push({ sessionId: id, reason: 'same-window' })
-      continue
-    }
-    if (!session.tmuxName) {
-      result.refused.push({ sessionId: id, reason: 'not-tmux' })
-      continue
-    }
-    // Tell the old host to drop the tab FIRST, so its terminal unmounts before
-    // the detach's pty:exit could paint "[Session ended]" on a moving tab.
-    if (oldHost) oldHost.webContents.send('session:removed-for-rehome', id)
-    ptyManager.kill(id, false) // detach: tmux session and record survive
-    windowRegistry.unbindSession(id)
-    result.moved.push(id)
-  }
-  if (result.moved.length > 0 || (layout && layout.groups.length > 0)) {
-    const payload: RehomePayload = { sessionIds: result.moved, layout, focus }
-    target.webContents.send('session:rehome', payload)
-  }
-  return result
+  const result = sidebarLayouts().moveSessionsToWindow(sessionIds, targetKey, focus)
+  if (result.ok) return result.value
+  return { moved: [], refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' })) }
 }
 
 export function registerWindowHandlers(deps: WindowHandlerDeps): void {
@@ -179,72 +134,25 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
 
   // A group moves whole: its members AND its quick-launch terminals' live
   // sessions travel (detach + re-adopt), and the target window takes the
-  // group object carrying only what actually moved. The source drops its
-  // copy on `ok`; what could not move (not live, not tmux-backed) stays
-  // there as plain tabs. A group whose members all stayed does not move at
-  // all — `ok: false`, nothing changes anywhere.
+  // group object carrying only what actually moved. The sidebar domain
+  // holds the group (the renderer's copy is named by its id and nothing
+  // else is read from it); the source drops its copy on `ok`, and what
+  // could not move (not live, not tmux-backed) stays there as plain tabs.
+  // A group whose members all stayed does not move at all: `ok: false`,
+  // nothing changes anywhere.
   ipcMain.handle(
     'window:move-group',
     (event, group: unknown, targetWindowId: unknown): MoveResult & { ok: boolean } => {
-      const g = group as { id?: unknown; sessionIds?: unknown; terminals?: unknown } | null
-      const target =
-        typeof targetWindowId === 'number' ? windowRegistry.getWindow(targetWindowId) : null
+      const g = group as { id?: unknown } | null
       const sender = BrowserWindow.fromWebContents(event.sender)
-      if (!target || !g || typeof g.id !== 'string' || (sender && sender.id === target.id)) {
+      const sourceKey = sender ? windowRegistry.getKeyForWindow(sender.id) : null
+      const targetKey =
+        typeof targetWindowId === 'number' ? windowRegistry.getKeyForWindow(targetWindowId) : null
+      if (!sourceKey || !targetKey || !g || typeof g.id !== 'string' || sourceKey === targetKey) {
         return { ok: false, moved: [], refused: [] }
       }
-      const members = Array.isArray(g.sessionIds)
-        ? g.sessionIds.filter((x): x is string => typeof x === 'string')
-        : []
-      const terminals = Array.isArray(g.terminals)
-        ? (g.terminals as { sessionId?: unknown }[]).filter((t) => t && typeof t === 'object')
-        : []
-      const terminalIds = terminals
-        .map((t) => t.sessionId)
-        .filter((x): x is string => typeof x === 'string')
-      const linked = [...members, ...terminalIds]
-      // Decide first, send nothing on a refusal: the detach happens inside
-      // moveSessionsToWindow, so a dry check of the same rules comes first.
-      const movable = linked.filter((id) => {
-        const session = ptyManager.getSession(id)
-        const host = windowRegistry.getWindowForSession(id)
-        return !!session && !!session.tmuxName && (!host || host.id !== target.id)
-      })
-      if (linked.length > 0 && movable.length === 0) {
-        return {
-          ok: false,
-          moved: [],
-          refused: linked.map((id) => ({
-            sessionId: id,
-            reason: ptyManager.getSession(id) ? 'not-tmux' : 'not-live'
-          }))
-        }
-      }
-      const movedSet = new Set(movable)
-      const handed = {
-        ...(group as Record<string, unknown>),
-        sessionIds: members.filter((id) => movedSet.has(id)),
-        terminals: terminals.map((t) => ({
-          ...t,
-          sessionId:
-            typeof t.sessionId === 'string' && movedSet.has(t.sessionId) ? t.sessionId : null
-        }))
-      }
-      const layout: SidebarLayout = { groups: [handed], displayOrder: [g.id] }
-      const outcome = moveSessionsToWindow(movable, target.id, layout)
-      // The source drops its copy of the group; members and terminals that
-      // could not move stay behind as plain tabs (the renderer re-places them).
-      if (sender && !sender.isDestroyed()) sender.webContents.send('group:removed-for-move', g.id)
-      const refused: MoveResult['refused'] = [
-        ...outcome.refused,
-        ...linked
-          .filter((id) => !movedSet.has(id))
-          .map((id) => ({
-            sessionId: id,
-            reason: (ptyManager.getSession(id) ? 'not-tmux' : 'not-live') as 'not-tmux' | 'not-live'
-          }))
-      ]
-      return { ok: true, moved: outcome.moved, refused }
+      const result = sidebarLayouts().moveGroupToWindow(sourceKey, g.id, targetKey)
+      return result.ok ? result.value : { ok: false, moved: [], refused: [] }
     }
   )
 
@@ -254,12 +162,4 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
       rehomeAck.ack(sessionIds.filter((x): x is string => typeof x === 'string'))
     }
   })
-}
-
-/** The closing window's groups, handed to the primary with its sessions, and
- *  its file removed: the primary persists what it absorbed into its own. */
-export function takeClosingLayout(windowKey: string): SidebarLayout {
-  const layout = sidebarLayoutManager.loadForWindow(windowKey)
-  sidebarLayoutManager.deleteForWindow(windowKey)
-  return layout
 }

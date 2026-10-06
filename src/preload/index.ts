@@ -26,6 +26,7 @@ import { dualListener, workspaceStatePick } from './dual-listener'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
+import type { SidebarGroup } from '@clave/contract/sidebar'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -242,6 +243,116 @@ const windowKey = (): Promise<string | null> =>
   ipcRenderer
     .invoke('window:identity')
     .then((identity: WindowIdentity | null) => identity?.windowKey ?? null)
+
+// ── The sidebar's road (lane C) ──
+// Which transport the sidebar takes is the shell's decision, not a failure's:
+// `server` when the server runs inside the app (the same instance main
+// holds), `shell` when the app is attached to a server elsewhere, which has
+// no windows to host. Null until the boot has decided; asked again on each
+// call until it answers, and every call before that goes over IPC, which
+// lands on the same instance either way. Once `server`, a server failure
+// reaches the caller: nothing here falls back on an error.
+type SidebarTransport = 'server' | 'shell'
+let sidebarTransportKnown: SidebarTransport | null = null
+const sidebarTransport = async (): Promise<SidebarTransport | null> => {
+  if (sidebarTransportKnown) return sidebarTransportKnown
+  const answer = (await ipcRenderer.invoke('sidebar:transport')) as SidebarTransport | null
+  if (answer) sidebarTransportKnown = answer
+  return answer
+}
+const viaSidebar = <A extends unknown[], R>(route: {
+  ipc: (...args: A) => Promise<R>
+  server: (backing: Backing, ...args: A) => Promise<R>
+}): ((...args: A) => Promise<R>) => {
+  // The server's road goes through `viaServer` and its refusal relay; the
+  // IPC road never enters the relay, since nothing of it reached the server
+  // and a sidebar edit must not take down a notice the sessions put up.
+  const routed = viaServer<A, R>({ ipc: route.ipc, server: route.server })
+  return async (...args) =>
+    (await sidebarTransport()) === 'server' ? routed(...args) : route.ipc(...args)
+}
+/** The persisted key of a window named by its id, from the live list. */
+const keyOfWindow = async (windowId: number): Promise<string | null> => {
+  const list = (await ipcRenderer.invoke('window:list')) as WindowIdentity[]
+  return list.find((w) => w.windowId === windowId)?.windowKey ?? null
+}
+// What the window hears about its sidebar: the shell sends every change over
+// IPC while the sidebar's road is IPC; once it is the server, the push
+// channel carries it (`sidebar.layout_changed` events) and the shell sends
+// nothing, so a change is heard once. The push listener is wired on the
+// first routed sidebar call, so the client is never loaded for it alone.
+type SidebarLayoutSnapshot = {
+  readonly windowKey: string
+  readonly revision: number
+  readonly groups: ReadonlyArray<unknown>
+  readonly displayOrder: ReadonlyArray<string>
+}
+type SidebarLayoutChanged = {
+  _tag: 'sidebar.layout_changed'
+  layout: SidebarLayoutSnapshot
+  cause: string
+}
+type SidebarSaveResult =
+  | { ok: true; layout: SidebarLayoutSnapshot }
+  | { ok: false; reason: 'no-window' }
+  | { ok: false; reason: 'conflict'; current: SidebarLayoutSnapshot }
+type MoveResult = {
+  readonly moved: ReadonlyArray<string>
+  readonly refused: ReadonlyArray<{
+    readonly sessionId: string
+    readonly reason: 'not-live' | 'not-tmux' | 'same-window'
+  }>
+}
+const sidebarListeners = new Set<(event: SidebarLayoutChanged) => void>()
+let sidebarPushWired: Backing | null = null
+const listenToSidebarPush = (backing: Backing): void => {
+  if (sidebarPushWired === backing) return
+  sidebarPushWired = backing
+  backing.push.onEvent((envelope) => {
+    const event = envelope.event as { _tag: string }
+    if (event._tag !== 'sidebar.layout_changed') return
+    for (const listener of [...sidebarListeners]) listener(event as SidebarLayoutChanged)
+  })
+  backing.push.connect()
+  // The catch-up: between the moment the shell's road became the server's
+  // (its IPC mirror stops) and this wiring, a change may have gone by with
+  // nobody to hear it. The layout is read once the socket is WELCOMED (the
+  // hub sends events to welcomed peers only, so a read before the welcome
+  // would leave a write between the two unheard) and handed to the
+  // listeners as a change; one at or below the revision the window knows
+  // is dropped by the store, so the read costs nothing when nothing moved.
+  void Promise.all([windowKey(), backing.push.whenOpen()]).then(
+    async ([key]) => {
+      if (!key) return
+      try {
+        const layout = await backing.api.sidebar.getLayout(key)
+        const event: SidebarLayoutChanged = {
+          _tag: 'sidebar.layout_changed',
+          layout,
+          cause: 'command'
+        }
+        for (const listener of [...sidebarListeners]) listener(event)
+      } catch {
+        // The next change arrives on the push channel; the next call tells the caller.
+      }
+    },
+    () => {
+      // The socket gave up (a refused token, a closed client): nothing to catch up on.
+    }
+  )
+}
+/** The sidebar's wire on lane A's shared signal (`onServerAvailable`): at
+ *  once when the backing is known, else when it becomes known, so a window
+ *  that booted before the server was up hears the sidebar the moment the
+ *  server answers (with the catch-up read above). On the IPC road for good
+ *  (attached mode) nothing is wired: the shell mirrors every change over
+ *  IPC, and a push socket to a server that holds no layout would only read
+ *  nothing from it. */
+const wireSidebarPush = (backing: Backing): void => {
+  void sidebarTransport().then((road) => {
+    if (road === 'server') listenToSidebarPush(backing)
+  })
+}
 
 /**
  * A listener on both transports. The IPC channel is bound at once, the push
@@ -843,14 +954,61 @@ const electronAPI = {
   onFsChanged: (callback: (cwd: string, changedDirs: string[]) => void) =>
     createIpcListener<[string, string[]]>('fs:changed', callback),
 
-  // Sidebar layout (session groups + display order), ONE FILE PER WINDOW —
-  // main-process JSON storage so the groups survive a hard kill that drops
-  // Chromium's lazily-flushed localStorage. A window reads and writes its own
-  // file only (main resolves it from the sender); the primary's load also
-  // takes in the orphans of windows that no longer exist.
-  sidebarLayoutLoad: () => ipcRenderer.invoke('sidebar-layout:load'),
-  sidebarLayoutSave: (data: { groups: unknown[]; displayOrder: string[] }) =>
-    ipcRenderer.invoke('sidebar-layout:save', data),
+  // ── The sidebar (lane C, PRDCT-3241) ──
+  // A window's groups, terminals, views and order live on the server, one
+  // layout per window key with a revision. The window reads its own at boot
+  // and writes it whole with the revision it last saw; a stale write is
+  // refused with the current snapshot (`reason: 'conflict'`), never merged,
+  // and every change made by anyone arrives through onSidebarLayoutChanged.
+  // Routed through the client when the server runs inside the app, over IPC
+  // when the app is attached to a server elsewhere: that server has no
+  // windows to host, so the shell keeps the sidebar (`sidebar:transport`,
+  // asked until main has decided). Both roads end on one instance.
+  sidebarLayoutLoad: viaSidebar<[], SidebarLayoutSnapshot>({
+    ipc: () => ipcRenderer.invoke('sidebar-layout:load'),
+    server: async (backing) => {
+      const key = await windowKey()
+      if (!key) return { windowKey: '', revision: 0, groups: [], displayOrder: [] }
+      listenToSidebarPush(backing)
+      return backing.api.sidebar.getLayout(key)
+    }
+  }),
+  sidebarLayoutSave: viaSidebar<
+    [data: { groups: unknown[]; displayOrder: string[] }, baseRevision?: number],
+    SidebarSaveResult
+  >({
+    ipc: (data, baseRevision) => ipcRenderer.invoke('sidebar-layout:save', data, baseRevision),
+    server: async (backing, data, baseRevision) => {
+      const key = await windowKey()
+      if (!key) return { ok: false, reason: 'no-window' }
+      listenToSidebarPush(backing)
+      try {
+        const layout = await backing.api.sidebar.saveLayout({
+          windowKey: key,
+          ...(baseRevision !== undefined && { baseRevision }),
+          groups: data.groups as unknown as ReadonlyArray<SidebarGroup>,
+          displayOrder: data.displayOrder
+        })
+        return { ok: true, layout }
+      } catch (error) {
+        const conflict = error as { _tag?: string; current?: SidebarLayoutSnapshot }
+        if (conflict && conflict._tag === 'LayoutConflict' && conflict.current) {
+          return { ok: false, reason: 'conflict', current: conflict.current }
+        }
+        throw error
+      }
+    }
+  }),
+  onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void): (() => void) => {
+    sidebarListeners.add(callback)
+    const withdraw = onServerAvailable(wireSidebarPush)
+    const offIpc = createIpcListener<[SidebarLayoutChanged]>('sidebar:layout-changed', callback)
+    return () => {
+      sidebarListeners.delete(callback)
+      withdraw()
+      offIpc()
+    }
+  },
 
   // Workspace registry + pins — main-process JSON storage, same crash-safety
   // rationale as the sidebar layouts, written FIELD BY FIELD: several windows
@@ -917,12 +1075,54 @@ const electronAPI = {
   windowList: () => ipcRenderer.invoke('window:list'),
   // A new window — the app once more — on a workspace (default: this one's).
   windowOpen: (workspaceId?: string) => ipcRenderer.invoke('window:open', workspaceId),
-  // Move live tabs (tmux-backed) to another window, id and scrollback kept.
-  windowMoveSessions: (sessionIds: string[], targetWindowId: number) =>
-    ipcRenderer.invoke('window:move-sessions', sessionIds, targetWindowId),
-  // Move a whole group (its object + its live members) to another window.
-  windowMoveGroup: (group: unknown, targetWindowId: number) =>
-    ipcRenderer.invoke('window:move-group', group, targetWindowId),
+  // Move live tabs (tmux-backed) to another window, id and scrollback kept:
+  // a command of the sidebar domain, which detaches and re-homes through
+  // the shell. The pickers name a window by id; the wire names it by key.
+  windowMoveSessions: viaSidebar<[sessionIds: string[], targetWindowId: number], MoveResult>({
+    ipc: (sessionIds, targetWindowId) =>
+      ipcRenderer.invoke('window:move-sessions', sessionIds, targetWindowId),
+    server: async (backing, sessionIds, targetWindowId) => {
+      const targetWindowKey = await keyOfWindow(targetWindowId)
+      if (!targetWindowKey) {
+        return {
+          moved: [],
+          refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' }))
+        }
+      }
+      return backing.api.sidebar.moveSessions({ sessionIds, targetWindowKey, focus: true })
+    }
+  }),
+  // Move a whole group (its live members and terminals with it) to another
+  // window. The domain holds the group; the renderer names it by id.
+  windowMoveGroup: viaSidebar<
+    [group: unknown, targetWindowId: number],
+    MoveResult & { ok: boolean }
+  >({
+    ipc: (group, targetWindowId) => ipcRenderer.invoke('window:move-group', group, targetWindowId),
+    server: async (backing, group, targetWindowId) => {
+      const groupId = (group as { id?: unknown } | null)?.id
+      const [windowKeyOfMine, targetWindowKey] = await Promise.all([
+        windowKey(),
+        keyOfWindow(targetWindowId)
+      ])
+      if (typeof groupId !== 'string' || !windowKeyOfMine || !targetWindowKey) {
+        return { ok: false, moved: [], refused: [] }
+      }
+      if (windowKeyOfMine === targetWindowKey) return { ok: false, moved: [], refused: [] }
+      try {
+        return await backing.api.sidebar.moveGroup({
+          windowKey: windowKeyOfMine,
+          groupId,
+          targetWindowKey
+        })
+      } catch (error) {
+        if ((error as { _tag?: string })?._tag === 'GroupNotFound') {
+          return { ok: false, moved: [], refused: [] }
+        }
+        throw error
+      }
+    }
+  }),
 
   // Usage. The Claude read is per account (the machine login when omitted);
   // main polls every account on its own clock and pushes each result.
