@@ -24,7 +24,7 @@ import { bearerAuth } from './auth'
 import { corsForLoopback } from './cors'
 import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
-import { PortsLive, type ServerPorts, SessionHost, SettingsSource } from './ports'
+import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, settingsHandlers } from './settings'
@@ -46,6 +46,7 @@ export type ServerServices =
   | Readiness
   | SessionHost
   | SettingsSource
+  | Terminals
   | PushHubService
   | EventStore
 

@@ -15,7 +15,9 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 export interface E2eHooks {
   /** Lane A: the sessions' host, wrapped by the chat and terminal-view specs. */
   sessionHost: SessionHostService
-  // ── Lane B: terminalJournal · later lanes add theirs here ──
+  // ── Lane B: the terminal journal's file (`src/main/terminal-journal.ts`) ──
+  terminalJournal: { file: string }
+  // ── later lanes add theirs here ──
 }
 
 /** Install what a domain exposes; a domain passes its own fields and no other. */

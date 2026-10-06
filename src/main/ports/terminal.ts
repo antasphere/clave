@@ -1,3 +1,5 @@
+import type { TerminalsService } from '@clave/server'
+
 /**
  * The terminal port: how the terminal backend gets a process. The backend
  * plans a spawn (which file, which arguments, in which directory, with which
@@ -5,43 +7,16 @@
  * process as four verbs and two events. node-pty is the one adapter today,
  * inside the app's Node process.
  *
- * Shaped for the process on the other side of a socket that wave 3 brings
- * (a Node process beside the standalone Bun server, which cannot run
- * node-pty): nothing of node-pty crosses this boundary. The spec carries
- * strings and numbers only, the data is text, the exit is a code, so the
- * same interface can be served over a wire without a type changing.
+ * The shapes are the server's (`packages/server/src/terminals/port.ts`, the
+ * `Terminals` port an entry gives the server): the in-process app gives it
+ * this adapter, the standalone server runs on `Terminals.none` until the
+ * Node terminal process of wave 3 implements the same interface over a
+ * wire. Nothing of node-pty crosses it: the spec carries strings and
+ * numbers only, the data is text, the exit is a code.
  */
 
-export interface TerminalSpawn {
-  readonly file: string
-  readonly args: readonly string[]
-  readonly cwd: string
-  readonly env: Readonly<Record<string, string>>
-  readonly cols: number
-  readonly rows: number
-  /** The terminal name advertised to the process (`xterm-256color`). */
-  readonly name?: string
-}
-
-export interface TerminalExit {
-  readonly exitCode: number
-  readonly signal?: number
-}
-
-export interface TerminalProcess {
-  readonly pid: number
-  write(data: string): void
-  resize(cols: number, rows: number): void
-  kill(signal?: string): void
-  /** Output as the process produces it. Returns the way to stop listening. */
-  onData(listener: (data: string) => void): () => void
-  /** The end of the process, once. Returns the way to stop listening. */
-  onExit(listener: (exit: TerminalExit) => void): () => void
-}
-
-export interface TerminalPort {
-  spawn(spec: TerminalSpawn): TerminalProcess
-}
+export type { TerminalExit, TerminalProcess, TerminalSpawn } from '@clave/server'
+export type TerminalPort = TerminalsService
 
 /** node-pty, loaded on the first spawn: the native module stays out of the
  *  module graph of whoever only reads the port's types, and a process that

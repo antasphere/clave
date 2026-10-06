@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { lazyTerminalPorts } from './ports/terminals'
+import { installE2eHooks } from './sessions/e2e-hooks'
 import type { PtySpawnOptions } from './sessions/adapters/pty-backend'
 
 /**
@@ -67,11 +68,9 @@ export function terminalJournal(): TerminalJournal | null {
     if (!TEST_NO_ACTIVATE) journal = null
     else {
       journal = fileTerminalJournal(lazyTerminalPorts.storage.pathOf(TERMINAL_JOURNAL_DOCUMENT))
-      // The test hooks namespace main exposes under --test-no-activate (the
-      // sessions lane puts its own there); a second global is never made.
-      const hooks = (globalThis as { __claveE2E?: Record<string, unknown> }).__claveE2E ?? {}
-      hooks.terminalJournal = { file: journal.file }
-      ;(globalThis as { __claveE2E?: Record<string, unknown> }).__claveE2E = hooks
+      // On the test hooks namespace main exposes under --test-no-activate,
+      // beside the sessions lane's host; a second global is never made.
+      installE2eHooks({ terminalJournal: { file: journal.file } })
     }
   }
   return journal

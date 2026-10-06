@@ -11,24 +11,30 @@
  */
 import { Layer } from 'effect'
 import { SessionHost, type SessionHostService } from './sessions/port'
+import { Terminals, type TerminalsService } from './terminals/port'
 
 export type { StartInput, Unsubscribe } from './sessions/port'
 export { SessionHost, type SessionHostService } from './sessions/port'
 import { SettingsSource, type SettingsSourceService } from './settings/port'
 
 export { SettingsSource, type SettingsSourceService } from './settings/port'
+export { Terminals, type TerminalsService } from './terminals/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
   readonly sessions?: SessionHostService
   /** Lane D: the settings. `SettingsSource.none` when absent. */
   readonly settings?: SettingsSourceService
-  // ── Lane B: terminals · Lane C: sidebar ──
+  /** Lane B: the terminals, where a session's process comes from.
+   *  `Terminals.none` when absent. */
+  readonly terminals?: TerminalsService
+  // ── Lane C: sidebar ──
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
-export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost | SettingsSource> =>
+export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost | SettingsSource | Terminals> =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
-    SettingsSource.layer(ports.settings ?? SettingsSource.none)
+    SettingsSource.layer(ports.settings ?? SettingsSource.none),
+    Terminals.layer(ports.terminals ?? Terminals.none)
   )
