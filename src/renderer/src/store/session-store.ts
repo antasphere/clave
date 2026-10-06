@@ -41,6 +41,7 @@ import {
   moveLayoutItems
 } from '@clave/contract/sidebar/ops'
 import { withDirToggled } from '../lib/panel-expansion'
+import { createSavePipeline } from '../lib/sidebar-save-pipeline'
 
 // Re-export types and constants so existing imports continue to work
 export type {
@@ -453,9 +454,6 @@ let lastPersistedOrder: string[] | null = null
 /** The JSON last accepted by the server, or last applied from it; re-sent
  *  only on change. */
 let lastPersistedJson: string | null = null
-/** The server's revision of this window's layout, as last read, saved or
- *  applied. Every save names it; a push below it is already known. */
-let knownRevision = 0
 
 export interface SidebarLayoutSnapshot {
   windowKey: string
@@ -464,57 +462,69 @@ export interface SidebarLayoutSnapshot {
   displayOrder: string[]
 }
 
+type SaveItem = { data: { groups: SessionGroup[]; displayOrder: string[] }; json: string }
+
+/** The save pipeline (lib/sidebar-save-pipeline.ts): one save in flight,
+ *  the next edit on the revision the answer names, a push held while a save
+ *  is out, a refusal applying the server's snapshot. */
+const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
+  current: () => {
+    const { groups, displayOrder } = useSessionStore.getState()
+    const data = { groups, displayOrder }
+    const json = JSON.stringify(data)
+    return json === lastPersistedJson ? null : { data, json }
+  },
+  send: async (item, baseRevision) => {
+    const api = window.electronAPI
+    if (!api?.sidebarLayoutSave) return { ok: false, reason: 'no-api' }
+    const res = await api.sidebarLayoutSave(item.data, baseRevision)
+    if (res.ok) return { ok: true, revision: res.layout.revision }
+    if (res.reason === 'conflict') {
+      return { ok: false, reason: 'conflict', current: res.current as SidebarLayoutSnapshot }
+    }
+    return { ok: false, reason: res.reason }
+  },
+  apply: (snapshot) => applyServerLayoutToStore(snapshot),
+  accepted: (item) => {
+    lastPersistedJson = item.json
+  }
+})
+
 /** The revision the boot read came back with, before any save. */
 export function setSidebarRevision(revision: number): void {
-  knownRevision = revision
+  savePipeline.setRevision(revision)
 }
 
 /** Tests only. */
 export function sidebarRevisionForTests(): number {
-  return knownRevision
+  return savePipeline.revision()
 }
 
-/** This window's whole sidebar to the server, with the revision it last
- *  saw. Every group carries its workspace stamp inside, so the window comes
- *  back showing the right ones. */
+/** This window's whole sidebar to the server, through the pipeline. Every
+ *  group carries its workspace stamp inside, so the window comes back
+ *  showing the right ones. */
 function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: string[] }): void {
   const { groups, displayOrder } = state
   if (groups === lastPersistedGroups && displayOrder === lastPersistedOrder) return
   lastPersistedGroups = groups
   lastPersistedOrder = displayOrder
-  const data = { groups, displayOrder }
-  const json = JSON.stringify(data)
-  if (json === lastPersistedJson) return
-  window.electronAPI
-    ?.sidebarLayoutSave?.(data, knownRevision)
-    .then((res) => {
-      if (!res) return
-      if (res.ok) {
-        knownRevision = res.layout.revision
-        lastPersistedJson = json
-        return
-      }
-      // Somebody wrote this window's layout since we last saw it: theirs is
-      // the truth, ours re-applies on top of it on the next change.
-      if (res.reason === 'conflict') applyServerLayout(res.current as SidebarLayoutSnapshot)
-    })
-    .catch(() => {
-      // Persistence failures are non-fatal: the groups stay in memory for this run.
-    })
+  savePipeline.save()
+}
+
+/** What the server pushed for this window: applied through the pipeline,
+ *  which holds it while a save is out and drops what is already known. */
+export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
+  savePipeline.incoming(snapshot)
 }
 
 /**
- * What the server holds for this window, applied over the working copy: the
- * groups and the order become the server's, then every session this window
- * holds that the server's layout does not place (a tab spawned since, whose
- * save has not landed) is appended at the top level so no tab disappears,
- * and the file tabs likewise. A snapshot at or below the known revision is
- * already here and ignored, which is what makes a window's own save, echoed
- * back on the push channel, a no-op.
+ * The server's snapshot over the working copy: the groups and the order
+ * become the server's, then every session this window holds that the
+ * server's layout does not place (a tab spawned since, whose save has not
+ * landed) is appended at the top level so no tab disappears, and the file
+ * tabs likewise. The pipeline decides WHEN this runs; this is only the how.
  */
-export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
-  if (snapshot.revision <= knownRevision) return
-  knownRevision = snapshot.revision
+function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   useSessionStore.setState((state) => {
     const groups = cloneGroupsForSnapshot(snapshot.groups)
     const nested = new Set<string>()
