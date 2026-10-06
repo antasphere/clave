@@ -13,7 +13,7 @@ export const SettingsEventsLive: Layer.Layer<never, never, ServerEvents | Settin
     Effect.gen(function* () {
       const events = yield* ServerEvents
       const source = yield* SettingsSource
-      const runtime = yield* Effect.runtime<never>()
+      // `runFork` starts the fiber synchronously, so events keep their order.
       const off = source.subscribe((event) => {
         Effect.runFork(
           events
@@ -24,8 +24,7 @@ export const SettingsEventsLive: Layer.Layer<never, never, ServerEvents | Settin
                   console.error('[clave-server] settings event not published', cause)
                 )
               )
-            ),
-          { ...(runtime && {}) }
+            )
         )
       })
       yield* Effect.addFinalizer(() => Effect.sync(off))

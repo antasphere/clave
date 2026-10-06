@@ -4,11 +4,14 @@ import { shellSettingsSource as settings } from '../settings/shell-source'
 
 /** The window key of the renderer that asked, so the change event names it
  *  as the writer and it is skipped on the way back: it already has the
- *  state, and sending it back would race its next mutation. */
-function originOf(sender: Electron.WebContents): string | undefined {
+ *  state, and sending it back would race its next mutation. A window the
+ *  registry does not know yet (the first moments of a boot) is named by its
+ *  web contents instead, so the skip holds for it too. */
+function originOf(sender: Electron.WebContents): string {
   const win = BrowserWindow.fromWebContents(sender)
-  return (win && windowRegistry.getKeyForWindow(win.id)) ?? undefined
+  return (win && windowRegistry.getKeyForWindow(win.id)) ?? contentsOrigin(sender.id)
 }
+const contentsOrigin = (id: number): string => `webContents:${id}`
 
 /** The workspace state file over IPC, written field by field through the
  *  same settings source the server writes it through: the renderer owns the
@@ -37,7 +40,12 @@ export function registerWorkspaceHandlers(): void {
     if (event._tag !== 'workspaces.state_changed') return
     const { workspaces, pins, origin } = event
     for (const win of windowRegistry.listWindows()) {
-      if (origin !== null && windowRegistry.getKeyForWindow(win.id) === origin) continue
+      if (
+        origin !== null &&
+        (windowRegistry.getKeyForWindow(win.id) === origin ||
+          contentsOrigin(win.webContents.id) === origin)
+      )
+        continue
       win.webContents.send('workspace:state-changed', { workspaces, pins })
     }
   })

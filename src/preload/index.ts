@@ -22,6 +22,7 @@ import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
+import { dualListener } from './dual-listener'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -285,49 +286,28 @@ function onSessionEvent<E extends ServerEvent['_tag']>(
 }
 
 /**
- * A settings listener (lane D) that moves to the server's push channel. The
- * IPC listener is registered at once, so nothing is missed while the router
- * asks main for the endpoint; once a backing exists the listener swaps to
- * the server's events of `tag` (the push socket opened here if it was not),
- * and the IPC one is dropped in the same tick, so no event arrives twice.
- * With no server the IPC listener stays. Main fans a settings change out on
- * BOTH transports (the IPC handlers and the server's events bridge, from the
- * one source, `src/main/settings/source.ts`) and a window listens on exactly
- * one, which is why this differs from `onBothTransports` above: there main
- * picks the transport, here the window does, and a window whose first call
- * came before the server was up still hears every change. `pick` turns the
- * event into what the callback has always received; returning `undefined`
- * drops the event (a window's own echo).
+ * A settings listener (lane D): main fans a settings change out on BOTH
+ * transports from the one source (`src/main/settings/source.ts`: the IPC
+ * handlers and the server's events bridge), and the window hears exactly one
+ * of them, IPC while the push socket is not open and the push channel while
+ * it is (`dual-listener.ts` beside this file, tested there). This differs from
+ * `onBothTransports` above on purpose: there main picks the transport, here
+ * the window does, so a window whose first call came before the server was up
+ * still hears every change, and a reconnection loses none. `pick` turns the
+ * event into what the callback has always received; `undefined` drops it (a
+ * window's own echo).
  */
 function viaServerEvent<E extends ServerEvent['_tag'], T>(
   channel: string,
   tag: E,
   pick: (event: Extract<ServerEvent, { _tag: E }>) => T | undefined
 ): (callback: (value: T) => void) => () => void {
-  return (callback) => {
-    let off: () => void = createIpcListener<[T]>(channel, callback)
-    let cancelled = false
-    void serverRouter.backing().then(
-      (backing) => {
-        if (cancelled || !backing) return
-        backing.push.connect()
-        const offPush = backing.push.onEvent((envelope) => {
-          if (envelope.event._tag !== tag) return
-          const value = pick(envelope.event as Extract<ServerEvent, { _tag: E }>)
-          if (value !== undefined) callback(value)
-        })
-        off()
-        off = offPush
-      },
-      () => {
-        /* no server: the IPC listener stays */
-      }
-    )
-    return (): void => {
-      cancelled = true
-      off()
-    }
-  }
+  return dualListener<E, T>({
+    bindIpc: (callback) => createIpcListener<[T]>(channel, callback),
+    backing: () => serverRouter.backing().then((backing) => backing?.push ?? null),
+    tag,
+    pick
+  })
 }
 
 /** The contract's answers are readonly through and through; the renderer's

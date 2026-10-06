@@ -126,8 +126,14 @@ describe('the settings source over the real managers', () => {
       capability: 'login'
     })
     expect(await source.logins.list()).toEqual([])
-    await expect(Promise.resolve(source.logins.input('j', 'x'))).resolves.toBeUndefined()
-    await expect(Promise.resolve(source.logins.cancel('j'))).resolves.toBeUndefined()
+    await expect(source.logins.input('j', 'x')).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'login'
+    })
+    await expect(source.logins.cancel('j')).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'login'
+    })
   })
 
   it('refuses the app icon without a Dock, and paints it with one', async () => {
@@ -225,6 +231,22 @@ describe('the settings source over the real managers', () => {
     expect(getLimits).toHaveBeenLastCalledWith('default', { force: true })
     await source.usage.readClaude('abc', true)
     expect(getLimits).toHaveBeenLastCalledWith('abc', { force: true })
+  })
+
+  it('emits every usage read, the poller’s included, as an event', async () => {
+    const source = settingsSourceFromManagers(managers)
+    const events: SettingsEvent[] = []
+    source.subscribe((event) => events.push(event))
+    const account = await source.claudeAccounts.add('Polled')
+    // What the five-minute clock does: a read the window never asked for.
+    await managers.claudeUsage.getLimits(account.id, { force: true })
+    expect(events).toContainEqual({
+      _tag: 'usage.claude_read',
+      accountId: account.id,
+      result: READ
+    })
+    await managers.codexUsage.getLimits('default', { force: true })
+    expect(events.filter((e) => e._tag === 'usage.codex_read')).toHaveLength(1)
   })
 
   it('forgets a removed account’s cached read', async () => {

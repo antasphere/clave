@@ -236,18 +236,19 @@ export const StartCodexApiKeyLogin = Command.define('StartCodexApiKeyLogin', {
   failure: RefusedOrUnavailable
 })
 
-/** `accounts:login-input` — what the user types into the login (the code it asks for). */
+/** `accounts:login-input` — what the user types into the login (the code it
+ *  asks for); a server with no login running answers `CapabilityUnavailable`. */
 export const SendAccountLoginInput = Command.define('SendAccountLoginInput', {
   payload: Schema.Struct({ jobId: Schema.String, text: Schema.String }),
   success: Schema.Void,
-  failure: SettingsRefused
+  failure: RefusedOrUnavailable
 })
 
-/** `accounts:login-cancel` */
+/** `accounts:login-cancel` — likewise. */
 export const CancelAccountLogin = Command.define('CancelAccountLogin', {
   payload: Schema.Struct({ jobId: Schema.String }),
   success: Schema.Void,
-  failure: SettingsRefused
+  failure: RefusedOrUnavailable
 })
 
 /** `accounts:login-list` */

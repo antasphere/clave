@@ -203,14 +203,15 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
         const jobs = await loadLogins('login', 'This server cannot store a Codex login.')
         return jobs.startCodexApiKeyLogin(accountId, apiKey)
       },
-      // Without a login manager there is no job to feed, cancel or list.
-      input: async (jobId, text) => {
-        if (m.logins)
-          (await loadLogins('login', 'This server runs no login.')).sendInput(jobId, text)
-      },
-      cancel: async (jobId) => {
-        if (m.logins) (await loadLogins('login', 'This server runs no login.')).cancel(jobId)
-      },
+      // Without a login manager there is no job to feed or cancel: refused,
+      // never a silent no-op; the list is empty.
+      input: async (jobId, text) =>
+        (await loadLogins('login', 'This server runs no login to type into.')).sendInput(
+          jobId,
+          text
+        ),
+      cancel: async (jobId) =>
+        (await loadLogins('login', 'This server runs no login to cancel.')).cancel(jobId),
       list: async () =>
         m.logins ? (await loadLogins('login', 'This server runs no login.')).list() : []
     },

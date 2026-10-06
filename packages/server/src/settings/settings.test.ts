@@ -93,6 +93,10 @@ describe('the settings group of the HTTP API', () => {
     })
     expect(fake.secrets).toContain('sk-test-key')
 
+    // Typing into or cancelling a login a server does not run is refused the same way.
+    expect((await post('/accounts/login/input', { jobId: 'j', text: 'code' })).status).toBe(422)
+    expect((await post('/accounts/login/cancel', { jobId: 'j' })).status).toBe(422)
+
     fake.refuse.appIcon = true
     const icon = await post('/preferences/app-icon', { icon: 'light' })
     expect(icon.status).toBe(422)

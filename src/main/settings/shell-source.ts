@@ -33,7 +33,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   launchProfiles: launchProfileManager,
   preferences: preferencesManager,
   workspaces: workspaceManager,
-  // Loaded on first use: the login manager pulls the PTY backend in.
+  // Loaded on first use so this module's own import graph reaches no PTY
+  // backend (a unit test loads it without one); the app's boot imports the
+  // same login manager statically, so in the app nothing loads twice.
   logins: () => import('../account-login').then((m) => m.accountLoginManager),
   applyAppIcon
 })

@@ -183,9 +183,11 @@ export class FakeSettingsSource implements SettingsSourceService {
     },
     input: (jobId, text) => {
       this.record('logins.input', jobId, text)
+      if (this.refuse.login) throw unavailable('login', 'This server runs no login to type into.')
     },
     cancel: (jobId) => {
       this.record('logins.cancel', jobId)
+      if (this.refuse.login) throw unavailable('login', 'This server runs no login to cancel.')
     },
     list: () => this.jobs
   }

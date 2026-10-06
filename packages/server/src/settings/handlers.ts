@@ -145,8 +145,8 @@ export const settingsHandlers = [
   CommandHandler.make(StartCodexApiKeyLogin, (p) =>
     call((s) => s.logins.startApiKey(p.accountId, Redacted.value(p.apiKey)))
   ),
-  CommandHandler.make(SendAccountLoginInput, (p) => must((s) => s.logins.input(p.jobId, p.text))),
-  CommandHandler.make(CancelAccountLogin, (p) => must((s) => s.logins.cancel(p.jobId))),
+  CommandHandler.make(SendAccountLoginInput, (p) => call((s) => s.logins.input(p.jobId, p.text))),
+  CommandHandler.make(CancelAccountLogin, (p) => call((s) => s.logins.cancel(p.jobId))),
   QueryHandler.make(ListAccountLogins, () => ask((s) => s.logins.list())),
   // Usage
   QueryHandler.make(ReadClaudeUsage, (p) =>
