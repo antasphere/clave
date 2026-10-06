@@ -20,4 +20,7 @@ export * as Clients from './clients'
 // ── Lane C (wave 1): settings (packages/contract/src/settings/) ──
 export * as Settings from './settings'
 
-// ── Lane B: terminals · Lane C: sidebar · Lane D: settings served ──
+// ── Lane C (wave 2): the sidebar (packages/contract/src/sidebar/) ──
+export * as Sidebar from './sidebar'
+
+// ── Lane B: terminals · Lane D: settings served ──

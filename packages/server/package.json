@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./embedded": "./src/embedded.ts",
     "./test-support": "./src/test-support.ts",
-    "./settings/test-support": "./src/settings/test-support.ts"
+    "./settings/test-support": "./src/settings/test-support.ts",
+    "./sidebar-layouts": "./src/sidebar/light.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

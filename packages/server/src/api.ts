@@ -22,6 +22,7 @@ import {
   WriteSession
 } from '@clave/contract/sessions'
 import { SettingsLive } from './settings/api'
+import { SidebarLive } from './sidebar/api'
 
 // ── Lane A: sessions ──
 export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers) =>
@@ -49,10 +50,13 @@ export const ClientsLive = HttpApiBuilder.group(ClaveApi, 'clients', (handlers) 
 // ── Lane D: settings (`settings/api.ts`) ──
 export { SettingsLive }
 
-// ── Lane B: terminals · Lane C: sidebar ──
+// ── Lane C: the sidebar (`sidebar/api.ts`) ──
+export { SidebarLive }
+
+// ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
 
 export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
-  Layer.provide(Layer.mergeAll(SessionsLive, ClientsLive, SettingsLive, HealthLive))
+  Layer.provide(Layer.mergeAll(SessionsLive, ClientsLive, SettingsLive, SidebarLive, HealthLive))
 )

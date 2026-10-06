@@ -19,6 +19,7 @@
  */
 import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
+import { CapabilityUnavailable } from '../errors'
 
 /** A window's persisted key, the id alphabet the shell mints; it names a
  *  file, so nothing outside this alphabet is ever accepted. */
@@ -299,7 +300,8 @@ export const MoveSessionsToWindow = Command.define('MoveSessionsToWindow', {
     focus: Schema.optional(Schema.Boolean)
   }),
   success: MoveResult,
-  failure: WindowNotFound
+  /** `CapabilityUnavailable` from a server that hosts no windows. */
+  failure: Schema.Union(WindowNotFound, CapabilityUnavailable)
 })
 /** A group whole: its object with the members and terminals that could
  *  move, the source dropping its copy. `ok: false` when nothing could move,
@@ -311,7 +313,7 @@ export const MoveGroupToWindow = Command.define('MoveGroupToWindow', {
     targetWindowKey: WindowKey
   }),
   success: Schema.Struct({ ok: Schema.Boolean, ...MoveResult.fields }),
-  failure: Schema.Union(GroupNotFound, WindowNotFound)
+  failure: Schema.Union(GroupNotFound, WindowNotFound, CapabilityUnavailable)
 })
 
 // ── Events: members of the server's one event union (`../events.ts`) ──

@@ -28,6 +28,7 @@ import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } f
 import { PushHubService, pushRoute } from './push/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, settingsHandlers } from './settings'
+import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -49,6 +50,7 @@ export type ServerServices =
   | Terminals
   | PushHubService
   | EventStore
+  | SidebarLayoutsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -65,7 +67,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const hub = PushHubService.layer(options).pipe(Layer.provide(services))
   // ── Lane D: the settings source's changes go out as server events ──
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
-  return Layer.mergeAll(services, hub, settingsEvents)
+  // ── Lane C: every change of the layouts told to the clients ──
+  const sidebarEvents = SidebarEventsLive.pipe(Layer.provide(services))
+  return Layer.mergeAll(services, hub, settingsEvents, sidebarEvents)
 }
 
 /** The buses, with every handler of every domain registered once. */
@@ -75,8 +79,10 @@ export const BusesLive = busesLayer.pipe(
       ...sessionHandlers,
       ...clientHandlers,
       // ── Lane D: settings ──
-      ...settingsHandlers
-      // ── Lane B: ...terminalHandlers · Lane C: ...sidebarHandlers ──
+      ...settingsHandlers,
+      // ── Lane C: the sidebar ──
+      ...sidebarHandlers
+      // ── Lane B: ...terminalHandlers ──
     )
   )
 )
