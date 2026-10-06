@@ -5,3 +5,6 @@ LICENSE.md
 tsconfig.json
 tsconfig.*.json
 plugin
+# The website shots staged scene: fixture content shown verbatim in the screenshots
+scripts/website-shots/project
+scripts/website-shots/changes

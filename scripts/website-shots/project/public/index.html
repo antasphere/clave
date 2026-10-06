@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout · Atelier Nord</title>
+<style>
+  :root { --ink: #1f2420; --muted: #6b716c; --line: #e4e2dc; --paper: #faf9f6; --card: #fff; --accent: #2f5d50; --warn: #b3412e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: var(--ink); background: var(--paper); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 40px; border-bottom: 1px solid var(--line); background: var(--card); }
+  .logo { font-weight: 600; letter-spacing: .14em; text-transform: uppercase; font-size: 14px; }
+  .steps { display: flex; gap: 22px; font-size: 13px; color: var(--muted); }
+  .steps b { color: var(--ink); font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; max-width: 980px; margin: 32px auto; padding: 0 32px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .field { margin-bottom: 16px; }
+  .input { height: 40px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; display: flex; align-items: center; background: #fff; font-size: 14px; }
+  .input.error { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(179, 65, 46, .1); }
+  .hint { color: var(--warn); font-size: 12.5px; margin-top: 6px; }
+  .btn { margin-top: 6px; height: 44px; border-radius: 8px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+  .item { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .thumb { width: 46px; height: 46px; border-radius: 8px; flex: none; }
+  .t1 { background: linear-gradient(135deg, #d9cbb4, #b9a586); }
+  .t2 { background: linear-gradient(135deg, #a9bfb4, #6f8f80); }
+  .name { font-size: 14px; font-weight: 500; }
+  .meta { font-size: 12.5px; color: var(--muted); }
+  .price { margin-left: auto; font-size: 14px; }
+  .sum { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; color: var(--muted); }
+  .sum.total { color: var(--ink); font-weight: 600; font-size: 16px; padding-top: 12px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Atelier Nord</div>
+  <div class="steps"><span>Cart</span><b>Shipping</b><span>Payment</span><span>Review</span></div>
+</header>
+<main>
+  <section>
+    <h1>Shipping address</h1>
+    <p class="sub">We ship to Belgium, France and the Netherlands.</p>
+    <div class="card">
+      <div class="row">
+        <div class="field"><label>First name</label><div class="input">Lena</div></div>
+        <div class="field"><label>Last name</label><div class="input">Maes</div></div>
+      </div>
+      <div class="field"><label>Street and number</label><div class="input">Rue des Tanneurs 14</div></div>
+      <div class="row">
+        <div class="field"><label>Postal code</label><div class="input error">10A0</div><div class="hint">Check the postal code</div></div>
+        <div class="field"><label>City</label><div class="input">Brussels</div></div>
+      </div>
+      <div class="field"><label>Country</label><div class="input">Belgium</div></div>
+      <div class="btn">Continue to payment</div>
+    </div>
+  </section>
+  <aside>
+    <div class="card">
+      <h2>Your order</h2>
+      <div class="item"><div class="thumb t1"></div><div><div class="name">Merino throw, oat</div><div class="meta">130 × 170 cm · 1</div></div><div class="price">€ 89.00</div></div>
+      <div class="item"><div class="thumb t2"></div><div><div class="name">Stoneware cups, sage</div><div class="meta">Set of 2 · 1</div></div><div class="price">€ 38.00</div></div>
+      <div class="sum" style="margin-top:8px"><span>Subtotal</span><span>€ 127.00</span></div>
+      <div class="sum"><span>Shipping</span><span>Free</span></div>
+      <div class="sum total"><span>Total</span><span>€ 127.00</span></div>
+    </div>
+  </aside>
+</main>
+</body>
+</html>
