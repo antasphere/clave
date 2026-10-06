@@ -14,14 +14,15 @@ export async function run(t) {
   const { app, win, record } = fixture
   const view = win.locator('[data-testid="chat-view"]')
   try {
-    await app.evaluate(({ ipcMain }) => {
-      const original = ipcMain._invokeHandlers.get('sessions:write')
+    await app.evaluate(() => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
       globalThis.__dockWrites = []
-      ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+      host.write = (id, input) => {
         globalThis.__dockWrites.push(input)
-        if (input.type === 'permission_response') return
-        return original(event, id, input)
-      })
+        if (input.type === 'permission_response') return Promise.resolve()
+        return write.call(host, id, input)
+      }
     })
     const writes = () => app.evaluate(() => globalThis.__dockWrites)
     await inject(app, record.id, [

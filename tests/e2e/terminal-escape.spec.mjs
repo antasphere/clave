@@ -21,10 +21,11 @@ export async function run(t) {
   const input = view.locator('textarea')
   // The echo adapter answers at once; here the agent answers only when the
   // spec says so. A sent message is echoed as the adapter would, working.
-  await app.evaluate(({ ipcMain, BrowserWindow }, id) => {
+  await app.evaluate(({ BrowserWindow }, id) => {
     globalThis.__interrupts = 0
-    const original = ipcMain._invokeHandlers.get('sessions:write')
-    ipcMain._invokeHandlers.set('sessions:write', (event, sid, input) => {
+    const host = globalThis.__claveE2E.sessionHost
+    const write = host.write
+    host.write = (sid, input) => {
       const send = (e) =>
         BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
           kind: 'event',
@@ -33,16 +34,16 @@ export async function run(t) {
       if (input?.type === 'user_message') {
         send({ type: 'user_message', text: input.text })
         send({ type: 'state_change', state: 'working' })
-        return undefined
+        return Promise.resolve()
       }
       if (input?.type === 'interrupt') {
         globalThis.__interrupts += 1
         send({ type: 'turn_interrupted' })
         send({ type: 'state_change', state: 'idle' })
-        return undefined
+        return Promise.resolve()
       }
-      return original(event, sid, input)
-    })
+      return write.call(host, sid, input)
+    }
   }, record.id)
   const questions = () =>
     view.locator('.chat-turn[data-role="user"]').evaluateAll((els) => els.map((e) => e.innerText))

@@ -37,13 +37,14 @@ export async function run(t) {
   const { app, win, record, close } = await openChat('chat-attachments')
   const root = fixturePath('chat-attachments-root')
   try {
-    await app.evaluate(({ ipcMain }) => {
-      const original = ipcMain._invokeHandlers.get('sessions:write')
+    await app.evaluate(() => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
       globalThis.__chatWrites = []
-      ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+      host.write = (id, input) => {
         globalThis.__chatWrites.push(input)
-        return original(event, id, input)
-      })
+        return write.call(host, id, input)
+      }
     })
     const pane = '[data-testid="chat-view"]'
     const input = win.locator(`${pane} textarea`)
