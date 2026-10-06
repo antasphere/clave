@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "@effect/platform": "0.97.1",
-    "@structure-ai/cqrs": "0.2.1",
-    "@structure-ai/http": "0.2.1",
+    "@structure-ai/cqrs": "0.3.0",
+    "@structure-ai/http": "0.3.0",
     "effect": "3.22.1"
   }
 }
