@@ -22,7 +22,7 @@ import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
-import { dualListener } from './dual-listener'
+import { dualListener, workspaceStatePick } from './dual-listener'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -891,10 +891,10 @@ const electronAPI = {
     void windowKey().then((key) => {
       mine = key
     })
-    return viaServerEvent('workspace:state-changed', 'workspaces.state_changed', (event) =>
-      event.origin !== null && event.origin === mine
-        ? undefined
-        : { workspaces: [...event.workspaces], pins: [...event.pins] }
+    return viaServerEvent(
+      'workspace:state-changed',
+      'workspaces.state_changed',
+      workspaceStatePick(() => mine)
     )(callback)
   },
 

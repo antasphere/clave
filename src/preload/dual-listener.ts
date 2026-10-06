@@ -27,6 +27,22 @@ import type { PushStatus } from '@clave/client'
 
 export type Unsubscribe = () => void
 
+type WorkspacesStateChanged = Extract<ServerEvent, { _tag: 'workspaces.state_changed' }>
+
+/**
+ * What a window takes from a workspace change on the push channel: the
+ * registry and the pins, unless the change is its own (the event's `origin`
+ * is the key `mine` answers), which it drops the way the IPC handler skips
+ * the sender. `mine` is read at each event, since the window's key arrives
+ * asynchronously after the listener is bound.
+ */
+export const workspaceStatePick =
+  (mine: () => string | null) =>
+  (event: WorkspacesStateChanged): { workspaces: unknown[]; pins: unknown[] } | undefined =>
+    event.origin !== null && event.origin === mine()
+      ? undefined
+      : { workspaces: [...event.workspaces], pins: [...event.pins] }
+
 /** What the listener needs of a push client: `PushClient` is one. */
 export interface PushLike {
   readonly status: PushStatus

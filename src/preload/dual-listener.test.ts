@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ServerEventEnvelope } from '@clave/contract/events'
-import { dualListener, type PushLike } from './dual-listener'
+import { dualListener, type PushLike, workspaceStatePick } from './dual-listener'
 import type { PushStatus } from '@clave/client'
 
 /** A push client the test opens, drops and reopens by hand. */
@@ -186,5 +186,30 @@ describe('a listener on both transports hears each event once', () => {
     ipc.send(7)
     expect(seen).toEqual([7])
     expect(ipc.bound.size).toBe(1)
+  })
+})
+
+describe('the workspace pick drops the window’s own echo and nothing else', () => {
+  const change = (origin: string | null): Parameters<ReturnType<typeof workspaceStatePick>>[0] => ({
+    _tag: 'workspaces.state_changed',
+    workspaces: [],
+    pins: [{ p: origin }],
+    origin
+  })
+  it('drops the change this window wrote, keeps every other', () => {
+    const pick = workspaceStatePick(() => 'w1')
+    expect(pick(change('w1'))).toBeUndefined()
+    expect(pick(change('w2'))).toEqual({ workspaces: [], pins: [{ p: 'w2' }] })
+    expect(pick(change(null))).toEqual({ workspaces: [], pins: [{ p: null }] })
+  })
+  it('reads the window’s key at each event, so a key that arrives late still counts', () => {
+    let mine: string | null = null
+    const pick = workspaceStatePick(() => mine)
+    expect(pick(change('w1'))).toBeDefined()
+    mine = 'w1'
+    expect(pick(change('w1'))).toBeUndefined()
+    // A window with no key yet drops nothing, not even a change with no origin.
+    mine = null
+    expect(pick(change(null))).toBeDefined()
   })
 })

@@ -119,9 +119,10 @@ export class SettingsSource extends Context.Tag('@clave/server/SettingsSource')<
   static layer(service: SettingsSourceService): Layer.Layer<SettingsSource> {
     return Layer.succeed(SettingsSource, service)
   }
-  /** A server with no settings behind it: every call says so, loudly, as the
-   *  declared failure, so a server started without a source never looks like
-   *  one with an empty settings store. The tests' default. */
+  /** A server with no settings behind it: every call says so, loudly, so a
+   *  server started without a source never looks like one with an empty
+   *  settings store: the declared failure (422) where the command declares
+   *  `CapabilityUnavailable`, a defect (500) everywhere else. The tests' default. */
   static readonly none: SettingsSourceService = noneSource()
 }
 

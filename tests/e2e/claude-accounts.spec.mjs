@@ -703,6 +703,29 @@ export async function run(t) {
     )
 
     t.equal('no renderer exceptions', errors.length, 0, errors)
+
+    // The shell's login manager and its Dock are wired behind the server: a
+    // cancel of a job that does not exist resolves (a source without a login
+    // manager would refuse it), and the icon write is taken, not refused.
+    // Neither runs a provider's login nor is asserted on screen.
+    t.check(
+      'cancelling an unknown login job is taken, so the login manager is wired',
+      await win.evaluate(() =>
+        window.electronAPI.accountLoginCancel('no-such-job').then(
+          () => true,
+          () => false
+        )
+      )
+    )
+    t.check(
+      'the app icon write is taken, so the Dock is wired',
+      await win.evaluate(() =>
+        window.electronAPI.setAppIcon('dark').then(
+          () => true,
+          () => false
+        )
+      )
+    )
   } finally {
     await app.close()
   }
