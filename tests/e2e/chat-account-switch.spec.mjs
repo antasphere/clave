@@ -12,6 +12,14 @@
 // The checks are what the stub CLI's own processes record — the token they
 // got, the `--resume` they were given, the messages they received — plus the
 // pane: no ended notice, the composer open, a new message answered.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it shows
+// comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -119,13 +127,15 @@ export async function run(t) {
   try {
     // Both accounts have headroom: the move is the reader's choice, not a limit's.
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') return { windows: [], fetchedAt: Date.now() }
-          return original(event, accountId, options)
-        })
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
+        const original = settings.usage.readClaude
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default')
+            return { windows: [], fetchedAt: Date.now() }
+          return original(accountId, force)
+        }
         const quota = { [WORK_TOKEN]: 0.3, [PLAY_TOKEN]: 0.2 }
         globalThis.fetch = async (_url, init) => {
           const token = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')

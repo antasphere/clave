@@ -14,13 +14,21 @@ import { SessionHost, type SessionHostService } from './sessions/port'
 
 export type { StartInput, Unsubscribe } from './sessions/port'
 export { SessionHost, type SessionHostService } from './sessions/port'
+import { SettingsSource, type SettingsSourceService } from './settings/port'
+
+export { SettingsSource, type SettingsSourceService } from './settings/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
   readonly sessions?: SessionHostService
-  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+  /** Lane D: the settings. `SettingsSource.none` when absent. */
+  readonly settings?: SettingsSourceService
+  // ── Lane B: terminals · Lane C: sidebar ──
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
-export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost> =>
-  Layer.mergeAll(SessionHost.layer(ports.sessions ?? SessionHost.none))
+export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost | SettingsSource> =>
+  Layer.mergeAll(
+    SessionHost.layer(ports.sessions ?? SessionHost.none),
+    SettingsSource.layer(ports.settings ?? SettingsSource.none)
+  )

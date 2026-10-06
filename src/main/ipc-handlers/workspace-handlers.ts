@@ -1,75 +1,44 @@
-import { ipcMain } from 'electron'
-import { workspaceManager } from '../workspace-manager'
+import { BrowserWindow, ipcMain } from 'electron'
 import { windowRegistry } from '../window-registry'
-import { isValidLayoutKey } from '../sidebar-layout-manager'
-import type { Workspace } from '../../shared/workspace-types'
+import { shellSettingsSource as settings } from '../settings/shell-source'
 
-/** Registry/pin changes reach every OTHER window, which folds them into its
- *  stores (registry and pins only — never groups or sessions). The sender
- *  already has the state; sending it back would race its next mutation. */
-function broadcastStateChanged(sender: Electron.WebContents): void {
-  const { workspaces, pins } = workspaceManager.load()
-  for (const win of windowRegistry.listWindows()) {
-    if (win.webContents.id === sender.id) continue
-    win.webContents.send('workspace:state-changed', { workspaces, pins })
-  }
+/** The window key of the renderer that asked, so the change event names it
+ *  as the writer and it is skipped on the way back: it already has the
+ *  state, and sending it back would race its next mutation. */
+function originOf(sender: Electron.WebContents): string | undefined {
+  const win = BrowserWindow.fromWebContents(sender)
+  return (win && windowRegistry.getKeyForWindow(win.id)) ?? undefined
 }
 
-/** A renderer can send anything; a registry entry that is not a workspace
- *  would take down every path that reads `rootDir` (session restore among
- *  them). Reject the whole write rather than store one bad entry. */
-function isWorkspace(x: unknown): x is Workspace {
-  if (typeof x !== 'object' || x === null) return false
-  const w = x as Record<string, unknown>
-  return (
-    isValidLayoutKey(w.id) &&
-    typeof w.name === 'string' &&
-    typeof w.rootDir === 'string' &&
-    w.rootDir.length > 0 &&
-    (w.profileFile === null || typeof w.profileFile === 'string') &&
-    typeof w.createdAt === 'number'
-  )
-}
-
-/** The workspace state file, written field by field: the renderer owns the
+/** The workspace state file over IPC, written field by field through the
+ *  same settings source the server writes it through: the renderer owns the
  *  state during a run and persists every mutation through the channel for
  *  the field it changed; main keeps a synchronous cache so the PTY layer can
- *  stamp spawns without an async hop. The whole-file `workspace:save` is
- *  gone — with several windows it was last-writer-wins on every field. */
+ *  stamp spawns without an async hop. Registry and pin changes reach every
+ *  OTHER window, which folds them into its stores (registry and pins only,
+ *  never groups or sessions). */
 export function registerWorkspaceHandlers(): void {
-  ipcMain.handle('workspace:load', () => {
-    return workspaceManager.load()
+  ipcMain.handle('workspace:load', () => settings.workspaces.load())
+
+  ipcMain.handle('workspace:update-registry', (event, workspaces: unknown) =>
+    settings.workspaces.updateRegistry(workspaces as never, originOf(event.sender))
+  )
+
+  ipcMain.handle('workspace:update-pins', (event, scope: unknown, pins: unknown) =>
+    settings.workspaces.updatePins(scope as never, pins as never, originOf(event.sender))
+  )
+
+  ipcMain.handle('workspace:set-last-active', async (_event, workspaceId: unknown) => {
+    await settings.workspaces.setLastActive(workspaceId as never)
+    return { ok: true as const }
   })
 
-  ipcMain.handle('workspace:update-registry', (event, workspaces: unknown) => {
-    if (!Array.isArray(workspaces) || !workspaces.every(isWorkspace)) {
-      console.error('[workspace] refused: update-registry payload is not a list of workspaces')
-      return { ok: false as const, reason: 'invalid' as const }
+  settings.subscribe((event) => {
+    if (event._tag !== 'workspaces.state_changed') return
+    const { workspaces, pins, origin } = event
+    for (const win of windowRegistry.listWindows()) {
+      if (origin !== null && windowRegistry.getKeyForWindow(win.id) === origin) continue
+      win.webContents.send('workspace:state-changed', { workspaces, pins })
     }
-    workspaceManager.updateRegistry(workspaces)
-    broadcastStateChanged(event.sender)
-    return { ok: true as const }
-  })
-
-  // Pins are per workspace and global to the app: any window writes the
-  // partition it changed (a refresh from the .clave files, a pin added or
-  // removed), and every other window folds the change in. 'all' is the
-  // one-time localStorage import. The scope is a partition key and is
-  // validated as one.
-  ipcMain.handle('workspace:update-pins', (event, scope: unknown, pins: unknown) => {
-    const key: string | null | 'all' | undefined =
-      scope === 'all' || scope === null ? scope : isValidLayoutKey(scope) ? scope : undefined
-    if (key === undefined || !Array.isArray(pins)) {
-      console.error(`[workspace] refused: invalid pins scope ${JSON.stringify(scope)}`)
-      return { ok: false as const, reason: 'invalid-key' as const }
-    }
-    workspaceManager.updatePins(key, pins)
-    broadcastStateChanged(event.sender)
-    return { ok: true as const }
-  })
-
-  ipcMain.handle('workspace:set-last-active', (_event, workspaceId: unknown) => {
-    workspaceManager.setLastActive(isValidLayoutKey(workspaceId) ? workspaceId : null)
-    return { ok: true as const }
   })
 }

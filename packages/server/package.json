@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./embedded": "./src/embedded.ts",
-    "./test-support": "./src/test-support.ts"
+    "./test-support": "./src/test-support.ts",
+    "./settings/test-support": "./src/settings/test-support.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

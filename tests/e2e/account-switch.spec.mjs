@@ -11,6 +11,14 @@
 //
 // The checks are what the session's own shell prints, never a badge: a
 // dropped spawn field renders a perfect UI and runs on the wrong subscription.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it
+// shows comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync, writeFileSync, existsSync, lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -46,7 +54,9 @@ export async function run(t) {
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
         const state = (globalThis.__switchFixture = { quota: {}, codexReads: [] })
         const window = (used, kind = 'session') => ({
           key: `${kind}:x`,
@@ -57,21 +67,20 @@ export async function run(t) {
           resetsAt: Date.now() + 3600_000,
           severity: null
         })
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
+        const original = settings.usage.readClaude
         // The Default account is the machine login: never read here.
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') {
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default') {
             return { windows: [window(30)], fetchedAt: Date.now() }
           }
-          return original(event, accountId, options)
-        })
-        const snapshot = handlers.get('usage:claude-snapshot')
-        handlers.set('usage:claude-snapshot', async (event) => {
-          const all = await snapshot(event)
+          return original(accountId, force)
+        }
+        const snapshot = settings.usage.claudeSnapshot
+        settings.usage.claudeSnapshot = async () => {
+          const all = await snapshot()
           delete all.default
           return all
-        })
+        }
         // The probe answers per token, with a quota the test moves.
         state.quota = { [WORK_TOKEN]: 0.1, [PLAY_TOKEN]: 0.2 }
         globalThis.fetch = async (url, init) => {
@@ -95,14 +104,13 @@ export async function run(t) {
           })
         }
         // Codex usage: a canned read per account, no codex process.
-        ipcMain.removeHandler('usage:get-codex-limits')
-        ipcMain.handle('usage:get-codex-limits', (_event, accountId) => {
+        settings.usage.readCodex = async (accountId) => {
           state.codexReads.push(accountId ?? 'default')
           return {
             windows: [window(accountId === 'default' || !accountId ? 20 : 10, 'weekly_all')],
             fetchedAt: Date.now()
           }
-        })
+        }
       },
       { WORK_TOKEN, PLAY_TOKEN }
     )

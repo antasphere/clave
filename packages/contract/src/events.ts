@@ -11,6 +11,7 @@
 import { Schema } from 'effect'
 import { Client } from './clients'
 import { AgentState } from './sessions'
+import { SettingsEvent } from './settings'
 
 export const ServerEvent = Schema.Union(
   // ── Clients ──
@@ -27,8 +28,10 @@ export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('session.cleared', {
     id: Schema.String,
     providerSessionId: Schema.NullOr(Schema.String)
-  })
-  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+  }),
+  // ── Lane D: settings (accounts, usage, workspaces) ──
+  ...SettingsEvent.members
+  // ── Lane B: terminals · Lane C: sidebar ──
 )
 export type ServerEvent = typeof ServerEvent.Type
 

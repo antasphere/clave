@@ -14,6 +14,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 - **The app runs on a server** — Clave main boots a server beside the window (in-process for now) or attaches to one started on its own under `CLAVE_SERVER_URL`; `npm run dev:attached` runs the two side by side, the end-to-end suite runs both ways (`CLAVE_E2E_SERVER=attached`) and in CI, and ADR 0003 records the architecture of the split. Nothing changes on screen.
 
+- **The settings are served by the server** — accounts (Claude and Codex, their login jobs, the usage reads), launch profiles, the app icon and the workspace registry and pins are read and changed through Clave's server: the contract's settings group has its handlers behind one settings port, the typed client its settings calls, and the preload routes every settings method and listener through the client once the shell names an endpoint (over IPC before). In the app the port is the shell's own managers, one truth for both routes; the standalone server serves the same settings from its own data directory and answers `CapabilityUnavailable` for the two terminal logins and the app icon it cannot carry. A token still travels in one command only, redacted, and reaches no answer, list, log or push frame.
+
 ## [2.0.0] — 2026-09-30
 
 Clave 2.0. A session is no longer only a terminal: Claude Code and Codex now open in a native chat view, the same session can be read as a terminal or as a Terminal view, and plugins can add agents, views and chrome of their own. Your sessions, groups and settings from 1.x carry over as they are.

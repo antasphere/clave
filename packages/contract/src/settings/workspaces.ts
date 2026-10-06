@@ -9,6 +9,7 @@
  */
 import { Command, Query } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
+import { SettingsRefused } from './failures'
 
 // ---------------------------------------------------------------------------
 // Views
@@ -41,6 +42,12 @@ export const WorkspaceStateView = Schema.Struct({
 
 const Ok = Schema.Struct({ ok: Schema.Literal(true) })
 
+/** The window key of the writer, when a window wrote. The change event
+ *  carries it back so the writer drops its own echo: it already holds the
+ *  state, and folding the echo in would race its next mutation (the rule the
+ *  IPC handler kept by sending to every OTHER window). */
+const Origin = Schema.optional(Schema.String)
+
 // ---------------------------------------------------------------------------
 // Commands and queries
 // ---------------------------------------------------------------------------
@@ -53,37 +60,43 @@ export const LoadWorkspaceState = Query.define('LoadWorkspaceState', {
 
 /** `workspace:update-registry` — the whole list replaces the registry, or nothing does. */
 export const UpdateWorkspaceRegistry = Command.define('UpdateWorkspaceRegistry', {
-  payload: Schema.Struct({ workspaces: Schema.Array(WorkspaceView) }),
+  payload: Schema.Struct({ workspaces: Schema.Array(WorkspaceView), origin: Origin }),
   success: Schema.Union(
     Ok,
     Schema.Struct({ ok: Schema.Literal(false), reason: Schema.Literal('invalid') })
-  )
+  ),
+  failure: SettingsRefused
 })
 
 /** `workspace:update-pins` — one workspace's pins, the unscoped ones (null), or 'all'. */
 export const UpdateWorkspacePins = Command.define('UpdateWorkspacePins', {
   payload: Schema.Struct({
     scope: Schema.NullOr(Schema.String),
-    pins: PinsView
+    pins: PinsView,
+    origin: Origin
   }),
   success: Schema.Union(
     Ok,
     Schema.Struct({ ok: Schema.Literal(false), reason: Schema.Literal('invalid-key', 'no-window') })
-  )
+  ),
+  failure: SettingsRefused
 })
 
 /** `workspace:set-last-active` */
 export const SetLastActiveWorkspace = Command.define('SetLastActiveWorkspace', {
   payload: Schema.Struct({ workspaceId: Schema.NullOr(Schema.String) }),
-  success: Ok
+  success: Ok,
+  failure: SettingsRefused
 })
 
 // ---------------------------------------------------------------------------
 // Events: members of the server's one event union (`../events.ts`).
 // ---------------------------------------------------------------------------
 
-/** `workspace:state-changed`: the registry and the pins, never groups or sessions. */
+/** `workspace:state-changed`: the registry and the pins, never groups or
+ *  sessions; `origin` names the window that wrote, or null when main did. */
 export const WorkspaceStateChanged = Schema.TaggedStruct('workspaces.state_changed', {
   workspaces: Schema.Array(WorkspaceView),
-  pins: PinsView
+  pins: PinsView,
+  origin: Schema.NullOr(Schema.String)
 })

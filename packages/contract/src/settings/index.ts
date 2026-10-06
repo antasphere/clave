@@ -15,6 +15,7 @@ import {
 import { WorkspaceStateChanged } from './workspaces'
 
 export * from './accounts'
+export * from './failures'
 export * from './launch-profiles'
 export * from './preferences'
 export * from './workspaces'

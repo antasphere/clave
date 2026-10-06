@@ -16,6 +16,7 @@
  */
 import { Command, Query } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
+import { RefusedOrUnavailable, SettingsRefused } from './failures'
 
 // ---------------------------------------------------------------------------
 // Views
@@ -129,25 +130,29 @@ export const ListMigratedClaudeAccounts = Query.define('ListMigratedClaudeAccoun
 /** `claude-accounts:add` */
 export const AddClaudeAccount = Command.define('AddClaudeAccount', {
   payload: Schema.Struct({ label: Schema.String }),
-  success: ClaudeAccountView
+  success: ClaudeAccountView,
+  failure: SettingsRefused
 })
 
 /** `claude-accounts:update` */
 export const RenameClaudeAccount = Command.define('RenameClaudeAccount', {
   payload: Schema.Struct({ id: Schema.String, updates: AccountLabelUpdates }),
-  success: Schema.UndefinedOr(ClaudeAccountView)
+  success: Schema.UndefinedOr(ClaudeAccountView),
+  failure: SettingsRefused
 })
 
 /** `claude-accounts:reorder` */
 export const ReorderClaudeAccounts = Command.define('ReorderClaudeAccounts', {
   payload: Schema.Struct({ ids: Schema.Array(Schema.String) }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 /** `claude-accounts:remove` */
 export const RemoveClaudeAccount = Command.define('RemoveClaudeAccount', {
   payload: Schema.Struct({ id: Schema.String }),
-  success: Schema.Boolean
+  success: Schema.Boolean,
+  failure: SettingsRefused
 })
 
 /**
@@ -156,13 +161,15 @@ export const RemoveClaudeAccount = Command.define('RemoveClaudeAccount', {
  */
 export const SetClaudeAccountToken = Command.define('SetClaudeAccountToken', {
   payload: Schema.Struct({ id: Schema.String, token: Schema.Redacted(Schema.String) }),
-  success: UsageReadView
+  success: UsageReadView,
+  failure: SettingsRefused
 })
 
 /** `claude-accounts:clear-token` */
 export const ClearClaudeAccountToken = Command.define('ClearClaudeAccountToken', {
   payload: Schema.Struct({ id: Schema.String }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 // ---------------------------------------------------------------------------
@@ -178,59 +185,69 @@ export const ListCodexAccounts = Query.define('ListCodexAccounts', {
 /** `codex-accounts:add` */
 export const AddCodexAccount = Command.define('AddCodexAccount', {
   payload: Schema.Struct({ label: Schema.String, kind: Schema.optional(CodexAccountKind) }),
-  success: CodexAccountView
+  success: CodexAccountView,
+  failure: SettingsRefused
 })
 
 /** `codex-accounts:update` */
 export const RenameCodexAccount = Command.define('RenameCodexAccount', {
   payload: Schema.Struct({ id: Schema.String, updates: AccountLabelUpdates }),
-  success: Schema.UndefinedOr(CodexAccountView)
+  success: Schema.UndefinedOr(CodexAccountView),
+  failure: SettingsRefused
 })
 
 /** `codex-accounts:reorder` */
 export const ReorderCodexAccounts = Command.define('ReorderCodexAccounts', {
   payload: Schema.Struct({ ids: Schema.Array(Schema.String) }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 /** `codex-accounts:remove` */
 export const RemoveCodexAccount = Command.define('RemoveCodexAccount', {
   payload: Schema.Struct({ id: Schema.String }),
-  success: Schema.Boolean
+  success: Schema.Boolean,
+  failure: SettingsRefused
 })
 
 /** `codex-accounts:clear-credential` */
 export const ClearCodexAccountCredential = Command.define('ClearCodexAccountCredential', {
   payload: Schema.Struct({ id: Schema.String }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 // ---------------------------------------------------------------------------
 // Login jobs
 // ---------------------------------------------------------------------------
 
-/** `accounts:login-start` */
+/** `accounts:login-start` — runs the provider's own login command in a PTY
+ *  the server owns; a server without one answers `CapabilityUnavailable`. */
 export const StartAccountLogin = Command.define('StartAccountLogin', {
   payload: Schema.Struct({ provider: AccountProvider, accountId: Schema.String }),
-  success: AccountLoginJobView
+  success: AccountLoginJobView,
+  failure: RefusedOrUnavailable
 })
 
 /** `accounts:login-api-key` — the one payload a Codex API key travels in. */
 export const StartCodexApiKeyLogin = Command.define('StartCodexApiKeyLogin', {
   payload: Schema.Struct({ accountId: Schema.String, apiKey: Schema.Redacted(Schema.String) }),
-  success: AccountLoginJobView
+  success: AccountLoginJobView,
+  failure: RefusedOrUnavailable
 })
 
 /** `accounts:login-input` — what the user types into the login (the code it asks for). */
 export const SendAccountLoginInput = Command.define('SendAccountLoginInput', {
   payload: Schema.Struct({ jobId: Schema.String, text: Schema.String }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 /** `accounts:login-cancel` */
 export const CancelAccountLogin = Command.define('CancelAccountLogin', {
   payload: Schema.Struct({ jobId: Schema.String }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: SettingsRefused
 })
 
 /** `accounts:login-list` */

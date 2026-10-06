@@ -14,6 +14,14 @@
 // The machine's own login is never read: the Default account's channel is
 // stubbed, and the probe a token account reads with is a stubbed fetch in the
 // main process answering the unified rate-limit headers per token.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it shows
+// comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync } from 'node:fs'
 import {
   launchApp,
@@ -43,14 +51,15 @@ export async function run(t) {
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
         const state = (globalThis.__accountsFixture = { probes: [], defaultReads: 0 })
         // The Default account is the machine login: never read here. Every
         // other account goes through the real manager and the stubbed probe.
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') {
+        const original = settings.usage.readClaude
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default') {
             state.defaultReads++
             return {
               windows: [
@@ -67,17 +76,17 @@ export async function run(t) {
               fetchedAt: Date.now()
             }
           }
-          return original(event, accountId, options)
-        })
+          return original(accountId, force)
+        }
         // The first boot, before this fixture, read the machine login for
         // real; a window primes from main's snapshot, so that read must not
         // reach the renderer under test either.
-        const snapshot = handlers.get('usage:claude-snapshot')
-        handlers.set('usage:claude-snapshot', async (event) => {
-          const all = await snapshot(event)
+        const snapshot = settings.usage.claudeSnapshot
+        settings.usage.claudeSnapshot = async () => {
+          const all = await snapshot()
           delete all.default
           return all
-        })
+        }
         // The probe: a one-token message whose headers carry the quota. Which
         // account answered is decided by the bearer token, as the API does.
         const byToken = {
