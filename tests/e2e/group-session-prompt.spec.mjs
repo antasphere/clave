@@ -2,6 +2,7 @@
 // PRDCT-3239): this spec starts a session through the app, and a standalone
 // server refuses every start until its terminal process exists (wave 3);
 // the shared attached-mode fixture seam comes with it. Not a known failure.
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * The group `+` reproduces the group's FIRST SESSION when the `.clave` declares
  * no group-level `prompt`: its brief, and the directory it opens in.
@@ -31,7 +32,7 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn,
+  spawnJournal,
   selectBuiltIn,
   fixturePath
 } from './harness.mjs'
@@ -123,7 +124,7 @@ export async function run(t) {
       addBtn
     )
 
-    const readSpawns = await spyPtySpawn(app)
+    const readSpawns = spawnJournal(DIR)
     await win.click('.group-new-session')
     await win.waitForTimeout(4000)
 

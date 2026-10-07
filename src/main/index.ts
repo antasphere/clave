@@ -52,6 +52,7 @@ import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource } from './settings/shell-source'
+import { terminalPorts } from './ports/terminals'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -122,8 +123,10 @@ async function bootServer(): Promise<void> {
             // ── Lane A: sessions ──
             sessions: getSessionHost(),
             // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──
-            settings: shellSettingsSource
-            // ── Lane B: terminals · Lane C: sidebar ──
+            settings: shellSettingsSource,
+            // ── Lane B: terminals (node-pty in this process, src/main/ports/terminal.ts) ──
+            terminals: terminalPorts().terminals
+            // ── Lane C: sidebar ──
           }
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }

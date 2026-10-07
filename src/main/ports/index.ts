@@ -19,3 +19,17 @@ export {
   lazySettingsPorts,
   type SettingsPorts
 } from './registry'
+export {
+  nodePtyTerminals,
+  type TerminalPort,
+  type TerminalProcess,
+  type TerminalSpawn
+} from './terminal'
+export { noMcpConfig, type McpConfigPort } from './mcp-config'
+export {
+  installTerminalPorts,
+  resetTerminalPorts,
+  terminalPorts,
+  lazyTerminalPorts,
+  type TerminalPorts
+} from './terminals'

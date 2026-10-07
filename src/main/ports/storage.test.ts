@@ -66,6 +66,20 @@ describe('fileStorage', () => {
   })
 })
 
+describe('fileStorage.list', () => {
+  it('names the documents directly under a folder, and nothing for a folder that is not there', () => {
+    const dir = tempDataDir()
+    const storage = fileStorage(dir)
+    expect(storage.list('records')).toEqual([])
+    storage.write('records/a.json', '1')
+    storage.write('records/b.json', '2')
+    storage.write('records/nested/c.json', '3')
+    fs.writeFileSync(path.join(dir, 'records', 'd.json.tmp'), 'half')
+    expect(storage.list('records').sort()).toEqual(['a.json', 'b.json', 'd.json.tmp'])
+    expect(storage.list('records/nested')).toEqual(['c.json'])
+  })
+})
+
 describe('readJson and writeJson', () => {
   it('round-trip a value as 2-space JSON, and read null for a missing or broken document', () => {
     const storage = fileStorage(tempDataDir())

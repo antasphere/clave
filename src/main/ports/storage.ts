@@ -25,6 +25,10 @@ export interface StoragePort {
   write(name: string, text: string, options?: { mode?: number }): void
   /** Forget a document. Nothing happens when there is none. */
   remove(name: string): void
+  /** The names of the documents directly under a folder, unordered; empty
+   *  when the folder is not there. A domain that keeps one document per
+   *  record (the session records) reads its folder through this. */
+  list(folder: string): string[]
 }
 
 /** The one storage adapter: JSON documents as files under `dir`. */
@@ -52,6 +56,16 @@ export function fileStorage(dir: string): StoragePort {
     },
     remove(name) {
       fs.rmSync(target(name), { force: true })
+    },
+    list(folder) {
+      try {
+        return fs
+          .readdirSync(target(folder), { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name)
+      } catch {
+        return []
+      }
     }
   }
 }

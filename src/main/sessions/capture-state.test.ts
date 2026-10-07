@@ -33,8 +33,13 @@ import {
   captureTabClosed
 } from '../exchange-capture/service'
 import { startWatching, stateFilePath } from '../agent-state-manager'
+import { installTerminalPorts } from '../ports/terminals'
+import { fileStorage } from '../ports/storage'
 import type { SessionState, EndpointIdentity, CaptureEvent } from '../exchange-capture/types'
 fixture.dir = mkdtempSync(join(tmpdir(), 'clave-2527-capture-'))
+// The agent state folder comes from the terminal layer's storage port now,
+// not from Electron's data path (PRDCT-3240).
+installTerminalPorts({ storage: fileStorage(fixture.dir) })
 afterEach(() => {
   for (const session of sessionManager.list()) sessionManager.forget(session.id)
   fixture.runtimeIdentities.clear()

@@ -1,20 +1,19 @@
 import type { UserMessageInput } from '../../../shared/session-model'
 import { migrateSessionAdapterRecord } from '../../session-records-index'
-import * as pty from 'node-pty'
 import { execFile, execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
-import { app } from 'electron'
 import {
   DEFAULT_TERMINAL_COLS,
   DEFAULT_TERMINAL_ROWS,
   INITIAL_COMMAND_DELAY_MS
 } from '../../constants'
 import { stateFilePath } from '../../agent-state-manager'
-import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../../mcp/mcp-runtime'
+import { lazyTerminalPorts } from '../../ports/terminals'
+import { readJson } from '../../ports/storage'
+import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
-import { dismissSessionOffers } from '../../copy-offer-manager'
 import { launchProfileManager } from '../../launch-profile-manager'
 import { claudeAccountsManager } from '../../claude-accounts'
 import { codexAccountsManager } from '../../codex-accounts'
@@ -210,6 +209,10 @@ const TMUX_SOCKET = 'clave'
 // undefined = not probed yet, null = tmux not installed, string = absolute path
 let tmuxPathCache: string | null | undefined
 let tmuxConfigPathCache: string | null = null
+/** The tmux config, as the storage port names it. */
+export const TMUX_CONFIG_DOCUMENT = 'clave.tmux.conf'
+/** The folder of the session records, as the storage port names it. */
+export const SESSION_RECORDS_FOLDER = 'session-records'
 
 /** Resolve tmux against the *login* shell PATH (Homebrew lives in /opt/homebrew
  *  which is usually absent from Electron's process.env.PATH). Uses the already
@@ -351,10 +354,11 @@ function getTmuxConfigPath(): string {
     ...TMUX_SESSION_ENV_VARS.map((name) => `set -ga update-environment ${name}`),
     ''
   ].join('\n')
-  const p = path.join(app.getPath('userData'), 'clave.tmux.conf')
+  // Written through the storage port, read back by tmux by path (`-f`): the
+  // one document of this layer another program is pointed at.
   try {
-    fs.writeFileSync(p, conf, 'utf-8')
-    tmuxConfigPathCache = p
+    lazyTerminalPorts.storage.write(TMUX_CONFIG_DOCUMENT, conf)
+    tmuxConfigPathCache = lazyTerminalPorts.storage.pathOf(TMUX_CONFIG_DOCUMENT)
   } catch {
     // Fall back to running without a config file rather than failing the spawn.
     return ''
@@ -529,15 +533,19 @@ function recordKeyOf(meta: SessionRecord): string {
   return meta.tmuxName ?? meta.id
 }
 
-let recordsDirEnsured = false
+let recordsDirMigratedFor: string | null = null
 
+/** The records folder's absolute path, for the one reader that walks it by
+ *  path (the MCP config sweep). Everything in this file reads and writes the
+ *  records as documents of the storage port. */
 export function sessionRecordsDir(): string {
-  const dir = path.join(app.getPath('userData'), 'session-records')
-  if (!recordsDirEnsured) {
-    recordsDirEnsured = true
+  const storage = lazyTerminalPorts.storage
+  const dir = storage.pathOf(SESSION_RECORDS_FOLDER)
+  if (recordsDirMigratedFor !== dir) {
+    recordsDirMigratedFor = dir
     // One-time move: records used to live in clave-tmux-sessions/ back when
     // only tmux-backed sessions had them.
-    const legacy = path.join(app.getPath('userData'), 'clave-tmux-sessions')
+    const legacy = storage.pathOf('clave-tmux-sessions')
     try {
       if (!fs.existsSync(dir) && fs.existsSync(legacy)) fs.renameSync(legacy, dir)
     } catch {
@@ -547,6 +555,11 @@ export function sessionRecordsDir(): string {
   return dir
 }
 
+/** A record's document name for the storage port. */
+function recordDocument(key: string): string {
+  return `${SESSION_RECORDS_FOLDER}/${key}.json`
+}
+
 /** Persist restore metadata. Returns false if it couldn't be written — the
  *  tmux path then falls back to a non-tmux spawn so we never create a tmux
  *  session we can't track (and would later be unable to adopt or clean up). */
@@ -554,15 +567,15 @@ function writeSessionRecord(meta: SessionRecord): boolean {
   const key = recordKeyOf(meta)
   if (!isValidRecordKey(key)) return false
   try {
-    const dir = sessionRecordsDir()
-    fs.mkdirSync(dir, { recursive: true })
-    // Write-then-rename: records are rewritten on every rename, so a kill
-    // mid-write must never be able to leave a truncated file behind — that
-    // would lose the whole session, not just its name.
-    const target = path.join(dir, `${key}.json`)
-    const tmp = `${target}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(migrateSessionAdapterRecord(meta)), 'utf-8')
-    fs.renameSync(tmp, target)
+    sessionRecordsDir()
+    // The port writes through a temp file and a rename: records are
+    // rewritten on every rename, so a kill mid-write must never be able to
+    // leave a truncated file behind — that would lose the whole session, not
+    // just its name.
+    lazyTerminalPorts.storage.write(
+      recordDocument(key),
+      JSON.stringify(migrateSessionAdapterRecord(meta))
+    )
     return true
   } catch {
     return false
@@ -571,21 +584,15 @@ function writeSessionRecord(meta: SessionRecord): boolean {
 
 function readSessionRecord(key: string): SessionRecord | null {
   if (!isValidRecordKey(key)) return null
-  try {
-    return migrateSessionAdapterRecord(
-      JSON.parse(
-        fs.readFileSync(path.join(sessionRecordsDir(), `${key}.json`), 'utf-8')
-      ) as SessionRecord
-    )
-  } catch {
-    return null
-  }
+  sessionRecordsDir()
+  const raw = readJson(lazyTerminalPorts.storage, recordDocument(key))
+  return raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
 }
 
 function deleteSessionRecord(key: string): void {
   if (!isValidRecordKey(key)) return
   try {
-    fs.unlinkSync(path.join(sessionRecordsDir(), `${key}.json`))
+    lazyTerminalPorts.storage.remove(recordDocument(key))
   } catch {
     // already gone
   }
@@ -844,7 +851,7 @@ export interface PtySession {
   id: string
   cwd: string
   folderName: string
-  ptyProcess: pty.IPty | null
+  ptyProcess: TerminalProcess | null
   alive: boolean
   claudeSessionId?: string
   piSessionId?: string
@@ -1014,8 +1021,7 @@ export class PtyBackend {
               ? options.piSessionId
               : randomUUID())
         }
-        const mcpConfigPath =
-          kind === 'claude' && getMcpRuntime() ? writeSessionMcpConfig(id) : null
+        const mcpConfigPath = kind === 'claude' ? lazyTerminalPorts.mcpConfig.write(id) : null
         const piExtensionPath =
           kind === 'pi'
             ? path
@@ -1259,8 +1265,11 @@ export class PtyBackend {
     // Per-session Claude account: a config dir and/or a pasted token, set only
     // when the account carries them (see buildSpawnEnv). A tmux-backed session
     // gets the same environment: tmux seeds a new session from the creating
-    // client's, which is this one.
-    const ptyProcess = pty.spawn(file, args, {
+    // client's, which is this one. The process comes from the terminal port
+    // (node-pty in this process today, a process of its own in wave 3).
+    const ptyProcess = lazyTerminalPorts.terminals.spawn({
+      file,
+      args,
       name: ptyName,
       cols: Math.max(1, cols),
       rows: Math.max(1, rows),
@@ -1329,13 +1338,10 @@ export class PtyBackend {
         deleteSessionRecord(session.tmuxName ?? id)
       }
       // On a real close the session is gone for good; on app quit (tmux
-      // survivor) the config must stay valid for the reattached agent.
-      if (killTmuxSession) {
-        deleteSessionMcpConfig(id)
-        // Copy offers are surfaced in the tab's own header — once the tab is
-        // gone they are unreachable, so don't keep their values in memory.
-        dismissSessionOffers(id)
-      }
+      // survivor) the config must stay valid for the reattached agent. (The
+      // tab's copy offers are dropped by the manager's close, which every
+      // close path goes through.)
+      if (killTmuxSession) lazyTerminalPorts.mcpConfig.remove(id)
       if (session.alive && session.ptyProcess) {
         session.ptyProcess.kill()
       }
@@ -1500,23 +1506,15 @@ export class PtyBackend {
     )
     const adoptedIds = new Set(this.sessions.keys())
 
-    const dir = sessionRecordsDir()
-    let files: string[] = []
-    try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
-    } catch {
-      files = []
-    }
+    sessionRecordsDir()
+    const storage = lazyTerminalPorts.storage
+    const files = storage.list(SESSION_RECORDS_FOLDER).filter((f) => f.endsWith('.json'))
 
     const adoptable: SessionRecord[] = []
     for (const file of files) {
-      let meta: SessionRecord | null = null
-      try {
-        meta = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'))
-      } catch {
-        meta = null
-      }
-      if (meta) meta = migrateSessionAdapterRecord(meta)
+      const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
+      const meta: SessionRecord | null =
+        raw && typeof raw === 'object' ? migrateSessionAdapterRecord(raw as SessionRecord) : null
       if (meta && meta.antigravityMode === undefined) {
         // Legacy records (written before the Antigravity switch) carry the old
         // `antigravityMode`'s predecessor key. Map it forward so a survivor of the
@@ -1530,7 +1528,7 @@ export class PtyBackend {
         (meta.tmuxName ? isValidTmuxName(meta.tmuxName) : !!meta.id && UUID_RE.test(meta.id))
       if (!meta || !validShape) {
         try {
-          fs.unlinkSync(path.join(dir, file))
+          storage.remove(`${SESSION_RECORDS_FOLDER}/${file}`)
         } catch {
           /* ignore */
         }

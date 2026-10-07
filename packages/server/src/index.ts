@@ -34,4 +34,13 @@ export {
   settingsHandlers
 } from './settings'
 
-// ── Lane B: terminals · Lane C: sidebar ──
+// ── Lane B: terminals ──
+export {
+  Terminals,
+  type TerminalsService,
+  type TerminalExit,
+  type TerminalProcess,
+  type TerminalSpawn
+} from './terminals'
+
+// ── Lane C: sidebar ──

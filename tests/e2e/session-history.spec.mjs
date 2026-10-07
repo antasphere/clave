@@ -2,6 +2,7 @@
 // PRDCT-3239): this spec starts a session through the app, and a standalone
 // server refuses every start until its terminal process exists (wave 3);
 // the shared attached-mode fixture seam comes with it. Not a known failure.
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * The session history (PRDCT-1738, reframed by PRDCT-1766), end to end.
  *
@@ -31,7 +32,7 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  spyPtySpawn,
+  spawnJournal,
   until,
   killLeakedE2eTmux,
   fixturePath
@@ -777,7 +778,7 @@ export async function run(t) {
     await win.waitForTimeout(350)
     await win.locator('.menu-surface .menu-item', { hasText: 'History' }).click()
     await win.waitForSelector('[data-history-row="cc-alpha-2"]', { timeout: 5000 })
-    const readSpawns = await spyPtySpawn(app)
+    const readSpawns = spawnJournal(DIR)
     await win.click('[data-history-row="cc-alpha-2"]')
     await win.waitForTimeout(800)
     const spawns = await readSpawns()

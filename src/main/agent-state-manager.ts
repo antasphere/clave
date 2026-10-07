@@ -1,19 +1,23 @@
-import { registerSessionIpc } from './sessions/ipc'
 import { sessionManager } from './sessions/session-manager'
-import { app } from 'electron'
-import { mkdirSync, readFileSync, existsSync, rmSync, watch, type FSWatcher } from 'fs'
+import { lazyTerminalPorts } from './ports/terminals'
+import { mkdirSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
 
 /**
  * Deterministic Claude Code session state, sourced from CC lifecycle hooks.
  *
  * Each Clave-spawned `claude` session is launched with `--settings` injecting a
- * tiny hook config (see pty-manager.ts) whose commands write a single state word
- * to `<userData>/agent-state/<claveSessionId>.state`. This manager owns that
- * directory and watches it, forwarding transitions to the renderer.
+ * tiny hook config (see pty-backend.ts) whose commands write a single state word
+ * to `<data>/agent-state/<claveSessionId>.state`. This manager owns that
+ * folder, through the terminal layer's storage port, and watches it,
+ * forwarding transitions to whoever started the watch (the shell fans them
+ * out to its windows).
  *
  * Pi's bundled extension writes the same state words. Codex uses its TUI's OSC
  * runtime titles instead, consumed by use-terminal.ts. Antigravity stays neutral.
+ *
+ * Nothing here imports Electron: the folder comes from the storage port, so
+ * the same file runs under the app and under a server of its own.
  */
 import type { AgentState } from '../shared/session-model'
 export type { AgentState } from '../shared/session-model'
@@ -26,20 +30,32 @@ const VALID: ReadonlySet<string> = new Set<AgentState>([
   'ended'
 ])
 const SUFFIX = '.state'
+/** The folder, as the storage port names a document under it. */
+const FOLDER = 'agent-state'
 
-let stateDir: string | null = null
 let watcher: FSWatcher | null = null
+/** The last word forwarded per session. The kernel may deliver one write as
+ *  two events and two writes as one; a hook writes `working` on every tool
+ *  call. Forwarding a word only when it differs from the last one makes a
+ *  transition one transition everywhere, and the renderer never sees the
+ *  same state twice per hook. */
+const lastForwarded = new Map<string, AgentState>()
 
+/** The folder's absolute path, created on first ask: the hooks' `mkdir -p`
+ *  recreates it after a deletion, but the watch below needs it first. */
 export function getStateDir(): string {
-  if (!stateDir) {
-    stateDir = join(app.getPath('userData'), 'agent-state')
-    try {
-      mkdirSync(stateDir, { recursive: true })
-    } catch {
-      // best-effort; reads/writes will simply no-op if this fails
-    }
+  const dir = lazyTerminalPorts.storage.pathOf(FOLDER)
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    // best-effort; reads/writes will simply no-op if this fails
   }
-  return stateDir
+  return dir
+}
+
+/** The document name of a session's state file, for the storage port. */
+function stateDocument(claveSessionId: string): string {
+  return `${FOLDER}/${claveSessionId}${SUFFIX}`
 }
 
 /** Absolute path of the state file a session's hooks write to. */
@@ -53,7 +69,6 @@ export function stateFilePath(claveSessionId: string): string {
  * state. Safe to call multiple times — only the first call installs the watcher.
  */
 export function startWatching(onState: (claveSessionId: string, state: AgentState) => void): void {
-  registerSessionIpc()
   if (watcher) return
   const dir = getStateDir()
   try {
@@ -62,16 +77,17 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
       const name = filename.toString()
       if (!name.endsWith(SUFFIX)) return
       const claveSessionId = name.slice(0, -SUFFIX.length)
-      const fp = join(dir, name)
       try {
-        if (!existsSync(fp)) return
-        const raw = readFileSync(fp, 'utf-8').trim()
         // A truncate-then-write can momentarily yield an empty/partial read;
         // we simply ignore anything that isn't a known state word and wait for
-        // the follow-up change event carrying the full word.
+        // the follow-up change event carrying the full word. A missing file
+        // (a clearState) reads as null and is nothing either.
+        const raw = lazyTerminalPorts.storage.read(stateDocument(claveSessionId))?.trim()
+        if (!raw) return
         // Events adapters own state; retain hook files without racing the stream.
         if (sessionManager.get(claveSessionId)?.transport === 'events') return
-        if (VALID.has(raw)) {
+        if (VALID.has(raw) && lastForwarded.get(claveSessionId) !== raw) {
+          lastForwarded.set(claveSessionId, raw as AgentState)
           sessionManager.setState(claveSessionId, raw as AgentState)
           onState(claveSessionId, raw as AgentState)
         }
@@ -84,10 +100,18 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
   }
 }
 
+/** Stop the watch (tests); the next `startWatching` installs a new one. */
+export function stopWatching(): void {
+  watcher?.close()
+  watcher = null
+  lastForwarded.clear()
+}
+
 /** Remove a session's state file (call on session exit/kill to avoid stale files). */
 export function clearState(claveSessionId: string): void {
+  lastForwarded.delete(claveSessionId)
   try {
-    rmSync(stateFilePath(claveSessionId), { force: true })
+    lazyTerminalPorts.storage.remove(stateDocument(claveSessionId))
   } catch {
     // ignore
   }
