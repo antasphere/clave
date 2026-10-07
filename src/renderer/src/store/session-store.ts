@@ -43,6 +43,7 @@ import {
 } from '@clave/contract/sidebar/ops'
 import { withDirToggled } from '../lib/panel-expansion'
 import { createSavePipeline } from '../lib/sidebar-save-pipeline'
+import { withoutGroup, withoutSession } from '../lib/sidebar-reflect'
 
 // Re-export types and constants so existing imports continue to work
 export type {
@@ -596,18 +597,25 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
 /**
  * A change the SERVER made and this window merely reflects (a tab or a
  * group that moved away, told over IPC by the shell) is no edit of the
- * person's: it becomes the base the next merge reasons from, and nothing is
- * saved for it. The base is marked BEFORE the store is set: the store tells
- * its subscribers inside `set`, and the save subscription compares against
- * these refs, so marking after would queue one save of the reflected state.
- * Without this, a tab moving away read as the window removing a member, and
- * the push that followed (the group gone with it) had the window tell the
- * person its own move "could not be kept".
+ * person's. The same change is applied to the BASE the next merge reasons
+ * from (lib/sidebar-reflect.ts), never the whole current state: a pending
+ * edit (a rename not yet saved) stays a difference between the state and
+ * the base and is saved on the next pass, while the reflected change itself
+ * is not. Marking the current state as the base folded such an edit into it
+ * and lost it without a word (verifier round 2, the fold race, 8 of 8).
  */
-function setAsBase(next: { groups: SessionGroup[]; displayOrder: string[] }): void {
-  lastPersistedGroups = next.groups
-  lastPersistedOrder = next.displayOrder
-  lastPersistedJson = JSON.stringify({ groups: next.groups, displayOrder: next.displayOrder })
+function reflectOnBase(
+  transform: (layout: { groups: SessionGroup[]; displayOrder: string[] }) => {
+    groups: SessionGroup[]
+    displayOrder: string[]
+  }
+): void {
+  if (!lastPersistedJson) return
+  const base = JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] }
+  lastPersistedJson = JSON.stringify(transform(base))
+  // The refs stay as they were, so the subscription fires once and the
+  // pipeline compares the state with the transformed base: equal when the
+  // window had nothing pending, a save of the pending edit otherwise.
 }
 
 /** Mirror a session's tab name into its tmux sidecar (main process), so the
@@ -989,9 +997,8 @@ export const useSessionStore = create<SessionState>((set) => ({
         focusedSessionId: state.focusedSessionId === id ? null : state.focusedSessionId
       }
     }
-    const next = reflect(useSessionStore.getState())
-    setAsBase({ groups: next.groups!, displayOrder: next.displayOrder! })
-    set(next)
+    reflectOnBase((base) => withoutSession(base, id))
+    set(reflect)
   },
 
   removeGroupForMove: (groupId) => {
@@ -1012,12 +1019,16 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
     }
     const state = useSessionStore.getState()
-    const next = reflect(state)
-    // A group this window does not hold: nothing to reflect, and nothing
-    // of the person's pending edits must fold into the base.
-    if (next === state || !next.groups || !next.displayOrder) return
-    setAsBase({ groups: next.groups, displayOrder: next.displayOrder })
-    set(next)
+    const group = state.groups.find((g) => g.id === groupId)
+    // A group this window does not hold: nothing to reflect.
+    if (!group) return
+    const linked = [
+      ...group.sessionIds,
+      ...group.terminals.map((t) => t.sessionId).filter((id): id is string => id !== null)
+    ]
+    const stayed = linked.filter((sid) => state.sessions.some((s) => s.id === sid))
+    reflectOnBase((base) => withoutGroup(base, groupId, stayed))
+    set(reflect)
   },
 
   removeSession: (id) =>
