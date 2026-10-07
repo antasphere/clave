@@ -184,9 +184,17 @@ const noop = (): void => {}
  *  answer did. An unknown session is the server's refusal, thrown. */
 const subscribeRoute = viaServer<[string], Session>({
   ipc: async (id) => {
-    const session = (await ipcRenderer.invoke('sessions:subscribe', id)) as Session
+    // Stamped BEFORE the round trip: a server announced while the IPC
+    // subscribe is in flight would otherwise find no stamp, bind the stream
+    // listener on push too, and the subscription would be held on both
+    // transports for its life (the verifier's round 2).
     subscribedVia.set(id, 'ipc')
-    return session
+    try {
+      return (await ipcRenderer.invoke('sessions:subscribe', id)) as Session
+    } catch (error) {
+      if (subscribedVia.get(id) === 'ipc') subscribedVia.delete(id)
+      throw error
+    }
   },
   server: async ({ push }, id) => {
     push.connect()

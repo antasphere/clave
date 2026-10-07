@@ -426,6 +426,28 @@ describe('a stream listener follows its subscription’s transport', () => {
     ])
   })
 
+  it('stays off the push channel for an IPC subscription still in flight when the server is announced', async () => {
+    // The IPC answer is held: the server arrives in the middle of the round trip.
+    let answerSubscribe: (session: unknown) => void = () => {}
+    const held = new Promise((resolve) => {
+      answerSubscribe = resolve
+    })
+    mocks.invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'server:endpoint') return null
+      if (channel === 'sessions:subscribe') return held
+      return undefined
+    })
+    const subscribing = api.sessionsSubscribe('s1')
+    api.onSessionStream('s1', vi.fn())
+    await connectBacking()
+    answerSubscribe({ id: 's1', via: 'ipc' })
+    await subscribing
+    await settle()
+    expect(mocks.push!.subscribe).not.toHaveBeenCalled()
+    await api.sessionsUnsubscribe('s1')
+    expect(channels()).toContain('sessions:unsubscribe')
+  })
+
   it('binds the push channel for a session subscribed on the server', async () => {
     answer(onServer)
     await api.sessionsSubscribe('s2')
