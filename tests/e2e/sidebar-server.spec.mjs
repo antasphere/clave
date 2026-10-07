@@ -9,8 +9,11 @@
  * server that cannot host windows, the shell keeps the sidebar and that
  * server holds no layout. Since verifier round 1: a write omitting a live
  * tab, the two-writer race, the stale window save on the IPC road, the
- * notice left alone, a plain pty refused between windows, and a window
- * that booted before the server hearing it once it answers.
+ * notice left alone (provoked first), a plain pty refused between windows,
+ * a window that booted before the server hearing it once it answers, a
+ * pending rename surviving a group's move to another window with nobody
+ * told of a loss, an edit under fire kept or told, no sidebar save over IPC
+ * once the server is up, and a group born during the restore kept.
  *
  * Fails if: the push never reaches the window (the group created over the
  * API is not drawn), the revision guard is dropped (the stale write answers
@@ -61,6 +64,29 @@ function drawnGroups(win) {
 const rowDrawn = (win, id) =>
   win.evaluate((sid) => !!document.querySelector(`[data-sidebar-item-id="${sid}"]`), id)
 const noticeCount = (win) => win.locator('[data-testid="server-notice"]').count()
+
+/** The main process's notifications, recorded at the IPC handler (the same
+ *  tap `spyPtySpawn` uses; `_invokeHandlers` is Electron-private and fails
+ *  loudly if it ever goes). */
+async function spyNotifications(app) {
+  return app.evaluate(({ ipcMain }) => {
+    const handlers = ipcMain._invokeHandlers
+    const original = handlers?.get('notification:show')
+    if (!original) return false
+    globalThis.__e2eNotifications = []
+    handlers.set('notification:show', async (event, options) => {
+      globalThis.__e2eNotifications.push(options)
+      return original(event, options)
+    })
+    return true
+  })
+}
+const notifications = (app) => app.evaluate(() => globalThis.__e2eNotifications ?? [])
+const toldOfALoss = async (app) =>
+  (await notifications(app)).some((n) => /could not be kept/i.test(String(n?.title ?? '')))
+/** How many sidebar calls came over IPC (main's seam under --test-no-activate). */
+const ipcCounts = (app) =>
+  app.evaluate(() => globalThis.__claveE2E?.sidebarIpc ?? { load: 0, save: 0 })
 
 const api = (url, token) => {
   const base = String(url).replace(/\/+$/, '')
@@ -113,6 +139,8 @@ export async function run(t) {
       const identity = await identityOf(win)
       const key = identity?.windowKey
       t.check('the window has a persisted key', typeof key === 'string' && key.length > 0, identity)
+      t.check('the notification tap is in', (await spyNotifications(app)) === true)
+      const ipcAtStart = await ipcCounts(app)
 
       // The window's boot read happened through the server: its layout is
       // known there, and the sidebar is empty to begin with.
@@ -303,6 +331,57 @@ export async function run(t) {
           drawnNow
         )
       }
+
+      // Everything above went the server's road: no sidebar save crossed
+      // IPC since the server came up (verifier round 2, gap 5).
+      const ipcAtEnd = await ipcCounts(app)
+      t.equal(
+        'no sidebar save went over IPC once the server was up',
+        ipcAtEnd.save - ipcAtStart.save,
+        0,
+        { ipcAtStart, ipcAtEnd }
+      )
+
+      // An edit that cannot be kept is TOLD, never silent (verifier round 2,
+      // gap 7): the window renames a group while an outside write removes
+      // it. Whichever lands first, either the rename is on the server, or
+      // the rename found no group to rename, or the person was notified.
+      const doomed = await callMcp(app, 'createGroup', { name: 'Doomed' })
+      await until(async () =>
+        (await client.layout(key)).body?.groups?.some((g) => g.id === doomed.groupId) ? true : null
+      )
+      const beforeDoom = (await client.layout(key)).body
+      let renameFailed = false
+      const [removal] = await Promise.all([
+        client.save({
+          windowKey: key,
+          baseRevision: beforeDoom.revision,
+          groups: beforeDoom.groups.filter((g) => g.id !== doomed.groupId),
+          displayOrder: beforeDoom.displayOrder.filter((id) => id !== doomed.groupId)
+        }),
+        callMcp(app, 'rename', {
+          target: 'group',
+          id: doomed.groupId,
+          name: 'Renamed under fire'
+        }).catch(() => {
+          renameFailed = true
+        })
+      ])
+      const settledDoom = await until(async () => {
+        const r = (await client.layout(key)).body
+        const kept = r?.groups?.some(
+          (g) => g.id === doomed.groupId && g.name === 'Renamed under fire'
+        )
+        if (kept) return { kept: true }
+        if (renameFailed) return { renameFailed: true }
+        if (await toldOfALoss(app)) return { told: true }
+        return null
+      })
+      t.check(
+        `the rename under fire was kept, refused to the caller, or told (removal ${removal.status})`,
+        !!settledDoom,
+        { removal: removal.status, notifications: await notifications(app) }
+      )
     } finally {
       await app.close().catch(() => {})
     }
@@ -336,9 +415,7 @@ export async function run(t) {
         Array.isArray(remote.body) && remote.body.length === 0,
         remote.body
       )
-      // The IPC road keeps the revision guard (verifier round 1, gap 7) and
-      // a sidebar edit leaves the sessions' server notice alone (Minor 3).
-      const noticesBefore = await noticeCount(win)
+      // The IPC road keeps the revision guard (verifier round 1, gap 7).
       const stale = await win.evaluate(() =>
         window.electronAPI.sidebarLayoutSave({ groups: [], displayOrder: [] }, 0)
       )
@@ -349,12 +426,19 @@ export async function run(t) {
         (await drawnGroups(win)).some((g) => g.id === mine.groupId),
         await drawnGroups(win)
       )
+      // A sidebar edit on the IPC road leaves the sessions' server notice
+      // alone (Minor 3 of round 1, gap 4 of round 2): the notice is
+      // PROVOKED first (a sessions call the standalone server refuses), then
+      // the edit, and the notice must still be up.
+      await win.evaluate(() => window.electronAPI.sessionsList().catch(() => null))
+      const provoked = await until(async () => ((await noticeCount(win)) === 1 ? true : null))
+      t.check('the server notice is up after a refused sessions call', provoked === true)
       await callMcp(app, 'createGroup', { name: 'Another edit' })
-      await win.waitForTimeout(500)
+      await win.waitForTimeout(800)
       t.equal(
-        `the server notice is where it was after a sidebar edit (${noticesBefore} before)`,
+        'and still up after a sidebar edit that never reached the server',
         await noticeCount(win),
-        noticesBefore
+        1
       )
     } finally {
       await app.close().catch(() => {})
@@ -427,6 +511,92 @@ export async function run(t) {
         (await client.layout(key)).body?.groups?.some((g) => g.id === mine.groupId) ? true : null
       )
       t.check("and the window's own group reaches the server", landed === true, mine)
+    } finally {
+      await app.close().catch(() => {})
+    }
+  }
+
+  // ── 5. A group moved to another window while a rename is pending: the
+  //       rename survives, nobody is told of a loss (verifier round 2,
+  //       Major 2 and gap 8) ──
+  {
+    const DIR = userDataDir('sidebar-server-move')
+    seed(DIR)
+    const { app, win } = await launchApp(DIR, { server: 'in-process' })
+    try {
+      const disc = await decided(DIR)
+      const client = api(disc.url, disc.token)
+      const key = (await identityOf(win))?.windowKey
+      t.check('the notification tap is in', (await spyNotifications(app)) === true)
+      const tab = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'rider' })
+      const moving = await callMcp(app, 'createGroup', { name: 'Moving' })
+      await callMcp(app, 'moveSession', { sessionId: tab.sessionId, groupId: moving.groupId })
+      const staying = await callMcp(app, 'createGroup', { name: 'Staying' })
+      await until(async () => {
+        const r = (await client.layout(key)).body
+        return r?.groups?.some(
+          (g) => g.id === moving.groupId && g.sessionIds.includes(tab.sessionId)
+        ) && r.groups.some((g) => g.id === staying.groupId)
+          ? true
+          : null
+      })
+      const second = await openWindow(app, win)
+      const key2 = (await identityOf(second.page))?.windowKey
+      const [moved] = await Promise.all([
+        win.evaluate(({ id, target }) => window.electronAPI.windowMoveGroup({ id }, target), {
+          id: moving.groupId,
+          target: second.windowId
+        }),
+        callMcp(app, 'rename', { target: 'group', id: staying.groupId, name: 'Renamed meanwhile' })
+      ])
+      t.check('the group moved', moved?.ok === true && moved.moved.includes(tab.sessionId), moved)
+      const landed = await until(async () => {
+        const w1 = (await client.layout(key)).body
+        const w2 = (await client.layout(key2)).body
+        const renamed = w1?.groups?.some(
+          (g) => g.id === staying.groupId && g.name === 'Renamed meanwhile'
+        )
+        const gone = !w1?.groups?.some((g) => g.id === moving.groupId)
+        const arrived = w2?.groups?.some(
+          (g) => g.id === moving.groupId && g.sessionIds.includes(tab.sessionId)
+        )
+        return renamed && gone && arrived ? { w1, w2 } : null
+      })
+      t.check('the pending rename survived the move, on the server', !!landed, landed)
+      await win.waitForTimeout(800)
+      t.check('and nobody was told of a loss', !(await toldOfALoss(app)), await notifications(app))
+    } finally {
+      await app.close().catch(() => {})
+    }
+  }
+
+  // ── 6. A group created on the server during the window's boot restore is
+  //       kept by the window's first save (verifier round 2, Major 1) ──
+  {
+    const DIR = userDataDir('sidebar-server-bootwipe')
+    seed(DIR)
+    const { app, win } = await launchApp(DIR, { server: 'in-process', settleMs: 0 })
+    try {
+      const disc = await decided(DIR)
+      const client = api(disc.url, disc.token)
+      const key = (await identityOf(win))?.windowKey
+      const born = await client.createGroup({
+        windowKey: key,
+        group: { name: 'Born during the restore', sessionIds: [] }
+      })
+      t.equal('a group is created while the window restores', born.status, 200)
+      await win.waitForTimeout(6000)
+      const after = (await client.layout(key)).body
+      t.check(
+        "the window's first save kept it",
+        after?.groups?.some((g) => g.id === born.body?.group?.id) === true,
+        after
+      )
+      t.check(
+        'and the window draws it',
+        (await drawnGroups(win)).some((g) => g.id === born.body?.group?.id),
+        await drawnGroups(win)
+      )
     } finally {
       await app.close().catch(() => {})
     }

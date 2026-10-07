@@ -492,9 +492,16 @@ const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
   }
 })
 
-/** The revision the boot read came back with, before any save. */
-export function setSidebarRevision(revision: number): void {
-  savePipeline.setRevision(revision)
+/** The boot read: the revision it came back with, and the layout as the
+ *  base the first merge reasons from. Without a base, the first refused
+ *  save read every server group the window lacked as the window's removal
+ *  and wrote the layout back without them (verifier round 2, Major 1). */
+export function setSidebarBase(snapshot: SidebarLayoutSnapshot): void {
+  savePipeline.setRevision(snapshot.revision)
+  lastPersistedJson = JSON.stringify({
+    groups: snapshot.groups,
+    displayOrder: snapshot.displayOrder
+  })
 }
 
 /** Tests only. */
@@ -541,9 +548,11 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       groups: cloneGroupsForSnapshot(snapshot.groups),
       displayOrder: [...snapshot.displayOrder]
     }
+    // No base known: the merge knows nothing of either side's past, so
+    // nothing reads as a removal and both sides' groups are kept.
     const base: { groups: SessionGroup[]; displayOrder: string[] } = lastPersistedJson
       ? (JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] })
-      : server
+      : { groups: [], displayOrder: [] }
     const local = { groups: state.groups, displayOrder: getDisplayOrder(state) }
     const merged = mergeLayouts(base, local, server)
     dropped = merged.dropped

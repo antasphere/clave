@@ -156,4 +156,14 @@ describe('mergeLayouts', () => {
     expect(out.groups[0]).toEqual(g('a', [], 'A by agent'))
     expect('color' in out.groups[0]).toBe(false)
   })
+
+  it('with no base known, nothing reads as a removal: both sides’ groups are kept', () => {
+    const empty = L([], [])
+    const local = L([g('mine', ['s1'])], ['mine'])
+    const server = L([g('theirs', ['s2'])], ['theirs', 's3'])
+    const out = mergeLayouts(empty, local, server)
+    expect(out.groups.map((x) => x.id)).toEqual(['theirs', 'mine'])
+    expect(out.displayOrder).toEqual(['mine', 'theirs', 's3'])
+    expect(out.dropped).toEqual([])
+  })
 })

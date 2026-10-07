@@ -8,7 +8,7 @@ import {
   getVisibleFlatOrder,
   inActiveWorkspace,
   enableSidebarPersistence,
-  setSidebarRevision,
+  setSidebarBase,
   applyServerLayout,
   isSidebarPersistenceEnabled,
   type SidebarLayoutSnapshot
@@ -218,9 +218,15 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
-        // The revision the server handed this layout out at: every save
-        // names it, and a stale one is refused rather than merged.
-        setSidebarRevision(savedLayout?.revision ?? 0)
+        // The revision the server handed this layout out at (every save
+        // names it, and a stale one is refused rather than merged) and the
+        // layout itself as the base the first merge reasons from.
+        setSidebarBase({
+          windowKey: savedLayout?.windowKey ?? '',
+          revision: savedLayout?.revision ?? 0,
+          groups: persisted.groups,
+          displayOrder: persisted.displayOrder
+        })
 
         // This window's own records (plus the orphans, for the primary):
         // live tmux survivors re-attach silently, whatever their workspace
