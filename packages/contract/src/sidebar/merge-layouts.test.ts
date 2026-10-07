@@ -45,12 +45,12 @@ describe('mergeLayouts', () => {
     expect(out.dropped).toEqual([])
   })
 
-  it('the window’s change wins on a group both touched, and the server keeps its own additions', () => {
+  it('a group both touched merges field by field, and the server keeps its own additions', () => {
     const base = L([g('a', ['s1'])], ['a'])
     const local = L([g('a', ['s1', 's2'])], ['a'])
     const server = L([g('a', ['s1'], 'A by agent'), g('n')], ['a', 'n'])
     const out = mergeLayouts(base, local, server)
-    expect(out.groups).toEqual([g('a', ['s1', 's2']), g('n')])
+    expect(out.groups).toEqual([g('a', ['s1', 's2'], 'A by agent'), g('n')])
     expect(out.displayOrder).toEqual(['a', 'n'])
   })
 
@@ -88,5 +88,49 @@ describe('mergeLayouts', () => {
     expect(out.groups).toEqual([g('a', ['s1'])])
     expect(out.displayOrder).toEqual(['a', 's2'])
     expect(out.dropped).toEqual([])
+  })
+
+  it('an idle window takes a reorder, a placement and a new group made elsewhere as they are', () => {
+    const synced = L([g('a', ['s1'])], ['a', 'b', 's2'])
+    // A reorder elsewhere.
+    expect(
+      mergeLayouts(synced, synced, L([g('a', ['s1'])], ['b', 's2', 'a'])).displayOrder
+    ).toEqual(['b', 's2', 'a'])
+    // A session placed first elsewhere.
+    expect(
+      mergeLayouts(synced, synced, L([g('a', ['s1'])], ['s9', 'a', 'b', 's2'])).displayOrder
+    ).toEqual(['s9', 'a', 'b', 's2'])
+    // A group created elsewhere at a member's place.
+    const made = L([g('a', ['s1']), g('n', ['s2'])], ['a', 'b', 'n'])
+    const out = mergeLayouts(synced, synced, made)
+    expect(out.groups.map((x) => x.id)).toEqual(['a', 'n'])
+    expect(out.displayOrder).toEqual(['a', 'b', 'n'])
+    expect(out.dropped).toEqual([])
+  })
+
+  it('a group both touched keeps the rename made elsewhere and the member added here', () => {
+    const base = L([g('a', ['s1'])], ['a'])
+    const local = L([g('a', ['s1', 's2'])], ['a'])
+    const server = L([g('a', ['s1'], 'Renamed by B')], ['a'])
+    const out = mergeLayouts(base, local, server)
+    expect(out.groups).toEqual([g('a', ['s1', 's2'], 'Renamed by B')])
+    expect(out.dropped).toEqual([])
+  })
+
+  it('a member leaving a group the server removed is no edit: nothing dropped, nothing reported', () => {
+    const base = L([g('a', ['s1', 's2'])], ['a'])
+    const local = L([g('a', ['s1'])], ['a', 's2'])
+    const server = L([], ['s1', 's2'])
+    const out = mergeLayouts(base, local, server)
+    expect(out.groups).toEqual([])
+    expect(out.dropped).toEqual([])
+    expect(out.displayOrder).toEqual(['s1', 's2'])
+  })
+
+  it('the window’s reorder wins over the server’s order when the window reordered', () => {
+    const base = L([], ['a', 'b', 'c'])
+    const local = L([], ['c', 'a', 'b'])
+    const server = L([], ['a', 'b', 'c', 'd'])
+    expect(mergeLayouts(base, local, server).displayOrder).toEqual(['c', 'a', 'b', 'd'])
   })
 })

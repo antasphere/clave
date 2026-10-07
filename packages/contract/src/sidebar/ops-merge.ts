@@ -220,35 +220,75 @@ export interface MergeResult<G extends MergeGroupLike> {
   groups: G[]
   displayOrder: string[]
   /** The groups whose local change could not be kept: the server removed
-   *  them while the window edited them. The window tells the person. */
+   *  them while the window changed them (beyond letting members go). The
+   *  window tells the person. */
   dropped: { id: string; name: string }[]
 }
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
 
+/** Whether `mine` differs from `was` only by members that left and terminal
+ *  links that went null: what a tab moving away, a session closing or a
+ *  hand-over does to a group, never an edit worth keeping on its own. */
+function onlyShrank<G extends MergeGroupLike>(was: G, mine: G): boolean {
+  const keys = new Set([...Object.keys(was), ...Object.keys(mine)])
+  for (const key of keys) {
+    if (key === 'sessionIds' || key === 'terminals') continue
+    if (!sameJson((was as Record<string, unknown>)[key], (mine as Record<string, unknown>)[key]))
+      return false
+  }
+  const wasMembers = new Set(was.sessionIds)
+  if (!mine.sessionIds.every((sid) => wasMembers.has(sid))) return false
+  if (mine.terminals.length !== was.terminals.length) return false
+  return mine.terminals.every((t, i) => {
+    const before = was.terminals[i] as { sessionId: string | null } & Record<string, unknown>
+    const after = t as { sessionId: string | null } & Record<string, unknown>
+    const { sessionId: s1, ...restBefore } = before
+    const { sessionId: s2, ...restAfter } = after
+    return sameJson(restBefore, restAfter) && (s2 === s1 || s2 === null)
+  })
+}
+
+/** A group both touched: every field the window changed against `base`
+ *  takes the window's value, every other field the server's, so a rename
+ *  made elsewhere and a member added here both survive. */
+function mergeGroup<G extends MergeGroupLike>(was: G, mine: G, theirs: G): G {
+  const out = { ...theirs } as Record<string, unknown>
+  const w = was as Record<string, unknown>
+  const m = mine as Record<string, unknown>
+  for (const key of new Set([...Object.keys(w), ...Object.keys(m)])) {
+    if (!sameJson(w[key], m[key])) {
+      if (m[key] === undefined) delete out[key]
+      else out[key] = m[key]
+    }
+  }
+  return out as G
+}
+
 /**
  * A window's pending change re-applied over the server's fresh snapshot,
  * when its whole-layout save was refused or a push landed while it edited
- * (PRDCT-3241). Three layouts: `base`, what the window last knew the server
- * held (the layout it last saved or applied); `local`, the window's working
- * copy with its edit; `server`, the snapshot the server holds now. What the
- * window changed against `base` is re-applied on `server`; what the server
- * changed against `base` is kept; where the two touched the same group, the
- * window's version wins (the person's edit in front of them, which the
- * other writer then sees pushed back), except when the server REMOVED the
- * group: nothing can be re-applied on a group that is gone, so the edit is
- * dropped and reported, never silently. The rules, one by one:
+ * (PRDCT-3241, the wave's ruling of 7 October). Three layouts: `base`, what
+ * the window last knew the server held (the layout it last saved or
+ * applied); `local`, the window's working copy; `server`, the snapshot the
+ * server holds now. Only what the window CHANGED against `base` is
+ * re-applied; everything else is the server's, so an idle window (local
+ * equals base) yields the server's layout untouched and a reorder or a
+ * placement made elsewhere stands. The rules:
  *
- *   - a group the window added (not in `base`) is added;
+ *   - a group the window added (not in `base`) is added, at the place the
+ *     window gave it;
  *   - a group the window removed (in `base`, not in `local`) is removed;
- *   - a group the window changed and the server still has takes the
- *     window's version; one the server removed is dropped and reported;
- *   - a group the window left alone takes the server's version, removed if
- *     the server removed it;
- *   - the order follows the window's where it names entries that still
- *     exist, with the server's additions placed after their server
- *     predecessor; an entry the server removed and the window did not
- *     re-add leaves the order; nothing nested surfaces at the top level.
+ *   - a group the window changed: field by field, the window's value where
+ *     it changed the field, the server's elsewhere; when the server removed
+ *     the group meanwhile, the edit is dropped and reported, unless the
+ *     window only let members go (a tab moved or closed), which is no edit;
+ *   - a group the window left alone is the server's, gone if the server
+ *     removed it;
+ *   - the order is the server's; the window's additions enter after their
+ *     local predecessor; the window's removals leave; when the window
+ *     REORDERED (its order of the entries both knew differs from base's),
+ *     the window's sequence of those entries wins; nothing nested surfaces.
  */
 export function mergeLayouts<G extends MergeGroupLike>(
   base: LayoutSlice<G>,
@@ -263,27 +303,23 @@ export function mergeLayouts<G extends MergeGroupLike>(
   const groups: G[] = []
   const placedGroup = new Set<string>()
 
-  // The server's groups first, in the server's order, each as the window
-  // or the server has it.
   for (const g of server.groups) {
     const was = baseGroups.get(g.id)
     const mine = localGroups.get(g.id)
     if (was && !mine) continue // the window removed it
-    if (mine && (!was || !sameJson(mine, was)))
-      groups.push(mine) // the window changed it
+    if (mine && !was)
+      groups.push(mine) // the window added it; the server has one too: the window's
+    else if (mine && was && !sameJson(mine, was)) groups.push(mergeGroup(was, mine, g))
     else groups.push(g)
     placedGroup.add(g.id)
   }
-  // Then the window's own: added since base, or changed on a group the
-  // server removed (dropped, reported).
   for (const g of local.groups) {
     if (placedGroup.has(g.id)) continue
     const was = baseGroups.get(g.id)
     if (!was) {
       groups.push(g)
       placedGroup.add(g.id)
-    } else if (!sameJson(g, was)) dropped.push({ id: g.id, name: g.name })
-    // Left alone by the window and removed by the server: gone, as it should be.
+    } else if (!sameJson(g, was) && !onlyShrank(was, g)) dropped.push({ id: g.id, name: g.name })
   }
 
   const nested = new Set<string>()
@@ -292,40 +328,49 @@ export function mergeLayouts<G extends MergeGroupLike>(
     for (const t of g.terminals) if (t.sessionId) nested.add(t.sessionId)
   }
   const groupIds = new Set(groups.map((g) => g.id))
+  const isGroupId = (id: string): boolean =>
+    baseGroups.has(id) || localGroups.has(id) || serverGroups.has(id)
+  const exists = (id: string): boolean => !nested.has(id) && (!isGroupId(id) || groupIds.has(id))
   const baseOrder = new Set(base.displayOrder)
-  const serverOrder = new Set(server.displayOrder)
   const localOrder = new Set(local.displayOrder)
+  const serverOrder = new Set(server.displayOrder)
+
+  // The sequence of entries the window and the base both knew: when the
+  // window changed it, the window reordered.
+  const known = (ids: string[]): string[] =>
+    ids.filter((id) => baseOrder.has(id) && localOrder.has(id))
+  const reordered = !sameJson(known(local.displayOrder), known(base.displayOrder))
+
+  // The server's order, as the spine; the window's sequence over the common
+  // entries when the window reordered.
+  let spine = server.displayOrder.filter((id) => !(baseOrder.has(id) && !localOrder.has(id))) // minus the window's removals
+  if (reordered) {
+    const common = new Set(local.displayOrder.filter((id) => serverOrder.has(id)))
+    const mineSeq = local.displayOrder.filter((id) => common.has(id))
+    let k = 0
+    spine = spine.map((id) => (common.has(id) ? mineSeq[k++] : id))
+  }
+  // The window's additions, after their local predecessor.
+  for (let i = 0; i < local.displayOrder.length; i++) {
+    const id = local.displayOrder[i]
+    if (baseOrder.has(id) || spine.includes(id)) continue
+    const before = local.displayOrder[i - 1]
+    const at = before === undefined ? -1 : spine.indexOf(before)
+    if (at === -1) spine.unshift(id)
+    else spine.splice(at + 1, 0, id)
+  }
+
   const seen = new Set<string>()
   const displayOrder: string[] = []
-  const push = (id: string): void => {
-    if (seen.has(id) || nested.has(id)) return
-    if (baseGroups.has(id) || localGroups.has(id) || serverGroups.has(id)) {
-      if (!groupIds.has(id)) return // a group that no longer exists
-    }
+  for (const id of spine) {
+    if (seen.has(id) || !exists(id)) continue
     seen.add(id)
     displayOrder.push(id)
   }
-  // The window's order, minus what the server removed and the window did
-  // not add back (an entry in base and not on the server is the server's
-  // removal; an entry the window added since base is the window's).
-  for (const id of local.displayOrder) {
-    const serverRemoved = baseOrder.has(id) && !serverOrder.has(id)
-    if (serverRemoved && !groupIds.has(id)) continue
-    push(id)
+  for (const g of groups) {
+    if (seen.has(g.id)) continue
+    seen.add(g.id)
+    displayOrder.push(g.id)
   }
-  // The server's additions (not in base), after their server predecessor.
-  for (let i = 0; i < server.displayOrder.length; i++) {
-    const id = server.displayOrder[i]
-    if (baseOrder.has(id) || localOrder.has(id) || seen.has(id)) continue
-    const before = server.displayOrder[i - 1]
-    const at = before === undefined ? -1 : displayOrder.indexOf(before)
-    if (nested.has(id)) continue
-    if (seen.has(id)) continue
-    seen.add(id)
-    if (at === -1) displayOrder.push(id)
-    else displayOrder.splice(at + 1, 0, id)
-  }
-  // Every group reachable, as every layout rule keeps it.
-  for (const g of groups) push(g.id)
   return { groups, displayOrder, dropped }
 }

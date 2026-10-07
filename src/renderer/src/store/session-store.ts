@@ -593,6 +593,21 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   }
 }
 
+/**
+ * A change the SERVER made and this window merely reflects (a tab or a
+ * group that moved away, told over IPC by the shell) is no edit of the
+ * person's: it becomes the base the next merge reasons from, and nothing is
+ * saved for it. Without this, a tab moving away read as the window removing
+ * a member, and the push that followed (the group gone with it) had the
+ * window tell the person its own move "could not be kept".
+ */
+function markLayoutAsBase(): void {
+  const { groups, displayOrder } = useSessionStore.getState()
+  lastPersistedGroups = groups
+  lastPersistedOrder = displayOrder
+  lastPersistedJson = JSON.stringify({ groups, displayOrder })
+}
+
 /** Mirror a session's tab name into its tmux sidecar (main process), so the
  *  rename survives a restart, a crash, or a reboot. The store itself lives in
  *  the renderer and dies with the window, which is why a renamed tab used to
@@ -954,7 +969,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { ...state, groups: merged.groups, displayOrder: merged.displayOrder }
     }),
 
-  removeSessionForRehome: (id) =>
+  removeSessionForRehome: (id) => {
     set((state) => {
       // The session lives on in another window now; only detach it from THIS
       // store's tab list, groups, order and selection. Never touch the pty.
@@ -971,9 +986,11 @@ export const useSessionStore = create<SessionState>((set) => ({
         selectedSessionIds: state.selectedSessionIds.filter((sid) => sid !== id),
         focusedSessionId: state.focusedSessionId === id ? null : state.focusedSessionId
       }
-    }),
+    })
+    markLayoutAsBase()
+  },
 
-  removeGroupForMove: (groupId) =>
+  removeGroupForMove: (groupId) => {
     set((state) => {
       const group = state.groups.find((g) => g.id === groupId)
       if (!group) return state
@@ -989,7 +1006,9 @@ export const useSessionStore = create<SessionState>((set) => ({
         groups: state.groups.filter((g) => g.id !== groupId),
         displayOrder: [...order, ...stayed.filter((sid) => !order.includes(sid))]
       }
-    }),
+    })
+    markLayoutAsBase()
+  },
 
   removeSession: (id) =>
     set((state) => {
