@@ -8,12 +8,15 @@
 // and every gate stayed green.
 //
 // The renderer writes back on a fold: when a window folds another window's
-// change, its persist pass writes the partitions the fold did not carry, and
-// the other window folds that and writes back in turn, until the two agree
-// (measured: one write from the spec lands as three in main). That is the
-// renderer's own behaviour, the same over IPC on dev, so the deliveries are
-// counted against the writes that landed in main, by origin: every window
-// hears exactly the writes that are not its own, and none of its own.
+// change whose content differs from what it last persisted, its persist pass
+// runs before the fold seeds the persisted state and writes the partition
+// back, and the other window does the same in turn, until the two agree
+// (measured: a non-empty partition written once lands as three writes in
+// main; this spec's empty partition on a fresh seed lands once). That is the
+// renderer's own behaviour on dev (`workspace-actions.ts`, the fold's order),
+// so the deliveries are counted against the writes that landed in main, by
+// origin: every window hears exactly the writes that are not its own, and
+// none of its own, with or without a write-back.
 //
 // Pinned to the in-process server (`server: 'in-process'`): the workspace
 // writes of an attached window land on the standalone server, which is
@@ -81,15 +84,16 @@ export async function run(t) {
     const settled = async () => {
       // The write-backs converge: wait until the write count holds still.
       let last = -1
-      await until(
+      const still = await until(
         async () => {
           const n = (await app.evaluate(() => globalThis.__echoWrites)).length
-          const still = n === last
+          const same = n === last
           last = n
-          return still
+          return same
         },
         { tries: 30, gapMs: 400 }
       )
+      if (!still) throw new Error(`the writes never settled: ${last} landed and still moving`)
       await a.waitForTimeout(600)
       return app.evaluate(() => globalThis.__echoWrites)
     }

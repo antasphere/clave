@@ -21,7 +21,7 @@ const HEAVY = /node_modules\/(effect|@effect|@structure-ai|@opentelemetry)\//
  *  the inputs: a direct import of it shows here and nowhere else). */
 const staticallyReached = async (
   entry: string
-): Promise<{ reached: string[]; externals: string[] }> => {
+): Promise<{ reached: string[]; externals: string[]; requires: number }> => {
   const result = await build({
     entryPoints: [join(root, entry)],
     bundle: true,
@@ -43,6 +43,7 @@ const staticallyReached = async (
   if (!entryName) throw new Error(`No entry output for ${entry}`)
   const reached = new Set<string>()
   const externals = new Set<string>()
+  let requires = 0
   const seen = new Set<string>()
   const follow = (name: string): void => {
     if (seen.has(name)) return
@@ -54,12 +55,13 @@ const staticallyReached = async (
       // test (`ports/registry.ts` requires Electron only inside Electron) does not.
       if (imported.external) {
         if (imported.kind === 'import-statement') externals.add(imported.path)
+        else if (imported.path === 'electron') requires += 1
       } else if (imported.kind === 'import-statement' && outputs[imported.path])
         follow(imported.path)
     }
   }
   follow(entryName)
-  return { reached: [...reached], externals: [...externals] }
+  return { reached: [...reached], externals: [...externals], requires }
 }
 
 describe('the settings source loads nothing of Effect at boot', () => {
@@ -71,7 +73,9 @@ describe('the settings source loads nothing of Effect at boot', () => {
     expect(externals).toContain('electron')
   })
   it('the standalone source reaches no Electron-bound module, nor Electron itself', async () => {
-    const { reached, externals } = await staticallyReached('src/main/settings/standalone-source.ts')
+    const { reached, externals, requires } = await staticallyReached(
+      'src/main/settings/standalone-source.ts'
+    )
     expect(reached.filter((file) => HEAVY.test(file))).toEqual([])
     expect(
       reached.filter((file) => /account-login\.ts$|app-icon\.ts$|pty-backend/.test(file))
@@ -79,5 +83,8 @@ describe('the settings source loads nothing of Effect at boot', () => {
     // The walk marks `electron` external, so a direct import of it is an
     // external edge, never an input (round 3's verifier slipped one past).
     expect(externals.filter((spec) => spec === 'electron')).toEqual([])
+    // The one `require('electron')` the graph may hold is the ports registry's,
+    // behind its runtime test; a second one is a new edge to Electron.
+    expect(requires).toBe(1)
   })
 })
