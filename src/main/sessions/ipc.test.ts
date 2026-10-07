@@ -10,11 +10,15 @@ const mocks = vi.hoisted(() => ({
   rememberChatModel: vi.fn(),
   rememberChatEffort: vi.fn(),
   rememberChatView: vi.fn(),
-  windowByKey: vi.fn()
+  windowByKey: vi.fn(),
+  getAllWindows: vi.fn((): unknown[] => [])
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
-  BrowserWindow: { fromWebContents: mocks.fromWebContents, getAllWindows: () => [] }
+  BrowserWindow: {
+    fromWebContents: mocks.fromWebContents,
+    getAllWindows: () => mocks.getAllWindows()
+  }
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
@@ -32,6 +36,7 @@ import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
 import { createSessionHost, setSessionHost } from './host'
+import { setServerEventPublisher } from '../server/session-events'
 
 let sequence = 0
 beforeEach(() => {
@@ -545,5 +550,72 @@ it('remembers a composer effort pick for the next chat, only once the session to
   ).toThrow()
   expect(mocks.rememberChatEffort).not.toHaveBeenCalled()
   sessionManager.kill(id)
+  sessionManager.forget(id)
+})
+
+// The wire's `prepared` is main's to build, never a renderer's to supply: a
+// message with no attachments reaches the adapter as its text alone, whatever
+// rode along over IPC (the verifier's round 1 found this unpinned).
+it('strips a prepared prompt smuggled over IPC from a message with no attachments', async () => {
+  const id = `ipc-prepared-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Prepared'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const written: unknown[] = []
+  vi.spyOn(adapter, 'write').mockImplementation((_handle, input) => {
+    written.push(input)
+  })
+  await mocks.handlers.get('sessions:write')({ sender: { id: 104 } }, id, {
+    type: 'user_message',
+    text: 'plain',
+    prepared: { text: 'INJECTED', images: [] }
+  })
+  expect(written).toEqual([{ type: 'user_message', text: 'plain' }])
+  sessionManager.forget(id)
+})
+
+// A chat session's state goes to the window over IPC only while no server
+// runs: with a publisher set, the server's push channel carries it and the
+// window must not hear it twice.
+it('sends a chat session’s state over IPC only while no server publishes it', () => {
+  const id = `ipc-state-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'State'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const sent: unknown[][] = []
+  const win = {
+    id: 7,
+    isDestroyed: () => false,
+    webContents: { send: (...args: unknown[]) => sent.push(args) }
+  }
+  mocks.getAllWindows.mockReturnValue([win])
+  mocks.keyForWindow.mockReturnValue('window')
+  sessionManager.setState(id, 'working')
+  expect(sent).toEqual([[`agent:state:${id}`, 'working']])
+  setServerEventPublisher(async () => {})
+  sessionManager.setState(id, 'done')
+  expect(sent).toHaveLength(1)
+  setServerEventPublisher(null)
+  mocks.getAllWindows.mockReturnValue([])
   sessionManager.forget(id)
 })

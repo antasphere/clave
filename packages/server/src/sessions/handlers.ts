@@ -18,6 +18,7 @@ import {
   type Session,
   SessionNotFound,
   SessionStartFailed,
+  SessionStopFailed,
   SessionWriteRefused,
   SetSessionView,
   StartSession,
@@ -69,9 +70,9 @@ export const sessionHandlers = [
         catch: (error) =>
           error instanceof CapabilityUnavailable
             ? error
-            : // A stop is best effort by contract: what the shell could not
-              // stop is in its log, and the client is not told a 500.
-              new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+            : // What the kill threw, as its own failure: a stop that fails for
+              // a reason of its own is not "this server runs no sessions".
+              new SessionStopFailed({ id: payload.id, message: messageOf(error) })
       })
     )
   ),

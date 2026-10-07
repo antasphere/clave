@@ -11,10 +11,15 @@ import { create } from 'zustand'
  * the capability takes it with it.
  */
 interface ServerNoticeState {
+  /** The domain the server named (`sessions`), for the notice's title. */
+  capability: string | null
   message: string | null
 }
 
-export const useServerNoticeStore = create<ServerNoticeState>(() => ({ message: null }))
+export const useServerNoticeStore = create<ServerNoticeState>(() => ({
+  capability: null,
+  message: null
+}))
 
 let bound = false
 /** Bind the store to the preload's relay, once per window. */
@@ -22,6 +27,9 @@ export function bindServerNotices(): void {
   if (bound || !window.electronAPI?.onServerRefusal) return
   bound = true
   window.electronAPI.onServerRefusal((refusal) =>
-    useServerNoticeStore.setState({ message: refusal?.message ?? null })
+    useServerNoticeStore.setState({
+      capability: refusal?.capability ?? null,
+      message: refusal?.message ?? null
+    })
   )
 }

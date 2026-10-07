@@ -353,6 +353,12 @@ export class SessionWriteRefused extends Schema.TaggedError<SessionWriteRefused>
   { id: Schema.String, message: Schema.String }
 ) {}
 
+/** The shell could not stop the session: what the kill threw, in its words. */
+export class SessionStopFailed extends Schema.TaggedError<SessionStopFailed>()(
+  'SessionStopFailed',
+  { id: Schema.String, message: Schema.String }
+) {}
+
 /** The shell could not start the session: a path that is not there, a
  *  provider that refused, an adapter that is disabled. */
 export class SessionStartFailed extends Schema.TaggedError<SessionStartFailed>()(
@@ -396,7 +402,7 @@ export const StartSession = Command.define('StartSession', {
 export const StopSession = Command.define('StopSession', {
   payload: Schema.Struct({ id: Schema.String }),
   success: Schema.Void,
-  failure: CapabilityUnavailable
+  failure: Schema.Union(CapabilityUnavailable, SessionStopFailed)
 })
 /** Hand a session what a view wrote: a typed input or terminal bytes. A
  *  user message's attachments are prepared by the shell at the write, from

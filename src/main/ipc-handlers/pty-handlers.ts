@@ -8,6 +8,7 @@ import {
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
+import { hasServerEventPublisher } from '../server/session-events'
 import {
   type SessionInfoResult,
   spawnSessionForWindow,
@@ -17,7 +18,12 @@ import {
 
 export function registerPtyHandlers(): void {
   // Deterministic Claude session state (from CC lifecycle hooks) → renderer.
+  // With the server running the same state travels as `session.state_changed`
+  // on the push channel (the manager publishes it, server/clave-server.ts):
+  // the per-window send is for an app without one, never beside it (the
+  // verifier's round 1 saw a terminal's state arrive twice).
   startAgentStateWatching((claveSessionId, state) => {
+    if (hasServerEventPublisher()) return
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(`agent:state:${claveSessionId}`, state)
     }

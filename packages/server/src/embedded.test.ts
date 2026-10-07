@@ -301,6 +301,18 @@ describe('the HTTP API behind the token', () => {
       await bare.stop()
     }
   })
+  it('answers a stop that failed as its own failure, not as a missing capability', async () => {
+    source.stop = async (id: string) => {
+      throw new Error(`could not kill ${id}`)
+    }
+    const stop = await post(`${server.url}/sessions/stop`, server.token, { id: 's1' })
+    expect(stop.status).toBe(422)
+    expect(await json(stop)).toMatchObject({
+      _tag: 'SessionStopFailed',
+      id: 's1',
+      message: 'could not kill s1'
+    })
+  })
   it('stops a session through the command', async () => {
     const stopped = await post(`${server.url}/sessions/stop`, server.token, { id: 's1' })
     expect(stopped.status).toBe(204)
