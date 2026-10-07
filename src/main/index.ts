@@ -50,6 +50,7 @@ import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } fro
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
+import { installE2eHooks } from './sessions/e2e-hooks'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -390,6 +391,10 @@ app.whenReady().then(() => {
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
   // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
   // the preload asks `ipc-handlers/server-handlers.ts`, registered above.
+  // The end-to-end seam into the sessions, under --test-no-activate only
+  // (sessions/e2e-hooks.ts): installed at boot, before the server, so an
+  // app attached to a standalone server has it too.
+  installE2eHooks({ sessionHost: getSessionHost() })
   serverBoot = bootServer()
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()

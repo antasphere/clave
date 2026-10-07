@@ -24,7 +24,6 @@
  */
 import type { EmbeddedServer, ServerPorts } from '@clave/server'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
-import { installE2eHooks } from '../sessions/e2e-hooks'
 import {
   type ClaveServerEndpoint,
   getClaveServerEndpoint,
@@ -73,7 +72,6 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token }
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
-  if (ports.sessions) installE2eHooks({ sessionHost: ports.sessions })
   // Every attached client hears a session change state, whether or not it
   // follows that session's stream.
   stopStates = manager.subscribeAll((id, stream) => {

@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —
@@ -92,7 +96,7 @@ export async function run(t) {
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { env })
+  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
   // The old process's end (below) travels through the session host, and a
   // wrap only reaches the subscriptions made after it: so the host's stream is
   // wrapped here, before the tab exists, and asks a hold the move installs

@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 // Account pools and the switch (ADR 0002): a Claude tab moved from one token
 // account to another keeps its id and its conversation and its PROCESS gets
 // the other token; a Codex tab moved to another account gets that account's
@@ -37,7 +41,7 @@ export async function run(t) {
   writeFileSync(path.join(CODEX_HOME, 'auth.json'), '{"machine":true}')
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { env: { CODEX_HOME } })
+  const { app, win } = await launchApp(DIR, { server: 'in-process', env: { CODEX_HOME } })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {

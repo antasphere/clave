@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +38,7 @@ export async function run(t) {
   let app
   let terminalId
   try {
-    const launched = await launchApp(dir)
+    const launched = await launchApp(dir, { server: 'in-process' })
     app = launched.app
     const win = launched.win
     assert.equal((await win.evaluate(() => window.electronAPI.skinsList())).activeId, null)

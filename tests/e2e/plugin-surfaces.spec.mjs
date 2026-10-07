@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 // A plugin configures the app's own chrome: a side-panel tab beside Files and Git, a
 // button and a popover in the toolbar, a panel in the main area, and the focused session
 // pushed to the plugin process. Every assertion here is about what the user can click,
@@ -17,7 +21,7 @@ export async function run(t) {
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
-  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
   let sessionId
   try {
     const record = async (id = 'clave.hello') =>

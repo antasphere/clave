@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * A link followed inside a view is never a dead end.
  *
@@ -222,7 +226,7 @@ export async function run(t) {
   const { server, port } = await serve()
   const HOME = `http://127.0.0.1:${port}`
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     // Count what leaves for the system browser instead of letting it open.
     await app.evaluate(({ shell }) => {

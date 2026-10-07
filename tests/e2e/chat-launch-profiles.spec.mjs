@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -67,6 +71,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   let app
   try {
     const launched = await launchApp(data, {
+      server: 'in-process',
       env: { SHELL: `${bin}/bash`, CLAVE_TRANSCRIPTS_ROOT: `${root}/transcripts` }
     })
     app = launched.app

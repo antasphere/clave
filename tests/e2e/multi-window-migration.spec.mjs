@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * The one-time sidebar-layout migration (PRDCT-1703): on the first boot of
  * the multi-window build (no windows.json yet) the legacy single
@@ -153,7 +157,7 @@ export async function run(t) {
 
   let app = null
   try {
-    const launched = await launchApp(DIR, { settleMs: 7000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = launched.app
     const id = await identityOf(launched.win)
     const key = id?.windowKey
@@ -233,7 +237,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1000)
-    const again = await launchApp(DIR, { settleMs: 6000 })
+    const again = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = again.app
     t.check(
       'a second boot leaves the backups in place (idempotent)',

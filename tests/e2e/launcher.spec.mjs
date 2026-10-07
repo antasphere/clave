@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * The session launcher (PRDCT-1663 / PRDCT-1664).
  *
@@ -41,7 +45,7 @@ export async function run(t) {
   mkdirSync(ROOT_B, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS_A, WS_B], activeWorkspaceId: WS_A.id, fresh: true })
 
-  let { app, win } = await launchApp(DIR)
+  let { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     const dialogCalls = await stubFolderDialog(app)
 
@@ -109,7 +113,7 @@ export async function run(t) {
   // ── and it survives a restart ──
   await new Promise((r) => setTimeout(r, 1500))
   seedWorkspaces(DIR, { workspaces: [WS_A, WS_B], activeWorkspaceId: WS_A.id })
-  ;({ app, win } = await launchApp(DIR))
+  ;({ app, win } = await launchApp(DIR, { server: 'in-process' }))
   try {
     t.equal('the remembered agent survives a restart', await agentButtonLabel(win), 'Codex')
   } finally {

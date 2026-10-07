@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * The configurable keymap boundary: defaults enter command mode, Save is the
  * only activation point, main broadcasts accepted overrides to every renderer,
@@ -38,7 +42,7 @@ export async function run(t) {
     IMPORT_FILE,
     JSON.stringify({ version: 1, bindings: { openSettings: ['Mod+Shift+K'] } }, null, 2)
   )
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
 
   try {
     await win.keyboard.press('Meta+,')

@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 // The account chip on the Terminal view's status line: the account the tab
 // runs on, what is left of it, and the menu that shows its caps and moves the
 // tab to another account (the same menu a tab's right click opens).
@@ -72,7 +76,7 @@ export async function run(t) {
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { env })
+  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
