@@ -457,15 +457,30 @@ export class SidebarLayouts {
     if (linked.length > 0 && movable.length === 0) {
       return ok({ ok: false, moved: [], refused })
     }
-    const moving = new Set(movable)
-    const handed: NormalizedGroup = {
+    const handedFor = (ids: ReadonlySet<string>): NormalizedGroup => ({
       ...group,
-      sessionIds: group.sessionIds.filter((sid) => moving.has(sid)),
+      sessionIds: group.sessionIds.filter((sid) => ids.has(sid)),
       terminals: group.terminals.map((t) =>
-        t.sessionId !== null && moving.has(t.sessionId) ? t : { ...t, sessionId: null }
+        t.sessionId !== null && ids.has(t.sessionId) ? t : { ...t, sessionId: null }
       )
+    })
+    // The shell moves what it can of the dry check's answer; the layouts
+    // follow what it says MOVED, never the dry check: a session that died
+    // between the two stays where it was, in the source, as a row.
+    const offered = handedFor(new Set(movable))
+    const outcome = this.host.rehome(movable, targetWindowKey, {
+      layout: frozen({ groups: [offered], displayOrder: [groupId] }),
+      focus: true
+    })
+    const moved = new Set(outcome.moved)
+    const refusedNow = [...outcome.refused, ...refused]
+    if (linked.length > 0 && moved.size === 0) {
+      // The target was handed a group nobody arrived in: told to drop it.
+      this.host.groupMovedAway(targetWindowKey, groupId)
+      return ok({ ok: false, moved: [], refused: refusedNow })
     }
-    const stayed = linked.filter((sid) => !moving.has(sid))
+    const handed = handedFor(moved)
+    const stayed = linked.filter((sid) => !moved.has(sid))
     const order = current.displayOrder.filter((id) => id !== groupId)
     this.commit(
       windowKey,
@@ -476,13 +491,8 @@ export class SidebarLayouts {
       'move'
     )
     this.host.groupMovedAway(windowKey, groupId)
-    const handedLayout: WindowLayout = { groups: [handed], displayOrder: [groupId] }
-    this.absorb(targetWindowKey, handedLayout, 'move')
-    const outcome = this.host.rehome(movable, targetWindowKey, {
-      layout: frozen(handedLayout),
-      focus: true
-    })
-    return ok({ ok: true, moved: outcome.moved, refused: [...outcome.refused, ...refused] })
+    this.absorb(targetWindowKey, { groups: [handed], displayOrder: [groupId] }, 'move')
+    return ok({ ok: true, moved: outcome.moved, refused: refusedNow })
   }
 
   /** The shell's close ladder: the closing window's layout handed to the

@@ -15,8 +15,11 @@ export { moveLayoutItems, type MovePosition, type OpsGroup, type OpsLayout } fro
 export {
   absorbLayout,
   mergeLayoutForKeys,
+  mergeLayouts,
   placeAdopted,
   type LayoutGroupLike,
+  type MergeGroupLike,
+  type MergeResult,
   type LayoutKey,
   type LayoutSessionLike,
   type LayoutSlice

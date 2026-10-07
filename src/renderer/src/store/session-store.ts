@@ -38,7 +38,8 @@ import {
   mergeLayoutForKeys,
   absorbLayout,
   placeAdopted,
-  moveLayoutItems
+  moveLayoutItems,
+  mergeLayouts
 } from '@clave/contract/sidebar/ops'
 import { withDirToggled } from '../lib/panel-expansion'
 import { createSavePipeline } from '../lib/sidebar-save-pipeline'
@@ -518,22 +519,41 @@ export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
 }
 
 /**
- * The server's snapshot over the working copy: the groups and the order
- * become the server's, then every session this window holds that the
- * server's layout does not place (a tab spawned since, whose save has not
- * landed) is appended at the top level so no tab disappears, and the file
- * tabs likewise. The pipeline decides WHEN this runs; this is only the how.
+ * The server's snapshot over the working copy, the window's pending change
+ * kept (PRDCT-3241, the wave's ruling of 7 October): what this window
+ * changed since it last knew the server's layout (the base, `lastPersisted
+ * Json`) is re-applied over the snapshot with the shared rule
+ * (`mergeLayouts` in @clave/contract/sidebar/ops), so a refused save loses
+ * nothing the person did here; what the server changed meanwhile is kept;
+ * an edit on a group the server removed cannot be re-applied, and the
+ * person is told. Then every session this window holds that the layout
+ * does not place (a tab spawned since, whose save has not landed) is
+ * appended at the top level so no tab disappears, and the file tabs
+ * likewise. When the result differs from the snapshot, the window saves it
+ * again on the revision it now knows: the refs below are left as they were
+ * so the store's subscription fires. The pipeline decides WHEN this runs.
  */
 function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
+  let dropped: { id: string; name: string }[] = []
   useSessionStore.setState((state) => {
-    const groups = cloneGroupsForSnapshot(snapshot.groups)
+    const server = {
+      groups: cloneGroupsForSnapshot(snapshot.groups),
+      displayOrder: [...snapshot.displayOrder]
+    }
+    const base: { groups: SessionGroup[]; displayOrder: string[] } = lastPersistedJson
+      ? (JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] })
+      : server
+    const local = { groups: state.groups, displayOrder: getDisplayOrder(state) }
+    const merged = mergeLayouts(base, local, server)
+    dropped = merged.dropped
+    const groups = merged.groups
     const nested = new Set<string>()
     for (const g of groups) {
       for (const sid of g.sessionIds) nested.add(sid)
       for (const t of g.terminals) if (t.sessionId) nested.add(t.sessionId)
     }
     for (const s of state.sessions) if (s.view?.serverSessionId) nested.add(s.view.serverSessionId)
-    const displayOrder = [...snapshot.displayOrder]
+    const displayOrder = [...merged.displayOrder]
     const placed = new Set(displayOrder)
     for (const s of state.sessions) {
       if (!nested.has(s.id) && !placed.has(s.id)) {
@@ -548,15 +568,29 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       }
     }
     groupCounter = Math.max(groupCounter, groups.length)
-    // What was applied is what the server has: the subscription below sees
-    // no change to send unless the appends above made one.
-    lastPersistedGroups = groups
-    lastPersistedOrder = displayOrder
-    if (displayOrder.length === snapshot.displayOrder.length) {
-      lastPersistedJson = JSON.stringify({ groups, displayOrder })
+    const serverJson = JSON.stringify(server)
+    const mergedJson = JSON.stringify({ groups, displayOrder })
+    // The base for the next merge is what the server holds now. When the
+    // merge adds nothing, the refs say so and the subscription stays quiet;
+    // when it does, the refs are left stale and the subscription saves the
+    // merged layout on the revision the pipeline now knows.
+    lastPersistedJson = serverJson
+    if (mergedJson === serverJson) {
+      lastPersistedGroups = groups
+      lastPersistedOrder = displayOrder
     }
     return { groups, displayOrder }
   })
+  if (dropped.length > 0) {
+    const names = dropped.map((d) => `"${d.name}"`).join(', ')
+    void window.electronAPI
+      ?.showNotification?.({
+        title: 'A change could not be kept',
+        body: `${names}: the group was removed elsewhere while you changed it, so your change was dropped.`,
+        sessionId: ''
+      })
+      .catch(() => {})
+  }
 }
 
 /** Mirror a session's tab name into its tmux sidecar (main process), so the

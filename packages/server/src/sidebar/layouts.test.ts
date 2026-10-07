@@ -21,6 +21,8 @@ class FakeHost implements SidebarHost {
   live = new Set<string>()
   primary: string | null = null
   refuse = new Map<string, Reason>()
+  /** Refused at the move itself although the dry check allowed it. */
+  refuseAtRehome = new Set<string>()
   readonly rehomed: Array<{
     sessionIds: string[]
     target: string
@@ -44,7 +46,15 @@ class FakeHost implements SidebarHost {
   ): MoveResult => {
     this.rehomed.push({ sessionIds: [...ids], target, options })
     const { movable, refused } = this.movable(ids)
-    return { moved: movable, refused }
+    return {
+      moved: movable.filter((id) => !this.refuseAtRehome.has(id)),
+      refused: [
+        ...refused,
+        ...movable
+          .filter((id) => this.refuseAtRehome.has(id))
+          .map((sessionId) => ({ sessionId, reason: 'not-live' as const }))
+      ]
+    }
   }
   groupMovedAway = (windowKey: string, groupId: string): void => {
     this.movedAway.push({ windowKey, groupId })
@@ -399,6 +409,42 @@ describe('between windows', () => {
         options: { layout: { groups: [handed], displayOrder: ['g1'] }, focus: true }
       }
     ])
+  })
+  it('moveGroupToWindow follows what the shell actually moved, not the dry check', () => {
+    const { layouts, host } = setup({
+      w1: { groups: [group('g1', ['a', 'b'])], displayOrder: ['g1'] },
+      w2: { groups: [], displayOrder: [] }
+    })
+    host.live = new Set(['w1', 'w2'])
+    // The dry check allows both; the shell refuses `b` at the move itself
+    // (it died in between): `b` stays in the source as a row, the handed
+    // group holds `a` alone.
+    host.refuseAtRehome.add('b')
+    const result = layouts.moveGroupToWindow('w1', 'g1', 'w2')
+    expect(result.ok && result.value).toEqual({
+      ok: true,
+      moved: ['a'],
+      refused: [{ sessionId: 'b', reason: 'not-live' }]
+    })
+    expect(layouts.get('w1')).toMatchObject({ groups: [], displayOrder: ['b'] })
+    expect(layouts.get('w2')).toMatchObject({ groups: [group('g1', ['a'])], displayOrder: ['g1'] })
+  })
+  it('moveGroupToWindow tells the target to drop a group nobody arrived in', () => {
+    const { layouts, host } = setup({
+      w1: { groups: [group('g1', ['a'])], displayOrder: ['g1'] },
+      w2: { groups: [], displayOrder: [] }
+    })
+    host.live = new Set(['w1', 'w2'])
+    host.refuseAtRehome.add('a')
+    const result = layouts.moveGroupToWindow('w1', 'g1', 'w2')
+    expect(result.ok && result.value).toEqual({
+      ok: false,
+      moved: [],
+      refused: [{ sessionId: 'a', reason: 'not-live' }]
+    })
+    expect(layouts.get('w1')).toMatchObject({ groups: [group('g1', ['a'])], displayOrder: ['g1'] })
+    expect(layouts.get('w2')).toMatchObject({ groups: [], displayOrder: [] })
+    expect(host.movedAway).toEqual([{ windowKey: 'w2', groupId: 'g1' }])
   })
   it('moveGroupToWindow changes nothing when no linked session can move', () => {
     const { layouts, host, storage, events } = setup({

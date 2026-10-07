@@ -7,7 +7,10 @@
  * nothing, on screen or on disk; the window's own save still lands on the
  * server, revision advanced, file written; and when the app is attached to a
  * server that cannot host windows, the shell keeps the sidebar and that
- * server holds no layout.
+ * server holds no layout. Since verifier round 1: a write omitting a live
+ * tab, the two-writer race, the stale window save on the IPC road, the
+ * notice left alone, a plain pty refused between windows, and a window
+ * that booted before the server hearing it once it answers.
  *
  * Fails if: the push never reaches the window (the group created over the
  * API is not drawn), the revision guard is dropped (the stale write answers
@@ -15,7 +18,8 @@
  * server (the revision does not advance after the MCP group), or the layout
  * file leaves its place (`sidebar-layouts/windows/<key>.json`).
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import {
   launchApp,
   seedWorkspaces,
@@ -26,6 +30,7 @@ import {
   identityOf,
   callMcp,
   windowLayout,
+  openWindow,
   until
 } from './harness.mjs'
 
@@ -51,6 +56,11 @@ function drawnGroups(win) {
     })
   )
 }
+
+/** Whether the sidebar draws a row for this id. */
+const rowDrawn = (win, id) =>
+  win.evaluate((sid) => !!document.querySelector(`[data-sidebar-item-id="${sid}"]`), id)
+const noticeCount = (win) => win.locator('[data-testid="server-notice"]').count()
 
 const api = (url, token) => {
   const base = String(url).replace(/\/+$/, '')
@@ -218,6 +228,81 @@ export async function run(t) {
       t.check('the window dropped the group the accepted write removed', trimmed === true, {
         groups: await drawnGroups(win)
       })
+
+      // A server write that omits a LIVE tab: the tab stays drawn, and the
+      // window tells the server about it again (verifier round 1, gap 9).
+      const tab = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'live' })
+      const placed = await until(async () =>
+        (await client.layout(key)).body?.displayOrder?.includes(tab.sessionId) ? true : null
+      )
+      t.check('the new tab reached the server', placed === true, tab)
+      const withTab = (await client.layout(key)).body
+      const omitting = await client.save({
+        windowKey: key,
+        baseRevision: withTab.revision,
+        groups: withTab.groups,
+        displayOrder: withTab.displayOrder.filter((id) => id !== tab.sessionId)
+      })
+      t.equal('an outside write omitting the live tab is accepted', omitting.status, 200)
+      await win.waitForTimeout(800)
+      t.check('the live tab is still drawn', await rowDrawn(win, tab.sessionId), {
+        groups: await drawnGroups(win)
+      })
+      const toldAgain = await until(async () => {
+        const r = (await client.layout(key)).body
+        return r?.displayOrder?.includes(tab.sessionId) && r.revision > omitting.body.revision
+          ? r
+          : null
+      })
+      t.check('and the window told the server about it again', !!toldAgain, {
+        after: toldAgain?.revision,
+        omitting: omitting.body?.revision
+      })
+
+      // The race: an outside write and the window's own edit on the same
+      // revision, three rounds. Whichever lands first, the window's group
+      // survives: a refused save re-applies its change over the server's
+      // snapshot and saves again (verifier round 1, Major 2).
+      for (let round = 0; round < 3; round++) {
+        const cur = (await client.layout(key)).body
+        const outsideId = `outside-${round}`
+        const [outside, mine] = await Promise.all([
+          client.save({
+            windowKey: key,
+            baseRevision: cur.revision,
+            groups: [
+              ...cur.groups,
+              {
+                id: outsideId,
+                name: `Outside ${round}`,
+                sessionIds: [],
+                collapsed: false,
+                cwd: null,
+                terminals: []
+              }
+            ],
+            displayOrder: [...cur.displayOrder, outsideId]
+          }),
+          callMcp(app, 'createGroup', { name: `Mine ${round}` })
+        ])
+        const settled = await until(async () => {
+          const r = (await client.layout(key)).body
+          const ids = r?.groups?.map((g) => g.id) ?? []
+          const outsideOk = outside.status === 200 ? ids.includes(outsideId) : true
+          return outsideOk && ids.includes(mine.groupId) ? r : null
+        })
+        t.check(
+          `race ${round}: the window's group is on the server (outside write ${outside.status})`,
+          !!settled,
+          { outside: outside.status, mine: mine.groupId, server: (await client.layout(key)).body }
+        )
+        const drawnNow = await drawnGroups(win)
+        t.check(
+          `race ${round}: the window's group is drawn`,
+          drawnNow.some((g) => g.id === mine.groupId),
+          drawnNow
+        )
+      }
     } finally {
       await app.close().catch(() => {})
     }
@@ -251,6 +336,97 @@ export async function run(t) {
         Array.isArray(remote.body) && remote.body.length === 0,
         remote.body
       )
+      // The IPC road keeps the revision guard (verifier round 1, gap 7) and
+      // a sidebar edit leaves the sessions' server notice alone (Minor 3).
+      const noticesBefore = await noticeCount(win)
+      const stale = await win.evaluate(() =>
+        window.electronAPI.sidebarLayoutSave({ groups: [], displayOrder: [] }, 0)
+      )
+      t.equal('a stale window save on the IPC road is refused', stale?.reason, 'conflict')
+      await win.waitForTimeout(500)
+      t.check(
+        'and the group is still drawn',
+        (await drawnGroups(win)).some((g) => g.id === mine.groupId),
+        await drawnGroups(win)
+      )
+      await callMcp(app, 'createGroup', { name: 'Another edit' })
+      await win.waitForTimeout(500)
+      t.equal(
+        `the server notice is where it was after a sidebar edit (${noticesBefore} before)`,
+        await noticeCount(win),
+        noticesBefore
+      )
+    } finally {
+      await app.close().catch(() => {})
+    }
+  }
+
+  // ── 3. A plain pty cannot move between windows: refused, and it stays ──
+  {
+    const DIR = userDataDir('sidebar-server-plain')
+    seed(DIR)
+    // The spawn's default comes from the shell's own preferences file
+    // (clave-file-handlers.ts), not the settings domain's preferences.json.
+    writeFileSync(path.join(DIR, 'clave-preferences.json'), JSON.stringify({ tmuxMode: false }))
+    const { app, win } = await launchApp(DIR, { server: 'in-process' })
+    try {
+      await decided(DIR)
+      const tab = await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'plain' })
+      const second = await openWindow(app, win)
+      const result = await win.evaluate(
+        ({ id, target }) => window.electronAPI.windowMoveSessions([id], target),
+        { id: tab.sessionId, target: second.windowId }
+      )
+      t.equal(
+        'a plain pty is refused as not-tmux',
+        result?.refused?.[0]?.reason,
+        'not-tmux',
+        result
+      )
+      t.equal('and nothing moved', result?.moved?.length, 0, result)
+      const listed = await callMcp(app, 'list', {})
+      t.check(
+        'the tab is still in its window',
+        listed.sessions.some((s) => s.id === tab.sessionId),
+        listed.sessions.map((s) => s.id)
+      )
+      t.check('and still drawn there', await rowDrawn(win, tab.sessionId))
+    } finally {
+      await app.close().catch(() => {})
+    }
+  }
+
+  // ── 4. A window that boots before the server hears it once it answers ──
+  {
+    const DIR = userDataDir('sidebar-server-late')
+    seed(DIR)
+    const { app, win } = await launchApp(DIR, {
+      server: 'in-process',
+      env: { CLAVE_E2E_SERVER_BOOT_DELAY_MS: '6000' }
+    })
+    try {
+      const disc = await decided(DIR)
+      t.equal('the server came up late, in-process', disc?.mode, 'in-process')
+      const client = api(disc.url, disc.token)
+      const key = (await identityOf(win))?.windowKey
+      const created = await client.createGroup({
+        windowKey: key,
+        group: { name: 'After a late boot', sessionIds: [] }
+      })
+      t.equal('the API creates a group once the server is up', created.status, 200)
+      const drawn = await until(
+        async () =>
+          (await drawnGroups(win)).some((g) => g.id === created.body?.group?.id) ? true : null,
+        { tries: 48, gapMs: 250 }
+      )
+      t.check('the window that booted before the server draws it', drawn === true, {
+        groups: await drawnGroups(win)
+      })
+      const mine = await callMcp(app, 'createGroup', { name: 'From the late window' })
+      const landed = await until(async () =>
+        (await client.layout(key)).body?.groups?.some((g) => g.id === mine.groupId) ? true : null
+      )
+      t.check("and the window's own group reaches the server", landed === true, mine)
     } finally {
       await app.close().catch(() => {})
     }
