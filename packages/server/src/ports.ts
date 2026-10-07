@@ -32,7 +32,9 @@ export interface ServerPorts {
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
-export const PortsLive = (ports: ServerPorts): Layer.Layer<SessionHost | SettingsSource | Terminals> =>
+export const PortsLive = (
+  ports: ServerPorts
+): Layer.Layer<SessionHost | SettingsSource | Terminals> =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
