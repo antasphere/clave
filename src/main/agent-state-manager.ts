@@ -34,6 +34,12 @@ const SUFFIX = '.state'
 const FOLDER = 'agent-state'
 
 let watcher: FSWatcher | null = null
+/** The last word forwarded per session. The kernel may deliver one write as
+ *  two events and two writes as one; a hook writes `working` on every tool
+ *  call. Forwarding a word only when it differs from the last one makes a
+ *  transition one transition everywhere, and the renderer never sees the
+ *  same state twice per hook. */
+const lastForwarded = new Map<string, AgentState>()
 
 /** The folder's absolute path, created on first ask: the hooks' `mkdir -p`
  *  recreates it after a deletion, but the watch below needs it first. */
@@ -80,7 +86,8 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
         if (!raw) return
         // Events adapters own state; retain hook files without racing the stream.
         if (sessionManager.get(claveSessionId)?.transport === 'events') return
-        if (VALID.has(raw)) {
+        if (VALID.has(raw) && lastForwarded.get(claveSessionId) !== raw) {
+          lastForwarded.set(claveSessionId, raw as AgentState)
           sessionManager.setState(claveSessionId, raw as AgentState)
           onState(claveSessionId, raw as AgentState)
         }
@@ -97,10 +104,12 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
 export function stopWatching(): void {
   watcher?.close()
   watcher = null
+  lastForwarded.clear()
 }
 
 /** Remove a session's state file (call on session exit/kill to avoid stale files). */
 export function clearState(claveSessionId: string): void {
+  lastForwarded.delete(claveSessionId)
   try {
     lazyTerminalPorts.storage.remove(stateDocument(claveSessionId))
   } catch {
