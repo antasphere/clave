@@ -12,7 +12,9 @@ export { createApiClient, type ApiClientOptions, type ClaveApiClient } from './a
 // ── Lane A ──
 export { type SessionsClient, type StartSessionInput } from './sessions'
 export { type ClientsClient, type RegisterClientInput } from './clients'
-// ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+// ── Lane D: settings ──
+export { settingsClient, type SettingsClient } from './settings'
+// ── Lane B: terminals · Lane C: sidebar ──
 export {
   PushClient,
   pushUrlOf,

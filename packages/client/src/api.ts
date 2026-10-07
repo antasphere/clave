@@ -15,6 +15,7 @@ import { type Call, type DerivedClient, deriveClient } from './call'
 import { type ClientsClient, clientsClient } from './clients'
 import { ServerRefused, ServerUnreachable } from './errors'
 import { type SessionsClient, sessionsClient } from './sessions'
+import { type SettingsClient, settingsClient } from './settings'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -38,7 +39,9 @@ export interface ClaveApiClient {
   // ── Lane A ──
   readonly sessions: SessionsClient
   readonly clients: ClientsClient
-  // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+  // ── Lane D ──
+  readonly settings: SettingsClient
+  // ── Lane B: terminals · Lane C: sidebar ──
   readonly health: {
     readonly live: () => Promise<boolean>
   }
@@ -80,6 +83,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     url: options.url,
     sessions: sessionsClient(call),
     clients: clientsClient(call),
+    settings: settingsClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

@@ -2,6 +2,14 @@
 // PRDCT-3239): this spec starts a session through the app, and a standalone
 // server refuses every start until its terminal process exists (wave 3);
 // the shared attached-mode fixture seam comes with it. Not a known failure.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it shows
+// comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync } from 'node:fs'
 import {
   launchApp,
@@ -26,6 +34,8 @@ export async function run(t) {
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(({ ipcMain }) => {
+      const settings = globalThis.__claveE2E?.settings
+      if (!settings) throw new Error('no settings source: is --test-no-activate on?')
       // Keep real renderer session selection and IPC, but never start an agent
       // or query a real account in this fixture.
       ipcMain.removeHandler('pty:spawn')
@@ -51,13 +61,11 @@ export async function run(t) {
         resetsAt: Date.now() + 3600_000,
         severity: null
       })
-      ipcMain.removeHandler('usage:get-limits')
-      ipcMain.handle('usage:get-limits', () => {
+      settings.usage.readClaude = async () => {
         state.calls.claude++
         return { windows: [window('Claude weekly', 30)], fetchedAt: Date.now() }
-      })
-      ipcMain.removeHandler('usage:get-codex-limits')
-      ipcMain.handle('usage:get-codex-limits', async () => {
+      }
+      settings.usage.readCodex = async () => {
         state.calls.codex++
         if (state.hold)
           await new Promise((r) => {
@@ -69,9 +77,8 @@ export async function run(t) {
           windows: [window('Codex weekly', state.used), window('Codex 5-hour', 20, 'session')],
           fetchedAt: Date.now()
         }
-      })
-      ipcMain.removeHandler('usage:get-pi')
-      ipcMain.handle('usage:get-pi', (_event, range) => {
+      }
+      settings.usage.readPi = (range) => {
         state.calls.pi++
         return {
           range,
@@ -83,7 +90,7 @@ export async function run(t) {
           totalTokens: range === 'today' ? 1000 : 4000,
           cost: 0.125
         }
-      })
+      }
     })
     await win.reload()
     await win.waitForSelector('.sidebar-footer-line[data-usage-provider="claude"]')

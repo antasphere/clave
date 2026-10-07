@@ -25,4 +25,13 @@ export {
 } from './sessions'
 export { ClientRegistry, type ClientRegistryService, clientHandlers } from './clients'
 
-// ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+// ── Lane D: settings ──
+export {
+  SettingsSource,
+  unavailable,
+  type SettingsSourceService,
+  type Awaitable,
+  settingsHandlers
+} from './settings'
+
+// ── Lane B: terminals · Lane C: sidebar ──

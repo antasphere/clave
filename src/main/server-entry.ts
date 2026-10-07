@@ -23,6 +23,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { startEmbedded, SessionHost } from '@clave/server'
+import { standaloneSettingsSource } from './settings/standalone-source'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -47,7 +48,13 @@ async function main(): Promise<void> {
   const server = await startEmbedded({
     // No terminal process beside this server yet (wave 3): a start answers
     // `CapabilityUnavailable` and says so, the reads answer empty.
-    ports: { sessions: SessionHost.none },
+    ports: {
+      sessions: SessionHost.none,
+      // The settings (lane D): the same managers as the app's, on JSON
+      // documents under `--data-dir` and the macOS Keychain; a login or the
+      // app icon asked of this server answers CapabilityUnavailable.
+      settings: standaloneSettingsSource(dataDir)
+    },
     port,
     ...(token !== undefined && { token })
   })

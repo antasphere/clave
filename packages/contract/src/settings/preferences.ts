@@ -16,6 +16,7 @@
  */
 import { Command } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
+import { RefusedOrUnavailable } from './failures'
 
 // ---------------------------------------------------------------------------
 // Views
@@ -49,8 +50,11 @@ export const PreferencesView = Schema.Struct({
 // Commands
 // ---------------------------------------------------------------------------
 
-/** `app:set-icon`: stores the `appIcon` preference and repaints the Dock tile. */
+/** `app:set-icon`: stores the `appIcon` preference and repaints the Dock
+ *  tile; a server with no Dock (the standalone entry) answers
+ *  `CapabilityUnavailable`. */
 export const SetAppIcon = Command.define('SetAppIcon', {
   payload: Schema.Struct({ icon: AppIconSchema }),
-  success: Schema.Void
+  success: Schema.Void,
+  failure: RefusedOrUnavailable
 })

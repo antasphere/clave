@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { launchProfileManager } from '../launch-profile-manager'
+import { shellSettingsSource as settings } from '../settings/shell-source'
 import type { LaunchProfile, LauncherFamily } from '../../shared/agent-launch'
 
 const FAMILIES = new Set<LauncherFamily>(['claude', 'antigravity', 'codex', 'pi'])
@@ -8,26 +8,24 @@ function family(value: unknown): LauncherFamily {
   return value as LauncherFamily
 }
 
+/** The launch profiles over IPC, from the same settings source the server
+ *  answers from. */
 export function registerLaunchProfileHandlers(): void {
-  ipcMain.handle('launch-profiles:list', () => launchProfileManager.getPreferences())
+  ipcMain.handle('launch-profiles:list', () => settings.launchProfiles.list())
   ipcMain.handle('launch-profiles:upsert', (_event, profile: LaunchProfile) =>
-    launchProfileManager.upsert(profile)
+    settings.launchProfiles.upsert(profile)
   )
   ipcMain.handle('launch-profiles:delete', (_event, profileId: string) =>
-    launchProfileManager.delete(profileId)
+    settings.launchProfiles.delete(profileId)
   )
   ipcMain.handle(
     'launch-profiles:set-global',
     (_event, value: { family: unknown; profileId: string | null }) =>
-      launchProfileManager.setGlobalDefault(family(value.family), value.profileId)
+      settings.launchProfiles.setGlobal(family(value.family), value.profileId)
   )
   ipcMain.handle(
     'launch-profiles:set-workspace',
     (_event, value: { workspaceId: string; family: unknown; profileId: string | null }) =>
-      launchProfileManager.setWorkspaceDefault(
-        value.workspaceId,
-        family(value.family),
-        value.profileId
-      )
+      settings.launchProfiles.setWorkspace(value.workspaceId, family(value.family), value.profileId)
   )
 }

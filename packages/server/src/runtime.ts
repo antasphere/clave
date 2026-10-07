@@ -24,9 +24,10 @@ import { bearerAuth } from './auth'
 import { corsForLoopback } from './cors'
 import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
-import { PortsLive, type ServerPorts, SessionHost } from './ports'
+import { PortsLive, type ServerPorts, SessionHost, SettingsSource } from './ports'
 import { PushHubService, pushRoute } from './push/route'
 import { sessionHandlers } from './sessions'
+import { SettingsEventsLive, settingsHandlers } from './settings'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -44,6 +45,7 @@ export type ServerServices =
   | ClientRegistry
   | Readiness
   | SessionHost
+  | SettingsSource
   | PushHubService
   | EventStore
 
@@ -60,7 +62,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
   const services = Layer.mergeAll(foundations, events)
   const hub = PushHubService.layer(options).pipe(Layer.provide(services))
-  return Layer.mergeAll(services, hub)
+  // ── Lane D: the settings source's changes go out as server events ──
+  const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
+  return Layer.mergeAll(services, hub, settingsEvents)
 }
 
 /** The buses, with every handler of every domain registered once. */
@@ -68,8 +72,10 @@ export const BusesLive = busesLayer.pipe(
   Layer.provide(
     HandlerRegistry.layer(
       ...sessionHandlers,
-      ...clientHandlers
-      // ── Lane B: ...terminalHandlers · Lane C: ...sidebarHandlers · Lane D: ...settingsHandlers ──
+      ...clientHandlers,
+      // ── Lane D: settings ──
+      ...settingsHandlers
+      // ── Lane B: ...terminalHandlers · Lane C: ...sidebarHandlers ──
     )
   )
 )

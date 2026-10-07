@@ -51,6 +51,7 @@ import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
+import { shellSettingsSource } from './settings/shell-source'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -119,8 +120,10 @@ async function bootServer(): Promise<void> {
         const endpoint = await startClaveServer({
           ports: {
             // ── Lane A: sessions ──
-            sessions: getSessionHost()
-            // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+            sessions: getSessionHost(),
+            // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──
+            settings: shellSettingsSource
+            // ── Lane B: terminals · Lane C: sidebar ──
           }
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }

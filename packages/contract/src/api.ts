@@ -24,6 +24,7 @@ import {
   StopSession,
   WriteSession
 } from './sessions'
+import { settingsGroup } from './settings/api'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -44,11 +45,15 @@ export const clientsGroup = ApiGroup.make('clients')
   .add(HttpCqrs.queryEndpoint('list', '/clients', ListClients))
   .add(HttpCqrs.commandEndpoint('unregister', '/clients/unregister', UnregisterClient))
 
-// ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+// ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
+export { settingsGroup }
+
+// ── Lane B: terminals · Lane C: sidebar ──
 
 export const ClaveApi = Api.make('clave')
   .add(sessionsGroup)
   .add(clientsGroup)
+  .add(settingsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

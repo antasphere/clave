@@ -11,13 +11,18 @@ import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
+import type {
+  LaunchProfile,
+  LaunchProfilePreferences,
+  LauncherFamily
+} from '../shared/agent-launch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
-import type { WindowIdentity } from '../shared/workspace-types'
+import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
 import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
+import { dualListener, workspaceStatePick } from './dual-listener'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -280,6 +285,42 @@ function onSessionEvent<E extends ServerEvent['_tag']>(
   })
 }
 
+/**
+ * A settings listener (lane D): main fans a settings change out on BOTH
+ * transports from the one source (`src/main/settings/source.ts`: the IPC
+ * handlers and the server's events bridge), and the window hears exactly one
+ * of them, IPC while the push socket is not open and the push channel while
+ * it is (`dual-listener.ts` beside this file, tested there). This differs from
+ * `onBothTransports` above on purpose: there main picks the transport, here
+ * the window does, so a window whose first call came before the server was up
+ * still hears every change, and a reconnection loses none. `pick` turns the
+ * event into what the callback has always received; `undefined` drops it (a
+ * window's own echo).
+ */
+function viaServerEvent<E extends ServerEvent['_tag'], T>(
+  channel: string,
+  tag: E,
+  pick: (event: Extract<ServerEvent, { _tag: E }>) => T | undefined
+): (callback: (value: T) => void) => () => void {
+  return dualListener<E, T>({
+    bindIpc: (callback) => createIpcListener<[T]>(channel, callback),
+    backing: () => serverRouter.backing().then((backing) => backing?.push ?? null),
+    tag,
+    pick
+  })
+}
+
+/** The contract's answers are readonly through and through; the renderer's
+ *  types are not. Same shape (the contract was written from them). */
+const loose = <T>(value: unknown): T => value as T
+const profiles = loose<LaunchProfilePreferences>
+type UsageRead = typeof import('@clave/contract/settings').UsageReadView.Type
+type PiUsageTotals = typeof import('@clave/contract/settings').PiUsageTotalsView.Type
+type AppIcon = typeof import('@clave/contract/settings').AppIconSchema.Type
+type RegistryWriteResult =
+  typeof import('@clave/contract/settings').UpdateWorkspaceRegistry.success.Type
+type PinsWriteResult = typeof import('@clave/contract/settings').UpdateWorkspacePins.success.Type
+
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
   onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
@@ -399,18 +440,35 @@ const electronAPI = {
    *  after a round-trip would jump on first paint. */
   platform: process.platform,
 
-  launchProfilesList: () => ipcRenderer.invoke('launch-profiles:list'),
-  launchProfileUpsert: (profile: LaunchProfile) =>
-    ipcRenderer.invoke('launch-profiles:upsert', profile),
-  launchProfileDelete: (profileId: string) =>
-    ipcRenderer.invoke('launch-profiles:delete', profileId),
-  launchProfileSetGlobal: (family: LauncherFamily, profileId: string | null) =>
-    ipcRenderer.invoke('launch-profiles:set-global', { family, profileId }),
-  launchProfileSetWorkspace: (
-    workspaceId: string,
-    family: LauncherFamily,
-    profileId: string | null
-  ) => ipcRenderer.invoke('launch-profiles:set-workspace', { workspaceId, family, profileId }),
+  // ── Settings (lane D): launch profiles, every one with a server arm ──
+  launchProfilesList: viaServer<[], LaunchProfilePreferences>({
+    ipc: () => ipcRenderer.invoke('launch-profiles:list'),
+    server: async ({ api }) => profiles(await api.settings.launchProfiles.list())
+  }),
+  launchProfileUpsert: viaServer<[LaunchProfile], LaunchProfilePreferences>({
+    ipc: (profile) => ipcRenderer.invoke('launch-profiles:upsert', profile),
+    server: async ({ api }, profile) => profiles(await api.settings.launchProfiles.upsert(profile))
+  }),
+  launchProfileDelete: viaServer<[string], LaunchProfilePreferences>({
+    ipc: (profileId) => ipcRenderer.invoke('launch-profiles:delete', profileId),
+    server: async ({ api }, profileId) =>
+      profiles(await api.settings.launchProfiles.delete(profileId))
+  }),
+  launchProfileSetGlobal: viaServer<[LauncherFamily, string | null], LaunchProfilePreferences>({
+    ipc: (family, profileId) =>
+      ipcRenderer.invoke('launch-profiles:set-global', { family, profileId }),
+    server: async ({ api }, family, profileId) =>
+      profiles(await api.settings.launchProfiles.setGlobal(family, profileId))
+  }),
+  launchProfileSetWorkspace: viaServer<
+    [string, LauncherFamily, string | null],
+    LaunchProfilePreferences
+  >({
+    ipc: (workspaceId, family, profileId) =>
+      ipcRenderer.invoke('launch-profiles:set-workspace', { workspaceId, family, profileId }),
+    server: async ({ api }, workspaceId, family, profileId) =>
+      profiles(await api.settings.launchProfiles.setWorkspace(workspaceId, family, profileId))
+  }),
   spawnSession: viaServer<
     [
       string,
@@ -725,7 +783,11 @@ const electronAPI = {
   missionControlSetEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('mission-control:set-enabled', enabled),
 
-  setAppIcon: (icon: string) => ipcRenderer.invoke('app:set-icon', icon),
+  // ── Settings (lane D): the app icon ──
+  setAppIcon: viaServer<[string], void>({
+    ipc: (icon) => ipcRenderer.invoke('app:set-icon', icon),
+    server: ({ api }, icon) => api.settings.preferences.setAppIcon(icon as AppIcon)
+  }),
   hapticTick: (pattern?: 'alignment' | 'generic' | 'level') =>
     ipcRenderer.send('haptic:tick', pattern ?? 'alignment'),
   getUsername: () => ipcRenderer.invoke('app:get-username') as Promise<string | null>,
@@ -793,20 +855,48 @@ const electronAPI = {
   // Workspace registry + pins — main-process JSON storage, same crash-safety
   // rationale as the sidebar layouts, written FIELD BY FIELD: several windows
   // share the file, and a whole-file save was last-writer-wins.
-  workspaceLoad: () => ipcRenderer.invoke('workspace:load'),
-  workspaceUpdateRegistry: (workspaces: unknown[]) =>
-    ipcRenderer.invoke('workspace:update-registry', workspaces),
-  workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) =>
-    ipcRenderer.invoke('workspace:update-pins', scope, pins),
-  workspaceSetLastActive: (workspaceId: string | null) =>
-    ipcRenderer.invoke('workspace:set-last-active', workspaceId),
+  // ── Settings (lane D): the workspaces. Through the server the write
+  // carries this window's key as its origin, and the change event carries it
+  // back so this window drops its own echo, the way the IPC handler skips
+  // the sender. ──
+  workspaceLoad: viaServer<[], WorkspaceStateFile>({
+    ipc: () => ipcRenderer.invoke('workspace:load'),
+    server: async ({ api }) => loose<WorkspaceStateFile>(await api.settings.workspaces.load())
+  }),
+  workspaceUpdateRegistry: viaServer<[unknown[]], RegistryWriteResult>({
+    ipc: (workspaces) => ipcRenderer.invoke('workspace:update-registry', workspaces),
+    server: async ({ api }, workspaces) =>
+      api.settings.workspaces.updateRegistry(
+        workspaces as Workspace[],
+        (await windowKey()) ?? undefined
+      )
+  }),
+  workspaceUpdatePins: viaServer<[string | null | 'all', unknown[]], PinsWriteResult>({
+    ipc: (scope, pins) => ipcRenderer.invoke('workspace:update-pins', scope, pins),
+    server: async ({ api }, scope, pins) =>
+      api.settings.workspaces.updatePins(scope, pins, (await windowKey()) ?? undefined)
+  }),
+  workspaceSetLastActive: viaServer<[string | null], { ok: true }>({
+    ipc: (workspaceId) => ipcRenderer.invoke('workspace:set-last-active', workspaceId),
+    server: async ({ api }, workspaceId) => {
+      await api.settings.workspaces.setLastActive(workspaceId)
+      return { ok: true as const }
+    }
+  }),
   onWorkspaceStateChanged: (
     callback: (state: { workspaces: unknown[]; pins: unknown[] }) => void
-  ) =>
-    createIpcListener<[{ workspaces: unknown[]; pins: unknown[] }]>(
+  ): (() => void) => {
+    // This window's key, read once: the echo test needs it synchronously.
+    let mine: string | null = null
+    void windowKey().then((key) => {
+      mine = key
+    })
+    return viaServerEvent(
       'workspace:state-changed',
-      callback
-    ),
+      'workspaces.state_changed',
+      workspaceStatePick(() => mine)
+    )(callback)
+  },
 
   // This window's identity — its id, its persisted key, the workspace it
   // shows, whether it is the primary. A renderer only ever learns its own;
@@ -836,54 +926,133 @@ const electronAPI = {
 
   // Usage. The Claude read is per account (the machine login when omitted);
   // main polls every account on its own clock and pushes each result.
-  getUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
-    ipcRenderer.invoke('usage:get-limits', accountId, options),
-  getClaudeUsageSnapshot: () => ipcRenderer.invoke('usage:claude-snapshot'),
-  onClaudeAccountUsage: (callback: (update: { accountId: string; result: unknown }) => void) =>
-    createIpcListener<[{ accountId: string; result: unknown }]>('usage:claude-account', callback),
+  // ── Settings (lane D): usage, accounts, logins, every one with a server arm ──
+  getUsageLimits: viaServer<[string?, { force?: boolean }?], UsageRead>({
+    ipc: (accountId, options) => ipcRenderer.invoke('usage:get-limits', accountId, options),
+    server: ({ api }, accountId, options) =>
+      api.settings.usage.readClaude(accountId, options).then(loose<UsageRead>)
+  }),
+  getClaudeUsageSnapshot: viaServer<[], Record<string, UsageRead>>({
+    ipc: () => ipcRenderer.invoke('usage:claude-snapshot'),
+    server: ({ api }) => api.settings.usage.claudeSnapshot().then(loose<Record<string, UsageRead>>)
+  }),
+  onClaudeAccountUsage: viaServerEvent('usage:claude-account', 'usage.claude_read', (event) => ({
+    accountId: event.accountId,
+    result: event.result as unknown
+  })),
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
-  claudeAccountsList: () => ipcRenderer.invoke('claude-accounts:list'),
-  claudeAccountsMigrated: () => ipcRenderer.invoke('claude-accounts:migrated'),
-  claudeAccountAdd: (input: { label: string }) => ipcRenderer.invoke('claude-accounts:add', input),
-  claudeAccountUpdate: (id: string, updates: { label?: string }) =>
-    ipcRenderer.invoke('claude-accounts:update', id, updates),
-  claudeAccountReorder: (ids: string[]) => ipcRenderer.invoke('claude-accounts:reorder', ids),
-  claudeAccountRemove: (id: string) => ipcRenderer.invoke('claude-accounts:remove', id),
-  claudeAccountSetToken: (id: string, token: string) =>
-    ipcRenderer.invoke('claude-accounts:set-token', id, token),
-  claudeAccountClearToken: (id: string) => ipcRenderer.invoke('claude-accounts:clear-token', id),
-  onClaudeAccountsChanged: (callback: (accounts: unknown[]) => void) =>
-    createIpcListener<[unknown[]]>('claude-accounts:changed', callback),
+  // Through the server the token is the one field of one command, redacted
+  // in the contract, opened in the handler, and in no answer or event.
+  claudeAccountsList: viaServer<[], unknown[]>({
+    ipc: () => ipcRenderer.invoke('claude-accounts:list'),
+    server: async ({ api }) => [...(await api.settings.claudeAccounts.list())]
+  }),
+  claudeAccountsMigrated: viaServer<[], string[]>({
+    ipc: () => ipcRenderer.invoke('claude-accounts:migrated'),
+    server: async ({ api }) => [...(await api.settings.claudeAccounts.migrated())]
+  }),
+  claudeAccountAdd: viaServer<[{ label: string }], unknown>({
+    ipc: (input) => ipcRenderer.invoke('claude-accounts:add', input),
+    server: ({ api }, input) => api.settings.claudeAccounts.add(input.label)
+  }),
+  claudeAccountUpdate: viaServer<[string, { label?: string }], unknown>({
+    ipc: (id, updates) => ipcRenderer.invoke('claude-accounts:update', id, updates),
+    server: ({ api }, id, updates) => api.settings.claudeAccounts.rename(id, updates)
+  }),
+  claudeAccountReorder: viaServer<[string[]], void>({
+    ipc: (ids) => ipcRenderer.invoke('claude-accounts:reorder', ids),
+    server: ({ api }, ids) => api.settings.claudeAccounts.reorder(ids)
+  }),
+  claudeAccountRemove: viaServer<[string], boolean>({
+    ipc: (id) => ipcRenderer.invoke('claude-accounts:remove', id),
+    server: ({ api }, id) => api.settings.claudeAccounts.remove(id)
+  }),
+  claudeAccountSetToken: viaServer<[string, string], UsageRead>({
+    ipc: (id, token) => ipcRenderer.invoke('claude-accounts:set-token', id, token),
+    server: ({ api }, id, token) =>
+      api.settings.claudeAccounts.setToken(id, token).then(loose<UsageRead>)
+  }),
+  claudeAccountClearToken: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('claude-accounts:clear-token', id),
+    server: ({ api }, id) => api.settings.claudeAccounts.clearToken(id)
+  }),
+  onClaudeAccountsChanged: viaServerEvent(
+    'claude-accounts:changed',
+    'accounts.claude_changed',
+    (event) => [...event.accounts] as unknown[]
+  ),
   // Codex accounts (ADR 0002): a home per account; no credential crosses.
-  codexAccountsList: () => ipcRenderer.invoke('codex-accounts:list'),
-  codexAccountAdd: (input: { label: string; kind?: 'chatgpt' | 'apiKey' }) =>
-    ipcRenderer.invoke('codex-accounts:add', input),
-  codexAccountUpdate: (id: string, updates: { label?: string }) =>
-    ipcRenderer.invoke('codex-accounts:update', id, updates),
-  codexAccountReorder: (ids: string[]) => ipcRenderer.invoke('codex-accounts:reorder', ids),
-  codexAccountRemove: (id: string) => ipcRenderer.invoke('codex-accounts:remove', id),
-  codexAccountClearCredential: (id: string) =>
-    ipcRenderer.invoke('codex-accounts:clear-credential', id),
-  onCodexAccountsChanged: (callback: (accounts: unknown[]) => void) =>
-    createIpcListener<[unknown[]]>('codex-accounts:changed', callback),
+  codexAccountsList: viaServer<[], unknown[]>({
+    ipc: () => ipcRenderer.invoke('codex-accounts:list'),
+    server: async ({ api }) => [...(await api.settings.codexAccounts.list())]
+  }),
+  codexAccountAdd: viaServer<[{ label: string; kind?: 'chatgpt' | 'apiKey' }], unknown>({
+    ipc: (input) => ipcRenderer.invoke('codex-accounts:add', input),
+    server: ({ api }, input) => api.settings.codexAccounts.add(input.label, input.kind)
+  }),
+  codexAccountUpdate: viaServer<[string, { label?: string }], unknown>({
+    ipc: (id, updates) => ipcRenderer.invoke('codex-accounts:update', id, updates),
+    server: ({ api }, id, updates) => api.settings.codexAccounts.rename(id, updates)
+  }),
+  codexAccountReorder: viaServer<[string[]], void>({
+    ipc: (ids) => ipcRenderer.invoke('codex-accounts:reorder', ids),
+    server: ({ api }, ids) => api.settings.codexAccounts.reorder(ids)
+  }),
+  codexAccountRemove: viaServer<[string], boolean>({
+    ipc: (id) => ipcRenderer.invoke('codex-accounts:remove', id),
+    server: ({ api }, id) => api.settings.codexAccounts.remove(id)
+  }),
+  codexAccountClearCredential: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('codex-accounts:clear-credential', id),
+    server: ({ api }, id) => api.settings.codexAccounts.clearCredential(id)
+  }),
+  onCodexAccountsChanged: viaServerEvent(
+    'codex-accounts:changed',
+    'accounts.codex_changed',
+    (event) => [...event.accounts] as unknown[]
+  ),
   // The login flows: a job's status, link and reason cross; nothing else.
-  accountLoginStart: (provider: 'claude' | 'codex', accountId: string) =>
-    ipcRenderer.invoke('accounts:login-start', provider, accountId),
-  accountLoginApiKey: (accountId: string, apiKey: string) =>
-    ipcRenderer.invoke('accounts:login-api-key', accountId, apiKey),
-  accountLoginInput: (jobId: string, text: string) =>
-    ipcRenderer.invoke('accounts:login-input', jobId, text),
-  accountLoginCancel: (jobId: string) => ipcRenderer.invoke('accounts:login-cancel', jobId),
-  accountLoginList: () => ipcRenderer.invoke('accounts:login-list'),
-  onAccountLoginProgress: (callback: (job: unknown) => void) =>
-    createIpcListener<[unknown]>('accounts:login-progress', callback),
+  // The API key is the one field of one command, redacted in the contract.
+  accountLoginStart: viaServer<['claude' | 'codex', string], unknown>({
+    ipc: (provider, accountId) => ipcRenderer.invoke('accounts:login-start', provider, accountId),
+    server: ({ api }, provider, accountId) => api.settings.logins.start(provider, accountId)
+  }),
+  accountLoginApiKey: viaServer<[string, string], unknown>({
+    ipc: (accountId, apiKey) => ipcRenderer.invoke('accounts:login-api-key', accountId, apiKey),
+    server: ({ api }, accountId, apiKey) => api.settings.logins.startApiKey(accountId, apiKey)
+  }),
+  accountLoginInput: viaServer<[string, string], void>({
+    ipc: (jobId, text) => ipcRenderer.invoke('accounts:login-input', jobId, text),
+    server: ({ api }, jobId, text) => api.settings.logins.input(jobId, text)
+  }),
+  accountLoginCancel: viaServer<[string], void>({
+    ipc: (jobId) => ipcRenderer.invoke('accounts:login-cancel', jobId),
+    server: ({ api }, jobId) => api.settings.logins.cancel(jobId)
+  }),
+  accountLoginList: viaServer<[], unknown[]>({
+    ipc: () => ipcRenderer.invoke('accounts:login-list'),
+    server: async ({ api }) => [...(await api.settings.logins.list())]
+  }),
+  onAccountLoginProgress: viaServerEvent(
+    'accounts:login-progress',
+    'accounts.login_progressed',
+    (event) => event.job as unknown
+  ),
   // Codex usage is per account like Claude's (the machine's home when omitted).
-  getCodexUsageLimits: (accountId?: string, options?: { force?: boolean }) =>
-    ipcRenderer.invoke('usage:get-codex-limits', accountId, options),
-  getCodexUsageSnapshot: () => ipcRenderer.invoke('usage:codex-snapshot'),
-  onCodexAccountUsage: (callback: (update: { accountId: string; result: unknown }) => void) =>
-    createIpcListener<[{ accountId: string; result: unknown }]>('usage:codex-account', callback),
+  getCodexUsageLimits: viaServer<[string?, { force?: boolean }?], UsageRead>({
+    ipc: (accountId, options) => ipcRenderer.invoke('usage:get-codex-limits', accountId, options),
+    server: ({ api }, accountId, options) =>
+      api.settings.usage.readCodex(accountId, options).then(loose<UsageRead>)
+  }),
+  getCodexUsageSnapshot: viaServer<[], Record<string, UsageRead>>({
+    ipc: () => ipcRenderer.invoke('usage:codex-snapshot'),
+    server: ({ api }) => api.settings.usage.codexSnapshot().then(loose<Record<string, UsageRead>>)
+  }),
+  onCodexAccountUsage: viaServerEvent('usage:codex-account', 'usage.codex_read', (event) => ({
+    accountId: event.accountId,
+    result: event.result as unknown
+  })),
   // A session moved to another account: the same tab, its process restarted
   // on the account with the conversation resumed (ADR 0002).
   restartSession: (
@@ -897,7 +1066,10 @@ const electronAPI = {
       resendRejected?: boolean
     }
   ) => ipcRenderer.invoke('pty:restart', id, overrides),
-  getPiUsage: (range: 'today' | '7d' | '30d' | 'all') => ipcRenderer.invoke('usage:get-pi', range),
+  getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
+    ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),
+    server: ({ api }, range) => api.settings.usage.readPi(range).then(loose<PiUsageTotals>)
+  }),
 
   // Git
   gitCheckIgnored: (cwd: string, paths: string[]) =>
@@ -1100,7 +1272,7 @@ const electronAPI = {
       { ok: true } | { ok: false; error: string }
     >
 
-  // ── Lane C: settings behind ports ──
+  // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
   // ── Lane F: the shell ──
 }

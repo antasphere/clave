@@ -10,6 +10,7 @@
  */
 import { Command, Query } from '@structure-ai/cqrs'
 import { Schema } from 'effect'
+import { SettingsRefused } from './failures'
 
 // ---------------------------------------------------------------------------
 // Views
@@ -76,19 +77,22 @@ export const ListLaunchProfiles = Query.define('ListLaunchProfiles', {
 /** `launch-profiles:upsert` */
 export const UpsertLaunchProfile = Command.define('UpsertLaunchProfile', {
   payload: Schema.Struct({ profile: LaunchProfileView }),
-  success: LaunchProfilePreferencesView
+  success: LaunchProfilePreferencesView,
+  failure: SettingsRefused
 })
 
 /** `launch-profiles:delete` */
 export const DeleteLaunchProfile = Command.define('DeleteLaunchProfile', {
   payload: Schema.Struct({ profileId: Schema.String }),
-  success: LaunchProfilePreferencesView
+  success: LaunchProfilePreferencesView,
+  failure: SettingsRefused
 })
 
 /** `launch-profiles:set-global` — null returns the family to its built-in profile. */
 export const SetGlobalLaunchProfile = Command.define('SetGlobalLaunchProfile', {
   payload: Schema.Struct({ family: LauncherFamily, profileId: Schema.NullOr(Schema.String) }),
-  success: LaunchProfilePreferencesView
+  success: LaunchProfilePreferencesView,
+  failure: SettingsRefused
 })
 
 /** `launch-profiles:set-workspace` — null drops the workspace's override. */
@@ -98,5 +102,6 @@ export const SetWorkspaceLaunchProfile = Command.define('SetWorkspaceLaunchProfi
     family: LauncherFamily,
     profileId: Schema.NullOr(Schema.String)
   }),
-  success: LaunchProfilePreferencesView
+  success: LaunchProfilePreferencesView,
+  failure: SettingsRefused
 })
