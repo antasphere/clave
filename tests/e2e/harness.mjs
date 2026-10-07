@@ -559,30 +559,14 @@ export async function spyPtySpawn(app) {
     }
     return true
   })
-  if (!installed) {
+  // No spec calls this at wave 2's head: the terminal specs read the
+  // journal (`spawnJournal` below). Kept for a spec that must tap the IPC
+  // handler and the session host at once; it fails loudly rather than
+  // recording nothing when Electron moves its private map.
+  if (!installed)
     throw new Error(
-      [
-        'spyPtySpawn could not tap pty:spawn.',
-        '',
-        'This DELIBERATELY uses `ipcMain._invokeHandlers`, an undocumented Electron',
-        'internal, verified on Electron 39 (39.5.2) with playwright-core 1.62. If you',
-        'are reading this after an Electron upgrade, the private Map has most likely',
-        'moved or been renamed.',
-        '',
-        'REPAIR IT — do not delete this test. It is the only deterministic point where',
-        'we can assert that a group prompt actually reaches the agent: `pty:spawn` only',
-        'creates the session record, the command runs when the terminal mounts, so a',
-        'background tab has no process and a `ps` check answers on which tab happened',
-        'to be on screen rather than on the code. Deleting it puts prompt delivery back',
-        'to unverifiable, which is where PRDCT-1677 started.',
-        '',
-        'Fallbacks, in order of preference: find where ipcMain now stores invoke',
-        'handlers; failing that, add a dev-only hook at ptyManager.spawn recording the',
-        'resolved shellArgs. See the workstream bundle 2026-08-22-sidebar-launcher for',
-        'the reasoning.'
-      ].join('\n')
+      'spyPtySpawn could not tap pty:spawn (ipcMain._invokeHandlers moved?). Prefer spawnJournal.'
     )
-  }
   return async () => app.evaluate(() => globalThis.__e2eSpawns ?? [])
 }
 
