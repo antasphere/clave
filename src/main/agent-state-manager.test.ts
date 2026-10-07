@@ -40,6 +40,24 @@ async function until(check: () => boolean, ms = 3000): Promise<boolean> {
 }
 
 describe('the agent state folder', () => {
+  it('keeps the last word per session: two sessions writing the same word are two transitions', async () => {
+    const states: [string, string][] = []
+    const setState = vi.spyOn(sessionManager, 'setState').mockImplementation(() => {})
+    startWatching((id, state) => states.push([id, state]))
+    await new Promise((r) => setTimeout(r, 300))
+    fs.writeFileSync(stateFilePath('s1'), 'working')
+    expect(await until(() => states.length >= 1)).toBe(true)
+    fs.writeFileSync(stateFilePath('s2'), 'working')
+    expect(await until(() => states.length >= 2)).toBe(true)
+    expect(states).toEqual([
+      ['s1', 'working'],
+      ['s2', 'working']
+    ])
+    clearState('s1')
+    clearState('s2')
+    setState.mockRestore()
+  })
+
   it('lives under the storage port’s data directory and is created on first ask', () => {
     expect(getStateDir()).toBe(path.join(dir, 'agent-state'))
     expect(fs.existsSync(path.join(dir, 'agent-state'))).toBe(true)
