@@ -98,6 +98,20 @@ export function mergeLayoutForKeys<G extends LayoutGroupLike>(
     // having no surviving member, and pruning it un-nested its terminal.)
     kept.push({ ...g, sessionIds, terminals })
   }
+  // A group BORN during this boot, before the saved layout came back (an
+  // agent's createGroup in the first seconds, PRDCT-1762): it is in the
+  // store and in no file, and replacing the partition would wipe it. It is
+  // kept where the store placed it; the save that follows the restore
+  // writes it to the server like any other.
+  const born: G[] = []
+  const persistedIds = new Set((persisted.groups ?? []).map((g) => g.id))
+  for (const g of state.groups) {
+    if (ownsGroup(g) && !persistedIds.has(g.id) && !otherGroupIds.has(g.id)) {
+      born.push(g)
+      kept.push(g)
+    }
+  }
+  const bornIds = new Set(born.map((g) => g.id))
   const keptIds = new Set(kept.map((g) => g.id))
 
   const nested = new Set<string>()
@@ -121,6 +135,7 @@ export function mergeLayoutForKeys<G extends LayoutGroupLike>(
   // stale and dropped.
   for (const id of state.displayOrder) {
     if (otherGroupIds.has(id)) push(id)
+    else if (bornIds.has(id)) push(id)
     else if (sessionKey.has(id) && !keySet.has(sessionKey.get(id)!)) push(id)
     else if (!sessionKey.has(id) && !keySet.size) push(id)
   }

@@ -32,16 +32,19 @@ describe('mergeLayoutForKeys', () => {
     sessions: [s('sA', A), s('sA2', A), s('sB-free', B)]
   }
 
-  it('replaces only the merged workspace and leaves the others untouched', () => {
+  // The merged workspace's groups come from the file; a group of that
+  // workspace the store holds and the file does not was born during this
+  // boot and is kept where the store put it (the boot race, PRDCT-1762).
+  it('takes the merged workspace from the file, keeps a group born meanwhile, leaves the others untouched', () => {
     const out = mergeLayoutForKeys(
       store,
       [B],
       { groups: [g('gB-new', ['sB1', 'sB2'], B)], displayOrder: ['gB-new', 'sB-free'] },
       ['sB1', 'sB-free']
     )
-    expect(out.groups.map((x) => x.id)).toEqual(['gA', 'gB-new'])
+    expect(out.groups.map((x) => x.id)).toEqual(['gA', 'gB-new', 'gB-old'])
     expect(out.groups[1].sessionIds).toEqual(['sB1'])
-    expect(out.displayOrder).toEqual(['gA', 'sA2', 'gB-new', 'sB-free'])
+    expect(out.displayOrder).toEqual(['gA', 'sA2', 'gB-old', 'gB-new', 'sB-free'])
   })
 
   it('keeps a group whose members survive ELSEWHERE as a shell (no truncation)', () => {
@@ -252,5 +255,39 @@ describe('placeAdopted — an adopted tab never lands twice, never in a foreign 
 
   it('is idempotent for a tab already at the top level', () => {
     expect(placeAdopted(state, 's-free')).toEqual(['g1', 's-free'])
+  })
+})
+
+describe('mergeLayoutForKeys keeps a group born during the boot', () => {
+  it('a group in the store and in no file survives the restore, where the store put it', () => {
+    const state = {
+      groups: [{ id: 'born', sessionIds: ['s-new'], terminals: [], workspaceId: 'ws' }],
+      displayOrder: ['born', 's-old'],
+      sessions: [
+        { id: 's-new', workspaceId: 'ws' },
+        { id: 's-old', workspaceId: 'ws' }
+      ]
+    }
+    const persisted = {
+      groups: [{ id: 'saved', sessionIds: ['s-old'], terminals: [], workspaceId: 'ws' }],
+      displayOrder: ['saved']
+    }
+    const out = mergeLayoutForKeys(state, ['ws'], persisted, ['s-new', 's-old'])
+    expect(out.groups.map((g) => g.id)).toEqual(['saved', 'born'])
+    expect(out.displayOrder).toEqual(['born', 'saved'])
+  })
+  it('a group the file also holds takes the file’s shape, as before', () => {
+    const state = {
+      groups: [{ id: 'g', sessionIds: ['a', 'b'], terminals: [], workspaceId: 'ws' }],
+      displayOrder: ['g'],
+      sessions: [{ id: 'a', workspaceId: 'ws' }]
+    }
+    const persisted = {
+      groups: [{ id: 'g', sessionIds: ['a'], terminals: [], workspaceId: 'ws' }],
+      displayOrder: ['g']
+    }
+    const out = mergeLayoutForKeys(state, ['ws'], persisted, ['a'])
+    expect(out.groups).toEqual([{ id: 'g', sessionIds: ['a'], terminals: [], workspaceId: 'ws' }])
+    expect(out.displayOrder).toEqual(['g'])
   })
 })
