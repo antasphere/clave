@@ -1011,11 +1011,13 @@ export const useSessionStore = create<SessionState>((set) => ({
         displayOrder: [...order, ...stayed.filter((sid) => !order.includes(sid))]
       }
     }
-    const next = reflect(useSessionStore.getState())
-    if (next.groups && next.displayOrder) {
-      setAsBase({ groups: next.groups, displayOrder: next.displayOrder })
-      set(next)
-    }
+    const state = useSessionStore.getState()
+    const next = reflect(state)
+    // A group this window does not hold: nothing to reflect, and nothing
+    // of the person's pending edits must fold into the base.
+    if (next === state || !next.groups || !next.displayOrder) return
+    setAsBase({ groups: next.groups, displayOrder: next.displayOrder })
+    set(next)
   },
 
   removeSession: (id) =>
