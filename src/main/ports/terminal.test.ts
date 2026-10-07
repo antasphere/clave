@@ -50,9 +50,20 @@ describe('nodePtyTerminals', () => {
     expect(output).toContain('got:typed-in:through-the-port')
   })
 
-  it('resizes without complaint, and a kill ends the process', async () => {
-    const process = spawnShell('sleep 30')
+  it('a resize reaches the process: the shell reads the new size', async () => {
+    const process = spawnShell('sleep 0.3; stty size')
+    let output = ''
+    process.onData((data) => {
+      output += data
+    })
     process.resize(132, 44)
+    expect(await exitOf(process)).toBe(0)
+    // `stty size` prints rows then columns.
+    expect(output).toContain('44 132')
+  })
+
+  it('a zero size is clamped, and a kill ends the process', async () => {
+    const process = spawnShell('sleep 30')
     process.resize(0, 0)
     const exit = exitOf(process)
     process.kill()

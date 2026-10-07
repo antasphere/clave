@@ -102,7 +102,10 @@ describe('a plain terminal', () => {
     const session = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
     expect(session.alive).toBe(true)
     expect(session.ptyProcess).toBeNull()
-    expect(sessionRecordsDir()).toBe(path.join(dir, SESSION_RECORDS_FOLDER))
+    // The literal, not the constant: an existing install keeps its records
+    // under this name and nothing migrates a renamed folder.
+    expect(sessionRecordsDir()).toBe(path.join(dir, 'session-records'))
+    expect(SESSION_RECORDS_FOLDER).toBe('session-records')
     const record = readRecord(session.id)
     expect(record).toMatchObject({
       id: session.id,

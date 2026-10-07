@@ -156,6 +156,16 @@ async function terminals(t) {
       (await liveIds(win)).includes(second)
     )
 
+    // --- Control: a line typed through the app is in the write journal ---
+    // Without this, "types nothing into it" below would also pass on a
+    // journal that records nothing.
+    await win.evaluate(
+      ([s, line]) => window.electronAPI.writeSession(s, line),
+      [second, 'echo KEYMAP-CONTROL\r']
+    )
+    const control = await until(async () => (await writesTo(second)).includes('KEYMAP-CONTROL'))
+    t.check('control: a line typed through the app reaches the write journal', !!control)
+
     // --- Archive on a plain terminal: nothing typed, nothing killed ---
     await win.keyboard.down('Alt')
     await win.click(rowOf(second), { button: 'middle' })
