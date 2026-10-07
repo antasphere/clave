@@ -22,13 +22,14 @@ export async function run(t) {
   const { app, win, record } = fixture
   const view = win.locator('[data-testid="terminal-view"]')
   // What the pane writes to the session, in order.
-  await app.evaluate(({ ipcMain }) => {
+  await app.evaluate(() => {
     globalThis.__writes = []
-    const original = ipcMain._invokeHandlers.get('sessions:write')
-    ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+    const host = globalThis.__claveE2E.sessionHost
+    const write = host.write
+    host.write = (id, input) => {
       globalThis.__writes.push(input)
-      return original(event, id, input)
-    })
+      return write.call(host, id, input)
+    }
   })
   const writes = () => app.evaluate(() => globalThis.__writes)
   try {

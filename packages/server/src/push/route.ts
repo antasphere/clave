@@ -13,7 +13,7 @@ import { PUSH_PATH } from '@clave/contract/push'
 import { type Wrap, pathOf } from '../auth'
 import { isOwnPageOrigin } from '../cors'
 import { ServerEvents } from '../events'
-import { SessionSource } from '../ports'
+import { SessionHost } from '../ports'
 import { PushHub } from './hub'
 
 export class PushHubService extends Context.Tag('@clave/server/PushHub')<
@@ -24,12 +24,12 @@ export class PushHubService extends Context.Tag('@clave/server/PushHub')<
     token: string
     serverId: string
     helloTimeoutMs?: number
-  }): Layer.Layer<PushHubService, never, ServerEvents | SessionSource> {
+  }): Layer.Layer<PushHubService, never, ServerEvents | SessionHost> {
     return Layer.scoped(
       PushHubService,
       Effect.gen(function* () {
         const events = yield* ServerEvents
-        const source = yield* SessionSource
+        const source = yield* SessionHost
         const hub = new PushHub({ ...options, events, source })
         yield* Effect.addFinalizer(() => Effect.sync(() => hub.dispose()))
         return hub

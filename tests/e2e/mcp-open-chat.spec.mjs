@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * clave_open_session opens Claude and Codex in the chat view with chat: true.
  *
@@ -40,7 +44,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     const agent = await spawnAgentTabIn(app, win, DIR)
     t.check('an agent tab holds an MCP token', !!agent?.token, agent)

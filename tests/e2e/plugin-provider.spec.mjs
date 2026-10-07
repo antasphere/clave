@@ -41,15 +41,18 @@ async function open(dir) {
     env: { ...process.env }
   })
   // Record the raw stream before any session exists: what the plugin emits is
-  // only assertable here, ahead of whatever the view chooses to render.
-  await app.evaluate(({ BrowserWindow }) => {
+  // only assertable here, ahead of whatever the view chooses to render. The
+  // stream reaches the window over the server's push channel, so the record
+  // is taken where every frame passes: the session host's subscribe.
+  await app.evaluate(() => {
     globalThis.__providerStream = []
-    const contents = BrowserWindow.getAllWindows()[0].webContents
-    const send = contents.send.bind(contents)
-    contents.send = (channel, ...args) => {
-      if (channel.startsWith('sessions:stream:')) globalThis.__providerStream.push(args[0])
-      return send(channel, ...args)
-    }
+    const host = globalThis.__claveE2E.sessionHost
+    const subscribe = host.subscribe
+    host.subscribe = (id, listener) =>
+      subscribe.call(host, id, (frame) => {
+        globalThis.__providerStream.push(frame)
+        listener(frame)
+      })
   })
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')

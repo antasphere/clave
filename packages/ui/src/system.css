@@ -2149,6 +2149,26 @@ body,
   background-color: var(--surface-100);
 }
 
+/* The server's own word over the stage: a callout laid at the top of the
+   content column, above the grid it speaks for, when the server a window is on
+   cannot run sessions. One place for it, so no view invents a banner. */
+.stage-notice {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.stage-notice > .settings-callout {
+  pointer-events: auto;
+  max-width: 36rem;
+  width: 100%;
+  box-shadow: var(--shadow-md);
+}
+
 /* A callout under a card: a confirmation, a picker, an error. Same material,
    the tone on the border only. */
 .settings-callout {

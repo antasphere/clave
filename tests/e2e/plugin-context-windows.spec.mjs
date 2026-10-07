@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 // The focused session a plugin is told about, across two windows.
 //
 // Focus is a renderer fact, so each window reports its own and the most recent report wins.
@@ -21,7 +25,7 @@ export async function run(t) {
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
-  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
   let alphaSession
   let betaSession
   try {

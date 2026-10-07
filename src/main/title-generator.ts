@@ -19,6 +19,7 @@ import {
 import { launchProfileManager } from './launch-profile-manager'
 import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
 import { TITLE_HELPER_MARKER } from './session-history'
+import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
 // --- Session tracking ---
 
@@ -164,9 +165,7 @@ export function scheduleTitleGeneration(
         // (before this the tab kept the pre-/clear id, and a Resume or a
         // restart reopened the conversation the user had just cleared).
         const stem = filename.slice(0, -'.jsonl'.length)
-        if (entry.win && !entry.win.isDestroyed()) {
-          entry.win.webContents.send(`session:clear-detected:${sessionId}`, stem)
-        }
+        sessionCleared(sessionId, stem, entry.win)
       }, 500)
     })
     entry.dirWatcher = dirWatcher
@@ -201,7 +200,11 @@ export function scheduleChatTitle(sessionId: string, launch: TitleLaunchContext 
  *  slash command, not a bare yes/no — becomes the tab's name, delivered on the
  *  same channel a terminal tab's title arrives on. Anything else leaves the tab
  *  waiting for the message that does state what the conversation is about. */
-export function notifyChatMessage(sessionId: string, text: string, win: BrowserWindow): void {
+export function notifyChatMessage(
+  sessionId: string,
+  text: string,
+  win: BrowserWindow | null
+): void {
   const launch = chatAwaitingTitle.get(sessionId)
   if (!launch) return
   const message = text.trim()
@@ -209,9 +212,7 @@ export function notifyChatMessage(sessionId: string, text: string, win: BrowserW
   chatAwaitingTitle.delete(sessionId)
   console.log(`[title-gen] Chat ${sessionId} message: "${message.slice(0, 80)}"`)
   generateTitle(sessionId, message, launch)
-    .then((title) => {
-      if (!win.isDestroyed()) win.webContents.send(`session:auto-title:${sessionId}`, title)
-    })
+    .then((title) => sessionTitleChanged(sessionId, title, win))
     .catch(() => {})
 }
 
@@ -303,11 +304,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
       console.log(`[title-gen] Session ${sessionId} message: "${userMessage.slice(0, 80)}"`)
 
       generateTitle(sessionId, userMessage, entry.launch)
-        .then((title) => {
-          if (entry.win && !entry.win.isDestroyed()) {
-            entry.win.webContents.send(`session:auto-title:${sessionId}`, title)
-          }
-        })
+        .then((title) => sessionTitleChanged(sessionId, title, entry.win))
         .catch(() => {})
       break
     }
@@ -322,9 +319,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
         const planPath = extractPlanPath(parsed)
         if (planPath && existsSync(planPath)) {
           entry.planDetected = true
-          if (entry.win && !entry.win.isDestroyed()) {
-            entry.win.webContents.send(`session:plan-detected:${sessionId}`, planPath)
-          }
+          sessionPlanDetected(sessionId, planPath, entry.win)
           console.log(`[title-gen] Session ${sessionId}: plan detected at ${planPath}`)
           break
         }

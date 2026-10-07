@@ -16,8 +16,11 @@ import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity } from '../shared/workspace-types'
+import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
+import type { ServerEvent } from '@clave/contract/events'
+import type { SessionWrite } from '@clave/contract/sessions'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -60,10 +63,174 @@ const serverRouter = createMethodRouter({
     // mounting behind it). The push socket is opened by the first routed
     // subscription, not before.
     const { connectThroughNode } = await import('@clave/client/node')
-    return connectThroughNode(endpoint, { client: 'clave-preload' })
+    const backing = await connectThroughNode(endpoint, { client: 'clave-preload' })
+    // Every push listener waiting for the server joins it now (below).
+    queueMicrotask(() => announceServer(backing))
+    return backing
   }
 })
-const viaServer = serverRouter.route
+
+/**
+ * The one "server became available" signal of this preload, for every
+ * domain's push listeners (the sessions here; the sidebar joins it at its
+ * lane's rebase). A window that boots before the server is up makes its
+ * first calls over IPC, and the shell stops its per-window sends the moment
+ * the server runs, so a listener bound early would hear nothing until its
+ * next routed call: `onServerAvailable` runs `wire` at once when the backing
+ * is known, else the moment it is, either because a routed call connected
+ * (`connect` above announces it) or because the watch below found it, asking
+ * main every two seconds. A window on IPC for good (an app whose server did
+ * not start) keeps asking cheaply and hears IPC. A domain that must catch up
+ * on what went by between the shell's switch and the wiring does its read in
+ * its own `wire`.
+ */
+type Backing = import('@clave/client/router').Backing
+let serverBacking: Backing | null = null
+const serverWaiters = new Set<(backing: Backing) => void>()
+let serverWatching = false
+const announceServer = (backing: Backing): void => {
+  if (serverBacking) return
+  serverBacking = backing
+  backing.push.connect()
+  for (const wire of [...serverWaiters]) wire(backing)
+  serverWaiters.clear()
+}
+const watchForServer = (): void => {
+  if (serverBacking || serverWatching) return
+  serverWatching = true
+  const ask = (): void => {
+    void serverRouter.backing().then(
+      (backing) => {
+        if (backing) announceServer(backing)
+        else if (!serverBacking) setTimeout(ask, 2000)
+      },
+      () => {
+        if (!serverBacking) setTimeout(ask, 2000)
+      }
+    )
+  }
+  ask()
+}
+/** Run `wire` once the server is there (at once when it already is); the
+ *  returned function withdraws a wait that has not fired. */
+function onServerAvailable(wire: (backing: Backing) => void): () => void {
+  if (serverBacking) {
+    wire(serverBacking)
+    return noop
+  }
+  serverWaiters.add(wire)
+  watchForServer()
+  return () => {
+    serverWaiters.delete(wire)
+  }
+}
+/**
+ * What the server said it cannot do, for the page. A declared
+ * `CapabilityUnavailable` (a standalone server with no terminal process
+ * refusing the sessions) is caught here, at the client boundary, because the
+ * page cannot read it off the rejection: an Error crossing the context bridge
+ * keeps its message and loses every other property, the tag included. The
+ * refusal still rejects the call; the page's notice hears it through
+ * `onServerRefusal`, and hears `null` when a routed call next succeeds.
+ */
+type ServerRefusal = { capability: string; message: string }
+const refusalListeners = new Set<(refusal: ServerRefusal | null) => void>()
+let refused = false
+const refusalOf = (error: unknown): ServerRefusal | null => {
+  if (!error || typeof error !== 'object') return null
+  const tagged = error as { _tag?: unknown; capability?: unknown; message?: unknown }
+  return tagged._tag === 'CapabilityUnavailable' &&
+    typeof tagged.capability === 'string' &&
+    typeof tagged.message === 'string'
+    ? { capability: tagged.capability, message: tagged.message }
+    : null
+}
+const tellRefusal = (refusal: ServerRefusal | null): void => {
+  for (const listener of refusalListeners) listener(refusal)
+}
+/** `serverRouter.route`, with the refusal relay around every routed call. */
+const viaServer = <A extends unknown[], R>(
+  route: Parameters<typeof serverRouter.route<A, R>>[0]
+): ((...args: A) => Promise<R>) => {
+  const routed = serverRouter.route<A, R>(route)
+  return async (...args) => {
+    try {
+      const result = await routed(...args)
+      if (refused) {
+        refused = false
+        tellRefusal(null)
+      }
+      return result
+    } catch (error) {
+      const refusal = refusalOf(error)
+      if (refusal) {
+        refused = true
+        tellRefusal(refusal)
+      }
+      throw error
+    }
+  }
+}
+/** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
+const heldSubscriptions = new Map<string, () => void>()
+/** Which transport a session's subscription was taken on: it is released on
+ *  the same one, whatever the router would pick now, and a stream listener
+ *  stays on IPC while the subscription is IPC's. */
+const subscribedVia = new Map<string, 'ipc' | 'server'>()
+const noop = (): void => {}
+/** One subscription on the server's push channel, held until the matching
+ *  unsubscribe; the answer is the server's own `subscribed` frame, which
+ *  comes once the session is ready and its listeners bound, as the IPC
+ *  answer did. An unknown session is the server's refusal, thrown. */
+const subscribeRoute = viaServer<[string], Session>({
+  ipc: async (id) => {
+    // Stamped BEFORE the round trip: a server announced while the IPC
+    // subscribe is in flight would otherwise find no stamp, bind the stream
+    // listener on push too, and the subscription would be held on both
+    // transports for its life (the verifier's round 2).
+    subscribedVia.set(id, 'ipc')
+    try {
+      return (await ipcRenderer.invoke('sessions:subscribe', id)) as Session
+    } catch (error) {
+      if (subscribedVia.get(id) === 'ipc') subscribedVia.delete(id)
+      throw error
+    }
+  },
+  server: async ({ push }, id) => {
+    push.connect()
+    heldSubscriptions.get(id)?.()
+    const release = push.subscribe(id, noop)
+    heldSubscriptions.set(id, release)
+    try {
+      const session = (await push.subscribed(id)) as Session
+      subscribedVia.set(id, 'server')
+      return session
+    } catch (error) {
+      release()
+      heldSubscriptions.delete(id)
+      throw error
+    }
+  }
+})
+/** A subscription is released on the transport it was taken on; one taken
+ *  over IPC and released over the server would leak in main and double every
+ *  frame of a later subscription (round 1 of the verifier). */
+const unsubscribeRoute = async (id: string): Promise<void> => {
+  const via = subscribedVia.get(id)
+  subscribedVia.delete(id)
+  if (via === 'server') {
+    heldSubscriptions.get(id)?.()
+    heldSubscriptions.delete(id)
+    return
+  }
+  await ipcRenderer.invoke('sessions:unsubscribe', id)
+}
+/** A session's subscription, taken again: on the transport it is already
+ *  on, else on whatever the router picks. */
+const subscribeAgain = (id: string): Promise<Session> =>
+  subscribedVia.get(id) === 'ipc'
+    ? (ipcRenderer.invoke('sessions:subscribe', id) as Promise<Session>)
+    : subscribeRoute(id)
 /** The window's own key: the server lists sessions per window the way
  *  `sessions:list` answers for the asking window. */
 const windowKey = (): Promise<string | null> =>
@@ -71,7 +238,57 @@ const windowKey = (): Promise<string | null> =>
     .invoke('window:identity')
     .then((identity: WindowIdentity | null) => identity?.windowKey ?? null)
 
+/**
+ * A listener on both transports. The IPC channel is bound at once, the push
+ * subscription once the server is available (`onServerAvailable`, at once or
+ * later); a window the server has not reached hears IPC, a window on the
+ * server hears the push channel, and main sends on one or the other, never
+ * both (`src/main/server/session-events.ts`). `unless` keeps a stream
+ * listener off the push channel while the session's subscription was taken
+ * over IPC: main serves that subscription over IPC until it is released, and
+ * binding push beside it would deliver every frame twice.
+ */
+function onBothTransports(
+  ipcOff: () => void,
+  bind: (push: import('@clave/client').PushClient) => () => void,
+  unless: () => boolean = () => false
+): () => void {
+  let pushOff: (() => void) | null = null
+  let gone = false
+  const withdraw = onServerAvailable((backing) => {
+    if (gone || unless()) return
+    pushOff = bind(backing.push)
+  })
+  return () => {
+    gone = true
+    withdraw()
+    ipcOff()
+    pushOff?.()
+  }
+}
+/** A server event about one session, on the push channel. */
+function onSessionEvent<E extends ServerEvent['_tag']>(
+  push: import('@clave/client').PushClient,
+  tag: E,
+  sessionId: string,
+  callback: (event: Extract<ServerEvent, { _tag: E }>) => void
+): () => void {
+  return push.onEvent((envelope) => {
+    const event = envelope.event
+    if (event._tag === tag && 'id' in event && event.id === sessionId)
+      callback(event as Extract<ServerEvent, { _tag: E }>)
+  })
+}
+
 const electronAPI = {
+  // ── The server (lane A): what it refused, for the page's notice ──
+  onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
+    refusalListeners.add(callback)
+    return () => {
+      refusalListeners.delete(callback)
+    }
+  },
+  // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),
     server: async ({ api }) => {
@@ -82,7 +299,7 @@ const electronAPI = {
   sessionsSubscribe: async (id: string): Promise<Session> => {
     sessionSubscriptionRefs.set(id, (sessionSubscriptionRefs.get(id) ?? 0) + 1)
     try {
-      return await ipcRenderer.invoke('sessions:subscribe', id)
+      return await subscribeAgain(id)
     } catch (error) {
       const refs = (sessionSubscriptionRefs.get(id) ?? 1) - 1
       if (refs > 0) sessionSubscriptionRefs.set(id, refs)
@@ -97,19 +314,37 @@ const electronAPI = {
       return Promise.resolve()
     }
     sessionSubscriptionRefs.delete(id)
-    return ipcRenderer.invoke('sessions:unsubscribe', id)
+    return unsubscribeRoute(id)
   },
-  sessionsWrite: (id: string, input: Uint8Array | SessionInput): Promise<void> =>
-    ipcRenderer.invoke('sessions:write', id, input),
-  sessionsSetView: (id: string, viewId: string | null): Promise<Session> =>
-    ipcRenderer.invoke('sessions:set-view', id, viewId),
-  sessionsModels: (id: string): Promise<ModelOption[]> => ipcRenderer.invoke('sessions:models', id),
-  sessionsCommands: (id: string): Promise<CommandOption[]> =>
-    ipcRenderer.invoke('sessions:commands', id),
-  sessionsCapabilities: (id: string): Promise<{ images: boolean }> =>
-    ipcRenderer.invoke('sessions:capabilities', id),
-  sessionsHistory: (id: string, before?: number, limit?: number): Promise<HistoryPage> =>
-    ipcRenderer.invoke('sessions:history', id, before, limit),
+  sessionsWrite: viaServer<[string, Uint8Array | SessionInput], void>({
+    ipc: (id, input) => ipcRenderer.invoke('sessions:write', id, input),
+    server: ({ api }, id, input) =>
+      api.sessions.write(
+        id,
+        input instanceof Uint8Array ? { type: 'bytes', data: input } : (input as SessionWrite)
+      )
+  }),
+  sessionsSetView: viaServer<[string, string | null], Session>({
+    ipc: (id, viewId) => ipcRenderer.invoke('sessions:set-view', id, viewId),
+    server: ({ api }, id, viewId) => api.sessions.setView(id, viewId) as Promise<Session>
+  }),
+  sessionsModels: viaServer<[string], ModelOption[]>({
+    ipc: (id) => ipcRenderer.invoke('sessions:models', id),
+    server: async ({ api }, id) => [...(await api.sessions.models(id))] as ModelOption[]
+  }),
+  sessionsCommands: viaServer<[string], CommandOption[]>({
+    ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
+    server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
+  }),
+  sessionsCapabilities: viaServer<[string], { images: boolean }>({
+    ipc: (id) => ipcRenderer.invoke('sessions:capabilities', id),
+    server: ({ api }, id) => api.sessions.capabilities(id)
+  }),
+  sessionsHistory: viaServer<[string, number?, number?], HistoryPage>({
+    ipc: (id, before, limit) => ipcRenderer.invoke('sessions:history', id, before, limit),
+    server: ({ api }, id, before, limit) =>
+      api.sessions.history(id, before, limit) as Promise<HistoryPage>
+  }),
   // The composer's files: prepared into a session's attachment records here,
   // read again in main when the message is sent.
   sessionsFiles: {
@@ -122,9 +357,17 @@ const electronAPI = {
       ipcRenderer.invoke('sessions:files', { type: 'open', file })
   },
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>
-    createIpcListener(`sessions:stream:${id}`, callback),
+    onBothTransports(
+      createIpcListener(`sessions:stream:${id}`, callback),
+      (push) => push.subscribe(id, callback as (stream: unknown) => void),
+      () => subscribedVia.get(id) === 'ipc'
+    ),
   onSessionStreamExit: (id: string, callback: (code: number) => void) =>
-    createIpcListener(`sessions:exit:${id}`, callback),
+    onBothTransports(
+      createIpcListener(`sessions:exit:${id}`, callback),
+      (push) => push.subscribe(id, noop, callback),
+      () => subscribedVia.get(id) === 'ipc'
+    ),
 
   pluginsList: () => ipcRenderer.invoke('plugins:list'),
   pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
@@ -168,38 +411,51 @@ const electronAPI = {
     family: LauncherFamily,
     profileId: string | null
   ) => ipcRenderer.invoke('launch-profiles:set-workspace', { workspaceId, family, profileId }),
-  spawnSession: (
-    cwd: string,
-    options?: {
-      dangerousMode?: boolean
-      model?: string
-      claudeMode?: boolean
-      antigravityMode?: boolean
-      codexMode?: boolean
-      piMode?: boolean
-      claudeAgentsMode?: boolean
-      resumeSessionId?: string
-      claudeSessionId?: string
-      piSessionId?: string
-      launchProfileId?: string
-      piProvider?: string
-      piThinking?: import('../shared/agent-launch').PiThinkingLevel
-      initialCommand?: string
-      autoExecute?: boolean
-      initialPrompt?: string
-      tmuxMode?: boolean
-      adoptTmuxName?: string
-      adoptSessionId?: string
-      configDir?: string
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      workspaceId?: string
-      link?:
-        | { kind: 'group-terminal'; groupId: string; terminalId: string }
-        | { kind: 'session-view'; ownerId: string }
-        | { kind: 'toolbar'; key: string }
+  spawnSession: viaServer<
+    [
+      string,
+      {
+        dangerousMode?: boolean
+        model?: string
+        claudeMode?: boolean
+        antigravityMode?: boolean
+        codexMode?: boolean
+        piMode?: boolean
+        claudeAgentsMode?: boolean
+        resumeSessionId?: string
+        claudeSessionId?: string
+        piSessionId?: string
+        launchProfileId?: string
+        piProvider?: string
+        piThinking?: import('../shared/agent-launch').PiThinkingLevel
+        initialCommand?: string
+        autoExecute?: boolean
+        initialPrompt?: string
+        tmuxMode?: boolean
+        adoptTmuxName?: string
+        adoptSessionId?: string
+        configDir?: string
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        workspaceId?: string
+        link?:
+          | { kind: 'group-terminal'; groupId: string; terminalId: string }
+          | { kind: 'session-view'; ownerId: string }
+          | { kind: 'toolbar'; key: string }
+      }?
+    ],
+    SessionInfo
+  >({
+    ipc: (cwd, options) => ipcRenderer.invoke('pty:spawn', cwd, options),
+    server: async ({ api }, cwd, options) => {
+      const key = await windowKey()
+      return (await api.sessions.start({
+        cwd,
+        ...(key && { windowKey: key }),
+        ...(options && { options })
+      })) as SessionInfo
     }
-  ) => ipcRenderer.invoke('pty:spawn', cwd, options),
+  }),
 
   writeSession: (id: string, data: string) => ipcRenderer.send('pty:write', id, data),
 
@@ -209,7 +465,10 @@ const electronAPI = {
   resizeSession: (id: string, cols: number, rows: number) =>
     ipcRenderer.send('pty:resize', id, cols, rows),
 
-  killSession: (id: string) => ipcRenderer.invoke('pty:kill', id),
+  killSession: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('pty:kill', id),
+    server: ({ api }, id) => api.sessions.stop(id)
+  }),
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
@@ -259,21 +518,42 @@ const electronAPI = {
   onSessionExit: (id: string, callback: (exitCode: number) => void) =>
     createIpcListener<[number]>(`pty:exit:${id}`, callback),
 
+  // A session's title, plan and clear are server events on the push channel
+  // once the server runs, and per-window sends before (one or the other,
+  // src/main/server/session-events.ts); a listener hears both transports.
   onSessionAutoTitle: (sessionId: string, callback: (title: string) => void) =>
-    createIpcListener<[string]>(`session:auto-title:${sessionId}`, callback),
+    onBothTransports(
+      createIpcListener<[string]>(`session:auto-title:${sessionId}`, callback),
+      (push) =>
+        onSessionEvent(push, 'session.title_changed', sessionId, (event) => callback(event.title))
+    ),
 
   onPlanDetected: (sessionId: string, callback: (planPath: string) => void) =>
-    createIpcListener<[string]>(`session:plan-detected:${sessionId}`, callback),
+    onBothTransports(
+      createIpcListener<[string]>(`session:plan-detected:${sessionId}`, callback),
+      (push) =>
+        onSessionEvent(push, 'session.plan_detected', sessionId, (event) => callback(event.path))
+    ),
 
   // A chat session's CLI reported its account's limit (ADR 0002): the policy
   // reads the account and proposes or makes the move.
   onSessionLimitReported: (callback: (sessionId: string) => void) =>
     createIpcListener<[string]>('session:limit-reported', callback),
   onClearDetected: (sessionId: string, callback: (newClaudeSessionId: string | null) => void) =>
-    createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),
+    onBothTransports(
+      createIpcListener<[string | null]>(`session:clear-detected:${sessionId}`, callback),
+      (push) =>
+        onSessionEvent(push, 'session.cleared', sessionId, (event) =>
+          callback(event.providerSessionId)
+        )
+    ),
 
+  // A terminal's hook state still arrives over IPC from the PTY handlers; a
+  // chat session's comes as `session.state_changed` once the server runs.
   onAgentState: (sessionId: string, callback: (state: string) => void) =>
-    createIpcListener<[string]>(`agent:state:${sessionId}`, callback),
+    onBothTransports(createIpcListener<[string]>(`agent:state:${sessionId}`, callback), (push) =>
+      onSessionEvent(push, 'session.state_changed', sessionId, (event) => callback(event.state))
+    ),
 
   onMcpCommand: (
     callback: (msg: { requestId: string; command: string; payload: unknown }) => void

@@ -557,6 +557,12 @@ export interface PluginSecretPrompt {
   description?: string
 }
 export interface ElectronAPI {
+  /** What the server said it cannot do (a declared CapabilityUnavailable on a
+   *  routed call), or null once a routed call succeeds again. The page shows
+   *  it where the sessions would be (ServerNotice). */
+  onServerRefusal: (
+    callback: (refusal: { capability: string; message: string } | null) => void
+  ) => () => void
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>

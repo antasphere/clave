@@ -16,7 +16,7 @@
   "dependencies": {
     "@clave/contract": "*",
     "@effect/platform": "0.97.1",
-    "@structure-ai/client": "0.2.1",
+    "@structure-ai/client": "0.3.0",
     "effect": "3.22.1",
     "@effect/platform-node": "0.108.1",
     "ws": "^8.19.0"

@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, readdirSync } from 'node:fs'
 import {
@@ -43,7 +47,7 @@ export async function run(t) {
   )
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  let { app, win } = await launchApp(DIR)
+  let { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     async function chooseTheme(name) {
       await app.evaluate(({ BrowserWindow }) =>
@@ -344,7 +348,7 @@ export async function run(t) {
     // Restart against the SAME isolated profile; durable document survives renderer/main teardown.
     await client.call('clave_side_panel', { action: 'read' })
     await app.close()
-    ;({ app, win } = await launchApp(DIR, { settleMs: 8000 }))
+    ;({ app, win } = await launchApp(DIR, { server: 'in-process', settleMs: 8000 }))
     if (await win.getByRole('button', { name: 'Restore', exact: true }).count())
       await win.getByRole('button', { name: 'Restore', exact: true }).click()
     await until(async () =>

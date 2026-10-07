@@ -8,12 +8,17 @@ import {
 } from '../../../src/shared/session-model'
 import {
   Attachments,
+  GetSessionHistory,
   Session,
   SessionEvent,
+  SessionInfo,
   SessionInput,
   SessionStream,
-  SessionWrite
+  SessionWrite,
+  SpawnOptions
 } from './sessions'
+import { CapabilityUnavailable } from './errors'
+import { ServerEvent } from './events'
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown): Either.Either<A, string> =>
   Either.mapLeft(Schema.decodeUnknownEither(schema)(input), (e) => e.message)
@@ -161,5 +166,112 @@ describe('the session stream on the wire', () => {
     expect(decode(SessionWrite, smuggled)).toEqual(Either.right(message))
     // In-process, the host's own union still carries it.
     expect(decode(SessionInput, smuggled)).toEqual(Either.right(smuggled))
+  })
+})
+
+describe('starting a session on the wire', () => {
+  const full = {
+    dangerousMode: true,
+    model: 'opus',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    resumeSessionId: 'r1',
+    claudeSessionId: 'c1',
+    piSessionId: 'p1',
+    launchProfileId: 'lp1',
+    piProvider: 'anthropic',
+    piThinking: 'high',
+    initialCommand: 'ls',
+    autoExecute: true,
+    initialPrompt: 'hello',
+    tmuxMode: true,
+    adoptTmuxName: 'clave-1',
+    adoptSessionId: 'a1',
+    configDir: '/cfg',
+    claudeProfileId: 'cp1',
+    claudeProfileLabel: 'Work',
+    codexAccountId: 'ca1',
+    codexAccountLabel: 'Personal',
+    workspaceId: 'ws1'
+  }
+  const links = [
+    { kind: 'group-terminal', groupId: 'g1', terminalId: 't1' },
+    { kind: 'session-view', ownerId: 'o1' },
+    { kind: 'toolbar', key: 'k1' }
+  ]
+
+  it('takes spawn options with no field at all', () => {
+    expect(decode(SpawnOptions, {})).toEqual(Either.right({}))
+  })
+  it.each(links.map((link) => [link.kind, link]))(
+    'takes the full option set with a link of kind %s',
+    (_, link) => {
+      const options = { ...full, link }
+      expect(decode(SpawnOptions, options)).toEqual(Either.right(options))
+    }
+  )
+  it('refuses a link of a kind it does not know', () => {
+    expect(Either.isLeft(decode(SpawnOptions, { link: { kind: 'sidebar', key: 'k' } }))).toBe(true)
+  })
+  it('round-trips the started session’s record, with and without its optional fields', () => {
+    const bare = {
+      id: 'started-1',
+      cwd: '/work/app',
+      folderName: 'app',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    }
+    const rich = {
+      ...bare,
+      claudeSessionId: 'c1',
+      piSessionId: 'p1',
+      launchProfileId: 'lp1',
+      model: 'opus',
+      piProvider: 'anthropic',
+      piThinking: 'high'
+    }
+    for (const info of [bare, rich]) {
+      const decoded = Schema.decodeUnknownSync(SessionInfo)(info)
+      expect(decoded).toEqual(info)
+      expect(Schema.encodeSync(SessionInfo)(decoded)).toEqual(info)
+    }
+    expect(Either.isLeft(decode(SessionInfo, { ...bare, id: '' }))).toBe(true)
+  })
+  it('decodes a history page’s numbers from the strings a GET carries', () => {
+    const payload = Schema.decodeUnknownEither(GetSessionHistory.payload)
+    expect(payload({ id: 'x', before: '12', limit: '40' })).toEqual(
+      Either.right({ id: 'x', before: 12, limit: 40 })
+    )
+    expect(payload({ id: 'x' })).toEqual(Either.right({ id: 'x' }))
+    expect(Either.isLeft(payload({ id: 'x', before: '-1' }))).toBe(true)
+    expect(Either.isLeft(payload({ id: 'x', limit: '1.5' }))).toBe(true)
+    expect(Either.isLeft(payload({ id: 'x', limit: 'many' }))).toBe(true)
+  })
+  it('encodes a missing capability with its tag, its capability and its message', () => {
+    const error = new CapabilityUnavailable({ capability: 'sessions', message: 'no sessions here' })
+    expect(Schema.encodeSync(CapabilityUnavailable)(error)).toEqual({
+      _tag: 'CapabilityUnavailable',
+      capability: 'sessions',
+      message: 'no sessions here'
+    })
+  })
+})
+
+describe('the sessions’ server events', () => {
+  const events: unknown[] = [
+    { _tag: 'session.title_changed', id: 's1', title: 'Fix the build' },
+    { _tag: 'session.plan_detected', id: 's1', path: '/plans/plan.md' },
+    { _tag: 'session.cleared', id: 's1', providerSessionId: null },
+    { _tag: 'session.cleared', id: 's1', providerSessionId: 'c2' }
+  ]
+  it.each(events.map((event) => [JSON.stringify(event), event]))('decodes %s', (_, event) => {
+    expect(decode(ServerEvent, event)).toEqual(Either.right(event))
+  })
+  it('refuses a cleared session without its provider session id', () => {
+    expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.cleared', id: 's1' }))).toBe(true)
   })
 })

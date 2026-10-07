@@ -1,5 +1,3 @@
-import { linkedDocuments } from '../linked-documents/runtime'
-import { callRenderer } from '../mcp/mcp-bridge'
 import { ipcMain, BrowserWindow } from 'electron'
 import {
   ptyManager,
@@ -7,136 +5,33 @@ import {
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
-import { getPreference } from './clave-file-handlers'
-import { workspaceManager } from '../workspace-manager'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
-import * as titleGenerator from '../title-generator'
+import { startWatching as startAgentStateWatching } from '../agent-state-manager'
+import { hasServerEventPublisher } from '../server/session-events'
 import {
-  startWatching as startAgentStateWatching,
-  clearState as clearAgentState
-} from '../agent-state-manager'
-
-type SessionInfoResult = {
-  id: string
-  cwd: string
-  folderName: string
-  alive: boolean
-  claudeSessionId: string | null
-  piSessionId: string | null
-  launchProfileId?: string
-  model?: string
-  piProvider?: string
-  piThinking?: PtySpawnOptions['piThinking']
-}
+  type SessionInfoResult,
+  spawnSessionForWindow,
+  stopSession,
+  trackInput
+} from '../sessions/lifecycle'
 
 export function registerPtyHandlers(): void {
-  // Buffer PTY input per session to detect /clear command
-  const inputBuffers = new Map<string, string>()
-
   // Deterministic Claude session state (from CC lifecycle hooks) → renderer.
+  // With the server running the same state travels as `session.state_changed`
+  // on the push channel (the manager publishes it, server/clave-server.ts):
+  // the per-window send is for an app without one, never beside it (the
+  // verifier's round 1 saw a terminal's state arrive twice).
   startAgentStateWatching((claveSessionId, state) => {
+    if (hasServerEventPublisher()) return
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(`agent:state:${claveSessionId}`, state)
     }
   })
 
-  /** The spawn, for the window that asked: the session, its listeners and
-   *  its window binding. `pty:spawn` and `pty:restart` share it so a restart
-   *  on another account (ADR 0002) is the same spawn with the account
-   *  changed, never a second copy of this wiring. */
-  async function spawnForWindow(
-    win: BrowserWindow | null,
-    cwd: string,
-    options?: PtySpawnOptions
-  ): Promise<SessionInfoResult> {
-    // tmux mode is a global app setting, ON by default. Honour it unless a
-    // caller overrides per-spawn or the user explicitly turned it off. (When
-    // tmux isn't installed the spawn transparently falls back to a plain shell.)
-    const tmuxMode = options?.tmuxMode ?? getPreference('tmuxMode') !== false
-    // Central workspace stamp: every spawn defaults to the workspace of the
-    // WINDOW that asked (the registry's truth, never the state file — another
-    // window may have switched or written last). Explicit values win (pin
-    // launches into a hidden workspace, MCP caller inheritance, adoption); the
-    // persisted last-active workspace survives only for a windowless caller.
-    const workspaceId =
-      options?.workspaceId ??
-      (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ??
-      workspaceManager.getLastActiveWorkspaceId() ??
-      undefined
-    // The asking window is the session's HOME: its persisted key goes on the
-    // record, so the next boot brings the tab back in that window (an
-    // adoption or a move re-stamps through this same path).
-    const windowKey = (win ? windowRegistry.getKeyForWindow(win.id) : null) ?? undefined
-    const session = await ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
-    // The sender hosts the session from now on: its renderer holds the xterm
-    // and receives pty:data. Adoption and re-homing rebind through this same
-    // path (the adopting window is the sender).
-    if (win) windowRegistry.bindSession(session.id, win.id)
-    const isClaudeMode =
-      options?.claudeMode !== false &&
-      !options?.antigravityMode &&
-      !options?.codexMode &&
-      !options?.piMode &&
-      !options?.claudeAgentsMode
-    const isResumed = !!options?.resumeSessionId
-
-    // A fresh Claude session is named by its first message, by the agent it
-    // runs: its resolved profile, on its account.
-    if (isClaudeMode && !isResumed && session.claudeSessionId && win) {
-      titleGenerator.scheduleTitleGeneration(
-        session.id,
-        session.cwd,
-        session.claudeSessionId,
-        win,
-        {
-          workspaceId,
-          launchProfileId: session.launchProfileId,
-          claudeProfileId: options?.claudeProfileId,
-          configDir: options?.configDir
-        }
-      )
-    }
-
-    // Attach listeners now so the channels are ready before the renderer
-    // triggers the actual pty.spawn() via pty:start (or first pty:resize).
-    ptyManager.attachListeners(
-      session.id,
-      (data) => {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(`pty:data:${session.id}`, data)
-        }
-      },
-      (exitCode) => {
-        titleGenerator.cleanup(session.id)
-        inputBuffers.delete(session.id)
-        clearAgentState(session.id)
-        windowRegistry.unbindSession(session.id)
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(`pty:exit:${session.id}`, exitCode)
-        }
-      }
-    )
-
-    if (session.claudeSessionId) {
-      console.log(
-        `[claude-session] PTY ${session.id} → claude session ${session.claudeSessionId}${options?.resumeSessionId ? ' (resumed)' : ' (new)'}`
-      )
-    }
-
-    return {
-      id: session.id,
-      cwd: session.cwd,
-      folderName: session.folderName,
-      alive: session.alive,
-      claudeSessionId: session.claudeSessionId ?? null,
-      piSessionId: session.piSessionId ?? null,
-      launchProfileId: session.launchProfileId,
-      model: session.model,
-      piProvider: session.piProvider,
-      piThinking: session.piThinking
-    }
-  }
+  /** Starting a session is `sessions/lifecycle.ts`'s: the server's
+   *  `StartSession` and these handlers share one wiring. */
+  const spawnForWindow = spawnSessionForWindow
 
   // The CLI's own word on its account's limit reaches the window holding the
   // tab (ADR 0002): the policy there proposes or makes the move.
@@ -205,26 +100,7 @@ export function registerPtyHandlers(): void {
   })
 
   ipcMain.on('pty:write', (_event, id: string, data: string) => {
-    // Track input to detect /clear command
-    let buf = inputBuffers.get(id) ?? ''
-    for (const ch of data) {
-      if (ch === '\r' || ch === '\n') {
-        // Enter pressed — check if the buffered line is /clear
-        if (/^\/clear\s*$/.test(buf.trim())) {
-          titleGenerator.notifyClear(id)
-        }
-        buf = ''
-      } else if (ch === '\x7f' || ch === '\b') {
-        buf = buf.slice(0, -1)
-      } else if (ch === '\x03' || ch === '\x15') {
-        // Ctrl+C or Ctrl+U — clear buffer
-        buf = ''
-      } else if (ch >= ' ') {
-        buf += ch
-      }
-    }
-    inputBuffers.set(id, buf)
-
+    trackInput(id, data)
     ptyManager.write(id, data)
   })
 
@@ -232,20 +108,7 @@ export function registerPtyHandlers(): void {
     ptyManager.resize(id, cols, rows)
   })
 
-  ipcMain.handle('pty:kill', async (_event, id: string) => {
-    const owner = windowRegistry.getWindowForSession(id)
-    if (
-      owner &&
-      linkedDocuments()
-        .list()
-        .some((d) => d.sessionId === id)
-    ) {
-      await callRenderer('flushLinkedDocument', { sessionId: id, allowConflict: true }, owner)
-    }
-    await ptyManager.kill(id)
-    // A session that never started has no exit event to unbind it.
-    windowRegistry.unbindSession(id)
-  })
+  ipcMain.handle('pty:kill', (_event, id: string) => stopSession(id))
 
   ipcMain.handle('pty:list', () => {
     return ptyManager.getAllSessions()

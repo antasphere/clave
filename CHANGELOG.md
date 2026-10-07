@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 - **Accounts, launch profiles, preferences and workspaces behind storage and secret ports** — the settings domains no longer ask Electron where their files live or how a token is encrypted: they take a storage port (JSON documents under one data directory) and a secret port (a sealed reference, opened only in the process that holds it). The app runs on its own data folder and OS encryption as before, byte for byte; a standalone server can run the same domains on a configured directory and the macOS Keychain.
 
+- **Sessions answer on the server, on the framework at 0.3.0** — every call a window makes about a session (start, stop, write with its attachments, the view, the models, the commands, the history) goes through Clave's server, and the session's stream, its exit, its title, its plan and a cleared conversation come back over the server's push channel; `@structure-ai` moves to 0.3.0 with its gRPC package beside it. Attached to a standalone server, which has no terminal process until the next wave, the window says so where the sessions would be instead of showing an empty list. Nothing changes on screen in the app as shipped.
+
 - **The app runs on a server** — Clave main boots a server beside the window (in-process for now) or attaches to one started on its own under `CLAVE_SERVER_URL`; `npm run dev:attached` runs the two side by side, the end-to-end suite runs both ways (`CLAVE_E2E_SERVER=attached`) and in CI, and ADR 0003 records the architecture of the split. Nothing changes on screen.
 
 ## [2.0.0] — 2026-09-30

@@ -19,6 +19,7 @@ const BUNDLED_SOURCE = [
   '@structure-ai/cqrs',
   '@structure-ai/domain',
   '@structure-ai/eventsourcing',
+  '@structure-ai/grpc',
   '@structure-ai/http',
   '@structure-ai/observability',
   '@structure-ai/runtime'

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { startEmbedded, type EmbeddedServer } from './embedded'
-import { SessionSource } from './ports'
+import { SessionHost } from './ports'
 
 /**
  * The preflight is decided before the token check, for every origin (ADR
@@ -12,7 +12,7 @@ import { SessionSource } from './ports'
 describe('the preflight and the token check', () => {
   let server: EmbeddedServer
   beforeAll(async () => {
-    server = await startEmbedded({ sessions: SessionSource.empty, port: 0 })
+    server = await startEmbedded({ ports: { sessions: SessionHost.none }, port: 0 })
   })
   afterAll(async () => {
     await server.stop()
@@ -59,9 +59,11 @@ describe('the preflight and the token check', () => {
   })
 
   it('a request with no Origin at all (a Node client) needs only the token', async () => {
-    const refused = await fetch(`${server.url}/sessions`)
+    const refused = await fetch(`${server.url}/clients`)
     expect(refused.status).toBe(401)
-    const ok = await fetch(`${server.url}/sessions`, {
+    // The clients list: a token-only call every server answers (the sessions
+    // list on a host with none is a declared refusal, not a 200).
+    const ok = await fetch(`${server.url}/clients`, {
       headers: { authorization: `Bearer ${server.token}` }
     })
     expect(ok.status).toBe(200)

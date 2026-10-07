@@ -1,5 +1,5 @@
 // The reasoning-effort chip beside the model chip, in both composers: it lists
-// the levels the model takes, switches through the write IPC, names the level
+// the levels the model takes, switches through the session write, names the level
 // the adapter reports, disappears for a model that takes none, and the pick is
 // remembered for the next chat. The echo fixture's Echo 1 takes Low and High,
 // Echo 2 none.
@@ -13,13 +13,14 @@ async function exercise(t, fixture, testId, label) {
   const { app, win } = fixture
   const view = win.locator(`[data-testid="${testId}"]`)
   const chip = view.getByRole('button', { name: 'Reasoning effort', exact: true })
-  await app.evaluate(({ ipcMain }) => {
+  await app.evaluate(() => {
     globalThis.__effortWrites = []
-    const original = ipcMain._invokeHandlers.get('sessions:write')
-    ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+    const host = globalThis.__claveE2E.sessionHost
+    const write = host.write
+    host.write = (id, input) => {
       globalThis.__effortWrites.push(input)
-      return original(event, id, input)
-    })
+      return write.call(host, id, input)
+    }
   })
   const written = () => app.evaluate(() => globalThis.__effortWrites)
 

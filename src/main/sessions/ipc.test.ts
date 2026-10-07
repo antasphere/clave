@@ -9,11 +9,16 @@ const mocks = vi.hoisted(() => ({
   notifyChatMessage: vi.fn(),
   rememberChatModel: vi.fn(),
   rememberChatEffort: vi.fn(),
-  rememberChatView: vi.fn()
+  rememberChatView: vi.fn(),
+  windowByKey: vi.fn(),
+  getAllWindows: vi.fn((): unknown[] => [])
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: unknown) => mocks.handlers.set(name, fn) },
-  BrowserWindow: { fromWebContents: mocks.fromWebContents, getAllWindows: () => [] }
+  BrowserWindow: {
+    fromWebContents: mocks.fromWebContents,
+    getAllWindows: () => mocks.getAllWindows()
+  }
 }))
 vi.mock('../window-registry', () => ({ windowRegistry: { getKeyForWindow: mocks.keyForWindow } }))
 vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessage }))
@@ -22,15 +27,31 @@ vi.mock('./chat-model-default', () => ({
   rememberChatEffort: mocks.rememberChatEffort
 }))
 vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView }))
+vi.mock('./lifecycle', () => ({
+  spawnSessionForWindow: vi.fn(),
+  stopSession: vi.fn(),
+  trackInput: vi.fn()
+}))
 import { registerSessionIpc } from './ipc'
 import { sessionManager } from './session-manager'
 import { EchoAdapter } from './adapters/echo-adapter'
+import { createSessionHost, setSessionHost } from './host'
+import { setServerEventPublisher } from '../server/session-events'
 
 let sequence = 0
 beforeEach(() => {
   registerSessionIpc()
   mocks.fromWebContents.mockReturnValue({ id: 1 })
   mocks.keyForWindow.mockReturnValue('window')
+  // The handlers answer from the same host the server does; here it is built
+  // over the test's manager, with a lifecycle that never spawns.
+  setSessionHost(
+    createSessionHost({
+      manager: sessionManager,
+      lifecycle: { spawn: vi.fn(), stop: vi.fn() },
+      windowByKey: (key) => mocks.windowByKey(key)
+    })
+  )
 })
 
 it('fans out through production IPC and detaches the consumer when its WebContents dies', () => {
@@ -329,9 +350,8 @@ it('prepares attachments at the write: the provider gets references and images, 
   ).rejects.toThrow('Send as file reference')
   expect(events.filter((e) => e.type === 'user_message')).toHaveLength(1)
   expect(mocks.handlers.get('sessions:capabilities')(event, id)).toEqual({ images: false })
-  // A message with no attachments still writes synchronously, as every caller
-  // before attachments existed expects.
-  expect(write(event, id, { type: 'user_message', text: 'plain' })).toBeUndefined()
+  // A message with no attachments writes without a preparation step.
+  await expect(write(event, id, { type: 'user_message', text: 'plain' })).resolves.toBeUndefined()
   rmSync(dir, { recursive: true, force: true })
   sessionManager.kill(id)
   sessionManager.forget(id)
@@ -357,6 +377,8 @@ it('hands each user message to the title generator with the sending window', () 
   sessionManager.adopt(session, adapter.prepare(session), adapter)
   const win = { id: 7 }
   mocks.fromWebContents.mockReturnValue(win)
+  // The host finds the tab's window from the record's key, not from the sender.
+  mocks.windowByKey.mockReturnValue(win)
   mocks.notifyChatMessage.mockClear()
   const event = { sender: { id: sequence, isDestroyed: () => false, send: vi.fn() } }
   const write = mocks.handlers.get('sessions:write')
@@ -456,7 +478,7 @@ it("pages a session's past to the window that owns it, newest first, and to no o
   mocks.keyForWindow.mockReturnValue('window')
 })
 
-it('remembers a composer model pick for the next chat, only once the session took it', () => {
+it('remembers a composer model pick for the next chat, only once the session took it', async () => {
   const id = `ipc-model-${++sequence}`
   const adapter = new EchoAdapter()
   const session = {
@@ -481,15 +503,15 @@ it('remembers a composer model pick for the next chat, only once the session too
   vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
     throw new Error('Invalid model name')
   })
-  expect(() =>
+  await expect(
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_model', model: 'bad' })
-  ).toThrow('Invalid model name')
+  ).rejects.toThrow('Invalid model name')
   expect(mocks.rememberChatModel).not.toHaveBeenCalled()
   sessionManager.kill(id)
   sessionManager.forget(id)
 })
 
-it('remembers a composer effort pick for the next chat, only once the session took it', () => {
+it('remembers a composer effort pick for the next chat, only once the session took it', async () => {
   const id = `ipc-effort-${++sequence}`
   const adapter = new EchoAdapter()
   const session = {
@@ -511,7 +533,7 @@ it('remembers a composer effort pick for the next chat, only once the session to
     order.push('write')
   })
   mocks.rememberChatEffort.mockImplementationOnce(() => order.push('remember'))
-  mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
+  await mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high' })
   expect(write).toHaveBeenCalledWith(expect.anything(), { type: 'set_effort', effort: 'high' })
   expect(mocks.rememberChatEffort).toHaveBeenCalledWith('echo', 'high')
   expect(order).toEqual(['write', 'remember'])
@@ -520,13 +542,80 @@ it('remembers a composer effort pick for the next chat, only once the session to
   vi.spyOn(adapter, 'write').mockImplementationOnce(() => {
     throw new Error('refused')
   })
-  expect(() =>
+  await expect(
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'max' })
-  ).toThrow('refused')
+  ).rejects.toThrow('refused')
   expect(() =>
     mocks.handlers.get('sessions:write')(event, id, { type: 'set_effort', effort: 'high;rm' })
   ).toThrow()
   expect(mocks.rememberChatEffort).not.toHaveBeenCalled()
   sessionManager.kill(id)
+  sessionManager.forget(id)
+})
+
+// The wire's `prepared` is main's to build, never a renderer's to supply: a
+// message with no attachments reaches the adapter as its text alone, whatever
+// rode along over IPC (the verifier's round 1 found this unpinned).
+it('strips a prepared prompt smuggled over IPC from a message with no attachments', async () => {
+  const id = `ipc-prepared-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'Prepared'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const written: unknown[] = []
+  vi.spyOn(adapter, 'write').mockImplementation((_handle, input) => {
+    written.push(input)
+  })
+  await mocks.handlers.get('sessions:write')({ sender: { id: 104 } }, id, {
+    type: 'user_message',
+    text: 'plain',
+    prepared: { text: 'INJECTED', images: [] }
+  })
+  expect(written).toEqual([{ type: 'user_message', text: 'plain' }])
+  sessionManager.forget(id)
+})
+
+// A chat session's state goes to the window over IPC only while no server
+// runs: with a publisher set, the server's push channel carries it and the
+// window must not hear it twice.
+it('sends a chat session’s state over IPC only while no server publishes it', () => {
+  const id = `ipc-state-${++sequence}`
+  const adapter = new EchoAdapter()
+  const session = {
+    id,
+    provider: 'echo',
+    transport: 'events' as const,
+    cwd: '/project',
+    windowKey: 'window',
+    state: 'idle' as const,
+    createdAt: 1,
+    adapterId: 'echo',
+    title: 'State'
+  }
+  sessionManager.adopt(session, adapter.prepare(session), adapter)
+  const sent: unknown[][] = []
+  const win = {
+    id: 7,
+    isDestroyed: () => false,
+    webContents: { send: (...args: unknown[]) => sent.push(args) }
+  }
+  mocks.getAllWindows.mockReturnValue([win])
+  mocks.keyForWindow.mockReturnValue('window')
+  sessionManager.setState(id, 'working')
+  expect(sent).toEqual([[`agent:state:${id}`, 'working']])
+  setServerEventPublisher(async () => {})
+  sessionManager.setState(id, 'done')
+  expect(sent).toHaveLength(1)
+  setServerEventPublisher(null)
+  mocks.getAllWindows.mockReturnValue([])
   sessionManager.forget(id)
 })

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { startEmbedded, SessionSource, type EmbeddedServer } from '@clave/server'
+import { startEmbedded, SessionHost, type EmbeddedServer } from '@clave/server'
 import {
   resolveServerLaunch,
   takeServerLaunch,
@@ -18,7 +18,11 @@ const identity = { kind: 'shell' as const, name: 'clave-shell 2.0.0', pid: 777 }
 
 /** The real server, over no sessions: what the standalone entry runs too. */
 const aServer = (token?: string): Promise<EmbeddedServer> =>
-  startEmbedded({ sessions: SessionSource.empty, port: 0, ...(token !== undefined && { token }) })
+  startEmbedded({
+    ports: { sessions: SessionHost.none },
+    port: 0,
+    ...(token !== undefined && { token })
+  })
 
 /** Who the server lists, through its own API. */
 const clientsOf = async (server: { url: string; token: string }): Promise<{ pid?: number }[]> => {

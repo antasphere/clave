@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * Registering the FIRST workspace must not destroy existing groups
  * (PRDCT-1703 — the single-window regression floor). This is the F1
@@ -50,7 +54,7 @@ export async function run(t) {
   let app = null
   const opened = []
   try {
-    const launched = await launchApp(DIR, { settleMs: 5000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 5000 })
     app = launched.app
     const win = launched.win
     const idBefore = await win.evaluate(() => window.electronAPI.windowIdentity())
@@ -139,7 +143,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const relaunched = await launchApp(DIR, { settleMs: 6000 })
+    const relaunched = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = relaunched.app
     const listed =
       (await until(async () => {

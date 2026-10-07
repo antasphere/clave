@@ -48,6 +48,9 @@ import { registerPreviewScheme, installPreviewProtocol } from './preview-protoco
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
+import { setClaveServerEndpoint } from './server/endpoint'
+import { getSessionHost } from './sessions/host'
+import { installE2eHooks } from './sessions/e2e-hooks'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -113,11 +116,24 @@ async function bootServer(): Promise<void> {
       // The in-process server: `@clave/server` over the session manager
       // (server/clave-server.ts), which publishes its address to the windows.
       startInProcess: async () => {
-        const endpoint = await startClaveServer()
+        const endpoint = await startClaveServer({
+          ports: {
+            // ── Lane A: sessions ──
+            sessions: getSessionHost()
+            // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
+          }
+        })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
       }
     })
     console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+    // An attached server is published to the windows too (wave 2): the
+    // sessions domain lives on the server now, so a window on an attached
+    // app asks that server, which says what it cannot do (a standalone
+    // server runs no sessions until its terminal process, wave 3). The
+    // in-process start publishes its own address in server/clave-server.ts.
+    if (serverHandle.mode === 'attached')
+      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token })
   } catch (err) {
     const message = err instanceof ServerBootError ? err.message : String(err)
     console.error(`[server] not available: ${message}`)
@@ -375,6 +391,10 @@ app.whenReady().then(() => {
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
   // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
   // the preload asks `ipc-handlers/server-handlers.ts`, registered above.
+  // The end-to-end seam into the sessions, under --test-no-activate only
+  // (sessions/e2e-hooks.ts): installed at boot, before the server, so an
+  // app attached to a standalone server has it too.
+  installE2eHooks({ sessionHost: getSessionHost() })
   serverBoot = bootServer()
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()

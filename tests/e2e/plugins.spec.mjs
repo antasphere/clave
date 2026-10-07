@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 2 of the server/client split,
+// PRDCT-3239): this spec starts a session through the app, and a standalone
+// server refuses every start until its terminal process exists (wave 3);
+// the shared attached-mode fixture seam comes with it. Not a known failure.
 import {
   mkdtempSync,
   mkdirSync,
@@ -18,7 +22,7 @@ export async function run(t) {
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
   // Unique profile gives MCP an ephemeral port; tmux gets its own socket directory.
-  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
   let targetId
   try {
     const terminal = await callMcp(app, 'openSession', {
@@ -422,7 +426,7 @@ async function closedSwapChecks(t) {
   })
   let app
   try {
-    let launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    let launched = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
     app = launched.app
     for (const f of fixtures) {
       await launched.win.evaluate((id) => window.electronAPI.pluginsEnable(id, []), f.manifest.id)
@@ -447,7 +451,7 @@ async function closedSwapChecks(t) {
         symlinkSync(replacement, f.directory)
       }
     }
-    launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    launched = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
     app = launched.app
     const win = launched.win
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')

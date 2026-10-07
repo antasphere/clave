@@ -277,17 +277,19 @@ export async function run(t) {
     t.check('a pushed question scrolls on over the top edge', leaving.top < 0, leaving)
 
     /* 4. "Other": the field wraps, the record wraps and says Answered. */
-    await app.evaluate(({ ipcMain, BrowserWindow }, id) => {
-      const original = ipcMain._invokeHandlers.get('sessions:write')
-      ipcMain._invokeHandlers.set('sessions:write', (event, sid, input) => {
-        if (input.type !== 'permission_response') return original(event, sid, input)
+    await app.evaluate(({ BrowserWindow }, id) => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
+      host.write = (sid, input) => {
+        if (input.type !== 'permission_response') return write.call(host, sid, input)
         // The adapter leaves blocked the moment it has the reply: that state
         // reaches the pane before the write's own answer does.
         BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }
         })
-      })
+        return Promise.resolve()
+      }
     }, record.id)
     await inject(app, record.id, [
       { type: 'user_message', text: 'ask me something' },
