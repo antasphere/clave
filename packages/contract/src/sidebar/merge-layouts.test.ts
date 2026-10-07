@@ -133,4 +133,27 @@ describe('mergeLayouts', () => {
     const server = L([], ['a', 'b', 'c', 'd'])
     expect(mergeLayouts(base, local, server).displayOrder).toEqual(['c', 'a', 'b', 'd'])
   })
+
+  it('a row the window removed stays out, even though the server still lists it', () => {
+    const base = L([g('a')], ['a', 's1', 's2'])
+    const local = L([g('a')], ['a', 's1'])
+    const server = L([g('a')], ['a', 's1', 's2'])
+    expect(mergeLayouts(base, local, server).displayOrder).toEqual(['a', 's1'])
+  })
+
+  it('a row the window added enters after its local predecessor, not at the end', () => {
+    const base = L([], ['a', 'b'])
+    const local = L([], ['a', 'x', 'b'])
+    const server = L([], ['a', 'b'])
+    expect(mergeLayouts(base, local, server).displayOrder).toEqual(['a', 'x', 'b'])
+  })
+
+  it('a field the window cleared on a both-touched group stays cleared', () => {
+    const was = { ...g('a'), color: 'teal' } as G & { color?: string }
+    const mine = { ...g('a') } as G & { color?: string }
+    const theirs = { ...g('a', [], 'A by agent'), color: 'teal' } as G & { color?: string }
+    const out = mergeLayouts(L([was], ['a']), L([mine], ['a']), L([theirs], ['a']))
+    expect(out.groups[0]).toEqual(g('a', [], 'A by agent'))
+    expect('color' in out.groups[0]).toBe(false)
+  })
 })

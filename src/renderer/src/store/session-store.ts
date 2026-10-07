@@ -597,15 +597,17 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
  * A change the SERVER made and this window merely reflects (a tab or a
  * group that moved away, told over IPC by the shell) is no edit of the
  * person's: it becomes the base the next merge reasons from, and nothing is
- * saved for it. Without this, a tab moving away read as the window removing
- * a member, and the push that followed (the group gone with it) had the
- * window tell the person its own move "could not be kept".
+ * saved for it. The base is marked BEFORE the store is set: the store tells
+ * its subscribers inside `set`, and the save subscription compares against
+ * these refs, so marking after would queue one save of the reflected state.
+ * Without this, a tab moving away read as the window removing a member, and
+ * the push that followed (the group gone with it) had the window tell the
+ * person its own move "could not be kept".
  */
-function markLayoutAsBase(): void {
-  const { groups, displayOrder } = useSessionStore.getState()
-  lastPersistedGroups = groups
-  lastPersistedOrder = displayOrder
-  lastPersistedJson = JSON.stringify({ groups, displayOrder })
+function setAsBase(next: { groups: SessionGroup[]; displayOrder: string[] }): void {
+  lastPersistedGroups = next.groups
+  lastPersistedOrder = next.displayOrder
+  lastPersistedJson = JSON.stringify({ groups: next.groups, displayOrder: next.displayOrder })
 }
 
 /** Mirror a session's tab name into its tmux sidecar (main process), so the
@@ -970,7 +972,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     }),
 
   removeSessionForRehome: (id) => {
-    set((state) => {
+    const reflect = (state: SessionState): Partial<SessionState> => {
       // The session lives on in another window now; only detach it from THIS
       // store's tab list, groups, order and selection. Never touch the pty.
       const sessions = state.sessions.filter((s) => s.id !== id)
@@ -986,12 +988,14 @@ export const useSessionStore = create<SessionState>((set) => ({
         selectedSessionIds: state.selectedSessionIds.filter((sid) => sid !== id),
         focusedSessionId: state.focusedSessionId === id ? null : state.focusedSessionId
       }
-    })
-    markLayoutAsBase()
+    }
+    const next = reflect(useSessionStore.getState())
+    setAsBase({ groups: next.groups!, displayOrder: next.displayOrder! })
+    set(next)
   },
 
   removeGroupForMove: (groupId) => {
-    set((state) => {
+    const reflect = (state: SessionState): Partial<SessionState> => {
       const group = state.groups.find((g) => g.id === groupId)
       if (!group) return state
       // Members and quick-launch terminals that could not move (not live,
@@ -1006,8 +1010,12 @@ export const useSessionStore = create<SessionState>((set) => ({
         groups: state.groups.filter((g) => g.id !== groupId),
         displayOrder: [...order, ...stayed.filter((sid) => !order.includes(sid))]
       }
-    })
-    markLayoutAsBase()
+    }
+    const next = reflect(useSessionStore.getState())
+    if (next.groups && next.displayOrder) {
+      setAsBase({ groups: next.groups, displayOrder: next.displayOrder })
+      set(next)
+    }
   },
 
   removeSession: (id) =>
