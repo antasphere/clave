@@ -651,6 +651,18 @@ function persistSessionName(
 export function enableSidebarPersistence(): void {
   sidebarPersistEnabled = true
   persistSidebarLayout(useSessionStore.getState())
+  // The restore ignored every push that landed while it ran, and a window
+  // whose restore changed nothing sends no save and so meets no conflict:
+  // a group created on the server meanwhile would sit there undrawn until
+  // the next push. One read now, handed to the pipeline as a change: at or
+  // below the revision the window knows it is dropped, newer it is merged.
+  void window.electronAPI
+    ?.sidebarLayoutLoad?.()
+    .then((snapshot) => {
+      if (snapshot && typeof snapshot.revision === 'number')
+        applyServerLayout(snapshot as SidebarLayoutSnapshot)
+    })
+    .catch(() => {})
 }
 
 export function isSidebarPersistenceEnabled(): boolean {
