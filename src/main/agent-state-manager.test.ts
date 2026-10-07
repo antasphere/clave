@@ -53,15 +53,21 @@ describe('the agent state folder', () => {
     // The watch is installed at boot in the app, long before a hook writes;
     // here the kernel gets a moment to arm it before the first write.
     await new Promise((r) => setTimeout(r, 300))
+    // The kernel may deliver one write as two events, or two writes as one
+    // (the runner's watcher does), so the assertions are on the words that
+    // arrive and the last one, never on how many events it took.
     fs.writeFileSync(stateFilePath('s1'), 'working')
-    expect(await until(() => states.length === 1)).toBe(true)
+    expect(await until(() => states.length >= 1)).toBe(true)
     expect(states[0]).toEqual(['s1', 'working'])
     expect(setState).toHaveBeenCalledWith('s1', 'working')
     fs.writeFileSync(stateFilePath('s1'), 'not-a-state')
     fs.writeFileSync(path.join(getStateDir(), 'notes.txt'), 'idle')
     fs.writeFileSync(stateFilePath('s1'), 'done')
-    expect(await until(() => states.length === 2)).toBe(true)
-    expect(states[1]).toEqual(['s1', 'done'])
+    expect(await until(() => states.at(-1)?.[1] === 'done')).toBe(true)
+    expect(
+      states.every(([id, word]) => id === 's1' && (word === 'working' || word === 'done'))
+    ).toBe(true)
+    expect(setState).not.toHaveBeenCalledWith('s1', 'not-a-state')
     clearState('s1')
     expect(fs.existsSync(stateFilePath('s1'))).toBe(false)
     clearState('s1')
