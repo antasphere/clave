@@ -250,4 +250,66 @@ describe('a layout pushed by the server', () => {
         .sort()
     ).toEqual(['a', 'b'])
   })
+
+  it('does not take a terminal in twice: a second adoption of a known id steals no focus', async () => {
+    const g = group(
+      'g',
+      [],
+      [{ id: 't1', command: 'x', commandMode: 'auto', color: 'green', sessionId: 'a' }]
+    )
+    g.workspaceId = 'ws-shown'
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-shown' })
+    useSessionStore.setState({
+      sessions: [session('elsewhere')],
+      groups: [g],
+      displayOrder: ['g', 'elsewhere']
+    })
+    records = [
+      {
+        id: 'a',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        workspaceId: 'ws-shown',
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    await adoptServerStartedTerminals(['a'])
+    expect(useSessionStore.getState().focusedSessionId).toBe('a')
+    useSessionStore.setState({ selectedSessionIds: ['elsewhere'], focusedSessionId: 'elsewhere' })
+    // Two pushes racing on the same id: the second lands after the first adopted it.
+    await adoptServerStartedTerminals(['a'])
+    expect(useSessionStore.getState().focusedSessionId).toBe('elsewhere')
+    expect(useSessionStore.getState().sessions.filter((s) => s.id === 'a')).toHaveLength(1)
+  })
+
+  it('takes a terminal in as ended when its record says its process is gone', async () => {
+    const g = group(
+      'g',
+      [],
+      [{ id: 't1', command: 'exit 0', commandMode: 'auto', color: 'green', sessionId: 'dead' }]
+    )
+    useSessionStore.setState({ groups: [g], displayOrder: ['g'] })
+    records = [
+      {
+        id: 'dead',
+        cwd: '/w',
+        folderName: 'w',
+        live: false,
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    await adoptServerStartedTerminals(['dead'])
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'dead')?.alive).toBe(false)
+  })
 })

@@ -29,7 +29,11 @@ describe('the server client of the agent tools', () => {
     expect(connect).toHaveBeenCalledWith({ url: 'http://127.0.0.1:1', token: 't' })
   })
   it('fails at once when the boot decided there is no server', async () => {
-    const sleep = vi.fn(async () => undefined)
+    // A sleep that refuses to be called: a wait here is the defect, and it
+    // must read as an assertion, not as a worker spinning 15 s on microtasks.
+    const sleep = vi.fn(async () => {
+      throw new Error('the client waited for a boot that had already decided')
+    })
     const client = createServerClient({
       endpoint: () => null,
       settled: () => true,

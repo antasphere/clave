@@ -48,18 +48,20 @@ export function markClaveServerBootSettled(): void {
  *  life of the process; past it the caller goes on as if nothing were named. */
 export const BOOT_DECISION_WAIT_MS = 20_000
 
-/** Resolves once the boot has decided, at once when it already has, and at
- *  the latest after `maxWaitMs`. */
-export function whenClaveServerBootSettled(maxWaitMs = BOOT_DECISION_WAIT_MS): Promise<void> {
-  if (settled) return Promise.resolve()
+/** Resolves with true once the boot has decided (at once when it already
+ *  has), with false when `maxWaitMs` passed first: a caller then knows it
+ *  gave up, and must not read "undecided" as "no server". */
+export function whenClaveServerBootSettled(maxWaitMs = BOOT_DECISION_WAIT_MS): Promise<boolean> {
+  if (settled) return Promise.resolve(true)
   return new Promise((resolve) => {
-    const timer = setTimeout(done, maxWaitMs)
-    function done(): void {
+    const timer = setTimeout(() => done(false), maxWaitMs)
+    const waiter = (): void => done(true)
+    function done(decided: boolean): void {
       clearTimeout(timer)
-      settledWaiters = settledWaiters.filter((w) => w !== done)
-      resolve()
+      settledWaiters = settledWaiters.filter((w) => w !== waiter)
+      resolve(decided)
     }
-    settledWaiters.push(done)
+    settledWaiters.push(waiter)
   })
 }
 

@@ -27,12 +27,12 @@ describe('the boot signal', () => {
   it('starts undecided with no endpoint, and resolves its waiters when marked', async () => {
     expect(isClaveServerBootSettled()).toBe(false)
     expect(getClaveServerEndpoint()).toBeNull()
-    let resolved = false
-    const wait = whenClaveServerBootSettled().then(() => {
-      resolved = true
+    let resolved: boolean | null = null
+    const wait = whenClaveServerBootSettled().then((decided) => {
+      resolved = decided
     })
     await vi.advanceTimersByTimeAsync(0)
-    expect(resolved).toBe(false)
+    expect(resolved).toBeNull()
     setClaveServerEndpoint({ url: 'http://127.0.0.1:1', token: 't' })
     markClaveServerBootSettled()
     await wait
@@ -41,24 +41,28 @@ describe('the boot signal', () => {
   })
   it('resolves at once once decided, with or without a server', async () => {
     markClaveServerBootSettled()
-    let resolved = false
-    void whenClaveServerBootSettled().then(() => {
-      resolved = true
+    let resolved: boolean | null = null
+    void whenClaveServerBootSettled().then((decided) => {
+      resolved = decided
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(resolved).toBe(true)
     expect(getClaveServerEndpoint()).toBeNull()
   })
-  it('gives up waiting after its ceiling when the boot never decides', async () => {
-    let resolved = false
-    void whenClaveServerBootSettled(1_000).then(() => {
-      resolved = true
+  it('gives up waiting after its ceiling when the boot never decides, and says so', async () => {
+    let resolved: boolean | null = null
+    void whenClaveServerBootSettled(1_000).then((decided) => {
+      resolved = decided
     })
     await vi.advanceTimersByTimeAsync(999)
-    expect(resolved).toBe(false)
+    expect(resolved).toBeNull()
     await vi.advanceTimersByTimeAsync(1)
-    expect(resolved).toBe(true)
+    // False: the caller gave up, the boot is still undecided.
+    expect(resolved).toBe(false)
     expect(isClaveServerBootSettled()).toBe(false)
+    // A mark landing later resolves nobody twice and leaves no stale waiter behind.
+    markClaveServerBootSettled()
+    expect(await whenClaveServerBootSettled(1)).toBe(true)
   })
   it('forgets the endpoint and the decision on reset', () => {
     setClaveServerEndpoint({ url: 'u', token: 't' })

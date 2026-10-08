@@ -27,10 +27,12 @@ export function createViewRequestTracker(limit = 500): ViewRequestTracker {
       seen.add(requestId)
       pending.add(requestId)
       if (seen.size > limit) {
-        const oldest = seen.values().next().value
-        if (oldest !== undefined) {
-          seen.delete(oldest)
-          pending.delete(oldest)
+        // The oldest id that is not still being run; a request this window is
+        // still answering stays known, whatever its age.
+        const evict = [...seen].find((id) => !pending.has(id)) ?? seen.values().next().value
+        if (evict !== undefined) {
+          seen.delete(evict)
+          pending.delete(evict)
         }
       }
       return true

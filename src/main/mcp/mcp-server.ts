@@ -23,7 +23,7 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
-import { whenClaveServerBootSettled } from '../server/endpoint'
+import { BOOT_DECISION_WAIT_MS, whenClaveServerBootSettled } from '../server/endpoint'
 import {
   loadOrCreateServerState,
   saveServerState,
@@ -280,6 +280,9 @@ async function aggregateList(
   }
 }
 
+/** What an agent reads when the boot has not decided within its ceiling. */
+export const SERVER_STILL_STARTING_MESSAGE = `Clave's server has not finished starting after ${BOOT_DECISION_WAIT_MS / 1000} seconds: try again in a moment.`
+
 /** The `windows` block of `clave_list`: every live window with its workspace,
  *  which is primary, which is focused and which is the caller's. */
 function windowsListing(callerWin: BrowserWindowLike): unknown[] {
@@ -435,8 +438,12 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
     } else {
       const win = await resolveCommandWindow(command, p, callerSessionId)
       // The road is the boot's decision: a call that lands before it waits for
-      // it, so a served tool never slips to the window for being early.
-      if (sidebarTransport() === null) await whenClaveServerBootSettled()
+      // it, so a served tool never slips to the window for being early. A boot
+      // still undecided past the ceiling is refused, never routed around: the
+      // window road would silently run what the server should, then wait on
+      // the client's own deadline for a server seconds away.
+      if (sidebarTransport() === null && !(await whenClaveServerBootSettled()))
+        throw new Error(SERVER_STILL_STARTING_MESSAGE)
       // Served by the server (wave 3): a tool whose work is a command the
       // server has is answered through the client, and the windows hear the
       // change over the push channel. Only while the sidebar's road is the
