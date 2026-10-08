@@ -106,6 +106,10 @@ interface Held {
   exitedAt: number | null
   readonly subscribers: Set<(event: TerminalEvent) => void>
   attached: number
+  /** Whether any stream has ever attached: until one has, every byte is
+   *  kept, since the first attach comes after the spawn answered and the
+   *  process may have written more than the ring by then. */
+  everAttached: boolean
   /** When the last attached stream left; null while one is attached. */
   detachedAt: number | null
   hungUpAt: number | null
@@ -132,7 +136,7 @@ export async function startTerminalProcess(
     if (event.event.case === 'output') {
       term.events.push(event)
       term.bytes += Buffer.byteLength(event.event.value.data)
-      while (term.bytes > retain && term.events.length > 1) {
+      while (term.everAttached && term.bytes > retain && term.events.length > 1) {
         const dropped = term.events.shift()!
         term.bytes -= Buffer.byteLength(
           dropped.event.case === 'output' ? dropped.event.value.data : ''
@@ -150,8 +154,10 @@ export async function startTerminalProcess(
     const now = Date.now()
     for (const term of held.values()) {
       if (term.exited) {
-        if (term.exitedAt !== null && (term.attached === 0 || now - term.exitedAt > grace))
-          forget(term)
+        // Kept for the grace after the exit, whoever is attached: a stream
+        // that ended on its deadline the moment before re-attaches with the
+        // sequence it last saw and must find the exit, not UnknownTerminal.
+        if (term.exitedAt !== null && now - term.exitedAt > grace) forget(term)
         continue
       }
       if (term.attached > 0 || term.detachedAt === null || now - term.detachedAt <= grace) continue
@@ -214,6 +220,7 @@ export async function startTerminalProcess(
             exitedAt: null,
             subscribers: new Set(),
             attached: 0,
+            everAttached: false,
             detachedAt: Date.now(),
             hungUpAt: null
           }
@@ -239,8 +246,8 @@ export async function startTerminalProcess(
             })
             term.exited = exited
             term.exitedAt = Date.now()
+            // Kept, attached or not, for the grace: the sweep forgets it.
             push(term, exited)
-            if (term.attached === 0) forget(term)
           })
           return create(SpawnResponseSchema, { id: term.id, pid: proc.pid })
         })
@@ -279,6 +286,7 @@ export async function startTerminalProcess(
                 Effect.acquireRelease(
                   Effect.sync(() => {
                     term.attached += 1
+                    term.everAttached = true
                     term.detachedAt = null
                     term.hungUpAt = null
                     const after = request.after
@@ -308,10 +316,7 @@ export async function startTerminalProcess(
                     Effect.sync(() => {
                       unsubscribe()
                       term.attached -= 1
-                      if (term.attached === 0) {
-                        term.detachedAt = Date.now()
-                        if (term.exited) forget(term)
-                      }
+                      if (term.attached === 0) term.detachedAt = Date.now()
                     })
                 ),
               { bufferSize: 'unbounded' }
