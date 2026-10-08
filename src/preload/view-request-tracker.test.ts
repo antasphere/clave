@@ -26,6 +26,13 @@ describe('the view request tracker of a window', () => {
     expect(tracker.owns('slow')).toBe(true)
     expect(tracker.take('b')).toBe(true)
   })
+  it('evicts the oldest id anyway when every known id is still being run', () => {
+    const tracker = createViewRequestTracker(2)
+    for (const id of ['a', 'b', 'c']) tracker.take(id)
+    expect(tracker.size).toBe(2)
+    expect(tracker.owns('a')).toBe(false)
+    expect(tracker.take('a')).toBe(true)
+  })
   it('forgets the oldest ids past its limit', () => {
     const tracker = createViewRequestTracker(3)
     for (const id of ['a', 'b', 'c', 'd']) {
