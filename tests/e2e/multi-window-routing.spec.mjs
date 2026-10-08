@@ -1,8 +1,3 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
 /**
  * MCP routing across windows (PRDCT-1703). With several windows the sidebar
  * state is per window, so mcp-server resolves WHICH window's renderer runs
@@ -79,7 +74,7 @@ export async function run(t) {
   let app = null
   const opened = []
   try {
-    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 5000 })
+    const launched = await launchApp(DIR, { settleMs: 5000 })
     app = launched.app
     const winA = launched.win
     const idA = await identityOf(winA)

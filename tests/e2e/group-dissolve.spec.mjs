@@ -1,8 +1,3 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).
@@ -128,7 +123,7 @@ export async function run(t) {
   const PFX = `clave-e2e-pfx-${rand}`
   const SIBLING = `${PFX}-2`
   try {
-    const first = await launchApp(DIR, { server: 'in-process' })
+    const first = await launchApp(DIR)
     app = first.app
     let win = first.win
 
@@ -319,7 +314,7 @@ export async function run(t) {
         recordExists(PFX)
     )
 
-    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
+    const second = await launchApp(DIR, { settleMs: 8000 })
     app = second.app
     win = second.win
     const booted = await until(async () => {

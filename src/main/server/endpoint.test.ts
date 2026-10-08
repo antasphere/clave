@@ -33,7 +33,7 @@ describe('the boot signal', () => {
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(resolved).toBeNull()
-    setClaveServerEndpoint({ url: 'http://127.0.0.1:1', token: 't' })
+    setClaveServerEndpoint({ url: 'http://127.0.0.1:1', token: 't', mode: 'in-process' })
     markClaveServerBootSettled()
     await wait
     expect(resolved).toBe(true)
@@ -65,7 +65,7 @@ describe('the boot signal', () => {
     expect(await whenClaveServerBootSettled(1)).toBe(true)
   })
   it('forgets the endpoint and the decision on reset', () => {
-    setClaveServerEndpoint({ url: 'u', token: 't' })
+    setClaveServerEndpoint({ url: 'u', token: 't', mode: 'in-process' })
     markClaveServerBootSettled()
     resetClaveServerBootForTests()
     expect(getClaveServerEndpoint()).toBeNull()

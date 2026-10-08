@@ -12,7 +12,7 @@ const fakeClient = (): ClaveApiClient =>
 
 describe('the server client of the agent tools', () => {
   it('waits for the boot to name a server, then connects to it once', async () => {
-    let endpoint: { url: string; token: string } | null = null
+    let endpoint: { url: string; token: string; mode: 'in-process' } | null = null
     const connect = vi.fn(async () => fakeClient())
     const client = createServerClient({
       endpoint: () => endpoint,
@@ -20,13 +20,17 @@ describe('the server client of the agent tools', () => {
       connect,
       waitMs: 2_000,
       sleep: async () => {
-        endpoint = { url: 'http://127.0.0.1:1', token: 't' }
+        endpoint = { url: 'http://127.0.0.1:1', token: 't', mode: 'in-process' }
       }
     })
     const [a, b] = await Promise.all([client.api(), client.api()])
     expect(a).toBe(b)
     expect(connect).toHaveBeenCalledTimes(1)
-    expect(connect).toHaveBeenCalledWith({ url: 'http://127.0.0.1:1', token: 't' })
+    expect(connect).toHaveBeenCalledWith({
+      url: 'http://127.0.0.1:1',
+      token: 't',
+      mode: 'in-process'
+    })
   })
   it('fails at once when the boot decided there is no server', async () => {
     // A sleep that refuses to be called: a wait here is the defect, and it
@@ -63,13 +67,13 @@ describe('the server client of the agent tools', () => {
     }
   })
   it('rebuilds the client when the address changes and disposes the old one', async () => {
-    let endpoint = { url: 'http://127.0.0.1:1', token: 't1' }
+    let endpoint = { url: 'http://127.0.0.1:1', token: 't1', mode: 'in-process' }
     const first = fakeClient()
     const second = fakeClient()
     const connect = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
     const client = createServerClient({ endpoint: () => endpoint, settled: () => true, connect })
     expect(await client.api()).toBe(first)
-    endpoint = { url: 'http://127.0.0.1:2', token: 't2' }
+    endpoint = { url: 'http://127.0.0.1:2', token: 't2', mode: 'in-process' }
     expect(await client.api()).toBe(second)
     await Promise.resolve()
     expect(first.dispose).toHaveBeenCalledTimes(1)
@@ -81,7 +85,7 @@ describe('the server client of the agent tools', () => {
       .mockRejectedValueOnce(new Error('no client'))
       .mockResolvedValueOnce(fakeClient())
     const client = createServerClient({
-      endpoint: () => ({ url: 'http://127.0.0.1:1', token: 't' }),
+      endpoint: () => ({ url: 'http://127.0.0.1:1', token: 't', mode: 'in-process' }),
       settled: () => true,
       connect
     })

@@ -1,8 +1,3 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).
@@ -103,7 +98,7 @@ export async function run(t) {
   try {
     // ── Before the restart: a group whose last tab is closed while its
     //    quick-launch terminal keeps running, and a tab with a served view ──
-    const first = await launchApp(DIR, { server: 'in-process' })
+    const first = await launchApp(DIR)
     app = first.app
     let win = first.win
 
@@ -181,7 +176,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
+    const second = await launchApp(DIR, { settleMs: 8000 })
     app = second.app
     win = second.win
 
