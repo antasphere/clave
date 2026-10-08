@@ -599,24 +599,51 @@ const workspaceFilesRelay = createReviewRelay({
     return answerReviewOn.api.workspaceFiles.answerReview(reviewId, answer)
   }
 })
+// This window names itself as the HOLDER of its watches, one name per road:
+// in the shipped app the two roads reach the one instance main holds, and a
+// watch handed from IPC to the server must be released on the IPC name and
+// kept on the server's, or the hand-over would close the watcher (round 1
+// of the lane's verifier). Two windows on one file are two holders.
+const windowHolder = crypto.randomUUID()
 const workspaceFileWatches = createWatchLedger({
   ipc: {
-    watch: (p) => ipcRenderer.invoke('clave:watch-file', p) as Promise<void>,
-    unwatch: (p) => ipcRenderer.invoke('clave:unwatch-file', p) as Promise<void>
+    watch: (p) => ipcRenderer.invoke('clave:watch-file', p, `ipc:${windowHolder}`) as Promise<void>,
+    unwatch: (p) =>
+      ipcRenderer.invoke('clave:unwatch-file', p, `ipc:${windowHolder}`) as Promise<void>
   },
   server: {
     watch: async (p) => {
       const backing = await serverRouter.backing()
       if (!backing) throw new Error('no server to watch on')
-      await backing.api.workspaceFiles.watch(p)
+      await backing.api.workspaceFiles.watch(p, `server:${windowHolder}`)
     },
     unwatch: async (p) => {
       const backing = await serverRouter.backing()
       if (!backing) throw new Error('no server to unwatch on')
-      await backing.api.workspaceFiles.unwatch(p)
+      await backing.api.workspaceFiles.unwatch(p, `server:${windowHolder}`)
     }
   }
 })
+/** The push welcome, or a failure after fifteen seconds: a socket stuck
+ *  reconnecting must fail a read the way the HTTP road fails, not hang it. */
+const PUSH_OPEN_DEADLINE_MS = 15_000
+const pushOpenOrFail = (push: import('@clave/client').PushClient): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('The server’s push channel did not open in time.')),
+      PUSH_OPEN_DEADLINE_MS
+    )
+    push.whenOpen().then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 /** Join the server for the workspace files: the review listener on the push
  *  channel, the answer road, the watches moved. Wired on the first routed
  *  read (which also waits for the welcome) or on the first watch, never at
@@ -1647,7 +1674,7 @@ const electronAPI = {
       // events and the read would wait for an answer nobody can give (wave
       // 2's lost-event shape).
       wireWorkspaceFiles(backing)
-      await push.whenOpen()
+      await pushOpenOrFail(push)
       const read = workspaceFilesRelay.begin()
       try {
         return loose<ClaveFileReadResult | null>(

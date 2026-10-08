@@ -66,6 +66,41 @@ describe('the typed workspace files calls', () => {
     expect(await api.workspaceFiles.image(join(root, 'none.png'))).toBeNull()
   })
 
+  it('a read held for a review outlives the client’s ordinary deadline', async () => {
+    const file = join(root, 'slow.clave')
+    writeFileSync(
+      file,
+      JSON.stringify({ name: 'Slow', cwd: '.', prompt: 'P', sessions: [], terminals: [] })
+    )
+    const impatient = createApiClient({ url: server.url, token: server.token, timeoutMs: 300 })
+    const push = new PushClient({ url: server.url, token: server.token }).connect()
+    try {
+      await push.whenOpen()
+      const seen = new Promise<{ reviewId: string }>((resolve) =>
+        push.onEvent((envelope) => {
+          if (envelope.event._tag === 'workspace_files.review_needed') resolve(envelope.event)
+        })
+      )
+      // The ordinary deadline (300 ms) would cut this read: an ordinary call proves it.
+      const ordinary = await impatient.workspaceFiles.trustedRoots().then(
+        () => 'answered',
+        (e: unknown) => String(e)
+      )
+      expect(ordinary).toBe('answered')
+      const reading = impatient.workspaceFiles.read(file, { requestId: 'slow-1' })
+      const review = await seen
+      await new Promise((r) => setTimeout(r, 900))
+      await impatient.workspaceFiles.answerReview(review.reviewId, {
+        response: 1,
+        checkboxChecked: false
+      })
+      expect(await reading).toMatchObject({ type: 'single', prompt: 'P' })
+    } finally {
+      push.close()
+      await impatient.dispose()
+    }
+  })
+
   it('carries the requestId onto the review event and answers it', async () => {
     const file = join(root, 'e.clave')
     writeFileSync(

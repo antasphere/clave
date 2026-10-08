@@ -211,6 +211,45 @@ describe('the workspace files over HTTP', () => {
     expect(await peer.silence(250)).toBe(true)
   })
 
+  it('answers null, never 500, for a file that is not a document', async () => {
+    for (const [name, text] of [
+      ['object-sessions.clave', '{"sessions":{}}'],
+      ['bare-null.clave', 'null'],
+      ['number-cwd.clave', '{"cwd":5}']
+    ] as const) {
+      const file = join(root, name)
+      writeFileSync(file, text)
+      const read = await post('/workspace-files/read', { path: file })
+      expect(read.status, name).toBe(200)
+      expect(await read.json(), name).toBeNull()
+    }
+  })
+
+  it('normalises autoDiscover on the wire: a loose `enabled` never fails the GET', async () => {
+    const file = join(root, 'loose.clave')
+    writeFileSync(file, JSON.stringify({ autoDiscover: { maxDepth: 3, exclude: ['x'] } }))
+    const res = await get(`/workspace-files/auto-discover?path=${encodeURIComponent(file)}`)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ enabled: false, maxDepth: 3, exclude: ['x'] })
+  })
+
+  it('a watch held by two holders survives one holder’s release', async () => {
+    const file = join(root, 'held.clave')
+    writeFileSync(file, elevated(''))
+    const peer = await welcomed()
+    await post('/workspace-files/watch', { path: file, holder: 'ipc:w1' })
+    await post('/workspace-files/watch', { path: file, holder: 'server:w1' })
+    await post('/workspace-files/unwatch', { path: file, holder: 'ipc:w1' })
+    expect(files.holdersOf(file)).toEqual(['server:w1'])
+    await new Promise((r) => setTimeout(r, 50))
+    writeFileSync(file, elevated('EDIT'))
+    expect(await peer.next()).toMatchObject({
+      event: { _tag: 'workspace_files.changed', path: file }
+    })
+    await post('/workspace-files/unwatch', { path: file, holder: 'server:w1' })
+    expect(files.watched()).toEqual([])
+  })
+
   it('writes a file through the server and trusts what it wrote', async () => {
     const file = join(root, 'written.clave')
     const written = await post('/workspace-files/write', {
@@ -247,8 +286,9 @@ describe('the workspace files over HTTP', () => {
     expect(
       await (await get(`/workspace-files/discover?folder=${encodeURIComponent(root)}`)).json()
     ).toEqual([{ name: 'workspace', path: join(root, 'workspace.clave'), rootDir: null }])
+    const list = (values: string[]): string => encodeURIComponent(JSON.stringify(values))
     const deep = await get(
-      `/workspace-files/discover-recursive?rootDir=${encodeURIComponent(root)}&maxDepth=3&exclude=node_modules&exclude=dist`
+      `/workspace-files/discover-recursive?rootDir=${encodeURIComponent(root)}&maxDepth=3&exclude=${list(['node_modules', 'dist'])}`
     )
     expect(deep.status).toBe(200)
     // The root's own workspace file is found too, at depth 0, as it always was.
@@ -261,7 +301,7 @@ describe('the workspace files over HTTP', () => {
       }
     ])
     const shallow = await get(
-      `/workspace-files/discover-recursive?rootDir=${encodeURIComponent(root)}&maxDepth=1&exclude=labs`
+      `/workspace-files/discover-recursive?rootDir=${encodeURIComponent(root)}&maxDepth=1&exclude=${list(['labs'])}`
     )
     expect(await shallow.json()).toEqual([
       { name: path.basename(root), path: join(root, 'workspace.clave'), rootDir: root }

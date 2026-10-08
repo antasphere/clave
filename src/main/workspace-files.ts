@@ -22,7 +22,6 @@
  * the instance at boot costs nothing (`src/main/server/lazy-load.test.ts`).
  */
 import { app, dialog, type BrowserWindow, type MessageBoxOptions } from 'electron'
-import * as path from 'path'
 import {
   WorkspaceFiles,
   fileWorkspaceFilesStorage,
@@ -30,6 +29,7 @@ import {
   type Reviewer
 } from '@clave/server/workspace-files'
 import type { ReviewAnswer } from '@clave/contract/workspace-files'
+import { reviewDialogText } from './workspace-files-dialog'
 
 let instance: WorkspaceFiles | null = null
 
@@ -40,42 +40,21 @@ export function workspaceFiles(): WorkspaceFiles {
 }
 
 /** What the dialog shows for a review: the shape the harness's
- *  `stubReviewDialog` records (`message`, `detail`) and asserts on. */
+ *  `stubReviewDialog` records (`message`, `detail`) and asserts on; the text
+ *  itself is `workspace-files-dialog.ts`, tested without Electron. */
 export function reviewDialog(review: ReviewRequest): MessageBoxOptions {
-  const detailLines: string[] = []
-  if (review.autoCommands.length > 0) {
-    detailLines.push('Commands that would run automatically:')
-    detailLines.push(...review.autoCommands.map((c) => `  • ${c}`))
-  }
-  if (review.prompts.length > 0) {
-    if (detailLines.length > 0) detailLines.push('')
-    detailLines.push('Instructions that would be auto-submitted to an agent:')
-    detailLines.push(
-      ...review.prompts.map((p) => {
-        const flat = p.replace(/\s+/g, ' ').trim()
-        return `  • ${flat.length > 120 ? flat.slice(0, 117) + '…' : flat}`
-      })
-    )
-  }
-  if (review.dangerous) {
-    detailLines.push('')
-    detailLines.push(
-      'One or more agents would start with permission prompts disabled (--dangerously-skip-permissions).'
-    )
-  }
+  const text = reviewDialogText(review)
   return {
     type: 'warning',
-    buttons: ['Open safely', 'Trust and run', 'Cancel'],
+    buttons: [...text.buttons],
     defaultId: 0,
     cancelId: 2,
     noLink: true,
-    checkboxLabel: `Trust all workspace files in “${path.basename(review.folder)}”`,
+    checkboxLabel: text.checkboxLabel,
     checkboxChecked: false,
-    title: 'Review workspace file',
-    message: `“${path.basename(review.path)}” wants to run content automatically.`,
-    detail:
-      detailLines.join('\n') +
-      '\n\nOnly trust this file if you recognise and understand what it would run.'
+    title: text.title,
+    message: text.message,
+    detail: text.detail
   }
 }
 

@@ -76,9 +76,15 @@ export function registerClaveFileHandlers(): void {
 
   ipcMain.handle('clave:file-exists', (_event, absolutePath: string) => files.exists(absolutePath))
 
-  ipcMain.handle('clave:watch-file', (_event, absolutePath: string) => files.watch(absolutePath))
-  ipcMain.handle('clave:unwatch-file', (_event, absolutePath: string) =>
-    files.unwatch(absolutePath)
+  // The window names itself as the holder of its watch (`ipc:<id>`), a
+  // window that does not fall back to its web contents; the watcher closes
+  // with its last holder, so one window's release never closes another's,
+  // nor a watch the same window handed to the in-process server.
+  ipcMain.handle('clave:watch-file', (event, absolutePath: string, holder?: string) =>
+    files.watch(absolutePath, holder ?? `webContents:${event.sender.id}`)
+  )
+  ipcMain.handle('clave:unwatch-file', (event, absolutePath: string, holder?: string) =>
+    files.unwatch(absolutePath, holder ?? `webContents:${event.sender.id}`)
   )
 
   // A watched file's change reaches every window over IPC; a window on the

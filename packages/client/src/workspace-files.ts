@@ -29,8 +29,9 @@ export interface WorkspaceFilesClient {
     options?: { rootDir?: string; requestId?: string }
   ) => Promise<ClaveFileReadResult | null>
   readonly write: (path: string, data: ClaveFileWriteData, rootDir?: string) => Promise<void>
-  readonly watch: (path: string) => Promise<void>
-  readonly unwatch: (path: string) => Promise<void>
+  /** `holder` names who holds the watch (a window); the watcher closes with its last holder. */
+  readonly watch: (path: string, holder?: string) => Promise<void>
+  readonly unwatch: (path: string, holder?: string) => Promise<void>
   readonly exists: (path: string) => Promise<boolean>
   readonly discover: (folder: string) => Promise<ReadonlyArray<DiscoveredFile>>
   readonly discoverRecursive: (
@@ -48,12 +49,25 @@ export interface WorkspaceFilesClient {
 export type WorkspaceFilesGroup = DerivedClient['workspaceFiles']
 type GroupCall = <A>(run: (group: WorkspaceFilesGroup) => Effect.Effect<A, unknown>) => Promise<A>
 
-export function workspaceFilesClient(callApi: Call): WorkspaceFilesClient {
+/**
+ * `callApi` is the client's ordinary call, under its per-request deadline;
+ * `patientCall` runs without that deadline (the client's patient one): a
+ * read may be HELD by the server for the whole review the person is
+ * reading, and a recursive walk over a big tree takes what it takes. Under
+ * the ordinary deadline the lane's round-1 verifier watched a read die at
+ * ten seconds while the dialog stayed open, and the late answer trusted
+ * content for a read nobody was waiting on.
+ */
+export function workspaceFilesClient(
+  callApi: Call,
+  patientCall: Call = callApi
+): WorkspaceFilesClient {
   const call: GroupCall = (run) => callApi((c) => run(c.workspaceFiles))
+  const patient: GroupCall = (run) => patientCall((c) => run(c.workspaceFiles))
   const done = (): undefined => undefined
   return {
     read: (path, options) =>
-      call((g) =>
+      patient((g) =>
         g.read({
           payload: {
             path,
@@ -66,18 +80,25 @@ export function workspaceFilesClient(callApi: Call): WorkspaceFilesClient {
       call((g) =>
         g.write({ payload: { path, data, ...(rootDir !== undefined && { rootDir }) } })
       ).then(done),
-    watch: (path) => call((g) => g.watch({ payload: { path } })).then(done),
-    unwatch: (path) => call((g) => g.unwatch({ payload: { path } })).then(done),
+    watch: (path, holder) =>
+      call((g) => g.watch({ payload: { path, ...(holder !== undefined && { holder }) } })).then(
+        done
+      ),
+    unwatch: (path, holder) =>
+      call((g) => g.unwatch({ payload: { path, ...(holder !== undefined && { holder }) } })).then(
+        done
+      ),
     exists: (path) => call((g) => g.exists({ payload: { path } })),
     discover: (folder) => call((g) => g.discover({ payload: { folder } })),
-    // A GET's parameters: only what is set, as the strings the wire carries.
+    // A GET's parameters: only what is set, as the strings the wire carries
+    // (the lists as one JSON-encoded parameter each, so an empty list travels).
     discoverRecursive: (rootDir, config) =>
-      call((g) =>
+      patient((g) =>
         g.discoverRecursive({
           payload: {
             rootDir,
-            ...(config?.patterns !== undefined && { patterns: config.patterns }),
-            ...(config?.exclude !== undefined && { exclude: config.exclude }),
+            ...(config?.patterns !== undefined && { patterns: JSON.stringify(config.patterns) }),
+            ...(config?.exclude !== undefined && { exclude: JSON.stringify(config.exclude) }),
             ...(config?.maxDepth !== undefined && { maxDepth: String(config.maxDepth) }),
             ...(config?.workspaceId !== undefined && { workspaceId: config.workspaceId })
           }

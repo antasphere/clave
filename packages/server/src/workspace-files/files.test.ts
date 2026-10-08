@@ -70,10 +70,75 @@ describe('reading', () => {
     expect(other?.type === 'single' && other.cwd).toBe(join(root, 'elsewhere', 'src'))
   })
 
-  it('answers null for a missing or unparsable file', async () => {
+  it('answers null for a missing, unparsable or non-document file, never a throw', async () => {
     expect(await files.read(join(root, 'none.clave'))).toBeNull()
     writeFileSync(join(root, 'bad.clave'), '{not json')
     expect(await files.read(join(root, 'bad.clave'))).toBeNull()
+    writeFileSync(join(root, 'null.clave'), 'null')
+    expect(await files.read(join(root, 'null.clave'))).toBeNull()
+    writeFileSync(join(root, 'sessions-object.clave'), '{"sessions":{}}')
+    expect(await files.read(join(root, 'sessions-object.clave'))).toBeNull()
+    writeFileSync(join(root, 'groups-of-null.clave'), '{"groups":[null]}')
+    expect(await files.read(join(root, 'groups-of-null.clave'))).toBeNull()
+  })
+
+  it('every field the parser produces survives the wire: the contract names them all', async () => {
+    const { Schema } = await import('effect')
+    const { ClaveFileReadResult } = await import('@clave/contract/workspace-files')
+    const file = join(root, 'full.clave')
+    writeFileSync(join(root, 'logo.png'), Buffer.from([1]))
+    writeFileSync(
+      file,
+      JSON.stringify({
+        name: 'Full',
+        cwd: 'p',
+        color: 'teal',
+        toolbar: true,
+        category: 'Work',
+        logo: 'logo.png',
+        prompt: 'G',
+        view: 'page.html',
+        sessions: [
+          {
+            cwd: 'lib',
+            name: 't',
+            claudeMode: true,
+            antigravityMode: true,
+            codexMode: true,
+            piMode: true,
+            claudeAgentsMode: true,
+            dangerousMode: true,
+            prompt: 'S',
+            rootSession: true,
+            account: 'Work'
+          }
+        ],
+        terminals: [
+          {
+            command: 'npm run dev',
+            commandMode: 'auto',
+            color: 'blue',
+            icon: 'bolt',
+            cwd: 'web',
+            autoLaunchLocalhost: true,
+            persistent: true,
+            serverUrl: 'http://localhost:3000',
+            groupView: true
+          }
+        ]
+      })
+    )
+    files.trustRoot(root)
+    const result = await files.read(file)
+    if (result?.type !== 'single') throw new Error('expected single')
+    // Every optional field set: nothing undefined to be dropped by JSON.
+    expect(Object.values(result).every((v) => v !== undefined)).toBe(true)
+    expect(Object.values(result.sessions[0]).every((v) => v !== undefined)).toBe(true)
+    expect(Object.values(result.terminals[0]).every((v) => v !== undefined)).toBe(true)
+    const overTheWire = Schema.decodeUnknownSync(ClaveFileReadResult)(
+      JSON.parse(JSON.stringify(Schema.encodeSync(ClaveFileReadResult)(result)))
+    )
+    expect(overTheWire).toEqual(result)
   })
 
   it('reads a multi-group file as multi, naming an unnamed group by its place', async () => {
@@ -306,6 +371,29 @@ describe('watching', () => {
     writeFileSync(file, single({ name: 'D' }))
     await settle(400)
     expect(heard).toEqual([file])
+  })
+
+  it('closes with its last holder, not its first', async () => {
+    const file = join(root, 'held.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((e) => heard.push(e.path))
+    files.watch(file, 'ipc:w1')
+    files.watch(file, 'server:w1')
+    files.watch(file, 'ipc:w2')
+    expect(files.holdersOf(file).sort()).toEqual(['ipc:w1', 'ipc:w2', 'server:w1'])
+    // The shipped app's hand-over: the IPC name released, the server's kept.
+    files.unwatch(file, 'ipc:w1')
+    files.unwatch(file, 'ipc:w2')
+    files.unwatch(file, 'nobody')
+    expect(files.watched()).toEqual([file])
+    await settle(50)
+    writeFileSync(file, single({ name: 'edited' }))
+    await settle(400)
+    expect(heard).toEqual([file])
+    files.unwatch(file, 'server:w1')
+    expect(files.watched()).toEqual([])
+    expect(files.holdersOf(file)).toEqual([])
   })
 
   it('survives an atomic rename of the file', async () => {

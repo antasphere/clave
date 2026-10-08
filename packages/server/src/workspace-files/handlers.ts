@@ -66,8 +66,8 @@ export const workspaceFilesHandlers = [
     })
   ),
   CommandHandler.make(WriteWorkspaceFile, (p) => call((f) => f.write(p.path, p.data, p.rootDir))),
-  CommandHandler.make(WatchWorkspaceFile, (p) => call((f) => f.watch(p.path))),
-  CommandHandler.make(UnwatchWorkspaceFile, (p) => call((f) => f.unwatch(p.path))),
+  CommandHandler.make(WatchWorkspaceFile, (p) => call((f) => f.watch(p.path, p.holder))),
+  CommandHandler.make(UnwatchWorkspaceFile, (p) => call((f) => f.unwatch(p.path, p.holder))),
   QueryHandler.make(WorkspaceFileExists, (p) => call((f) => f.exists(p.path))),
   QueryHandler.make(DiscoverWorkspaceFiles, (p) => call((f) => f.discover(p.folder))),
   QueryHandler.make(DiscoverWorkspaceFilesRecursive, (p) =>

@@ -51,6 +51,31 @@ describe('the review relay', () => {
     expect(shown).toEqual(['mine'])
   })
 
+  it('drops the dialog’s answer when the read ended before the person answered', async () => {
+    const answered: string[] = []
+    const logged: string[] = []
+    let resolveDialog: (a: { response: 0 | 1 | 2; checkboxChecked: boolean }) => void = () => {}
+    const relay = createReviewRelay({
+      mintId: () => 'req',
+      showDialog: () =>
+        new Promise((resolve) => {
+          resolveDialog = resolve
+        }),
+      answer: async (reviewId) => {
+        answered.push(reviewId)
+      },
+      log: (message) => logged.push(message)
+    })
+    const read = relay.begin()
+    relay.onEvent(review('req', 'slow'))
+    await tick()
+    read.done() // the read answered (a deadline, the server gone) while the dialog was open
+    resolveDialog({ response: 1, checkboxChecked: false })
+    await tick()
+    expect(answered).toEqual([])
+    expect(logged).toEqual(['[clave] workspace file review answered after its read ended; dropped'])
+  })
+
   it('ignores an event that is not a review, and logs an answer the server refused', async () => {
     const logged: string[] = []
     const relay = createReviewRelay({

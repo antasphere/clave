@@ -65,9 +65,19 @@ export function createReviewRelay(options: ReviewRelayOptions): ReviewRelay {
       const event = envelope.event
       if (event._tag !== 'workspace_files.review_needed') return
       if (event.requestId === null || !pending.has(event.requestId)) return
+      const requestId = event.requestId
       void options
         .showDialog(event)
-        .then((answer) => options.answer(event.reviewId, answer))
+        .then((answer) => {
+          // The read answered meanwhile (a deadline, the server gone): the
+          // person's word is for a read nobody waits on, and sending it
+          // would trust content for nothing. Dropped, said in the log.
+          if (!pending.has(requestId)) {
+            log('[clave] workspace file review answered after its read ended; dropped', null)
+            return
+          }
+          return options.answer(event.reviewId, answer)
+        })
         .catch((error) => log('[clave] workspace file review not answered', error))
     },
     pending: () => pending.size

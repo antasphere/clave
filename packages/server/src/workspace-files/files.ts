@@ -329,6 +329,8 @@ export class WorkspaceFiles {
   private trustedHashes: Set<string> | null = null
   private trustedRoots: string[] | null = null
   private readonly watchers = new Map<string, { watcher: fs.FSWatcher; cleanup: () => void }>()
+  /** Who holds each watch; the watcher closes with its last holder. */
+  private readonly holders = new Map<string, Set<string>>()
   /** The files the server itself just wrote: a change on one is the echo. */
   private readonly recentWrites = new Set<string>()
   private readonly listeners = new Set<(event: WorkspaceFilesEvent) => void>()
@@ -446,22 +448,26 @@ export class WorkspaceFiles {
   async read(absolutePath: string, options: ReadOptions = {}): Promise<ClaveFileReadResult | null> {
     const { rootDir, reviewer = noReviewer } = options
     let raw: string
-    let data: ClaveFileRaw
+    let result: ClaveFileReadResult
+    // The parse and the resolve under one try, as the IPC handler always had
+    // them: a file that is not a document (a bare `null`, `sessions: {}`) is
+    // no file, null on both roads, never a throw that stops a workspace's
+    // sync at the first bad file of a tree.
     try {
       raw = fs.readFileSync(absolutePath, 'utf-8')
-      data = JSON.parse(raw) as ClaveFileRaw
+      const data = JSON.parse(raw) as ClaveFileRaw
+      const dir = rootDir || path.dirname(absolutePath)
+      const fallbackName = path.basename(absolutePath, '.clave')
+      result = Array.isArray(data.groups)
+        ? {
+            type: 'multi',
+            groups: data.groups.map((g, i) => resolveGroup(g, dir, `Group ${i + 1}`))
+          }
+        : { type: 'single', ...resolveGroup(data, dir, fallbackName) }
     } catch (err) {
       console.error('[clave] Failed to read .clave file:', absolutePath, err)
       return null
     }
-    const dir = rootDir || path.dirname(absolutePath)
-    const fallbackName = path.basename(absolutePath, '.clave')
-    const result: ClaveFileReadResult = Array.isArray(data.groups)
-      ? {
-          type: 'multi',
-          groups: data.groups.map((g, i) => resolveGroup(g, dir, `Group ${i + 1}`))
-        }
-      : { type: 'single', ...resolveGroup(data, dir, fallbackName) }
 
     const { autoCommands, prompts, dangerous } = describeElevated(result)
     const elevated = autoCommands.length > 0 || prompts.length > 0 || dangerous
@@ -528,13 +534,29 @@ export class WorkspaceFiles {
     return readImageAsDataUrl(absolutePath)
   }
 
-  /** The `autoDiscover` key of a file, or null when it has none or cannot be read. */
+  /** The `autoDiscover` key of a file, or null when it has none or cannot be
+   *  read; normalised to the contract's shape (`enabled` a boolean, the lists
+   *  lists of strings, the depth a number), so the two roads answer the same
+   *  thing for a loosely written file. */
   readAutoDiscover(filePath: string): AutoDiscoverConfig | null {
     try {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as ClaveFileRaw
-      if (!data.autoDiscover) return null
-      if (data.autoDiscover === true) return { enabled: true }
-      return data.autoDiscover
+      const cfg = data.autoDiscover
+      if (!cfg) return null
+      if (cfg === true) return { enabled: true }
+      if (typeof cfg !== 'object') return null
+      const strings = (value: unknown): string[] | undefined =>
+        Array.isArray(value) && value.every((v) => typeof v === 'string') ? value : undefined
+      const patterns = strings(cfg.patterns)
+      const exclude = strings(cfg.exclude)
+      return {
+        enabled: cfg.enabled === true,
+        ...(patterns !== undefined && { patterns }),
+        ...(exclude !== undefined && { exclude }),
+        ...(typeof cfg.maxDepth === 'number' && Number.isFinite(cfg.maxDepth)
+          ? { maxDepth: cfg.maxDepth }
+          : {})
+      }
     } catch {
       return null
     }
@@ -637,9 +659,15 @@ export class WorkspaceFiles {
 
   // ── Watching ──
 
-  /** Watch a file for changes on disk; every listener hears them. A second
-   *  watch of the same path is the same watcher. */
-  watch(absolutePath: string): void {
+  /** Watch a file for changes on disk; every listener hears them. One
+   *  watcher per path whoever holds it: a second holder joins it, and the
+   *  watcher closes only when its last holder releases it. A window names
+   *  itself as the holder so another window's release, or the same window's
+   *  release on the road it left, never closes a watch still wanted. */
+  watch(absolutePath: string, holder = 'default'): void {
+    const held = this.holders.get(absolutePath) ?? new Set<string>()
+    held.add(holder)
+    this.holders.set(absolutePath, held)
     if (this.watchers.has(absolutePath)) return
     try {
       let debounceTimer: NodeJS.Timeout | null = null
@@ -662,6 +690,7 @@ export class WorkspaceFiles {
         if (debounceTimer) clearTimeout(debounceTimer)
         watcher.close()
         this.watchers.delete(absolutePath)
+        this.holders.delete(absolutePath)
       }
       watcher.on('error', cleanup)
       this.watchers.set(absolutePath, { watcher, cleanup })
@@ -670,13 +699,22 @@ export class WorkspaceFiles {
     }
   }
 
-  unwatch(absolutePath: string): void {
-    this.watchers.get(absolutePath)?.cleanup()
+  /** Release one holder's watch; the watcher closes with its last holder. */
+  unwatch(absolutePath: string, holder = 'default'): void {
+    const held = this.holders.get(absolutePath)
+    if (!held) return
+    held.delete(holder)
+    if (held.size === 0) this.watchers.get(absolutePath)?.cleanup()
   }
 
   /** The paths watched right now (tests, and the shell's diagnostics). */
   watched(): string[] {
     return [...this.watchers.keys()]
+  }
+
+  /** Who holds a path's watch (tests). */
+  holdersOf(absolutePath: string): string[] {
+    return [...(this.holders.get(absolutePath) ?? [])]
   }
 
   /** Every change on a watched file, as it is told. */

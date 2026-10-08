@@ -201,15 +201,22 @@ export const WriteWorkspaceFile = Command.define('WriteWorkspaceFile', {
   success: Schema.Void
 })
 
+/** Who holds a watch: a window names itself, so two windows on one file are
+ *  two holders and one window's release does not close the other's watcher.
+ *  A window reaching the SAME server instance over two roads (IPC and the
+ *  in-process server) names each road apart, so a watch handed from one road
+ *  to the other is never released on the road that took it over. */
+const Holder = Schema.optional(Schema.String)
+
 /** `clave:watch-file`: changes on disk reach every client as `workspace_files.changed`. */
 export const WatchWorkspaceFile = Command.define('WatchWorkspaceFile', {
-  payload: Schema.Struct({ path: Schema.String }),
+  payload: Schema.Struct({ path: Schema.String, holder: Holder }),
   success: Schema.Void
 })
 
-/** `clave:unwatch-file` */
+/** `clave:unwatch-file`: the holder's watch released; the watcher closes with its last holder. */
 export const UnwatchWorkspaceFile = Command.define('UnwatchWorkspaceFile', {
-  payload: Schema.Struct({ path: Schema.String }),
+  payload: Schema.Struct({ path: Schema.String, holder: Holder }),
   success: Schema.Void
 })
 
@@ -225,17 +232,10 @@ export const DiscoverWorkspaceFiles = Query.define('DiscoverWorkspaceFiles', {
   success: Schema.Array(DiscoveredFile)
 })
 
-/** A list on a GET: the URL carries one occurrence of a key as a string and
- *  several as an array, and the handler wants a list either way. */
-const StringList = Schema.transform(
-  Schema.Union(Schema.Array(Schema.String), Schema.String),
-  Schema.Array(Schema.String),
-  {
-    strict: true,
-    decode: (value) => (typeof value === 'string' ? [value] : value),
-    encode: (list) => list
-  }
-)
+/** A list on a GET, carried as one JSON-encoded parameter: repeated keys
+ *  would lose an empty list (no key at all) and read one value as a string,
+ *  and an empty `exclude` means "exclude nothing", not the defaults. */
+const StringList = Schema.parseJson(Schema.Array(Schema.String))
 
 /** `clave:discover-files-recursive`: every project workspace file under a
  *  root, the root's own file included when it has one (the renderer skips
