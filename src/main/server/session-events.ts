@@ -1,18 +1,20 @@
 /**
  * How a session's news reaches the windows: through the server's push channel
- * when the in-process server runs (`session.title_changed`,
+ * when a server publishes in this process (`session.title_changed`,
  * `session.plan_detected`, `session.cleared`, `session.state_changed`, every
  * attached client hears them), and over the per-window IPC channel it always
  * had when no server runs (the app without a server, the first moments of a
  * boot). One or the other, never both: the preload listens on both transports,
  * and a title delivered twice would rename a tab twice.
  *
- * The publisher is set by `clave-server.ts` when the server starts and
- * cleared when it stops; an attached server's shell has none (the server is
- * another process), so an attached app keeps the IPC path for these.
+ * The publisher is set by `clave-server.ts` when the in-process server starts
+ * and cleared when it stops, and by the standalone entry for its own server;
+ * an attached app's shell has none (the server is another process) and keeps
+ * the IPC path. The window is named by its KEY and reached through the
+ * session windows port (`sessions/windows.ts`): nothing here imports Electron.
  */
-import type { BrowserWindow } from 'electron'
 import type { ServerEvent } from '@clave/contract/events'
+import { sessionWindows } from '../sessions/windows'
 
 type Publisher = (event: ServerEvent) => Promise<void>
 
@@ -34,21 +36,20 @@ export function publishOrSend(event: ServerEvent, legacy: () => void): void {
   )
 }
 
-const send = (win: BrowserWindow | null | undefined, channel: string, ...args: unknown[]): void => {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
-}
+const send = (windowKey: string | null, channel: string, ...args: unknown[]): void =>
+  sessionWindows().send(windowKey, channel, ...args)
 
 /** The tab's name, earned from its first message. */
-export function sessionTitleChanged(id: string, title: string, win: BrowserWindow | null): void {
+export function sessionTitleChanged(id: string, title: string, windowKey: string | null): void {
   publishOrSend({ _tag: 'session.title_changed', id, title }, () =>
-    send(win, `session:auto-title:${id}`, title)
+    send(windowKey, `session:auto-title:${id}`, title)
   )
 }
 
 /** The agent wrote a plan at `path`. */
-export function sessionPlanDetected(id: string, path: string, win: BrowserWindow | null): void {
+export function sessionPlanDetected(id: string, path: string, windowKey: string | null): void {
   publishOrSend({ _tag: 'session.plan_detected', id, path }, () =>
-    send(win, `session:plan-detected:${id}`, path)
+    send(windowKey, `session:plan-detected:${id}`, path)
   )
 }
 
@@ -56,9 +57,9 @@ export function sessionPlanDetected(id: string, path: string, win: BrowserWindow
 export function sessionCleared(
   id: string,
   providerSessionId: string | null,
-  win: BrowserWindow | null
+  windowKey: string | null
 ): void {
   publishOrSend({ _tag: 'session.cleared', id, providerSessionId }, () =>
-    send(win, `session:clear-detected:${id}`, providerSessionId)
+    send(windowKey, `session:clear-detected:${id}`, providerSessionId)
   )
 }

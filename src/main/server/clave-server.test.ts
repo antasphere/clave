@@ -3,9 +3,8 @@ import { createApiClient, PushClient, type PushSocketConstructor } from '@clave/
 // The host's neighbours that reach the PTY backend and Electron: nothing here
 // names a tab or looks a window up.
 vi.mock('../title-generator', () => ({ notifyChatMessage: vi.fn() }))
-vi.mock('../window-registry', () => ({ windowRegistry: { getWindowByKey: () => null } }))
 vi.mock('../sessions/lifecycle', () => ({
-  spawnSessionForWindow: vi.fn(),
+  spawnSession: vi.fn(),
   stopSession: vi.fn(),
   trackInput: vi.fn()
 }))
@@ -30,7 +29,7 @@ const record = (id: string, windowKey = 'w1'): Session => ({
   title: id
 })
 const lifecycle: SessionLifecycle = {
-  spawn: async (_win, cwd) => ({
+  spawn: async (_windowKey, cwd) => ({
     id: 'spawned',
     cwd,
     folderName: cwd.split('/').pop() ?? cwd,
@@ -41,7 +40,7 @@ const lifecycle: SessionLifecycle = {
   stop: async () => {}
 }
 const hostOver = (manager: SessionManager): ReturnType<typeof createSessionHost> =>
-  createSessionHost({ manager, lifecycle, windowByKey: () => null })
+  createSessionHost({ manager, lifecycle })
 
 afterEach(async () => {
   await stopClaveServer()
@@ -129,8 +128,7 @@ describe('the server started by the shell', () => {
         stop: async (id) => {
           stopped.push(id)
         }
-      },
-      windowByKey: () => null
+      }
     })
     const endpoint = await startClaveServer({ manager, ports: { sessions: host } })
     const api = createApiClient(endpoint)

@@ -1,6 +1,4 @@
 import { randomUUID } from 'crypto'
-import { clipboard } from 'electron'
-import { broadcastToAllWindows } from './window-routing'
 
 /**
  * Lifecycle for agent-offered copyable values — the outbound mirror of the
@@ -9,6 +7,12 @@ import { broadcastToAllWindows } from './window-routing'
  * them scraping it out of terminal output). Main owns the full values; the
  * renderer only ever receives previews. Copying happens here, straight from
  * the stored record to the OS clipboard, so the exact bytes are preserved.
+ *
+ * The clipboard and the windows are the shell's (PRDCT-3293): it installs
+ * them once at boot (`ipc-handlers/copy-offer-handlers.ts`), so this store
+ * imports no Electron and the session host that dismisses a closed tab's
+ * offers loads without it. A process with no shell installed keeps the store,
+ * tells nobody, and refuses a copy with the reason.
  */
 
 export interface CopyOffer {
@@ -33,6 +37,22 @@ export interface CopyOfferView {
   sensitive: boolean
   createdAt: number
   copiedAt?: number
+}
+
+/** What the shell gives the store: where a copy lands, who hears a change. */
+export interface CopyOfferShell {
+  /** Put the exact bytes on the OS clipboard. */
+  writeClipboard(text: string): void
+  /** Tell every window the offers changed (the copy button sits in the
+   *  offering tab's own header, which may be in any window). */
+  broadcast(views: CopyOfferView[]): void
+}
+
+let shell: CopyOfferShell | null = null
+
+/** Name the shell; the app does it once at boot. Null forgets it (tests). */
+export function installCopyOfferShell(next: CopyOfferShell | null): void {
+  shell = next
 }
 
 const MAX_PER_SESSION = 20
@@ -66,9 +86,7 @@ export function listOfferViews(): CopyOfferView[] {
 }
 
 function pushToRenderer(): void {
-  // The offer surfaces a copy button in the offering tab's own header, which
-  // may be in any window; broadcast so whichever window hosts that tab shows it.
-  broadcastToAllWindows('copy-offer:changed', listOfferViews())
+  shell?.broadcast(listOfferViews())
 }
 
 export function createOffer(input: {
@@ -101,7 +119,8 @@ export function createOffer(input: {
 export function copyOfferToClipboard(id: string): CopyOfferView {
   const offer = offers.get(id)
   if (!offer) throw new Error(`No copy offer "${id}"`)
-  clipboard.writeText(offer.value)
+  if (!shell) throw new Error('This process has no clipboard: the copy offer stays in the tab.')
+  shell.writeClipboard(offer.value)
   offer.copiedAt = Date.now()
   pushToRenderer()
   return toView(offer)

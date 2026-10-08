@@ -14,10 +14,12 @@ import { startWatching as startAgentStateWatching } from '../agent-state-manager
 import { hasServerEventPublisher } from '../server/session-events'
 import {
   type SessionInfoResult,
-  spawnSessionForWindow,
+  spawnSession,
   stopSession,
   trackInput
 } from '../sessions/lifecycle'
+import { installSessionWindows } from '../sessions/windows'
+import { electronSessionWindows } from '../sessions/electron-windows'
 
 export function registerPtyHandlers(): void {
   // The shell wires the terminal layer's MCP config port to its own MCP
@@ -31,6 +33,9 @@ export function registerPtyHandlers(): void {
       remove: deleteSessionMcpConfig
     }
   })
+  // What the session host still needs from the windows, by key: the shell's
+  // registry and IPC sends (sessions/windows.ts, PRDCT-3293).
+  installSessionWindows(electronSessionWindows)
   // The session stream's IPC, registered once with the terminal handlers (the
   // agent state manager used to do it from the watch below and owns no IPC).
   registerSessionIpc()
@@ -47,8 +52,14 @@ export function registerPtyHandlers(): void {
   })
 
   /** Starting a session is `sessions/lifecycle.ts`'s: the server's
-   *  `StartSession` and these handlers share one wiring. */
-  const spawnForWindow = spawnSessionForWindow
+   *  `StartSession` and these handlers share one wiring, and the window is
+   *  its key. */
+  const spawnForWindow = (
+    win: BrowserWindow | null,
+    cwd: string,
+    options?: PtySpawnOptions
+  ): Promise<SessionInfoResult> =>
+    spawnSession(win ? windowRegistry.getKeyForWindow(win.id) : null, cwd, options)
 
   // The CLI's own word on its account's limit reaches the window holding the
   // tab (ADR 0002): the policy there proposes or makes the move.

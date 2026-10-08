@@ -10,8 +10,11 @@
  * The object is plain and its methods are looked up at call time, which is
  * what lets the end-to-end hook (`e2e-hooks.ts`) wrap one of them under
  * `--test-no-activate`, the way the specs used to wrap an IPC handler.
+ *
+ * Nothing here imports Electron (PRDCT-3293): a window is its key, and the
+ * standalone server builds the same host over the same manager and lifecycle
+ * (`standalone-host.ts`).
  */
-import type { BrowserWindow } from 'electron'
 import type { SessionHostService, StartInput } from '@clave/server'
 import type {
   HistoryPage,
@@ -25,11 +28,10 @@ import type { SessionInput } from '../../shared/session-model'
 import type { PtySpawnOptions } from '../pty-manager'
 import { type SessionManager, sessionManager } from './session-manager'
 import { preparePrompt } from './attachments'
-import { windowRegistry } from '../window-registry'
 import * as titleGenerator from '../title-generator'
 import { rememberChatEffort, rememberChatModel } from './chat-model-default'
 import { rememberChatView } from './chat-view-default'
-import { type SessionInfoResult, spawnSessionForWindow, stopSession } from './lifecycle'
+import { type SessionInfoResult, spawnSession, stopSession } from './lifecycle'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -46,7 +48,7 @@ export const isRawWireFrame = (value: SessionStream): boolean =>
 
 export interface SessionLifecycle {
   readonly spawn: (
-    win: BrowserWindow | null,
+    windowKey: string | null,
     cwd: string,
     options?: PtySpawnOptions
   ) => Promise<SessionInfoResult>
@@ -56,8 +58,6 @@ export interface SessionLifecycle {
 export interface SessionHostDeps {
   readonly manager: SessionManager
   readonly lifecycle: SessionLifecycle
-  /** The window a key names, for what still reaches a window directly. */
-  readonly windowByKey: (key: string) => BrowserWindow | null
 }
 
 const asInfo = (result: SessionInfoResult): SessionInfo => ({
@@ -75,10 +75,9 @@ const asInfo = (result: SessionInfoResult): SessionInfo => ({
 
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
-  const windowOf = (id: string): BrowserWindow | null => {
-    const key = manager.get(id)?.windowKey
-    return key ? deps.windowByKey(key) : null
-  }
+  /** The key of the window the session's record names, for the per-window
+   *  arm of its news when no server publishes them. */
+  const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
   return {
     list: (windowKey) => manager.list(windowKey),
     get: (id) => manager.get(id),
@@ -96,11 +95,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     },
     subscribeExit: (id, listener) => manager.subscribeExit(id, listener),
     start: async (input: StartInput) => {
-      const win = input.windowKey ? deps.windowByKey(input.windowKey) : null
       // `initialInput` is main's own (a restart's resend): a caller's start
       // never carries one, and the wire does not know the field.
       const options = input.options as PtySpawnOptions | undefined
-      return asInfo(await deps.lifecycle.spawn(win, input.cwd, options))
+      return asInfo(await deps.lifecycle.spawn(input.windowKey ?? null, input.cwd, options))
     },
     stop: (id) => deps.lifecycle.stop(id),
     write: async (id: string, input: SessionWrite) => {
@@ -154,8 +152,7 @@ export function getSessionHost(): SessionHostService {
   if (!host) {
     host = createSessionHost({
       manager: sessionManager,
-      lifecycle: { spawn: spawnSessionForWindow, stop: stopSession },
-      windowByKey: (key) => windowRegistry.getWindowByKey(key)
+      lifecycle: { spawn: spawnSession, stop: stopSession }
     })
   }
   return host
