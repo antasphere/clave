@@ -8,6 +8,7 @@ import type {
   HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
   GithubResult,
   MergeMethod,
@@ -936,6 +937,13 @@ export interface ElectronAPI {
   accountLoginCancel: (jobId: string) => Promise<void>
   accountLoginList: () => Promise<AccountLoginJob[]>
   onAccountLoginProgress: (callback: (job: AccountLoginJob) => void) => () => void
+  /** The Antasphere account (PRDCT-3259): a status in every direction, never a credential. */
+  antasphereAccountGet: () => Promise<AntasphereAccountStatus>
+  antasphereAccountSignIn: () => Promise<AntasphereAccountStatus>
+  antasphereAccountCancel: () => Promise<AntasphereAccountStatus>
+  antasphereAccountSignOut: () => Promise<AntasphereAccountStatus>
+  antasphereAccountDismiss: () => Promise<AntasphereAccountStatus>
+  onAntasphereAccountChanged: (callback: (status: AntasphereAccountStatus) => void) => () => void
   getCodexUsageLimits: (
     accountId?: string,
     options?: { force?: boolean }

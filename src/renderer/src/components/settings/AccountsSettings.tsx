@@ -7,6 +7,7 @@ import {
   Radio,
   SettingsSelect
 } from './primitives'
+import { AntasphereAccountSection } from './AntasphereAccountSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { CodexAccountsSection } from './CodexAccountsSection'
 import { loadAccountLogins } from '../../store/account-login-store'
@@ -86,10 +87,11 @@ function SwitchPolicySection(): ReactElement {
 }
 
 /**
- * Settings → Accounts (ADR 0002): the subscriptions Clave can run a session
- * on, per provider, in the order the pool walks them, each signed in from
- * here. Usage per account is read on the Usage page; this page is where an
- * account is added, logged into, ordered and removed.
+ * Settings → Accounts: the Antasphere account this Clave is signed in with
+ * (PRDCT-3259, optional, Clave only), then the subscriptions Clave can run a
+ * session on (ADR 0002), per provider, in the order the pool walks them,
+ * each signed in from here. Usage per account is read on the Usage page;
+ * this page is where an account is added, logged into, ordered and removed.
  */
 export function AccountsSettings(): ReactElement {
   useEffect(() => {
@@ -98,9 +100,10 @@ export function AccountsSettings(): ReactElement {
   return (
     <SettingsPage
       title="Accounts"
-      description="The subscriptions Clave can run sessions on. New sessions start on the selected account and move along the list when it is about to hit its limit; a running tab is switched from its menu, its conversation resumed on the other account."
+      description="Your Antasphere account, which signs you into Clave itself, and the provider subscriptions Clave can run sessions on. New sessions start on the selected account and move along the list when it is about to hit its limit; a running tab is switched from its menu, its conversation resumed on the other account."
       testId="accounts"
     >
+      <AntasphereAccountSection />
       <ClaudeAccountsSection />
       <CodexAccountsSection />
       <SwitchPolicySection />

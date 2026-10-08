@@ -51,7 +51,7 @@ import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
-import { shellSettingsSource } from './settings/shell-source'
+import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
 import { terminalPorts } from './ports/terminals'
 
 // The server to attach to, if any, read ONCE off the environment and taken
@@ -478,6 +478,9 @@ app.on('before-quit', (event) => {
   usageManager.stopPolling()
   codexUsageManager.stopPolling()
   accountLoginManager.cancelAll()
+  // The Antasphere login, while this process is its server: nothing stays
+  // listening, nothing fires later (attached, the server elsewhere owns it).
+  shellAntasphereAccount?.shutdown()
   stopMcpServer()
   // Keep the event loop alive until owned event children finish their escalation.
   // The server goes with them: the boot awaited first (a registration still

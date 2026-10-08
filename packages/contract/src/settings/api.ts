@@ -33,6 +33,14 @@ import {
   StartCodexApiKeyLogin
 } from './accounts'
 import {
+  CancelAntasphereSignIn,
+  ConfirmAntasphereHandoff,
+  DismissAntasphereFailure,
+  ReadAntasphereAccount,
+  SignInWithAntasphere,
+  SignOutOfAntasphere
+} from './antasphere'
+import {
   DeleteLaunchProfile,
   ListLaunchProfiles,
   SetGlobalLaunchProfile,
@@ -122,6 +130,46 @@ export const settingsGroup = ApiGroup.make('settings')
   )
   .add(HttpCqrs.commandEndpoint('cancelAccountLogin', '/accounts/login/cancel', CancelAccountLogin))
   .add(HttpCqrs.queryEndpoint('listAccountLogins', '/accounts/login', ListAccountLogins))
+  // The Antasphere account (PRDCT-3259): the status, and the four commands
+  // that move it; the sign-in's answer alone carries the browser handoff.
+  .add(
+    HttpCqrs.queryEndpoint('readAntasphereAccount', '/accounts/antasphere', ReadAntasphereAccount)
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'signInWithAntasphere',
+      '/accounts/antasphere/sign-in',
+      SignInWithAntasphere
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'confirmAntasphereHandoff',
+      '/accounts/antasphere/handoff/confirm',
+      ConfirmAntasphereHandoff
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'cancelAntasphereSignIn',
+      '/accounts/antasphere/cancel',
+      CancelAntasphereSignIn
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'signOutOfAntasphere',
+      '/accounts/antasphere/sign-out',
+      SignOutOfAntasphere
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'dismissAntasphereFailure',
+      '/accounts/antasphere/dismiss',
+      DismissAntasphereFailure
+    )
+  )
   // Usage
   .add(HttpCqrs.queryEndpoint('readClaudeUsage', '/usage/claude', ReadClaudeUsage))
   .add(

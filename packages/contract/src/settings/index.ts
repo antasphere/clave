@@ -13,8 +13,10 @@ import {
   CodexUsageRead
 } from './accounts'
 import { WorkspaceStateChanged } from './workspaces'
+import { AntasphereAccountChanged } from './antasphere'
 
 export * from './accounts'
+export * from './antasphere'
 export * from './failures'
 export * from './launch-profiles'
 export * from './preferences'
@@ -28,6 +30,7 @@ export const SettingsEvent = Schema.Union(
   AccountLoginProgressed,
   ClaudeUsageRead,
   CodexUsageRead,
-  WorkspaceStateChanged
+  WorkspaceStateChanged,
+  AntasphereAccountChanged
 )
 export type SettingsEvent = typeof SettingsEvent.Type

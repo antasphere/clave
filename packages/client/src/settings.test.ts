@@ -87,3 +87,32 @@ describe('the typed settings calls', () => {
     expect(preferences.customProfiles).toContainEqual(profile)
   })
 })
+
+describe('the Antasphere account calls', () => {
+  it('reads the status, signs in with the handoff in the answer, and the rest answer the status', async () => {
+    expect(typeof api.settings.antasphere?.status).toBe('function')
+    expect(await api.settings.antasphere.status()).toMatchObject({ phase: 'signed-out' })
+    const signedIn = await api.settings.antasphere.signIn()
+    expect(signedIn.status.phase).toBe('signing-in')
+    expect(signedIn.handoff).toEqual({
+      url: 'https://issuer.test/authorize?state=s1',
+      generation: 1
+    })
+    expect(await api.settings.antasphere.confirmHandoff(signedIn.handoff!)).toBe(true)
+    expect(
+      await api.settings.antasphere.confirmHandoff({ ...signedIn.handoff!, generation: 9 })
+    ).toBe(false)
+    expect(await api.settings.antasphere.cancel()).toMatchObject({ lastFailure: 'cancelled' })
+    expect(await api.settings.antasphere.confirmHandoff(signedIn.handoff!)).toBe(false)
+    expect(await api.settings.antasphere.dismiss()).toMatchObject({ lastFailure: null })
+    expect(await api.settings.antasphere.signOut()).toMatchObject({ phase: 'signed-out' })
+    expect(last('antasphere.signOut')).toEqual([])
+  })
+
+  it('throws the refusal of a server without the account as the tagged error', async () => {
+    fake.refuse.antasphere = true
+    const error = await api.settings.antasphere.signIn().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(CapabilityUnavailable)
+    expect(error).toMatchObject({ capability: 'antasphereAccount' })
+  })
+})

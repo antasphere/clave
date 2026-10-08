@@ -45,15 +45,19 @@ async function main(): Promise<void> {
   }
 
   const token = arg('token')
+  // The settings (lane D): the same managers as the app's, on JSON documents
+  // under `--data-dir` and the macOS Keychain (`CLAVE_KEYCHAIN_FILE` names
+  // a keychain file instead of the login keychain, the harness's way of
+  // never touching a personal one); a login job or the app icon asked of
+  // this server answers CapabilityUnavailable. The Antasphere account
+  // (PRDCT-3259) is this server's own, restored from the data directory.
+  const standalone = standaloneSettingsSource(dataDir)
   const server = await startEmbedded({
     // No terminal process beside this server yet (wave 3): a start answers
     // `CapabilityUnavailable` and says so, the reads answer empty.
     ports: {
       sessions: SessionHost.none,
-      // The settings (lane D): the same managers as the app's, on JSON
-      // documents under `--data-dir` and the macOS Keychain; a login or the
-      // app icon asked of this server answers CapabilityUnavailable.
-      settings: standaloneSettingsSource(dataDir)
+      settings: standalone.settings
     },
     port,
     ...(token !== undefined && { token })
@@ -82,6 +86,9 @@ async function main(): Promise<void> {
     if (stopping) return
     stopping = true
     process.stderr.write(`clave-server: ${signal}, stopping\n`)
+    // The login's listener and timers go with the server; the session on
+    // disk is kept as it is for the next start.
+    standalone.shutdown()
     // The discovery file goes with the process: a reader must never find
     // the url and the token of a server that is gone.
     try {

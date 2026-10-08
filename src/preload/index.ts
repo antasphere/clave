@@ -424,6 +424,66 @@ function viaServerEvent<E extends ServerEvent['_tag'], T>(
 /** The contract's answers are readonly through and through; the renderer's
  *  types are not. Same shape (the contract was written from them). */
 const loose = <T>(value: unknown): T => value as T
+
+/** The sign-in's answer as the server (or main, before it) gives it: the
+ *  status and the handoff. Routed like every settings call; the method on
+ *  the bridge splits it so the handoff never reaches the page. */
+type AntasphereSignInAnswer = {
+  status: unknown
+  handoff: { url: string; generation: number } | null
+}
+const antasphereSignIn = viaServer<[], AntasphereSignInAnswer>({
+  ipc: () => ipcRenderer.invoke('antasphere-account:sign-in'),
+  server: ({ api }) => api.settings.antasphere.signIn().then(loose<AntasphereSignInAnswer>)
+})
+/** Whether the handoff is still the one issued for the login in flight,
+ *  asked of the manager that issued it right before the browser opens: a
+ *  cancel, a sign-out or a new login since the sign-in's answer, and the
+ *  link opens nothing. A read, never a start. A server that cannot answer
+ *  (gone, refusing) is a no: the browser never opens on a guess. */
+const antasphereConfirmHandoff = viaServer<[{ url: string; generation: number }], boolean>({
+  ipc: (handoff) => ipcRenderer.invoke('antasphere-account:confirm-handoff', handoff),
+  server: ({ api }, handoff) => api.settings.antasphere.confirmHandoff(handoff)
+})
+/**
+ * This preload's own order of the account's operations, the guard between
+ * the confirmation and the open. The server's confirmation is a read of the
+ * manager's state when it answered; its reply can be delayed, and a cancel,
+ * a sign-out or a newer sign-in can finish here before an older `true`
+ * lands. So a sign-in takes a number when it starts, each of those bumps
+ * the number synchronously, before anything is awaited, and the sign-in
+ * checks its number after every await and once more right before the open:
+ * behind, it opens nothing and answers the status it was given (the page's
+ * store drops a stale answer in its turn). A status heard from the server
+ * saying the login is no longer in flight (another window cancelled, the
+ * browser came back, a sign-out elsewhere) bumps it too; the start's own
+ * `signing-in` push does not, since that is the flow being opened.
+ *
+ * The boundary, stated plainly: the confirmation and the OS opening the
+ * browser are two steps, not one transaction. What this guard closes is
+ * everything this preload hears before it hands the URL to main; a cancel
+ * on the server in the microseconds after that still lands on the manager's
+ * callback check (a stale state opens nothing there), not on the browser.
+ */
+const antasphereCancel = viaServer<[], unknown>({
+  ipc: () => ipcRenderer.invoke('antasphere-account:cancel'),
+  server: ({ api }) => api.settings.antasphere.cancel()
+})
+const antasphereSignOut = viaServer<[], unknown>({
+  ipc: () => ipcRenderer.invoke('antasphere-account:sign-out'),
+  server: ({ api }) => api.settings.antasphere.signOut()
+})
+const antasphereChanged = viaServerEvent(
+  'antasphere-account:changed',
+  'accounts.antasphere_changed',
+  (event) => event.status as unknown
+)
+let accountOp = 0
+const nextAccountOp = (): number => ++accountOp
+const onAccountStatus = (status: unknown): void => {
+  const phase = (status as { phase?: unknown } | null)?.phase
+  if (phase !== 'signing-in') nextAccountOp()
+}
 const profiles = loose<LaunchProfilePreferences>
 type UsageRead = typeof import('@clave/contract/settings').UsageReadView.Type
 type PiUsageTotals = typeof import('@clave/contract/settings').PiUsageTotalsView.Type
@@ -1239,6 +1299,48 @@ const electronAPI = {
     'accounts.login_progressed',
     (event) => event.job as unknown
   ),
+  // The Antasphere account (PRDCT-3259): the status crosses, in and out;
+  // the login itself and its tokens stay on the server. A sign-in answers
+  // this preload the browser handoff (the authorization URL, bound to the
+  // login's generation), which goes to main to open and never to the page:
+  // the page gets the status. A browser main refuses or cannot open is not
+  // a failed sign-in: the login waits, and the status says so.
+  antasphereAccountGet: viaServer<[], unknown>({
+    ipc: () => ipcRenderer.invoke('antasphere-account:get'),
+    server: ({ api }) => api.settings.antasphere.status()
+  }),
+  antasphereAccountSignIn: async (): Promise<unknown> => {
+    const mine = nextAccountOp()
+    const { status, handoff } = await antasphereSignIn()
+    if (handoff && mine === accountOp) {
+      // Confirmed with the login's own manager at the last moment, then
+      // opened by main, which checks the target against its own issuer. A
+      // confirmation that fails or cannot be had opens nothing; neither
+      // outcome is a failed sign-in, since the login waits regardless.
+      const current = await antasphereConfirmHandoff(handoff).catch(() => false)
+      if (current === true && mine === accountOp) {
+        await ipcRenderer.invoke('antasphere-account:open-browser', handoff).catch(() => undefined)
+      }
+    }
+    return status
+  },
+  antasphereAccountCancel: (): Promise<unknown> => {
+    nextAccountOp()
+    return antasphereCancel()
+  },
+  antasphereAccountSignOut: (): Promise<unknown> => {
+    nextAccountOp()
+    return antasphereSignOut()
+  },
+  antasphereAccountDismiss: viaServer<[], unknown>({
+    ipc: () => ipcRenderer.invoke('antasphere-account:dismiss'),
+    server: ({ api }) => api.settings.antasphere.dismiss()
+  }),
+  onAntasphereAccountChanged: (callback: (status: unknown) => void): (() => void) =>
+    antasphereChanged((status) => {
+      onAccountStatus(status)
+      callback(status)
+    }),
   // Codex usage is per account like Claude's (the machine's home when omitted).
   getCodexUsageLimits: viaServer<[string?, { force?: boolean }?], UsageRead>({
     ipc: (accountId, options) => ipcRenderer.invoke('usage:get-codex-limits', accountId, options),

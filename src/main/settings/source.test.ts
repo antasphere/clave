@@ -13,10 +13,12 @@ import type { LoginJob } from '../account-login'
 import { electronTestPorts, tempDataDir } from '../ports/testing'
 import {
   DEFAULT_ACCOUNT_ID,
+  type AntasphereAccountLike,
   type LoginJobsLike,
   type SettingsManagers,
   settingsSourceFromManagers
 } from './source'
+import type { AntasphereAccountStatus } from '../../shared/antasphere-account-types'
 
 const TOKEN = 'sk-ant-oat01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const READ = { windows: [], fetchedAt: 1 }
@@ -270,5 +272,92 @@ describe('the settings source over the real managers', () => {
     expect(second.map((e) => e._tag)).toContain('accounts.claude_changed')
     expect(error).toHaveBeenCalled()
     error.mockRestore()
+  })
+})
+
+describe('the Antasphere account through the source (PRDCT-3259)', () => {
+  const status = (phase: 'signed-out' | 'signing-in' | 'signed-in'): AntasphereAccountStatus => ({
+    phase,
+    account: null,
+    issuerHost: 'issuer.test',
+    signedInAt: null,
+    expiresAt: null,
+    renewable: false,
+    loginStartedAt: null,
+    lastFailure: null,
+    secureStorage: true
+  })
+
+  it('refuses every account call where it has no login manager: nothing local stands in', async () => {
+    const source = settingsSourceFromManagers(managers)
+    expect(source.antasphere).toBeDefined()
+    for (const call of [
+      () => source.antasphere.status(),
+      () => source.antasphere.signIn(),
+      () => source.antasphere.confirmHandoff({ url: 'https://issuer.test/a', generation: 1 }),
+      () => source.antasphere.cancel(),
+      () => source.antasphere.signOut(),
+      () => source.antasphere.dismiss()
+    ]) {
+      await expect((async () => call())()).rejects.toMatchObject({
+        _tag: 'CapabilityUnavailable',
+        capability: 'antasphereAccount'
+      })
+    }
+  })
+
+  it('owns the manager: answers from it, emits its changes once, asks nothing at build', async () => {
+    let change: ((s: AntasphereAccountStatus) => void) | null = null
+    const calls: string[] = []
+    const fake: AntasphereAccountLike = {
+      status: () => status('signed-out'),
+      start: async () => {
+        calls.push('start')
+        return {
+          status: status('signing-in'),
+          handoff: { url: 'https://issuer.test/authorize?state=s', generation: 3 }
+        }
+      },
+      confirmHandoff: (handoff) => {
+        calls.push(`confirm:${handoff.generation}`)
+        return handoff.generation === 3
+      },
+      cancel: () => {
+        calls.push('cancel')
+        return status('signed-out')
+      },
+      signOut: () => {
+        calls.push('signOut')
+        return status('signed-out')
+      },
+      dismissFailure: () => {
+        calls.push('dismiss')
+        return status('signed-out')
+      },
+      onChange: (listener) => {
+        change = listener
+        return () => {}
+      }
+    }
+    const source = settingsSourceFromManagers({ ...build(), antasphere: fake })
+    // Nothing is asked of the manager by building the source: the entry
+    // restores the session when its ports can be used, not at module load.
+    expect(calls).toEqual([])
+    const events: SettingsEvent[] = []
+    source.subscribe((event) => events.push(event))
+    expect(await source.antasphere.status()).toMatchObject({ phase: 'signed-out' })
+    const signedIn = await source.antasphere.signIn()
+    expect(signedIn.handoff?.generation).toBe(3)
+    expect(await source.antasphere.confirmHandoff(signedIn.handoff!)).toBe(true)
+    expect(await source.antasphere.confirmHandoff({ ...signedIn.handoff!, generation: 2 })).toBe(
+      false
+    )
+    await source.antasphere.cancel()
+    await source.antasphere.dismiss()
+    await source.antasphere.signOut()
+    expect(calls).toEqual(['start', 'confirm:3', 'confirm:2', 'cancel', 'dismiss', 'signOut'])
+    expect(change).not.toBeNull()
+    change!(status('signed-in'))
+    expect(events).toEqual([{ _tag: 'accounts.antasphere_changed', status: status('signed-in') }])
   })
 })

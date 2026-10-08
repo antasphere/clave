@@ -64,10 +64,16 @@ export function keychainSecrets(options: {
   run?: SecurityCommand
   platform?: NodeJS.Platform
   exists?: (file: string) => boolean
+  /** A keychain file to use instead of the login keychain: every subcommand
+   *  names it last, the way `security` takes one. The end-to-end harness
+   *  gives the standalone server a keychain of the run's own, so a test
+   *  never files anything in, or reads anything from, a personal keychain. */
+  keychainFile?: string
 }): SecretPort {
   const run = options.run ?? runSecurity
   const platform = options.platform ?? process.platform
   const exists = options.exists ?? ((file: string) => fs.existsSync(file))
+  const keychain = options.keychainFile ? [options.keychainFile] : []
   const handleOf = (sealed: string): string | null =>
     sealed.startsWith(KEYCHAIN_HANDLE_PREFIX) ? sealed.slice(KEYCHAIN_HANDLE_PREFIX.length) : null
   const port: SecretPort = {
@@ -86,9 +92,10 @@ export function keychainSecrets(options: {
         )
       }
       const handle = randomUUID()
+      const file = keychain.length ? ` ${quoteForSecurity(keychain[0])}` : ''
       run(
         ['-i'],
-        `add-generic-password -U -s ${quoteForSecurity(options.service)} -a ${quoteForSecurity(handle)} -w ${quoteForSecurity(plain)}\n`
+        `add-generic-password -U -s ${quoteForSecurity(options.service)} -a ${quoteForSecurity(handle)} -w ${quoteForSecurity(plain)}${file}\n`
       )
       return `${KEYCHAIN_HANDLE_PREFIX}${handle}`
     },
@@ -96,10 +103,15 @@ export function keychainSecrets(options: {
       const handle = handleOf(sealed)
       if (handle === null || !port.available()) return undefined
       try {
-        return run(['find-generic-password', '-s', options.service, '-a', handle, '-w']).replace(
-          /\n$/,
-          ''
-        )
+        return run([
+          'find-generic-password',
+          '-s',
+          options.service,
+          '-a',
+          handle,
+          '-w',
+          ...keychain
+        ]).replace(/\n$/, '')
       } catch {
         return undefined
       }
@@ -108,7 +120,7 @@ export function keychainSecrets(options: {
       const handle = handleOf(sealed)
       if (handle === null || !port.available()) return
       try {
-        run(['delete-generic-password', '-s', options.service, '-a', handle])
+        run(['delete-generic-password', '-s', options.service, '-a', handle, ...keychain])
       } catch {
         // Already gone, or never written: nothing to forget.
       }

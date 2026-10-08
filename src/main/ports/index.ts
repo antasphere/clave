@@ -11,7 +11,14 @@ export {
   type ElectronLike,
   type SafeStorageLike
 } from './electron'
-export { standalonePorts, dataDirFromEnv, DATA_DIR_ENV, KEYCHAIN_SERVICE } from './standalone'
+export {
+  standalonePorts,
+  dataDirFromEnv,
+  keychainFileFromEnv,
+  DATA_DIR_ENV,
+  KEYCHAIN_FILE_ENV,
+  KEYCHAIN_SERVICE
+} from './standalone'
 export {
   installSettingsPorts,
   resetSettingsPorts,
