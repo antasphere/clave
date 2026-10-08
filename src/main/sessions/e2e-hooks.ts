@@ -9,7 +9,7 @@
  * when absent and extended in place, never replaced, so whichever domain
  * installs first, the others' hooks stay.
  */
-import type { SessionHostService } from '@clave/server'
+import type { SessionHostService, SettingsSourceService } from '@clave/server'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 
 export interface E2eHooks {
@@ -17,6 +17,10 @@ export interface E2eHooks {
   sessionHost: SessionHostService
   // ── Lane B: the terminal journal's file (`src/main/terminal-journal.ts`) ──
   terminalJournal: { file: string }
+  /** Lane D: the settings source the server reads, stubbed by the quota
+   *  specs (the shell's in `settings/shell-source.ts`; the standalone entry
+   *  installs its own). */
+  settings: SettingsSourceService
   // ── later lanes add theirs here ──
 }
 

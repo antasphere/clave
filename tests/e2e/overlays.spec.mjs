@@ -1,3 +1,7 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec starts a session from the launcher, and a standalone
+// server refuses every start until lane C's session host lands on it; the
+// pin goes when it does. Not a known failure.
 // The overlay language: menus, popovers, and modals share one surface
 // (`.menu-surface` / `.modal-card`), one scrim (`.modal-scrim`), and working
 // enter/exit animations.
@@ -32,7 +36,7 @@ export async function run(t) {
     ],
     activeWorkspaceId: 'ws-a'
   })
-  const { app, win } = await launchApp(dir)
+  const { app, win } = await launchApp(dir, { server: 'in-process' })
 
   try {
     // --- The workspace switcher popover, in the panel language ---

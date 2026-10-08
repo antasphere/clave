@@ -14,6 +14,7 @@
  * session windows port (`sessions/windows.ts`): nothing here imports Electron.
  */
 import type { ServerEvent } from '@clave/contract/events'
+import type { SessionManager } from '../sessions/session-manager'
 import { sessionWindows } from '../sessions/windows'
 
 type Publisher = (event: ServerEvent) => Promise<void>
@@ -34,6 +35,23 @@ export function publishOrSend(event: ServerEvent, legacy: () => void): void {
   void publisher(event).catch((error) =>
     console.error(`[clave-server] ${event._tag} not published`, error)
   )
+}
+
+/** Every attached client hears a session change state, whether or not it
+ *  follows that session's stream: the manager's state changes go out as
+ *  `session.state_changed` on the publisher given. Returns the way to stop.
+ *  The in-process entry and the standalone entry both wire it, once, when
+ *  their server starts. */
+export function publishSessionStates(
+  manager: SessionManager,
+  publish: (event: ServerEvent) => Promise<void>
+): () => void {
+  return manager.subscribeAll((id, stream) => {
+    if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
+    void publish({ _tag: 'session.state_changed', id, state: stream.event.state }).catch((error) =>
+      console.error('[clave-server] state event not published', error)
+    )
+  })
 }
 
 const send = (windowKey: string | null, channel: string, ...args: unknown[]): void =>

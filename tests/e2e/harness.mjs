@@ -6,7 +6,15 @@
 // where `window.electronAPI` is undefined and none of this works.
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright-core'
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
+import {
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  readdirSync,
+  copyFileSync
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -102,18 +110,67 @@ export function serverMode(env = process.env) {
 // run can sweep what a spec that threw before `app.close()` left behind.
 const liveServers = new Set()
 
+/** The settings documents a spec seeds into the app's data folder that the
+ *  separate server must find in its own: the server reads its `--data-dir`
+ *  and nothing of the app's (ADR 0003), so a workspace seeded for the app
+ *  alone left an attached window saying "No workspaces configured" (five
+ *  specs red attached on dev at 7be32fd, measured by the wave on 8 October
+ *  2026). The accounts' credentials are not among them: the app's are sealed
+ *  by safeStorage, which the server cannot open. */
+export const SEEDED_DOCUMENTS = [
+  'workspace-state.json',
+  'clave-trusted-roots.json',
+  'preferences.json',
+  'agent-launch-profiles.json',
+  'claude-accounts.json',
+  'codex-accounts.json'
+]
+
+/** Another domain's seeded documents, registered by name (a file name
+ *  relative to the data folder, a folder's files one by one): a lane whose
+ *  files move to the server's storage adds its names here, or from its own
+ *  spec before `launchApp`, and the copy picks them up. Idempotent. */
+export function registerSeededDocuments(...names) {
+  for (const name of names) if (!SEEDED_DOCUMENTS.includes(name)) SEEDED_DOCUMENTS.push(name)
+  return [...SEEDED_DOCUMENTS]
+}
+
+/** Copy the seeded documents of an app data folder into a server's, before
+ *  the server starts. Only what exists is copied; nothing is removed. */
+export function seedServerDataDir(from, to) {
+  if (!from || !existsSync(from)) return []
+  mkdirSync(to, { recursive: true })
+  const copied = []
+  for (const name of SEEDED_DOCUMENTS) {
+    const source = path.join(from, name)
+    if (!existsSync(source)) continue
+    mkdirSync(path.dirname(path.join(to, name)), { recursive: true })
+    copyFileSync(source, path.join(to, name))
+    copied.push(name)
+  }
+  return copied
+}
+
 /** Start a server of this spec's own, on `<fixture>/clave-e2e-<name>-server`.
  *  Resolves once it announced its url and token. `env` is extra environment
  *  for the server process, the way `launchApp`'s is for the app: a spec that
- *  names a local issuer or a keychain file of the run's own names it to both. */
-export async function startE2eServer(name, { timeoutMs = 15_000, env = {} } = {}) {
+ *  names a local issuer or a keychain file of the run's own names it to both.
+ *  `args` are extra flags for the entry (`launchApp` passes the app's own test
+ *  flags); `seedFrom` is the app data folder whose seeded documents the
+ *  server starts on. */
+export async function startE2eServer(
+  name,
+  { timeoutMs = 15_000, env = {}, args = [], seedFrom = null } = {}
+) {
   const dataDir = fixturePath(`${name}-server`)
   rmSync(dataDir, { recursive: true, force: true })
+  seedServerDataDir(seedFrom, dataDir)
   const started = await startServerProcess({
     repo: REPO,
     dataDir,
     timeoutMs,
-    env: { ...process.env, ...env }
+    env: { ...process.env, ...env },
+    args
   })
   const server = {
     ...started,
@@ -226,7 +283,15 @@ export async function launchApp(
   let started = null
   let serverEnv = {}
   if (server === 'attached') {
-    started = await startE2eServer(path.basename(dir), { env })
+    // The server gets the app's own test flags (`--test-no-activate` is
+    // what turns its fixture route and its terminal journal on; the echo
+    // adapter's flags reach the process that spawns the sessions), the
+    // spec's extra environment, and the documents the spec seeded for the app.
+    started = await startE2eServer(path.basename(dir), {
+      env,
+      args: ['--test-no-activate', ...args],
+      seedFrom: dir
+    })
     serverEnv = { CLAVE_SERVER_URL: started.url, CLAVE_SERVER_TOKEN: started.token }
   } else if (server && typeof server === 'object') {
     serverEnv = { CLAVE_SERVER_URL: server.url, CLAVE_SERVER_TOKEN: server.token ?? '' }
@@ -263,7 +328,78 @@ export async function launchApp(
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')
   await win.waitForTimeout(settleMs)
-  return { app, win, server: started }
+  // The fixture: the one way into the process hosting the sessions, in
+  // both modes (`serverFixture` below). Attached, the server this call
+  // started; in-process, the app's own, read off its discovery file.
+  const fixture = started
+    ? serverFixture(started.url, started.token)
+    : server && typeof server === 'object'
+      ? serverFixture(server.url, server.token ?? '')
+      : appServerFixture(dir)
+  return { app, win, server: started, fixture }
+}
+
+// ── The fixture route (PRDCT-3293, lane C of wave 3) ─────────────────────────
+// A spec that must reach the sessions from inside (wrap the session host,
+// stub a settings read, replace `fetch`) used to `app.evaluate` a function in
+// Electron main. The sessions live on the server now, which in attached mode
+// is another process, so the function's SOURCE is sent to the server's
+// `POST /e2e/evaluate` and run there, with `globalThis.__claveE2E` as the
+// specs know it. The route exists only on a server started in test mode
+// (`--test-no-activate`, which `launchApp` passes to both) and sits behind
+// the token. Same rules as Playwright's evaluate: no closure over spec
+// variables, one JSON-able argument, a JSON-able result.
+
+export const FIXTURE_PATH = '/e2e/evaluate'
+
+/** A fixture bound to one server. `evaluate(fn, arg)` runs `fn(arg)` in the
+ *  server's process and answers its awaited value; what `fn` throws is
+ *  thrown here with its message. */
+export function serverFixture(url, token) {
+  const base = String(url).replace(/\/+$/, '')
+  return {
+    url: base,
+    token,
+    async evaluate(fn, arg) {
+      const source = typeof fn === 'function' ? fn.toString() : String(fn)
+      const res = await fetch(base + FIXTURE_PATH, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(arg === undefined ? { source } : { source, arg })
+      })
+      if (res.status !== 200)
+        throw new Error(`the fixture route answered ${res.status}: ${await res.text()}`)
+      const body = await res.json()
+      if (!body.ok) throw new Error(`fixture.evaluate failed in the server: ${body.error}`)
+      return body.value
+    }
+  }
+}
+
+/** The fixture of an app on its own in-process server: the endpoint comes
+ *  off `clave-server.json` in the app's data folder, waited for on the
+ *  first call (the boot writes it a moment after the window loads). */
+export function appServerFixture(dir) {
+  let bound = null
+  const resolve = async () => {
+    if (bound) return bound
+    const found = await until(() => {
+      const d = serverEndpoint(dir)
+      return d && d.ok && d.token ? d : null
+    })
+    if (!found) throw new Error(`no server endpoint in ${dir}/clave-server.json`)
+    bound = serverFixture(found.url, found.token)
+    return bound
+  }
+  return {
+    get url() {
+      return bound?.url ?? null
+    },
+    get token() {
+      return bound?.token ?? null
+    },
+    evaluate: async (fn, arg) => (await resolve()).evaluate(fn, arg)
+  }
 }
 
 /** Replace the native folder picker in the MAIN process so a spec can tell

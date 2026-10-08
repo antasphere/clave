@@ -133,7 +133,9 @@ async function bootServer(): Promise<void> {
             terminals: terminalPorts().terminals,
             // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
             sidebar: sidebarLayouts()
-          }
+          },
+          // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
+          testFixtures: TEST_NO_ACTIVATE
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
       }

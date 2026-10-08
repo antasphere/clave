@@ -70,8 +70,17 @@ export function terminalProcessCommand({ repo, port = 0, parent = process.pid })
 }
 
 /** The command line that starts the server on `dataDir`, port 0 = any free;
- *  `terminals` the address of the terminal process, or none. */
-export function serverCommand({ repo, dataDir, port = 0, env = process.env, terminals }) {
+ *  `terminals` the address of the terminal process, or none; `args` extra
+ *  flags the entry reads off its argv (the harness passes the app's own test
+ *  flags, `--test-no-activate` and the echo adapter's). */
+export function serverCommand({
+  repo,
+  dataDir,
+  port = 0,
+  env = process.env,
+  terminals,
+  args = []
+}) {
   return {
     cmd: bunBinary(env, repo),
     args: [
@@ -80,7 +89,8 @@ export function serverCommand({ repo, dataDir, port = 0, env = process.env, term
       dataDir,
       '--port',
       String(port),
-      ...(terminals ? ['--terminals', terminals] : [])
+      ...(terminals ? ['--terminals', terminals] : []),
+      ...args
     ]
   }
 }
@@ -233,7 +243,8 @@ export async function startServerProcess({
   timeoutMs = 15_000,
   killAfterMs = 5_000,
   env = process.env,
-  terminals = 'sidecar'
+  terminals = 'sidecar',
+  args: extraArgs = []
 }) {
   if (terminals !== 'sidecar' && terminals !== 'none')
     throw new Error(`startServerProcess: terminals must be "sidecar" or "none", got ${terminals}`)
@@ -244,7 +255,14 @@ export async function startServerProcess({
       ? await startTerminalProcess({ repo, timeoutMs, killAfterMs, env })
       : null
 
-  const { cmd, args } = serverCommand({ repo, dataDir, port, env, terminals: sidecar?.address })
+  const { cmd, args } = serverCommand({
+    repo,
+    dataDir,
+    port,
+    env,
+    terminals: sidecar?.address,
+    args: extraArgs
+  })
   const serverEnv = sidecar ? { ...env, CLAVE_TERMINALS_TOKEN: sidecar.token } : env
   const { child, announced, stderr } = startAnnouncing({
     what: 'the server',
