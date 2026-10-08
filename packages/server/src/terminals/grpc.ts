@@ -87,8 +87,16 @@ const failureOf = <A, E>(exit: Exit.Exit<A, E>): E | undefined =>
     ? Cause.failureOption(exit.cause).pipe((o) => (o._tag === 'Some' ? o.value : undefined))
     : undefined
 
+/** The process is not there, or will never take this port's calls: both
+ *  are for good. */
 const isGone = (error: unknown): boolean =>
-  error instanceof GrpcError && error.code === Status.UNAVAILABLE
+  error instanceof GrpcError &&
+  (error.code === Status.UNAVAILABLE || error.code === Status.UNAUTHENTICATED)
+
+const whyGone = (error: unknown): string =>
+  error instanceof GrpcError && error.code === Status.UNAUTHENTICATED
+    ? 'it refused the token this server holds'
+    : describe(error)
 
 export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
   const log = options.log ?? (() => {})
@@ -104,13 +112,13 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
     }).pipe(Scope.extend(scope))
   )
 
-  let down = false
+  let down: string | null = null
   let closing = false
   const live = new Set<Remote>()
 
   const markDown = (why: string): void => {
-    if (down) return
-    down = true
+    if (down !== null) return
+    down = why
     log(`the terminal process at ${options.address} is gone: ${why}`)
     for (const remote of [...live]) remote.lost(why)
   }
@@ -180,6 +188,11 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
       this.ended = true
       this.ops.length = 0
       live.delete(this)
+      // Nothing after the exit: the stream still open on a lost terminal
+      // is cancelled, so the process sees it detached, and no listener
+      // hears output after the exit it was told of.
+      this.dataListeners.clear()
+      void this.detach()
       for (const listener of this.exitListeners) listener(exit)
     }
 
@@ -215,7 +228,7 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
         return
       }
       const error = failureOf(exit)
-      if (isGone(error)) markDown(describe(error))
+      if (isGone(error)) markDown(whyGone(error))
       else log(`spawn of ${this.spec.file} failed: ${describe(error ?? exit.cause)}`)
       this.finish(LOST_EXIT)
     }
@@ -244,7 +257,7 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
         this.inFlight = false
         if (Exit.isFailure(exit)) {
           const error = failureOf(exit)
-          if (isGone(error)) return markDown(describe(error))
+          if (isGone(error)) return markDown(whyGone(error))
           log(`${op.kind} on terminal ${id} failed: ${describe(error ?? exit.cause)}`)
           // The process does not hold this terminal any more: the attach
           // stream is what reports its end; nothing queued can land.
@@ -288,8 +301,15 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
         // A CANCELLED here is the process's doing (its server closing its
         // calls), not this handle's: its own cancel returns above.
         attempts += 1
-        if (isGone(error) || attempts > 3 || !(await ping()))
-          return markDown(describe(error ?? exit.cause))
+        if (isGone(error)) return markDown(whyGone(error))
+        const answer = await ping()
+        if (answer === 'gone') return
+        if (attempts > 3) {
+          log(
+            `attach to terminal ${id} failed ${attempts} times, the terminal is given up: ${describe(error ?? exit.cause)}`
+          )
+          return this.finish(LOST_EXIT)
+        }
         log(`attach to terminal ${id} failed, trying again: ${describe(error ?? exit.cause)}`)
       }
     }
@@ -314,17 +334,26 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
     }
   }
 
-  const ping = async (): Promise<boolean> => {
-    if (down) return false
+  /** One ping. `gone` is UNAVAILABLE, the process not there, and marks it
+   *  down for good; `slow` is any other failure (a stall past the deadline,
+   *  a refused token), answered as not ready this time and nothing more,
+   *  because a process that is alive and late must not lose its terminals. */
+  const ping = async (): Promise<'ok' | 'slow' | 'gone'> => {
+    if (down !== null) return 'gone'
     const exit = await call(
       client.ping(create(PingRequestSchema), {
         metadata,
         timeoutMs: Math.min(callTimeoutMs, 2_000)
       })
     )
-    if (Exit.isSuccess(exit)) return true
-    markDown(describe(failureOf(exit) ?? exit.cause))
-    return false
+    if (Exit.isSuccess(exit)) return 'ok'
+    const error = failureOf(exit)
+    if (isGone(error)) {
+      markDown(whyGone(error))
+      return 'gone'
+    }
+    log(`ping failed, the process is not answering yet: ${describe(error ?? exit.cause)}`)
+    return 'slow'
   }
 
   return {
@@ -335,15 +364,15 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
           capability: 'terminals',
           message: 'This server is stopping and starts no more terminals.'
         })
-      if (down)
+      if (down !== null)
         throw new CapabilityUnavailable({
           capability: 'terminals',
-          message: `The terminal process at ${options.address} is gone: this server cannot start a terminal until it is started again.`
+          message: `The terminal process at ${options.address} is gone (${down}): this server cannot start a terminal until the pair is started again.`
         })
       return new Remote(spec)
     },
-    ready: ping,
-    down: () => down,
+    ready: async () => (await ping()) === 'ok',
+    down: () => down !== null,
     close: async () => {
       closing = true
       // The streams first, so the process sees every terminal detached and

@@ -7,9 +7,11 @@ import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
 import {
   bunBinary,
+  serverCommand,
   startServerProcess,
   startTerminalProcess,
-  terminalProcessBundle
+  terminalProcessBundle,
+  terminalProcessCommand
 } from './server-process.mjs'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -82,31 +84,62 @@ describe('the server as its own process', () => {
 
 const ready = async (url) => (await fetch(`${url}/health/ready`)).json()
 
+describe('the commands the starter names', () => {
+  it('the terminal process is told its parent and its port, and the token never rides the command line', () => {
+    if (!built) return
+    const { cmd, args } = terminalProcessCommand({ repo: REPO, port: 0, parent: 4242 })
+    expect(cmd).toBe(process.execPath)
+    expect(args).toEqual([BUNDLE, '--port', '0', '--parent', '4242'])
+  })
+
+  it('the server is told the terminal process address and nothing of its token', () => {
+    const { args } = serverCommand({
+      repo: REPO,
+      dataDir: '/tmp/x',
+      terminals: '127.0.0.1:5',
+      env: { PATH: '', CLAVE_BUN: '/usr/bin/true' }
+    })
+    expect(args.slice(-2)).toEqual(['--terminals', '127.0.0.1:5'])
+    expect(args.join(' ')).not.toMatch(/token/i)
+    expect(
+      serverCommand({
+        repo: REPO,
+        dataDir: '/tmp/x',
+        env: { PATH: '', CLAVE_BUN: '/usr/bin/true' }
+      }).args
+    ).not.toContain('--terminals')
+  })
+})
+
 // Each start is two processes (Node, then Bun) announcing themselves: under
 // a loaded suite that is seconds, so every case here gets twenty.
 describe.skipIf(!built)('the terminal process beside the server (from the built bundle)', () => {
   it('the server starts after its terminal process, reports it ready, and stops both', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-'))
+    let server
     try {
-      const server = await startServerProcess({ repo: REPO, dataDir })
+      server = await startServerProcess({ repo: REPO, dataDir })
       expect(server.terminalProcess.address).toMatch(/^127\.0\.0\.1:\d+$/)
       expect(alive(server.terminalProcess.pid)).toBe(true)
       expect(await ready(server.url)).toEqual({
         ready: true,
         checks: [{ name: 'terminals', ok: true }]
       })
-      await server.stop()
-      expect(await untilDead(server.pid)).toBe(true)
-      expect(await untilDead(server.terminalProcess.pid)).toBe(true)
     } finally {
+      // Stopped whatever the assertions said: a failing test must leave no
+      // Bun server behind (the server has no parent watch of its own).
+      await server?.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
+    expect(await untilDead(server.pid)).toBe(true)
+    expect(await untilDead(server.terminalProcess.pid)).toBe(true)
   }, 20_000)
 
   it('a terminal process killed under the server is reported by the server as not ready', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-killed-'))
+    let server
     try {
-      const server = await startServerProcess({ repo: REPO, dataDir })
+      server = await startServerProcess({ repo: REPO, dataDir })
       process.kill(server.terminalProcess.pid, 'SIGKILL')
       await server.terminalProcess.exited
       expect(await ready(server.url)).toEqual({
@@ -116,8 +149,8 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
       expect(server.stderr()).toMatch(/the terminal process at 127\.0\.0\.1:\d+ is gone/)
       // The server itself is still answering.
       expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
-      await server.stop()
     } finally {
+      await server?.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
   }, 20_000)

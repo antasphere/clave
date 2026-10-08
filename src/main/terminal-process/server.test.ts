@@ -105,8 +105,10 @@ describe('the terminal process and the port over the wire to it', () => {
     const wrong = grpcTerminals({ address: process.address, token: 'not-the-token' })
     open.push(wrong)
     expect(await wrong.ready()).toBe(false)
+    // A refused token never becomes right: the port is down for good and
+    // says why.
     expect(wrong.down()).toBe(true)
-    expect(() => spawnSh(wrong, 'echo never')).toThrow(CapabilityUnavailable)
+    expect(() => spawnSh(wrong, 'echo never')).toThrow(/refused the token/)
     // The right token on the same process still works.
     expect(await port.ready()).toBe(true)
     expect(process.terminals()).toBe(0)
@@ -169,6 +171,32 @@ describe('the terminal process and the port over the wire to it', () => {
     expect(refused).toBeInstanceOf(CapabilityUnavailable)
     expect((refused as CapabilityUnavailable).capability).toBe('terminals')
     expect((refused as CapabilityUnavailable).message).toContain(process.address)
+  })
+
+  it('a ping that times out says not ready and nothing more: the process is slow, not gone', async () => {
+    const { process, port } = await start()
+    const terminal = spawnSh(port, 'sleep 30')
+    await until(() => terminal.pid > 0)
+    // A port whose every call has a 1 ms deadline: its ping cannot answer
+    // in time, which is a stall, not an absence.
+    const lines: string[] = []
+    const slow = grpcTerminals({
+      address: process.address,
+      token: TOKEN,
+      callTimeoutMs: 1,
+      log: (line) => lines.push(line)
+    })
+    open.push(slow)
+    expect(await slow.ready()).toBe(false)
+    expect(slow.down()).toBe(false)
+    expect(lines.join('\n')).toMatch(/not answering yet: Deadline exceeded/)
+    // The process is alive: the other port still reaches it, and the
+    // terminal it holds is still running.
+    expect(await port.ready()).toBe(true)
+    expect(port.down()).toBe(false)
+    terminal.kill('SIGTERM')
+    const { exit } = watch(terminal)
+    expect((await exit).signal).toBe(15)
   })
 
   it('a spawn the process cannot do ends with the reason in the log and an exit, not a hang', async () => {
@@ -382,14 +410,18 @@ describe('what the process keeps and replays, on the wire with a scripted termin
 
   it('hangs up a terminal nobody attached to once the grace has passed, and not before', async () => {
     const { pty, client } = await start({ orphanGraceMs: 300 })
+    const started = Date.now()
     await client.spawn()
-    await sleep(120)
+    await sleep(100)
     expect(pty.killed).toEqual([])
-    await sleep(400)
+    await until(() => pty.killed.length >= 1, 3_000)
+    const hungUpAt = Date.now() - started
     expect(pty.killed).toEqual(['SIGHUP'])
-    // Still running after another grace: killed for good.
-    await sleep(400)
+    expect(hungUpAt).toBeGreaterThanOrEqual(300)
+    // Still running after another grace: killed for good, and not before.
+    await until(() => pty.killed.length >= 2, 3_000)
     expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
+    expect(Date.now() - started - hungUpAt).toBeGreaterThanOrEqual(300)
   })
 
   it('hangs up every terminal still running when the process closes', async () => {
