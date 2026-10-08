@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS test of a plain JS script */
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -146,6 +146,83 @@ describe('the server as its own process', () => {
       backing.push.close()
       await backing.api.dispose()
     } finally {
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('stops the CLI a chat started when the server stops, as the app’s quit does', async () => {
+    // A chat's CLI is a detached child of the server process (the adapter
+    // spawns it so a quit cannot take it down by accident); the entry's stop
+    // must kill it on purpose, or every stop of the standalone server leaves
+    // an agent running (the verifier's round 1, Major 1). The CLI here is a
+    // script that records its pid and sleeps.
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-orphan-'))
+    const fake = path.join(dataDir, 'fake-claude')
+    const pidFile = path.join(dataDir, 'fake.pid')
+    writeFileSync(fake, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 300\n`, { mode: 0o755 })
+    writeFileSync(
+      path.join(dataDir, 'agent-launch-profiles.json'),
+      JSON.stringify({
+        version: 1,
+        customProfiles: [
+          { id: 'fake', name: 'Fake', family: 'claude', command: [fake], additionalArgs: [] }
+        ],
+        globalDefaults: {},
+        workspaceOverrides: {}
+      })
+    )
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate']
+    })
+    let cliPid = null
+    try {
+      const { connectThroughNode } = await import('../packages/client/src/node')
+      const backing = await connectThroughNode(
+        { url: server.url, token: server.token },
+        { client: 'server-process-test' }
+      )
+      backing.push.connect()
+      await backing.push.whenOpen()
+      const chat = await backing.api.sessions.start({
+        cwd: dataDir,
+        windowKey: 'w1',
+        options: { launchProfileId: 'chat:claude:fake' }
+      })
+      backing.push.subscribe(chat.id, () => {})
+      await backing.push.subscribed(chat.id)
+      // The CLI starts on the first message.
+      await backing.api.sessions.write(chat.id, { type: 'user_message', text: 'hello' })
+      const started = async () => {
+        const end = Date.now() + 10_000
+        while (Date.now() < end) {
+          if (existsSync(pidFile)) {
+            const n = Number(readFileSync(pidFile, 'utf8').trim())
+            if (n > 0) return n
+          }
+          await new Promise((r) => setTimeout(r, 100))
+        }
+        return null
+      }
+      cliPid = await started()
+      expect(cliPid, 'the fake CLI started').not.toBeNull()
+      expect(alive(cliPid)).toBe(true)
+      backing.push.close()
+      await backing.api.dispose()
+      await server.stop()
+      expect(await untilDead(server.pid)).toBe(true)
+      expect(await untilDead(cliPid), 'the CLI died with the server').toBe(true)
+    } finally {
+      if (cliPid && alive(cliPid)) {
+        try {
+          process.kill(cliPid, 'SIGKILL')
+        } catch {
+          /* gone */
+        }
+      }
       await server.stop()
       rmSync(dataDir, { recursive: true, force: true })
     }
