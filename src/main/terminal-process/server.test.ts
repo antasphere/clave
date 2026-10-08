@@ -408,20 +408,43 @@ describe('what the process keeps and replays, on the wire with a scripted termin
     expect(String(cause)).toContain('UnknownTerminal')
   })
 
-  it('hangs up a terminal nobody attached to once the grace has passed, and not before', async () => {
-    const { pty, client } = await start({ orphanGraceMs: 300 })
-    const started = Date.now()
+  it('hangs up a terminal nobody attached to once the grace has passed, kills it once, and never again', async () => {
+    // The sweep is driven on a clock the test holds: no sleep, no timer.
+    // A grace long enough that the process's own sweeper never fires; the
+    // instants carry a second of margin over the spawn's own clock.
+    const { pty, client, process } = await start({ orphanGraceMs: 60_000 })
+    const t0 = Date.now()
     await client.spawn()
-    await sleep(100)
+    process.sweep(t0 + 30_000)
     expect(pty.killed).toEqual([])
-    await until(() => pty.killed.length >= 1, 3_000)
-    const hungUpAt = Date.now() - started
+    process.sweep(t0 + 61_000)
     expect(pty.killed).toEqual(['SIGHUP'])
-    expect(hungUpAt).toBeGreaterThanOrEqual(300)
-    // Still running after another grace: killed for good, and not before.
-    await until(() => pty.killed.length >= 2, 3_000)
+    process.sweep(t0 + 90_000)
+    expect(pty.killed).toEqual(['SIGHUP'])
+    process.sweep(t0 + 122_000)
     expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
-    expect(Date.now() - started - hungUpAt).toBeGreaterThanOrEqual(300)
+    // Still no exit, however long: a second SIGKILL could reach a pid
+    // reused by another process.
+    process.sweep(t0 + 183_000)
+    process.sweep(t0 + 1_000_000)
+    expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
+    expect(process.terminals()).toBe(1)
+    // The exit arrives late: nothing more is sent, and the record goes
+    // once its grace has passed.
+    pty.exit(137)
+    process.sweep(t0 + 1_061_000)
+    expect(process.terminals()).toBe(0)
+    expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
+  })
+
+  it('a terminal that exits before the grace is never signalled', async () => {
+    const { pty, client, process } = await start({ orphanGraceMs: 60_000 })
+    const t0 = Date.now()
+    await client.spawn()
+    pty.exit(0)
+    process.sweep(t0 + 61_000)
+    process.sweep(t0 + 122_000)
+    expect(pty.killed).toEqual([])
   })
 
   it('hangs up every terminal still running when the process closes', async () => {

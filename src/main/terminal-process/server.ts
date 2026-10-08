@@ -88,6 +88,10 @@ export interface TerminalProcessHandle {
   readonly address: string
   /** How many terminals the process holds, exited ones included until forgotten. */
   readonly terminals: () => number
+  /** One pass of the orphan sweep at the time given (tests: the sweep's
+   *  decisions are made on a clock the test holds, no sleep). The process
+   *  runs it on its own every quarter of the grace. */
+  readonly sweep: (now?: number) => void
   readonly close: () => Promise<void>
 }
 
@@ -113,6 +117,9 @@ interface Held {
   /** When the last attached stream left; null while one is attached. */
   detachedAt: number | null
   hungUpAt: number | null
+  /** When SIGKILL was sent, once: a kill is never repeated, since the pid of
+   *  a process already reaped may belong to someone else by then. */
+  killedAt: number | null
 }
 
 const nodePtySpawn = (): PtySpawn => {
@@ -150,8 +157,7 @@ export async function startTerminalProcess(
     held.delete(term.id)
   }
 
-  const sweep = (): void => {
-    const now = Date.now()
+  const sweep = (now: number = Date.now()): void => {
     for (const term of held.values()) {
       if (term.exited) {
         // Kept for the grace after the exit, whoever is attached: a stream
@@ -171,20 +177,27 @@ export async function startTerminalProcess(
         } catch {
           /* already gone */
         }
-      } else if (now - term.hungUpAt > grace) {
+      } else if (term.killedAt === null && now - term.hungUpAt > grace) {
+        // Once. A terminal that does not report its exit after this is
+        // logged and left: another signal could reach a reused pid.
         log(
           `terminal ${term.id} (pid ${term.proc.pid}): still running ${grace} ms after SIGHUP, killing`
         )
+        term.killedAt = now
         try {
           term.proc.kill('SIGKILL')
         } catch {
           /* already gone */
         }
-        term.hungUpAt = now
+      } else if (term.killedAt !== null && now - term.killedAt > grace) {
+        log(
+          `terminal ${term.id} (pid ${term.proc.pid}): no exit ${grace} ms after SIGKILL, left as it is`
+        )
+        term.killedAt = Number.POSITIVE_INFINITY
       }
     }
   }
-  const sweeper = setInterval(sweep, Math.max(50, Math.floor(grace / 4)))
+  const sweeper = setInterval(() => sweep(), Math.max(50, Math.floor(grace / 4)))
   sweeper.unref()
 
   const lookup = (id: string): Effect.Effect<Held, UnknownTerminal> => {
@@ -222,7 +235,8 @@ export async function startTerminalProcess(
             attached: 0,
             everAttached: false,
             detachedAt: Date.now(),
-            hungUpAt: null
+            hungUpAt: null,
+            killedAt: null
           }
           held.set(term.id, term)
           proc.onData((data) => {
@@ -289,6 +303,7 @@ export async function startTerminalProcess(
                     term.everAttached = true
                     term.detachedAt = null
                     term.hungUpAt = null
+                    term.killedAt = null
                     const after = request.after
                     const first = term.events[0]
                     if (first !== undefined && first.seq > after + 1n) {
@@ -350,6 +365,7 @@ export async function startTerminalProcess(
     return {
       address: server.address,
       terminals: () => held.size,
+      sweep,
       close: async () => {
         clearInterval(sweeper)
         await Effect.runPromise(Scope.close(scope, Exit.void))
