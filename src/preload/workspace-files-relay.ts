@@ -124,14 +124,27 @@ export function createWatchLedger(
     // The server came while the IPC watch was in flight: it moves at once.
     if (via === 'ipc' && serverKnown && held.get(path) === 'ipc') await move(path)
   }
+  const moving = new Set<string>()
   const move = async (path: string): Promise<void> => {
-    if (held.get(path) !== 'ipc') return
-    held.set(path, 'server')
+    if (held.get(path) !== 'ipc' || moving.has(path)) return
+    moving.add(path)
     try {
+      // The server takes the watch FIRST; the ledger marks it the server's
+      // only then, so a server watch that fails leaves the watch where it
+      // is, on IPC, where a release can still reach it (round 2's verifier
+      // found the IPC holder stranded for good when this order was reversed).
       await transports.server.watch(path)
+      if (held.get(path) !== 'ipc') {
+        // Released meanwhile: give the server's watch back.
+        await transports.server.unwatch(path)
+        return
+      }
+      held.set(path, 'server')
       await transports.ipc.unwatch(path)
     } catch (error) {
       log('[clave] workspace file watch not moved to the server', error)
+    } finally {
+      moving.delete(path)
     }
   }
   return {

@@ -8,7 +8,7 @@
  * once, and an answer to a review the desk does not hold is refused.
  */
 import { randomUUID } from 'node:crypto'
-import { Context, Layer } from 'effect'
+import { Context, Effect, Layer } from 'effect'
 import type { ReviewAnswer } from '@clave/contract/workspace-files'
 import type { ReviewRequest } from './files'
 
@@ -27,14 +27,27 @@ export interface ReviewDeskService {
   readonly answer: (reviewId: string, answer: ReviewAnswer) => boolean
   /** How many reviews are waiting (tests). */
   readonly pending: () => number
+  /** The server is stopping: every waiting review reads as Cancel at once,
+   *  so a held read answers and the stop does not wait on a dialog. */
+  readonly close: () => void
 }
 
 export class ReviewDesk extends Context.Tag('@clave/server/ReviewDesk')<
   ReviewDesk,
   ReviewDeskService
 >() {
+  /** Scoped: the desk closes with the server, settling what it still holds.
+   *  Round 2 of the lane's verifier watched a standalone outlive its SIGTERM
+   *  by five minutes on one open review, and the app's quit awaits the same
+   *  stop. */
   static layer(options: { timeoutMs?: number } = {}): Layer.Layer<ReviewDesk> {
-    return Layer.succeed(ReviewDesk, makeReviewDesk(options))
+    return Layer.scoped(
+      ReviewDesk,
+      Effect.acquireRelease(
+        Effect.sync(() => makeReviewDesk(options)),
+        (desk) => Effect.sync(() => desk.close())
+      )
+    )
   }
 }
 
@@ -69,6 +82,9 @@ export function makeReviewDesk(options: { timeoutMs?: number } = {}): ReviewDesk
       settle(answer)
       return true
     },
-    pending: () => waiting.size
+    pending: () => waiting.size,
+    close: () => {
+      for (const settle of [...waiting.values()]) settle(null)
+    }
   }
 }

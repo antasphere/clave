@@ -80,6 +80,10 @@ describe('reading', () => {
     expect(await files.read(join(root, 'sessions-object.clave'))).toBeNull()
     writeFileSync(join(root, 'groups-of-null.clave'), '{"groups":[null]}')
     expect(await files.read(join(root, 'groups-of-null.clave'))).toBeNull()
+    writeFileSync(join(root, 'array.clave'), '[1,2]')
+    expect(await files.read(join(root, 'array.clave'))).toBeNull()
+    writeFileSync(join(root, 'string.clave'), '"x"')
+    expect(await files.read(join(root, 'string.clave'))).toBeNull()
   })
 
   it('every field the parser produces survives the wire: the contract names them all', async () => {

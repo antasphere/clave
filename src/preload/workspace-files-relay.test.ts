@@ -131,6 +131,38 @@ describe('the watch ledger', () => {
     expect(ledger.heldOn('/a')).toBeNull()
   })
 
+  it('leaves a watch on IPC when the server refuses to take it, so a release still reaches it', async () => {
+    const calls: string[] = []
+    const logged: string[] = []
+    const ledger = createWatchLedger(
+      {
+        ipc: {
+          watch: async (p) => {
+            calls.push(`ipc.watch ${p}`)
+          },
+          unwatch: async (p) => {
+            calls.push(`ipc.unwatch ${p}`)
+          }
+        },
+        server: {
+          watch: async () => {
+            throw new Error('server watch failed')
+          },
+          unwatch: async (p) => {
+            calls.push(`server.unwatch ${p}`)
+          }
+        }
+      },
+      (message) => logged.push(message)
+    )
+    await ledger.watch('/a', 'ipc')
+    await ledger.moveToServer()
+    expect(logged).toEqual(['[clave] workspace file watch not moved to the server'])
+    expect(ledger.heldOn('/a')).toBe('ipc')
+    await ledger.unwatch('/a')
+    expect(calls).toEqual(['ipc.watch /a', 'ipc.unwatch /a'])
+  })
+
   it('moves a watch whose IPC call was still in flight when the server came', async () => {
     const calls: string[] = []
     let release: () => void = () => {}

@@ -455,7 +455,10 @@ export class WorkspaceFiles {
     // sync at the first bad file of a tree.
     try {
       raw = fs.readFileSync(absolutePath, 'utf-8')
-      const data = JSON.parse(raw) as ClaveFileRaw
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+        throw new TypeError('a .clave file is a JSON object')
+      const data = parsed as ClaveFileRaw
       const dir = rootDir || path.dirname(absolutePath)
       const fallbackName = path.basename(absolutePath, '.clave')
       result = Array.isArray(data.groups)

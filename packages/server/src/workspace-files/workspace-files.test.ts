@@ -169,6 +169,31 @@ describe('the workspace files over HTTP', () => {
     expect((await peer.next())._tag).toBe('event')
   })
 
+  it('a stopping server answers its held reads at once, as Cancel', async () => {
+    const file = join(root, 'stop.clave')
+    writeFileSync(file, elevated('BRIEF'))
+    const peer = await welcomed()
+    const reading = post('/workspace-files/read', { path: file })
+    expect((await peer.next())._tag).toBe('event')
+    const started = Date.now()
+    await server.stop()
+    const stoppedAfter = Date.now() - started
+    expect(stoppedAfter).toBeLessThan(2000)
+    const answer = await reading.then(
+      async (res) => ({ status: res.status, body: await res.text() }),
+      (error: unknown) => ({ status: 0, body: String(error) })
+    )
+    // Null (Cancel) when the answer still left the closing listener, else the
+    // connection closed; never a read still held after the stop.
+    if (answer.status === 200) expect(answer.body).toBe('null')
+    // Restarted so afterEach's stop has a server.
+    server = await startEmbedded({
+      ports: { sessions: new FakeSource(), workspaceFiles: files },
+      helloTimeoutMs: 200,
+      reviewTimeoutMs: 400
+    })
+  })
+
   it('an answer to a review it does not hold is the declared failure', async () => {
     const res = await post('/workspace-files/review/answer', {
       reviewId: 'nope',
@@ -215,6 +240,7 @@ describe('the workspace files over HTTP', () => {
     for (const [name, text] of [
       ['object-sessions.clave', '{"sessions":{}}'],
       ['bare-null.clave', 'null'],
+      ['array.clave', '[1,2]'],
       ['number-cwd.clave', '{"cwd":5}']
     ] as const) {
       const file = join(root, name)

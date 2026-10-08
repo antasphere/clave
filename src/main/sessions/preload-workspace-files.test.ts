@@ -132,6 +132,24 @@ describe('a .clave read through the server', () => {
     expect(await reading).toMatchObject({ name: 'R' })
   })
 
+  it('fails the read when the push channel never opens, instead of hanging it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    answer({ 'server:endpoint': endpoint })
+    const reading = api.readClaveFile('/w/a.clave')
+    const outcome = reading.then(
+      () => 'answered',
+      (error: unknown) => String((error as Error).message)
+    )
+    await settle()
+    expect(mocks.push).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(14_000)
+    await settle()
+    expect(mocks.files.read).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(await outcome).toBe('The server’s push channel did not open in time.')
+    expect(mocks.files.read).not.toHaveBeenCalled()
+  })
+
   it('shows the shell’s dialog for its own review and answers the server; another window’s review is left alone', async () => {
     answer({
       'server:endpoint': endpoint,

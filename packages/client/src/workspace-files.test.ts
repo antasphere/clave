@@ -6,25 +6,23 @@ import {
   startEmbedded,
   type EmbeddedServer,
   WorkspaceFiles,
-  memoryWorkspaceFilesStorage
+  memoryWorkspaceFilesStorage,
+  REVIEW_TIMEOUT_MS
 } from '@clave/server'
 import { FakeSource } from '@clave/server/test-support'
 import { ReviewNotFound } from '@clave/contract/workspace-files'
-import { type ClaveApiClient, createApiClient } from './api'
+import { PATIENT_TIMEOUT_MS, type ClaveApiClient, createApiClient } from './api'
 import { PushClient } from './push-client'
 
 let server: EmbeddedServer
 let api: ClaveApiClient
 let root: string
+let files: WorkspaceFiles
 
 beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'clave-wsf-client-')))
-  server = await startEmbedded({
-    ports: {
-      sessions: new FakeSource(),
-      workspaceFiles: new WorkspaceFiles(memoryWorkspaceFilesStorage())
-    }
-  })
+  files = new WorkspaceFiles(memoryWorkspaceFilesStorage())
+  server = await startEmbedded({ ports: { sessions: new FakeSource(), workspaceFiles: files } })
   api = createApiClient({ url: server.url, token: server.token })
 })
 afterEach(async () => {
@@ -64,6 +62,41 @@ describe('the typed workspace files calls', () => {
     ).toEqual([])
     expect(await api.workspaceFiles.autoDiscover(file)).toBeNull()
     expect(await api.workspaceFiles.image(join(root, 'none.png'))).toBeNull()
+  })
+
+  it('carries the exclude list whole: empty means exclude nothing, one name is one name', async () => {
+    // The lists travel as one JSON-encoded parameter each: an empty list
+    // would be no key at all with repeated keys, and one name would read as
+    // the text of a list (round 2's verifier walked node_modules that way).
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true })
+    writeFileSync(
+      join(root, 'node_modules', 'pkg', 'workspace.clave'),
+      JSON.stringify({ name: 'pkg', cwd: '.', sessions: [], terminals: [] })
+    )
+    const names = async (config?: { exclude?: string[] }): Promise<string[]> =>
+      (await api.workspaceFiles.discoverRecursive(root, config)).map((f) => f.name)
+    expect(await names()).toEqual([])
+    expect(await names({ exclude: [] })).toEqual(['pkg'])
+    expect(await names({ exclude: ['node_modules'] })).toEqual([])
+    expect(await names({ exclude: ['other'] })).toEqual(['pkg'])
+  })
+
+  it('carries the holder of a watch: two windows are two holders', async () => {
+    const file = join(root, 'held.clave')
+    writeFileSync(file, JSON.stringify({ name: 'H', cwd: '.', sessions: [], terminals: [] }))
+    await api.workspaceFiles.watch(file, 'a')
+    await api.workspaceFiles.watch(file, 'b')
+    expect(files.holdersOf(file).sort()).toEqual(['a', 'b'])
+    await api.workspaceFiles.unwatch(file, 'a')
+    expect(files.holdersOf(file)).toEqual(['b'])
+    await api.workspaceFiles.unwatch(file, 'b')
+    expect(files.watched()).toEqual([])
+  })
+
+  it('the patient deadline outlasts the server’s review timeout', () => {
+    // B1 of round 1 returns for any review open between the two if this ever flips.
+    expect(PATIENT_TIMEOUT_MS).toBeGreaterThan(REVIEW_TIMEOUT_MS)
   })
 
   it('a read held for a review outlives the client’s ordinary deadline', async () => {
