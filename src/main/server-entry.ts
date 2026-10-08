@@ -36,6 +36,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
+import { ptyManager } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 
 function arg(name: string): string | undefined {
@@ -141,6 +142,12 @@ async function main(): Promise<void> {
   )
 
   let stopping = false
+  const sessions_shutdown = (): void => {
+    stopping_sessions = ptyManager.killAll().catch((error) => {
+      process.stderr.write(`clave-server: session shutdown failed: ${(error as Error).message}\n`)
+    })
+  }
+  let stopping_sessions: Promise<void> = Promise.resolve()
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
@@ -150,6 +157,12 @@ async function main(): Promise<void> {
     standalone.shutdown()
     stopStates()
     setServerEventPublisher(null)
+    // The sessions go with the server, as they go with the app at its quit
+    // (`index.ts`): a chat's CLI is a detached child of this process and
+    // would outlive it; a terminal's tmux session is left for the next
+    // start, the way the app's quit leaves it (kill with killTmuxSession
+    // false, which killAll does).
+    sessions_shutdown()
     // The discovery file goes with the process: a reader must never find
     // the url and the token of a server that is gone.
     try {
@@ -157,8 +170,8 @@ async function main(): Promise<void> {
     } catch {
       /* nothing to remove */
     }
-    server
-      .stop()
+    stopping_sessions
+      .then(() => server.stop())
       .then(() => closeTerminals())
       .then(
         () => process.exit(0),

@@ -64,6 +64,8 @@ describe('the typed request client', () => {
         options: { claudeMode: true, link: { kind: 'toolbar', key: 'k1' } }
       }
     ])
+    expect(await api.sessions.resize('started-1', 120, 40)).toBeUndefined()
+    expect(source.resizes).toEqual([{ id: 'started-1', cols: 120, rows: 40 }])
     expect(await api.sessions.stop('started-1')).toBeUndefined()
     expect(source.stops).toEqual(['started-1'])
   })

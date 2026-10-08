@@ -55,8 +55,16 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
 const serverRouter = createMethodRouter({
-  resolve: async (): Promise<Endpoint | null> =>
-    ((await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as Endpoint | null) ?? null,
+  resolve: async (): Promise<Endpoint | null> => {
+    const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as
+      | (Endpoint & { mode?: ServerMode })
+      | null
+    // The endpoint's mode is learned here too, so the terminal pane's road
+    // (below) is known by the time a session started through the server has
+    // a pane: a routed call always precedes one.
+    if (found?.mode) serverModeKnown = found.mode
+    return found ?? null
+  },
   connect: async (endpoint) => {
     // The calls leave through NODE, not the page: this preload runs with
     // Node available (`sandbox: false`), so the request client goes out

@@ -311,9 +311,13 @@ describe('the terminal pane’s road', () => {
     await api.sessionsList()
     await settle()
     const order: string[] = []
+    let calls = 0
     mocks.sessions.write.mockImplementation(async (_id: string, input: { data: Uint8Array }) => {
-      // The first write answers last: the chain must still keep the order.
-      await new Promise((resolve) => setTimeout(resolve, order.length === 0 ? 20 : 1))
+      // The FIRST call answers last (20 ms), every later one at once: without
+      // the per-session chain the second write would land first and the
+      // order would read ['b', 'a'].
+      const delay = ++calls === 1 ? 20 : 1
+      await new Promise((resolve) => setTimeout(resolve, delay))
       order.push(new TextDecoder().decode(input.data))
     })
     const first = api.writeSession('t1', 'a')

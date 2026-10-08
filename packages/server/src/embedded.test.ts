@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CapabilityUnavailable } from '@clave/contract/errors'
 import { startEmbedded, type EmbeddedServer } from './embedded'
 import { SessionHost } from './ports'
 import { FakeSource, Peer, aSession, sleep } from './test-support'
@@ -295,6 +296,20 @@ describe('the HTTP API behind the token', () => {
     })
     expect(refused.status).toBe(422)
     expect(await json(refused)).toMatchObject({ _tag: 'SessionWriteRefused' })
+    // A host with no terminal process to start it says which capability is
+    // missing, as declared, not a refused write.
+    source.refuse = new CapabilityUnavailable({ capability: 'terminals', message: 'no terminals' })
+    const missing = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 80,
+      rows: 24
+    })
+    expect(missing.status).toBe(422)
+    expect(await json(missing)).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'terminals'
+    })
+    source.refuse = null
   })
   it('answers a declared failure when the start itself fails', async () => {
     source.refuse = new Error('no such folder')

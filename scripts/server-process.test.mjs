@@ -61,6 +61,96 @@ describe('the server as its own process', () => {
     }
   })
 
+  it('registers the test fixture route only under --test-no-activate, and never by default', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-gate-'))
+    try {
+      const evaluate = (server) =>
+        fetch(`${server.url}/e2e/evaluate`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ source: '() => 1' })
+        })
+      // The entry as the dev script starts it: no test flag, no route.
+      const bare = await startServerProcess({ repo: REPO, dataDir, terminals: 'none' })
+      try {
+        expect((await evaluate(bare)).status).toBe(404)
+      } finally {
+        await bare.stop()
+      }
+      // The entry as the harness starts it: the flag, the route, behind the token.
+      const testing = await startServerProcess({
+        repo: REPO,
+        dataDir,
+        terminals: 'none',
+        args: ['--test-no-activate']
+      })
+      try {
+        expect((await evaluate(testing)).status).toBe(200)
+        expect(await (await evaluate(testing)).json()).toEqual({ ok: true, value: 1 })
+        const noToken = await fetch(`${testing.url}/e2e/evaluate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ source: '() => 1' })
+        })
+        expect(noToken.status).toBe(401)
+      } finally {
+        await testing.stop()
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('publishes a session’s state on its push channel and stops the session with the server', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-states-'))
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate', '--dev-echo-adapter']
+    })
+    try {
+      const { connectThroughNode } = await import('../packages/client/src/node')
+      const backing = await connectThroughNode(
+        { url: server.url, token: server.token },
+        { client: 'server-process-test' }
+      )
+      const events = []
+      backing.push.onEvent((envelope) => events.push(envelope.event))
+      backing.push.connect()
+      await backing.push.whenOpen()
+      const info = await backing.api.sessions.start({
+        cwd: dataDir,
+        windowKey: 'w1',
+        options: { launchProfileId: 'dev-echo-adapter' }
+      })
+      backing.push.subscribe(info.id, () => {})
+      await backing.push.subscribed(info.id)
+      await backing.api.sessions.write(info.id, { type: 'user_message', text: 'hello' })
+      const until = async (pred, ms = 5000) => {
+        const end = Date.now() + ms
+        while (Date.now() < end) {
+          if (pred()) return true
+          await new Promise((r) => setTimeout(r, 50))
+        }
+        return pred()
+      }
+      expect(
+        await until(() =>
+          events.some((e) => e._tag === 'session.state_changed' && e.id === info.id)
+        )
+      ).toBe(true)
+      // The session is listed while the server runs and goes with it: a
+      // chat's CLI is a child of this process and must not outlive it.
+      expect((await backing.api.sessions.list('w1')).map((s) => s.id)).toEqual([info.id])
+      backing.push.close()
+      await backing.api.dispose()
+    } finally {
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('a server that misses its announce timeout is killed, not left running', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-late-'))
     try {

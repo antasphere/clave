@@ -142,4 +142,31 @@ describe('the server started by the shell', () => {
     expect(stopped).toEqual(['spawned'])
     await api.dispose()
   })
+  it('hands a terminal’s size and its bytes to the lifecycle, where the journal and the /clear watch are', async () => {
+    const manager = new SessionManager()
+    const adapter = new EchoAdapter()
+    manager.adopt(record('t1'), adapter.prepare({ id: 't1' } as never), adapter)
+    const resized: Array<[string, number, number]> = []
+    const written: Array<[string, string]> = []
+    const host = createSessionHost({
+      manager,
+      lifecycle: {
+        ...lifecycle,
+        resize: (id, cols, rows) => {
+          resized.push([id, cols, rows])
+        },
+        writeTerminal: (id, text) => {
+          written.push([id, text])
+        }
+      }
+    })
+    const endpoint = await startClaveServer({ manager, ports: { sessions: host } })
+    const api = createApiClient(endpoint)
+    await api.sessions.resize('t1', 120, 40)
+    await api.sessions.write('t1', { type: 'bytes', data: new TextEncoder().encode('ls -la\r') })
+    expect(resized).toEqual([['t1', 120, 40]])
+    expect(written).toEqual([['t1', 'ls -la\r']])
+    await api.dispose()
+    manager.kill('t1')
+  })
 })
