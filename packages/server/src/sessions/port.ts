@@ -55,6 +55,10 @@ export interface SessionHostService extends SessionStreamSource {
   /** Hand the session a typed input or terminal bytes; throws when it is
    *  unknown, rejects when the provider or the preparation refused it. */
   readonly write: (id: string, input: SessionWrite) => Promise<void>
+  /** A terminal's size from its pane: the first one starts the process at
+   *  it, a later one resizes it. Throws when the session is unknown, or
+   *  `CapabilityUnavailable` when no terminal process can run it. */
+  readonly resize: (id: string, cols: number, rows: number) => void
   readonly setView: (id: string, viewId: string | null) => Session
   readonly models: (id: string) => Promise<ReadonlyArray<ModelOption>>
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
@@ -93,6 +97,9 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     start: () => Promise.reject(NO_SESSIONS),
     stop: () => Promise.reject(NO_SESSIONS),
     write: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
+    resize: (id) => {
+      throw new Error(`Unknown session: ${id}`)
+    },
     setView: (id) => {
       throw new Error(`Unknown session: ${id}`)
     },

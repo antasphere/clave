@@ -6,6 +6,8 @@ vi.mock('../title-generator', () => ({ notifyChatMessage: vi.fn() }))
 vi.mock('../sessions/lifecycle', () => ({
   spawnSession: vi.fn(),
   stopSession: vi.fn(),
+  resizeSession: vi.fn(),
+  writeTerminal: vi.fn(),
   trackInput: vi.fn()
 }))
 import { WebSocket } from 'ws'
@@ -37,7 +39,9 @@ const lifecycle: SessionLifecycle = {
     claudeSessionId: null,
     piSessionId: null
   }),
-  stop: async () => {}
+  stop: async () => {},
+  resize: () => {},
+  writeTerminal: () => {}
 }
 const hostOver = (manager: SessionManager): ReturnType<typeof createSessionHost> =>
   createSessionHost({ manager, lifecycle })

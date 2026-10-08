@@ -29,6 +29,8 @@ vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView
 vi.mock('./lifecycle', () => ({
   spawnSession: vi.fn(),
   stopSession: vi.fn(),
+  resizeSession: vi.fn(),
+  writeTerminal: vi.fn(),
   trackInput: vi.fn()
 }))
 import { registerSessionIpc } from './ipc'
@@ -47,7 +49,7 @@ beforeEach(() => {
   setSessionHost(
     createSessionHost({
       manager: sessionManager,
-      lifecycle: { spawn: vi.fn(), stop: vi.fn() }
+      lifecycle: { spawn: vi.fn(), stop: vi.fn(), resize: vi.fn(), writeTerminal: vi.fn() }
     })
   )
 })

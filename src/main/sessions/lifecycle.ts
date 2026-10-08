@@ -156,6 +156,21 @@ export async function spawnSession(
   }
 }
 
+/** A terminal's size from its pane: the first call starts the process at
+ *  that size (the backend defers the spawn until then), a later one resizes
+ *  it. Nothing happens for a session that is not a terminal. */
+export function resizeSession(id: string, cols: number, rows: number): void {
+  ptyManager.resize(id, cols, rows)
+}
+
+/** Terminal bytes from the pane: watched for a `/clear`, journaled in test
+ *  mode, written to the process. Nothing happens for a session that is not a
+ *  terminal. */
+export function writeTerminal(id: string, text: string): void {
+  trackInput(id, text)
+  ptyManager.write(id, text)
+}
+
 /** Stop a session: what its window owes first (a linked document flushed),
  *  then the process is killed and the window binding released. A session
  *  that never started has no exit event to unbind it, so the unbind is here

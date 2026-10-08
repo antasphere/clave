@@ -266,6 +266,36 @@ describe('the HTTP API behind the token', () => {
     }>
     expect(listed.map((s) => s.id)).toContain('started-1')
   })
+  it('takes a terminal’s size, and answers unknown, malformed and refused sizes as declared', async () => {
+    const resized = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 120,
+      rows: 40
+    })
+    expect(resized.status).toBe(204)
+    expect(source.resizes).toEqual([{ id: 's1', cols: 120, rows: 40 }])
+    const unknown = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 'nope',
+      cols: 1,
+      rows: 1
+    })
+    expect(unknown.status).toBe(422)
+    expect(await json(unknown)).toMatchObject({ _tag: 'SessionNotFound' })
+    const zero = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 0,
+      rows: 40
+    })
+    expect(zero.status).toBe(400)
+    source.refuse = new Error('the terminal is gone')
+    const refused = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 80,
+      rows: 24
+    })
+    expect(refused.status).toBe(422)
+    expect(await json(refused)).toMatchObject({ _tag: 'SessionWriteRefused' })
+  })
   it('answers a declared failure when the start itself fails', async () => {
     source.refuse = new Error('no such folder')
     const failed = await post(`${server.url}/sessions/start`, server.token, { cwd: '/nowhere' })

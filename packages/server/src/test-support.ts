@@ -44,6 +44,7 @@ export class FakeSource implements SessionHostService {
   readonly starts: StartInput[] = []
   readonly stops: string[] = []
   readonly views: Array<{ id: string; viewId: string | null }> = []
+  readonly resizes: Array<{ id: string; cols: number; rows: number }> = []
   /** What `models`, `commands` and `history` answer. */
   modelsOf: ModelOption[] = [{ id: 'm1', label: 'Model one' }]
   commandsOf: CommandOption[] = [{ name: 'help', insert: '/help ' }]
@@ -95,6 +96,11 @@ export class FakeSource implements SessionHostService {
   stop = async (id: string): Promise<void> => {
     this.stops.push(id)
     this.sessions.delete(id)
+  }
+  resize = (id: string, cols: number, rows: number): void => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
+    this.resizes.push({ id, cols, rows })
   }
   setView = (id: string, viewId: string | null): Session => {
     const session = this.sessions.get(id)

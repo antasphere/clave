@@ -31,7 +31,13 @@ import { preparePrompt } from './attachments'
 import * as titleGenerator from '../title-generator'
 import { rememberChatEffort, rememberChatModel } from './chat-model-default'
 import { rememberChatView } from './chat-view-default'
-import { type SessionInfoResult, spawnSession, stopSession } from './lifecycle'
+import {
+  type SessionInfoResult,
+  resizeSession,
+  spawnSession,
+  stopSession,
+  writeTerminal
+} from './lifecycle'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -53,6 +59,10 @@ export interface SessionLifecycle {
     options?: PtySpawnOptions
   ) => Promise<SessionInfoResult>
   readonly stop: (id: string) => Promise<void>
+  readonly resize: (id: string, cols: number, rows: number) => void
+  /** Terminal bytes, as text: the `/clear` watch and the test journal sit
+   *  on this road, so the server's bytes take it as the IPC bytes do. */
+  readonly writeTerminal: (id: string, text: string) => void
 }
 
 export interface SessionHostDeps {
@@ -72,6 +82,8 @@ const asInfo = (result: SessionInfoResult): SessionInfo => ({
   ...(result.piProvider !== undefined && { piProvider: result.piProvider }),
   ...(result.piThinking !== undefined && { piThinking: result.piThinking })
 })
+
+const bytesDecoder = new TextDecoder()
 
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
@@ -102,7 +114,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     },
     stop: (id) => deps.lifecycle.stop(id),
     write: async (id: string, input: SessionWrite) => {
-      if (input.type === 'bytes') return manager.write(id, input.data)
+      if (input.type === 'bytes') {
+        if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
+        return deps.lifecycle.writeTerminal(id, bytesDecoder.decode(input.data))
+      }
       const value = input as SessionInput
       if (value.type === 'set_model') {
         // The composer's pick is the next chat's default too. Remembered only
@@ -132,6 +147,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
       manager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
     },
+    resize: (id, cols, rows) => {
+      if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
+      deps.lifecycle.resize(id, cols, rows)
+    },
     setView: (id, viewId) => {
       const updated = manager.setView(id, viewId)
       rememberChatView(viewId)
@@ -152,7 +171,12 @@ export function getSessionHost(): SessionHostService {
   if (!host) {
     host = createSessionHost({
       manager: sessionManager,
-      lifecycle: { spawn: spawnSession, stop: stopSession }
+      lifecycle: {
+        spawn: spawnSession,
+        stop: stopSession,
+        resize: resizeSession,
+        writeTerminal
+      }
     })
   }
   return host

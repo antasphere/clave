@@ -22,7 +22,8 @@ import {
   SetSessionView,
   StartSession,
   StopSession,
-  WriteSession
+  WriteSession,
+  ResizeSession
 } from './sessions'
 import { settingsGroup } from './settings/api'
 import { sidebarGroup } from './sidebar/api'
@@ -34,6 +35,7 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('start', '/sessions/start', StartSession))
   .add(HttpCqrs.commandEndpoint('stop', '/sessions/stop', StopSession))
   .add(HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession))
+  .add(HttpCqrs.commandEndpoint('resize', '/sessions/resize', ResizeSession))
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))

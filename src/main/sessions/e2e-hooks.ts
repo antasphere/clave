@@ -10,6 +10,7 @@
  * installs first, the others' hooks stay.
  */
 import type { SessionHostService, SettingsSourceService } from '@clave/server'
+import type { SessionStream } from '../../shared/session-model'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 
 export interface E2eHooks {
@@ -21,6 +22,11 @@ export interface E2eHooks {
    *  specs (the shell's in `settings/shell-source.ts`; the standalone entry
    *  installs its own). */
   settings: SettingsSourceService
+  /** Lane C of wave 3: the echo adapter's injection, for the chat specs
+   *  that used to send a synthetic frame to the window over IPC; the frame
+   *  now enters where the session lives and reaches the window over its own
+   *  transport (`adapters/echo-adapter.ts`). */
+  echo: { inject: (sessionId: string, stream: SessionStream) => void }
   // ── later lanes add theirs here ──
 }
 

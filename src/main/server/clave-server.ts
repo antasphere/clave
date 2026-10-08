@@ -73,7 +73,7 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
     ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })
   })
   running = server
-  const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token }
+  const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token, mode: 'in-process' }
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))

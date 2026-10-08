@@ -23,6 +23,7 @@ import {
   SetSessionView,
   StartSession,
   StopSession,
+  ResizeSession,
   WriteSession
 } from '@clave/contract/sessions'
 import { SessionHost, type SessionHostService } from './port'
@@ -83,6 +84,21 @@ export const sessionHandlers = [
           Effect.tryPromise({
             try: () => host.write(payload.id, payload.input),
             catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
+          })
+        )
+      )
+    )
+  ),
+  CommandHandler.make(ResizeSession, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.try({
+            try: () => host.resize(payload.id, payload.cols, payload.rows),
+            catch: (error) =>
+              error instanceof CapabilityUnavailable
+                ? error
+                : new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
           })
         )
       )

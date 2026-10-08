@@ -151,7 +151,7 @@ async function bootServer(): Promise<void> {
     // server runs no sessions until its terminal process, wave 3). The
     // in-process start publishes its own address in server/clave-server.ts.
     if (serverHandle.mode === 'attached')
-      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token })
+      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
   } catch (err) {
     const message = err instanceof ServerBootError ? err.message : String(err)
     console.error(`[server] not available: ${message}`)

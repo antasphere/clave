@@ -30,6 +30,8 @@ export interface SessionsClient {
   readonly start: (input: StartSessionInput) => Promise<SessionInfo>
   readonly stop: (id: string) => Promise<void>
   readonly write: (id: string, input: SessionWrite) => Promise<void>
+  /** A terminal's size from its pane; the first one starts the process. */
+  readonly resize: (id: string, cols: number, rows: number) => Promise<void>
   readonly setView: (id: string, viewId: string | null) => Promise<Session>
   readonly models: (id: string) => Promise<ReadonlyArray<ModelOption>>
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
@@ -62,6 +64,8 @@ export const sessionsClient = (call: Call): SessionsClient => ({
     call((c) => c.sessions.write({ payload: { id, input: encodeWrite(input) } })).then(
       () => undefined
     ),
+  resize: (id, cols, rows) =>
+    call((c) => c.sessions.resize({ payload: { id, cols, rows } })).then(() => undefined),
   setView: (id, viewId) => call((c) => c.sessions.setView({ payload: { id, viewId } })),
   models: (id) => call((c) => c.sessions.models({ payload: { id } })),
   commands: (id) => call((c) => c.sessions.commands({ payload: { id } })),
