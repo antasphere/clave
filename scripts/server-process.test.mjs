@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync, readFileSync 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import {
   bunBinary,
   serverCommand,
@@ -160,7 +160,14 @@ describe('the server as its own process', () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-orphan-'))
     const fake = path.join(dataDir, 'fake-claude')
     const pidFile = path.join(dataDir, 'fake.pid')
-    writeFileSync(fake, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 300\n`, { mode: 0o755 })
+    // The chat's CLI is the invocation on the stream protocol; the title
+    // generator runs the same binary once for the tab's name (a one-shot job
+    // of its own, not this session's) and must not be mistaken for it.
+    writeFileSync(
+      fake,
+      `#!/bin/sh\ncase "$*" in *stream-json*) echo $$ > ${pidFile} ;; esac\nexec sleep 300\n`,
+      { mode: 0o755 }
+    )
     writeFileSync(
       path.join(dataDir, 'agent-launch-profiles.json'),
       JSON.stringify({
@@ -210,11 +217,25 @@ describe('the server as its own process', () => {
       cliPid = await started()
       expect(cliPid, 'the fake CLI started').not.toBeNull()
       expect(alive(cliPid)).toBe(true)
+      const tree = () =>
+        execFileSync('ps', ['-o', 'pid,ppid,pgid,sess,command', '-p', `${server.pid},${cliPid}`], {
+          encoding: 'utf8'
+        }).trim()
+      const before = tree()
       backing.push.close()
       await backing.api.dispose()
       await server.stop()
       expect(await untilDead(server.pid)).toBe(true)
-      expect(await untilDead(cliPid), 'the CLI died with the server').toBe(true)
+      const died = await untilDead(cliPid)
+      expect(
+        died,
+        `the CLI died with the server\nbefore:\n${before}\nafter:\n${died ? '' : tree()}\nserver stderr:\n${server
+          .stderr()
+          .split('\n')
+          .filter(Boolean)
+          .slice(-8)
+          .join('\n')}`
+      ).toBe(true)
     } finally {
       if (cliPid && alive(cliPid)) {
         try {
