@@ -4,18 +4,18 @@
 // a session on the standalone server mounts its chat but gets no view lease
 // (no view switcher, no chip that the view reports), so the pin stays until
 // the plugin host reaches the server, which the spec keeps in the shell
-// through wave 3. The session host itself is reached through the fixture in
-// both modes. Not a known failure.
+// through wave 3. Not a known failure.
 // The chat view on the echo fixture. This spec and every spec built on its
 // `openChat` reach the sessions from inside (the echo adapter, the session host
-// wrapped to see what the composer wrote, synthetic frames), and they now run in
-// both server modes through the fixture route (PRDCT-3293): the launch goes
-// through `launchApp`, which hands the echo flags to whichever process spawns
-// the sessions (Electron main in-process, the standalone server attached), and
+// wrapped to see what the composer wrote, synthetic frames) through the
+// fixture route (PRDCT-3293), the one road into the process hosting the
+// sessions whichever server runs: the launch goes through `launchApp`, which
+// hands the echo flags to the process that spawns the sessions, and
 // `fixture.evaluate` runs the wraps there. Synthetic frames are injected where
 // the session lives (`__claveE2E.echo.inject`) and reach the window over its own
 // transport. Only what is Electron's (an `ipcMain` stub, a `BrowserWindow`
-// send) stays on `app.evaluate`.
+// send) stays on `app.evaluate`. The specs themselves run in-process for the
+// reason above; the road is the same in both modes.
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'

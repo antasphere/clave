@@ -287,6 +287,10 @@ export async function launchApp(
   delete base.CLAVE_SERVER_TOKEN
   let started = null
   let serverEnv = {}
+  launchedModes.set(
+    path.resolve(dir),
+    server === 'attached' || (server && typeof server === 'object') ? 'attached' : 'in-process'
+  )
   if (server === 'attached') {
     // The server gets the app's own test flags (`--test-no-activate` is
     // what turns its fixture route and its terminal journal on; the echo
@@ -725,14 +729,20 @@ export async function spyPtySpawn(app) {
 /** Where a test instance journals its terminal spawns and writes: under its
  *  user-data directory, under `--test-no-activate` (`src/main/terminal-journal.ts`,
  *  which also names the file on `globalThis.__claveE2E.terminalJournal`). */
+/** How each app data folder was last launched by `launchApp`: the journal
+ *  is read where the terminal manager of THAT launch runs. An existence
+ *  check would read a stale server journal in an in-process run after an
+ *  attached one of the same spec (the verifier's round 1, Major 2). */
+const launchedModes = new Map()
+
 export function terminalJournalPath(dir) {
   // Attached, the terminal manager runs in the standalone server, which
-  // keeps the journal under its own data folder (`<dir>-server`, the folder
-  // `startE2eServer` names for the app's `dir`); in-process it is the app's.
-  // The server's file is read when it exists: a spec then reads the same
-  // launches whichever process spawned them.
-  const attached = path.join(fixturePath(`${path.basename(dir)}-server`), 'terminal-journal.jsonl')
-  return existsSync(attached) ? attached : path.join(dir, 'terminal-journal.jsonl')
+  // keeps the journal under its own data folder (the folder `startE2eServer`
+  // names for the app's `dir`); in-process it is the app's.
+  const mode = launchedModes.get(path.resolve(dir)) ?? 'in-process'
+  return mode === 'attached'
+    ? path.join(fixturePath(`${path.basename(dir)}-server`), 'terminal-journal.jsonl')
+    : path.join(dir, 'terminal-journal.jsonl')
 }
 
 function readTerminalJournal(dir) {
