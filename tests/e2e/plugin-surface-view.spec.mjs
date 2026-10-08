@@ -53,8 +53,8 @@ const guestFor = async (win, sessionId) =>
   })
 
 export async function run(t) {
-  const fixture = await openChat('surface-view')
-  const { app, win, record } = fixture
+  const chat = await openChat('surface-view')
+  const { app, win, record, fixture } = chat
   try {
     await app.evaluate(({ ipcMain }) => {
       globalThis.__viewLeases = []
@@ -159,7 +159,7 @@ export async function run(t) {
     // one is announced; the header must not take it, because the reader is not
     // looking at that view. (Injected on the renderer channel, which is the
     // hidden native view's path and not the lease's.)
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'session_meta', model: 'fixture-model', providerSessionId: 'fixture' }
     ])
     await until(async () => (await leased.innerText()).includes('fixture-model'), {
@@ -252,6 +252,6 @@ export async function run(t) {
     assert.equal(stillActive, 'active')
     t.check('a lease dies with the renderer that held it, the plugin keeps running', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

@@ -10,7 +10,6 @@ import {
 } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import { BrowserWindow } from 'electron'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -37,7 +36,9 @@ export interface TitleLaunchContext {
 interface SessionEntry {
   cwd: string
   claudeSessionId: string
-  win: BrowserWindow
+  /** The key of the window the tab is in, for the per-window arm of its
+   *  news when no server publishes it; null for a windowless caller. */
+  windowKey: string | null
   launch: TitleLaunchContext
   jsonlPath: string
   titleDone: boolean
@@ -100,14 +101,14 @@ export function scheduleTitleGeneration(
   sessionId: string,
   cwd: string,
   claudeSessionId: string,
-  win: BrowserWindow,
+  windowKey: string | null,
   launch: TitleLaunchContext = {}
 ): void {
   const jsonlPath = getJsonlPath(cwd, claudeSessionId)
   const entry: SessionEntry = {
     cwd,
     claudeSessionId,
-    win,
+    windowKey,
     launch,
     jsonlPath,
     titleDone: false,
@@ -165,7 +166,7 @@ export function scheduleTitleGeneration(
         // (before this the tab kept the pre-/clear id, and a Resume or a
         // restart reopened the conversation the user had just cleared).
         const stem = filename.slice(0, -'.jsonl'.length)
-        sessionCleared(sessionId, stem, entry.win)
+        sessionCleared(sessionId, stem, entry.windowKey)
       }, 500)
     })
     entry.dirWatcher = dirWatcher
@@ -200,11 +201,7 @@ export function scheduleChatTitle(sessionId: string, launch: TitleLaunchContext 
  *  slash command, not a bare yes/no — becomes the tab's name, delivered on the
  *  same channel a terminal tab's title arrives on. Anything else leaves the tab
  *  waiting for the message that does state what the conversation is about. */
-export function notifyChatMessage(
-  sessionId: string,
-  text: string,
-  win: BrowserWindow | null
-): void {
+export function notifyChatMessage(sessionId: string, text: string, windowKey: string | null): void {
   const launch = chatAwaitingTitle.get(sessionId)
   if (!launch) return
   const message = text.trim()
@@ -212,7 +209,7 @@ export function notifyChatMessage(
   chatAwaitingTitle.delete(sessionId)
   console.log(`[title-gen] Chat ${sessionId} message: "${message.slice(0, 80)}"`)
   generateTitle(sessionId, message, launch)
-    .then((title) => sessionTitleChanged(sessionId, title, win))
+    .then((title) => sessionTitleChanged(sessionId, title, windowKey))
     .catch(() => {})
 }
 
@@ -304,7 +301,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
       console.log(`[title-gen] Session ${sessionId} message: "${userMessage.slice(0, 80)}"`)
 
       generateTitle(sessionId, userMessage, entry.launch)
-        .then((title) => sessionTitleChanged(sessionId, title, entry.win))
+        .then((title) => sessionTitleChanged(sessionId, title, entry.windowKey))
         .catch(() => {})
       break
     }
@@ -319,7 +316,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
         const planPath = extractPlanPath(parsed)
         if (planPath && existsSync(planPath)) {
           entry.planDetected = true
-          sessionPlanDetected(sessionId, planPath, entry.win)
+          sessionPlanDetected(sessionId, planPath, entry.windowKey)
           console.log(`[title-gen] Session ${sessionId}: plan detected at ${planPath}`)
           break
         }

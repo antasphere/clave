@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CapabilityUnavailable } from '@clave/contract/errors'
 import { startEmbedded, type EmbeddedServer } from './embedded'
 import { SessionHost } from './ports'
 import { FakeSource, Peer, aSession, sleep } from './test-support'
@@ -265,6 +266,50 @@ describe('the HTTP API behind the token', () => {
       id: string
     }>
     expect(listed.map((s) => s.id)).toContain('started-1')
+  })
+  it('takes a terminal’s size, and answers unknown, malformed and refused sizes as declared', async () => {
+    const resized = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 120,
+      rows: 40
+    })
+    expect(resized.status).toBe(204)
+    expect(source.resizes).toEqual([{ id: 's1', cols: 120, rows: 40 }])
+    const unknown = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 'nope',
+      cols: 1,
+      rows: 1
+    })
+    expect(unknown.status).toBe(422)
+    expect(await json(unknown)).toMatchObject({ _tag: 'SessionNotFound' })
+    const zero = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 0,
+      rows: 40
+    })
+    expect(zero.status).toBe(400)
+    source.refuse = new Error('the terminal is gone')
+    const refused = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 80,
+      rows: 24
+    })
+    expect(refused.status).toBe(422)
+    expect(await json(refused)).toMatchObject({ _tag: 'SessionWriteRefused' })
+    // A host with no terminal process to start it says which capability is
+    // missing, as declared, not a refused write.
+    source.refuse = new CapabilityUnavailable({ capability: 'terminals', message: 'no terminals' })
+    const missing = await post(`${server.url}/sessions/resize`, server.token, {
+      id: 's1',
+      cols: 80,
+      rows: 24
+    })
+    expect(missing.status).toBe(422)
+    expect(await json(missing)).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'terminals'
+    })
+    source.refuse = null
   })
   it('answers a declared failure when the start itself fails', async () => {
     source.refuse = new Error('no such folder')

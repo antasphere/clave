@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
+import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 /**
  * The bundled `plugins/echo-provider` drives a real session end to end: the
@@ -31,20 +30,16 @@ async function open(dir) {
     fresh: true
   })
   seedTrustedRoots(dir, [root])
-  const app = await electron.launch({
-    executablePath: path.join(
-      REPO,
-      'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
-    ),
-    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate'],
-    cwd: REPO,
-    env: { ...process.env }
-  })
+  // In-process (PRDCT-3293): the plugin's adapter and its launch profile
+  // register with the shell's plugin host and main's managers; attached, the
+  // window reads its profiles from the standalone server, which never hears
+  // of them. The session host is reached through the fixture either way.
+  const { app, win, fixture } = await launchApp(dir, { server: 'in-process' })
   // Record the raw stream before any session exists: what the plugin emits is
   // only assertable here, ahead of whatever the view chooses to render. The
   // stream reaches the window over the server's push channel, so the record
   // is taken where every frame passes: the session host's subscribe.
-  await app.evaluate(() => {
+  await fixture.evaluate(() => {
     globalThis.__providerStream = []
     const host = globalThis.__claveE2E.sessionHost
     const subscribe = host.subscribe
@@ -54,9 +49,7 @@ async function open(dir) {
         listener(frame)
       })
   })
-  const win = await app.firstWindow()
-  await win.waitForLoadState('domcontentloaded')
-  return { app, win, root }
+  return { app, win, root, fixture }
 }
 
 const profileIds = (win) =>
@@ -64,8 +57,8 @@ const profileIds = (win) =>
     (await window.electronAPI.launchProfilesList()).customProfiles.map((profile) => profile.id)
   )
 
-const streamEvents = (app) =>
-  app.evaluate(() =>
+const streamEvents = (fixture) =>
+  fixture.evaluate(() =>
     globalThis.__providerStream
       .filter((entry) => entry && entry.kind === 'event')
       .map((entry) => entry.event)
@@ -82,7 +75,7 @@ export async function run(t) {
   // Per run, not shared: a fixed path here collided with another lane's suite and
   // cost the verifier a red round on a check that passes alone.
   const dir = fixturePath(`plugin-provider-${process.pid}`)
-  const { app, win, root } = await open(dir)
+  const { app, win, root, fixture } = await open(dir)
   try {
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')
     await win.click('[data-settings-nav-row="plugins"]')
@@ -143,7 +136,7 @@ export async function run(t) {
     assert.ok(session)
     assert.equal(session.transport, 'events')
     assert.equal(session.provider, ADAPTER_ID)
-    const notice = (await streamEvents(app)).find((event) => event.type === 'provider_event')
+    const notice = (await streamEvents(fixture)).find((event) => event.type === 'provider_event')
     assert.deepEqual(notice, {
       type: 'provider_event',
       provider: ADAPTER_ID,
@@ -159,7 +152,7 @@ export async function run(t) {
       await win.locator('.chat-turn[data-role="assistant"]').first().innerText(),
       /Echo from echo --from-manifest: hello there/
     )
-    const calls = (await streamEvents(app)).filter((event) => event.type === 'tool_call')
+    const calls = (await streamEvents(fixture)).filter((event) => event.type === 'tool_call')
     assert.equal(calls.length, 1)
     assert.equal(calls[0].id, `${PLUGIN_ID}:call-1`)
     t.check('the manifest command reaches the adapter; plugin ids arrive namespaced', true)
@@ -167,7 +160,7 @@ export async function run(t) {
     await input.fill('!invalid')
     await input.press('Enter')
     await chatView(win).getByText('The invalid event was dropped.', { exact: true }).waitFor()
-    const texts = (await streamEvents(app)).filter((event) => event.type === 'assistant_text')
+    const texts = (await streamEvents(fixture)).filter((event) => event.type === 'assistant_text')
     assert.ok(
       texts.every((event) => typeof event.delta === 'string' && typeof event.final === 'boolean'),
       'no malformed event crossed the boundary'
@@ -178,13 +171,15 @@ export async function run(t) {
     await input.press('Enter')
     const allow = win.getByRole('button', { name: 'Allow once', exact: true })
     await allow.waitFor()
-    const request = (await streamEvents(app)).find((event) => event.type === 'permission_request')
+    const request = (await streamEvents(fixture)).find(
+      (event) => event.type === 'permission_request'
+    )
     assert.equal(request.id, `${PLUGIN_ID}:ask-2`)
     await allow.click()
     // The plugin threw if the prefix had not been stripped on the way back in.
     await chatView(win).getByText('Allowed, and echoed.', { exact: true }).waitFor()
     assert.equal(
-      (await streamEvents(app)).filter((e) => e.type === 'error').length,
+      (await streamEvents(fixture)).filter((e) => e.type === 'error').length,
       0,
       'the permission round trip raised no error event'
     )

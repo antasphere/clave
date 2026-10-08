@@ -4,16 +4,18 @@
  * (`sessions/host.ts`) call the same two functions, so a start is one piece
  * of wiring whatever transport brought it. Lifted out of the PTY handlers for
  * PRDCT-3239; the PTY backend itself is untouched.
+ *
+ * Nothing here imports Electron (PRDCT-3293): the window is a KEY, and what
+ * still reaches a window (the binding, the workspace it shows, the per-window
+ * sends, the flush a stop owes) goes through the session windows port
+ * (`windows.ts`), which the shell implements over its registry and the
+ * standalone server over a map.
  */
-import { BrowserWindow } from 'electron'
 import { ptyManager, type PtySpawnOptions } from '../pty-manager'
-import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { workspaceManager } from '../workspace-manager'
-import { windowRegistry } from '../window-registry'
 import * as titleGenerator from '../title-generator'
 import { clearState as clearAgentState } from '../agent-state-manager'
-import { linkedDocuments } from '../linked-documents/runtime'
-import { callRenderer } from '../mcp/mcp-bridge'
+import { sessionWindows } from './windows'
 
 export type SessionInfoResult = {
   id: string
@@ -26,6 +28,15 @@ export type SessionInfoResult = {
   model?: string
   piProvider?: string
   piThinking?: PtySpawnOptions['piThinking']
+}
+
+/** The tmux switch lives in the app's own preferences file
+ *  (`clave-preferences.json`, read by the .clave handlers, which import
+ *  Electron): the shell installs the reader at boot; a host with none
+ *  (the standalone server) runs tmux, the default. */
+let tmuxPreference: () => unknown = () => undefined
+export function setTmuxPreferenceReader(reader: (() => unknown) | null): void {
+  tmuxPreference = reader ?? (() => undefined)
 }
 
 /** What each terminal's reader typed since the last Enter, to see a `/clear`. */
@@ -51,19 +62,21 @@ export function trackInput(id: string, data: string): void {
   inputBuffers.set(id, buf)
 }
 
-/** The spawn, for the window that asked: the session, its listeners and
- *  its window binding. `pty:spawn`, `pty:restart` and the server's
- *  `StartSession` share it, so a restart on another account (ADR 0002) is the
- *  same spawn with the account changed, never a second copy of this wiring. */
-export async function spawnSessionForWindow(
-  win: BrowserWindow | null,
+/** The spawn, for the window that asked (by its key; null for a windowless
+ *  caller): the session, its listeners and its window binding. `pty:spawn`,
+ *  `pty:restart` and the server's `StartSession` share it, so a restart on
+ *  another account (ADR 0002) is the same spawn with the account changed,
+ *  never a second copy of this wiring. */
+export async function spawnSession(
+  windowKey: string | null,
   cwd: string,
   options?: PtySpawnOptions
 ): Promise<SessionInfoResult> {
+  const windows = sessionWindows()
   // tmux mode is a global app setting, ON by default. Honour it unless a
   // caller overrides per-spawn or the user explicitly turned it off. (When
   // tmux isn't installed the spawn transparently falls back to a plain shell.)
-  const tmuxMode = options?.tmuxMode ?? getPreference('tmuxMode') !== false
+  const tmuxMode = options?.tmuxMode ?? tmuxPreference() !== false
   // Central workspace stamp: every spawn defaults to the workspace of the
   // WINDOW that asked (the registry's truth, never the state file — another
   // window may have switched or written last). Explicit values win (pin
@@ -71,18 +84,22 @@ export async function spawnSessionForWindow(
   // persisted last-active workspace survives only for a windowless caller.
   const workspaceId =
     options?.workspaceId ??
-    (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ??
+    (windowKey ? windows.workspaceOf(windowKey) : null) ??
     workspaceManager.getLastActiveWorkspaceId() ??
     undefined
   // The asking window is the session's HOME: its persisted key goes on the
   // record, so the next boot brings the tab back in that window (an
   // adoption or a move re-stamps through this same path).
-  const windowKey = (win ? windowRegistry.getKeyForWindow(win.id) : null) ?? undefined
-  const session = await ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
+  const session = await ptyManager.spawn(cwd, {
+    ...options,
+    tmuxMode,
+    workspaceId,
+    windowKey: windowKey ?? undefined
+  })
   // The sender hosts the session from now on: its renderer holds the xterm
   // and receives pty:data. Adoption and re-homing rebind through this same
   // path (the adopting window is the sender).
-  if (win) windowRegistry.bindSession(session.id, win.id)
+  if (windowKey) windows.bind(session.id, windowKey)
   const isClaudeMode =
     options?.claudeMode !== false &&
     !options?.antigravityMode &&
@@ -93,32 +110,32 @@ export async function spawnSessionForWindow(
 
   // A fresh Claude session is named by its first message, by the agent it
   // runs: its resolved profile, on its account.
-  if (isClaudeMode && !isResumed && session.claudeSessionId && win) {
-    titleGenerator.scheduleTitleGeneration(session.id, session.cwd, session.claudeSessionId, win, {
-      workspaceId,
-      launchProfileId: session.launchProfileId,
-      claudeProfileId: options?.claudeProfileId,
-      configDir: options?.configDir
-    })
+  if (isClaudeMode && !isResumed && session.claudeSessionId) {
+    titleGenerator.scheduleTitleGeneration(
+      session.id,
+      session.cwd,
+      session.claudeSessionId,
+      windowKey,
+      {
+        workspaceId,
+        launchProfileId: session.launchProfileId,
+        claudeProfileId: options?.claudeProfileId,
+        configDir: options?.configDir
+      }
+    )
   }
 
   // Attach listeners now so the channels are ready before the renderer
   // triggers the actual pty.spawn() via pty:start (or first pty:resize).
   ptyManager.attachListeners(
     session.id,
-    (data) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send(`pty:data:${session.id}`, data)
-      }
-    },
+    (data) => windows.send(windowKey, `pty:data:${session.id}`, data),
     (exitCode) => {
       titleGenerator.cleanup(session.id)
       inputBuffers.delete(session.id)
       clearAgentState(session.id)
-      windowRegistry.unbindSession(session.id)
-      if (win && !win.isDestroyed()) {
-        win.webContents.send(`pty:exit:${session.id}`, exitCode)
-      }
+      windows.unbind(session.id)
+      windows.send(windowKey, `pty:exit:${session.id}`, exitCode)
     }
   )
 
@@ -142,19 +159,28 @@ export async function spawnSessionForWindow(
   }
 }
 
-/** Stop a session: a linked document it owns is flushed first, then the
- *  process is killed and the window binding released. A session that never
- *  started has no exit event to unbind it, so the unbind is here too. */
+/** A terminal's size from its pane: the first call starts the process at
+ *  that size (the backend defers the spawn until then), a later one resizes
+ *  it. Nothing happens for a session that is not a terminal. */
+export function resizeSession(id: string, cols: number, rows: number): void {
+  ptyManager.resize(id, cols, rows)
+}
+
+/** Terminal bytes from the pane: watched for a `/clear`, journaled in test
+ *  mode, written to the process. Nothing happens for a session that is not a
+ *  terminal. */
+export function writeTerminal(id: string, text: string): void {
+  trackInput(id, text)
+  ptyManager.write(id, text)
+}
+
+/** Stop a session: what its window owes first (a linked document flushed),
+ *  then the process is killed and the window binding released. A session
+ *  that never started has no exit event to unbind it, so the unbind is here
+ *  too. */
 export async function stopSession(id: string): Promise<void> {
-  const owner = windowRegistry.getWindowForSession(id)
-  if (
-    owner &&
-    linkedDocuments()
-      .list()
-      .some((d) => d.sessionId === id)
-  ) {
-    await callRenderer('flushLinkedDocument', { sessionId: id, allowConflict: true }, owner)
-  }
+  const windows = sessionWindows()
+  await windows.beforeStop(id)
   await ptyManager.kill(id)
-  windowRegistry.unbindSession(id)
+  windows.unbind(id)
 }

@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   rememberChatModel: vi.fn(),
   rememberChatEffort: vi.fn(),
   rememberChatView: vi.fn(),
-  windowByKey: vi.fn(),
   getAllWindows: vi.fn((): unknown[] => [])
 }))
 vi.mock('electron', () => ({
@@ -28,8 +27,10 @@ vi.mock('./chat-model-default', () => ({
 }))
 vi.mock('./chat-view-default', () => ({ rememberChatView: mocks.rememberChatView }))
 vi.mock('./lifecycle', () => ({
-  spawnSessionForWindow: vi.fn(),
+  spawnSession: vi.fn(),
   stopSession: vi.fn(),
+  resizeSession: vi.fn(),
+  writeTerminal: vi.fn(),
   trackInput: vi.fn()
 }))
 import { registerSessionIpc } from './ipc'
@@ -48,8 +49,7 @@ beforeEach(() => {
   setSessionHost(
     createSessionHost({
       manager: sessionManager,
-      lifecycle: { spawn: vi.fn(), stop: vi.fn() },
-      windowByKey: (key) => mocks.windowByKey(key)
+      lifecycle: { spawn: vi.fn(), stop: vi.fn(), resize: vi.fn(), writeTerminal: vi.fn() }
     })
   )
 })
@@ -375,16 +375,18 @@ it('hands each user message to the title generator with the sending window', () 
     title: 'Echo'
   }
   sessionManager.adopt(session, adapter.prepare(session), adapter)
-  const win = { id: 7 }
-  mocks.fromWebContents.mockReturnValue(win)
-  // The host finds the tab's window from the record's key, not from the sender.
-  mocks.windowByKey.mockReturnValue(win)
+  mocks.fromWebContents.mockReturnValue({ id: 7 })
   mocks.notifyChatMessage.mockClear()
   const event = { sender: { id: sequence, isDestroyed: () => false, send: vi.fn() } }
   const write = mocks.handlers.get('sessions:write')
   write(event, id, { type: 'user_message', text: 'please name this tab after me' })
   expect(mocks.notifyChatMessage).toHaveBeenCalledTimes(1)
-  expect(mocks.notifyChatMessage).toHaveBeenCalledWith(id, 'please name this tab after me', win)
+  // The host names the tab's window by the record's key, not by the sender.
+  expect(mocks.notifyChatMessage).toHaveBeenCalledWith(
+    id,
+    'please name this tab after me',
+    'window'
+  )
   write(event, id, { type: 'interrupt' })
   expect(mocks.notifyChatMessage).toHaveBeenCalledTimes(1)
   sessionManager.kill(id)

@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * Multi-window core (PRDCT-1703): a window is the whole app once more, on
  * whatever workspace it shows — the SAME workspace as another window
@@ -108,7 +113,7 @@ export async function run(t) {
   const opened = []
   try {
     // ── window 1: the primary, on the last-active workspace ──
-    const launched = await launchApp(DIR)
+    const launched = await launchApp(DIR, { server: 'in-process' })
     app = launched.app
     const win1 = launched.win
     const id1 = await identityOf(win1)
@@ -254,7 +259,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const relaunched = await launchApp(DIR, { settleMs: 7000 })
+    const relaunched = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = relaunched.app
     const back = await windows(app)
     t.equal('after a restart both windows come back', back.length, 2)
@@ -344,7 +349,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const again = await launchApp(DIR, { settleMs: 7000 })
+    const again = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = again.app
     t.equal('one window comes back', (await windows(app)).length, 1)
     const idF = await identityOf(again.win)

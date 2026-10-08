@@ -26,6 +26,7 @@ import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
 import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } from './ports'
 import { PushHubService, pushRoute } from './push/route'
+import { fixtureRoute } from './fixtures/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, settingsHandlers } from './settings'
 import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
@@ -39,6 +40,10 @@ export interface ServerOptions {
   readonly ports: ServerPorts
   /** How long a push peer has to say hello. The contract's default otherwise. */
   readonly helloTimeoutMs?: number
+  /** Lane C of wave 3: register the end-to-end fixture route (`fixtures/route.ts`),
+   *  which runs code it is sent. TEST MODE ONLY: off by default, and the
+   *  packaged app never turns it on. */
+  readonly testFixtures?: boolean
 }
 
 export type ServerServices =
@@ -103,11 +108,16 @@ export const BusesLive = busesLayer.pipe(
 )
 
 /** The middleware outside the router, outermost first: the loopback CORS
- *  answer, the push upgrade, then the token check. */
+ *  answer, the push upgrade, then the token check, then (test mode only)
+ *  the fixture route, inside the token check so it is never open. */
 const outer =
-  (token: string) =>
+  (options: ServerOptions) =>
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
-    Effect.flatMap(PushHubService, (hub) => corsForLoopback(pushRoute(hub)(bearerAuth(token)(app))))
+    Effect.flatMap(PushHubService, (hub) =>
+      corsForLoopback(
+        pushRoute(hub)(bearerAuth(options.token)(fixtureRoute(options.testFixtures === true)(app)))
+      )
+    )
 
 /**
  * The served API over the services, needing only an `HttpServer` (and the
@@ -125,7 +135,7 @@ export const ServerLive = (
   const api: Layer.Layer<HttpApi.Api, never, ServerServices> = ApiLive.pipe(
     Layer.provide(BusesLive.pipe(Layer.provide(services)))
   )
-  return HttpApiBuilder.serve(outer(options.token)).pipe(
+  return HttpApiBuilder.serve(outer(options)).pipe(
     Layer.provide(Middleware.layer),
     Layer.provide(api),
     Layer.provideMerge(services)

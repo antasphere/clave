@@ -1,7 +1,8 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * A session's attached web view actually REPLACES its terminal.
  *

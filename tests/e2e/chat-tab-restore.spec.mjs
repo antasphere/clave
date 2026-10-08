@@ -1,7 +1,9 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec restarts the app and expects its sessions back. On
+// an attached server the records are the server's, but the window's restore
+// still reads main's own list (`pty:list`) and main's folder, so nothing is
+// brought back: the restore of persisted sessions on the standalone server
+// is wave 3's named leftover (ADR 0003). Not a known failure.
 /**
  * A Claude chat tab survives an app restart, and a real close forgets it.
  *

@@ -55,8 +55,16 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
 const serverRouter = createMethodRouter({
-  resolve: async (): Promise<Endpoint | null> =>
-    ((await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as Endpoint | null) ?? null,
+  resolve: async (): Promise<Endpoint | null> => {
+    const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as
+      | (Endpoint & { mode?: ServerMode })
+      | null
+    // The endpoint's mode is learned here too, so the terminal pane's road
+    // (below) is known by the time a session started through the server has
+    // a pane: a routed call always precedes one.
+    if (found?.mode) serverModeKnown = found.mode
+    return found ?? null
+  },
   connect: async (endpoint) => {
     // The calls leave through NODE, not the page: this preload runs with
     // Node available (`sandbox: false`), so the request client goes out
@@ -97,6 +105,9 @@ let serverWatching = false
 const announceServer = (backing: Backing): void => {
   if (serverBacking) return
   serverBacking = backing
+  // The terminal pane's road needs the mode (below): asked now, so a pane
+  // mounted after the announce already knows it.
+  void serverMode()
   backing.push.connect()
   for (const wire of [...serverWaiters]) wire(backing)
   serverWaiters.clear()
@@ -374,6 +385,76 @@ function onBothTransports(
   const withdraw = onServerAvailable((backing) => {
     if (gone || unless()) return
     pushOff = bind(backing.push)
+  })
+  return () => {
+    gone = true
+    withdraw()
+    ipcOff()
+    pushOff?.()
+  }
+}
+// ── The terminal pane's road (lane C of wave 3) ──
+// A terminal's start, its resizes and its bytes go over IPC inside the app,
+// where the bytes are ordered and cost nothing, and to the server only when
+// the app is ATTACHED to one, whose terminals run in that process (the shell
+// of an attached app has none to write to). The mode is the endpoint's own
+// word (`mode`, `src/main/server/endpoint.ts`), asked of main once it names
+// one. The bytes keep their order over HTTP by chaining per session; the
+// pane's listeners hear the bytes and the exit over IPC as always and, when
+// attached, off the push channel's `pty` frames and exit instead, never both.
+type ServerMode = 'in-process' | 'attached'
+let serverModeKnown: ServerMode | null = null
+const serverMode = async (): Promise<ServerMode | null> => {
+  if (serverModeKnown) return serverModeKnown
+  const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as { mode?: ServerMode } | null
+  if (found?.mode) serverModeKnown = found.mode
+  return found?.mode ?? null
+}
+// The mode is asked for as the window starts and again whenever the server
+// is announced, so by the time a terminal pane exists it is known: inside
+// the app the pane's calls then stay SYNCHRONOUS sends, as they always were
+// (a write that waited on a promise first reordered against the pane's
+// own start and resize), and only an app known to be attached takes the
+// server road.
+void serverMode()
+const terminalChains = new Map<string, Promise<void>>()
+const viaAttachedServer =
+  <A extends unknown[]>(route: {
+    ipc: (...args: A) => void
+    server: (backing: Backing, ...args: A) => Promise<void>
+  }) =>
+  async (...args: A): Promise<void> => {
+    if (serverModeKnown !== 'attached') {
+      route.ipc(...args)
+      if (!serverModeKnown) void serverMode()
+      return
+    }
+    const backing = await serverRouter.backing()
+    if (!backing) throw new Error('The app is attached to a server it cannot reach')
+    const id = String(args[0])
+    const next = (terminalChains.get(id) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => route.server(backing, ...args))
+    terminalChains.set(id, next)
+    try {
+      await next
+    } finally {
+      if (terminalChains.get(id) === next) terminalChains.delete(id)
+    }
+  }
+/** The IPC listener always; the push binding only once the server is there
+ *  AND the app is attached to it. */
+function onAttachedPush(
+  ipcOff: () => void,
+  bind: (push: import('@clave/client').PushClient) => () => void
+): () => void {
+  let pushOff: (() => void) | null = null
+  let gone = false
+  const withdraw = onServerAvailable((backing) => {
+    void serverMode().then((mode) => {
+      if (gone || mode !== 'attached') return
+      pushOff = bind(backing.push)
+    })
   })
   return () => {
     gone = true
@@ -686,13 +767,21 @@ const electronAPI = {
     }
   }),
 
-  writeSession: (id: string, data: string) => ipcRenderer.send('pty:write', id, data),
+  writeSession: viaAttachedServer<[string, string]>({
+    ipc: (id, data) => ipcRenderer.send('pty:write', id, data),
+    server: ({ api }, id, data) =>
+      api.sessions.write(id, { type: 'bytes', data: new TextEncoder().encode(data) })
+  }),
 
-  startSession: (id: string, cols: number, rows: number) =>
-    ipcRenderer.send('pty:start', id, cols, rows),
+  startSession: viaAttachedServer<[string, number, number]>({
+    ipc: (id, cols, rows) => ipcRenderer.send('pty:start', id, cols, rows),
+    server: ({ api }, id, cols, rows) => api.sessions.resize(id, cols, rows)
+  }),
 
-  resizeSession: (id: string, cols: number, rows: number) =>
-    ipcRenderer.send('pty:resize', id, cols, rows),
+  resizeSession: viaAttachedServer<[string, number, number]>({
+    ipc: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
+    server: ({ api }, id, cols, rows) => api.sessions.resize(id, cols, rows)
+  }),
 
   killSession: viaServer<[string], void>({
     ipc: (id) => ipcRenderer.invoke('pty:kill', id),
@@ -742,10 +831,20 @@ const electronAPI = {
   ackRehomed: (sessionIds: string[]) => ipcRenderer.send('window:rehomed', sessionIds),
 
   onSessionData: (id: string, callback: (data: string) => void) =>
-    createIpcListener<[string]>(`pty:data:${id}`, callback),
+    onAttachedPush(createIpcListener<[string]>(`pty:data:${id}`, callback), (push) => {
+      // One decoder per listener: a multibyte character split across two
+      // frames is finished by the next one, as the shell's own decoder did.
+      const decoder = new TextDecoder()
+      return push.subscribe(id, (stream) => {
+        const frame = stream as SessionStream
+        if (frame.kind === 'pty') callback(decoder.decode(frame.data, { stream: true }))
+      })
+    }),
 
   onSessionExit: (id: string, callback: (exitCode: number) => void) =>
-    createIpcListener<[number]>(`pty:exit:${id}`, callback),
+    onAttachedPush(createIpcListener<[number]>(`pty:exit:${id}`, callback), (push) =>
+      push.subscribe(id, noop, callback)
+    ),
 
   // A session's title, plan and clear are server events on the push channel
   // once the server runs, and per-window sends before (one or the other,

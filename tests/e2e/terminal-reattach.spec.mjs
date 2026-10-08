@@ -1,6 +1,9 @@
-// Pinned in-process (wave 2 rule): this spec reads the session records and the
-// terminal journal the app writes, fixtures inside the main process; an
-// attached server has no terminals until the Node terminal process of wave 3.
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec restarts the app and expects its sessions back. On
+// an attached server the records are the server's, but the window's restore
+// still reads main's own list (`pty:list`) and main's folder, so nothing is
+// brought back: the restore of persisted sessions on the standalone server
+// is wave 3's named leftover (ADR 0003). Not a known failure.
 /**
  * A terminal started, written to, and reattached after a restart (PRDCT-3240).
  *
@@ -54,8 +57,11 @@ const MARKER_2 = `REATTACH-SECOND-${process.pid}`
 const liveIds = (win) =>
   win.evaluate(() => window.electronAPI.sessionsList().then((all) => all.map((s) => s.id)))
 
+/** The session records live where the terminal manager runs: under the
+ *  app's data folder in-process, under the server's when attached. */
+let recordsRoot = DIR
 function recordOf(id) {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRoot, 'session-records')
   if (!existsSync(dir)) return null
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
     const r = JSON.parse(readFileSync(path.join(dir, f), 'utf-8'))
@@ -100,6 +106,7 @@ export async function run(t) {
 
   let tmuxName = null
   const first = await launchApp(DIR, { server: 'in-process' })
+  recordsRoot = first.server?.dataDir ?? DIR
   let id
   try {
     const { win } = first
@@ -119,7 +126,7 @@ export async function run(t) {
     )
     t.check(
       'keyed by the tmux name',
-      record?.file === path.join(DIR, 'session-records', `${tmuxName}.json`),
+      record?.file === path.join(recordsRoot, 'session-records', `${tmuxName}.json`),
       record?.file
     )
     t.check('the tmux session is alive', tmuxName && tmuxSessionAlive(tmuxName))

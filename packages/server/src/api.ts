@@ -17,6 +17,7 @@ import {
   GetSessionModels,
   ListSessions,
   SetSessionView,
+  ResizeSession,
   StartSession,
   StopSession,
   WriteSession
@@ -52,6 +53,7 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('start', HttpCqrs.command(StartSession))
     .handle('stop', HttpCqrs.command(StopSession))
     .handle('write', HttpCqrs.command(WriteSession))
+    .handle('resize', HttpCqrs.command(ResizeSession))
     .handle('setView', HttpCqrs.command(SetSessionView))
     .handle('models', HttpCqrs.query(GetSessionModels))
     .handle('commands', HttpCqrs.query(GetSessionCommands))

@@ -14,15 +14,15 @@ import { until } from './harness.mjs'
      asks the conversation to launch it again on the model picked. */
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-subagents',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   // What the pane writes to the session, in order.
-  await app.evaluate(() => {
+  await fixture.evaluate(() => {
     globalThis.__writes = []
     const host = globalThis.__claveE2E.sessionHost
     const write = host.write
@@ -31,10 +31,10 @@ export async function run(t) {
       return write.call(host, id, input)
     }
   })
-  const writes = () => app.evaluate(() => globalThis.__writes)
+  const writes = () => fixture.evaluate(() => globalThis.__writes)
   try {
     /* 1. A context of 12k on a model whose window is known: the bar fills. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'session_meta', model: 'claude-opus-5-5', providerSessionId: null },
       { type: 'context_usage', used: 12_000, window: null }
     ])
@@ -67,7 +67,7 @@ export async function run(t) {
     )
 
     /* 3. A background subagent at work. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'tool_call',
         id: 'call-1',
@@ -139,6 +139,6 @@ export async function run(t) {
       sent
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

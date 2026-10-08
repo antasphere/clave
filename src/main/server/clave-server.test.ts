@@ -3,10 +3,11 @@ import { createApiClient, PushClient, type PushSocketConstructor } from '@clave/
 // The host's neighbours that reach the PTY backend and Electron: nothing here
 // names a tab or looks a window up.
 vi.mock('../title-generator', () => ({ notifyChatMessage: vi.fn() }))
-vi.mock('../window-registry', () => ({ windowRegistry: { getWindowByKey: () => null } }))
 vi.mock('../sessions/lifecycle', () => ({
-  spawnSessionForWindow: vi.fn(),
+  spawnSession: vi.fn(),
   stopSession: vi.fn(),
+  resizeSession: vi.fn(),
+  writeTerminal: vi.fn(),
   trackInput: vi.fn()
 }))
 import { WebSocket } from 'ws'
@@ -30,7 +31,7 @@ const record = (id: string, windowKey = 'w1'): Session => ({
   title: id
 })
 const lifecycle: SessionLifecycle = {
-  spawn: async (_win, cwd) => ({
+  spawn: async (_windowKey, cwd) => ({
     id: 'spawned',
     cwd,
     folderName: cwd.split('/').pop() ?? cwd,
@@ -38,10 +39,12 @@ const lifecycle: SessionLifecycle = {
     claudeSessionId: null,
     piSessionId: null
   }),
-  stop: async () => {}
+  stop: async () => {},
+  resize: () => {},
+  writeTerminal: () => {}
 }
 const hostOver = (manager: SessionManager): ReturnType<typeof createSessionHost> =>
-  createSessionHost({ manager, lifecycle, windowByKey: () => null })
+  createSessionHost({ manager, lifecycle })
 
 afterEach(async () => {
   await stopClaveServer()
@@ -129,8 +132,7 @@ describe('the server started by the shell', () => {
         stop: async (id) => {
           stopped.push(id)
         }
-      },
-      windowByKey: () => null
+      }
     })
     const endpoint = await startClaveServer({ manager, ports: { sessions: host } })
     const api = createApiClient(endpoint)
@@ -139,5 +141,32 @@ describe('the server started by the shell', () => {
     await api.sessions.stop('spawned')
     expect(stopped).toEqual(['spawned'])
     await api.dispose()
+  })
+  it('hands a terminal’s size and its bytes to the lifecycle, where the journal and the /clear watch are', async () => {
+    const manager = new SessionManager()
+    const adapter = new EchoAdapter()
+    manager.adopt(record('t1'), adapter.prepare({ id: 't1' } as never), adapter)
+    const resized: Array<[string, number, number]> = []
+    const written: Array<[string, string]> = []
+    const host = createSessionHost({
+      manager,
+      lifecycle: {
+        ...lifecycle,
+        resize: (id, cols, rows) => {
+          resized.push([id, cols, rows])
+        },
+        writeTerminal: (id, text) => {
+          written.push([id, text])
+        }
+      }
+    })
+    const endpoint = await startClaveServer({ manager, ports: { sessions: host } })
+    const api = createApiClient(endpoint)
+    await api.sessions.resize('t1', 120, 40)
+    await api.sessions.write('t1', { type: 'bytes', data: new TextEncoder().encode('ls -la\r') })
+    expect(resized).toEqual([['t1', 120, 40]])
+    expect(written).toEqual([['t1', 'ls -la\r']])
+    await api.dispose()
+    manager.kill('t1')
   })
 })

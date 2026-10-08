@@ -16,8 +16,8 @@ const turn = (n) =>
     : { type: 'assistant_text', delta: paragraph(n), final: true }
 
 export async function run(t) {
-  const fixture = await openChat('chat-scroll-end')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-scroll-end')
+  const { win, record, fixture } = chat
   try {
     // Scoped to the conversation view: the compact view is mounted on the
     // same session behind it and scrolls on its own.
@@ -40,7 +40,7 @@ export async function run(t) {
 
     const count = 40
     await inject(
-      app,
+      fixture,
       record.id,
       Array.from({ length: count }, (_, i) => turn(i))
     )
@@ -64,7 +64,7 @@ export async function run(t) {
     t.check('scrolling up shows the way back down', true)
 
     const before = (await geometry()).height
-    await inject(app, record.id, [turn(count)])
+    await inject(fixture, record.id, [turn(count)])
     assert.ok(
       await until(async () => (await geometry()).height > before),
       'the new turn lands below the reader'
@@ -81,7 +81,7 @@ export async function run(t) {
       'the control leaves once the end is in view'
     )
 
-    await inject(app, record.id, [turn(count + 1)])
+    await inject(fixture, record.id, [turn(count + 1)])
     await turnAt(count + 1).waitFor()
     t.check(
       'after the jump the transcript follows the stream again',
@@ -90,6 +90,6 @@ export async function run(t) {
     )
     assert.equal(await button.count(), 0)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

@@ -133,7 +133,9 @@ async function bootServer(): Promise<void> {
             terminals: terminalPorts().terminals,
             // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
             sidebar: sidebarLayouts()
-          }
+          },
+          // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
+          testFixtures: TEST_NO_ACTIVATE
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
       }
@@ -149,7 +151,7 @@ async function bootServer(): Promise<void> {
     // server runs no sessions until its terminal process, wave 3). The
     // in-process start publishes its own address in server/clave-server.ts.
     if (serverHandle.mode === 'attached')
-      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token })
+      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
   } catch (err) {
     const message = err instanceof ServerBootError ? err.message : String(err)
     console.error(`[server] not available: ${message}`)

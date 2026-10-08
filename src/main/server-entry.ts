@@ -13,30 +13,31 @@
  * started it reads that line and hands the pair to the app as
  * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
  *
- * The process runs `@clave/server`, the same package the app runs in-process.
- * Its terminals come from the terminal process (wave 3, ADR 0003): with
- * `--terminals <host:port>` and the process's token in
- * `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment),
+ * The process runs `@clave/server`, the same package the app runs in-process,
+ * over the app's own session host built in this process
+ * (`sessions/standalone-host.ts`, wave 3): a chat session runs its CLI as a
+ * child of this process, a terminal session gets its process from the
+ * terminals port. The terminals come from the terminal process (lane B of
+ * wave 3, ADR 0003): with `--terminals <host:port>` and the process's token
+ * in `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment),
  * `ports.terminals` is the gRPC port to it, and the server's readiness
  * carries a `terminals` check that turns false when the process stops
- * answering. Without `--terminals` the server runs on `Terminals.none`,
- * said on stderr, and every spawn answers the declared
- * `CapabilityUnavailable`. The sessions domain (wave 2) still runs on
- * `SessionHost.none` here until the standalone session host (lane C of wave
- * 3) is composed over these terminals. A client sees the same API, the same
- * token check and the same push channel as in-process. Nothing here imports
+ * answering. Without `--terminals` the server runs on `Terminals.none`, said
+ * on stderr, and a terminal's first resize answers the declared
+ * `CapabilityUnavailable`. A client sees the same API, the same token check
+ * and the same push channel as in-process. Nothing here imports
  * Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import {
-  startEmbedded,
-  SessionHost,
-  Terminals,
-  grpcTerminals,
-  type TerminalsService
-} from '@clave/server'
+import { startEmbedded, Terminals, grpcTerminals, type TerminalsService } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
+import { standaloneSessionHost } from './sessions/standalone-host'
+import { installE2eHooks } from './sessions/e2e-hooks'
+import { publishSessionStates, setServerEventPublisher } from './server/session-events'
+import { sessionManager } from './sessions/session-manager'
+import { ptyManager } from './pty-manager'
+import { TEST_NO_ACTIVATE } from './test-mode'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -91,17 +92,32 @@ async function main(): Promise<void> {
   // this server answers CapabilityUnavailable. The Antasphere account
   // (PRDCT-3259) is this server's own, restored from the data directory.
   const standalone = standaloneSettingsSource(dataDir)
+  // Installed FIRST: the session host's spawn reads the profiles and the
+  // accounts through the same ports. The source is on the test hooks
+  // namespace for the quota specs, as the shell's is.
+  installE2eHooks({ settings: standalone.settings })
+  // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
+  const sessions = standaloneSessionHost({ dataDir, terminals })
   const server = await startEmbedded({
-    // No standalone session host yet (lane C of wave 3): a start answers
-    // `CapabilityUnavailable` and says so, the reads answer empty.
     ports: {
-      sessions: SessionHost.none,
+      sessions,
       terminals,
       settings: standalone.settings
     },
     port,
-    ...(token !== undefined && { token })
+    ...(token !== undefined && { token }),
+    // ── Lane C of wave 3: the end-to-end fixture route, under the app's own
+    // test flag (`--test-no-activate`, passed by the harness and never by
+    // the packaged app), so the suite reaches this process as it reaches
+    // the app's; off, the route does not exist.
+    testFixtures: TEST_NO_ACTIVATE
   })
+
+  // A session's title, plan, clear and state go out as server events to
+  // every attached client (`server/session-events.ts`), as the in-process
+  // entry publishes them.
+  setServerEventPublisher((event) => server.publish(event))
+  const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
@@ -126,6 +142,12 @@ async function main(): Promise<void> {
   )
 
   let stopping = false
+  const sessions_shutdown = (): void => {
+    stopping_sessions = ptyManager.killAll().catch((error) => {
+      process.stderr.write(`clave-server: session shutdown failed: ${(error as Error).message}\n`)
+    })
+  }
+  let stopping_sessions: Promise<void> = Promise.resolve()
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
@@ -133,6 +155,14 @@ async function main(): Promise<void> {
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
+    stopStates()
+    setServerEventPublisher(null)
+    // The sessions go with the server, as they go with the app at its quit
+    // (`index.ts`): a chat's CLI is a detached child of this process and
+    // would outlive it; a terminal's tmux session is left for the next
+    // start, the way the app's quit leaves it (kill with killTmuxSession
+    // false, which killAll does).
+    sessions_shutdown()
     // The discovery file goes with the process: a reader must never find
     // the url and the token of a server that is gone.
     try {
@@ -140,8 +170,8 @@ async function main(): Promise<void> {
     } catch {
       /* nothing to remove */
     }
-    server
-      .stop()
+    stopping_sessions
+      .then(() => server.stop())
       .then(() => closeTerminals())
       .then(
         () => process.exit(0),

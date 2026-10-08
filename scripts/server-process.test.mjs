@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS test of a plain JS script */
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import {
   bunBinary,
   serverCommand,
@@ -60,6 +60,194 @@ describe('the server as its own process', () => {
       rmSync(dataDir, { recursive: true, force: true })
     }
   })
+
+  it('registers the test fixture route only under --test-no-activate, and never by default', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-gate-'))
+    try {
+      const evaluate = (server) =>
+        fetch(`${server.url}/e2e/evaluate`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ source: '() => 1' })
+        })
+      // The entry as the dev script starts it: no test flag, no route.
+      const bare = await startServerProcess({ repo: REPO, dataDir, terminals: 'none' })
+      try {
+        expect((await evaluate(bare)).status).toBe(404)
+      } finally {
+        await bare.stop()
+      }
+      // The entry as the harness starts it: the flag, the route, behind the token.
+      const testing = await startServerProcess({
+        repo: REPO,
+        dataDir,
+        terminals: 'none',
+        args: ['--test-no-activate']
+      })
+      try {
+        expect((await evaluate(testing)).status).toBe(200)
+        expect(await (await evaluate(testing)).json()).toEqual({ ok: true, value: 1 })
+        const noToken = await fetch(`${testing.url}/e2e/evaluate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ source: '() => 1' })
+        })
+        expect(noToken.status).toBe(401)
+      } finally {
+        await testing.stop()
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('publishes a session’s state on its push channel and stops the session with the server', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-states-'))
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate', '--dev-echo-adapter']
+    })
+    try {
+      const { connectThroughNode } = await import('../packages/client/src/node')
+      const backing = await connectThroughNode(
+        { url: server.url, token: server.token },
+        { client: 'server-process-test' }
+      )
+      const events = []
+      backing.push.onEvent((envelope) => events.push(envelope.event))
+      backing.push.connect()
+      await backing.push.whenOpen()
+      const info = await backing.api.sessions.start({
+        cwd: dataDir,
+        windowKey: 'w1',
+        options: { launchProfileId: 'dev-echo-adapter' }
+      })
+      backing.push.subscribe(info.id, () => {})
+      await backing.push.subscribed(info.id)
+      await backing.api.sessions.write(info.id, { type: 'user_message', text: 'hello' })
+      const until = async (pred, ms = 5000) => {
+        const end = Date.now() + ms
+        while (Date.now() < end) {
+          if (pred()) return true
+          await new Promise((r) => setTimeout(r, 50))
+        }
+        return pred()
+      }
+      expect(
+        await until(() =>
+          events.some((e) => e._tag === 'session.state_changed' && e.id === info.id)
+        )
+      ).toBe(true)
+      // The session is listed while the server runs and goes with it: a
+      // chat's CLI is a child of this process and must not outlive it.
+      expect((await backing.api.sessions.list('w1')).map((s) => s.id)).toEqual([info.id])
+      backing.push.close()
+      await backing.api.dispose()
+    } finally {
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('stops the CLI a chat started when the server stops, as the app’s quit does', async () => {
+    // A chat's CLI is a detached child of the server process (the adapter
+    // spawns it so a quit cannot take it down by accident); the entry's stop
+    // must kill it on purpose, or every stop of the standalone server leaves
+    // an agent running (the verifier's round 1, Major 1). The CLI here is a
+    // script that records its pid and sleeps.
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-orphan-'))
+    const fake = path.join(dataDir, 'fake-claude')
+    const pidFile = path.join(dataDir, 'fake.pid')
+    // The chat's CLI is the invocation on the stream protocol; the title
+    // generator runs the same binary once for the tab's name (a one-shot job
+    // of its own, not this session's) and must not be mistaken for it.
+    writeFileSync(
+      fake,
+      `#!/bin/sh\ncase "$*" in *stream-json*) echo $$ > ${pidFile} ;; esac\nexec sleep 300\n`,
+      { mode: 0o755 }
+    )
+    writeFileSync(
+      path.join(dataDir, 'agent-launch-profiles.json'),
+      JSON.stringify({
+        version: 1,
+        customProfiles: [
+          { id: 'fake', name: 'Fake', family: 'claude', command: [fake], additionalArgs: [] }
+        ],
+        globalDefaults: {},
+        workspaceOverrides: {}
+      })
+    )
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate']
+    })
+    let cliPid = null
+    try {
+      const { connectThroughNode } = await import('../packages/client/src/node')
+      const backing = await connectThroughNode(
+        { url: server.url, token: server.token },
+        { client: 'server-process-test' }
+      )
+      backing.push.connect()
+      await backing.push.whenOpen()
+      const chat = await backing.api.sessions.start({
+        cwd: dataDir,
+        windowKey: 'w1',
+        options: { launchProfileId: 'chat:claude:fake' }
+      })
+      backing.push.subscribe(chat.id, () => {})
+      await backing.push.subscribed(chat.id)
+      // The CLI starts on the first message.
+      await backing.api.sessions.write(chat.id, { type: 'user_message', text: 'hello' })
+      const started = async () => {
+        const end = Date.now() + 10_000
+        while (Date.now() < end) {
+          if (existsSync(pidFile)) {
+            const n = Number(readFileSync(pidFile, 'utf8').trim())
+            if (n > 0) return n
+          }
+          await new Promise((r) => setTimeout(r, 100))
+        }
+        return null
+      }
+      cliPid = await started()
+      expect(cliPid, 'the fake CLI started').not.toBeNull()
+      expect(alive(cliPid)).toBe(true)
+      const tree = () =>
+        execFileSync('ps', ['-o', 'pid,ppid,pgid,sess,command', '-p', `${server.pid},${cliPid}`], {
+          encoding: 'utf8'
+        }).trim()
+      const before = tree()
+      backing.push.close()
+      await backing.api.dispose()
+      await server.stop()
+      expect(await untilDead(server.pid)).toBe(true)
+      const died = await untilDead(cliPid)
+      expect(
+        died,
+        `the CLI died with the server\nbefore:\n${before}\nafter:\n${died ? '' : tree()}\nserver stderr:\n${server
+          .stderr()
+          .split('\n')
+          .filter(Boolean)
+          .slice(-8)
+          .join('\n')}`
+      ).toBe(true)
+    } finally {
+      if (cliPid && alive(cliPid)) {
+        try {
+          process.kill(cliPid, 'SIGKILL')
+        } catch {
+          /* gone */
+        }
+      }
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('a server that misses its announce timeout is killed, not left running', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-late-'))

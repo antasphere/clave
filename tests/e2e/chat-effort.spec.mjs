@@ -9,11 +9,11 @@ import path from 'node:path'
 import { openChat } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
 
-async function exercise(t, fixture, testId, label) {
-  const { app, win } = fixture
+async function exercise(t, chat, testId, label) {
+  const { app, win, fixture, server } = chat
   const view = win.locator(`[data-testid="${testId}"]`)
   const chip = view.getByRole('button', { name: 'Reasoning effort', exact: true })
-  await app.evaluate(() => {
+  await fixture.evaluate(() => {
     globalThis.__effortWrites = []
     const host = globalThis.__claveE2E.sessionHost
     const write = host.write
@@ -22,7 +22,7 @@ async function exercise(t, fixture, testId, label) {
       return write.call(host, id, input)
     }
   })
-  const written = () => app.evaluate(() => globalThis.__effortWrites)
+  const written = () => fixture.evaluate(() => globalThis.__effortWrites)
 
   await chip.filter({ hasText: 'Low' }).waitFor()
   t.check(`${label}: the chip names the level the adapter reported at ready`, true)
@@ -46,9 +46,11 @@ async function exercise(t, fixture, testId, label) {
   await chip.filter({ hasText: 'High' }).waitFor()
   t.check(`${label}: picking High writes set_effort and the chip follows the report`, true)
 
+  // Attached, the pick is remembered by the server, in its own data folder.
   const userData = await app.evaluate(({ app }) => app.getPath('userData'))
+  const prefsDir = server?.dataDir ?? userData
   const prefs = await until(() => {
-    const read = JSON.parse(readFileSync(path.join(userData, 'preferences.json'), 'utf8'))
+    const read = JSON.parse(readFileSync(path.join(prefsDir, 'preferences.json'), 'utf8'))
     return read.chatEfforts?.echo === 'high' ? read : null
   })
   assert.ok(prefs, 'the pick is remembered for the next chat on this adapter')

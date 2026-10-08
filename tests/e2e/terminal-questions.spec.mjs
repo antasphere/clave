@@ -24,12 +24,12 @@ const filler = (n) =>
   }))
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-questions',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   try {
     // Pinning is the default; make sure of it.
@@ -37,7 +37,7 @@ export async function run(t) {
     if ((await pin.getAttribute('aria-pressed')) !== 'true') await pin.click()
 
     /* 1. A bare one-line question, scrolled past: pinned, never folded. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'one line question' },
       ...filler(40),
       { type: 'assistant_text', delta: 'Done.', final: true },
@@ -134,7 +134,7 @@ export async function run(t) {
     )
 
     /* 2. An interrupted one-line question: the note folds away, the box stays whole. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'OK well archive the sessions and close their tabs' },
       { type: 'turn_interrupted' },
       ...filler(40),
@@ -158,7 +158,7 @@ export async function run(t) {
     const long = Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a very long message`).join(
       '\n'
     )
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: long },
       ...filler(60),
       { type: 'assistant_text', delta: 'Done.', final: true },
@@ -277,21 +277,21 @@ export async function run(t) {
     t.check('a pushed question scrolls on over the top edge', leaving.top < 0, leaving)
 
     /* 4. "Other": the field wraps, the record wraps and says Answered. */
-    await app.evaluate(({ BrowserWindow }, id) => {
+    await fixture.evaluate((id) => {
       const host = globalThis.__claveE2E.sessionHost
       const write = host.write
       host.write = (sid, input) => {
         if (input.type !== 'permission_response') return write.call(host, sid, input)
         // The adapter leaves blocked the moment it has the reply: that state
         // reaches the pane before the write's own answer does.
-        BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
+        globalThis.__claveE2E.echo.inject(id, {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }
         })
         return Promise.resolve()
       }
     }, record.id)
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'ask me something' },
       {
         type: 'permission_request',
@@ -361,6 +361,6 @@ export async function run(t) {
       record_
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

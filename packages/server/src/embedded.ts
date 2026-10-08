@@ -29,6 +29,8 @@ export interface EmbeddedOptions {
   readonly helloTimeoutMs?: number
   /** Log at and above this level; warnings only by default, requests are not logged. */
   readonly logLevel?: LogLevel.LogLevel
+  /** The end-to-end fixture route, test mode only (`runtime.ts`). */
+  readonly testFixtures?: boolean
 }
 
 export interface EmbeddedServer {
@@ -50,7 +52,8 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
     token,
     serverId,
     ports: options.ports,
-    ...(options.helloTimeoutMs !== undefined && { helloTimeoutMs: options.helloTimeoutMs })
+    ...(options.helloTimeoutMs !== undefined && { helloTimeoutMs: options.helloTimeoutMs }),
+    ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })
   }).pipe(
     Layer.provideMerge(
       NodeHttpServer.layer(() => createServer(), { port: options.port ?? 0, host })

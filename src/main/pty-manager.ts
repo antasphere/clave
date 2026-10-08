@@ -15,6 +15,7 @@ import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
+import { installE2eHooks } from './sessions/e2e-hooks'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
@@ -31,6 +32,9 @@ import type { Session, UserMessageInput } from '../shared/session-model'
 // behind the adapter. No renderer PTY channel or spawn result changes.
 export * from './sessions/adapters/pty-backend'
 const echoAdapter = new EchoAdapter()
+// The suite's way to inject a frame into an echo session, in test mode only
+// (`sessions/e2e-hooks.ts`); outside test mode nothing is installed.
+installE2eHooks({ echo: { inject: (id, stream) => echoAdapter.inject(id, stream) } })
 const claudeAdapter = new ClaudeAdapter()
 sessionManager.registerAdapter(ptyAdapter)
 sessionManager.registerAdapter(echoAdapter)

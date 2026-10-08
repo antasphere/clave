@@ -13,13 +13,13 @@ async function reloadChat(win, input) {
 }
 
 export async function run(t) {
-  const fixture = await openChat('chat-input-history')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-input-history')
+  const { win, record, fixture } = chat
   try {
     const input = win.locator('[data-testid="chat-view"] textarea')
     await input.press('ArrowUp')
     assert.equal(await input.inputValue(), '')
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'First message\nwith another line' },
       { type: 'assistant_text', delta: 'Do not recall this reply', final: true },
       { type: 'user_message', text: 'Latest message' },
@@ -57,7 +57,7 @@ export async function run(t) {
     t.check('drafts, modified arrows, IME and editing are safe; recalled text can be resent', true)
 
     await input.fill('')
-    await inject(app, record.id, [{ type: 'user_message', text: '/help' }])
+    await inject(fixture, record.id, [{ type: 'user_message', text: '/help' }])
     await win
       .locator('[data-testid="chat-view"] .chat-turn[data-role="user"]')
       .filter({ hasText: '/help' })
@@ -88,7 +88,7 @@ export async function run(t) {
     assert.equal(await fresh.inputValue(), '', 'another session has its own history')
     t.check('history stays within its session', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
   const compact = await openChat(
     'compact-input-history',

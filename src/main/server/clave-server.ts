@@ -29,7 +29,7 @@ import {
   getClaveServerEndpoint,
   setClaveServerEndpoint
 } from './endpoint'
-import { setServerEventPublisher } from './session-events'
+import { publishSessionStates, setServerEventPublisher } from './session-events'
 
 export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
@@ -44,6 +44,9 @@ export interface StartOptions {
   manager?: SessionManager
   /** The ports the server answers from, one per domain (`ports.ts`). */
   ports: ServerPorts
+  /** The end-to-end fixture route, under `--test-no-activate` only (lane C
+   *  of wave 3): the boot passes the test flag, nothing else turns it on. */
+  testFixtures?: boolean
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -66,20 +69,14 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const server = await startEmbedded({
     ports,
     ...(options.port !== undefined && { port: options.port }),
-    ...(options.token !== undefined && { token: options.token })
+    ...(options.token !== undefined && { token: options.token }),
+    ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })
   })
   running = server
-  const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token }
+  const endpoint: ClaveServerEndpoint = { url: server.url, token: server.token, mode: 'in-process' }
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
-  // Every attached client hears a session change state, whether or not it
-  // follows that session's stream.
-  stopStates = manager.subscribeAll((id, stream) => {
-    if (stream.kind !== 'event' || stream.event.type !== 'state_change') return
-    void server
-      .publish({ _tag: 'session.state_changed', id, state: stream.event.state })
-      .catch((error) => console.error('[clave-server] state event not published', error))
-  })
+  stopStates = publishSessionStates(manager, (event) => server.publish(event))
   return endpoint
 }
 

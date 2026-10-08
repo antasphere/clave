@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrowserWindow } from 'electron'
+import {
+  inMemorySessionWindows,
+  installSessionWindows,
+  type SessionWindowsPort
+} from './sessions/windows'
 
 // The module reaches for Electron, the PTY backend's login-shell env and the
 // history store at import; none of them is needed here. The CLI itself is a
@@ -24,7 +28,10 @@ const mocks = vi.hoisted(() => ({
     id === 'acct-work' ? 'sk-ant-oat01-account' : undefined
   )
 }))
-vi.mock('electron', () => ({ BrowserWindow: class {} }))
+// The generator imports no Electron (PRDCT-3293): asking for it fails the import.
+vi.mock('electron', () => {
+  throw new Error('the title generator imported electron')
+})
 vi.mock('child_process', () => ({ execFile: mocks.execFile }))
 // The login shell of the machine this was found on: a Nushell profile that
 // exported a `claude setup-token` token as ANTHROPIC_API_KEY.
@@ -76,12 +83,19 @@ describe('title generation CLI arguments', () => {
 
 type Callback = (err: Error | null, stdout: string, stderr: string) => void
 let sequence = 0
-function window(): { win: BrowserWindow; send: ReturnType<typeof vi.fn> } {
+/** A window the tab is in, as the session windows port names it: its key,
+ *  and what the per-window arm sent it. */
+function window(): { win: string; send: ReturnType<typeof vi.fn> } {
   const send = vi.fn()
-  return {
-    win: { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
-    send
+  const key = `win-${++sequence}`
+  const port: SessionWindowsPort = {
+    ...inMemorySessionWindows(),
+    send: (windowKey, channel, ...args) => {
+      if (windowKey === key) send(channel, ...args)
+    }
   }
+  installSessionWindows(port)
+  return { win: key, send }
 }
 async function settled(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -214,10 +228,9 @@ describe('a chat tab is named by its first message', () => {
 
   it('a window gone before the title arrived receives nothing', async () => {
     const id = `chat-${++sequence}`
-    const send = vi.fn()
-    const win = { isDestroyed: () => true, webContents: { send } } as unknown as BrowserWindow
+    const { send } = window()
     scheduleChatTitle(id)
-    notifyChatMessage(id, 'please make the sidebar tab follow the first message', win)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message', 'gone-window')
     await settled()
     expect(mocks.execFile).toHaveBeenCalledTimes(1)
     expect(send).not.toHaveBeenCalled()

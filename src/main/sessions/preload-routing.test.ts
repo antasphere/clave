@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
   const state = {
     exposed: new Map<string, unknown>(),
     invoke: vi.fn(),
+    send: vi.fn(),
     on: vi.fn(),
     removeListener: vi.fn(),
     apiList: vi.fn(),
@@ -76,7 +77,12 @@ vi.mock('electron', () => ({
   contextBridge: {
     exposeInMainWorld: (key: string, value: unknown) => mocks.exposed.set(key, value)
   },
-  ipcRenderer: { invoke: mocks.invoke, on: mocks.on, removeListener: mocks.removeListener },
+  ipcRenderer: {
+    invoke: mocks.invoke,
+    send: mocks.send,
+    on: mocks.on,
+    removeListener: mocks.removeListener
+  },
   webUtils: {}
 }))
 vi.mock('@clave/client/router', async (importActual) => {
@@ -105,7 +111,8 @@ vi.mock('@clave/client/node', () => ({
 
 let api: ElectronAPI
 
-const endpoint = { url: 'http://127.0.0.1:4242', token: 'secret' }
+const endpoint = { url: 'http://127.0.0.1:4242', token: 'secret', mode: 'in-process' }
+const attachedEndpoint = { ...endpoint, mode: 'attached' }
 const identity = { windowId: 1, windowKey: 'w-7', workspaceId: null, isPrimary: true }
 const onServer = { 'server:endpoint': endpoint, 'window:identity': identity }
 const answer = (table: Record<string, unknown>): void => {
@@ -137,6 +144,9 @@ const connectBacking = async (): Promise<void> => {
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  // The preload asks for the endpoint as it loads (the terminal pane's
+  // mode): a previous test's answer must not be what it hears.
+  mocks.invoke.mockReset()
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   delete process.env.CLAVE_SERVER_URL
   delete process.env.CLAVE_SERVER_TOKEN
@@ -151,7 +161,8 @@ beforeEach(async () => {
     capabilities: vi.fn(async () => ({ images: true })),
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
-    stop: vi.fn(async () => undefined)
+    stop: vi.fn(async () => undefined),
+    resize: vi.fn(async () => undefined)
   }
   mocks.createApiClient.mockImplementation(() => ({ sessions: mocks.sessions }))
   vi.resetModules()
@@ -168,7 +179,10 @@ describe('the preload routes sessionsList', () => {
     answer({ 'server:endpoint': null, 'sessions:list': [{ id: 'ipc' }] })
     expect(await api.sessionsList()).toEqual([{ id: 'ipc' }])
     expect(mocks.createApiClient).not.toHaveBeenCalled()
-    expect(channels()).toEqual(['server:endpoint', 'sessions:list'])
+    // The preload asks for the endpoint once at its start too, for the
+    // terminal pane's road (its mode), before any routed call.
+    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual(['sessions:list'])
+    expect(channels()[0]).toBe('server:endpoint')
   })
   it('goes to the server, scoped to this window, once main names an endpoint', async () => {
     answer({ ...onServer, 'sessions:list': [{ id: 'ipc' }] })
@@ -264,6 +278,71 @@ describe('the preload routes the other session calls', () => {
     })
     expect(mocks.sessions.stop).toHaveBeenCalledExactlyOnceWith('s1')
     expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'window:identity')).toEqual([])
+  })
+})
+
+describe('the terminal pane’s road', () => {
+  const ipcSends = (): unknown[][] => mocks.send.mock.calls
+  it('stays on IPC inside the app, with the server named and in-process', async () => {
+    answer(onServer)
+    await api.startSession('t1', 120, 40)
+    await api.writeSession('t1', 'ls\r')
+    await api.resizeSession('t1', 100, 30)
+    expect(ipcSends()).toEqual([
+      ['pty:start', 't1', 120, 40],
+      ['pty:write', 't1', 'ls\r'],
+      ['pty:resize', 't1', 100, 30]
+    ])
+    expect(mocks.sessions.resize).not.toHaveBeenCalled()
+    expect(mocks.sessions.write).not.toHaveBeenCalled()
+    // The pane's listeners hear IPC only: no push subscription is taken for
+    // a terminal of the in-process app (its bytes would arrive twice).
+    const data = vi.fn()
+    api.onSessionData('t1', data)
+    api.onSessionExit('t1', vi.fn())
+    await connectBacking()
+    expect(mocks.push!.subscribe).not.toHaveBeenCalled()
+    expect(mocks.on.mock.calls.map(([c]) => c)).toContain('pty:data:t1')
+  })
+  it('goes to the attached server, the bytes in order, and hears the pty frames off the push channel', async () => {
+    answer({ 'server:endpoint': attachedEndpoint, 'window:identity': identity })
+    // A pane exists only after a session started through the server: that
+    // routed call announces the server and the preload learns the mode.
+    await api.sessionsList()
+    await settle()
+    const order: string[] = []
+    let calls = 0
+    mocks.sessions.write.mockImplementation(async (_id: string, input: { data: Uint8Array }) => {
+      // The FIRST call answers last (20 ms), every later one at once: without
+      // the per-session chain the second write would land first and the
+      // order would read ['b', 'a'].
+      const delay = ++calls === 1 ? 20 : 1
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      order.push(new TextDecoder().decode(input.data))
+    })
+    const first = api.writeSession('t1', 'a')
+    const second = api.writeSession('t1', 'b')
+    const third = api.startSession('t1', 120, 40)
+    await settle()
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.all([first, second, third])
+    expect(order).toEqual(['a', 'b'])
+    expect(mocks.sessions.resize).toHaveBeenCalledWith('t1', 120, 40)
+    expect(ipcSends()).toEqual([])
+
+    const data = vi.fn()
+    const exit = vi.fn()
+    api.onSessionData('t1', data)
+    api.onSessionExit('t1', exit)
+    await settle()
+    expect(mocks.push!.subscribe).toHaveBeenCalled()
+    // A character split across two frames is finished by the second.
+    mocks.emitStream('t1', { kind: 'pty', data: new Uint8Array([0x68, 0xc3]) })
+    mocks.emitStream('t1', { kind: 'pty', data: new Uint8Array([0xa9]) })
+    mocks.emitStream('t1', { kind: 'event', event: { type: 'state_change', state: 'idle' } })
+    expect(data.mock.calls.map(([d]) => d).join('')).toBe('hé')
+    for (const listener of mocks.push!.exits.get('t1') ?? []) listener(0)
+    expect(exit).toHaveBeenCalledWith(0)
   })
 })
 

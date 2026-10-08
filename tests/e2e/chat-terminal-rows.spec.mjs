@@ -11,12 +11,12 @@ const answer = (n, times) =>
   `Answer ${n}. ` + 'An answer long enough to give the exchange some height. '.repeat(times)
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'chat-terminal-rows',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   try {
     const view = win.locator('[data-testid="terminal-view"]')
     const scroller = view.locator('.chat-scroll')
@@ -40,7 +40,7 @@ export async function run(t) {
     // Every exchange a question and a short answer; the last one's answer is
     // taller than the pane, so its question has something to stay pinned over.
     await inject(
-      app,
+      fixture,
       record.id,
       Array.from({ length: EXCHANGES }, (_, n) => [
         { type: 'user_message', text: `question ${n}` },
@@ -121,6 +121,6 @@ export async function run(t) {
       { count: texts.length, head: texts.slice(0, 3), tail: texts.slice(-3) }
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

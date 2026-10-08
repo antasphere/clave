@@ -11,17 +11,17 @@ import { until } from './harness.mjs'
    - a failure is counted in the title and marked on its call. */
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-tools',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   const runs = view.locator('.term-tools')
   try {
     /* 1. A lone call: a title of its own, no kind icon on it. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'read it' },
       { type: 'tool_call', id: 't1', name: 'Read', input: { file_path: '/repo/src/app.ts' } },
       { type: 'tool_result', id: 't1', output: 'export const app = 1' },
@@ -82,7 +82,7 @@ export async function run(t) {
     )
 
     /* 3. In flight, then left without a result by an interrupted turn. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'run the tests' },
       { type: 'state_change', state: 'working' },
       { type: 'tool_call', id: 'c1', name: 'Bash', input: { command: 'npm test' } },
@@ -104,7 +104,7 @@ export async function run(t) {
         flight.animation === 'term-shimmer',
       flight
     )
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'turn_interrupted' },
       { type: 'state_change', state: 'idle' }
     ])
@@ -124,7 +124,7 @@ export async function run(t) {
     )
 
     /* 4. A failure: counted in the title, marked on its call. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'try again' },
       { type: 'state_change', state: 'working' },
       { type: 'tool_call', id: 'f1', name: 'Bash', input: { command: 'false' } },
@@ -152,7 +152,7 @@ export async function run(t) {
     )
 
     /* 5. A run sits closer to the words that led to it than to what follows. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'look around' },
       { type: 'assistant_text', delta: 'Checking the layout first.', final: true },
       { type: 'tool_call', id: 'g1', name: 'Grep', input: { pattern: 'layout' } },
@@ -175,6 +175,6 @@ export async function run(t) {
       gaps
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

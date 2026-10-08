@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 const mock = vi.hoisted(() => ({
   spawn: vi.fn(),
+  /** The MCP config port: no MCP server behind it unless a case says so. */
+  mcpConfig: { write: vi.fn((): string | null => null), remove: vi.fn() },
   token: vi.fn(() => 'secret-account-token'),
   find: vi.fn((): string | null => null),
   profileArgs: ['--debug']
@@ -17,10 +20,6 @@ vi.mock('node:child_process', () => ({ spawn: mock.spawn }))
 vi.mock('../../shell-launch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shell-launch')>()),
   findExecutable: mock.find
-}))
-vi.mock('../../mcp/mcp-runtime', () => ({
-  getMcpRuntime: () => null,
-  deleteSessionMcpConfig: vi.fn()
 }))
 vi.mock('../../launch-profile-manager', () => ({
   launchProfileManager: {
@@ -84,8 +83,14 @@ beforeEach(() => {
   events.length = 0
   translator = new ClaudeStreamTranslator((e) => events.push(e))
   vi.clearAllMocks()
+  // The adapter writes a session's --mcp-config through the terminal
+  // layer's MCP config port (PRDCT-3293), never through the MCP runtime.
+  installTerminalPorts({ mcpConfig: mock.mcpConfig })
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  resetTerminalPorts()
+})
 function feed(payload: unknown): void {
   translator.line(JSON.stringify(payload))
 }
@@ -604,8 +609,7 @@ it('ends naturally with code 3 and flushes the last frame despite a setsid stdou
     ])
     expect(child!.stdout.destroyed).toBe(true)
     expect(process.kill(grandchildPid!, 0)).toBe(true)
-    const { deleteSessionMcpConfig } = await import('../../mcp/mcp-runtime')
-    expect(deleteSessionMcpConfig).toHaveBeenCalledExactlyOnceWith(spec.id)
+    expect(mock.mcpConfig.remove).toHaveBeenCalledExactlyOnceWith(spec.id)
     expect(() => adapter.write(handle, { type: 'user_message', text: 'late' })).toThrow(/ended/)
   } finally {
     clearTimeout(deadline)
@@ -1818,6 +1822,24 @@ describe('the reasoning effort of a Claude chat', () => {
       await adapter.kill(handle)
     }
   )
+
+  it('points the CLI at the MCP config the port writes, and omits the flag when it writes none', async () => {
+    mock.mcpConfig.write.mockReturnValue('/data/mcp/with-port.json')
+    const withPort = await started('mcp-argv')
+    withPort.adapter.write(withPort.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.mcpConfig.write).toHaveBeenCalledExactlyOnceWith('mcp-argv')
+    expect(mock.spawn.mock.calls[0][1][2]).toContain("'--mcp-config' '/data/mcp/with-port.json'")
+    withPort.child.emit('close', 0)
+    await withPort.adapter.kill(withPort.handle)
+    expect(mock.mcpConfig.remove).toHaveBeenCalledWith('mcp-argv')
+    mock.spawn.mockClear()
+    mock.mcpConfig.write.mockReturnValue(null)
+    const without = await started('mcp-argv-none')
+    without.adapter.write(without.handle, { type: 'user_message', text: 'Hello' })
+    expect(mock.spawn.mock.calls[0][1][2]).not.toContain('--mcp-config')
+    without.child.emit('close', 0)
+    await without.adapter.kill(without.handle)
+  })
 
   it('launches on the effort last picked, and on none when there is none', async () => {
     const picked = await started('effort-argv', { effort: 'high' })

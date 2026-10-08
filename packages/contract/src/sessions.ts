@@ -412,6 +412,23 @@ export const WriteSession = Command.define('WriteSession', {
   success: Schema.Void,
   failure: Schema.Union(SessionNotFound, SessionWriteRefused)
 })
+/**
+ * A terminal's size, from the pane that shows it. The first call starts the
+ * process at the pane's real size (the shell defers the spawn until a size
+ * is known, so an agent's banner is laid out for the real width), a later
+ * one resizes it; a session that is not a terminal takes it and does
+ * nothing. A server whose terminal process is missing refuses it with
+ * `CapabilityUnavailable`; a size the terminal refused is `SessionWriteRefused`.
+ */
+export const ResizeSession = Command.define('ResizeSession', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    cols: Schema.Int.pipe(Schema.positive()),
+    rows: Schema.Int.pipe(Schema.positive())
+  }),
+  success: Schema.Void,
+  failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionWriteRefused)
+})
 /** The view a session is read in, `<pluginId>/<viewId>`; null hands it back
  *  to the host's default. Answers the record as it stands. */
 export const SetSessionView = Command.define('SetSessionView', {

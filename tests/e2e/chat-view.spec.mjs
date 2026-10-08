@@ -1,14 +1,24 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): the chat's views are plugin views leased from the shell's
+// plugin host, which knows main's sessions and not the server's; attached,
+// a session on the standalone server mounts its chat but gets no view lease
+// (no view switcher, no chip that the view reports), so the pin stays until
+// the plugin host reaches the server, which the spec keeps in the shell
+// through wave 3. Not a known failure.
 // The chat view on the echo fixture. This spec and every spec built on its
-// `openChat` need a fixture INSIDE the main process (the echo adapter, the
-// session host wrapped to see what the composer wrote, synthetic frames sent to
-// the window), so they run the app with its in-process server and never attach
-// to a separate one: the wave's rule for wave 2, the shared attached-mode seam
-// being wave 3's, beside the terminal process.
+// `openChat` reach the sessions from inside (the echo adapter, the session host
+// wrapped to see what the composer wrote, synthetic frames) through the
+// fixture route (PRDCT-3293), the one road into the process hosting the
+// sessions whichever server runs: the launch goes through `launchApp`, which
+// hands the echo flags to the process that spawns the sessions, and
+// `fixture.evaluate` runs the wraps there. Synthetic frames are injected where
+// the session lives (`__claveE2E.echo.inject`) and reach the window over its own
+// transport. Only what is Electron's (an `ipcMain` stub, a `BrowserWindow`
+// send) stays on `app.evaluate`. The specs themselves run in-process for the
+// reason above; the road is the same in both modes.
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
-import path from 'node:path'
-import { _electron as electron } from 'playwright-core'
-import { REPO, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
+import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
 
 export const TOOL_RESULT = 'chat-result: verified payload 2537'
 
@@ -31,20 +41,18 @@ export async function openChat(
     fresh: true
   })
   seedTrustedRoots(dir, [root])
-  const app = await electron.launch({
-    executablePath: path.join(
-      REPO,
-      'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
-    ),
-    args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', '--dev-echo-adapter', ...extraArgs],
-    cwd: REPO,
-    env: { ...process.env, ...env }
+  const { app, win, server, fixture } = await launchApp(dir, {
+    args: ['--dev-echo-adapter', ...extraArgs],
+    env,
+    server: 'in-process'
   })
   // The session calls cross the server, not IPC (PRDCT-3239): what a spec
-  // wraps is the session host main exposes under --test-no-activate, the one
-  // object both transports answer from. A subscription is recorded when the
-  // host binds it and when the view's unsubscribe releases it.
-  await app.evaluate(() => {
+  // wraps is the session host the server exposes under --test-no-activate, the
+  // one object both transports answer from, reached through the fixture in
+  // whichever process hosts it. A subscription is recorded when the host binds
+  // it and when the view's unsubscribe releases it. Installed before the
+  // launcher click, so the new session's first subscription is seen.
+  await fixture.evaluate(() => {
     globalThis.__chatSubscriptions = []
     const host = globalThis.__claveE2E.sessionHost
     const subscribe = host.subscribe
@@ -57,8 +65,6 @@ export async function openChat(
       }
     }
   })
-  const win = await app.firstWindow()
-  await win.waitForLoadState('domcontentloaded')
   await win.evaluate(() => window.electronAPI.launchProfileSetGlobal('claude', 'dev-echo-adapter'))
   await win.reload()
   await win.locator('.launcher-split .launcher-btn').click()
@@ -73,6 +79,8 @@ export async function openChat(
     app,
     win,
     record,
+    fixture,
+    server,
     async close() {
       await app.close()
       rmSync(dir, { recursive: true, force: true })
@@ -80,21 +88,19 @@ export async function openChat(
     }
   }
 }
-export async function inject(app, id, events) {
-  await app.evaluate(
-    ({ BrowserWindow }, { id, events }) => {
-      for (const event of events)
-        BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
-          kind: 'event',
-          event
-        })
+/** Emit synthetic events into an echo session where it lives, as if the
+ *  session produced them; they reach the window over its own transport. */
+export async function inject(fixture, id, events) {
+  await fixture.evaluate(
+    ({ id, events }) => {
+      for (const event of events) globalThis.__claveE2E.echo.inject(id, { kind: 'event', event })
     },
     { id, events }
   )
 }
 export async function run(t) {
-  const fixture = await openChat()
-  const { app, win, record } = fixture
+  const chat = await openChat()
+  const { app, win, record, fixture } = chat
   try {
     assert.equal(await win.locator('.xterm').count(), 0)
     assert.equal(await win.getByLabel('Chat view', { exact: true }).count(), 1)
@@ -133,7 +139,7 @@ export async function run(t) {
       await view.locator('.chat-tool-item .chat-tool-section pre').first().innerText(),
       '/help\n'
     )
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'assistant_text', delta: 'Reading it now.', final: true },
       { type: 'tool_call', id: 'distinct-result', name: 'Read fixture', input: {} },
       { type: 'tool_result', id: 'distinct-result', output: TOOL_RESULT }
@@ -153,7 +159,7 @@ export async function run(t) {
         globalThis.__chatExternal = url
       })
     })
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'assistant_text',
         delta: '[Reference](https://example.com/chat-reference)',
@@ -167,7 +173,7 @@ export async function run(t) {
       )
     )
     t.check('markdown links use the host external-link handler', true)
-    await app.evaluate(() => {
+    await fixture.evaluate(() => {
       const host = globalThis.__claveE2E.sessionHost
       const write = host.write
       globalThis.__chatWrites = []
@@ -178,7 +184,7 @@ export async function run(t) {
         return write.call(host, id, input)
       }
     })
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'session_meta', model: 'fixture-model', providerSessionId: 'fixture' },
       {
         type: 'permission_request',
@@ -217,10 +223,12 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Allow once', exact: true }).click()
     assert.ok(
       await until(() =>
-        app.evaluate(() => globalThis.__chatWrites.some((x) => x.type === 'permission_response'))
+        fixture.evaluate(() =>
+          globalThis.__chatWrites.some((x) => x.type === 'permission_response')
+        )
       )
     )
-    assert.deepEqual(await app.evaluate(() => globalThis.__chatWrites[0]), {
+    assert.deepEqual(await fixture.evaluate(() => globalThis.__chatWrites[0]), {
       type: 'permission_response',
       id: 'permit',
       optionId: 'allow'
@@ -239,7 +247,7 @@ export async function run(t) {
     // consequence, the state_change that leaves blocked; the whole path — a real
     // adapter, answered through sessionsWrite from outside the view — is proven
     // in claude-chat-adapter.spec.mjs.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'permission_request',
         id: 'permit-elsewhere',
@@ -262,7 +270,7 @@ export async function run(t) {
       false,
       'an outstanding request offers a live button'
     )
-    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
     await win.locator('.chat-state[data-state="working"]').waitFor()
     const elsewhere = win.locator('.chat-permission-row[data-state="elsewhere"]')
     await elsewhere.waitFor()
@@ -279,7 +287,7 @@ export async function run(t) {
         `${label} must be gone once the kernel says the request was answered`
       )
     assert.equal(
-      await app.evaluate(
+      await fixture.evaluate(
         () =>
           globalThis.__chatWrites.filter(
             (x) => x.type === 'permission_response' && x.id === 'permit-elsewhere'
@@ -294,7 +302,7 @@ export async function run(t) {
     await win.getByRole('menuitem', { name: /Echo 2/ }).click()
     assert.ok(
       await until(() =>
-        app.evaluate(() =>
+        fixture.evaluate(() =>
           globalThis.__chatWrites.some((x) => x.type === 'set_model' && x.model === 'echo-2')
         )
       )
@@ -311,12 +319,12 @@ export async function run(t) {
     t.check('the working mark shows before text; a turn copies itself from its meta line', true)
     // The mark is the agent at work: it leaves the moment the turn ends and
     // returns with the next one, rather than resting under the answer.
-    await inject(app, record.id, [{ type: 'state_change', state: 'done' }])
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'done' }])
     assert.ok(
       await until(async () => (await win.locator('.chat-provider-mark').count()) === 0),
       'the mark must leave when the agent stops'
     )
-    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
     await win.locator('.chat-provider-mark[data-state="working"]').waitFor()
     t.check('the mark leaves when the agent stops and returns when it works again', true)
     assert.equal(await waitingDot.count(), 1, 'view-only answers cannot clear kernel blocked state')
@@ -331,7 +339,7 @@ export async function run(t) {
     )
     assert.ok(
       await until(() =>
-        app.evaluate(() => globalThis.__chatWrites.some((x) => x.type === 'interrupt'))
+        fixture.evaluate(() => globalThis.__chatWrites.some((x) => x.type === 'interrupt'))
       )
     )
     // Escape while working: a second interrupt. The last message sent
@@ -340,7 +348,7 @@ export async function run(t) {
     await input.press('Escape')
     assert.ok(
       await until(() =>
-        app.evaluate(
+        fixture.evaluate(
           () => globalThis.__chatWrites.filter((x) => x.type === 'interrupt').length === 2
         )
       )
@@ -351,7 +359,7 @@ export async function run(t) {
     // it steps back, says so underneath, and no error card is raised over it.
     const pane = win.locator('[data-testid="chat-view"]')
     const sent = pane.locator('.chat-turn-wrap[data-side="end"]').last()
-    await inject(app, record.id, [{ type: 'turn_interrupted' }])
+    await inject(fixture, record.id, [{ type: 'turn_interrupted' }])
     await sent.locator('.chat-turn[data-role="user"][data-interrupted="true"]').waitFor()
     assert.equal(await sent.locator('.chat-turn-note').innerText(), 'Interrupted')
     assert.equal(
@@ -380,7 +388,7 @@ export async function run(t) {
     )
     await input.fill('')
     t.check('dropping paths from the file and git panels pastes them into the composer', true)
-    const sentBefore = await app.evaluate(
+    const sentBefore = await fixture.evaluate(
       () => globalThis.__chatWrites.filter((x) => x.type === 'user_message').length
     )
     await input.fill('/')
@@ -393,7 +401,7 @@ export async function run(t) {
     assert.equal(await input.inputValue(), '/shout ')
     assert.equal(await win.getByRole('option').count(), 0)
     assert.equal(
-      await app.evaluate(
+      await fixture.evaluate(
         () => globalThis.__chatWrites.filter((x) => x.type === 'user_message').length
       ),
       sentBefore,
@@ -402,7 +410,7 @@ export async function run(t) {
     await input.fill('')
     t.check('a slash lists the session commands, filters as typed, completes on Enter', true)
     assert.ok(true)
-    await inject(app, record.id, [{ type: 'error', message: 'Fixture error', fatal: false }])
+    await inject(fixture, record.id, [{ type: 'error', message: 'Fixture error', fatal: false }])
     assert.equal(await win.getByRole('alert').innerText(), 'Fixture error')
     await app.evaluate(
       ({ BrowserWindow }, id) =>
@@ -412,17 +420,17 @@ export async function run(t) {
     await win.getByText('Session ended (exit 0)', { exact: true }).waitFor()
     assert.ok(await input.isDisabled())
     t.check('interrupt, inline errors and exit state reach the conversation', true)
-    const beforeDisable = await unsubscribeCount(app, record.id)
+    const beforeDisable = await unsubscribeCount(fixture, record.id)
     await win.evaluate(() => window.electronAPI.pluginsDisable('clave.chat-view'))
     await win.locator('.xterm').waitFor()
     assert.equal(await win.locator('[data-testid="chat-view"]').count(), 0)
-    assert.ok(await until(async () => (await unsubscribeCount(app, record.id)) > beforeDisable))
+    assert.ok(await until(async () => (await unsubscribeCount(fixture, record.id)) > beforeDisable))
     t.check('disabling plugin restores terminal fallback and releases its subscription', true)
     await win.evaluate(() =>
       window.electronAPI.pluginsEnable('clave.chat-view', ['sessions.read', 'sessions.write'])
     )
     await win.locator('[data-testid="chat-view"] textarea:not(:disabled)').waitFor()
-    const beforeClose = await unsubscribeCount(app, record.id)
+    const beforeClose = await unsubscribeCount(fixture, record.id)
     await win.getByRole('button', { name: 'Close session', exact: true }).click()
     const confirmation = win.getByRole('dialog', { name: 'Delete session', exact: true })
     await confirmation.waitFor()
@@ -432,7 +440,7 @@ export async function run(t) {
     )
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
     await confirmation.waitFor({ state: 'hidden' })
-    assert.equal(await unsubscribeCount(app, record.id), beforeClose)
+    assert.equal(await unsubscribeCount(fixture, record.id), beforeClose)
     assert.equal(await win.locator('[data-testid="chat-view"]').count(), 1)
     assert.ok(
       await win.evaluate(
@@ -445,7 +453,7 @@ export async function run(t) {
     await confirmation.getByRole('button', { name: 'Delete', exact: true }).click()
     await win.locator('[data-testid="chat-view"]').waitFor({ state: 'detached' })
     assert.equal(await win.locator(`[data-sidebar-item-id="${record.id}"]`).count(), 0)
-    assert.ok(await until(async () => (await unsubscribeCount(app, record.id)) > beforeClose))
+    assert.ok(await until(async () => (await unsubscribeCount(fixture, record.id)) > beforeClose))
     assert.equal(
       await win.evaluate(
         async (id) =>
@@ -456,13 +464,13 @@ export async function run(t) {
     )
     t.check('header Close cancels safely or confirms termination and subscription cleanup', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }
 
-async function unsubscribeCount(app, id) {
-  return app.evaluate(
-    (_electron, id) =>
+async function unsubscribeCount(fixture, id) {
+  return fixture.evaluate(
+    (id) =>
       globalThis.__chatSubscriptions.filter(
         (call) => call.channel === 'sessions:unsubscribe' && call.id === id
       ).length,

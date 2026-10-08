@@ -12,12 +12,13 @@
  *     refuses a wrong token. The main process listens on exactly the MCP port
  *     and (in-process) the server's port. Attached: the server is the one the
  *     harness started, and the windows are told its address in both modes
- *     (wave 2: the sessions live on the server; attached, the standalone
- *     server refuses a list and a start with a declared CapabilityUnavailable
- *     until its terminal process exists). In-process, a terminal the app
- *     spawns sees neither CLAVE_SERVER_URL nor CLAVE_SERVER_TOKEN: the token
- *     belongs to what is meant to call the server, never to a session or a
- *     helper by inheritance.
+ *     (wave 2: the sessions live on the server; wave 3: the standalone
+ *     server runs the app's own session host, so a renderer-routed list
+ *     answers attached as in-process). In both modes a terminal the app's
+ *     agent tools spawn (on main's own host until lane D moves the tools to
+ *     the server) sees neither CLAVE_SERVER_URL nor CLAVE_SERVER_TOKEN: the
+ *     token belongs to what is meant to call the server, never to a session
+ *     or a helper by inheritance.
  *  2. Whatever the suite's mode, an app attached by CLAVE_SERVER_URL to a
  *     server of this spec's own registers on it, and deregisters on quit,
  *     leaving that server up.
@@ -242,53 +243,29 @@ export async function run(t) {
       )
       // A renderer-routed call reaches the server through the preload's Node
       // side (no page origin, no CSP, no preflight; the round-2 blocker of
-      // wave 1): in-process it lists the sessions; attached, the standalone
-      // server has none to run until wave 3 and says so with a declared
-      // refusal, which the preload lets through and the window shows
-      // (server-sessions-attached.spec.mjs pins the notice).
+      // wave 1): in-process it lists the sessions, and attached too since the
+      // standalone server runs the app's own session host (wave 3, lane C;
+      // server-sessions-attached.spec.mjs proves a terminal there).
       const routed = await win.evaluate(() =>
         window.electronAPI.sessionsList().then(
           (sessions) => ({ ok: true, count: Array.isArray(sessions) ? sessions.length : -1 }),
           (error) => ({ ok: false, error: String(error && error.message ? error.message : error) })
         )
       )
-      if (MODE === 'in-process') {
-        t.check(
-          'a renderer-routed sessionsList() succeeds over the server',
-          routed.ok === true && routed.count >= 0,
-          routed
-        )
-      } else {
-        t.check(
-          'attached: a renderer-routed sessionsList() is refused by the standalone server, naming the missing terminal process',
-          routed.ok === false && /no sessions/.test(routed.error),
-          routed
-        )
-      }
+      t.check(
+        `${MODE}: a renderer-routed sessionsList() succeeds over the server`,
+        routed.ok === true && routed.count >= 0,
+        routed
+      )
 
       // A terminal the app spawns sees neither variable: the token is not
-      // inherited by sessions, nor by anything else main starts. Attached, no
-      // terminal can start (the standalone server refuses the start, pinned
-      // here), so the environment claim is held by the in-process run.
+      // inherited by sessions, nor by anything else main starts. The agent
+      // tools still start their session on main's own host in both modes
+      // (lane D of wave 3 moves them to the server), so the probe runs there
+      // attached as in-process, and the environment claim holds either way.
       const id = await identityOf(win)
       const g = await callMcp(app, 'createGroup', { name: 'probe' })
-      if (MODE === 'attached') {
-        const refusal = await callMcp(app, 'openSession', {
-          cwd: ROOT,
-          mode: 'terminal',
-          groupId: g.groupId,
-          command: 'true',
-          autoRun: true
-        }).then(
-          () => null,
-          (error) => String(error && error.message ? error.message : error)
-        )
-        t.check(
-          'attached: a start through the agent tools is refused by the standalone server, naming the missing terminal process',
-          refusal !== null && /no sessions/.test(refusal),
-          refusal
-        )
-      } else {
+      {
         const s = await callMcp(app, 'openSession', {
           cwd: ROOT,
           mode: 'terminal',
