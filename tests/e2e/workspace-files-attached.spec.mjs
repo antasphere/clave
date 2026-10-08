@@ -16,7 +16,7 @@
 //     channel, once.
 //  4. Main's own trust store never saw the folder the window trusted: an
 //     attached window's trust is the server's.
-import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -83,11 +83,15 @@ export async function run(t) {
     }
 
     // ── 1. the server's trust store decides ──
+    // The server keeps a root by its REAL path (symlinks resolved, so a path
+    // trick cannot defeat the trust check); the fixture folder lives under
+    // /tmp, a symlink to /private/tmp on macOS.
+    const real = (p) => realpathSync(p)
     const roots = await api('/workspace-files/trust/roots')
     t.equal('the standalone server serves the trusted roots', roots.status, 200)
     t.check(
       'and the seeded root is among them',
-      Array.isArray(roots.body) && roots.body.includes(ROOT),
+      Array.isArray(roots.body) && roots.body.includes(real(ROOT)),
       roots.body
     )
 
@@ -114,16 +118,17 @@ export async function run(t) {
     const trusted = await read(TRUSTED)
     t.equal('a file under the server’s trusted root opens whole', trusted?.prompt ?? null, PROMPT)
     t.equal('with no dialog', (await dialogs()).length, 0)
+    const shownSoFar = (await dialogs()).length
 
     // ── 2. the review round trip ──
     await app.evaluate(() => {
       globalThis.__e2eReviewAnswer = { response: 0, checkboxChecked: false }
     })
     const safe = await read(UNTRUSTED)
-    const shown = await dialogs()
+    const shown = (await dialogs()).slice(shownSoFar)
     t.check(
       'an elevated file outside the root raises the shell’s dialog',
-      shown.length === 1,
+      shown.length === 1 && shown[0].message.includes('untrusted.clave'),
       shown
     )
     t.check(
@@ -146,7 +151,7 @@ export async function run(t) {
     const rootsAfter = await api('/workspace-files/trust/roots')
     t.check(
       'and the folder is trusted on the SERVER, visible on its API',
-      Array.isArray(rootsAfter.body) && rootsAfter.body.includes(OUTSIDE),
+      Array.isArray(rootsAfter.body) && rootsAfter.body.includes(real(OUTSIDE)),
       rootsAfter.body
     )
     await app.evaluate(() => {
