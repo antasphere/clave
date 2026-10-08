@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaveApiClient } from '@clave/client'
+import type { ClaveServerEndpoint } from '../server/endpoint'
 import { NO_SERVER_MESSAGE, createServerClient } from './server-client'
 
 /**
@@ -67,7 +68,11 @@ describe('the server client of the agent tools', () => {
     }
   })
   it('rebuilds the client when the address changes and disposes the old one', async () => {
-    let endpoint = { url: 'http://127.0.0.1:1', token: 't1', mode: 'in-process' }
+    let endpoint: ClaveServerEndpoint = {
+      url: 'http://127.0.0.1:1',
+      token: 't1',
+      mode: 'in-process'
+    }
     const first = fakeClient()
     const second = fakeClient()
     const connect = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
