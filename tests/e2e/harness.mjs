@@ -134,6 +134,10 @@ export function registerSeededDocuments(...names) {
   for (const name of names) if (!SEEDED_DOCUMENTS.includes(name)) SEEDED_DOCUMENTS.push(name)
   return [...SEEDED_DOCUMENTS]
 }
+// The workspace files' trust store (wave 3, lane A, PRDCT-3291): the trusted
+// roots are listed above; the trusted content hashes travel with them, so a
+// spec that seeds a trusted `.clave` content reaches the attached server too.
+registerSeededDocuments('clave-trusted.json')
 
 /** Copy the seeded documents of an app data folder into a server's, before
  *  the server starts. Only what exists is copied; nothing is removed. */
