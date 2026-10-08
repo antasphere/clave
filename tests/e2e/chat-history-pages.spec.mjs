@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * A long conversation restored into a chat tab opens on its end at once, and
  * reads further back only as the reader scrolls there, without moving them.
@@ -141,7 +137,7 @@ export async function run(t) {
   let app = null
   try {
     // ── Launch 1: a chat tab talks once, so it has a record and a transcript ──
-    let launched = await launchApp(DIR, { server: 'in-process', env })
+    let launched = await launchApp(DIR, { env })
     app = launched.app
     let win = launched.win
     await win.evaluate(async (command) => {
@@ -180,7 +176,7 @@ export async function run(t) {
     writeFileSync(transcript, longTranscript())
 
     // ── Launch 2: the tab comes back on a long conversation ──
-    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
+    launched = await launchApp(DIR, { env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })

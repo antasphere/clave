@@ -1,6 +1,3 @@
-// Pinned in-process (wave 2 rule): this spec reads the session records and the
-// terminal journal the app writes, fixtures inside the main process; an
-// attached server has no terminals until the Node terminal process of wave 3.
 /**
  * A terminal started, written to, and reattached after a restart (PRDCT-3240).
  *
@@ -54,8 +51,11 @@ const MARKER_2 = `REATTACH-SECOND-${process.pid}`
 const liveIds = (win) =>
   win.evaluate(() => window.electronAPI.sessionsList().then((all) => all.map((s) => s.id)))
 
+/** The session records live where the terminal manager runs: under the
+ *  app's data folder in-process, under the server's when attached. */
+let recordsRoot = DIR
 function recordOf(id) {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRoot, 'session-records')
   if (!existsSync(dir)) return null
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
     const r = JSON.parse(readFileSync(path.join(dir, f), 'utf-8'))
@@ -99,7 +99,8 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
 
   let tmuxName = null
-  const first = await launchApp(DIR, { server: 'in-process' })
+  const first = await launchApp(DIR)
+  recordsRoot = first.server?.dataDir ?? DIR
   let id
   try {
     const { win } = first
@@ -119,7 +120,7 @@ export async function run(t) {
     )
     t.check(
       'keyed by the tmux name',
-      record?.file === path.join(DIR, 'session-records', `${tmuxName}.json`),
+      record?.file === path.join(recordsRoot, 'session-records', `${tmuxName}.json`),
       record?.file
     )
     t.check('the tmux session is alive', tmuxName && tmuxSessionAlive(tmuxName))
@@ -151,7 +152,7 @@ export async function run(t) {
   t.check('after the quit the tmux session survives', !!tmuxName && tmuxSessionAlive(tmuxName))
   t.check('and so does the record', !!id && !!recordOf(id))
 
-  const second = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
+  const second = await launchApp(DIR, { settleMs: 6000 })
   try {
     const { app, win } = second
     const back = await until(async () => ((await liveIds(win)).includes(id) ? id : null))

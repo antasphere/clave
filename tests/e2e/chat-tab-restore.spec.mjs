@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * A Claude chat tab survives an app restart, and a real close forgets it.
  *
@@ -128,7 +124,7 @@ export async function run(t) {
   const pids = new Set()
   try {
     // ── Launch 1: a chat tab from the launcher, one message ──
-    let launched = await launchApp(DIR, { server: 'in-process', env })
+    let launched = await launchApp(DIR, { env })
     app = launched.app
     let win = launched.win
     await win.evaluate(async (command) => {
@@ -205,7 +201,7 @@ export async function run(t) {
     t.check('quit: the chat record survives app.close()', existsSync(recordPath(tabId)))
 
     // ── Launch 2: accept the restore prompt ──
-    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
+    launched = await launchApp(DIR, { env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })

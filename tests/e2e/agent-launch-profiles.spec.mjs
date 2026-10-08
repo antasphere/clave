@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * Launch profiles and Pi are wired through the real settings UI, preload IPC,
  * main-process persistence, launcher, and keyboard shortcut.
@@ -79,7 +75,7 @@ export async function run(t) {
     // Pi's own test-only override keeps the real ~/.pi session store untouched.
     PI_CODING_AGENT_SESSION_DIR: PI_ROOT
   }
-  let { app, win } = await launchApp(DIR, { server: 'in-process', env: launchEnv })
+  let { app, win } = await launchApp(DIR, { env: launchEnv })
   try {
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.send('menu:open-settings-section', 'agents')
@@ -226,7 +222,6 @@ export async function run(t) {
     await app.close()
     app = null
     const relaunched = await launchApp(DIR, {
-      server: 'in-process',
       env: launchEnv,
       settleMs: 6000
     })

@@ -18,9 +18,8 @@
 // origin: every window hears exactly the writes that are not its own, and
 // none of its own, with or without a write-back.
 //
-// Pinned to the in-process server (`server: 'in-process'`): the workspace
-// writes of an attached window land on the standalone server, which is
-// another process with no second window of this app on it.
+// Both server modes (PRDCT-3293): the two windows share the server the app is
+// on, and the write stub reaches its settings source through the fixture.
 import { mkdirSync, rmSync } from 'node:fs'
 import {
   launchApp,
@@ -41,7 +40,7 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win: a } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win: a, fixture } = await launchApp(DIR)
   try {
     const { page: b } = await openWindow(app, a, WS.id)
     const listen = (page) =>
@@ -56,7 +55,7 @@ export async function run(t) {
     // Every write that lands in main, with its origin: the renderer must not
     // write anything back on a fold, or a count of deliveries would measure
     // its write-backs rather than the transport.
-    await app.evaluate(() => {
+    await fixture.evaluate(() => {
       const settings = globalThis.__claveE2E?.settings
       if (!settings) throw new Error('no settings source: is --test-no-activate on?')
       globalThis.__echoWrites = []
@@ -86,7 +85,7 @@ export async function run(t) {
       let last = -1
       const still = await until(
         async () => {
-          const n = (await app.evaluate(() => globalThis.__echoWrites)).length
+          const n = (await fixture.evaluate(() => globalThis.__echoWrites)).length
           const same = n === last
           last = n
           return same
@@ -95,7 +94,7 @@ export async function run(t) {
       )
       if (!still) throw new Error(`the writes never settled: ${last} landed and still moving`)
       await a.waitForTimeout(600)
-      return app.evaluate(() => globalThis.__echoWrites)
+      return fixture.evaluate(() => globalThis.__echoWrites)
     }
     const expected = (writes, key) => writes.filter((w) => w.origin !== key).length
 

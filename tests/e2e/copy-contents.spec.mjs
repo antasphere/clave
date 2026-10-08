@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec starts a session from the launcher, and a standalone
-// server refuses every start until lane C's session host lands on it; the
-// pin goes when it does. Not a known failure.
 /**
  * The copy button on a file copies the FILE, not its name.
  *
@@ -39,7 +35,7 @@ export async function run(t) {
   writeFileSync(`${ROOT}/notes.md`, BODY)
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
 
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win } = await launchApp(DIR)
   try {
     // A session, so the tree has a cwd; then the tree.
     await win.click('.launcher-row button')

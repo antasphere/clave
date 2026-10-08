@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
 /**
  * Sidebar drag-and-drop moves exactly the row you dragged, and lands it
  * exactly where the indicator said.
@@ -159,7 +155,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win } = await launchApp(DIR)
   try {
     for (const nth of [0, 1, 2]) {
       await win.click('button[aria-label="Add a group"]')

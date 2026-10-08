@@ -1,7 +1,3 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
 // It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * The group `+` reproduces the group's FIRST SESSION when the `.clave` declares
@@ -85,7 +81,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win } = await launchApp(DIR)
   try {
     // CONTROL: the parser really does leave the group-level prompt empty, so a
     // pass below cannot come from the file secretly carrying one.

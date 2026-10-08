@@ -1,7 +1,8 @@
-// Pinned to the in-process server (wave 2 of the server/client split,
-// PRDCT-3239): this spec starts a session through the app, and a standalone
-// server refuses every start until its terminal process exists (wave 3);
-// the shared attached-mode fixture seam comes with it. Not a known failure.
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —

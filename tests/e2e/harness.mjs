@@ -160,11 +160,16 @@ export function seedServerDataDir(from, to) {
  *  server starts on. */
 export async function startE2eServer(
   name,
-  { timeoutMs = 15_000, env = {}, args = [], seedFrom = null } = {}
+  { timeoutMs = 15_000, env = {}, args = [], seedFrom = null, keep = false } = {}
 ) {
   const dataDir = fixturePath(`${name}-server`)
-  rmSync(dataDir, { recursive: true, force: true })
-  seedServerDataDir(seedFrom, dataDir)
+  // `keep`: an app RESTARTED on its data folder gets its server's data back
+  // too (its session records, its settings as the window left them), the
+  // way the in-process app finds its own; a fresh start wipes and seeds.
+  if (!keep) {
+    rmSync(dataDir, { recursive: true, force: true })
+    seedServerDataDir(seedFrom, dataDir)
+  }
   const started = await startServerProcess({
     repo: REPO,
     dataDir,
@@ -287,10 +292,14 @@ export async function launchApp(
     // what turns its fixture route and its terminal journal on; the echo
     // adapter's flags reach the process that spawns the sessions), the
     // spec's extra environment, and the documents the spec seeded for the app.
+    // A restart (the app's data folder already carries a discovery file from
+    // a launch of this run) keeps the server's data; a fresh start seeds it.
+    const restart = existsSync(path.join(dir, 'clave-server.json'))
     started = await startE2eServer(path.basename(dir), {
       env,
       args: ['--test-no-activate', ...args],
-      seedFrom: dir
+      seedFrom: dir,
+      keep: restart
     })
     serverEnv = { CLAVE_SERVER_URL: started.url, CLAVE_SERVER_TOKEN: started.token }
   } else if (server && typeof server === 'object') {
@@ -717,7 +726,13 @@ export async function spyPtySpawn(app) {
  *  user-data directory, under `--test-no-activate` (`src/main/terminal-journal.ts`,
  *  which also names the file on `globalThis.__claveE2E.terminalJournal`). */
 export function terminalJournalPath(dir) {
-  return path.join(dir, 'terminal-journal.jsonl')
+  // Attached, the terminal manager runs in the standalone server, which
+  // keeps the journal under its own data folder (`<dir>-server`, the folder
+  // `startE2eServer` names for the app's `dir`); in-process it is the app's.
+  // The server's file is read when it exists: a spec then reads the same
+  // launches whichever process spawned them.
+  const attached = path.join(`${dir}-server`, 'terminal-journal.jsonl')
+  return existsSync(attached) ? attached : path.join(dir, 'terminal-journal.jsonl')
 }
 
 function readTerminalJournal(dir) {

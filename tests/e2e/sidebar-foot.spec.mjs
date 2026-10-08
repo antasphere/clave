@@ -18,13 +18,9 @@
  *    leaves the default palette, which is indistinguishable from a user who
  *    never chose one.
  *
- * Pinned to the in-process server (`server: 'in-process'`): the quota it shows
- * comes from a read stubbed on the shell's settings source
- * (`globalThis.__claveE2E.settings`), which only the in-process server consults;
- * an attached app answers its settings from the standalone server's own data
- * directory, where no fixture in this process reaches. The attached-mode
- * fixture seam is wave 3's, beside the Node terminal process (the wave's
- * ruling of 6 October 2026).
+ * The quota it shows comes from a read stubbed on the settings source of
+ * whichever server runs (`globalThis.__claveE2E.settings`, reached through
+ * the fixture route in both modes, PRDCT-3293).
  */
 import {
   launchApp,
@@ -100,7 +96,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  let { app, win } = await launchApp(DIR, { server: 'in-process' })
+  let { app, win, fixture } = await launchApp(DIR)
   try {
     // Hand the renderer a fixed set of limit windows. Without this the second
     // line renders whichever branch the RUNNING MACHINE's own Claude session
@@ -108,7 +104,7 @@ export async function run(t) {
     // the row-shaped control they sit in — was checked on some machines and
     // silently skipped on others. Canned, both branches are reachable and the
     // geometry below is always asserted against the real thing.
-    await app.evaluate(() => {
+    await fixture.evaluate(() => {
       const settings = globalThis.__claveE2E?.settings
       if (!settings) throw new Error('no settings source: is --test-no-activate on?')
       settings.usage.readClaude = async () => ({
