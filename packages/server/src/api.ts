@@ -22,6 +22,27 @@ import {
   WriteSession
 } from '@clave/contract/sessions'
 import { SettingsLive } from './settings/api'
+import {
+  AbsorbLayout,
+  AddGroupTerminal,
+  CreateGroup,
+  DeleteGroup,
+  GetWindowLayout,
+  ListWindowLayouts,
+  MoveGroupToWindow,
+  MoveItems,
+  MoveSessionsToWindow,
+  PlaceSession,
+  RemoveGroupTerminal,
+  RemoveSession,
+  RenameGroup,
+  SaveWindowLayout,
+  SetGroupCollapsed,
+  SetGroupColor,
+  SetGroupPrompt,
+  SetGroupView,
+  UpdateGroupTerminal
+} from '@clave/contract/sidebar'
 
 // ── Lane A: sessions ──
 export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers) =>
@@ -49,10 +70,34 @@ export const ClientsLive = HttpApiBuilder.group(ClaveApi, 'clients', (handlers) 
 // ── Lane D: settings (`settings/api.ts`) ──
 export { SettingsLive }
 
-// ── Lane B: terminals · Lane C: sidebar ──
+// ── Lane C: the sidebar ──
+export const SidebarLive = HttpApiBuilder.group(ClaveApi, 'sidebar', (handlers) =>
+  handlers
+    .handle('getLayout', HttpCqrs.query(GetWindowLayout))
+    .handle('listLayouts', HttpCqrs.query(ListWindowLayouts))
+    .handle('saveLayout', HttpCqrs.command(SaveWindowLayout))
+    .handle('createGroup', HttpCqrs.command(CreateGroup))
+    .handle('renameGroup', HttpCqrs.command(RenameGroup))
+    .handle('setGroupView', HttpCqrs.command(SetGroupView))
+    .handle('setGroupColor', HttpCqrs.command(SetGroupColor))
+    .handle('setGroupPrompt', HttpCqrs.command(SetGroupPrompt))
+    .handle('setGroupCollapsed', HttpCqrs.command(SetGroupCollapsed))
+    .handle('deleteGroup', HttpCqrs.command(DeleteGroup))
+    .handle('addTerminal', HttpCqrs.command(AddGroupTerminal))
+    .handle('updateTerminal', HttpCqrs.command(UpdateGroupTerminal))
+    .handle('removeTerminal', HttpCqrs.command(RemoveGroupTerminal))
+    .handle('moveItems', HttpCqrs.command(MoveItems))
+    .handle('placeSession', HttpCqrs.command(PlaceSession))
+    .handle('removeSession', HttpCqrs.command(RemoveSession))
+    .handle('absorbLayout', HttpCqrs.command(AbsorbLayout))
+    .handle('moveSessions', HttpCqrs.command(MoveSessionsToWindow))
+    .handle('moveGroup', HttpCqrs.command(MoveGroupToWindow))
+)
+
+// ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
 
 export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
-  Layer.provide(Layer.mergeAll(SessionsLive, ClientsLive, SettingsLive, HealthLive))
+  Layer.provide(Layer.mergeAll(SessionsLive, ClientsLive, SettingsLive, SidebarLive, HealthLive))
 )

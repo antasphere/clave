@@ -19,6 +19,10 @@ import { SettingsSource, type SettingsSourceService } from './settings/port'
 
 export { SettingsSource, type SettingsSourceService } from './settings/port'
 export { Terminals, type TerminalsService } from './terminals/port'
+import { SidebarLayoutsPort } from './sidebar/port'
+import type { SidebarLayouts } from './sidebar/layouts'
+
+export { SidebarLayoutsPort } from './sidebar/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
@@ -28,15 +32,18 @@ export interface ServerPorts {
   /** Lane B: the terminals, where a session's process comes from.
    *  `Terminals.none` when absent. */
   readonly terminals?: TerminalsService
-  // ── Lane C: sidebar ──
+  /** Lane C: the sidebar, one layout per window key. `SidebarLayoutsPort.none`
+   *  when absent: layouts kept in memory, no window to host. */
+  readonly sidebar?: SidebarLayouts
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
 export const PortsLive = (
   ports: ServerPorts
-): Layer.Layer<SessionHost | SettingsSource | Terminals> =>
+): Layer.Layer<SessionHost | SettingsSource | Terminals | SidebarLayoutsPort> =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
-    Terminals.layer(ports.terminals ?? Terminals.none)
+    Terminals.layer(ports.terminals ?? Terminals.none),
+    SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none)
   )

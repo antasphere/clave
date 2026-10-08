@@ -133,6 +133,24 @@ export interface RehomePayload {
   focus: boolean
 }
 
+/** A window's sidebar as the server holds it (`@clave/contract/sidebar`'s
+ *  LayoutSnapshot); the groups are the renderer's `SessionGroup` objects. */
+export interface SidebarLayoutSnapshot {
+  windowKey: string
+  revision: number
+  groups: unknown[]
+  displayOrder: string[]
+}
+export type SidebarSaveResult =
+  | { ok: true; layout: SidebarLayoutSnapshot }
+  | { ok: false; reason: 'no-window' }
+  | { ok: false; reason: 'conflict'; current: SidebarLayoutSnapshot }
+export interface SidebarLayoutChanged {
+  _tag: 'sidebar.layout_changed'
+  layout: SidebarLayoutSnapshot
+  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+}
+
 /** The outcome of moving sessions to another window. */
 export interface MoveResult {
   moved: string[]
@@ -856,8 +874,15 @@ export interface ElectronAPI {
   watchDir: (cwd: string, dirs?: string[]) => Promise<void>
   unwatchDir: () => Promise<void>
   onFsChanged: (callback: (cwd: string, changedDirs: string[]) => void) => () => void
-  sidebarLayoutLoad: () => Promise<{ groups: unknown[]; displayOrder: string[] }>
-  sidebarLayoutSave: (data: { groups: unknown[]; displayOrder: string[] }) => Promise<WriteResult>
+  // The sidebar on the server (PRDCT-3241): this window's layout with the
+  // revision a write must name; a stale write is refused with the current
+  // snapshot; every change, whoever made it, arrives on the listener.
+  sidebarLayoutLoad: () => Promise<SidebarLayoutSnapshot>
+  sidebarLayoutSave: (
+    data: { groups: unknown[]; displayOrder: string[] },
+    baseRevision?: number
+  ) => Promise<SidebarSaveResult>
+  onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
   workspaceLoad: () => Promise<WorkspaceStateFile>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]

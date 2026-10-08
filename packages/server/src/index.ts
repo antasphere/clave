@@ -43,4 +43,5 @@ export {
   type TerminalSpawn
 } from './terminals'
 
-// ── Lane C: sidebar ──
+// ── Lane C: the sidebar, one layout per window key ──
+export * from './sidebar'

@@ -25,6 +25,7 @@ import {
   WriteSession
 } from './sessions'
 import { settingsGroup } from './settings/api'
+import { sidebarGroup } from './sidebar/api'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -48,12 +49,16 @@ export const clientsGroup = ApiGroup.make('clients')
 // ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
 export { settingsGroup }
 
-// ── Lane B: terminals · Lane C: sidebar ──
+// ── Lane C: the sidebar (`sidebar/api.ts`) ──
+export { sidebarGroup }
+
+// ── Lane B: terminals ──
 
 export const ClaveApi = Api.make('clave')
   .add(sessionsGroup)
   .add(clientsGroup)
   .add(settingsGroup)
+  .add(sidebarGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

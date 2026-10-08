@@ -14,7 +14,9 @@
     "./events": "./src/events.ts",
     "./push": "./src/push.ts",
     "./sessions": "./src/sessions.ts",
-    "./settings": "./src/settings/index.ts"
+    "./settings": "./src/settings/index.ts",
+    "./sidebar": "./src/sidebar/index.ts",
+    "./sidebar/ops": "./src/sidebar/ops.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

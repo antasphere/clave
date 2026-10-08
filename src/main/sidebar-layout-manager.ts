@@ -8,25 +8,18 @@ import {
   type SidebarLayoutData
 } from './sidebar-layout-migration'
 
-/** Persisted sidebar layout: the session groups and the top-level display
- *  order that nests them. Sessions themselves survive via tmux sidecars; this
- *  is the group metadata (names, colors, terminals, ordering) that organizes
- *  them, written from the main process so it survives a hard kill (Ctrl+C /
- *  crash) the way Chromium's lazily-flushed localStorage does not.
- *
- *  ONE FILE PER WINDOW since multi-window (PRDCT-1703): a window is the whole
- *  app once more, and its sidebar is its own — `sidebar-layouts/windows/
- *  <windowKey>.json`, read and written by that window alone, so there is no
- *  ownership rule and nothing to arbitrate. Groups keep their `workspaceId`
- *  stamp inside the file (the window shows the ones of its active workspace,
- *  as it always did). A file whose window no longer exists is an ORPHAN: the
- *  primary window takes it in at its next boot.
- *
- *  Two older shapes migrate into the first window's file, once, on the first
- *  boot of this build: the single `sidebar-layout.json` every release before
- *  multi-window wrote, and the per-workspace `sidebar-layouts/<workspaceId>.
- *  json` files of the halted one-workspace-per-window build (dev only).
- *  Sources are RENAMED to `.migrated-backup`, never deleted. */
+/** The one-shot migration of the older sidebar-layout shapes into the first
+ *  window's file. The layouts themselves (one file per window under
+ *  `sidebar-layouts/windows/<windowKey>.json`, the orphans the primary takes
+ *  in, the moves between windows) are the sidebar domain's since PRDCT-3241:
+ *  `src/main/sidebar-layouts.ts` runs it in this process and the server
+ *  package's `fileSidebarStorage` reads and writes the same files. What
+ *  stays here is what runs once, on the first boot with no windows.json:
+ *  the single `sidebar-layout.json` every release before multi-window
+ *  wrote, and the per-workspace `sidebar-layouts/<workspaceId>.json` files
+ *  of the halted one-workspace-per-window build (dev only), concatenated
+ *  into the first window's file. Sources are RENAMED to `.migrated-backup`,
+ *  never deleted. */
 export type SidebarLayout = SidebarLayoutData
 
 export const LEGACY_LAYOUT_FILE = 'sidebar-layout.json'
@@ -82,7 +75,7 @@ export class SidebarLayoutManager {
     fs.renameSync(tmp, file)
   }
 
-  /** A window's own layout; empty when it has none yet. */
+  /** A window's own layout as the file holds it; empty when it has none yet. */
   loadForWindow(key: string): SidebarLayout {
     const file = this.fileForWindow(key)
     return (file ? this.readFile(file) : null) ?? { groups: [], displayOrder: [] }
@@ -93,43 +86,6 @@ export class SidebarLayoutManager {
     if (!file) return false
     this.writeFile(file, data)
     return true
-  }
-
-  /** Drop a window's file — after its content was handed to another window
-   *  (a close, an orphan take). Missing is fine. */
-  deleteForWindow(key: string): void {
-    const file = this.fileForWindow(key)
-    if (!file) return
-    try {
-      fs.unlinkSync(file)
-    } catch {
-      /* already gone */
-    }
-  }
-
-  /** Keys of every window layout file on disk that belongs to none of
-   *  `knownKeys` — layouts whose window no longer exists. */
-  orphanKeys(knownKeys: Set<string>): string[] {
-    let files: string[] = []
-    try {
-      files = fs.readdirSync(this.windowDir).filter((f) => f.endsWith('.json'))
-    } catch {
-      return []
-    }
-    return files
-      .map((f) => f.slice(0, -'.json'.length))
-      .filter((k) => isValidLayoutKey(k) && !knownKeys.has(k))
-  }
-
-  /** The orphans' layouts concatenated, and their files removed — the take
-   *  is one-shot; the taker persists what it merged into its own file. */
-  takeOrphans(knownKeys: Set<string>): SidebarLayout {
-    const keys = this.orphanKeys(knownKeys)
-    if (keys.length === 0) return { groups: [], displayOrder: [] }
-    const layouts = keys.map((k) => this.loadForWindow(k))
-    for (const k of keys) this.deleteForWindow(k)
-    console.log(`[sidebar-layout] primary took ${keys.length} orphan window layout(s)`)
-    return concatLayouts(layouts)
   }
 
   /**

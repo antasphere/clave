@@ -14,8 +14,8 @@ import {
 } from './sidebar-layout-manager'
 
 /**
- * One layout file per window, and the one-shot migration of the two older
- * shapes into the first window's file. A migration that drops a group is the
+ * The one-shot migration of the two older shapes into the first window's
+ * file (the per-window files themselves are the sidebar domain's now). A migration that drops a group is the
  * classic silent defect — the user finds an empty sidebar and no error.
  */
 let dir: string
@@ -48,31 +48,6 @@ describe('per-window files', () => {
   it('refuses a key that could escape the directory', () => {
     expect(mgr.saveForWindow('../x', { groups: [], displayOrder: [] })).toBe(false)
     expect(mgr.fileForWindow('a/b')).toBeNull()
-  })
-
-  it('deleteForWindow removes the file and tolerates a missing one', () => {
-    mgr.saveForWindow('w1', { groups: [group('g1')], displayOrder: ['g1'] })
-    mgr.deleteForWindow('w1')
-    mgr.deleteForWindow('w1')
-    expect(mgr.loadForWindow('w1')).toEqual({ groups: [], displayOrder: [] })
-  })
-
-  it('orphans are the files of windows nobody knows; taking them removes them', () => {
-    mgr.saveForWindow('live', { groups: [group('g1')], displayOrder: ['g1'] })
-    mgr.saveForWindow('gone-a', { groups: [group('g2')], displayOrder: ['g2'] })
-    mgr.saveForWindow('gone-b', { groups: [group('g3'), group('g2')], displayOrder: ['g3'] })
-    expect(mgr.orphanKeys(new Set(['live'])).sort()).toEqual(['gone-a', 'gone-b'])
-    const taken = mgr.takeOrphans(new Set(['live']))
-    expect(taken.groups.map((g) => (g as { id: string }).id)).toEqual(['g2', 'g3'])
-    expect(taken.displayOrder).toEqual(['g2', 'g3'])
-    expect(mgr.orphanKeys(new Set(['live']))).toEqual([])
-    expect(mgr.loadForWindow('live').groups.length).toBe(1)
-  })
-
-  it('takeOrphans with nothing to take returns empty and touches nothing', () => {
-    mgr.saveForWindow('live', { groups: [group('g1')], displayOrder: ['g1'] })
-    expect(mgr.takeOrphans(new Set(['live']))).toEqual({ groups: [], displayOrder: [] })
-    expect(mgr.loadForWindow('live').groups.length).toBe(1)
   })
 })
 

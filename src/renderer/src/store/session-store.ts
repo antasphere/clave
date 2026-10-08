@@ -34,9 +34,16 @@ import {
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
-import { mergeLayoutForKeys, absorbLayout, placeAdopted } from '../lib/sidebar-layout-partition'
-import { moveLayoutItems } from '../lib/sidebar-layout-ops'
+import {
+  mergeLayoutForKeys,
+  absorbLayout,
+  placeAdopted,
+  moveLayoutItems,
+  mergeLayouts
+} from '@clave/contract/sidebar/ops'
 import { withDirToggled } from '../lib/panel-expansion'
+import { createSavePipeline } from '../lib/sidebar-save-pipeline'
+import { withoutGroup, withoutSession } from '../lib/sidebar-reflect'
 
 // Re-export types and constants so existing imports continue to work
 export type {
@@ -276,7 +283,7 @@ interface SessionState {
    *  launched from the group's own `+` start on. */
   setGroupPrompt: (groupId: string, prompt: string | null) => void
   /** Move rows or groups relative to `targetId`; `null` = the top level, at
-   *  the end (the explicit ungroup). Rules in lib/sidebar-layout-ops.ts. */
+   *  the end (the explicit ungroup). Rules in @clave/contract/sidebar/ops. */
   moveItems: (
     itemIds: string[],
     targetId: string | null,
@@ -429,42 +436,197 @@ function normalizeSession(session: Session): Session {
 
 let groupCounter = 0
 
-// Groups (and the sidebar ordering that nests them) live only in memory during
-// a run. tmux-backed sessions survive an app restart and get re-adopted, but
-// the group objects that organize them would otherwise be lost. They are
-// persisted from the main process (see sidebar-layout-manager) — written to a
-// file synchronously on every change so they survive a hard kill (Ctrl+C /
-// crash) that drops Chromium's lazily-flushed localStorage.
+// Groups (and the sidebar ordering that nests them) are the SERVER's since
+// PRDCT-3241: one layout per window key, with a revision. This store holds
+// the window's working copy: it edits it as the user drags and types, hands
+// the whole layout back with the revision it last saw (persistSidebarLayout),
+// and applies what the server pushes (applyServerLayout) when somebody else
+// changed it, an agent command, a move between windows, a window closing.
+// A save on a stale revision is REFUSED with the current snapshot, never
+// merged last-writer-wins: the store applies that snapshot and, if its own
+// state still differs, the subscription below saves again on the new base.
 //
-// Persistence stays disabled until `enableSidebarPersistence()` runs on launch,
-// AFTER the previous layout has been read and groups restored. This prevents the
-// empty initial state — written as sessions re-adopt — from clobbering the file
-// before we've had a chance to load it.
+// Persistence stays disabled until `enableSidebarPersistence()` runs on
+// launch, AFTER the saved layout has been read and the groups restored. This
+// prevents the empty initial state, written as sessions re-adopt, from
+// clobbering the server's copy before it was loaded.
 let sidebarPersistEnabled = false
 let lastPersistedGroups: SessionGroup[] | null = null
 let lastPersistedOrder: string[] | null = null
-/** The JSON last accepted by main — re-sent only on change. */
+/** The JSON last accepted by the server, or last applied from it; re-sent
+ *  only on change. */
 let lastPersistedJson: string | null = null
 
-/** This window's whole sidebar, to its own file (one file per window — main
- *  resolves it from the sender). Every group carries its workspace stamp
- *  inside the file, so the window comes back showing the right ones. */
+export interface SidebarLayoutSnapshot {
+  windowKey: string
+  revision: number
+  groups: SessionGroup[]
+  displayOrder: string[]
+}
+
+type SaveItem = { data: { groups: SessionGroup[]; displayOrder: string[] }; json: string }
+
+/** The save pipeline (lib/sidebar-save-pipeline.ts): one save in flight,
+ *  the next edit on the revision the answer names, a push held while a save
+ *  is out, a refusal applying the server's snapshot. */
+const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
+  current: () => {
+    const { groups, displayOrder } = useSessionStore.getState()
+    const data = { groups, displayOrder }
+    const json = JSON.stringify(data)
+    return json === lastPersistedJson ? null : { data, json }
+  },
+  send: async (item, baseRevision) => {
+    const api = window.electronAPI
+    if (!api?.sidebarLayoutSave) return { ok: false, reason: 'no-api' }
+    const res = await api.sidebarLayoutSave(item.data, baseRevision)
+    if (res.ok) return { ok: true, revision: res.layout.revision }
+    if (res.reason === 'conflict') {
+      return { ok: false, reason: 'conflict', current: res.current as SidebarLayoutSnapshot }
+    }
+    return { ok: false, reason: res.reason }
+  },
+  apply: (snapshot) => applyServerLayoutToStore(snapshot),
+  accepted: (item) => {
+    lastPersistedJson = item.json
+  }
+})
+
+/** The boot read: the revision it came back with, and the layout as the
+ *  base the first merge reasons from. Without a base, the first refused
+ *  save read every server group the window lacked as the window's removal
+ *  and wrote the layout back without them (verifier round 2, Major 1). */
+export function setSidebarBase(snapshot: SidebarLayoutSnapshot): void {
+  savePipeline.setRevision(snapshot.revision)
+  lastPersistedJson = JSON.stringify({
+    groups: snapshot.groups,
+    displayOrder: snapshot.displayOrder
+  })
+}
+
+/** Tests only. */
+export function sidebarRevisionForTests(): number {
+  return savePipeline.revision()
+}
+
+/** This window's whole sidebar to the server, through the pipeline. Every
+ *  group carries its workspace stamp inside, so the window comes back
+ *  showing the right ones. */
 function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: string[] }): void {
   const { groups, displayOrder } = state
   if (groups === lastPersistedGroups && displayOrder === lastPersistedOrder) return
   lastPersistedGroups = groups
   lastPersistedOrder = displayOrder
-  const data = { groups, displayOrder }
-  const json = JSON.stringify(data)
-  if (json === lastPersistedJson) return
-  window.electronAPI
-    ?.sidebarLayoutSave?.(data)
-    .then((res) => {
-      if (res?.ok) lastPersistedJson = json
-    })
-    .catch(() => {
-      // Persistence failures are non-fatal — groups stay in memory for this run.
-    })
+  savePipeline.save()
+}
+
+/** What the server pushed for this window: applied through the pipeline,
+ *  which holds it while a save is out and drops what is already known. */
+export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
+  savePipeline.incoming(snapshot)
+}
+
+/**
+ * The server's snapshot over the working copy, the window's pending change
+ * kept (PRDCT-3241, the wave's ruling of 7 October): what this window
+ * changed since it last knew the server's layout (the base, `lastPersisted
+ * Json`) is re-applied over the snapshot with the shared rule
+ * (`mergeLayouts` in @clave/contract/sidebar/ops), so a refused save loses
+ * nothing the person did here; what the server changed meanwhile is kept;
+ * an edit on a group the server removed cannot be re-applied, and the
+ * person is told. Then every session this window holds that the layout
+ * does not place (a tab spawned since, whose save has not landed) is
+ * appended at the top level so no tab disappears, and the file tabs
+ * likewise. When the result differs from the snapshot, the window saves it
+ * again on the revision it now knows: the refs below are left as they were
+ * so the store's subscription fires. The pipeline decides WHEN this runs.
+ */
+function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
+  let dropped: { id: string; name: string }[] = []
+  useSessionStore.setState((state) => {
+    const server = {
+      groups: cloneGroupsForSnapshot(snapshot.groups),
+      displayOrder: [...snapshot.displayOrder]
+    }
+    // No base known: the merge knows nothing of either side's past, so
+    // nothing reads as a removal and both sides' groups are kept. Unreachable
+    // once the boot read has seeded the base (setSidebarBase); kept as belt
+    // and braces for a push before the restore ever read.
+    const base: { groups: SessionGroup[]; displayOrder: string[] } = lastPersistedJson
+      ? (JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] })
+      : { groups: [], displayOrder: [] }
+    const local = { groups: state.groups, displayOrder: getDisplayOrder(state) }
+    const merged = mergeLayouts(base, local, server)
+    dropped = merged.dropped
+    const groups = merged.groups
+    const nested = new Set<string>()
+    for (const g of groups) {
+      for (const sid of g.sessionIds) nested.add(sid)
+      for (const t of g.terminals) if (t.sessionId) nested.add(t.sessionId)
+    }
+    for (const s of state.sessions) if (s.view?.serverSessionId) nested.add(s.view.serverSessionId)
+    const displayOrder = [...merged.displayOrder]
+    const placed = new Set(displayOrder)
+    for (const s of state.sessions) {
+      if (!nested.has(s.id) && !placed.has(s.id)) {
+        placed.add(s.id)
+        displayOrder.push(s.id)
+      }
+    }
+    for (const f of state.fileTabs) {
+      if (!placed.has(f.id)) {
+        placed.add(f.id)
+        displayOrder.push(f.id)
+      }
+    }
+    groupCounter = Math.max(groupCounter, groups.length)
+    const serverJson = JSON.stringify(server)
+    const mergedJson = JSON.stringify({ groups, displayOrder })
+    // The base for the next merge is what the server holds now. When the
+    // merge adds nothing, the refs say so and the subscription stays quiet;
+    // when it does, the refs are left stale and the subscription saves the
+    // merged layout on the revision the pipeline now knows.
+    lastPersistedJson = serverJson
+    if (mergedJson === serverJson) {
+      lastPersistedGroups = groups
+      lastPersistedOrder = displayOrder
+    }
+    return { groups, displayOrder }
+  })
+  if (dropped.length > 0) {
+    const names = dropped.map((d) => `"${d.name}"`).join(', ')
+    void window.electronAPI
+      ?.showNotification?.({
+        title: 'A change could not be kept',
+        body: `${names}: the group was removed elsewhere while you changed it, so your change was dropped.`,
+        sessionId: ''
+      })
+      .catch(() => {})
+  }
+}
+
+/**
+ * A change the SERVER made and this window merely reflects (a tab or a
+ * group that moved away, told over IPC by the shell) is no edit of the
+ * person's. The same change is applied to the BASE the next merge reasons
+ * from (lib/sidebar-reflect.ts), never the whole current state: a pending
+ * edit (a rename not yet saved) stays a difference between the state and
+ * the base and is saved on the next pass, while the reflected change itself
+ * is not. Marking the current state as the base folded such an edit into it
+ * and lost it without a word (verifier round 2, the fold race, 8 of 8).
+ */
+function reflectOnBase(
+  transform: (layout: { groups: SessionGroup[]; displayOrder: string[] }) => {
+    groups: SessionGroup[]
+    displayOrder: string[]
+  }
+): void {
+  if (!lastPersistedJson) return
+  const base = JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] }
+  lastPersistedJson = JSON.stringify(transform(base))
+  // The refs stay as they were, so the subscription fires once and the
+  // pipeline compares the state with the transformed base: equal when the
+  // window had nothing pending, a save of the pending edit otherwise.
 }
 
 /** Mirror a session's tab name into its tmux sidecar (main process), so the
@@ -491,6 +653,22 @@ function persistSessionName(
 export function enableSidebarPersistence(): void {
   sidebarPersistEnabled = true
   persistSidebarLayout(useSessionStore.getState())
+  // The restore ignored every push that landed while it ran, and a window
+  // whose restore changed nothing sends no save and so meets no conflict:
+  // a group created on the server meanwhile would sit there undrawn until
+  // the next push. One read now, handed to the pipeline as a change: at or
+  // below the revision the window knows it is dropped, newer it is merged.
+  void window.electronAPI
+    ?.sidebarLayoutLoad?.()
+    .then((snapshot) => {
+      if (snapshot && typeof snapshot.revision === 'number')
+        applyServerLayout(snapshot as SidebarLayoutSnapshot)
+    })
+    .catch(() => {})
+}
+
+export function isSidebarPersistenceEnabled(): boolean {
+  return sidebarPersistEnabled
 }
 
 type SidebarSnapshot = {
@@ -824,8 +1002,8 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { ...state, groups: merged.groups, displayOrder: merged.displayOrder }
     }),
 
-  removeSessionForRehome: (id) =>
-    set((state) => {
+  removeSessionForRehome: (id) => {
+    const reflect = (state: SessionState): Partial<SessionState> => {
       // The session lives on in another window now; only detach it from THIS
       // store's tab list, groups, order and selection. Never touch the pty.
       const sessions = state.sessions.filter((s) => s.id !== id)
@@ -841,10 +1019,13 @@ export const useSessionStore = create<SessionState>((set) => ({
         selectedSessionIds: state.selectedSessionIds.filter((sid) => sid !== id),
         focusedSessionId: state.focusedSessionId === id ? null : state.focusedSessionId
       }
-    }),
+    }
+    reflectOnBase((base) => withoutSession(base, id))
+    set(reflect)
+  },
 
-  removeGroupForMove: (groupId) =>
-    set((state) => {
+  removeGroupForMove: (groupId) => {
+    const reflect = (state: SessionState): Partial<SessionState> => {
       const group = state.groups.find((g) => g.id === groupId)
       if (!group) return state
       // Members and quick-launch terminals that could not move (not live,
@@ -859,7 +1040,19 @@ export const useSessionStore = create<SessionState>((set) => ({
         groups: state.groups.filter((g) => g.id !== groupId),
         displayOrder: [...order, ...stayed.filter((sid) => !order.includes(sid))]
       }
-    }),
+    }
+    const state = useSessionStore.getState()
+    const group = state.groups.find((g) => g.id === groupId)
+    // A group this window does not hold: nothing to reflect.
+    if (!group) return
+    const linked = [
+      ...group.sessionIds,
+      ...group.terminals.map((t) => t.sessionId).filter((id): id is string => id !== null)
+    ]
+    const stayed = linked.filter((sid) => state.sessions.some((s) => s.id === sid))
+    reflectOnBase((base) => withoutGroup(base, groupId, stayed))
+    set(reflect)
+  },
 
   removeSession: (id) =>
     set((state) => {

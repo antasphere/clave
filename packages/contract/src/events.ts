@@ -12,6 +12,7 @@ import { Schema } from 'effect'
 import { Client } from './clients'
 import { AgentState } from './sessions'
 import { SettingsEvent } from './settings'
+import { SidebarEvent } from './sidebar/layout'
 
 export const ServerEvent = Schema.Union(
   // ── Clients ──
@@ -30,8 +31,10 @@ export const ServerEvent = Schema.Union(
     providerSessionId: Schema.NullOr(Schema.String)
   }),
   // ── Lane D: settings (accounts, usage, workspaces) ──
-  ...SettingsEvent.members
-  // ── Lane B: terminals · Lane C: sidebar ──
+  ...SettingsEvent.members,
+  // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
+  ...SidebarEvent.members
+  // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type
 

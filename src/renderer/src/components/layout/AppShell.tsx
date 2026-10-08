@@ -7,7 +7,11 @@ import {
   isFileTabId,
   getVisibleFlatOrder,
   inActiveWorkspace,
-  enableSidebarPersistence
+  enableSidebarPersistence,
+  setSidebarBase,
+  applyServerLayout,
+  isSidebarPersistenceEnabled,
+  type SidebarLayoutSnapshot
 } from '../../store/session-store'
 import type { SessionGroup, SettingsSection } from '../../store/session-store'
 import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
@@ -171,6 +175,16 @@ export function AppShell(): React.JSX.Element {
     window.electronAPI?.onGroupRemovedForMove?.((groupId) => {
       useSessionStore.getState().removeGroupForMove(groupId)
     })
+    // The server's word on this window's sidebar whenever somebody else
+    // changed it (an agent's command, a move, a closing window's hand-over):
+    // applied over the working copy once the boot restore is done, so a
+    // push that lands mid-restore cannot write over what is being rebuilt.
+    window.electronAPI?.onSidebarLayoutChanged?.((event) => {
+      if (!isSidebarPersistenceEnabled()) return
+      const mine = useWorkspaceStore.getState().windowKey
+      if (mine && event.layout.windowKey !== mine) return
+      applyServerLayout(event.layout as SidebarLayoutSnapshot)
+    })
     // What the agent button relaunches, per workspace. Deliberately NOT in the
     // session-adoption effect below: that one awaits the "restore sessions?"
     // prompt, so anything after it waits on the user answering a dialog — and
@@ -204,6 +218,15 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
+        // The revision the server handed this layout out at (every save
+        // names it, and a stale one is refused rather than merged) and the
+        // layout itself as the base the first merge reasons from.
+        setSidebarBase({
+          windowKey: savedLayout?.windowKey ?? '',
+          revision: savedLayout?.revision ?? 0,
+          groups: persisted.groups,
+          displayOrder: persisted.displayOrder
+        })
 
         // This window's own records (plus the orphans, for the primary):
         // live tmux survivors re-attach silently, whatever their workspace

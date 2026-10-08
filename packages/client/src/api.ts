@@ -16,6 +16,7 @@ import { type ClientsClient, clientsClient } from './clients'
 import { ServerRefused, ServerUnreachable } from './errors'
 import { type SessionsClient, sessionsClient } from './sessions'
 import { type SettingsClient, settingsClient } from './settings'
+import { type SidebarClient, sidebarClient } from './sidebar'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -41,7 +42,9 @@ export interface ClaveApiClient {
   readonly clients: ClientsClient
   // ── Lane D ──
   readonly settings: SettingsClient
-  // ── Lane B: terminals · Lane C: sidebar ──
+  // ── Lane C: the sidebar (`./sidebar.ts`) ──
+  readonly sidebar: SidebarClient
+  // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
   }
@@ -84,6 +87,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     sessions: sessionsClient(call),
     clients: clientsClient(call),
     settings: settingsClient(call),
+    sidebar: sidebarClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },
