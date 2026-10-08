@@ -437,6 +437,27 @@ describe('what the process keeps and replays, on the wire with a scripted termin
     expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
   })
 
+  it('a terminal already hung up is not signalled again after a late attach and detach', async () => {
+    const { pty, client, process } = await start({ orphanGraceMs: 60_000 })
+    const t0 = Date.now()
+    const id = await client.spawn()
+    process.sweep(t0 + 61_000)
+    process.sweep(t0 + 122_000)
+    expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
+    // A client comes back to it and leaves again: the cycle does not
+    // restart. (One event is taken: a stream that takes none never opens.)
+    pty.emit('still here')
+    expect(await client.attach(id, 0n, 1)).toEqual(['1:still here'])
+    // The stream's end reaches the process a moment after the client saw
+    // its event: the sweeps run once the process has seen it detach.
+    await until(() => process.inspect(id)?.attached === 0)
+    process.sweep(t0 + 200_000)
+    process.sweep(t0 + 261_000)
+    process.sweep(t0 + 322_000)
+    process.sweep(t0 + 10_000_000)
+    expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
+  })
+
   it('a terminal that exits before the grace is never signalled', async () => {
     const { pty, client, process } = await start({ orphanGraceMs: 60_000 })
     const t0 = Date.now()
@@ -450,7 +471,9 @@ describe('what the process keeps and replays, on the wire with a scripted termin
   it('hangs up every terminal still running when the process closes', async () => {
     const { pty, client, process } = await start()
     const id = await client.spawn()
-    expect(await client.attach(id, 0n, 0)).toEqual([])
+    pty.emit('running')
+    expect(await client.attach(id, 0n, 1)).toEqual(['1:running'])
+    await until(() => process.inspect(id)?.attached === 0)
     await process.close()
     expect(pty.killed).toEqual(['SIGHUP'])
   })

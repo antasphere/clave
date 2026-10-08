@@ -85,12 +85,14 @@ describe('the server as its own process', () => {
 const ready = async (url) => (await fetch(`${url}/health/ready`)).json()
 
 describe('the commands the starter names', () => {
-  it('the terminal process is told its parent and its port, and the token never rides the command line', () => {
-    if (!built) return
-    const { cmd, args } = terminalProcessCommand({ repo: REPO, port: 0, parent: 4242 })
-    expect(cmd).toBe(process.execPath)
-    expect(args).toEqual([BUNDLE, '--port', '0', '--parent', '4242'])
-  })
+  it.skipIf(!built)(
+    'the terminal process is told its parent and its port, and the token never rides the command line',
+    () => {
+      const { cmd, args } = terminalProcessCommand({ repo: REPO, port: 0, parent: 4242 })
+      expect(cmd).toBe(process.execPath)
+      expect(args).toEqual([BUNDLE, '--port', '0', '--parent', '4242'])
+    }
+  )
 
   it('the server is told the terminal process address and nothing of its token', () => {
     const { args } = serverCommand({

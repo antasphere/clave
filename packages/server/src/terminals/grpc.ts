@@ -190,7 +190,10 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
       live.delete(this)
       // Nothing after the exit: the stream still open on a lost terminal
       // is cancelled, so the process sees it detached, and no listener
-      // hears output after the exit it was told of.
+      // hears output after the exit it was told of. A defence: since a
+      // slow ping no longer marks the process down, no path a live process
+      // reaches ends a handle while its stream is open, and the verifier's
+      // round 2 could pin these two lines with nothing (verifier-2.md).
       this.dataListeners.clear()
       void this.detach()
       for (const listener of this.exitListeners) listener(exit)
@@ -334,10 +337,11 @@ export function grpcTerminals(options: GrpcTerminalsOptions): GrpcTerminals {
     }
   }
 
-  /** One ping. `gone` is UNAVAILABLE, the process not there, and marks it
-   *  down for good; `slow` is any other failure (a stall past the deadline,
-   *  a refused token), answered as not ready this time and nothing more,
-   *  because a process that is alive and late must not lose its terminals. */
+  /** One ping. `gone` is UNAVAILABLE (the process not there) or a refused
+   *  token (never right by waiting), and marks the port down for good;
+   *  `slow` is any other failure (a stall past the deadline), answered as
+   *  not ready this time and nothing more, because a process that is alive
+   *  and late must not lose its terminals. */
   const ping = async (): Promise<'ok' | 'slow' | 'gone'> => {
     if (down !== null) return 'gone'
     const exit = await call(

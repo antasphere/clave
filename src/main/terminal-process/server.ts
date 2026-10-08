@@ -92,6 +92,12 @@ export interface TerminalProcessHandle {
    *  decisions are made on a clock the test holds, no sleep). The process
    *  runs it on its own every quarter of the grace. */
   readonly sweep: (now?: number) => void
+  /** What the process holds for one terminal, or undefined once forgotten:
+   *  how many streams are attached, whether it was hung up or killed, and
+   *  whether its exit came (tests and diagnostics). */
+  readonly inspect: (
+    id: string
+  ) => { attached: number; hungUp: boolean; killed: boolean; exited: boolean } | undefined
   readonly close: () => Promise<void>
 }
 
@@ -302,8 +308,9 @@ export async function startTerminalProcess(
                     term.attached += 1
                     term.everAttached = true
                     term.detachedAt = null
-                    term.hungUpAt = null
-                    term.killedAt = null
+                    // A hang-up already sent stays sent: an attach after it
+                    // never starts the cycle again, so one terminal gets at
+                    // most one SIGHUP and one SIGKILL in its life.
                     const after = request.after
                     const first = term.events[0]
                     if (first !== undefined && first.seq > after + 1n) {
@@ -366,6 +373,17 @@ export async function startTerminalProcess(
       address: server.address,
       terminals: () => held.size,
       sweep,
+      inspect: (id) => {
+        const term = held.get(id)
+        return term
+          ? {
+              attached: term.attached,
+              hungUp: term.hungUpAt !== null,
+              killed: term.killedAt !== null,
+              exited: term.exited !== null
+            }
+          : undefined
+      },
       close: async () => {
         clearInterval(sweeper)
         await Effect.runPromise(Scope.close(scope, Exit.void))
