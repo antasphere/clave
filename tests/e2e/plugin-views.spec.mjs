@@ -45,12 +45,12 @@ export async function run(t) {
   // The launch profile names the view its sessions open in. The development
   // profile is told to name one, so the path from a profile to the session
   // record is exercised here rather than left to inspection.
-  const fixture = await openChat(
+  const chat = await openChat(
     'plugin-views',
     ['--dev-echo-view=clave.chat-view/compact'],
     '[data-view="compact"] input[aria-label="Message"]:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   try {
     const picker = win.getByLabel('Change view', { exact: true })
     await picker.waitFor()
@@ -69,7 +69,7 @@ export async function run(t) {
     )
     t.check('a session opens in the view its launch profile names', true)
 
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'the first turn' },
       { type: 'assistant_text', delta: 'the answer to it', final: true }
     ])
@@ -144,6 +144,6 @@ export async function run(t) {
     assert.equal(await viewIdOf(win, second.id), COMPACT)
     t.check('the choice outlives the pane that made it, on the record in main', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

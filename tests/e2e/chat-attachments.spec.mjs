@@ -34,10 +34,10 @@ async function dragFiles(win, selector, type, files) {
 }
 
 export async function run(t) {
-  const { app, win, record, close } = await openChat('chat-attachments')
+  const { app, win, record, fixture, close } = await openChat('chat-attachments')
   const root = fixturePath('chat-attachments-root')
   try {
-    await app.evaluate(() => {
+    await fixture.evaluate(() => {
       const host = globalThis.__claveE2E.sessionHost
       const write = host.write
       globalThis.__chatWrites = []
@@ -51,7 +51,7 @@ export async function run(t) {
     const send = win.getByRole('button', { name: 'Send message', exact: true })
     const composerChips = win.locator('.chat-composer .chat-attachment')
     const userMessages = () =>
-      app.evaluate(() => globalThis.__chatWrites.filter((x) => x.type === 'user_message'))
+      fixture.evaluate(() => globalThis.__chatWrites.filter((x) => x.type === 'user_message'))
 
     // 1. A files drag shows the overlay over the whole pane; the drop makes a chip.
     await dragFiles(win, pane, 'dragenter', { 'shot.png': PNG })

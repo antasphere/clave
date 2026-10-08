@@ -9,8 +9,8 @@ import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
 
 export async function run(t) {
-  const fixture = await openChat('chat-motion')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-motion')
+  const { win, record, fixture } = chat
   try {
     const view = win.locator('[data-testid="chat-view"]')
     const input = view.getByRole('textbox', { name: 'Message', exact: true })
@@ -18,7 +18,7 @@ export async function run(t) {
     await send.evaluate((el) => {
       el.dataset.probe = 'same-element'
     })
-    await inject(app, record.id, [{ type: 'state_change', state: 'working' }])
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])
     const stop = view.getByRole('button', { name: 'Interrupt', exact: true })
     await stop.waitFor()
     t.check(
@@ -41,7 +41,7 @@ export async function run(t) {
       }),
       await glyphs()
     )
-    await inject(app, record.id, [{ type: 'state_change', state: 'ready' }])
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'ready' }])
     await send.waitFor()
     t.check(
       'and back: the same element again, send once more',
@@ -49,7 +49,7 @@ export async function run(t) {
         (await send.getAttribute('data-kind')) === 'send' &&
         (await send.getAttribute('type')) === 'submit'
     )
-    await inject(app, record.id, [{ type: 'user_message', text: 'Arrived.' }])
+    await inject(fixture, record.id, [{ type: 'user_message', text: 'Arrived.' }])
     const turn = view.locator('.chat-turn-wrap').last()
     await turn.waitFor()
     const arrival = await turn.evaluate((el) => {
@@ -82,6 +82,6 @@ export async function run(t) {
     await input.fill('')
     assert.ok(await until(async () => (await menu.count()) === 0))
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

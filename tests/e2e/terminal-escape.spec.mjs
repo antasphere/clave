@@ -11,26 +11,22 @@ import { until } from './harness.mjs'
      message back to the transcript. */
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-escape',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   const input = view.locator('textarea')
   // The echo adapter answers at once; here the agent answers only when the
   // spec says so. A sent message is echoed as the adapter would, working.
-  await app.evaluate(({ BrowserWindow }, id) => {
+  await fixture.evaluate((id) => {
     globalThis.__interrupts = 0
     const host = globalThis.__claveE2E.sessionHost
     const write = host.write
     host.write = (sid, input) => {
-      const send = (e) =>
-        BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
-          kind: 'event',
-          event: e
-        })
+      const send = (e) => globalThis.__claveE2E.echo.inject(id, { kind: 'event', event: e })
       if (input?.type === 'user_message') {
         send({ type: 'user_message', text: input.text })
         send({ type: 'state_change', state: 'working' })
@@ -70,7 +66,7 @@ export async function run(t) {
     /* 2. An answer has begun: the message stays, Interrupted; the composer empty. */
     await input.fill('')
     await sendText('explain the layout')
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'assistant_text', delta: 'The layout has three parts', final: false }
     ])
     await view.getByText('The layout has three parts').waitFor()
@@ -94,7 +90,7 @@ export async function run(t) {
     await sendText('one more thing')
     await input.press('Escape')
     await until(async () => !(await questions()).includes('one more thing'))
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'assistant_text', delta: 'Already answering', final: false }
     ])
     const again = await until(async () => (await questions()).includes('one more thing'))
@@ -102,6 +98,6 @@ export async function run(t) {
       questions: await questions()
     })
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

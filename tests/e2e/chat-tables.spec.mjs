@@ -27,11 +27,11 @@ const WIDE = [
 ].join('\n')
 
 export async function run(t) {
-  const { app, win, record, close } = await openChat('chat-tables')
+  const { app, win, record, fixture, close } = await openChat('chat-tables')
   try {
     // About the width of the screenshot's pane, where the bug showed.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 800))
-    await inject(app, record.id, [{ type: 'assistant_text', delta: PRICED, final: true }])
+    await inject(fixture, record.id, [{ type: 'assistant_text', delta: PRICED, final: true }])
     const view = win.locator('[data-testid="chat-view"]')
     await view.locator('.chat-prose table').first().waitFor()
 
@@ -71,7 +71,7 @@ export async function run(t) {
       rowHeight
     })
 
-    await inject(app, record.id, [{ type: 'assistant_text', delta: WIDE, final: true }])
+    await inject(fixture, record.id, [{ type: 'assistant_text', delta: WIDE, final: true }])
     await until(async () => (await view.locator('.chat-table-scroll').count()) === 2)
     const frame = await view
       .locator('.chat-table-scroll')

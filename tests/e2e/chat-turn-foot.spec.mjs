@@ -9,10 +9,10 @@ import { inject, openChat } from './chat-view.spec.mjs'
    composer's box. */
 
 export async function run(t) {
-  const { app, win, record, close } = await openChat('chat-turn-foot')
+  const { win, record, fixture, close } = await openChat('chat-turn-foot')
   try {
     const view = win.locator('[data-testid="chat-view"]')
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'assistant_text',
         delta: Array.from({ length: 60 }, (_, i) => `Ligne ${i} du message.`).join('\n\n'),

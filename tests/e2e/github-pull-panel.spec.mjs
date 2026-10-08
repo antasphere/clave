@@ -78,14 +78,14 @@ const callWith = (prefix) =>
 
 export async function run(t) {
   writeStubs()
-  const fixture = await openChat('github-pull', [], undefined, {
+  const chat = await openChat('github-pull', [], undefined, {
     SHELL: `${BIN}/bash`,
     PATH: `${BIN}:${process.env.PATH}`,
     // The login shell exports a token, as a shell often does for something
     // else; gh would prefer it to the stored login, so Clave must not pass it.
     GITHUB_TOKEN: SHELL_TOKEN
   })
-  const { app, win, record } = fixture
+  const { app, win, record, fixture } = chat
   try {
     // The bundled plugin is a feature of the app: on from the first start, its
     // tab claimed, without a visit to Settings.
@@ -106,7 +106,7 @@ export async function run(t) {
     })
     const external = () => app.evaluate(() => globalThis.__external)
 
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'assistant_text',
         delta: `Opened [PR #42](${PULL_URL}) for [the issue](${ISSUE_URL}).`,
@@ -252,7 +252,7 @@ export async function run(t) {
     assert.equal((await external()).at(-1), PULL_URL)
     t.check('a disabled plugin leaves pull request links to the browser', true)
   } finally {
-    await fixture.close()
+    await chat.close()
     rmSync(BIN, { recursive: true, force: true })
   }
 }

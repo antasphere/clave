@@ -10,11 +10,11 @@ import { until } from './harness.mjs'
    leaves its record in the transcript. */
 
 export async function run(t) {
-  const fixture = await openChat('chat-prompt-dock')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-prompt-dock')
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="chat-view"]')
   try {
-    await app.evaluate(() => {
+    await fixture.evaluate(() => {
       const host = globalThis.__claveE2E.sessionHost
       const write = host.write
       globalThis.__dockWrites = []
@@ -24,8 +24,8 @@ export async function run(t) {
         return write.call(host, id, input)
       }
     })
-    const writes = () => app.evaluate(() => globalThis.__dockWrites)
-    await inject(app, record.id, [
+    const writes = () => fixture.evaluate(() => globalThis.__dockWrites)
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'send the email' },
       {
         type: 'permission_request',
@@ -121,7 +121,7 @@ export async function run(t) {
     t.check('an answered question leaves the dock and records its answer in the transcript', true)
 
     // A tool permission answers from the keyboard: Escape denies.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'permission_request',
         id: 'write',
@@ -185,6 +185,6 @@ export async function run(t) {
       .waitFor()
     t.check('a permission reads as a sentence, orders its buttons, and Escape denies', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }
