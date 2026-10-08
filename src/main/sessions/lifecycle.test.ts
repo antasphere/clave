@@ -25,9 +25,6 @@ vi.mock('../pty-manager', () => ({
       mocks.listeners.set(id, { onData, onExit })
   }
 }))
-vi.mock('../preferences-manager', () => ({
-  preferencesManager: { get: (key: string) => mocks.preference(key) }
-}))
 vi.mock('../workspace-manager', () => ({
   workspaceManager: { getLastActiveWorkspaceId: () => mocks.lastWorkspace() }
 }))
@@ -37,7 +34,7 @@ vi.mock('../title-generator', () => ({
   notifyClear: vi.fn()
 }))
 vi.mock('../agent-state-manager', () => ({ clearState: mocks.clearState }))
-import { spawnSession, stopSession } from './lifecycle'
+import { setTmuxPreferenceReader, spawnSession, stopSession } from './lifecycle'
 
 /** A windows port that records everything, with one live window `w1` on
  *  workspace `ws-1`. */
@@ -93,9 +90,14 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.listeners.clear()
   mocks.preference.mockReturnValue(undefined)
+  // The shell's reader of the tmux switch (the .clave handlers' file).
+  setTmuxPreferenceReader(() => mocks.preference('tmuxMode'))
   mocks.lastWorkspace.mockReturnValue(null)
 })
-afterEach(() => installSessionWindows(null))
+afterEach(() => {
+  installSessionWindows(null)
+  setTmuxPreferenceReader(null)
+})
 
 describe('a session is spawned for a window named by its key', () => {
   it('stamps the workspace of the asking window and binds the session to it', async () => {

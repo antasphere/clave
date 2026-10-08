@@ -12,7 +12,6 @@
  * standalone server over a map.
  */
 import { ptyManager, type PtySpawnOptions } from '../pty-manager'
-import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import * as titleGenerator from '../title-generator'
 import { clearState as clearAgentState } from '../agent-state-manager'
@@ -31,10 +30,14 @@ export type SessionInfoResult = {
   piThinking?: PtySpawnOptions['piThinking']
 }
 
-/** The tmux switch is kept by the preferences manager outside its typed
- *  shape (`preferences:set` writes it by name). */
-const tmuxPreference = (): unknown =>
-  (preferencesManager.get as unknown as (key: string) => unknown)('tmuxMode')
+/** The tmux switch lives in the app's own preferences file
+ *  (`clave-preferences.json`, read by the .clave handlers, which import
+ *  Electron): the shell installs the reader at boot; a host with none
+ *  (the standalone server) runs tmux, the default. */
+let tmuxPreference: () => unknown = () => undefined
+export function setTmuxPreferenceReader(reader: (() => unknown) | null): void {
+  tmuxPreference = reader ?? (() => undefined)
+}
 
 /** What each terminal's reader typed since the last Enter, to see a `/clear`. */
 const inputBuffers = new Map<string, string>()

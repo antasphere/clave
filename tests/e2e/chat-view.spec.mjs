@@ -1,3 +1,11 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): the chat's views are plugin views leased from the shell's
+// plugin host, which knows main's sessions and not the server's; attached,
+// a session on the standalone server mounts its chat but gets no view lease
+// (no view switcher, no chip that the view reports), so the pin stays until
+// the plugin host reaches the server, which the spec keeps in the shell
+// through wave 3. The session host itself is reached through the fixture in
+// both modes. Not a known failure.
 // The chat view on the echo fixture. This spec and every spec built on its
 // `openChat` reach the sessions from inside (the echo adapter, the session host
 // wrapped to see what the composer wrote, synthetic frames), and they now run in
@@ -35,7 +43,8 @@ export async function openChat(
   seedTrustedRoots(dir, [root])
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
-    env
+    env,
+    server: 'in-process'
   })
   // The session calls cross the server, not IPC (PRDCT-3239): what a spec
   // wraps is the session host the server exposes under --test-no-activate, the

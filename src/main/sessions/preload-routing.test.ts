@@ -144,6 +144,9 @@ const connectBacking = async (): Promise<void> => {
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  // The preload asks for the endpoint as it loads (the terminal pane's
+  // mode): a previous test's answer must not be what it hears.
+  mocks.invoke.mockReset()
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   delete process.env.CLAVE_SERVER_URL
   delete process.env.CLAVE_SERVER_TOKEN
@@ -176,7 +179,10 @@ describe('the preload routes sessionsList', () => {
     answer({ 'server:endpoint': null, 'sessions:list': [{ id: 'ipc' }] })
     expect(await api.sessionsList()).toEqual([{ id: 'ipc' }])
     expect(mocks.createApiClient).not.toHaveBeenCalled()
-    expect(channels()).toEqual(['server:endpoint', 'sessions:list'])
+    // The preload asks for the endpoint once at its start too, for the
+    // terminal pane's road (its mode), before any routed call.
+    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual(['sessions:list'])
+    expect(channels()[0]).toBe('server:endpoint')
   })
   it('goes to the server, scoped to this window, once main names an endpoint', async () => {
     answer({ ...onServer, 'sessions:list': [{ id: 'ipc' }] })
@@ -300,6 +306,10 @@ describe('the terminal pane’s road', () => {
   })
   it('goes to the attached server, the bytes in order, and hears the pty frames off the push channel', async () => {
     answer({ 'server:endpoint': attachedEndpoint, 'window:identity': identity })
+    // A pane exists only after a session started through the server: that
+    // routed call announces the server and the preload learns the mode.
+    await api.sessionsList()
+    await settle()
     const order: string[] = []
     mocks.sessions.write.mockImplementation(async (_id: string, input: { data: Uint8Array }) => {
       // The first write answers last: the chain must still keep the order.

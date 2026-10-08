@@ -1,3 +1,9 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec restarts the app and expects its sessions back. On
+// an attached server the records are the server's, but the window's restore
+// still reads main's own list (`pty:list`) and main's folder, so nothing is
+// brought back: the restore of persisted sessions on the standalone server
+// is wave 3's named leftover (ADR 0003). Not a known failure.
 /**
  * A Codex chat tab survives an app restart, in whichever workspace it lives.
  *
@@ -120,7 +126,7 @@ export async function run(t) {
     )
   try {
     // ── Launch 1: two Codex chat tabs in the workspace NOT shown ──
-    let launched = await launchApp(DIR, { env })
+    let launched = await launchApp(DIR, { server: 'in-process', env })
     app = launched.app
     let win = launched.win
     const open = async () =>
@@ -188,7 +194,7 @@ export async function run(t) {
     )
 
     // ── Launch 2: accept the restore prompt ──
-    launched = await launchApp(DIR, { env, settleMs: 3000 })
+    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })

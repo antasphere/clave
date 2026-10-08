@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * An emptied group keeps its place.
  *
@@ -96,7 +101,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  let { app, win } = await launchApp(DIR)
+  let { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     // ── The group, with one tab: the reference height ──
     const group = await callMcp(app, 'createGroup', { name: 'Lane' })
@@ -197,7 +202,7 @@ export async function run(t) {
     app = null
     await new Promise((r) => setTimeout(r, 1500))
 
-    const second = await launchApp(DIR, { settleMs: 6000 })
+    const second = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = second.app
     win = second.win
     const back = await until(async () => {

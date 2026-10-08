@@ -41,7 +41,9 @@ export async function run(t) {
       }),
       await glyphs()
     )
-    await inject(fixture, record.id, [{ type: 'state_change', state: 'ready' }])
+    // The frame crosses the server's push channel now, so it is one the
+    // contract carries: `idle`, the agent's state once its turn is over.
+    await inject(fixture, record.id, [{ type: 'state_change', state: 'idle' }])
     await send.waitFor()
     t.check(
       'and back: the same element again, send once more',

@@ -1,3 +1,9 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec restarts the app and expects its sessions back. On
+// an attached server the records are the server's, but the window's restore
+// still reads main's own list (`pty:list`) and main's folder, so nothing is
+// brought back: the restore of persisted sessions on the standalone server
+// is wave 3's named leftover (ADR 0003). Not a known failure.
 /**
  * A long conversation restored into a chat tab opens on its end at once, and
  * reads further back only as the reader scrolls there, without moving them.
@@ -137,7 +143,7 @@ export async function run(t) {
   let app = null
   try {
     // ── Launch 1: a chat tab talks once, so it has a record and a transcript ──
-    let launched = await launchApp(DIR, { env })
+    let launched = await launchApp(DIR, { server: 'in-process', env })
     app = launched.app
     let win = launched.win
     await win.evaluate(async (command) => {
@@ -176,7 +182,7 @@ export async function run(t) {
     writeFileSync(transcript, longTranscript())
 
     // ── Launch 2: the tab comes back on a long conversation ──
-    launched = await launchApp(DIR, { env, settleMs: 3000 })
+    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })

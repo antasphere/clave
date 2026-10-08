@@ -731,7 +731,7 @@ export function terminalJournalPath(dir) {
   // `startE2eServer` names for the app's `dir`); in-process it is the app's.
   // The server's file is read when it exists: a spec then reads the same
   // launches whichever process spawned them.
-  const attached = path.join(`${dir}-server`, 'terminal-journal.jsonl')
+  const attached = path.join(fixturePath(`${path.basename(dir)}-server`), 'terminal-journal.jsonl')
   return existsSync(attached) ? attached : path.join(dir, 'terminal-journal.jsonl')
 }
 

@@ -14,10 +14,12 @@ import { startWatching as startAgentStateWatching } from '../agent-state-manager
 import { hasServerEventPublisher } from '../server/session-events'
 import {
   type SessionInfoResult,
+  setTmuxPreferenceReader,
   spawnSession,
   stopSession,
   trackInput
 } from '../sessions/lifecycle'
+import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
 
@@ -36,6 +38,8 @@ export function registerPtyHandlers(): void {
   // What the session host still needs from the windows, by key: the shell's
   // registry and IPC sends (sessions/windows.ts, PRDCT-3293).
   installSessionWindows(electronSessionWindows)
+  // The tmux switch comes from the app's own preferences file.
+  setTmuxPreferenceReader(() => getPreference('tmuxMode'))
   // The session stream's IPC, registered once with the terminal handlers (the
   // agent state manager used to do it from the watch below and owns no IPC).
   registerSessionIpc()

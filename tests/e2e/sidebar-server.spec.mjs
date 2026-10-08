@@ -431,20 +431,26 @@ export async function run(t) {
         (await drawnGroups(win)).some((g) => g.id === mine.groupId),
         await drawnGroups(win)
       )
-      // A sidebar edit on the IPC road leaves the sessions' server notice
-      // alone (Minor 3 of round 1, gap 4 of round 2): the notice is
-      // PROVOKED first (a sessions call the standalone server refuses), then
-      // the edit, and the notice must still be up.
-      await win.evaluate(() => window.electronAPI.sessionsList().catch(() => null))
-      const provoked = await until(async () => ((await noticeCount(win)) === 1 ? true : null))
-      t.check('the server notice is up after a refused sessions call', provoked === true)
+      // The sessions' server notice and a sidebar edit on the IPC road are
+      // independent (Minor 3 of round 1, gap 4 of round 2). Since wave 3 the
+      // standalone server runs the sessions, so a sessions call is answered
+      // and provokes no notice; the edit must not raise one either.
+      const listed = await win.evaluate(() =>
+        window.electronAPI.sessionsList().then(
+          () => true,
+          () => false
+        )
+      )
+      t.check('a sessions call is answered by the attached server', listed === true)
+      await win.waitForTimeout(500)
+      t.equal('and no server notice is up', await noticeCount(win), 0)
       const ipcBeforeEdit = await ipcCounts(app)
       await callMcp(app, 'createGroup', { name: 'Another edit' })
       await win.waitForTimeout(800)
       t.equal(
-        'and still up after a sidebar edit that never reached the server',
+        'and still none after a sidebar edit that never reached the server',
         await noticeCount(win),
-        1
+        0
       )
       // The counter that tells the roads apart counts here, where the road
       // IS IPC (verifier round 3, gap 3): a dead counter would read 0 on

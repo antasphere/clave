@@ -1,3 +1,9 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec restarts the app and expects its sessions back. On
+// an attached server the records are the server's, but the window's restore
+// still reads main's own list (`pty:list`) and main's folder, so nothing is
+// brought back: the restore of persisted sessions on the standalone server
+// is wave 3's named leftover (ADR 0003). Not a known failure.
 /**
  * A terminal started, written to, and reattached after a restart (PRDCT-3240).
  *
@@ -99,7 +105,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
 
   let tmuxName = null
-  const first = await launchApp(DIR)
+  const first = await launchApp(DIR, { server: 'in-process' })
   recordsRoot = first.server?.dataDir ?? DIR
   let id
   try {
@@ -152,7 +158,7 @@ export async function run(t) {
   t.check('after the quit the tmux session survives', !!tmuxName && tmuxSessionAlive(tmuxName))
   t.check('and so does the record', !!id && !!recordOf(id))
 
-  const second = await launchApp(DIR, { settleMs: 6000 })
+  const second = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
   try {
     const { app, win } = second
     const back = await until(async () => ((await liveIds(win)).includes(id) ? id : null))

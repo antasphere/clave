@@ -97,6 +97,9 @@ let serverWatching = false
 const announceServer = (backing: Backing): void => {
   if (serverBacking) return
   serverBacking = backing
+  // The terminal pane's road needs the mode (below): asked now, so a pane
+  // mounted after the announce already knows it.
+  void serverMode()
   backing.push.connect()
   for (const wire of [...serverWaiters]) wire(backing)
   serverWaiters.clear()
@@ -399,6 +402,13 @@ const serverMode = async (): Promise<ServerMode | null> => {
   if (found?.mode) serverModeKnown = found.mode
   return found?.mode ?? null
 }
+// The mode is asked for as the window starts and again whenever the server
+// is announced, so by the time a terminal pane exists it is known: inside
+// the app the pane's calls then stay SYNCHRONOUS sends, as they always were
+// (a write that waited on a promise first reordered against the pane's
+// own start and resize), and only an app known to be attached takes the
+// server road.
+void serverMode()
 const terminalChains = new Map<string, Promise<void>>()
 const viaAttachedServer =
   <A extends unknown[]>(route: {
@@ -406,7 +416,11 @@ const viaAttachedServer =
     server: (backing: Backing, ...args: A) => Promise<void>
   }) =>
   async (...args: A): Promise<void> => {
-    if ((await serverMode()) !== 'attached') return route.ipc(...args)
+    if (serverModeKnown !== 'attached') {
+      route.ipc(...args)
+      if (!serverModeKnown) void serverMode()
+      return
+    }
     const backing = await serverRouter.backing()
     if (!backing) throw new Error('The app is attached to a server it cannot reach')
     const id = String(args[0])
