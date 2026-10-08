@@ -23,6 +23,10 @@ import { SidebarLayoutsPort } from './sidebar/port'
 import type { SidebarLayouts } from './sidebar/layouts'
 
 export { SidebarLayoutsPort } from './sidebar/port'
+import { WorkspaceFilesPort } from './workspace-files/port'
+import type { WorkspaceFiles } from './workspace-files/files'
+
+export { WorkspaceFilesPort } from './workspace-files/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
@@ -35,15 +39,22 @@ export interface ServerPorts {
   /** Lane C: the sidebar, one layout per window key. `SidebarLayoutsPort.none`
    *  when absent: layouts kept in memory, no window to host. */
   readonly sidebar?: SidebarLayouts
+  /** Wave 3, lane A: the workspace files (`.clave`), their trust store on the
+   *  entry's data directory. `WorkspaceFilesPort.none` when absent: the
+   *  trust store kept in memory. */
+  readonly workspaceFiles?: WorkspaceFiles
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
 export const PortsLive = (
   ports: ServerPorts
-): Layer.Layer<SessionHost | SettingsSource | Terminals | SidebarLayoutsPort> =>
+): Layer.Layer<
+  SessionHost | SettingsSource | Terminals | SidebarLayoutsPort | WorkspaceFilesPort
+> =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
     Terminals.layer(ports.terminals ?? Terminals.none),
-    SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none)
+    SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none),
+    WorkspaceFilesPort.layer(ports.workspaceFiles ?? WorkspaceFilesPort.none)
   )

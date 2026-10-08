@@ -30,6 +30,12 @@ import { fixtureRoute } from './fixtures/route'
 import { sessionHandlers } from './sessions'
 import { SettingsEventsLive, settingsHandlers } from './settings'
 import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
+import {
+  ReviewDesk,
+  WorkspaceFilesEventsLive,
+  WorkspaceFilesPort,
+  workspaceFilesHandlers
+} from './workspace-files'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -44,6 +50,9 @@ export interface ServerOptions {
    *  which runs code it is sent. TEST MODE ONLY: off by default, and the
    *  packaged app never turns it on. */
   readonly testFixtures?: boolean
+  /** Wave 3, lane A: how long a `.clave` review waits for its answer before
+   *  it reads as Cancel. Five minutes by default. */
+  readonly reviewTimeoutMs?: number
 }
 
 export type ServerServices =
@@ -56,6 +65,8 @@ export type ServerServices =
   | PushHubService
   | EventStore
   | SidebarLayoutsPort
+  | WorkspaceFilesPort
+  | ReviewDesk
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -65,7 +76,11 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     ClientRegistry.layer,
     // ── Lane B: terminals · Lane C: sidebar · Lane D: settings ──
     Readiness.layer,
-    InMemoryAll
+    InMemoryAll,
+    // ── Wave 3, lane A: the reviews a `.clave` read waits on ──
+    ReviewDesk.layer({
+      ...(options.reviewTimeoutMs !== undefined && { timeoutMs: options.reviewTimeoutMs })
+    })
   )
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
   const services = Layer.mergeAll(foundations, events)
@@ -76,7 +91,16 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const sidebarEvents = SidebarEventsLive.pipe(Layer.provide(services))
   // ── Lane B: a terminals port over a wire is a readiness check ──
   const terminalsReady = TerminalsReadyLive.pipe(Layer.provide(services))
-  return Layer.mergeAll(services, hub, settingsEvents, sidebarEvents, terminalsReady)
+  // ── Wave 3, lane A: a watched `.clave` file's changes told to the clients ──
+  const workspaceFilesEvents = WorkspaceFilesEventsLive.pipe(Layer.provide(services))
+  return Layer.mergeAll(
+    services,
+    hub,
+    settingsEvents,
+    sidebarEvents,
+    terminalsReady,
+    workspaceFilesEvents
+  )
 }
 
 /** The `terminals` check of `/health/ready`: whether the terminal process
@@ -101,7 +125,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Lane D: settings ──
       ...settingsHandlers,
       // ── Lane C: the sidebar ──
-      ...sidebarHandlers
+      ...sidebarHandlers,
+      // ── Wave 3, lane A: the workspace files ──
+      ...workspaceFilesHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

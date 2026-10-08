@@ -23,6 +23,7 @@ import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/wo
 import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick } from './dual-listener'
+import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -572,6 +573,69 @@ type AppIcon = typeof import('@clave/contract/settings').AppIconSchema.Type
 type RegistryWriteResult =
   typeof import('@clave/contract/settings').UpdateWorkspaceRegistry.success.Type
 type PinsWriteResult = typeof import('@clave/contract/settings').UpdateWorkspacePins.success.Type
+
+// ── The workspace files (wave 3, lane A): the review round trip and the watches ──
+// A `.clave` read that goes through the server may need a review; the server
+// publishes it on the push channel with the requestId this window sent, and
+// the relay below shows the SHELL's dialog (over IPC, Electron's own) and
+// answers the server. The listener joins the push channel the moment the
+// server is known, before any read goes out (the read itself also waits for
+// the welcome). The watches a window holds move to the server with it.
+type ClaveFileReadResult = import('../preload/index.d').ClaveFileReadResult
+type ClaveFileWriteData = import('../preload/index.d').ClaveFileWriteData
+type ReviewNeeded = Extract<ServerEvent, { _tag: 'workspace_files.review_needed' }>
+let answerReviewOn: Backing | null = null
+const workspaceFilesRelay = createReviewRelay({
+  showDialog: (review: ReviewNeeded) =>
+    ipcRenderer.invoke('clave:review-dialog', {
+      path: review.path,
+      folder: review.folder,
+      autoCommands: [...review.autoCommands],
+      prompts: [...review.prompts],
+      dangerous: review.dangerous
+    }) as Promise<{ response: 0 | 1 | 2; checkboxChecked: boolean }>,
+  answer: (reviewId, answer) => {
+    if (!answerReviewOn) return Promise.reject(new Error('no server to answer the review on'))
+    return answerReviewOn.api.workspaceFiles.answerReview(reviewId, answer)
+  }
+})
+const workspaceFileWatches = createWatchLedger({
+  ipc: {
+    watch: (p) => ipcRenderer.invoke('clave:watch-file', p) as Promise<void>,
+    unwatch: (p) => ipcRenderer.invoke('clave:unwatch-file', p) as Promise<void>
+  },
+  server: {
+    watch: async (p) => {
+      const backing = await serverRouter.backing()
+      if (!backing) throw new Error('no server to watch on')
+      await backing.api.workspaceFiles.watch(p)
+    },
+    unwatch: async (p) => {
+      const backing = await serverRouter.backing()
+      if (!backing) throw new Error('no server to unwatch on')
+      await backing.api.workspaceFiles.unwatch(p)
+    }
+  }
+})
+/** Join the server for the workspace files: the review listener on the push
+ *  channel, the answer road, the watches moved. Wired on the first routed
+ *  read (which also waits for the welcome) or on the first watch, never at
+ *  window start, so the client is never loaded for it alone. */
+let workspaceFilesWired: Backing | null = null
+const wireWorkspaceFiles = (backing: Backing): void => {
+  if (workspaceFilesWired === backing) return
+  workspaceFilesWired = backing
+  answerReviewOn = backing
+  backing.push.onEvent(workspaceFilesRelay.onEvent)
+  backing.push.connect()
+  void workspaceFileWatches.moveToServer()
+}
+let workspaceFilesWaiting = false
+const watchWorkspaceFilesServer = (): void => {
+  if (workspaceFilesWaiting) return
+  workspaceFilesWaiting = true
+  onServerAvailable(wireWorkspaceFiles)
+}
 
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
@@ -1570,42 +1634,89 @@ const electronAPI = {
   onAgentsUpdated: (callback: (locationId: string, agents: unknown[]) => void) =>
     createIpcListener<[string, unknown[]]>('agent:agents-updated', callback),
 
-  // ── .clave files ──
-  readClaveFile: (absolutePath: string, rootDir?: string) =>
-    ipcRenderer.invoke('clave:read-file', absolutePath, rootDir),
-  writeClaveFile: (absolutePath: string, data: unknown, rootDir?: string) =>
-    ipcRenderer.invoke('clave:write-file', absolutePath, data, rootDir),
-  watchClaveFile: (absolutePath: string) => ipcRenderer.invoke('clave:watch-file', absolutePath),
-  unwatchClaveFile: (absolutePath: string) =>
-    ipcRenderer.invoke('clave:unwatch-file', absolutePath),
-  onClaveFileChanged: (callback: (filePath: string) => void) =>
-    createIpcListener<[string]>('clave:file-changed', callback),
+  // ── The workspace files (wave 3, lane A): every call goes to the server
+  // once main names it, over IPC before; the review dialog stays the shell's
+  // either way (`workspaceFilesRelay` above and `clave:review-dialog`). ──
+  readClaveFile: viaServer<[string, string?], ClaveFileReadResult | null>({
+    ipc: (absolutePath, rootDir) => ipcRenderer.invoke('clave:read-file', absolutePath, rootDir),
+    server: async (backing, absolutePath, rootDir) => {
+      const { api, push } = backing
+      // The review this read may need arrives on the push channel: the
+      // listener is bound and the socket WELCOMED before the read goes out,
+      // or the server could publish the review before this window hears
+      // events and the read would wait for an answer nobody can give (wave
+      // 2's lost-event shape).
+      wireWorkspaceFiles(backing)
+      await push.whenOpen()
+      const read = workspaceFilesRelay.begin()
+      try {
+        return loose<ClaveFileReadResult | null>(
+          await api.workspaceFiles.read(absolutePath, {
+            requestId: read.requestId,
+            ...(rootDir !== undefined && { rootDir })
+          })
+        )
+      } finally {
+        read.done()
+      }
+    }
+  }),
+  writeClaveFile: viaServer<[string, ClaveFileWriteData, string?], void>({
+    ipc: (absolutePath, data, rootDir) =>
+      ipcRenderer.invoke('clave:write-file', absolutePath, data, rootDir),
+    // The preload's write type is the contract's shape with the renderer's
+    // mutability (the contract was written from it); the cast is of that alone.
+    server: ({ api }, absolutePath, data, rootDir) =>
+      api.workspaceFiles.write(absolutePath, loose(data), rootDir)
+  }),
+  watchClaveFile: (absolutePath: string): Promise<void> => {
+    watchWorkspaceFilesServer()
+    return serverRouter.backing().then(
+      (backing) => workspaceFileWatches.watch(absolutePath, backing ? 'server' : 'ipc'),
+      () => workspaceFileWatches.watch(absolutePath, 'ipc')
+    )
+  },
+  unwatchClaveFile: (absolutePath: string): Promise<void> =>
+    workspaceFileWatches.unwatch(absolutePath),
+  onClaveFileChanged: viaServerEvent<'workspace_files.changed', string>(
+    'clave:file-changed',
+    'workspace_files.changed',
+    (event) => event.path
+  ),
   saveFileDialog: (defaultName: string, filters: { name: string; extensions: string[] }[]) =>
     ipcRenderer.invoke('dialog:saveFile', defaultName, filters),
   getDownloadsPath: () => ipcRenderer.invoke('app:get-downloads-path') as Promise<string>,
   getUserDataPath: () => ipcRenderer.invoke('app:get-user-data-path') as Promise<string>,
-  claveFileExists: (absolutePath: string) =>
-    ipcRenderer.invoke('clave:file-exists', absolutePath) as Promise<boolean>,
-  discoverClaveFiles: (folderPath: string) =>
-    ipcRenderer.invoke('clave:discover-files', folderPath) as Promise<
-      { name: string; path: string; rootDir: string | null }[]
-    >,
-  discoverClaveFilesRecursive: (
-    rootDir: string,
-    config?: { patterns?: string[]; exclude?: string[]; maxDepth?: number; workspaceId?: string }
-  ) =>
-    ipcRenderer.invoke('clave:discover-files-recursive', rootDir, config) as Promise<
-      { name: string; path: string; rootDir: string }[]
-    >,
-  readAutoDiscoverConfig: (filePath: string) =>
-    ipcRenderer.invoke('clave:read-auto-discover', filePath) as Promise<{
-      enabled: boolean
-      patterns?: string[]
-      exclude?: string[]
-      maxDepth?: number
-    } | null>,
-  readImageAsDataUrl: (absolutePath: string) =>
-    ipcRenderer.invoke('clave:read-image', absolutePath) as Promise<string | null>,
+  claveFileExists: viaServer<[string], boolean>({
+    ipc: (absolutePath) => ipcRenderer.invoke('clave:file-exists', absolutePath),
+    server: ({ api }, absolutePath) => api.workspaceFiles.exists(absolutePath)
+  }),
+  discoverClaveFiles: viaServer<[string], { name: string; path: string; rootDir: string | null }[]>(
+    {
+      ipc: (folderPath) => ipcRenderer.invoke('clave:discover-files', folderPath),
+      server: async ({ api }, folderPath) =>
+        loose([...(await api.workspaceFiles.discover(folderPath))])
+    }
+  ),
+  discoverClaveFilesRecursive: viaServer<
+    [string, { patterns?: string[]; exclude?: string[]; maxDepth?: number; workspaceId?: string }?],
+    { name: string; path: string; rootDir: string }[]
+  >({
+    ipc: (rootDir, config) => ipcRenderer.invoke('clave:discover-files-recursive', rootDir, config),
+    server: async ({ api }, rootDir, config) =>
+      loose([...(await api.workspaceFiles.discoverRecursive(rootDir, config))])
+  }),
+  readAutoDiscoverConfig: viaServer<
+    [string],
+    { enabled: boolean; patterns?: string[]; exclude?: string[]; maxDepth?: number } | null
+  >({
+    ipc: (filePath) => ipcRenderer.invoke('clave:read-auto-discover', filePath),
+    server: async ({ api }, filePath) => loose(await api.workspaceFiles.autoDiscover(filePath))
+  }),
+  readImageAsDataUrl: viaServer<[string], string | null>({
+    ipc: (absolutePath) => ipcRenderer.invoke('clave:read-image', absolutePath),
+    server: ({ api }, absolutePath) => api.workspaceFiles.image(absolutePath)
+  }),
   skinsList: () => ipcRenderer.invoke('skins:list'),
   skinsActivate: (id: string) => ipcRenderer.invoke('skins:activate', id),
   skinsImport: (source?: string) => ipcRenderer.invoke('skins:import', source),
@@ -1629,11 +1740,18 @@ const electronAPI = {
   keymapsExport: (json: string) => ipcRenderer.invoke('keymaps:export', json) as Promise<boolean>,
   onKeymapsChanged: (callback: (value: unknown) => void) =>
     createIpcListener<[unknown]>('keymaps:changed', callback),
-  trustWorkspaceRoot: (root: string) =>
-    ipcRenderer.invoke('clave:trust-root', root) as Promise<void>,
-  untrustWorkspaceRoot: (root: string) =>
-    ipcRenderer.invoke('clave:untrust-root', root) as Promise<void>,
-  listTrustedRoots: () => ipcRenderer.invoke('clave:list-trusted-roots') as Promise<string[]>,
+  trustWorkspaceRoot: viaServer<[string], void>({
+    ipc: (root) => ipcRenderer.invoke('clave:trust-root', root),
+    server: ({ api }, root) => api.workspaceFiles.trustRoot(root)
+  }),
+  untrustWorkspaceRoot: viaServer<[string], void>({
+    ipc: (root) => ipcRenderer.invoke('clave:untrust-root', root),
+    server: ({ api }, root) => api.workspaceFiles.untrustRoot(root)
+  }),
+  listTrustedRoots: viaServer<[], string[]>({
+    ipc: () => ipcRenderer.invoke('clave:list-trusted-roots'),
+    server: async ({ api }) => [...(await api.workspaceFiles.trustedRoots())]
+  }),
 
   // ── Extensions (inventory of installed plugins/skills/MCP + management) ──
   extensionsGetInventory: (configDir?: string) =>

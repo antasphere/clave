@@ -13,6 +13,7 @@ import { Client } from './clients'
 import { AgentState } from './sessions'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
+import { WorkspaceFilesEvent } from './workspace-files/model'
 
 export const ServerEvent = Schema.Union(
   // ── Clients ──
@@ -33,7 +34,9 @@ export const ServerEvent = Schema.Union(
   // ── Lane D: settings (accounts, usage, workspaces) ──
   ...SettingsEvent.members,
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
-  ...SidebarEvent.members
+  ...SidebarEvent.members,
+  // ── Wave 3, lane A: the workspace files (a watched file changed, a review needed) ──
+  ...WorkspaceFilesEvent.members
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

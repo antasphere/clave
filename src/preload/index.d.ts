@@ -214,8 +214,10 @@ export interface ClaveFileGroupData {
   category?: string
   logo?: string
   /** Group-level default prompt: what sessions launched from the live group's
-   *  `+` start on. Mirrors `ClaveGroupData.prompt` in the main process. */
+   *  `+` start on. Mirrors `ClaveGroup.prompt` in `@clave/contract/workspace-files`. */
   prompt?: string
+  /** The group's web view when no terminal serves it: an http(s) URL or a page on disk. */
+  view?: string
   sessions: {
     cwd: string
     name: string
@@ -239,6 +241,8 @@ export interface ClaveFileGroupData {
     autoLaunchLocalhost?: boolean
     persistent?: boolean
     serverUrl?: string
+    /** Bind this terminal's `serverUrl` as the group's web view at launch. */
+    groupView?: boolean
   }[]
 }
 
@@ -250,7 +254,11 @@ export interface ClaveFileWriteData {
   name?: string
   cwd?: string | null
   color?: string | null
+  toolbar?: boolean
+  category?: string
+  logo?: string
   prompt?: string
+  view?: string
   sessions?: {
     cwd: string
     name: string
@@ -273,6 +281,7 @@ export interface ClaveFileWriteData {
     autoLaunchLocalhost?: boolean
     persistent?: boolean
     serverUrl?: string
+    groupView?: boolean
   }[]
   groups?: Array<{
     name: string

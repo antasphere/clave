@@ -17,6 +17,7 @@ import { ServerRefused, ServerUnreachable } from './errors'
 import { type SessionsClient, sessionsClient } from './sessions'
 import { type SettingsClient, settingsClient } from './settings'
 import { type SidebarClient, sidebarClient } from './sidebar'
+import { type WorkspaceFilesClient, workspaceFilesClient } from './workspace-files'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -44,6 +45,8 @@ export interface ClaveApiClient {
   readonly settings: SettingsClient
   // ── Lane C: the sidebar (`./sidebar.ts`) ──
   readonly sidebar: SidebarClient
+  // ── Wave 3, lane A: the workspace files (`./workspace-files.ts`) ──
+  readonly workspaceFiles: WorkspaceFilesClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -88,6 +91,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     clients: clientsClient(call),
     settings: settingsClient(call),
     sidebar: sidebarClient(call),
+    workspaceFiles: workspaceFilesClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

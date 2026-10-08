@@ -16,6 +16,8 @@ export { type ClientsClient, type RegisterClientInput } from './clients'
 export { settingsClient, type SettingsClient } from './settings'
 // ── Lane C: the sidebar ──
 export { sidebarClient, type SidebarClient } from './sidebar'
+// ── Wave 3, lane A: the workspace files ──
+export { workspaceFilesClient, type WorkspaceFilesClient } from './workspace-files'
 // ── Lane B: terminals ──
 export {
   PushClient,
