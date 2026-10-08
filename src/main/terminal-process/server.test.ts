@@ -437,6 +437,30 @@ describe('what the process keeps and replays, on the wire with a scripted termin
     expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL'])
   })
 
+  it('inspect(id) counts the streams attached: one while a stream is held open, none once it ends', async () => {
+    // The accessor the tests above wait on: a stream held open on the wire
+    // (two events taken, one emitted so far) is counted, and the count
+    // drops once the stream has ended and the process has seen it go.
+    const { pty, client, process } = await start()
+    const id = await client.spawn()
+    expect(process.inspect(id)).toEqual({
+      attached: 0,
+      hungUp: false,
+      killed: false,
+      exited: false
+    })
+    pty.emit('one')
+    const events = client.attach(id, 0n, 2)
+    await until(() => process.inspect(id)?.attached === 1)
+    expect(process.inspect(id)?.attached).toBe(1)
+    pty.emit('two')
+    expect(await events).toEqual(['1:one', '2:two'])
+    await until(() => process.inspect(id)?.attached === 0)
+    pty.exit(0)
+    expect(process.inspect(id)).toEqual({ attached: 0, hungUp: false, killed: false, exited: true })
+    expect(process.inspect('no-such-terminal')).toBeUndefined()
+  })
+
   it('a terminal already hung up is not signalled again after a late attach and detach', async () => {
     const { pty, client, process } = await start({ orphanGraceMs: 60_000 })
     const t0 = Date.now()
