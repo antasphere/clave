@@ -1,0 +1,10 @@
+# Regenerates the checked-in Protobuf-ES code of the terminal service
+# (`npm run proto:gen`; CI checks the output is current). buf and the
+# generator come from the dev dependencies, so no protoc is needed.
+version: v2
+inputs:
+  - directory: packages/server/src/terminals/proto
+plugins:
+  - local: protoc-gen-es
+    out: packages/server/src/terminals/proto
+    opt: target=ts

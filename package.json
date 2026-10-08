@@ -30,9 +30,11 @@
     "build:linux": "electron-vite build && electron-builder --linux",
     "release": "bash scripts/release.sh",
     "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
-    "test:e2e": "node tests/e2e/run.mjs"
+    "test:e2e": "node tests/e2e/run.mjs",
+    "proto:gen": "buf generate"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0",
     "@clave/client": "*",
     "@clave/contract": "*",
     "@clave/plugin-sdk": "*",
@@ -49,6 +51,7 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@fontsource/geist-sans": "^5.2.5",
+    "@grpc/grpc-js": "^1.14.5",
     "@heroicons/react": "^2.2.0",
     "@lezer/highlight": "^1.2.3",
     "@mdxeditor/editor": "^4.2.0",
@@ -100,6 +103,8 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@bufbuild/buf": "1.73.0",
+    "@bufbuild/protoc-gen-es": "2.16.0",
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
@@ -114,6 +119,7 @@
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
+    "bun": "1.4.1",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",

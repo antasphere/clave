@@ -2,6 +2,7 @@
  * `clave-server`: the server as its own process (ADR 0003).
  *
  *   bun src/main/server-entry.ts --data-dir <dir> [--port <n>] [--token <t>]
+ *                                [--terminals <host:port>]
  *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
@@ -12,17 +13,29 @@
  * started it reads that line and hands the pair to the app as
  * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
  *
- * The process runs `@clave/server`, the same package the app runs in-process,
- * with NO session host: the sessions domain is on the server (wave 2), but a
- * standalone server has no terminal process to run them until wave 3, so it
- * lists none and answers every start with a declared `CapabilityUnavailable`
- * that names what is missing. A client sees the same API, the same token
- * check and the same push channel as in-process. Nothing here imports
+ * The process runs `@clave/server`, the same package the app runs in-process.
+ * Its terminals come from the terminal process (wave 3, ADR 0003): with
+ * `--terminals <host:port>` and the process's token in
+ * `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment),
+ * `ports.terminals` is the gRPC port to it, and the server's readiness
+ * carries a `terminals` check that turns false when the process stops
+ * answering. Without `--terminals` the server runs on `Terminals.none`,
+ * said on stderr, and every spawn answers the declared
+ * `CapabilityUnavailable`. The sessions domain (wave 2) still runs on
+ * `SessionHost.none` here until the standalone session host (lane C of wave
+ * 3) is composed over these terminals. A client sees the same API, the same
+ * token check and the same push channel as in-process. Nothing here imports
  * Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { startEmbedded, SessionHost } from '@clave/server'
+import {
+  startEmbedded,
+  SessionHost,
+  Terminals,
+  grpcTerminals,
+  type TerminalsService
+} from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 
 function arg(name: string): string | undefined {
@@ -44,6 +57,32 @@ async function main(): Promise<void> {
     process.exit(2)
   }
 
+  // ── Lane B: the terminals, over the wire to the terminal process ──
+  const terminalsAddress = arg('terminals')
+  const terminalsToken = process.env.CLAVE_TERMINALS_TOKEN
+  delete process.env.CLAVE_TERMINALS_TOKEN
+  let terminals: TerminalsService = Terminals.none
+  let closeTerminals: () => Promise<void> = async () => {}
+  if (terminalsAddress !== undefined) {
+    if (!terminalsToken) {
+      process.stderr.write(
+        'clave-server: --terminals needs the terminal process token in CLAVE_TERMINALS_TOKEN\n'
+      )
+      process.exit(2)
+    }
+    const port = grpcTerminals({
+      address: terminalsAddress,
+      token: terminalsToken,
+      log: (line) => process.stderr.write(`clave-server: terminals: ${line}\n`)
+    })
+    terminals = port
+    closeTerminals = port.close
+  } else {
+    process.stderr.write(
+      'clave-server: no --terminals given, this server runs no terminals (a spawn answers CapabilityUnavailable)\n'
+    )
+  }
+
   const token = arg('token')
   // The settings (lane D): the same managers as the app's, on JSON documents
   // under `--data-dir` and the macOS Keychain (`CLAVE_KEYCHAIN_FILE` names
@@ -53,10 +92,11 @@ async function main(): Promise<void> {
   // (PRDCT-3259) is this server's own, restored from the data directory.
   const standalone = standaloneSettingsSource(dataDir)
   const server = await startEmbedded({
-    // No terminal process beside this server yet (wave 3): a start answers
+    // No standalone session host yet (lane C of wave 3): a start answers
     // `CapabilityUnavailable` and says so, the reads answer empty.
     ports: {
       sessions: SessionHost.none,
+      terminals,
       settings: standalone.settings
     },
     port,
@@ -79,7 +119,11 @@ async function main(): Promise<void> {
   fs.chmodSync(file, 0o600)
 
   process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
-  process.stderr.write(`clave-server: listening on ${server.url} (data in ${dataDir})\n`)
+  process.stderr.write(
+    `clave-server: listening on ${server.url} (data in ${dataDir}` +
+      (terminalsAddress === undefined ? '' : `, terminals at ${terminalsAddress}`) +
+      ')\n'
+  )
 
   let stopping = false
   const stop = (signal: string): void => {
@@ -96,10 +140,13 @@ async function main(): Promise<void> {
     } catch {
       /* nothing to remove */
     }
-    server.stop().then(
-      () => process.exit(0),
-      () => process.exit(1)
-    )
+    server
+      .stop()
+      .then(() => closeTerminals())
+      .then(
+        () => process.exit(0),
+        () => process.exit(1)
+      )
   }
   process.on('SIGTERM', () => stop('SIGTERM'))
   process.on('SIGINT', () => stop('SIGINT'))

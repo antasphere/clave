@@ -34,13 +34,17 @@ export {
   settingsHandlers
 } from './settings'
 
-// ── Lane B: terminals ──
+// ── Lane B: terminals, and the port over the wire to the terminal process ──
 export {
   Terminals,
   type TerminalsService,
   type TerminalExit,
   type TerminalProcess,
-  type TerminalSpawn
+  type TerminalSpawn,
+  grpcTerminals,
+  LOST_EXIT,
+  type GrpcTerminals,
+  type GrpcTerminalsOptions
 } from './terminals'
 
 // ── Lane C: the sidebar, one layout per window key ──

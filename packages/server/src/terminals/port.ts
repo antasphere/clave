@@ -44,6 +44,11 @@ export interface TerminalsService {
   /** Start a process; throws `CapabilityUnavailable` when this server has
    *  no terminal process, with any other error when the spawn itself failed. */
   spawn(spec: TerminalSpawn): TerminalProcess
+  /** Whether the terminals can be reached right now. A port over a wire
+   *  answers for the process at the other end (`grpc.ts`), and the server
+   *  reports it as the `terminals` check of its readiness; a port in this
+   *  process has nothing to ask and leaves it out. */
+  ready?(): Promise<boolean>
 }
 
 const NO_TERMINALS = new CapabilityUnavailable({
