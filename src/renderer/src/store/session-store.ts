@@ -549,7 +549,9 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       displayOrder: [...snapshot.displayOrder]
     }
     // No base known: the merge knows nothing of either side's past, so
-    // nothing reads as a removal and both sides' groups are kept.
+    // nothing reads as a removal and both sides' groups are kept. Unreachable
+    // once the boot read has seeded the base (setSidebarBase); kept as belt
+    // and braces for a push before the restore ever read.
     const base: { groups: SessionGroup[]; displayOrder: string[] } = lastPersistedJson
       ? (JSON.parse(lastPersistedJson) as { groups: SessionGroup[]; displayOrder: string[] })
       : { groups: [], displayOrder: [] }

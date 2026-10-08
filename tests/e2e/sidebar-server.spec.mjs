@@ -433,12 +433,22 @@ export async function run(t) {
       await win.evaluate(() => window.electronAPI.sessionsList().catch(() => null))
       const provoked = await until(async () => ((await noticeCount(win)) === 1 ? true : null))
       t.check('the server notice is up after a refused sessions call', provoked === true)
+      const ipcBeforeEdit = await ipcCounts(app)
       await callMcp(app, 'createGroup', { name: 'Another edit' })
       await win.waitForTimeout(800)
       t.equal(
         'and still up after a sidebar edit that never reached the server',
         await noticeCount(win),
         1
+      )
+      // The counter that tells the roads apart counts here, where the road
+      // IS IPC (verifier round 3, gap 3): a dead counter would read 0 on
+      // both roads and let the in-process check pass for nothing.
+      const ipcAfterEdit = await ipcCounts(app)
+      t.check(
+        'the edit on the IPC road was counted as an IPC save',
+        ipcAfterEdit.save > ipcBeforeEdit.save,
+        { ipcBeforeEdit, ipcAfterEdit }
       )
     } finally {
       await app.close().catch(() => {})
@@ -579,7 +589,19 @@ export async function run(t) {
     try {
       const disc = await decided(DIR)
       const client = api(disc.url, disc.token)
-      const key = (await identityOf(win))?.windowKey
+      // The write must land INSIDE the restore: the layouts are polled every
+      // ten milliseconds and the group is written the instant the window's
+      // key appears there (its boot read), before the restore has ended.
+      // Asking the renderer for its identity first would wait past it
+      // (verifier round 3, gap 1).
+      const key = await until(
+        async () => {
+          const r = await client.layouts()
+          return r.status === 200 && r.body?.[0]?.windowKey ? r.body[0].windowKey : null
+        },
+        { tries: 1500, gapMs: 10 }
+      )
+      t.check('the window read its layout from the server', typeof key === 'string', key)
       const born = await client.createGroup({
         windowKey: key,
         group: { name: 'Born during the restore', sessionIds: [] }
