@@ -13,10 +13,10 @@ import { Command } from '@structure-ai/cqrs'
 import { ApiGroup, HttpCqrs } from '@structure-ai/http'
 import { WindowKey } from './sidebar/layout'
 
-/** How long a request waits for its window when the caller names no deadline. */
-export const VIEW_REQUEST_TIMEOUT_MS = 10_000
-/** The longest deadline a caller may ask for. */
-export const VIEW_REQUEST_MAX_TIMEOUT_MS = 60_000
+// The deadlines live in `view-deadlines.ts`, a module with no import, so
+// that main can read them at boot without loading Effect (lazy-load guard).
+import { VIEW_REQUEST_MAX_TIMEOUT_MS } from './view-deadlines'
+export { VIEW_REQUEST_MAX_TIMEOUT_MS, VIEW_REQUEST_TIMEOUT_MS } from './view-deadlines'
 
 /** What the server pushes: the request, minted an id, for the window of that key. */
 export const ViewRequest = Schema.Struct({

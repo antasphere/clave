@@ -23,6 +23,7 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
+import { whenClaveServerBootSettled } from '../server/endpoint'
 import {
   loadOrCreateServerState,
   saveServerState,
@@ -433,6 +434,9 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       result = openWindowFromTool(p, callerSessionId)
     } else {
       const win = await resolveCommandWindow(command, p, callerSessionId)
+      // The road is the boot's decision: a call that lands before it waits for
+      // it, so a served tool never slips to the window for being early.
+      if (sidebarTransport() === null) await whenClaveServerBootSettled()
       // Served by the server (wave 3): a tool whose work is a command the
       // server has is answered through the client, and the windows hear the
       // change over the push channel. Only while the sidebar's road is the

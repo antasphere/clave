@@ -328,8 +328,10 @@ async function setGroupView(ctx: Ctx, key: string, p: Payload): Promise<unknown>
 }
 
 async function moveSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
+  // No "mine" here: the window's handler takes an id and nothing else, and
+  // the two roads of one tool must answer the same call the same way.
   const ref = str(p.sessionId) ?? ''
-  const id = ref === 'mine' ? ctx.callerSessionId : ref
+  const id = ref
   if (!id) throw new Error(`No session with id "${ref}"`)
   await getSession(ctx, id, ref)
 
@@ -557,7 +559,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       cwd: s.cwd,
       mode: modeOf(record, s.provider),
       alive: s.state !== 'ended',
-      agentState: s.state,
+      // The window's listing never said 'ended' (its run state has no such
+      // word; an ended tab kept its last state or none): the same vocabulary.
+      agentState: s.state === 'ended' ? null : s.state,
       account: record ? ctx.shell.accountOf(record) : null,
       groupId: groupOfSession(layouts, s.id)?.id ?? null,
       view: record?.view ? { url: record.view.url, title: record.view.title ?? null } : null,
@@ -565,30 +569,35 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       workspaceName: workspaceNameOf(ctx, record?.workspaceId),
       windowId: windowIdOf(s.windowKey)
     }))
-  const groups = layouts.flatMap((l) =>
-    l.groups
-      .filter((g) => inScope(g.workspaceId))
-      .map((g) => ({
-        id: g.id,
-        name: g.name,
-        cwd: g.cwd,
-        color: g.color ?? null,
-        view: g.view ?? null,
-        sessionIds: g.sessionIds,
-        workspaceId: g.workspaceId ?? null,
-        workspaceName: workspaceNameOf(ctx, g.workspaceId),
-        terminals: g.terminals.map((t) => ({
-          id: t.id,
-          command: t.command,
-          commandMode: t.commandMode,
-          color: t.color,
-          icon: t.icon ?? null,
-          serverUrl: t.serverUrl ?? null,
-          sessionId: t.sessionId
-        })),
-        windowId: windowIdOf(l.windowKey)
-      }))
-  )
+  // The layouts of live windows only: a key the server keeps for a window
+  // that is gone is an orphan the primary takes at its next read, and the
+  // window-by-window aggregate never listed it.
+  const groups = layouts
+    .filter((l) => windowIdOf(l.windowKey) !== null)
+    .flatMap((l) =>
+      l.groups
+        .filter((g) => inScope(g.workspaceId))
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          cwd: g.cwd,
+          color: g.color ?? null,
+          view: g.view ?? null,
+          sessionIds: g.sessionIds,
+          workspaceId: g.workspaceId ?? null,
+          workspaceName: workspaceNameOf(ctx, g.workspaceId),
+          terminals: g.terminals.map((t) => ({
+            id: t.id,
+            command: t.command,
+            commandMode: t.commandMode,
+            color: t.color,
+            icon: t.icon ?? null,
+            serverUrl: t.serverUrl ?? null,
+            sessionId: t.sessionId
+          })),
+          windowId: windowIdOf(l.windowKey)
+        }))
+    )
   const windowState = await ctx.requestView<{
     pinnedGroups?: unknown[]
     focusedSessionId?: string | null

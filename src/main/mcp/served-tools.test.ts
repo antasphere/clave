@@ -14,6 +14,7 @@ import {
 } from './served-tools'
 
 vi.mock('./roads', () => ({ noteRoad: vi.fn() }))
+import { noteRoad } from './roads'
 
 const group = (id: string, extra: Partial<SidebarGroup> = {}): SidebarGroup => ({
   ...{ id, name: id, sessionIds: [], collapsed: false, cwd: null, terminals: [] },
@@ -384,7 +385,7 @@ describe('serveCommand', () => {
       ['s2', 2]
     ])
     expect(all.sessions[1]).toMatchObject({
-      ...{ mode: 'codex', alive: false, agentState: 'ended', groupId: null },
+      ...{ mode: 'codex', alive: false, agentState: null, groupId: null },
       ...{ workspaceId: 'ws2', workspaceName: 'Two', account: null, view: null }
     })
     expect(all.groups.map((g) => [g.id, g.windowId])).toEqual([
@@ -445,5 +446,67 @@ describe('resolveGroupRef', () => {
     expect(() => resolveGroupRef(layouts, 'wA', 'nope', opts)).toThrow(
       'No group with id or name "nope"'
     )
+  })
+  // ── Round 1 of the verifier: the gaps it found, pinned ──
+
+  it('records the server road only for a command it served, never for one it left to the window', async () => {
+    vi.mocked(noteRoad).mockClear()
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { workspaceId: 'ws2' })])],
+      sessions: [session('s1')],
+      records: { s1: record('s1', { workspaceId: 'ws1' }) }
+    })
+    // A cross-workspace placement is the window's: NOT_SERVED, no road recorded.
+    expect(await serveCommand('moveSession', { sessionId: 's1', groupId: 'gA' }, h.ctx())).toBe(
+      NOT_SERVED
+    )
+    expect(noteRoad).not.toHaveBeenCalled()
+    await serveCommand('createGroup', { name: 'x' }, h.ctx())
+    expect(noteRoad).toHaveBeenCalledWith('createGroup', 'server')
+    expect(noteRoad).toHaveBeenCalledTimes(1)
+  })
+
+  it('lists an item with no workspace under a scoped listing, as the window did', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gNo'), group('gTwo', { workspaceId: 'ws2' })])],
+      sessions: [session('sNo'), session('sTwo')],
+      records: { sNo: record('sNo'), sTwo: record('sTwo', { workspaceId: 'ws2' }) }
+    })
+    type Listing = Record<string, { id: string }[]>
+    const active = (await serveCommand('list', { workspace: 'active' }, h.ctx())) as Listing
+    expect(active.sessions.map((s) => s.id)).toEqual(['sNo'])
+    expect(active.groups.map((g) => g.id)).toEqual(['gNo'])
+  })
+
+  it('lists the groups of live windows only', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA')]), layout('wGone', [group('gOrphan')])]
+    })
+    type Listing = Record<string, { id: string }[]>
+    const all = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(all.groups.map((g) => g.id)).toEqual(['gA'])
+  })
+
+  it('a move whose window argument names the routed window itself stays in that window', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { workspaceId: 'ws1' })])],
+      sessions: [session('s1')],
+      records: { s1: record('s1', { workspaceId: 'ws1' }) }
+    })
+    const out = await serveCommand(
+      'moveSession',
+      { sessionId: 's1', groupId: 'gA', window: 1 },
+      h.ctx({ targetWindow: h.windows.wA })
+    )
+    expect(out).toEqual({ sessionId: 's1', groupId: 'gA' })
+    expect(h.argsOf('sidebar.moveSessions')).toEqual([])
+    expect(h.argsOf('awaitRehomed')).toEqual([])
+  })
+
+  it('a move takes an id and nothing else, as the window does: "mine" is no session', async () => {
+    const h = setup({ sessions: [session('caller')] })
+    await expect(
+      serveCommand('moveSession', { sessionId: 'mine', groupId: 'root' }, h.ctx())
+    ).rejects.toThrow('No session with id "mine"')
   })
 })

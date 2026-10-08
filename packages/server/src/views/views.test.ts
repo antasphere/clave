@@ -159,6 +159,48 @@ describe('a view request', () => {
     b.ws.close()
   })
 
+  it('reaches a peer welcomed after the request went out, while it still waits', async () => {
+    const asked = post('/views/request', {
+      windowKey: 'w1',
+      command: 'list',
+      payload: { late: true },
+      timeoutMs: 3000
+    })
+    await sleep(100)
+    // The window's socket opens only now: it must still hear the request.
+    const peer = await welcomed()
+    const frame = await nextRequest(peer)
+    expect(frame).toMatchObject({ windowKey: 'w1', command: 'list', payload: { late: true } })
+    expect(
+      (await post('/views/answer', { requestId: frame.requestId, ok: true, result: 1 })).status
+    ).toBe(204)
+    expect(await (await asked).json()).toEqual({ result: 1 })
+    peer.ws.close()
+  })
+
+  it('fails a waiting request when the server stops, instead of leaving its caller hanging', async () => {
+    const peer = await welcomed()
+    const asked = post('/views/request', {
+      windowKey: 'w1',
+      command: 'list',
+      payload: {},
+      timeoutMs: 10_000
+    })
+    await nextRequest(peer)
+    const started = Date.now()
+    await server.stop()
+    const outcome = await asked.then(
+      async (r) => ({ status: r.status, body: await r.json().catch(() => null) }),
+      (error: unknown) => ({ status: 0, body: String(error) })
+    )
+    expect(Date.now() - started).toBeLessThan(2000)
+    // Either the server answered the failure before its listener closed, or the
+    // connection went with it; what never happens is a wait on the deadline.
+    if (outcome.status === 422) expect(outcome.body).toMatchObject({ _tag: 'ViewRequestTimeout' })
+    peer.ws.close()
+    server = await startEmbedded({ ports: { sessions: new FakeSource() }, helloTimeoutMs: 200 })
+  })
+
   it('refuses a request without the token', async () => {
     const response = await fetch(`${server.url}/views/request`, {
       method: 'POST',

@@ -15,6 +15,7 @@ import {
   ViewRequestRefused,
   ViewRequestTimeout
 } from '@clave/contract/views'
+import type { ServerFrame } from '@clave/contract/push'
 import { PushHubService } from '../push/route'
 
 export interface ViewRequestInput {
@@ -37,6 +38,8 @@ interface Pending {
   readonly windowKey: string
   readonly command: string
   readonly timeoutMs: number
+  /** The frame as it went out, sent again to a peer welcomed meanwhile. */
+  readonly frame: Extract<ServerFrame, { _tag: 'request' }>
   readonly timer: ReturnType<typeof setTimeout>
   readonly resume: (
     outcome: Effect.Effect<{ result?: unknown }, ViewRequestRefused | ViewRequestTimeout>
@@ -60,6 +63,13 @@ export class ViewRequests extends Context.Tag('@clave/server/ViewRequests')<
           timeoutMs: entry.timeoutMs
         })
 
+      // A window whose socket opens while a request waits (a window just
+      // opened, a reconnection) gets every pending frame: the request is for
+      // one window and the others ignore it, so sending it again costs nothing.
+      const offWelcome = hub.onWelcome((send) => {
+        for (const entry of waiting.values()) send(entry.frame)
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(offWelcome))
       // The server is stopping: nobody will answer now, and every caller hears so.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -83,20 +93,22 @@ export class ViewRequests extends Context.Tag('@clave/server/ViewRequests')<
               waiting.delete(requestId)
               resume(Effect.fail(timeoutOf(requestId, entry)))
             }, timeoutMs)
+            const frame = {
+              _tag: 'request' as const,
+              requestId,
+              windowKey: input.windowKey,
+              command: input.command,
+              payload: input.payload
+            }
             waiting.set(requestId, {
               windowKey: input.windowKey,
               command: input.command,
               timeoutMs,
               timer,
+              frame,
               resume
             })
-            hub.publishFrame({
-              _tag: 'request',
-              requestId,
-              windowKey: input.windowKey,
-              command: input.command,
-              payload: input.payload
-            })
+            hub.publishFrame(frame)
             // The caller went away (an aborted HTTP request): forget the request.
             return Effect.sync(() => {
               clearTimeout(timer)

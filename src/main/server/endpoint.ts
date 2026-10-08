@@ -22,3 +22,36 @@ export function getClaveServerEndpoint(): ClaveServerEndpoint | null {
 export function setClaveServerEndpoint(next: ClaveServerEndpoint | null): void {
   endpoint = next
 }
+
+// ── Lane D (wave 3): whether the boot has decided ──
+// The agent tools wait for the server while the boot is still deciding
+// (`bootServer` in `src/main/index.ts` has not resolved) and fail at once
+// once it has decided there is none ("the app runs without it"), rather than
+// poll for a server that will never come.
+let settled = false
+let settledWaiters: (() => void)[] = []
+
+export function isClaveServerBootSettled(): boolean {
+  return settled
+}
+
+/** The boot decided: a server named through `setClaveServerEndpoint`, or none. */
+export function markClaveServerBootSettled(): void {
+  settled = true
+  const waiters = settledWaiters
+  settledWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
+/** Resolves once the boot has decided, at once when it already has. */
+export function whenClaveServerBootSettled(): Promise<void> {
+  if (settled) return Promise.resolve()
+  return new Promise((resolve) => settledWaiters.push(resolve))
+}
+
+/** Tests only. */
+export function resetClaveServerBootForTests(): void {
+  settled = false
+  settledWaiters = []
+  endpoint = null
+}

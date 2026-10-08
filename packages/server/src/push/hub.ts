@@ -50,6 +50,8 @@ interface Peer {
 export class PushHub {
   private readonly peers = new Set<Peer>()
   private readonly offEvents: Unsubscribe
+  // ── Lane D (wave 3): the view requests ──
+  private readonly welcomeListeners = new Set<(send: (frame: ServerFrame) => void) => void>()
 
   constructor(private readonly options: PushHubOptions) {
     this.offEvents = options.events.subscribe((envelope) =>
@@ -117,11 +119,13 @@ export class PushHub {
       peer.welcomed = true
       if (peer.helloTimer) clearTimeout(peer.helloTimer)
       peer.helloTimer = null
-      return this.send(peer, {
+      this.send(peer, {
         _tag: 'welcome',
         serverId: this.options.serverId,
         protocol: PUSH_PROTOCOL
       })
+      for (const listener of [...this.welcomeListeners]) listener((frame) => this.send(peer, frame))
+      return
     }
     switch (frame._tag) {
       case 'hello':
@@ -179,6 +183,19 @@ export class PushHub {
    */
   publishFrame(frame: ServerFrame): void {
     for (const peer of [...this.peers]) if (peer.welcomed) this.send(peer, frame)
+  }
+
+  /**
+   * Told of every peer the moment it is welcomed, with a sender for that peer
+   * alone: what a request still waiting for its window uses to reach a window
+   * whose socket opened after the request went out (a window just opened, a
+   * socket reconnecting).
+   */
+  onWelcome(listener: (send: (frame: ServerFrame) => void) => void): Unsubscribe {
+    this.welcomeListeners.add(listener)
+    return () => {
+      this.welcomeListeners.delete(listener)
+    }
   }
 
   private send(peer: Peer, frame: ServerFrame): void {

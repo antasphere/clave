@@ -16,7 +16,7 @@
  */
 import type { BrowserWindow } from 'electron'
 import type { ViewsClient } from '@clave/client'
-import { VIEW_REQUEST_TIMEOUT_MS } from '@clave/contract/views'
+import { VIEW_REQUEST_TIMEOUT_MS } from '@clave/contract/view-deadlines'
 import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow } from '../window-routing'
 import { noteRoad } from './roads'

@@ -6,19 +6,27 @@
  * starts or an attached one is reached). The client, and Effect under it,
  * load on the first tool call that needs them, never at boot
  * (`server/lazy-load.test.ts`), and a tool call that lands before the boot
- * has named a server waits a little for it rather than failing on the race.
+ * has named a server waits for the decision rather than failing on the race,
+ * and fails at once once the boot has decided there is none.
  *
  * Its requests go out through `@effect/platform-node`'s HTTP client, as the
  * preload's do, and its deadline is the longest a view request may wait plus
  * a margin: a request to a window waits on the person, not on the network.
  */
 import type { ClaveApiClient } from '@clave/client'
-import { VIEW_REQUEST_MAX_TIMEOUT_MS } from '@clave/contract/views'
-import { type ClaveServerEndpoint, getClaveServerEndpoint } from '../server/endpoint'
+import { VIEW_REQUEST_MAX_TIMEOUT_MS } from '@clave/contract/view-deadlines'
+import {
+  type ClaveServerEndpoint,
+  getClaveServerEndpoint,
+  isClaveServerBootSettled
+} from '../server/endpoint'
 
 export interface ServerClientOptions {
   /** Where the server is, null while the boot has not named one. */
   readonly endpoint?: () => ClaveServerEndpoint | null
+  /** Whether the boot has decided (a server named, or none): with no
+   *  endpoint once it has, a call fails at once instead of waiting. */
+  readonly settled?: () => boolean
   /** Builds the client for an endpoint; the real one loads `@clave/client`. */
   readonly connect?: (endpoint: ClaveServerEndpoint) => Promise<ClaveApiClient>
   /** How long a call waits for the boot to name a server. */
@@ -53,6 +61,7 @@ const defaultSleep = (ms: number): Promise<void> =>
 
 export function createServerClient(options: ServerClientOptions = {}): ServerClient {
   const endpointOf = options.endpoint ?? getClaveServerEndpoint
+  const settled = options.settled ?? isClaveServerBootSettled
   const connect = options.connect ?? defaultConnect
   const waitMs = options.waitMs ?? 15_000
   const sleep = options.sleep ?? defaultSleep
@@ -63,7 +72,8 @@ export function createServerClient(options: ServerClientOptions = {}): ServerCli
     for (;;) {
       const endpoint = endpointOf()
       if (endpoint) return endpoint
-      if (Date.now() >= deadline) throw new Error(NO_SERVER_MESSAGE)
+      // The boot decided there is no server: nothing to wait for.
+      if (settled() || Date.now() >= deadline) throw new Error(NO_SERVER_MESSAGE)
       await sleep(100)
     }
   }

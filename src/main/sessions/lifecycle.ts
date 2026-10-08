@@ -180,7 +180,14 @@ export function writeTerminal(id: string, text: string): void {
  *  too. */
 export async function stopSession(id: string): Promise<void> {
   const windows = sessionWindows()
-  await windows.beforeStop(id)
+  // What the window owes goes through the server (wave 3): an app that runs
+  // without a server, or a window that does not answer, must not hold the
+  // close. The document keeps its last flushed revision and the tab goes.
+  await windows
+    .beforeStop(id)
+    .catch((error) =>
+      console.error('[sessions] linked document not flushed before the stop', error)
+    )
   await ptyManager.kill(id)
   windows.unbind(id)
 }
