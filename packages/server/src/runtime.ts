@@ -69,8 +69,23 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const settingsEvents = SettingsEventsLive.pipe(Layer.provide(services))
   // ── Lane C: every change of the layouts told to the clients ──
   const sidebarEvents = SidebarEventsLive.pipe(Layer.provide(services))
-  return Layer.mergeAll(services, hub, settingsEvents, sidebarEvents)
+  // ── Lane B: a terminals port over a wire is a readiness check ──
+  const terminalsReady = TerminalsReadyLive.pipe(Layer.provide(services))
+  return Layer.mergeAll(services, hub, settingsEvents, sidebarEvents, terminalsReady)
 }
+
+/** The `terminals` check of `/health/ready`: whether the terminal process
+ *  answers, when the port has one to ask (`TerminalsService.ready`); a port
+ *  in this process registers nothing. */
+const TerminalsReadyLive: Layer.Layer<never, never, Terminals | Readiness> = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const terminals = yield* Terminals
+    const readiness = yield* Readiness
+    const ready = terminals.ready
+    if (ready === undefined) return
+    yield* readiness.register({ name: 'terminals', run: Effect.promise(() => ready()) })
+  })
+)
 
 /** The buses, with every handler of every domain registered once. */
 export const BusesLive = busesLayer.pipe(

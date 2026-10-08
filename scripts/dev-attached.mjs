@@ -13,7 +13,7 @@
 // The server keeps its data under `~/.clave/server-dev` (`CLAVE_SERVER_DATA`
 // to move it); the dev app shares the installed app's user data as `npm run
 // dev` does, so pass `-- --user-data-dir=<dir>` for a throwaway one.
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,16 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const serverOnly = process.argv.includes('--server-only')
 const extra = process.argv.slice(2).filter((a) => a !== '--server-only')
 const dataDir = process.env.CLAVE_SERVER_DATA ?? path.join(os.homedir(), '.clave', 'server-dev')
+
+// The server's terminal process runs from the bundle electron-vite writes
+// (out/main/terminal-process.js, ADR 0003 wave 3), and the server starts
+// before `electron-vite dev` would write it: build first, every time, so the
+// process never runs from a bundle older than its sources.
+const built = spawnSync(path.join(REPO, 'node_modules', '.bin', 'electron-vite'), ['build'], {
+  cwd: REPO,
+  stdio: 'inherit'
+})
+if (built.status !== 0) process.exit(built.status ?? 1)
 
 const server = await startServerProcess({ repo: REPO, dataDir })
 process.stdout.write(`clave-server: ${server.url} (data in ${dataDir})\n`)

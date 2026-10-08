@@ -10,17 +10,21 @@
     "./embedded": "./src/embedded.ts",
     "./test-support": "./src/test-support.ts",
     "./settings/test-support": "./src/settings/test-support.ts",
-    "./sidebar-layouts": "./src/sidebar/light.ts"
+    "./sidebar-layouts": "./src/sidebar/light.ts",
+    "./terminals-wire": "./src/terminals/wire.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0",
     "@clave/contract": "*",
     "@effect/platform": "0.97.1",
     "@effect/platform-node": "0.108.1",
+    "@grpc/grpc-js": "^1.14.5",
     "@structure-ai/cqrs": "0.3.0",
     "@structure-ai/eventsourcing": "0.3.0",
+    "@structure-ai/grpc": "0.3.0",
     "@structure-ai/http": "0.3.0",
     "@structure-ai/runtime": "0.3.0",
     "effect": "3.22.1"

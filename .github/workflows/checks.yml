@@ -36,10 +36,13 @@ jobs:
           cache: npm
 
       # The unit tests of the server's own process (scripts/server-process.test.mjs)
-      # start it under Bun.
+      # start it under Bun: the repository's own, from the `bun` dev dependency
+      # (1.4.1, the version the framework's gRPC package needs; ADR 0003, wave
+      # 3), which scripts/server-process.mjs prefers to any Bun on the PATH.
+      # This action pins the same version for anything else that calls `bun`.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.14'
+          bun-version: '1.4.1'
 
       - name: Install dependencies
         run: npm ci
@@ -49,6 +52,12 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # The generated protobuf code of the terminal service is checked in
+      # (packages/server/src/terminals/proto); a .proto edited without its
+      # generated file would fail only at runtime.
+      - name: Generated code is current
+        run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
 
       - name: Unit tests
         run: npx vitest run
@@ -83,7 +92,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.14'
+          bun-version: '1.4.1'
 
       - name: tmux
         run: brew install tmux
@@ -94,6 +103,13 @@ jobs:
       - name: Build the app
         id: build
         run: npx electron-vite build
+
+      # The terminal process beside the standalone server, from the bundle
+      # the build wrote (the tests that need it skip without one, so they run
+      # here and not in the Linux job): a terminal spawned through it streams
+      # its bytes, a killed process is reported by the server.
+      - name: Gate, the terminal process from the built bundle
+        run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
 
       - name: Gate, the server spec with the server in-process
         run: node tests/e2e/run.mjs server-boot
