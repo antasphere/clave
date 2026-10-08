@@ -1,5 +1,6 @@
 import type { SessionRecord } from '../../../preload/index.d'
-import { useSessionStore } from '../store/session-store'
+import { useSessionStore, inActiveWorkspace } from '../store/session-store'
+import { useWorkspaceStore } from '../store/workspace-store'
 import type { Session, SessionViewConfig } from '../store/session-types'
 import { resolveHiddenOwner } from './boot-adoption'
 
@@ -216,4 +217,71 @@ export async function adoptRehomed(
     if (id && takeFocus) first = false
   }
   window.electronAPI?.ackRehomed?.(ids)
+}
+
+/**
+ * Take in the sessions of quick-launch terminals the SERVER started (an
+ * agent's clave_add_group_terminal answered by the server, wave 3): their
+ * records exist in main and their processes run, but this window never saw
+ * them, since no spawn went through it. They join the store as the hidden
+ * half of their group's terminal, from their record alone and WITHOUT a
+ * spawn (the process is already bound to this window by main); the layout
+ * that named them already links each to its terminal. A terminal whose
+ * group's workspace is the one on screen is selected, as the window's own
+ * launch of a terminal does. Records main no longer has are skipped.
+ */
+export async function adoptServerStartedTerminals(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
+  const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
+  for (const record of records) {
+    const store = useSessionStore.getState()
+    if (store.sessions.some((s) => s.id === record.id)) continue
+    const session = sessionOfRecord(record, record.workspaceId ?? activeWorkspaceId ?? undefined)
+    store.addHiddenSession(session)
+    const group = store.groups.find((g) => g.terminals.some((t) => t.sessionId === record.id))
+    if (group && inActiveWorkspace({ workspaceId: group.workspaceId }, activeWorkspaceId)) {
+      useSessionStore.setState({ selectedSessionIds: [record.id], focusedSessionId: record.id })
+    }
+  }
+}
+
+/** The tab a record describes, as `spawnFromRecord` builds it after its
+ *  spawn, from the record alone: for a process main already runs. */
+function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Session {
+  return {
+    id: s.id,
+    cwd: s.cwd,
+    folderName: s.folderName,
+    name: s.displayName || s.folderName,
+    userRenamed: s.userRenamed === true,
+    alive: s.live !== false,
+    activityStatus: 'idle',
+    promptWaiting: null,
+    claudeMode: s.claudeMode,
+    antigravityMode: s.antigravityMode,
+    codexMode: s.codexMode,
+    piMode: s.piMode,
+    claudeAgentsMode: s.claudeAgentsMode,
+    dangerousMode: s.dangerousMode,
+    model: s.model,
+    claudeSessionId: s.claudeSessionId ?? null,
+    piSessionId: s.piSessionId ?? null,
+    launchProfileId: s.launchProfileId,
+    piProvider: s.piProvider,
+    piThinking: s.piThinking,
+    claudeProfileId: s.claudeProfileId,
+    claudeProfileLabel: s.claudeProfileLabel,
+    claudeConfigDir: s.configDir,
+    codexAccountId: s.codexAccountId,
+    codexAccountLabel: s.codexAccountLabel,
+    sessionType: 'local',
+    workspaceId,
+    view: s.view ? { ...s.view } : undefined,
+    detectedUrl: null,
+    serverStatus: null,
+    serverCommand: null,
+    hasUnseenActivity: false,
+    planFilePath: null
+  }
 }

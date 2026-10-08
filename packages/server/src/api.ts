@@ -22,6 +22,7 @@ import {
   StopSession,
   WriteSession
 } from '@clave/contract/sessions'
+import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
 import {
@@ -99,6 +100,12 @@ export const SidebarLive = HttpApiBuilder.group(ClaveApi, 'sidebar', (handlers) 
 
 // ── Wave 3, lane A: the workspace files (`workspace-files/api.ts`) ──
 export { WorkspaceFilesLive }
+// ── Lane D (wave 3): the view requests ──
+export const ViewsLive = HttpApiBuilder.group(ClaveApi, 'views', (handlers) =>
+  handlers
+    .handle('request', HttpCqrs.command(RequestView))
+    .handle('answer', HttpCqrs.command(AnswerViewRequest))
+)
 
 // ── Lane B: terminals ──
 
@@ -112,6 +119,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       SettingsLive,
       SidebarLive,
       WorkspaceFilesLive,
+      // ── Lane D (wave 3): the view requests ──
+      ViewsLive,
       HealthLive
     )
   )

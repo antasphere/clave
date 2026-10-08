@@ -15,6 +15,7 @@ import {
 } from '@clave/contract/push'
 import type { ServerEventEnvelope } from '@clave/contract/events'
 import type { Session, SessionStream } from '@clave/contract/sessions'
+import type { ViewRequest } from '@clave/contract/views'
 import { Either } from 'effect'
 
 export type PushStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
@@ -100,6 +101,8 @@ export class PushClient {
     (status: PushStatus, detail: PushStatusDetail) => void
   >()
   private readonly errorListeners = new Set<(message: string, sessionId?: string) => void>()
+  // ── Lane D (wave 3): the view requests ──
+  private readonly requestListeners = new Set<(request: ViewRequest) => void>()
   private openWaiters: Array<{ resolve: () => void; reject: (error: Error) => void }> = []
 
   constructor(private readonly options: PushClientOptions) {
@@ -227,6 +230,19 @@ export class PushClient {
     }
   }
 
+  // ── Lane D (wave 3): the view requests ──
+  /**
+   * The view requests the server pushes. Every welcomed client receives each
+   * one; a window answers only those carrying its own key, through the
+   * `views.answer` request, and the others ignore it.
+   */
+  onRequest(listener: (request: ViewRequest) => void): Unsubscribe {
+    this.requestListeners.add(listener)
+    return () => {
+      this.requestListeners.delete(listener)
+    }
+  }
+
   private open(status: PushStatus): void {
     const Ctor = this.options.WebSocket ?? defaultSocket()
     this.setStatus(status, { attempt: this.attempts })
@@ -330,6 +346,17 @@ export class PushClient {
         subscription.acked = frame.session
         const waiters = subscription.waiters.splice(0)
         for (const waiter of waiters) waiter.resolve(frame.session)
+        return
+      }
+      // ── Lane D (wave 3): the view requests ──
+      case 'request': {
+        const request = {
+          requestId: frame.requestId,
+          windowKey: frame.windowKey,
+          command: frame.command,
+          payload: frame.payload
+        }
+        for (const listener of this.requestListeners) this.safely(() => listener(request))
         return
       }
       case 'unsubscribed':

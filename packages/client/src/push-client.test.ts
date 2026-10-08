@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { startEmbedded, type EmbeddedServer } from '@clave/server'
 import { FakeSource, aSession, sleep } from '@clave/server/test-support'
 import type { SessionStream } from '@clave/contract/sessions'
+import type { ViewRequest } from '@clave/contract/views'
 import { PushClient, type PushSocketConstructor, type PushStatus, pushUrlOf } from './push-client'
 
 const Socket = WebSocket as unknown as PushSocketConstructor
@@ -257,6 +258,40 @@ describe('the push client against the server', () => {
     await server.publish({ _tag: 'session.state_changed', id: 's1', state: 'working' })
     await until(() => events.length === 1)
     expect(events).toEqual(['session.state_changed'])
+  })
+
+  // ── Lane D (wave 3): the view requests ──
+  it('hands a view request to its onRequest listeners, as sent', async () => {
+    client = new PushClient({ url: server.url, token: server.token, WebSocket: Socket }).connect()
+    await client.whenOpen()
+    const requests: ViewRequest[] = []
+    client.onRequest((request) => requests.push(request))
+    const post = (path: string, body: unknown): Promise<Response> =>
+      fetch(`${server.url}${path}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+    const asked = post('/views/request', {
+      windowKey: 'w1',
+      command: 'list',
+      payload: { workspace: 'all', depth: [1, 2] },
+      timeoutMs: 500
+    })
+    await until(() => requests.length === 1)
+    expect(requests[0]).toMatchObject({
+      windowKey: 'w1',
+      command: 'list',
+      payload: { workspace: 'all', depth: [1, 2] }
+    })
+    expect(typeof requests[0].requestId).toBe('string')
+    const answered = await post('/views/answer', {
+      requestId: requests[0].requestId,
+      ok: true,
+      result: 'done'
+    })
+    expect(answered.status).toBe(204)
+    expect(await (await asked).json()).toEqual({ result: 'done' })
   })
 })
 

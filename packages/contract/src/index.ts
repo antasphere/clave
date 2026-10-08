@@ -25,5 +25,7 @@ export * as Sidebar from './sidebar'
 
 // ── Wave 3, lane A: the workspace files (packages/contract/src/workspace-files/) ──
 export * as WorkspaceFiles from './workspace-files'
+// ── Lane D (wave 3): the view requests ──
+export * as Views from './views'
 
 // ── Lane B: terminals · Lane D: settings served ──

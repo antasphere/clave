@@ -14,6 +14,7 @@
 import { Schema } from 'effect'
 import { ServerEventEnvelope } from './events'
 import { Session, SessionStream } from './sessions'
+import { ViewRequest } from './views'
 
 export const PUSH_PATH = '/push'
 export const PUSH_PROTOCOL = 1
@@ -52,7 +53,12 @@ export const ServerFrame = Schema.Union(
     sessionId: Schema.optional(Schema.String),
     message: Schema.String
   }),
-  Schema.TaggedStruct('pong', {})
+  Schema.TaggedStruct('pong', {}),
+  // ── Lane D (wave 3): the view requests ──
+  /** A view request for the window named by its key. Every welcomed peer
+   *  receives it and only that window answers, through the
+   *  `AnswerViewRequest` command. */
+  Schema.TaggedStruct('request', ViewRequest.fields)
 )
 export type ServerFrame = typeof ServerFrame.Type
 

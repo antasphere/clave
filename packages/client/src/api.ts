@@ -18,6 +18,7 @@ import { type SessionsClient, sessionsClient } from './sessions'
 import { type SettingsClient, settingsClient } from './settings'
 import { type SidebarClient, sidebarClient } from './sidebar'
 import { type WorkspaceFilesClient, workspaceFilesClient } from './workspace-files'
+import { type ViewsClient, viewsClient } from './views'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -53,6 +54,8 @@ export interface ClaveApiClient {
   readonly sidebar: SidebarClient
   // ── Wave 3, lane A: the workspace files (`./workspace-files.ts`) ──
   readonly workspaceFiles: WorkspaceFilesClient
+  // ── Lane D (wave 3): the view requests (`./views.ts`) ──
+  readonly views: ViewsClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -113,6 +116,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     settings: settingsClient(call),
     sidebar: sidebarClient(call),
     workspaceFiles: workspaceFilesClient(call, patientCall),
+    // ── Lane D (wave 3): the view requests ──
+    views: viewsClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

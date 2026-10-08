@@ -166,6 +166,18 @@ export class PushHub {
   }
 
   private broadcast(frame: ServerFrame): void {
+    this.publishFrame(frame)
+  }
+
+  // ── Lane D (wave 3): the view requests ──
+  /**
+   * Send one frame to every welcomed peer. The view requests go out through
+   * here: they are not server events (a request is a question, not a fact,
+   * and never enters the event store), and the hub does not know which
+   * socket is which window, so every peer gets it and only the named window
+   * answers.
+   */
+  publishFrame(frame: ServerFrame): void {
     for (const peer of [...this.peers]) if (peer.welcomed) this.send(peer, frame)
   }
 

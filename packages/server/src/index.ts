@@ -65,3 +65,5 @@ export {
   type Reviewer,
   type WorkspaceFilesStorage
 } from './workspace-files'
+// ── Lane D (wave 3): the view requests ──
+export { ViewRequests, type ViewRequestsService, viewHandlers } from './views'

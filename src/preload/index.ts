@@ -101,6 +101,9 @@ const serverRouter = createMethodRouter({
  */
 type Backing = import('@clave/client/router').Backing
 let serverBacking: Backing | null = null
+// ── Lane D (wave 3): the view requests this window received from the server,
+// by id, so their answers go back through the server and not over IPC. ──
+const serverViewRequests = new Set<string>()
 const serverWaiters = new Set<(backing: Backing) => void>()
 let serverWatching = false
 const announceServer = (backing: Backing): void => {
@@ -974,16 +977,62 @@ const electronAPI = {
       onSessionEvent(push, 'session.state_changed', sessionId, (event) => callback(event.state))
     ),
 
+  // ── Lane D (wave 3): the agent tools reach this window through the server ──
+  // The app's MCP server asks a window through a view request: a `request`
+  // frame on the push channel carrying the key of the window it is for, which
+  // this window answers through the server's `views.answer` command. The IPC
+  // pair (`mcp:command` in, `mcp:response` out) stays for the harness's
+  // `callMcp`, which drives the dispatcher directly; the app never sends it.
+  // Both roads deliver to the one dispatcher, and an answer goes back the way
+  // its request came.
   onMcpCommand: (
     callback: (msg: { requestId: string; command: string; payload: unknown }) => void
-  ) =>
-    createIpcListener<[{ requestId: string; command: string; payload: unknown }]>(
+  ) => {
+    const offIpc = createIpcListener<[{ requestId: string; command: string; payload: unknown }]>(
       'mcp:command',
       callback
-    ),
+    )
+    let offPush: (() => void) | null = null
+    const withdraw = onServerAvailable((backing) => {
+      const mine = windowKey()
+      offPush = backing.push.onRequest((request) => {
+        void mine.then((key) => {
+          if (!key || request.windowKey !== key) return
+          serverViewRequests.add(request.requestId)
+          callback({
+            requestId: request.requestId,
+            command: request.command,
+            payload: request.payload
+          })
+        })
+      })
+    })
+    return () => {
+      offIpc()
+      withdraw()
+      offPush?.()
+    }
+  },
 
-  mcpRespond: (response: { requestId: string; ok: boolean; result?: unknown; error?: string }) =>
-    ipcRenderer.send('mcp:response', response),
+  mcpRespond: (response: { requestId: string; ok: boolean; result?: unknown; error?: string }) => {
+    if (!serverViewRequests.delete(response.requestId)) {
+      ipcRenderer.send('mcp:response', response)
+      return
+    }
+    const backing = serverBacking
+    if (!backing) return
+    void backing.api.views
+      .answer({
+        requestId: response.requestId,
+        ok: response.ok,
+        ...(response.result !== undefined && { result: response.result }),
+        ...(response.error !== undefined && { error: response.error })
+      })
+      .catch((error: unknown) => {
+        // A late answer to a request the server gave up on is nothing to do.
+        console.warn('[mcp] the view request could not be answered', error)
+      })
+  },
 
   // Exchange capture: fire-and-forget observability writes — the renderer
   // never waits on these, so a capture failure can't delay a delivery.

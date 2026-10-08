@@ -136,21 +136,63 @@ function resolveGroup(
   )
 }
 
-function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
-  const state = useSessionStore.getState()
-  const wsState = useWorkspaceStore.getState()
-
-  // Optional scoping: 'all' (default — agents may orchestrate across
-  // workspaces), 'active', or a workspace id/name.
-  const scope = payload.workspace ?? 'all'
+/** The scope a listing is asked with: 'all' (default — agents may
+ *  orchestrate across workspaces), 'active', or a workspace id/name. */
+function listScope(workspace: string | undefined): (x: { workspaceId?: string | null }) => boolean {
+  const scope = workspace ?? 'all'
   const scopeId: string | null | 'all' =
     scope === 'all'
       ? 'all'
       : scope === 'active'
-        ? wsState.activeWorkspaceId
+        ? useWorkspaceStore.getState().activeWorkspaceId
         : resolveWorkspace(scope).id
-  const inScope = (x: { workspaceId?: string | null }): boolean =>
-    scopeId === 'all' || inActiveWorkspace(x, scopeId)
+  return (x) => scopeId === 'all' || inActiveWorkspace(x, scopeId)
+}
+
+/** The pinned groups in scope: launchable templates from .clave files
+ *  (auto-discovered or imported), which clave_launch_group spawns by id or
+ *  name. */
+function pinnedGroupsInScope(inScope: (x: { workspaceId?: string | null }) => boolean): unknown[] {
+  const pinnedSessionMode = (s: PinnedGroupSession): SessionMode => {
+    if (s.antigravityMode) return 'antigravity'
+    if (s.codexMode) return 'codex'
+    if (s.piMode) return 'pi'
+    if (s.claudeAgentsMode) return 'claude-agents'
+    if (s.claudeMode) return 'claude'
+    return 'terminal'
+  }
+  return usePinnedStore
+    .getState()
+    .pinnedGroups.filter(inScope)
+    .map((pg) => ({
+      id: pg.id,
+      name: pg.name,
+      cwd: pg.cwd,
+      category: pg.category ?? null,
+      sourceFile: pg.filePath ?? pg.discoveredBy ?? null,
+      state: getPinnedState(pg),
+      activeGroupId: pg.activeGroupId,
+      workspaceId: pg.workspaceId ?? null,
+      workspaceName: workspaceNameOf(pg.workspaceId),
+      sessions: pg.sessions.map((s) => ({ name: s.name, cwd: s.cwd, mode: pinnedSessionMode(s) })),
+      terminals: pg.terminals.map((t) => ({ command: t.command, commandMode: t.commandMode }))
+    }))
+}
+
+/** What only this window knows of a listing, for the agent tools the server
+ *  answers (wave 3): the pinned groups, whose store is the window's until the
+ *  workspace files move to the server, and the focused tab. */
+function handleWindowState(payload: { workspace?: string }): unknown {
+  return {
+    pinnedGroups: pinnedGroupsInScope(listScope(payload.workspace)),
+    focusedSessionId: useSessionStore.getState().focusedSessionId
+  }
+}
+
+function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
+  const state = useSessionStore.getState()
+  const wsState = useWorkspaceStore.getState()
+  const inScope = listScope(payload.workspace)
 
   const sessions = state.sessions
     .filter((s) => s.sessionType === 'local' && inScope(s))
@@ -194,32 +236,7 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       sessionId: t.sessionId
     }))
   }))
-  const pinnedSessionMode = (s: PinnedGroupSession): SessionMode => {
-    if (s.antigravityMode) return 'antigravity'
-    if (s.codexMode) return 'codex'
-    if (s.piMode) return 'pi'
-    if (s.claudeAgentsMode) return 'claude-agents'
-    if (s.claudeMode) return 'claude'
-    return 'terminal'
-  }
-  // Pinned groups = launchable templates from .clave files (auto-discovered or
-  // imported). clave_launch_group spawns them by id or name.
-  const pinnedGroups = usePinnedStore
-    .getState()
-    .pinnedGroups.filter(inScope)
-    .map((pg) => ({
-      id: pg.id,
-      name: pg.name,
-      cwd: pg.cwd,
-      category: pg.category ?? null,
-      sourceFile: pg.filePath ?? pg.discoveredBy ?? null,
-      state: getPinnedState(pg),
-      activeGroupId: pg.activeGroupId,
-      workspaceId: pg.workspaceId ?? null,
-      workspaceName: workspaceNameOf(pg.workspaceId),
-      sessions: pg.sessions.map((s) => ({ name: s.name, cwd: s.cwd, mode: pinnedSessionMode(s) })),
-      terminals: pg.terminals.map((t) => ({ command: t.command, commandMode: t.commandMode }))
-    }))
+  const pinnedGroups = pinnedGroupsInScope(inScope)
   const callerSessionId = payload.callerSessionId ?? null
   return {
     workspaces: wsState.workspaces.map((w) => ({
@@ -1407,6 +1424,8 @@ async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
       return handleList(payload as Parameters<typeof handleList>[0])
+    case 'windowState':
+      return handleWindowState(payload as Parameters<typeof handleWindowState>[0])
     case 'resolveSessionRef':
       return handleResolveSessionRef(payload as { ref: string })
     case 'createGroup':

@@ -36,6 +36,7 @@ import {
   WorkspaceFilesPort,
   workspaceFilesHandlers
 } from './workspace-files'
+import { ViewRequests, viewHandlers } from './views'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -67,6 +68,8 @@ export type ServerServices =
   | SidebarLayoutsPort
   | WorkspaceFilesPort
   | ReviewDesk
+  // ── Lane D (wave 3): the view requests ──
+  | ViewRequests
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -93,13 +96,16 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const terminalsReady = TerminalsReadyLive.pipe(Layer.provide(services))
   // ── Wave 3, lane A: a watched `.clave` file's changes told to the clients ──
   const workspaceFilesEvents = WorkspaceFilesEventsLive.pipe(Layer.provide(services))
+  // ── Lane D (wave 3): the view requests, pushed through the hub ──
+  const views = ViewRequests.layer.pipe(Layer.provide(hub))
   return Layer.mergeAll(
     services,
     hub,
     settingsEvents,
     sidebarEvents,
     terminalsReady,
-    workspaceFilesEvents
+    workspaceFilesEvents,
+    views
   )
 }
 
@@ -127,7 +133,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Lane C: the sidebar ──
       ...sidebarHandlers,
       // ── Wave 3, lane A: the workspace files ──
-      ...workspaceFilesHandlers
+      ...workspaceFilesHandlers,
+      // ── Lane D (wave 3): the view requests ──
+      ...viewHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

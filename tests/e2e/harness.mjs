@@ -929,3 +929,15 @@ export async function selectBuiltIn(win, label, profileName, family) {
   await entry.click()
   if (count > 1) await win.getByRole('menuitem', { name: profileName, exact: true }).click()
 }
+
+// ── The agent tools' road (wave 3, PRDCT-3294) ───────────────────────────────
+
+/** Which road each agent tool took since the app started, oldest first:
+ *  `server` (the server's own command, through the client) or `window` (a
+ *  view request the window answered through the server). Recorded by main
+ *  under --test-no-activate on the shared hooks namespace
+ *  (`globalThis.__claveE2E.mcpRoads`, `src/main/mcp/roads.ts`); an app that
+ *  never ran a tool answers an empty list. */
+export async function mcpRoads(app) {
+  return app.evaluate(() => globalThis.__claveE2E?.mcpRoads ?? [])
+}
