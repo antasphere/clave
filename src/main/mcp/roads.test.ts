@@ -19,9 +19,10 @@ afterEach(() => {
 describe('the agent tools’ road record', () => {
   it('records each tool’s road on the hooks namespace in test mode', async () => {
     vi.doMock('../test-mode', () => ({ TEST_NO_ACTIVATE: true }))
-    const { noteRoad } = await import('./roads')
+    const { noteRoad, recordedRoads } = await import('./roads')
     noteRoad('createGroup', 'server')
     noteRoad('focus', 'window')
+    expect(recordedRoads()).toBe(2)
     expect(g.__claveE2E?.mcpRoads).toEqual([
       { command: 'createGroup', road: 'server' },
       { command: 'focus', road: 'window' }
@@ -29,8 +30,11 @@ describe('the agent tools’ road record', () => {
   })
   it('keeps nothing outside test mode', async () => {
     vi.doMock('../test-mode', () => ({ TEST_NO_ACTIVATE: false }))
-    const { noteRoad } = await import('./roads')
+    const { noteRoad, recordedRoads } = await import('./roads')
     for (let i = 0; i < 1000; i++) noteRoad('list', 'server')
     expect(g.__claveE2E).toBeUndefined()
+    // The list itself, not only the namespace: a record kept in memory with
+    // nobody reading it is the leak this guards against.
+    expect(recordedRoads()).toBe(0)
   })
 })

@@ -43,10 +43,24 @@ export function markClaveServerBootSettled(): void {
   for (const resolve of waiters) resolve()
 }
 
-/** Resolves once the boot has decided, at once when it already has. */
-export function whenClaveServerBootSettled(): Promise<void> {
+/** How long a caller waits for the boot's decision at most: a boot that
+ *  never decides (a lost mark, a hung start) must not hold a caller for the
+ *  life of the process; past it the caller goes on as if nothing were named. */
+export const BOOT_DECISION_WAIT_MS = 20_000
+
+/** Resolves once the boot has decided, at once when it already has, and at
+ *  the latest after `maxWaitMs`. */
+export function whenClaveServerBootSettled(maxWaitMs = BOOT_DECISION_WAIT_MS): Promise<void> {
   if (settled) return Promise.resolve()
-  return new Promise((resolve) => settledWaiters.push(resolve))
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, maxWaitMs)
+    function done(): void {
+      clearTimeout(timer)
+      settledWaiters = settledWaiters.filter((w) => w !== done)
+      resolve()
+    }
+    settledWaiters.push(done)
+  })
 }
 
 /** Tests only. */

@@ -18,6 +18,11 @@ export interface RoadEntry {
 const roads: RoadEntry[] = []
 let installed = false
 
+/** How many roads were recorded since the start: 0 outside test mode, always. */
+export function recordedRoads(): number {
+  return roads.length
+}
+
 export function noteRoad(command: string, road: ToolRoad): void {
   if (!TEST_NO_ACTIVATE) return
   if (!installed) {

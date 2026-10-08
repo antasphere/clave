@@ -24,6 +24,7 @@ import type { SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
+import { createViewRequestTracker } from './view-request-tracker'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -101,9 +102,12 @@ const serverRouter = createMethodRouter({
  */
 type Backing = import('@clave/client/router').Backing
 let serverBacking: Backing | null = null
-// ── Lane D (wave 3): the view requests this window received from the server,
-// by id, so their answers go back through the server and not over IPC. ──
-const serverViewRequests = new Set<string>()
+// ── Lane D (wave 3): the view requests this window received from the server:
+// a repeat (the server sends a waiting request again to a peer welcomed
+// meanwhile, and a reconnected socket is a new peer to it) is not run again,
+// and an answer goes back through the server only for a request this window
+// started (`view-request-tracker.ts`). ──
+const viewRequests = createViewRequestTracker()
 const serverWaiters = new Set<(backing: Backing) => void>()
 let serverWatching = false
 const announceServer = (backing: Backing): void => {
@@ -998,7 +1002,7 @@ const electronAPI = {
       offPush = backing.push.onRequest((request) => {
         void mine.then((key) => {
           if (!key || request.windowKey !== key) return
-          serverViewRequests.add(request.requestId)
+          if (!viewRequests.take(request.requestId)) return
           callback({
             requestId: request.requestId,
             command: request.command,
@@ -1015,10 +1019,11 @@ const electronAPI = {
   },
 
   mcpRespond: (response: { requestId: string; ok: boolean; result?: unknown; error?: string }) => {
-    if (!serverViewRequests.delete(response.requestId)) {
+    if (!viewRequests.owns(response.requestId)) {
       ipcRenderer.send('mcp:response', response)
       return
     }
+    viewRequests.answered(response.requestId)
     const backing = serverBacking
     if (!backing) return
     void backing.api.views
