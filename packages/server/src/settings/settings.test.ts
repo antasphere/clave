@@ -238,3 +238,104 @@ describe('a server with no settings behind it', () => {
     }
   })
 })
+
+describe('the Antasphere account on the server (PRDCT-3259)', () => {
+  const STATUS_KEYS = [
+    'account',
+    'expiresAt',
+    'issuerHost',
+    'lastFailure',
+    'loginStartedAt',
+    'phase',
+    'renewable',
+    'secureStorage',
+    'signedInAt'
+  ]
+
+  it('answers the status as the read model, and nothing more', async () => {
+    const res = await get('/accounts/antasphere')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(STATUS_KEYS)
+    expect(body).toMatchObject({ phase: 'signed-out', account: null })
+  })
+
+  it('a sign-in answers the handoff to the caller alone: never on the push channel', async () => {
+    const peer = new Peer(server.url.replace('http', 'ws') + '/push')
+    await peer.opened
+    peer.send({ _tag: 'hello', token: server.token, client: 'test' })
+    expect(await peer.next()).toMatchObject({ _tag: 'welcome' })
+    const res = await post('/accounts/antasphere/sign-in', {})
+    expect([200, 201]).toContain(res.status)
+    const body = (await res.json()) as {
+      status: Record<string, unknown>
+      handoff: { url: string; generation: number } | null
+    }
+    expect(body.status.phase).toBe('signing-in')
+    expect(body.handoff).toEqual({ url: 'https://issuer.test/authorize?state=s1', generation: 1 })
+    // The status-changed event the sign-in caused carries the status only.
+    const frame = (await peer.next()) as { _tag: string; event: Record<string, unknown> }
+    expect(frame).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'accounts.antasphere_changed', status: { phase: 'signing-in' } }
+    })
+    expect(JSON.stringify(frame)).not.toContain('authorize')
+    expect(Object.keys(frame.event).sort()).toEqual(['_tag', 'status'])
+    // The confirmation: the exact handoff while the login waits, and nothing else.
+    const confirmed = await post('/accounts/antasphere/handoff/confirm', body.handoff)
+    expect([200, 201]).toContain(confirmed.status)
+    expect(await confirmed.json()).toEqual({ current: true })
+    const other = await post('/accounts/antasphere/handoff/confirm', {
+      ...body.handoff,
+      generation: 2
+    })
+    expect(await other.json()).toEqual({ current: false })
+    expect(await peer.silence()).toBe(true)
+    // The four commands answer the status; a cancel, a sign-out and a dismiss too.
+    const cancel = await post('/accounts/antasphere/cancel', {})
+    expect([200, 201]).toContain(cancel.status)
+    expect(await cancel.json()).toMatchObject({ phase: 'signed-out', lastFailure: 'cancelled' })
+    expect(await peer.next()).toMatchObject({
+      _tag: 'event',
+      event: { _tag: 'accounts.antasphere_changed', status: { lastFailure: 'cancelled' } }
+    })
+    const dismiss = await post('/accounts/antasphere/dismiss', {})
+    expect([200, 201]).toContain(dismiss.status)
+    expect(await dismiss.json()).toMatchObject({ phase: 'signed-out', lastFailure: null })
+    const out = await post('/accounts/antasphere/sign-out', {})
+    expect([200, 201]).toContain(out.status)
+    expect(await out.json()).toMatchObject({ phase: 'signed-out', account: null })
+    // Once the login is over, the handoff it issued confirms as nothing.
+    const stale = await post('/accounts/antasphere/handoff/confirm', body.handoff)
+    expect(await stale.json()).toEqual({ current: false })
+    expect(
+      fake.calls.filter((c) => c.method.startsWith('antasphere.')).map((c) => c.method)
+    ).toEqual([
+      'antasphere.signIn',
+      'antasphere.confirmHandoff',
+      'antasphere.confirmHandoff',
+      'antasphere.cancel',
+      'antasphere.dismiss',
+      'antasphere.signOut',
+      'antasphere.confirmHandoff'
+    ])
+    peer.ws.close()
+  })
+
+  it('a server without the account refuses the commands as the declared failure', async () => {
+    fake.refuse.antasphere = true
+    for (const path of ['sign-in', 'cancel', 'sign-out', 'dismiss', 'handoff/confirm']) {
+      const res = await post(
+        `/accounts/antasphere/${path}`,
+        path === 'handoff/confirm' ? { url: 'https://issuer.test/a', generation: 1 } : {}
+      )
+      expect(res.status, path).toBe(422)
+      expect(await res.json()).toMatchObject({
+        _tag: 'CapabilityUnavailable',
+        capability: 'antasphereAccount'
+      })
+    }
+    // The status read, a query, has no declared failure: a defect, never a fake status.
+    expect((await get('/accounts/antasphere')).status).toBe(500)
+  })
+})

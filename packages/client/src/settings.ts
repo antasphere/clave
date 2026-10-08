@@ -26,6 +26,9 @@ export type Workspace = typeof S.WorkspaceView.Type
 export type WorkspaceState = typeof S.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof S.UpdateWorkspaceRegistry.success.Type
 export type PinsWriteResult = typeof S.UpdateWorkspacePins.success.Type
+export type AntasphereAccountStatus = typeof S.AntasphereAccountStatusView.Type
+export type AntasphereSignInResult = typeof S.SignInWithAntasphere.success.Type
+export type AntasphereHandoff = typeof S.AntasphereHandoffView.Type
 
 export interface SettingsClient {
   readonly claudeAccounts: {
@@ -76,6 +79,18 @@ export interface SettingsClient {
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
+  }
+  /** The Antasphere account (PRDCT-3259): the status, and the four commands
+   *  that move it. The sign-in's answer carries the browser handoff to this
+   *  client; whoever calls it opens the browser and keeps the URL to itself. */
+  readonly antasphere: {
+    readonly status: () => Promise<AntasphereAccountStatus>
+    readonly signIn: () => Promise<AntasphereSignInResult>
+    /** Whether a handoff is the one issued for the login in flight, right now. */
+    readonly confirmHandoff: (handoff: AntasphereHandoff) => Promise<boolean>
+    readonly cancel: () => Promise<AntasphereAccountStatus>
+    readonly signOut: () => Promise<AntasphereAccountStatus>
+    readonly dismiss: () => Promise<AntasphereAccountStatus>
   }
   readonly workspaces: {
     readonly load: () => Promise<WorkspaceState>
@@ -166,6 +181,15 @@ export function settingsClient(callApi: Call): SettingsClient {
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)
+    },
+    antasphere: {
+      status: () => call((g) => g.readAntasphereAccount({ payload: {} })),
+      signIn: () => call((g) => g.signInWithAntasphere({ payload: {} })),
+      confirmHandoff: (handoff) =>
+        call((g) => g.confirmAntasphereHandoff({ payload: handoff })).then((r) => r.current),
+      cancel: () => call((g) => g.cancelAntasphereSignIn({ payload: {} })),
+      signOut: () => call((g) => g.signOutOfAntasphere({ payload: {} })),
+      dismiss: () => call((g) => g.dismissAntasphereFailure({ payload: {} }))
     },
     workspaces: {
       load: () => call((g) => g.loadWorkspaceState({ payload: {} })),

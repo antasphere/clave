@@ -7,11 +7,24 @@
  *
  *  - the shell (`shell-source.ts`), over the module singletons, with the
  *    login jobs (they run a provider's own login command in a PTY main owns)
- *    and the Dock (the app icon);
+ *    and the Dock (the app icon), and the Antasphere account manager while
+ *    the server runs in-process;
  *  - the standalone entry (`standalone-source.ts`), over the same managers
- *    on the standalone ports, with neither: a login or an icon asked of it
+ *    on the standalone ports, with the Antasphere account manager of its
+ *    own and neither of the other two: a login or an icon asked of it
  *    answers the contract's `CapabilityUnavailable`, never a 500 and never
  *    a silent no-op.
+ *
+ * The Antasphere account (PRDCT-3259) is owned here, whichever entry: the
+ * source answers the status and the commands from the manager and emits its
+ * changes as one event. The entry restores the stored session, once its
+ * ports can be used (the shell after `app` is ready, since `safeStorage`
+ * cannot be asked before; the standalone once its ports are installed): a
+ * restore at this factory's call would run at the shell's module load and
+ * find no OS encryption. A source built without a manager (the shell
+ * attached to a server elsewhere) refuses every account call, the status
+ * read included, so nothing local ever stands in for the login the server
+ * holds.
  *
  * It is the ONE origin of the settings events: every change of a manager,
  * whoever caused it (a command through the server, the IPC route, the
@@ -35,6 +48,11 @@ import type { LaunchProfileManager } from '../launch-profile-manager'
 import type { PreferencesManager, AppIcon } from '../preferences-manager'
 import type { WorkspaceManager } from '../workspace-manager'
 import type { LoginJob } from '../account-login'
+import type {
+  AntasphereAccountStatus,
+  AntasphereHandoff,
+  AntasphereSignInResult
+} from '../../shared/antasphere-account-types'
 import type { Workspace } from '../../shared/workspace-types'
 import type { LaunchProfile } from '../../shared/agent-launch'
 
@@ -47,6 +65,18 @@ export interface LoginJobsLike {
   cancel(jobId: string): void
   list(): LoginJob[]
   onProgress(listener: (job: LoginJob) => void): () => void
+}
+
+/** The Antasphere account manager as the source needs it
+ *  (`antasphere-account.ts`'s `AntasphereAccountManager`). */
+export interface AntasphereAccountLike {
+  status(): AntasphereAccountStatus
+  start(): Promise<AntasphereSignInResult>
+  confirmHandoff(handoff: AntasphereHandoff): boolean
+  cancel(): AntasphereAccountStatus
+  signOut(): AntasphereAccountStatus
+  dismissFailure(): AntasphereAccountStatus
+  onChange(listener: (status: AntasphereAccountStatus) => void): () => void
 }
 
 export interface SettingsManagers {
@@ -65,6 +95,9 @@ export interface SettingsManagers {
   logins?: () => Promise<LoginJobsLike>
   /** Where the process has a Dock (the shell); absent, the icon is refused. */
   applyAppIcon?: (icon: AppIcon) => void
+  /** Where this process owns the Antasphere login (the server's own process,
+   *  in-process or standalone); absent, every account call is refused. */
+  antasphere?: AntasphereAccountLike
 }
 
 /** The machine's own login, when a usage read names no account. */
@@ -150,6 +183,12 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // handlers used to do this per provider).
   m.claudeAccounts.onChange(() => forgetGone(m.claudeUsage, m.claudeAccounts.list()))
   m.codexAccounts.onChange(() => forgetGone(m.codexUsage, m.codexAccounts.list()))
+  // The Antasphere account: its changes are one event. The entry restores
+  // the stored session when its ports can be used (the header says why not
+  // here).
+  const antasphere = (): AntasphereAccountLike =>
+    m.antasphere ?? refuse('antasphereAccount', 'This server holds no Antasphere account.')
+  m.antasphere?.onChange((status) => emit({ _tag: 'accounts.antasphere_changed', status }))
 
   const workspaceChanged = (origin: string | undefined): void => {
     const { workspaces, pins } = m.workspaces.load()
@@ -238,6 +277,14 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
         m.preferences.set('appIcon', icon)
         m.applyAppIcon(icon)
       }
+    },
+    antasphere: {
+      status: () => antasphere().status(),
+      signIn: () => antasphere().start(),
+      confirmHandoff: (handoff) => antasphere().confirmHandoff(handoff),
+      cancel: () => antasphere().cancel(),
+      signOut: () => antasphere().signOut(),
+      dismiss: () => antasphere().dismissFailure()
     },
     workspaces: {
       load: () => m.workspaces.load(),

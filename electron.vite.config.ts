@@ -25,9 +25,18 @@ const BUNDLED_SOURCE = [
   '@structure-ai/runtime'
 ]
 
+/**
+ * ESM-only dependencies of the main process, bundled rather than required:
+ * openid-client and what it stands on ship no CommonJS build, and the main
+ * bundle is CommonJS. Node 22 can `require` an ES module, but a bundle that
+ * carries the code loads the same way packaged in an asar as it does from
+ * `out/`, with nothing to resolve at runtime.
+ */
+const BUNDLED_ESM = ['openid-client', 'oauth4webapi', 'jose']
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: BUNDLED_SOURCE })],
+    plugins: [externalizeDepsPlugin({ exclude: [...BUNDLED_SOURCE, ...BUNDLED_ESM] })],
     build: {
       rollupOptions: {
         input: {

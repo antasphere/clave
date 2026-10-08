@@ -5,6 +5,7 @@
  */
 import type {
   AccountLoginJob,
+  AntasphereAccountStatus,
   ClaudeAccount,
   CodexAccount,
   LaunchProfile,
@@ -57,8 +58,20 @@ export class FakeSettingsSource implements SettingsSourceService {
   /** Every secret the source was handed, so a test can prove where it went and did not. */
   readonly secrets: string[] = []
   readonly calls: Array<{ method: string; args: unknown[] }> = []
-  /** What the two login commands and the icon answer; `null` lets them run. */
-  refuse: { login?: boolean; appIcon?: boolean } = {}
+  /** What the two login commands, the icon and the Antasphere account answer; unset lets them run. */
+  refuse: { login?: boolean; appIcon?: boolean; antasphere?: boolean } = {}
+  /** The Antasphere account as the fake holds it, moved by the four commands. */
+  antasphereStatus: AntasphereAccountStatus = {
+    phase: 'signed-out',
+    account: null,
+    issuerHost: 'issuer.test',
+    signedInAt: null,
+    expiresAt: null,
+    renewable: false,
+    loginStartedAt: null,
+    lastFailure: null,
+    secureStorage: true
+  }
   private readonly listeners = new Set<(event: SettingsEvent) => void>()
   private n = 0
 
@@ -250,6 +263,62 @@ export class FakeSettingsSource implements SettingsSourceService {
     setAppIcon: (icon) => {
       this.record('preferences.setAppIcon', icon)
       if (this.refuse.appIcon) throw unavailable('appIcon', 'This server has no Dock.')
+    }
+  }
+  readonly antasphere: SettingsSourceService['antasphere'] = {
+    status: () => {
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      return this.antasphereStatus
+    },
+    signIn: () => {
+      this.record('antasphere.signIn')
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      this.antasphereStatus = {
+        ...this.antasphereStatus,
+        phase: 'signing-in',
+        loginStartedAt: 1,
+        lastFailure: null
+      }
+      this.emit({ _tag: 'accounts.antasphere_changed', status: this.antasphereStatus })
+      return {
+        status: this.antasphereStatus,
+        handoff: { url: 'https://issuer.test/authorize?state=s1', generation: 1 }
+      }
+    },
+    confirmHandoff: (handoff) => {
+      this.record('antasphere.confirmHandoff', handoff.generation)
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      return (
+        this.antasphereStatus.phase === 'signing-in' &&
+        handoff.generation === 1 &&
+        handoff.url === 'https://issuer.test/authorize?state=s1'
+      )
+    },
+    cancel: () => {
+      this.record('antasphere.cancel')
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      this.antasphereStatus = {
+        ...this.antasphereStatus,
+        phase: 'signed-out',
+        loginStartedAt: null,
+        lastFailure: 'cancelled'
+      }
+      this.emit({ _tag: 'accounts.antasphere_changed', status: this.antasphereStatus })
+      return this.antasphereStatus
+    },
+    signOut: () => {
+      this.record('antasphere.signOut')
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      this.antasphereStatus = { ...this.antasphereStatus, phase: 'signed-out', account: null }
+      this.emit({ _tag: 'accounts.antasphere_changed', status: this.antasphereStatus })
+      return this.antasphereStatus
+    },
+    dismiss: () => {
+      this.record('antasphere.dismiss')
+      if (this.refuse.antasphere) throw unavailable('antasphereAccount', 'No account here.')
+      this.antasphereStatus = { ...this.antasphereStatus, lastFailure: null }
+      this.emit({ _tag: 'accounts.antasphere_changed', status: this.antasphereStatus })
+      return this.antasphereStatus
     }
   }
   readonly workspaces: SettingsSourceService['workspaces'] = {

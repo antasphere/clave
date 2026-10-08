@@ -16,6 +16,12 @@ import {
   AddClaudeAccount,
   AddCodexAccount,
   CancelAccountLogin,
+  CancelAntasphereSignIn,
+  ConfirmAntasphereHandoff,
+  DismissAntasphereFailure,
+  ReadAntasphereAccount,
+  SignInWithAntasphere,
+  SignOutOfAntasphere,
   CapabilityUnavailable,
   ClearClaudeAccountToken,
   ClearCodexAccountCredential,
@@ -172,6 +178,23 @@ export const settingsHandlers = [
   ),
   // Preferences: the icon needs a Dock, which this server may not have.
   CommandHandler.make(SetAppIcon, (p) => call((s) => s.preferences.setAppIcon(p.icon))),
+  // The Antasphere account (PRDCT-3259): the server owns the login, or says
+  // it has none. The sign-in's answer carries the handoff to this caller and
+  // to nobody else; the status-changed event the source emits carries the
+  // status alone.
+  QueryHandler.make(ReadAntasphereAccount, () => ask((s) => s.antasphere.status())),
+  CommandHandler.make(SignInWithAntasphere, () => call((s) => s.antasphere.signIn())),
+  CommandHandler.make(ConfirmAntasphereHandoff, (p) =>
+    call(async (s) => ({
+      current: await s.antasphere.confirmHandoff({
+        url: Redacted.value(p.url),
+        generation: p.generation
+      })
+    }))
+  ),
+  CommandHandler.make(CancelAntasphereSignIn, () => call((s) => s.antasphere.cancel())),
+  CommandHandler.make(SignOutOfAntasphere, () => call((s) => s.antasphere.signOut())),
+  CommandHandler.make(DismissAntasphereFailure, () => call((s) => s.antasphere.dismiss())),
   // Workspaces
   QueryHandler.make(LoadWorkspaceState, () => ask((s) => s.workspaces.load())),
   CommandHandler.make(UpdateWorkspaceRegistry, (p) =>

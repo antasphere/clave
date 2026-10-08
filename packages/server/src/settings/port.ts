@@ -37,6 +37,9 @@ export type Workspace = typeof Settings.WorkspaceView.Type
 export type WorkspaceState = typeof Settings.WorkspaceStateView.Type
 export type RegistryWriteResult = typeof Settings.UpdateWorkspaceRegistry.success.Type
 export type PinsWriteResult = typeof Settings.UpdateWorkspacePins.success.Type
+export type AntasphereAccountStatus = typeof Settings.AntasphereAccountStatusView.Type
+export type AntasphereSignInResult = typeof Settings.SignInWithAntasphere.success.Type
+export type AntasphereHandoff = typeof Settings.AntasphereHandoffView.Type
 export type SettingsEvent = Settings.SettingsEvent
 
 export interface SettingsSourceService {
@@ -91,6 +94,20 @@ export interface SettingsSourceService {
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Awaitable<void>
+  }
+  /** The Antasphere account (PRDCT-3259): the login the server owns. A
+   *  server with no login manager behind it answers `CapabilityUnavailable`
+   *  on every one of these, the status read included: nothing local may
+   *  stand in for it. */
+  readonly antasphere: {
+    readonly status: () => Awaitable<AntasphereAccountStatus>
+    /** The status once the page is built, and the handoff for the caller alone. */
+    readonly signIn: () => Awaitable<AntasphereSignInResult>
+    /** Whether the handoff is the one issued for the login in flight, now. A read. */
+    readonly confirmHandoff: (handoff: AntasphereHandoff) => Awaitable<boolean>
+    readonly cancel: () => Awaitable<AntasphereAccountStatus>
+    readonly signOut: () => Awaitable<AntasphereAccountStatus>
+    readonly dismiss: () => Awaitable<AntasphereAccountStatus>
   }
   readonly workspaces: {
     readonly load: () => Awaitable<WorkspaceState>
@@ -175,6 +192,14 @@ function noneSource(): SettingsSourceService {
       setWorkspace: refuse('launchProfiles')
     },
     preferences: { setAppIcon: refuse('appIcon') },
+    antasphere: {
+      status: refuse('antasphereAccount'),
+      signIn: refuse('antasphereAccount'),
+      confirmHandoff: refuse('antasphereAccount'),
+      cancel: refuse('antasphereAccount'),
+      signOut: refuse('antasphereAccount'),
+      dismiss: refuse('antasphereAccount')
+    },
     workspaces: {
       load: refuse('workspaces'),
       updateRegistry: refuse('workspaces'),

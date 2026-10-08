@@ -118,3 +118,47 @@ describe('keychainSecrets', () => {
     expect(p.open(`${KEYCHAIN_HANDLE_PREFIX}x`)).toBeUndefined()
   })
 })
+
+describe('keychainSecrets on a keychain file of its own', () => {
+  it('names the file last on every subcommand, and nothing else changes', () => {
+    const security = fakeSecurity()
+    const port = keychainSecrets({
+      service: 'Clave test',
+      run: security.run,
+      platform: 'darwin',
+      exists: () => true,
+      keychainFile: '/tmp/run 1/test.keychain-db'
+    })
+    const sealed = port.seal('value-1')
+    expect(port.open(sealed)).toBe('value-1')
+    port.discard(sealed)
+    expect(port.open(sealed)).toBeUndefined()
+    const [add, find, del] = security.calls
+    expect(add.args).toEqual(['-i'])
+    expect(add.input).toMatch(/ -w "value-1" "\/tmp\/run 1\/test\.keychain-db"\n$/)
+    expect(find.args.at(-1)).toBe('/tmp/run 1/test.keychain-db')
+    expect(find.args.slice(0, -1)).toEqual([
+      'find-generic-password',
+      '-s',
+      'Clave test',
+      '-a',
+      sealed.slice(KEYCHAIN_HANDLE_PREFIX.length),
+      '-w'
+    ])
+    expect(del.args.at(-1)).toBe('/tmp/run 1/test.keychain-db')
+    expect(security.items.size).toBe(0)
+  })
+
+  it('without a file, no subcommand names one: the login keychain as before', () => {
+    const security = fakeSecurity()
+    const port = keychainSecrets({
+      service: 'Clave test',
+      run: security.run,
+      platform: 'darwin',
+      exists: () => true
+    })
+    port.open(port.seal('v'))
+    expect(security.calls[0].input).toMatch(/ -w "v"\n$/)
+    expect(security.calls[1].args.at(-1)).toBe('-w')
+  })
+})

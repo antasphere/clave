@@ -103,11 +103,18 @@ export function serverMode(env = process.env) {
 const liveServers = new Set()
 
 /** Start a server of this spec's own, on `<fixture>/clave-e2e-<name>-server`.
- *  Resolves once it announced its url and token. */
-export async function startE2eServer(name, { timeoutMs = 15_000 } = {}) {
+ *  Resolves once it announced its url and token. `env` is extra environment
+ *  for the server process, the way `launchApp`'s is for the app: a spec that
+ *  names a local issuer or a keychain file of the run's own names it to both. */
+export async function startE2eServer(name, { timeoutMs = 15_000, env = {} } = {}) {
   const dataDir = fixturePath(`${name}-server`)
   rmSync(dataDir, { recursive: true, force: true })
-  const started = await startServerProcess({ repo: REPO, dataDir, timeoutMs })
+  const started = await startServerProcess({
+    repo: REPO,
+    dataDir,
+    timeoutMs,
+    env: { ...process.env, ...env }
+  })
   const server = {
     ...started,
     stop: async () => {
@@ -219,7 +226,7 @@ export async function launchApp(
   let started = null
   let serverEnv = {}
   if (server === 'attached') {
-    started = await startE2eServer(path.basename(dir))
+    started = await startE2eServer(path.basename(dir), { env })
     serverEnv = { CLAVE_SERVER_URL: started.url, CLAVE_SERVER_TOKEN: started.token }
   } else if (server && typeof server === 'object') {
     serverEnv = { CLAVE_SERVER_URL: server.url, CLAVE_SERVER_TOKEN: server.token ?? '' }

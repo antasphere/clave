@@ -68,6 +68,29 @@ describe('the settings contract keeps secrets off every surface a client reads',
     expect(leaked).toEqual([])
   })
 
+  it('the browser handoff is in the sign-in answer and in no event or query', () => {
+    // The authorization URL is for the caller that asked and nobody else:
+    // a `url` on the event would put it on the push channel to every client.
+    expect(propertyNames(Settings.SignInWithAntasphere.success.ast)).toContain('url')
+    expect(propertyNames(Settings.AntasphereAccountChanged.ast)).not.toContain('url')
+    expect(propertyNames(Settings.ReadAntasphereAccount.success.ast)).not.toContain('url')
+    for (const command of [
+      Settings.CancelAntasphereSignIn,
+      Settings.SignOutOfAntasphere,
+      Settings.DismissAntasphereFailure,
+      Settings.ConfirmAntasphereHandoff
+    ]) {
+      expect(propertyNames(command.success.ast)).not.toContain('url')
+    }
+    // The confirmation takes the URL back in, redacted: a decoded payload
+    // never prints it.
+    const confirm = Schema.decodeUnknownSync(Settings.ConfirmAntasphereHandoff.payload)({
+      url: 'https://issuer.test/authorize?state=secret-state',
+      generation: 1
+    })
+    expect(JSON.stringify(confirm)).not.toContain('secret-state')
+  })
+
   it('only two payloads carry a secret in, and both carry it redacted', () => {
     const carrying = definitions.filter((d) =>
       propertyNames(d.payload.ast).some((n) => SECRET_FIELDS.has(n))
@@ -92,6 +115,6 @@ describe('the settings contract keeps secrets off every surface a client reads',
       const literal = (tag.type as SchemaAST.Literal).literal
       expect(String(literal)).toMatch(/^(accounts|usage|workspaces)\.[a-z_]+$/)
     }
-    expect(tags).toHaveLength(6)
+    expect(tags).toHaveLength(7)
   })
 })
