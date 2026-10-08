@@ -54,9 +54,17 @@ export class ReviewDesk extends Context.Tag('@clave/server/ReviewDesk')<
 export function makeReviewDesk(options: { timeoutMs?: number } = {}): ReviewDeskService {
   const timeoutMs = options.timeoutMs ?? REVIEW_TIMEOUT_MS
   const waiting = new Map<string, (answer: ReviewAnswer | null) => void>()
+  // Once closed the desk stays closed: a read that reaches it after the
+  // server began stopping (parsed and described while the finalizer ran)
+  // is Cancel at once, never held for the timeout (round 3's verifier).
+  let closed = false
   return {
     ask: (_request, announce) =>
       new Promise<ReviewAnswer | null>((resolve) => {
+        if (closed) {
+          resolve(null)
+          return
+        }
         const reviewId = randomUUID()
         const timer = setTimeout(() => settle(null), timeoutMs)
         timer.unref?.()
@@ -84,6 +92,7 @@ export function makeReviewDesk(options: { timeoutMs?: number } = {}): ReviewDesk
     },
     pending: () => waiting.size,
     close: () => {
+      closed = true
       for (const settle of [...waiting.values()]) settle(null)
     }
   }

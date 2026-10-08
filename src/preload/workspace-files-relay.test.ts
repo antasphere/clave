@@ -131,6 +131,106 @@ describe('the watch ledger', () => {
     expect(ledger.heldOn('/a')).toBeNull()
   })
 
+  /** Transports whose server watch resolves only when the test says so. */
+  const slowServer = (): {
+    calls: string[]
+    release: () => void
+    transports: Parameters<typeof createWatchLedger>[0]
+  } => {
+    const calls: string[] = []
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    return {
+      calls,
+      release: () => release(),
+      transports: {
+        ipc: {
+          watch: async (p) => {
+            calls.push(`ipc.watch ${p}`)
+          },
+          unwatch: async (p) => {
+            calls.push(`ipc.unwatch ${p}`)
+          }
+        },
+        server: {
+          watch: async (p) => {
+            calls.push(`server.watch ${p}`)
+            await gate
+          },
+          unwatch: async (p) => {
+            calls.push(`server.unwatch ${p}`)
+          }
+        }
+      }
+    }
+  }
+
+  it('a double move during a slow server watch takes the watch once and keeps it', async () => {
+    // Round 3's verifier: without the guard the second move found the first
+    // had marked the watch the server's and GAVE THE SERVER'S WATCH BACK, so
+    // nobody held it while the ledger said `server`.
+    const { calls, release, transports } = slowServer()
+    const ledger = createWatchLedger(transports)
+    await ledger.watch('/a', 'ipc')
+    const first = ledger.moveToServer()
+    const second = ledger.moveToServer()
+    release()
+    await Promise.all([first, second])
+    expect(ledger.heldOn('/a')).toBe('server')
+    expect(calls).toEqual(['ipc.watch /a', 'server.watch /a', 'ipc.unwatch /a'])
+  })
+
+  it('a release during a slow move gives the server’s watch back and holds nothing', async () => {
+    const { calls, release, transports } = slowServer()
+    const ledger = createWatchLedger(transports)
+    await ledger.watch('/a', 'ipc')
+    const moving = ledger.moveToServer()
+    await ledger.unwatch('/a')
+    release()
+    await moving
+    expect(ledger.heldOn('/a')).toBeNull()
+    expect(calls).toEqual([
+      'ipc.watch /a',
+      'server.watch /a',
+      'ipc.unwatch /a',
+      'server.unwatch /a'
+    ])
+  })
+
+  it('a move the server refused is retried on the next move', async () => {
+    const calls: string[] = []
+    let refuse = true
+    const ledger = createWatchLedger(
+      {
+        ipc: {
+          watch: async (p) => {
+            calls.push(`ipc.watch ${p}`)
+          },
+          unwatch: async (p) => {
+            calls.push(`ipc.unwatch ${p}`)
+          }
+        },
+        server: {
+          watch: async (p) => {
+            calls.push(`server.watch ${p}`)
+            if (refuse) throw new Error('server watch failed')
+          },
+          unwatch: async () => {}
+        }
+      },
+      () => {}
+    )
+    await ledger.watch('/a', 'ipc')
+    await ledger.moveToServer()
+    expect(ledger.heldOn('/a')).toBe('ipc')
+    refuse = false
+    await ledger.moveToServer()
+    expect(ledger.heldOn('/a')).toBe('server')
+    expect(calls).toEqual(['ipc.watch /a', 'server.watch /a', 'server.watch /a', 'ipc.unwatch /a'])
+  })
+
   it('leaves a watch on IPC when the server refuses to take it, so a release still reaches it', async () => {
     const calls: string[] = []
     const logged: string[] = []
