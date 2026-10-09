@@ -22,6 +22,7 @@ import {
 import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
+import { recordsForIds } from '../sessions/records-by-id'
 
 export function registerPtyHandlers(): void {
   // The shell wires the terminal layer's MCP config port to its own MCP
@@ -228,20 +229,12 @@ export function registerPtyHandlers(): void {
   ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
     const all = ptyManager.listAdoptableSessions()
     if (filter && Array.isArray(filter.ids)) {
-      const wanted = new Set(filter.ids.filter((x): x is string => typeof x === 'string'))
-      const found = all.filter((r) => wanted.has(r.id))
-      // A session this process already runs is not adoptable and the listing
-      // above leaves it out; a window asking for it by id wants its record
-      // all the same (a terminal the server started for a group, which the
-      // window takes in from the record alone, wave 3). Its `live` is the
-      // process's state, not tmux's.
-      for (const id of wanted) {
-        if (found.some((r) => r.id === id)) continue
-        const record = ptyManager.getSessionRecord(id)
-        if (record)
-          found.push({ ...record, live: ptyManager.getSession(id)?.alive === true, running: true })
-      }
-      return found
+      // By id, the records of sessions this process already runs come back
+      // too, marked `running` (sessions/records-by-id.ts, the rule's own test).
+      return recordsForIds(all, filter.ids, {
+        recordOf: (id) => ptyManager.getSessionRecord(id) ?? undefined,
+        isAlive: (id) => ptyManager.getSession(id)?.alive === true
+      })
     }
     const win = BrowserWindow.fromWebContents(event.sender)
     const key = win ? windowRegistry.getKeyForWindow(win.id) : null
