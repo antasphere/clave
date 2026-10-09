@@ -48,6 +48,7 @@ import { registerPreviewScheme, installPreviewProtocol } from './preview-protoco
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
+import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
@@ -420,7 +421,9 @@ app.whenReady().then(() => {
   // (sessions/e2e-hooks.ts): installed at boot, before the server, so an
   // app attached to a standalone server has it too.
   installE2eHooks({ sessionHost: getSessionHost() })
-  serverBoot = bootServer()
+  // The agent tools wait for the boot to decide (server/endpoint.ts): a
+  // tool call before the decision waits, one after a failed boot fails at once.
+  serverBoot = bootServer().finally(() => markClaveServerBootSettled())
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()
   initNotificationManager()

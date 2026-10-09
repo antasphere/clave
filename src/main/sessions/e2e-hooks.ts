@@ -27,6 +27,8 @@ export interface E2eHooks {
    *  now enters where the session lives and reaches the window over its own
    *  transport (`adapters/echo-adapter.ts`). */
   echo: { inject: (sessionId: string, stream: SessionStream) => void }
+  // ── Lane D (wave 3): which road each agent tool took (`src/main/mcp/roads.ts`) ──
+  mcpRoads: { command: string; road: 'server' | 'window' }[]
   // ── later lanes add theirs here ──
 }
 

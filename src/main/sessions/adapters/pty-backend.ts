@@ -510,6 +510,10 @@ export interface SessionRecord {
    *  tmux server died (e.g. a shutdown/reboot killed it) but the sidecar
    *  metadata survives → re-spawn fresh (Claude resumes via claudeSessionId). */
   live?: boolean
+  /** Populated only when a window asks for the record of a session this
+   *  process already runs (the agent tools' served terminal, wave 3): the
+   *  window takes such a session in from the record alone, with no spawn. */
+  running?: boolean
 }
 
 /** tmux session names we create are always `clave-<sanitized>`. Validate before

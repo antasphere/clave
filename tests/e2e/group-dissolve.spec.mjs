@@ -1,8 +1,12 @@
 // Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
+// or without it (measured on 9 October 2026, the same checks red on both):
+// the session records are the server's while the window reads main's folder,
+// a tab's move between windows detaches and re-adopts through main's own
+// terminals, and an agent tab's token file is written by the process that
+// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
+// a failure of the agent tools, and the pin goes with them (wave 4). Not a
+// known failure.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).

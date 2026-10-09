@@ -22,6 +22,7 @@ import {
 import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
+import { recordsForIds } from '../sessions/records-by-id'
 
 export function registerPtyHandlers(): void {
   // The shell wires the terminal layer's MCP config port to its own MCP
@@ -228,8 +229,12 @@ export function registerPtyHandlers(): void {
   ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
     const all = ptyManager.listAdoptableSessions()
     if (filter && Array.isArray(filter.ids)) {
-      const wanted = new Set(filter.ids.filter((x): x is string => typeof x === 'string'))
-      return all.filter((r) => wanted.has(r.id))
+      // By id, the records of sessions this process already runs come back
+      // too, marked `running` (sessions/records-by-id.ts, the rule's own test).
+      return recordsForIds(all, filter.ids, {
+        recordOf: (id) => ptyManager.getSessionRecord(id) ?? undefined,
+        isAlive: (id) => ptyManager.getSession(id)?.alive === true
+      })
     }
     const win = BrowserWindow.fromWebContents(event.sender)
     const key = win ? windowRegistry.getKeyForWindow(win.id) : null

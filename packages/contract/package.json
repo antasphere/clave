@@ -17,7 +17,9 @@
     "./settings": "./src/settings/index.ts",
     "./sidebar": "./src/sidebar/index.ts",
     "./sidebar/ops": "./src/sidebar/ops.ts",
-    "./workspace-files": "./src/workspace-files/index.ts"
+    "./workspace-files": "./src/workspace-files/index.ts",
+    "./views": "./src/views.ts",
+    "./view-deadlines": "./src/view-deadlines.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

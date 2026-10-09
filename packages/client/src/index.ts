@@ -23,6 +23,8 @@ export { settingsClient, type SettingsClient } from './settings'
 export { sidebarClient, type SidebarClient } from './sidebar'
 // ── Wave 3, lane A: the workspace files ──
 export { workspaceFilesClient, type WorkspaceFilesClient } from './workspace-files'
+// ── Lane D (wave 3): the view requests ──
+export { viewsClient, type ViewsClient, type ViewRequestInput } from './views'
 // ── Lane B: terminals ──
 export {
   PushClient,

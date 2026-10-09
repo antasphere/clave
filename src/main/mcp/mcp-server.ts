@@ -2,17 +2,28 @@ import { linkedDocuments } from '../linked-documents/runtime'
 import { linkedOpenSchema, linkedUpdateSchema } from '../../shared/linked-documents'
 import * as http from 'http'
 import * as path from 'path'
+import * as fs from 'fs'
 import { createHash, timingSafeEqual } from 'crypto'
 import { app, Notification } from 'electron'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { callRenderer, callRendererAll, registerMcpBridge } from './mcp-bridge'
+import { callRenderer, callRendererAll, requestView } from './mcp-bridge'
 import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
+import { sidebarTransport } from '../sidebar-layouts'
+import { ptyManager } from '../pty-manager'
+import { captureTabClosed } from '../exchange-capture/service'
+import { claudeAccountsManager } from '../claude-accounts'
+import { codexAccountsManager } from '../codex-accounts'
+import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
+import { codexUsageManager } from '../codex-usage'
+import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
+import { serverClient } from './server-client'
+import { BOOT_DECISION_WAIT_MS, whenClaveServerBootSettled } from '../server/endpoint'
 import {
   loadOrCreateServerState,
   saveServerState,
@@ -254,7 +265,28 @@ async function aggregateList(
     Array.isArray(o.r[k])
       ? (o.r[k] as { id?: unknown }[]).map((x) => ({ ...x, windowId: o.windowId }))
       : []
-  const windows = windowRegistry.listWindows().map((w) => {
+  return {
+    ...base,
+    windows: windowsListing(callerWin),
+    callerWindowId: callerWin?.id ?? null,
+    sessions: dedupeById(ok.flatMap((o) => arr(o, 'sessions'))),
+    groups: dedupeById(ok.flatMap((o) => arr(o, 'groups'))),
+    // Pins are per workspace and global: every window holds the same list.
+    pinnedGroups: dedupeById(
+      ok.flatMap((o) =>
+        Array.isArray(o.r.pinnedGroups) ? (o.r.pinnedGroups as { id?: unknown }[]) : []
+      )
+    )
+  }
+}
+
+/** What an agent reads when the boot has not decided within its ceiling. */
+export const SERVER_STILL_STARTING_MESSAGE = `Clave's server has not finished starting after ${BOOT_DECISION_WAIT_MS / 1000} seconds: try again in a moment.`
+
+/** The `windows` block of `clave_list`: every live window with its workspace,
+ *  which is primary, which is focused and which is the caller's. */
+function windowsListing(callerWin: BrowserWindowLike): unknown[] {
+  return windowRegistry.listWindows().map((w) => {
     const identity = windowRegistry.identityOf(w.id)
     const ws = identity?.workspaceId ?? null
     return {
@@ -270,19 +302,89 @@ async function aggregateList(
       mine: !!callerWin && callerWin.id === w.id
     }
   })
-  return {
-    ...base,
-    windows,
-    callerWindowId: callerWin?.id ?? null,
-    sessions: dedupeById(ok.flatMap((o) => arr(o, 'sessions'))),
-    groups: dedupeById(ok.flatMap((o) => arr(o, 'groups'))),
-    // Pins are per workspace and global: every window holds the same list.
-    pinnedGroups: dedupeById(
-      ok.flatMap((o) =>
-        Array.isArray(o.r.pinnedGroups) ? (o.r.pinnedGroups as { id?: unknown }[]) : []
-      )
-    )
+}
+
+/** Whether an account's last usage read says it is about to stop: the
+ *  tightest window critical, or about five percent left (the pool's rule in
+ *  the renderer, `lib/account-pool.ts`); an unknown read is not exhaustion. */
+function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
+  if (!read || !('windows' in read)) return false
+  const rank = { normal: 0, warning: 1, critical: 2 } as Record<string, number>
+  let best: { usedPercentage: number; severity?: string | null } | null = null
+  for (const w of read.windows) {
+    if (!best) best = w
+    else {
+      const a = rank[w.severity ?? 'normal'] ?? 0
+      const b = rank[best.severity ?? 'normal'] ?? 0
+      if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
+    }
   }
+  if (!best) return false
+  if (best.severity === 'critical') return true
+  return 100 - best.usedPercentage <= 5
+}
+
+/**
+ * The shell's facts the served tools read (`served-tools.ts`): which windows
+ * exist and what they show, the records main keeps for the sessions, the
+ * accounts and their last usage read, the files on disk. The tools map the
+ * agent's call onto the server's commands; this is what they need from the
+ * app around the server.
+ */
+const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
+  keyOf: (win) => windowRegistry.getKeyForWindow(win.id),
+  windowByKey: (key) => windowRegistry.getWindowByKey(key),
+  liveWindows: () => windowRegistry.listWindows(),
+  workspaceOfWindow: (winId) => windowRegistry.getWorkspaceForWindow(winId),
+  workspaces: () => workspaceManager.getWorkspaces(),
+  resolveWorkspaceId: (ref) => resolveWorkspaceIdMain(ref),
+  record: (sessionId) => ptyManager.getSessionRecord(sessionId) ?? undefined,
+  servingSessionsOf: (ownerId) =>
+    ptyManager
+      .getAllSessions()
+      .map((s) => ptyManager.getSessionRecord(s.id))
+      .filter(
+        (r): r is NonNullable<typeof r> =>
+          !!r && r.link?.kind === 'session-view' && r.link.ownerId === ownerId
+      )
+      .map((r) => r.id),
+  accountOf: (record) => {
+    if (record.codexMode) {
+      const id = record.codexAccountId ?? 'default'
+      const account = codexAccountsManager.get(id)
+      const read = codexUsageManager.snapshot()[id]
+      return {
+        id,
+        label: account?.label ?? record.codexAccountLabel ?? 'Removed account',
+        exhausted: exhaustedFrom(read)
+      }
+    }
+    if (record.claudeMode || record.claudeAgentsMode) {
+      const id = record.claudeProfileId ?? 'default'
+      const account = claudeAccountsManager.get(id)
+      const read = usageManager.snapshot()[id]
+      return {
+        id,
+        label: account?.label ?? record.claudeProfileLabel ?? 'Removed account',
+        exhausted: exhaustedFrom(read)
+      }
+    }
+    return null
+  },
+  statKind: async (absPath) => {
+    try {
+      const stat = await fs.promises.stat(absPath)
+      return stat.isDirectory() ? 'directory' : 'file'
+    } catch {
+      return null
+    }
+  },
+  startPty: (id, cols, rows) => ptyManager.start(id, cols, rows),
+  awaitRehomed: (ids) => awaitRehomed(ids),
+  captureTabClosed: (payload) => captureTabClosed(payload),
+  windowsListing: (callerWin) => windowsListing(callerWin),
+  mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -331,12 +433,39 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
     const callerSessionId =
       caller ?? (typeof p.callerSessionId === 'string' ? p.callerSessionId : undefined)
     let result: unknown
-    if (command === 'list') {
-      result = await aggregateList(p, callerSessionId)
-    } else if (command === 'openWindow') {
+    if (command === 'openWindow') {
       result = openWindowFromTool(p, callerSessionId)
     } else {
       const win = await resolveCommandWindow(command, p, callerSessionId)
+      // The road is the boot's decision: a call that lands before it waits for
+      // it, so a served tool never slips to the window for being early. A boot
+      // still undecided past the ceiling is refused, never routed around: the
+      // window road would silently run what the server should, then wait on
+      // the client's own deadline for a server seconds away.
+      if (sidebarTransport() === null && !(await whenClaveServerBootSettled()))
+        throw new Error(SERVER_STILL_STARTING_MESSAGE)
+      // Served by the server (wave 3): a tool whose work is a command the
+      // server has is answered through the client, and the windows hear the
+      // change over the push channel. Only while the sidebar's road is the
+      // server's: attached to a server that hosts no windows, the shell keeps
+      // the sidebar and the tools keep the window, through the view request.
+      if (sidebarTransport() === 'server') {
+        const served = await serveCommand(command, p, {
+          api: await serverClient.api(),
+          shell: servedShell,
+          win,
+          callerSessionId,
+          targetWindow:
+            command === 'moveSession' ? resolveWindowArg(p.window, callerSessionId) : undefined,
+          requestView
+        })
+        if (served !== NOT_SERVED)
+          return { content: [{ type: 'text', text: JSON.stringify(served ?? { ok: true }) }] }
+      }
+      if (command === 'list') {
+        result = await aggregateList(p, callerSessionId)
+        return { content: [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }] }
+      }
       // A move INTO another window: the session travels first (detach +
       // re-adopt there, id preserved), then the group placement runs where
       // it now lives.
@@ -1145,7 +1274,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
  * works without it, spawned sessions simply don't get the --mcp-config flag.
  */
 export async function startMcpServer(): Promise<void> {
-  registerMcpBridge()
   const { port, token } = loadOrCreateServerState()
   serverToken = token
 

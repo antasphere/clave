@@ -22,3 +22,52 @@ export function getClaveServerEndpoint(): ClaveServerEndpoint | null {
 export function setClaveServerEndpoint(next: ClaveServerEndpoint | null): void {
   endpoint = next
 }
+
+// ── Lane D (wave 3): whether the boot has decided ──
+// The agent tools wait for the server while the boot is still deciding
+// (`bootServer` in `src/main/index.ts` has not resolved) and fail at once
+// once it has decided there is none ("the app runs without it"), rather than
+// poll for a server that will never come.
+let settled = false
+let settledWaiters: (() => void)[] = []
+
+export function isClaveServerBootSettled(): boolean {
+  return settled
+}
+
+/** The boot decided: a server named through `setClaveServerEndpoint`, or none. */
+export function markClaveServerBootSettled(): void {
+  settled = true
+  const waiters = settledWaiters
+  settledWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
+/** How long a caller waits for the boot's decision at most: a boot that
+ *  never decides (a lost mark, a hung start) must not hold a caller for the
+ *  life of the process; past it the caller goes on as if nothing were named. */
+export const BOOT_DECISION_WAIT_MS = 20_000
+
+/** Resolves with true once the boot has decided (at once when it already
+ *  has), with false when `maxWaitMs` passed first: a caller then knows it
+ *  gave up, and must not read "undecided" as "no server". */
+export function whenClaveServerBootSettled(maxWaitMs = BOOT_DECISION_WAIT_MS): Promise<boolean> {
+  if (settled) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => done(false), maxWaitMs)
+    const waiter = (): void => done(true)
+    function done(decided: boolean): void {
+      clearTimeout(timer)
+      settledWaiters = settledWaiters.filter((w) => w !== waiter)
+      resolve(decided)
+    }
+    settledWaiters.push(waiter)
+  })
+}
+
+/** Tests only. */
+export function resetClaveServerBootForTests(): void {
+  settled = false
+  settledWaiters = []
+  endpoint = null
+}

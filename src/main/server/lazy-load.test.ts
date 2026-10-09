@@ -32,7 +32,10 @@ const HEAVY = /node_modules\/(effect|@effect|@structure-ai|@opentelemetry)\//
  *  through (a module shared with a dynamic chunk is hoisted into a chunk of
  *  its own, still imported statically); what only a dynamic import reaches
  *  stays out. */
-const staticallyReached = async (entry: string): Promise<string[]> => {
+const staticallyReached = async (
+  entry: string,
+  options: { onlyFollow?: RegExp } = {}
+): Promise<string[]> => {
   const result = await build({
     entryPoints: [join(root, entry)],
     bundle: true,
@@ -43,7 +46,23 @@ const staticallyReached = async (entry: string): Promise<string[]> => {
     metafile: true,
     logLevel: 'silent',
     outdir: join(tmpdir(), 'clave-lazy-load-guard'),
-    external: ['electron']
+    external: ['electron'],
+    // Main's entry pulls native modules and the whole app; for its walk only
+    // the packages the guard is about are followed into, every other bare
+    // import stays external (its own contents are not the question).
+    plugins: options.onlyFollow
+      ? [
+          {
+            name: 'follow-only',
+            setup(api) {
+              const follow = options.onlyFollow!
+              api.onResolve({ filter: /^[^./]/ }, (args) =>
+                follow.test(args.path) ? undefined : { path: args.path, external: true }
+              )
+            }
+          }
+        ]
+      : []
   })
   const outputs = result.metafile.outputs
   const entryName = Object.keys(outputs).find((name) => {
@@ -93,6 +112,17 @@ describe('the client and the server load lazily', () => {
       )
     ).toEqual([])
   }, 30_000)
+  it('main’s entry reaches no Effect module at boot (the agent tools’ bridge included)', async () => {
+    // Wave 3's verifier found the bridge importing two constants from
+    // `@clave/contract/views`, whose top level builds schemas and endpoints:
+    // Effect, the platform and the framework at main's boot, 1.5 to 2.3 s of
+    // synchronous requires. The constants moved to an import-free module.
+    const reached = await staticallyReached('src/main/index.ts', {
+      onlyFollow: /^(@clave\/|effect|@effect\/|@structure-ai\/|@opentelemetry\/)/
+    })
+    expect(reached.filter((file) => HEAVY.test(file))).toEqual([])
+    expect(reached.some((file) => /contract\/src\/view-deadlines\.ts$/.test(file))).toBe(true)
+  }, 60_000)
   it('the preload imports nothing of the client at window start (the source says so too)', () => {
     const imports = staticImports(read('src/preload/index.ts'))
     const heavy = imports.filter(

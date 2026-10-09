@@ -1,4 +1,5 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
+import { adoptServerStartedTerminals } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
@@ -543,6 +544,8 @@ export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
  */
 function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   let dropped: { id: string; name: string }[] = []
+  const closed = new Set<string>()
+  const unknownTerminals: string[] = []
   useSessionStore.setState((state) => {
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
@@ -567,11 +570,20 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     for (const s of state.sessions) if (s.view?.serverSessionId) nested.add(s.view.serverSessionId)
     const displayOrder = [...merged.displayOrder]
     const placed = new Set(displayOrder)
+    // A tab the server's layout no longer places and whose process has ended
+    // was closed elsewhere (an agent's close served by the server, wave 3): it
+    // leaves this store, with the serving session of its view, instead of
+    // being appended and saved back into the layout. A side panel with
+    // unsaved edits keeps its tab, as a close made from this window would.
     for (const s of state.sessions) {
-      if (!nested.has(s.id) && !placed.has(s.id)) {
-        placed.add(s.id)
-        displayOrder.push(s.id)
+      if (nested.has(s.id) || placed.has(s.id)) continue
+      if (!s.alive && !linkedEditorBlocksClose(s.id)) {
+        closed.add(s.id)
+        if (s.view?.serverSessionId) closed.add(s.view.serverSessionId)
+        continue
       }
+      placed.add(s.id)
+      displayOrder.push(s.id)
     }
     for (const f of state.fileTabs) {
       if (!placed.has(f.id)) {
@@ -579,6 +591,13 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
         displayOrder.push(f.id)
       }
     }
+    // A quick-launch terminal the server started (clave_add_group_terminal
+    // served by the server, wave 3) runs a session this window has never
+    // seen: it is taken in from its record once the state is set, below.
+    for (const g of groups)
+      for (const t of g.terminals)
+        if (t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
+          unknownTerminals.push(t.sessionId)
     groupCounter = Math.max(groupCounter, groups.length)
     const serverJson = JSON.stringify(server)
     const mergedJson = JSON.stringify({ groups, displayOrder })
@@ -591,8 +610,17 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       lastPersistedGroups = groups
       lastPersistedOrder = displayOrder
     }
-    return { groups, displayOrder }
+    if (closed.size === 0) return { groups, displayOrder }
+    return {
+      groups,
+      displayOrder,
+      sessions: state.sessions.filter((s) => !closed.has(s.id)),
+      selectedSessionIds: state.selectedSessionIds.filter((sid) => !closed.has(sid)),
+      focusedSessionId:
+        state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
+    }
   })
+  if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
   if (dropped.length > 0) {
     const names = dropped.map((d) => `"${d.name}"`).join(', ')
     void window.electronAPI
