@@ -1705,11 +1705,23 @@ const electronAPI = {
   },
   unwatchClaveFile: (absolutePath: string): Promise<void> =>
     workspaceFileWatches.unwatch(absolutePath),
-  onClaveFileChanged: viaServerEvent<'workspace_files.changed', string>(
-    'clave:file-changed',
-    'workspace_files.changed',
-    (event) => event.path
-  ),
+  // The change listener's push side binds when the server IS there, not
+  // when the listener is bound: a window that boots before main names the
+  // server binds this at start, the router answers "no backing" then, and
+  // the one-shot ask of `viaServerEvent` would leave the listener on IPC for
+  // good; attached, once the ledger moved the watch to the server, nothing
+  // came over IPC any more and the hot reload was lost (round 5 of the
+  // lane's verifier, on the real app). `onServerAvailable` is the preload's
+  // own signal for exactly this, the one the sessions' listeners wait on.
+  onClaveFileChanged: dualListener<'workspace_files.changed', string>({
+    bindIpc: (callback) => createIpcListener<[string]>('clave:file-changed', callback),
+    backing: () =>
+      new Promise((resolve) => {
+        onServerAvailable((backing) => resolve(backing.push))
+      }),
+    tag: 'workspace_files.changed',
+    pick: (event) => event.path
+  }),
   saveFileDialog: (defaultName: string, filters: { name: string; extensions: string[] }[]) =>
     ipcRenderer.invoke('dialog:saveFile', defaultName, filters),
   getDownloadsPath: () => ipcRenderer.invoke('app:get-downloads-path') as Promise<string>,

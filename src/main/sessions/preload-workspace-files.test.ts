@@ -195,6 +195,37 @@ describe('a .clave read through the server', () => {
   })
 })
 
+describe('a .clave change listener', () => {
+  it('bound before the server was named, hears the push channel once the server is announced', async () => {
+    // Round 5 of the verifier, on the real app, attached: the listener asked
+    // the router once at bind time, was told null, and never bound its push
+    // side; once the watch had moved to the server the window heard nothing.
+    answer({ 'server:endpoint': null })
+    const heard: string[] = []
+    const off = api.onClaveFileChanged((p) => heard.push(p))
+    await settle()
+    expect(mocks.push).toBeNull()
+    // IPC delivers while there is no server.
+    const ipcListener = mocks.on.mock.calls.find(([c]) => c === 'clave:file-changed')?.[1] as
+      | ((event: unknown, path: string) => void)
+      | undefined
+    expect(typeof ipcListener).toBe('function')
+    ipcListener!({}, '/w/ipc.clave')
+    expect(heard).toEqual(['/w/ipc.clave'])
+    // The server comes: a routed call connects and announces it.
+    answer({ 'server:endpoint': endpoint })
+    await api.claveFileExists('/w/a.clave').catch(() => undefined)
+    await settle()
+    expect(mocks.push).not.toBeNull()
+    mocks.push!.open()
+    await settle()
+    mocks.emitEvent({ _tag: 'workspace_files.changed', path: '/w/pushed.clave' })
+    await settle()
+    expect(heard).toEqual(['/w/ipc.clave', '/w/pushed.clave'])
+    off()
+  })
+})
+
 describe('a .clave watch', () => {
   it('taken over IPC before the server was named moves to the server under the server’s name, the IPC name released', async () => {
     answer({ 'server:endpoint': null })
