@@ -23,4 +23,7 @@ export * as Settings from './settings'
 // ── Lane C (wave 2): the sidebar (packages/contract/src/sidebar/) ──
 export * as Sidebar from './sidebar'
 
+// ── Wave 3, lane A: the workspace files (packages/contract/src/workspace-files/) ──
+export * as WorkspaceFiles from './workspace-files'
+
 // ── Lane B: terminals · Lane D: settings served ──

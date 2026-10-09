@@ -53,6 +53,7 @@ import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
 import { terminalPorts } from './ports/terminals'
+import { workspaceFiles } from './workspace-files'
 
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
@@ -132,7 +133,9 @@ async function bootServer(): Promise<void> {
             // ── Lane B: terminals (node-pty in this process, src/main/ports/terminal.ts) ──
             terminals: terminalPorts().terminals,
             // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
-            sidebar: sidebarLayouts()
+            sidebar: sidebarLayouts(),
+            // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
+            workspaceFiles: workspaceFiles()
           },
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
           testFixtures: TEST_NO_ACTIVATE

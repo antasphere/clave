@@ -11,7 +11,8 @@
     "./test-support": "./src/test-support.ts",
     "./settings/test-support": "./src/settings/test-support.ts",
     "./sidebar-layouts": "./src/sidebar/light.ts",
-    "./terminals-wire": "./src/terminals/wire.ts"
+    "./terminals-wire": "./src/terminals/wire.ts",
+    "./workspace-files": "./src/workspace-files/light.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

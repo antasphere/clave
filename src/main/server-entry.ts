@@ -30,7 +30,14 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import { startEmbedded, Terminals, grpcTerminals, type TerminalsService } from '@clave/server'
+import {
+  startEmbedded,
+  Terminals,
+  grpcTerminals,
+  type TerminalsService,
+  WorkspaceFiles,
+  fileWorkspaceFilesStorage
+} from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
@@ -102,7 +109,11 @@ async function main(): Promise<void> {
     ports: {
       sessions,
       terminals,
-      settings: standalone.settings
+      settings: standalone.settings,
+      // The workspace files (wave 3, lane A): the `.clave` files of this
+      // machine, their trust store under `--data-dir`; a review a read needs
+      // is published to the clients and the read waits for the answer.
+      workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
     },
     port,
     ...(token !== undefined && { token }),

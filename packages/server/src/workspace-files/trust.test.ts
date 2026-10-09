@@ -21,8 +21,8 @@ import {
   describeElevated,
   sanitizeElevated,
   type ClaveFileReadResult,
-  type ClaveGroupData
-} from './clave-trust'
+  type ClaveGroup as ClaveGroupData
+} from './trust'
 
 function group(overrides: Partial<ClaveGroupData> = {}): ClaveGroupData {
   return {

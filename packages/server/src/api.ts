@@ -23,6 +23,7 @@ import {
   WriteSession
 } from '@clave/contract/sessions'
 import { SettingsLive } from './settings/api'
+import { WorkspaceFilesLive } from './workspace-files/api'
 import {
   AbsorbLayout,
   AddGroupTerminal,
@@ -96,10 +97,22 @@ export const SidebarLive = HttpApiBuilder.group(ClaveApi, 'sidebar', (handlers) 
     .handle('moveGroup', HttpCqrs.command(MoveGroupToWindow))
 )
 
+// ── Wave 3, lane A: the workspace files (`workspace-files/api.ts`) ──
+export { WorkspaceFilesLive }
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
 
 export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
-  Layer.provide(Layer.mergeAll(SessionsLive, ClientsLive, SettingsLive, SidebarLive, HealthLive))
+  Layer.provide(
+    Layer.mergeAll(
+      SessionsLive,
+      ClientsLive,
+      SettingsLive,
+      SidebarLive,
+      WorkspaceFilesLive,
+      HealthLive
+    )
+  )
 )

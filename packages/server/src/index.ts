@@ -49,3 +49,19 @@ export {
 
 // ── Lane C: the sidebar, one layout per window key ──
 export * from './sidebar'
+
+// ── Wave 3, lane A: the workspace files (`.clave`), their trust and their watchers ──
+export {
+  WorkspaceFiles,
+  WorkspaceFilesPort,
+  ReviewDesk,
+  REVIEW_TIMEOUT_MS,
+  fileWorkspaceFilesStorage,
+  memoryWorkspaceFilesStorage,
+  describeElevated,
+  sanitizeElevated,
+  workspaceFilesHandlers,
+  type ReviewRequest,
+  type Reviewer,
+  type WorkspaceFilesStorage
+} from './workspace-files'

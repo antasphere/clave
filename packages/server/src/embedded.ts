@@ -27,6 +27,8 @@ export interface EmbeddedOptions {
   /** A token to reuse across restarts; a fresh one otherwise. */
   readonly token?: string
   readonly helloTimeoutMs?: number
+  /** Wave 3, lane A: how long a `.clave` review waits for its answer (`runtime.ts`). */
+  readonly reviewTimeoutMs?: number
   /** Log at and above this level; warnings only by default, requests are not logged. */
   readonly logLevel?: LogLevel.LogLevel
   /** The end-to-end fixture route, test mode only (`runtime.ts`). */
@@ -53,7 +55,8 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
     serverId,
     ports: options.ports,
     ...(options.helloTimeoutMs !== undefined && { helloTimeoutMs: options.helloTimeoutMs }),
-    ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })
+    ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures }),
+    ...(options.reviewTimeoutMs !== undefined && { reviewTimeoutMs: options.reviewTimeoutMs })
   }).pipe(
     Layer.provideMerge(
       NodeHttpServer.layer(() => createServer(), { port: options.port ?? 0, host })

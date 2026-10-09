@@ -82,6 +82,17 @@ describe('the client and the server load lazily', () => {
       reached.join('\n')
     ).toHaveLength(0)
   }, 30_000)
+  it('the shell’s workspace files seam reaches no Effect module when main loads it', async () => {
+    // `src/main/index.ts` imports it statically at boot, over the server
+    // package's light entry; an Effect import there would cost every boot.
+    const reached = await staticallyReached('src/main/workspace-files.ts')
+    expect(reached.filter((file) => HEAVY.test(file))).toEqual([])
+    expect(
+      reached.filter((file) =>
+        /server\/src\/workspace-files\/(handlers|port|reviews|events|api)\.ts$/.test(file)
+      )
+    ).toEqual([])
+  }, 30_000)
   it('the preload imports nothing of the client at window start (the source says so too)', () => {
     const imports = staticImports(read('src/preload/index.ts'))
     const heavy = imports.filter(
