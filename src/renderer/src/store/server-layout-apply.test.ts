@@ -186,6 +186,7 @@ describe('a layout pushed by the server', () => {
         cwd: '/w',
         folderName: 'w',
         live: true,
+        running: true,
         link: { kind: 'group-terminal', groupId: 'g', terminalId: 't1' },
         claudeMode: false,
         antigravityMode: false,
@@ -229,6 +230,7 @@ describe('a layout pushed by the server', () => {
       cwd: '/w',
       folderName: 'w',
       live: true,
+      running: true,
       workspaceId: ws,
       claudeMode: false,
       antigravityMode: false,
@@ -270,6 +272,7 @@ describe('a layout pushed by the server', () => {
         cwd: '/w',
         folderName: 'w',
         live: true,
+        running: true,
         workspaceId: 'ws-shown',
         claudeMode: false,
         antigravityMode: false,
@@ -301,6 +304,7 @@ describe('a layout pushed by the server', () => {
         cwd: '/w',
         folderName: 'w',
         live: false,
+        running: true,
         claudeMode: false,
         antigravityMode: false,
         codexMode: false,
@@ -311,5 +315,50 @@ describe('a layout pushed by the server', () => {
     ]
     await adoptServerStartedTerminals(['dead'])
     expect(useSessionStore.getState().sessions.find((s) => s.id === 'dead')?.alive).toBe(false)
+  })
+
+  it('leaves a terminal detached from another window to the re-home: no record main runs, nothing taken in', async () => {
+    const g = group(
+      'g',
+      [],
+      [
+        {
+          id: 't1',
+          command: 'npm run dev',
+          commandMode: 'auto',
+          color: 'green',
+          sessionId: 'moving'
+        }
+      ]
+    )
+    g.workspaceId = 'ws-shown'
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-shown' })
+    useSessionStore.setState({
+      sessions: [session('member')],
+      groups: [g],
+      displayOrder: ['g', 'member'],
+      focusedSessionId: 'member',
+      selectedSessionIds: ['member']
+    })
+    // An adoptable record (tmux alive, no `running`): the move's own adoption reattaches it.
+    records = [
+      {
+        id: 'moving',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        tmuxName: 'clave-x',
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    await adoptServerStartedTerminals(['moving'])
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['member'])
+    expect(state.focusedSessionId).toBe('member')
   })
 })

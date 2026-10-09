@@ -340,6 +340,10 @@ export type SessionLink =
   | { kind: 'toolbar'; key: string }
 
 export interface SessionRecord {
+  /** The session is one this process already runs (wave 3): a window asking
+   *  for it by id takes it in from the record alone, with no spawn. Absent on
+   *  an adoptable record, whose process the window reattaches itself. */
+  running?: boolean
   /** Backing tmux session when there is one; absent = plain record (relaunch-only). */
   tmuxName?: string
   id: string

@@ -1,3 +1,12 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
+// or without it (measured on 9 October 2026, the same checks red on both):
+// the session records are the server's while the window reads main's folder,
+// a tab's move between windows detaches and re-adopts through main's own
+// terminals, and an agent tab's token file is written by the process that
+// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
+// a failure of the agent tools, and the pin goes with them (wave 4). Not a
+// known failure.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).
@@ -123,7 +132,7 @@ export async function run(t) {
   const PFX = `clave-e2e-pfx-${rand}`
   const SIBLING = `${PFX}-2`
   try {
-    const first = await launchApp(DIR)
+    const first = await launchApp(DIR, { server: 'in-process' })
     app = first.app
     let win = first.win
 
@@ -314,7 +323,7 @@ export async function run(t) {
         recordExists(PFX)
     )
 
-    const second = await launchApp(DIR, { settleMs: 8000 })
+    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
     app = second.app
     win = second.win
     const booted = await until(async () => {

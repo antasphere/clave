@@ -235,6 +235,11 @@ export async function adoptServerStartedTerminals(ids: string[]): Promise<void> 
   const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
   for (const record of records) {
+    // Only a session main itself runs: a terminal detached from another
+    // window on its way here is the re-home's to reattach, and taking it in
+    // from the record would leave its process behind and steal the focus the
+    // move owes its member.
+    if (record.running !== true) continue
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === record.id)) continue
     const session = sessionOfRecord(record, record.workspaceId ?? activeWorkspaceId ?? undefined)

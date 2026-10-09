@@ -238,7 +238,8 @@ export function registerPtyHandlers(): void {
       for (const id of wanted) {
         if (found.some((r) => r.id === id)) continue
         const record = ptyManager.getSessionRecord(id)
-        if (record) found.push({ ...record, live: ptyManager.getSession(id)?.alive === true })
+        if (record)
+          found.push({ ...record, live: ptyManager.getSession(id)?.alive === true, running: true })
       }
       return found
     }
