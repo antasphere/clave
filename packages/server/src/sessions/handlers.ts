@@ -24,7 +24,11 @@ import {
   StartSession,
   StopSession,
   ResizeSession,
-  WriteSession
+  WriteSession,
+  // ── Wave 4, lane C: the session records and a session's release ──
+  DiscardSessionRecord,
+  ListAdoptableRecords,
+  ReleaseSessions
 } from '@clave/contract/sessions'
 import { SessionHost, type SessionHostService } from './port'
 
@@ -140,6 +144,43 @@ export const sessionHandlers = [
       known(host, payload.id).pipe(
         Effect.map(() => host.history(payload.id, payload.before, payload.limit))
       )
+    )
+  ),
+  // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+  // The host keeps the records (the terminal layer's documents under its
+  // storage); what it throws beyond the declared failure is a bug in the
+  // host, said as the capability rather than as a 500.
+  QueryHandler.make(ListAdoptableRecords, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => host.listAdoptableRecords(payload.ids),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
+  ),
+  CommandHandler.make(DiscardSessionRecord, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => host.discardRecord(payload.key),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
+  ),
+  CommandHandler.make(ReleaseSessions, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => host.release(payload.ids, payload.fallbackWindowKey),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
     )
   )
 ] as const

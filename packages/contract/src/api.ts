@@ -23,8 +23,13 @@ import {
   StartSession,
   StopSession,
   WriteSession,
-  ResizeSession
+  ResizeSession,
+  // ── Wave 4, lane C: the session records and a session's release ──
+  DiscardSessionRecord,
+  ListAdoptableRecords,
+  ReleaseSessions
 } from './sessions'
+import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
 import { sidebarGroup } from './sidebar/api'
 import { workspaceFilesGroup } from './workspace-files/api'
@@ -43,6 +48,10 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
   .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
   .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
+  // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
+  .add(HttpCqrs.queryEndpoint('listAdoptable', '/sessions/records', ListAdoptableRecords))
+  .add(HttpCqrs.commandEndpoint('discardRecord', '/sessions/records/discard', DiscardSessionRecord))
+  .add(HttpCqrs.commandEndpoint('release', '/sessions/release', ReleaseSessions))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')
@@ -60,6 +69,8 @@ export { sidebarGroup }
 export { workspaceFilesGroup }
 // ── Lane D (wave 3): the view requests ──
 export { viewsGroup }
+// ── Wave 4, lane C: the agent tools' address and tokens (`agent-tools.ts`) ──
+export { agentToolsGroup }
 
 // ── Lane B: terminals ──
 
@@ -71,6 +82,8 @@ export const ClaveApi = Api.make('clave')
   .add(workspaceFilesGroup)
   // ── Lane D (wave 3): the view requests ──
   .add(viewsGroup)
+  // ── Wave 4, lane C: the agent tools ──
+  .add(agentToolsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

@@ -16,9 +16,11 @@ import type {
   CommandOption,
   HistoryPage,
   ModelOption,
+  ReleaseOutcome,
   Session,
   SessionCapabilities,
   SessionInfo,
+  SessionRecord,
   SessionStream,
   SessionWrite,
   SpawnOptions
@@ -64,6 +66,19 @@ export interface SessionHostService extends SessionStreamSource {
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
   readonly capabilities: (id: string) => SessionCapabilities
   readonly history: (id: string, before?: number, limit?: number) => HistoryPage
+  // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+  /** The records a window may bring back (`ListAdoptableRecords`): every
+   *  adoptable one, or those of `ids` plus the records of the sessions this
+   *  host runs by those ids, marked `running`. Throws `CapabilityUnavailable`
+   *  on a host that keeps no records. */
+  readonly listAdoptableRecords: (ids?: ReadonlyArray<string>) => ReadonlyArray<SessionRecord>
+  /** Destroy a surviving session nobody brings back: its tmux session when
+   *  it has one, then its record. Nothing happens for an unknown key. */
+  readonly discardRecord: (key: string) => void
+  /** Let go of live sessions for another window to take in: each tmux-backed
+   *  one detached and unbound, the record kept; a plain one refused, and with
+   *  `fallbackWindowKey` re-stamped there and detached all the same. */
+  readonly release: (ids: ReadonlyArray<string>, fallbackWindowKey?: string) => ReleaseOutcome
 }
 
 const NO_SESSIONS = new CapabilityUnavailable({
@@ -110,6 +125,16 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     },
     history: (id) => {
       throw new Error(`Unknown session: ${id}`)
+    },
+    // ── Wave 4, lane C: a host with no sessions keeps no records either ──
+    listAdoptableRecords: () => {
+      throw NO_SESSIONS
+    },
+    discardRecord: () => {
+      throw NO_SESSIONS
+    },
+    release: () => {
+      throw NO_SESSIONS
     }
   }
 }

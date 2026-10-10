@@ -468,3 +468,116 @@ export const GetSessionHistory = Query.define('GetSessionHistory', {
   success: HistoryPage,
   failure: SessionNotFound
 })
+
+// ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+
+/** The page behind a tab's dashboard icon, as the record keeps it. */
+export const SessionRecordView = Schema.Struct({
+  url: Schema.String,
+  title: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
+  cwd: Schema.optional(Schema.String)
+})
+export type SessionRecordView = typeof SessionRecordView.Type
+
+/**
+ * A session's persisted record: what survives a quit and what a window brings
+ * a tab back from. The shell's `SessionRecord` (`src/main/sessions/adapters/
+ * pty-backend.ts`) field by field, with the two the listing adds: `live`,
+ * whether the backing tmux session still runs, and `running`, set only on a
+ * record asked for by id whose process this host already runs. A field the
+ * schema does not name is DROPPED on the wire, silently: the test beside the
+ * shell's type (`src/main/sessions/records-contract.test.ts`) holds the two
+ * copies together.
+ */
+export const SessionRecord = Schema.Struct({
+  id: Schema.NonEmptyString,
+  adapterId: Schema.optional(Schema.String),
+  transport: Schema.optional(Transport),
+  tmuxName: Schema.optional(Schema.String),
+  claudeSessionId: Schema.optional(Schema.String),
+  piSessionId: Schema.optional(Schema.String),
+  cwd: Schema.String,
+  folderName: Schema.String,
+  displayName: Schema.optional(Schema.String),
+  userRenamed: Schema.optional(Schema.Boolean),
+  claudeMode: Schema.Boolean,
+  antigravityMode: Schema.Boolean,
+  codexMode: Schema.Boolean,
+  piMode: Schema.Boolean,
+  claudeAgentsMode: Schema.Boolean,
+  dangerousMode: Schema.Boolean,
+  model: Schema.optional(Schema.String),
+  launchProfileId: Schema.optional(Schema.String),
+  piProvider: Schema.optional(Schema.String),
+  piThinking: Schema.optional(Schema.String),
+  configDir: Schema.optional(Schema.String),
+  claudeProfileId: Schema.optional(Schema.String),
+  claudeProfileLabel: Schema.optional(Schema.String),
+  codexAccountId: Schema.optional(Schema.String),
+  codexAccountLabel: Schema.optional(Schema.String),
+  codexThreadId: Schema.optional(Schema.String),
+  startedAt: Schema.optional(Schema.Number),
+  workspaceId: Schema.optional(Schema.String),
+  windowKey: Schema.optional(Schema.String),
+  view: Schema.optional(SessionRecordView),
+  link: Schema.optional(SessionLink),
+  live: Schema.optional(Schema.Boolean),
+  running: Schema.optional(Schema.Boolean)
+})
+export type SessionRecord = typeof SessionRecord.Type
+
+/**
+ * The records a window may bring back: every record whose session this host
+ * does not run (a tmux survivor to reattach, a dead record to offer), with
+ * `live` said on each; or, with `ids`, those records whatever their window
+ * plus the records of the sessions this host runs by those ids, marked
+ * `running`. Which of them a WINDOW takes is the shell's rule (its own, plus
+ * the orphans for the primary), applied by the caller: the server knows no
+ * windows. The ids travel comma-joined, since a query's payload is decoded
+ * from the URL and a single repeated key would not read as an array.
+ */
+export const ListAdoptableRecords = Query.define('ListAdoptableRecords', {
+  payload: Schema.Struct({ ids: Schema.optional(Schema.split(',')) }),
+  success: Schema.Array(SessionRecord),
+  failure: CapabilityUnavailable
+})
+/** Destroy a surviving session nobody brings back: its tmux session when it
+ *  has one, then its record. `key` is the record's file key, the tmux name
+ *  or the session id. Nothing happens for a key no record carries. */
+export const DiscardSessionRecord = Command.define('DiscardSessionRecord', {
+  payload: Schema.Struct({ key: Schema.NonEmptyString }),
+  success: Schema.Void,
+  failure: CapabilityUnavailable
+})
+
+/** Why a session could not be released for a move: not running here, or
+ *  running on a plain pty whose scrollback would die with the detach. */
+export const ReleaseRefusal = Schema.Struct({
+  sessionId: Schema.String,
+  reason: Schema.Literal('not-live', 'not-tmux')
+})
+export type ReleaseRefusal = typeof ReleaseRefusal.Type
+export const ReleaseOutcome = Schema.Struct({
+  released: Schema.Array(Schema.String),
+  refused: Schema.Array(ReleaseRefusal)
+})
+export type ReleaseOutcome = typeof ReleaseOutcome.Type
+/**
+ * Let go of live sessions so another window can take them in: each tmux-backed
+ * session is detached from its process (the tmux session and the record
+ * survive, as at a quit) and unbound from its window; the window that takes
+ * it starts it again with `adoptSessionId`, which re-stamps the record. A
+ * session that is not tmux-backed is refused; with `fallbackWindowKey` its
+ * record is re-stamped to that window and the session detached all the same,
+ * the way a closing window hands its plain sessions to the primary (the
+ * record is offered there at the next boot).
+ */
+export const ReleaseSessions = Command.define('ReleaseSessions', {
+  payload: Schema.Struct({
+    ids: Schema.Array(Schema.NonEmptyString),
+    fallbackWindowKey: Schema.optional(Schema.NonEmptyString)
+  }),
+  success: ReleaseOutcome,
+  failure: CapabilityUnavailable
+})

@@ -67,3 +67,5 @@ export {
 } from './workspace-files'
 // ── Lane D (wave 3): the view requests ──
 export { ViewRequests, type ViewRequestsService, viewHandlers } from './views'
+// ── Wave 4, lane C: the agent tools' address and tokens ──
+export { AgentTokens, type AgentTokensService, agentToolsHandlers } from './agent-tools'

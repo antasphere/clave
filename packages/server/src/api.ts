@@ -20,9 +20,14 @@ import {
   ResizeSession,
   StartSession,
   StopSession,
-  WriteSession
+  WriteSession,
+  // ── Wave 4, lane C: the session records and a session's release ──
+  DiscardSessionRecord,
+  ListAdoptableRecords,
+  ReleaseSessions
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
+import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
 import {
@@ -61,6 +66,10 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('commands', HttpCqrs.query(GetSessionCommands))
     .handle('capabilities', HttpCqrs.query(GetSessionCapabilities))
     .handle('history', HttpCqrs.query(GetSessionHistory))
+    // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
+    .handle('listAdoptable', HttpCqrs.query(ListAdoptableRecords))
+    .handle('discardRecord', HttpCqrs.command(DiscardSessionRecord))
+    .handle('release', HttpCqrs.command(ReleaseSessions))
 )
 
 // ── Lane A: the clients the shell registers as ──
@@ -107,6 +116,13 @@ export const ViewsLive = HttpApiBuilder.group(ClaveApi, 'views', (handlers) =>
     .handle('answer', HttpCqrs.command(AnswerViewRequest))
 )
 
+// ── Wave 4, lane C: the agent tools' address and tokens ──
+export const AgentToolsLive = HttpApiBuilder.group(ClaveApi, 'agentTools', (handlers) =>
+  handlers
+    .handle('announce', HttpCqrs.command(AnnounceAgentTools))
+    .handle('resolveToken', HttpCqrs.command(ResolveAgentToken))
+)
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -121,6 +137,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       WorkspaceFilesLive,
       // ── Lane D (wave 3): the view requests ──
       ViewsLive,
+      // ── Wave 4, lane C: the agent tools ──
+      AgentToolsLive,
       HealthLive
     )
   )
