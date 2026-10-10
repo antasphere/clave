@@ -715,6 +715,9 @@ export interface ElectronAPI {
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
+  /** The attached server's surviving records for this window (restore top-up);
+   *  empty in-process. */
+  listServerRestoreRecords: () => Promise<SessionRecord[]>
   discardSessionRecord: (key: string) => Promise<void>
   onSessionRehome: (callback: (payload: RehomePayload) => void) => () => void
   onSessionRemovedForRehome: (callback: (sessionId: string) => void) => () => void

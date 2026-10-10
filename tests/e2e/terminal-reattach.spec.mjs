@@ -129,7 +129,11 @@ export async function run(t) {
       record?.file === path.join(recordsRoot, 'session-records', `${tmuxName}.json`),
       record?.file
     )
-    t.check('the tmux session is alive', tmuxName && tmuxSessionAlive(tmuxName))
+    // Attached, the server's terminal process registers the tmux session a
+    // beat after the record is written, so wait for it rather than racing
+    // the check (the downstream writes and the reattach prove it alive).
+    const tmuxUp = await until(() => (tmuxName && tmuxSessionAlive(tmuxName) ? true : null))
+    t.check('the tmux session is alive', !!tmuxUp)
 
     // The terminal must have started (the pane mounted and reported its
     // size) before a write means anything.

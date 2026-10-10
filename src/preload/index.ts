@@ -459,35 +459,45 @@ const viaAttachedServer =
 // applies the rule here (`shared/adoption-scope.ts`), from the scope main
 // answers over IPC. A read by id skips the rule: the re-home path asks for
 // exactly those records whatever their window.
-/** The mode, waited for when the boot has not named it yet: the restore runs
- *  early and must not read the records off the wrong road because the endpoint
- *  is a moment late. Bounded, so an app that never names a server (its boot
- *  failed) still answers over IPC rather than hanging the restore. */
-async function resolvedServerMode(): Promise<ServerMode | null> {
-  const deadline = Date.now() + 10_000
-  let mode = await serverMode()
-  while (mode === null && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    mode = await serverMode()
-  }
-  return mode
-}
+// The records a window brings back. The BOOT read (no ids) goes over IPC
+// always, the fast road, so the restore never delays the rest of the boot;
+// attached, IPC answers main's own empty folder and the window's own sessions
+// come back through the deferred top-up (`listServerRestoreRecords`), after
+// persistence is on, so an app that opens a file or a tab in the first
+// seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
+// the re-home path (post-boot): attached it must reach the server, which owns
+// a moved session's record.
 async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
-  if ((await resolvedServerMode()) !== 'attached')
-    return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
+  if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) return [...(await backing.api.sessions.listAdoptable(filter.ids))]
+  }
+  return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
+}
+
+/** The server's adoptable records for the attached restore top-up, with this
+ *  window's selection rule applied (`shared/adoption-scope.ts`); empty
+ *  in-process, where the boot's IPC read already holds main's own. It waits
+ *  for the server to be reachable (the backing), which is why it runs AFTER
+ *  the boot rather than inside it. */
+async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
+  if ((await serverMode()) !== 'attached') return []
   const backing = await serverRouter.backing()
-  if (!backing) throw new Error('The app is attached to a server it cannot reach')
-  if (filter && Array.isArray(filter.ids))
-    return [...(await backing.api.sessions.listAdoptable(filter.ids))]
+  if (!backing) return []
   const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
   const all = [...(await backing.api.sessions.listAdoptable())]
   return scope ? selectAdoptableRecords(all, scope) : []
 }
+
 async function discardSessionRecord(key: string): Promise<void> {
-  if ((await resolvedServerMode()) !== 'attached') return ipcRenderer.invoke('records:discard', key)
-  const backing = await serverRouter.backing()
-  if (!backing) throw new Error('The app is attached to a server it cannot reach')
-  await backing.api.sessions.discardRecord(key)
+  if ((await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) {
+      await backing.api.sessions.discardRecord(key)
+      return
+    }
+  }
+  await ipcRenderer.invoke('records:discard', key)
 }
 
 /** The IPC listener always; the push binding only once the server is there
@@ -980,6 +990,10 @@ const electronAPI = {
   // main answers over IPC (`records:adoption-scope`, `shared/adoption-scope.ts`).
   // By id the rule does not apply: the re-home path wants exactly those.
   listSessionRecords: (filter?: { ids?: string[] }) => listSessionRecords(filter),
+
+  // The attached restore top-up: the server's surviving records for this
+  // window, empty in-process (PRDCT-3376).
+  listServerRestoreRecords: () => listServerRestoreRecords(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),
 
