@@ -129,7 +129,7 @@ function setup(partial: Partial<World> = {}): Harness {
     setParent: (child, parent) => note('setParent', [child, parent]),
     captureMessage: (payload) => note('captureMessage', payload),
     captureTabSpawn: (payload) => note('captureTabSpawn', payload),
-    publish: (event) => note('publish', event),
+    publish: (event, windowKey) => note('publish', [event, windowKey]),
     notify: (title, body) => note('notify', [title, body])
   }
   const requestView = vi.fn(async () => ({ pinnedGroups: [{ id: 'p1' }], focusedSessionId: 'f1' }))

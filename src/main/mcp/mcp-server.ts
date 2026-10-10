@@ -14,7 +14,7 @@ import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
-import { sidebarTransport } from '../sidebar-layouts'
+import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
 import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
 import { launchProfileManager } from '../launch-profile-manager'
@@ -22,6 +22,9 @@ import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
 import { getPreference } from '../ipc-handlers/clave-file-handlers'
 import { parentOf, setParent } from '../sessions/lineage'
 import { publishOrSend } from '../server/session-events'
+import { sessionWindows } from '../sessions/windows'
+import { shellSidebarClient } from './shell-sidebar'
+import { usageSummaryOf } from '../../shared/usage-summary'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
 import type { AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
@@ -386,23 +389,9 @@ function windowsListing(callerWin: BrowserWindowLike): unknown[] {
   })
 }
 
-/** An account's last usage read as the pool reads it (`shared/account-pool.ts`):
- *  the tightest window (severity first, then use), and the windows themselves;
- *  undefined for no read, or a failed one. */
-function summaryOf(read: UsageLimits | UsageError | undefined): AccountUsageSummary | undefined {
-  if (!read || !('windows' in read)) return undefined
-  const rank = { normal: 0, warning: 1, critical: 2 } as Record<string, number>
-  let best: UsageLimits['windows'][number] | null = null
-  for (const w of read.windows) {
-    if (!best) best = w
-    else {
-      const a = rank[w.severity ?? 'normal'] ?? 0
-      const b = rank[best.severity ?? 'normal'] ?? 0
-      if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-    }
-  }
-  return { tightest: best, windows: read.windows }
-}
+/** An account's last usage read as the pool reads it (`shared/usage-summary.ts`). */
+const summaryOf = (read: UsageLimits | UsageError | undefined): AccountUsageSummary | undefined =>
+  read && 'windows' in read ? usageSummaryOf(read) : undefined
 
 /** Whether an account's last usage read says it is about to stop: the
  *  tightest window critical, or about five percent left (the pool's rule);
@@ -521,7 +510,8 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   setParent: (childId, parentId) => setParent(childId, parentId),
   captureMessage: (payload) => captureMessage(payload),
   captureTabSpawn: (payload) => captureTabSpawn(payload),
-  publish: (event) => publishOrSend(event, () => undefined),
+  publish: (event, windowKey) =>
+    publishOrSend(event, () => sessionWindows().send(windowKey, 'pinned-group:launched', event)),
   notify: (title, body) => {
     if (Notification.isSupported()) new Notification({ title, body }).show()
   }
@@ -589,15 +579,23 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // change over the push channel. Only while the sidebar's road is the
       // server's: attached to a server that hosts no windows, the shell keeps
       // the sidebar and the tools keep the window, through the view request.
-      if (sidebarTransport() === 'server') {
+      // Attached to a server running apart (wave 4): the sessions are that
+      // server's and the sidebar the shell's, so the wave 4 tools are served
+      // over the client with the sidebar answered by main's own layouts
+      // (`shell-sidebar.ts`); `serveCommand` keeps the wave 3 tools on the
+      // window there.
+      const attached = getClaveServerEndpoint()?.mode === 'attached'
+      if (sidebarTransport() === 'server' || attached) {
+        const api = await serverClient.api()
         const served = await serveCommand(command, p, {
-          api: await serverClient.api(),
+          api: attached ? { ...api, sidebar: shellSidebarClient(sidebarLayouts()) } : api,
           shell: servedShell,
           win,
           callerSessionId,
           targetWindow:
             command === 'moveSession' ? resolveWindowArg(p.window, callerSessionId) : undefined,
-          requestView
+          requestView,
+          attached
         })
         if (served !== NOT_SERVED)
           return { content: [{ type: 'text', text: JSON.stringify(served ?? { ok: true }) }] }

@@ -109,9 +109,13 @@ export interface ServedShell<W extends ToolWindow = ToolWindow> {
   captureMessage(payload: MessageCapturePayload): void
   /** Records a tab an agent opened on the exchange capture. */
   captureTabSpawn(payload: TabSpawnCapturePayload): void
-  /** Tells every window a fact the server has no command for (a pinned
-   *  group's launch); nothing happens without a server publishing. */
-  publish(event: ServerEvent): void
+  /** Tells the windows a fact the server has no command for (a pinned
+   *  group's launch): published on the server when one publishes in this
+   *  process, sent to the window of that key over IPC otherwise (attached). */
+  publish(event: ServerEvent, windowKey: string): void
+  /** Attached only: the records read again from the server, after a start
+   *  made a new one (`served-attached.ts`). Absent in-process. */
+  syncRecords?: () => Promise<void>
   /** A note to the person, as a system notification. */
   notify(title: string, body: string): void
 }
@@ -124,6 +128,9 @@ export interface ServedContext<W extends ToolWindow = ToolWindow> {
   readonly callerSessionId: string | undefined
   /** The window a `window` argument names, for moveSession. */
   readonly targetWindow?: W | null
+  /** The app is attached to a server running apart from it: the sessions
+   *  are that server's, the sidebar the shell's (`served-attached.ts`). */
+  readonly attached?: boolean
   /** A command the window itself must run, through the server's view
    *  request; `timeoutMs` bounds the wait when the caller has a plan B. */
   readonly requestView: <T>(
