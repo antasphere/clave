@@ -377,8 +377,15 @@ export async function run(t) {
 
       // clave_open_session of an agent tab: served; the window takes the tab in
       // from its record and names it.
+      // The built-in terminal profile, named: the workspace's default could be
+      // a chat profile, whose message is not a paste into a terminal.
       const worker = toolPayload(
-        await client.call('clave_open_session', { cwd: ROOT, mode: 'claude', name: 'Worker' })
+        await client.call('clave_open_session', {
+          cwd: ROOT,
+          mode: 'claude',
+          profile: 'builtin-claude',
+          name: 'Worker'
+        })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
       t.equal('and took the server road', await lastRoad(app, 'openSession'), 'server')
@@ -404,17 +411,19 @@ export async function run(t) {
       )
       t.check('clave_send_to_session answers delivered', sent?.delivered === true, sent)
       t.equal('and took the server road', await lastRoad(app, 'sendToSession'), 'server')
+      // The pane's own focus report may land between the paste and its
+      // submit: the envelope must be whole, and a submit must follow it.
       const typed = await until(async () => {
         const w = await writes(worker.sessionId)
-        return w.includes('\x1b[201~\r') ? w : null
+        const end = w.indexOf('second line\x1b[201~')
+        return end >= 0 && w.indexOf('\r', end) > end ? w : null
       })
       t.check(
         'the message was typed as one bracketed paste under its provenance header, then submitted',
         typeof typed === 'string' &&
           typed.includes('\x1b[200~[Message from Clave tab "Renamed by the server"') &&
-          typed.includes('hello from the server road\nsecond line\x1b[201~') &&
-          typed.endsWith('\x1b[201~\r'),
-        typed
+          typed.includes('hello from the server road\nsecond line\x1b[201~'),
+        { typed, journal: await writes(worker.sessionId) }
       )
 
       // The worker answers its parent: the link the server kept.
@@ -422,6 +431,19 @@ export async function run(t) {
       t.check('the worker holds a token of its own', !!workerToken)
       const workerClient = mcpHttpClient(mcpEndpoint(DIR), workerToken)
       await workerClient.init()
+      // The worker reads its parent first: a message typed into the parent
+      // answers whatever prompt its CLI shows (here claude's folder-trust
+      // question, whose default is to exit), so the read comes before the send.
+      const readParentRaw = await workerClient.call('clave_read_session', { sessionId: 'parent' })
+      const readParent = toolPayload(readParentRaw)
+      t.check('the worker reads its parent', readParent?.sessionId === agent.sessionId, {
+        readParentRaw,
+        agentOnServer: await sessionOn(disc, agent.sessionId),
+        agentScreen: await fetch(`${disc.url}/sessions/screen?id=${agent.sessionId}&lines=3`, {
+          headers: { authorization: `Bearer ${disc.token}` }
+        }).then(async (r) => ({ status: r.status, body: await r.text() }))
+      })
+
       const parentWrites = writeJournal(DIR)
       const back = toolPayload(
         await workerClient.call('clave_send_to_session', { sessionId: 'parent', message: 'done' })
@@ -473,11 +495,6 @@ export async function run(t) {
         read
       )
       t.equal('and took the server road', await lastRoad(app, 'readSession'), 'server')
-      const readParent = toolPayload(
-        await workerClient.call('clave_read_session', { sessionId: 'parent' })
-      )
-      t.equal('the worker reads its parent', readParent?.sessionId, agent.sessionId)
-
       // clave_switch_account: served in automatic mode; the tab's own pin and
       // mode asked of the window first.
       const switched = toolPayload(
@@ -520,16 +537,16 @@ export async function run(t) {
         (await pinSpawns()).some((x) => x.cwd === ROOT && !x.claudeMode),
         await pinSpawns()
       )
-      const pinGroupDrawn = await until(
-        async () =>
-          (await drawnGroups(win)).find(
-            (g) => g.id === launched?.groupId && g.name === 'Served pin'
-          ) ?? null
-      )
+      const pinGroupDrawn = await until(async () => {
+        const g = (await drawnGroups(win)).find(
+          (x) => x.id === launched?.groupId && x.name === 'Served pin'
+        )
+        return g && g.rows.length > 0 ? g : null
+      })
       t.check(
         'the window draws the group with its member',
         pinGroupDrawn?.rows?.length === 1,
-        pinGroupDrawn
+        pinGroupDrawn ?? (await drawnGroups(win))
       )
       const pinLinked = await until(async () => {
         const l = await callMcp(app, 'list', {})
@@ -620,7 +637,12 @@ export async function run(t) {
 
       // A tab opened, named and placed: served; the window takes it in.
       const worker = toolPayload(
-        await agent.call('clave_open_session', { cwd: ROOT, mode: 'claude', name: 'Worker' })
+        await agent.call('clave_open_session', {
+          cwd: ROOT,
+          mode: 'claude',
+          profile: 'builtin-claude',
+          name: 'Worker'
+        })
       )
       t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
       t.equal('on the server road, attached', await lastRoad(app, 'openSession'), 'server')
