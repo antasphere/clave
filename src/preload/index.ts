@@ -459,8 +459,21 @@ const viaAttachedServer =
 // applies the rule here (`shared/adoption-scope.ts`), from the scope main
 // answers over IPC. A read by id skips the rule: the re-home path asks for
 // exactly those records whatever their window.
+/** The mode, waited for when the boot has not named it yet: the restore runs
+ *  early and must not read the records off the wrong road because the endpoint
+ *  is a moment late. Bounded, so an app that never names a server (its boot
+ *  failed) still answers over IPC rather than hanging the restore. */
+async function resolvedServerMode(): Promise<ServerMode | null> {
+  const deadline = Date.now() + 10_000
+  let mode = await serverMode()
+  while (mode === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    mode = await serverMode()
+  }
+  return mode
+}
 async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
-  if ((await serverMode()) !== 'attached')
+  if ((await resolvedServerMode()) !== 'attached')
     return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
   const backing = await serverRouter.backing()
   if (!backing) throw new Error('The app is attached to a server it cannot reach')
@@ -471,7 +484,7 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
   return scope ? selectAdoptableRecords(all, scope) : []
 }
 async function discardSessionRecord(key: string): Promise<void> {
-  if ((await serverMode()) !== 'attached') return ipcRenderer.invoke('records:discard', key)
+  if ((await resolvedServerMode()) !== 'attached') return ipcRenderer.invoke('records:discard', key)
   const backing = await serverRouter.backing()
   if (!backing) throw new Error('The app is attached to a server it cannot reach')
   await backing.api.sessions.discardRecord(key)
