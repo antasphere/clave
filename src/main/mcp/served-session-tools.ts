@@ -206,8 +206,13 @@ async function readSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
     screen = await ctx.api.sessions.screen(target.id, requested)
   } catch (err) {
     if (tagOf(err) === 'SessionScreenUnavailable') {
+      // The window's text for a tab with nothing to read; any other reason
+      // the host gives is said as it is, never hidden behind it.
+      const message = (err as { message?: string }).message ?? ''
       throw new Error(
-        `Session "${nameOf(ctx, target)}" has no terminal buffer (tab not mounted yet)`
+        message.includes('no terminal screen')
+          ? `Session "${nameOf(ctx, target)}" has no terminal buffer (tab not mounted yet)`
+          : `Session "${nameOf(ctx, target)}" could not be read: ${message}`
       )
     }
     throw err

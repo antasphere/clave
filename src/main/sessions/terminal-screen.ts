@@ -75,8 +75,19 @@ export function resetScreensForTests(): void {
 }
 
 type HeadlessModule = typeof import('@xterm/headless')
-let headless: Promise<HeadlessModule> | null = null
-const loadHeadless = (): Promise<HeadlessModule> => (headless ??= import('@xterm/headless'))
+type HeadlessTerminal = HeadlessModule['Terminal']
+let headless: Promise<HeadlessTerminal> | null = null
+/** The constructor, wherever the loader put it: on the namespace under
+ *  vitest, under `default` once electron-vite has bundled main as CommonJS
+ *  (the first end-to-end run answered "Terminal is not a constructor"). */
+const loadHeadless = (): Promise<HeadlessTerminal> =>
+  (headless ??= import('@xterm/headless').then((mod) => {
+    const found =
+      (mod as { Terminal?: HeadlessTerminal }).Terminal ??
+      (mod as { default?: { Terminal?: HeadlessTerminal } }).default?.Terminal
+    if (typeof found !== 'function') throw new Error('the headless terminal did not load')
+    return found
+  }))
 
 /** The last `lines` rendered lines of the session's screen. Throws when the
  *  session printed nothing this process kept. */
@@ -84,7 +95,7 @@ export async function renderScreen(id: string, lines: number): Promise<SessionSc
   const kept = screens.get(id)
   if (!kept) throw new Error('no terminal buffer')
   const wanted = Math.min(Math.max(Math.floor(lines) || 1, 1), MAX_LINES)
-  const { Terminal } = await loadHeadless()
+  const Terminal = await loadHeadless()
   const terminal = new Terminal({
     cols: kept.cols,
     rows: kept.rows,
