@@ -207,10 +207,12 @@ function trackConnections(node: NodeServer): Connections {
  *    because the ws server's close in the scope would otherwise wait on it
  *    for its own thirty seconds.
  * 4. Close the scope: handlers off, hub disposed, ws server closed.
- * 5. Destroy whatever a client still holds (a keep-alive socket, a peer that
- *    never answered), so the listener's close can complete. A request that
- *    arrives on such a socket after step 4 is refused by the reset, never
- *    left hanging until the client's deadline.
+ * 5. Destroy whatever a client still holds (a socket with a request the drain
+ *    gave up on, a peer that never answered), so the listener's close can
+ *    complete; the idle kept-alive sockets were already destroyed by Node's
+ *    own close at step 1. A request that arrives on such a socket after
+ *    step 4 is refused by the reset, never left hanging until the client's
+ *    deadline.
  */
 async function stopEmbedded(input: {
   node: NodeServer
@@ -233,7 +235,11 @@ async function stopEmbedded(input: {
   if (!(await connections.peersGone(input.peerGraceMs)))
     for (const socket of [...connections.upgraded]) socket.destroy()
   await Effect.runPromise(Scope.close(scope, Exit.void))
-  const left = [...connections.sockets]
+  // Node's own close already destroyed the idle kept-alive sockets at step 1
+  // (their 'close' event may not have run yet); what is counted here is what
+  // THIS step had to end: a socket with a request still on it, a peer that
+  // never answered.
+  const left = [...connections.sockets].filter((socket) => !socket.destroyed)
   for (const socket of left) socket.destroy()
   await closed
   return { ms: Date.now() - started, inFlight, drained, peers, destroyed: left.length }

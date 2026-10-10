@@ -250,7 +250,10 @@ export function serverClient(url, token) {
  *  port, the in-process server's port, and nothing else; in particular no
  *  server started "in place of" one that could not be reached. A probe of
  *  the url that failed proves nothing about a fallback on another port. */
-export function listeningPorts(pid) {
+/** How long a synchronous child call of the harness (lsof, tmux) may take. */
+export const CHILD_CALL_TIMEOUT_MS = 10_000
+
+export function listeningPorts(pid, { timeoutMs = 2 * CHILD_CALL_TIMEOUT_MS } = {}) {
   let out
   try {
     // A timeout on every synchronous child call of the harness: a hung lsof
@@ -258,7 +261,7 @@ export function listeningPorts(pid) {
     // can fire while it does (wave 3's 13-minute launch had that shape).
     out = execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid), '-Fn'], {
       encoding: 'utf-8',
-      timeout: 20_000
+      timeout: timeoutMs
     })
   } catch (err) {
     // lsof exits 1 when the process has no matching descriptor at all.
@@ -321,7 +324,10 @@ export function killLeakedApps() {
  * created in that window was wiped by the layout merge: at 2 s never drawn,
  * at 3 s drawn, measured under load; four specs sat in known-failures.json for it.
  */
-export async function waitForBoot(page, { timeoutMs = BOOT_TIMEOUT_MS, dir = null } = {}) {
+export async function waitForBoot(
+  page,
+  { timeoutMs = BOOT_TIMEOUT_MS, dir = null, pid = null } = {}
+) {
   const started = Date.now()
   let state = null
   let server = dir ? null : 'not asked'
@@ -329,8 +335,14 @@ export async function waitForBoot(page, { timeoutMs = BOOT_TIMEOUT_MS, dir = nul
     state = await page
       .evaluate(() => document.documentElement.dataset.boot ?? null)
       .catch(() => null)
-    if (dir) server = serverEndpoint(dir) ? 'written' : null
-    if ((state === 'complete' || state === 'restore-prompt') && server)
+    if (dir) {
+      // The file must be THIS launch's: the app does not remove it at quit,
+      // so a relaunch into the same folder finds the previous launch's
+      // (round 1 of the verifier). Main writes its own pid into it.
+      const found = serverEndpoint(dir)
+      server = !found ? null : pid != null && found.pid !== pid ? 'stale' : 'written'
+    }
+    if ((state === 'complete' || state === 'restore-prompt') && server === 'written')
       return { state, ms: Date.now() - started }
     await new Promise((r) => setTimeout(r, 100))
   }
@@ -429,7 +441,7 @@ export async function launchApp(
   await win.waitForLoadState('domcontentloaded')
   // The boot, not a clock (waitForBoot above); a settleMs a spec still
   // passes is waited after it.
-  await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null })
+  await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })
   if (settleMs > 0) await win.waitForTimeout(settleMs)
   // The fixture: the one way into the process hosting the sessions, in
   // both modes (`serverFixture` below). Attached, the server this call
@@ -677,9 +689,11 @@ export async function closeWindow(app, page) {
  * cwd's basename, so the session's start path is what tells two runs apart),
  * and never with pkill.
  */
-export function killLeakedE2eTmux({ env = process.env } = {}) {
+export function killLeakedE2eTmux({ env = process.env, timeoutMs = CHILD_CALL_TIMEOUT_MS } = {}) {
   let rows
   try {
+    // `env` is the child's environment too, so a test can put a tmux of its
+    // own on its PATH (Node looks the command up on `options.env.PATH`).
     // A pipe, not a tab: tmux prints a control character in a format as '_'.
     // The app's session names are [A-Za-z0-9_-], so the first pipe is the cut.
     rows = execFileSync(
@@ -687,7 +701,8 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
       ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
       {
         encoding: 'utf-8',
-        timeout: 10_000
+        timeout: timeoutMs,
+        env
       }
     )
   } catch {
@@ -696,7 +711,10 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
   for (const n of leakedE2eSessions(rows, { env })) {
     try {
       // `=name` is an EXACT target: never a prefix or a glob match.
-      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`], { timeout: 10_000 })
+      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`], {
+        timeout: timeoutMs,
+        env
+      })
     } catch {
       // Gone between the list and the kill.
     }
@@ -736,11 +754,11 @@ export function leakedE2eSessions(rows, { env = process.env } = {}) {
 }
 
 /** Is a tmux session of that name alive on the app's socket? */
-export function tmuxSessionAlive(name) {
+export function tmuxSessionAlive(name, { timeoutMs = CHILD_CALL_TIMEOUT_MS } = {}) {
   try {
     execFileSync('tmux', ['-L', 'clave', 'has-session', '-t', `=${name}`], {
       stdio: 'ignore',
-      timeout: 10_000
+      timeout: timeoutMs
     })
     return true
   } catch {

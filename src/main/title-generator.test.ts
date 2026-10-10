@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   inMemorySessionWindows,
   installSessionWindows,
@@ -242,6 +242,23 @@ describe('a chat tab is named by its first message', () => {
 // group that nothing of the sessions' shutdown reached. `cancelAll` is what
 // the sessions' shutdown calls now.
 describe('a quit ends the title jobs', () => {
+  afterEach(async () => {
+    const { resetCancelAllForTests } = await import('./title-generator')
+    resetCancelAllForTests()
+  })
+
+  it('a title asked for AFTER cancelAll starts no CLI', async () => {
+    const { cancelAll } = await import('./title-generator')
+    cancelAll()
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalledWith(`session:auto-title:${id}`, expect.anything())
+  })
+
   it('signals the running CLI, and its late answer names no tab', async () => {
     const { cancelAll, runningTitleJobs } = await import('./title-generator')
     let finish!: Callback

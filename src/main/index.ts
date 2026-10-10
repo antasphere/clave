@@ -47,7 +47,7 @@ import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS, awaitQuitWaits } from './quit-cleanup'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS, armQuitHammer, awaitQuitWaits } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
@@ -510,10 +510,11 @@ app.on('before-quit', (event) => {
     })
     .finally(() => {
       quitReady = true
-      setTimeout(() => {
-        console.error(`[quit] still running ${QUIT_HAMMER_MS} ms after the cleanup; exiting`)
-        app.exit(1)
-      }, QUIT_HAMMER_MS)
+      armQuitHammer({
+        ms: QUIT_HAMMER_MS,
+        exit: (code) => app.exit(code),
+        log: (line) => console.error(line)
+      })
       app.quit()
     })
 })

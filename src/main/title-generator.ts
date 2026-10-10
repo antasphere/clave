@@ -82,6 +82,9 @@ const MAX_CONCURRENT_TITLES = 1
  *  handle is held here so the quit ends it with the rest. */
 const activeChildren = new Set<ChildProcess>()
 const cancelled = new WeakSet<ChildProcess>()
+/** Set by `cancelAll`: from then on no title job starts (a tab named during
+ *  the quit would spawn a CLI nothing kills; round 1 of the verifier). */
+let closed = false
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
 export const TITLE_CANCEL_GRACE_MS = 1000
 
@@ -91,6 +94,7 @@ export const TITLE_CANCEL_GRACE_MS = 1000
  *  (`pty-manager.ts` killAll), in the app's quit and the standalone
  *  server's stop alike. */
 export function cancelAll(): void {
+  closed = true
   for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
   for (const child of [...activeChildren]) {
     cancelled.add(child)
@@ -113,6 +117,11 @@ export function cancelAll(): void {
 /** The CLI children running right now (test seam). */
 export function runningTitleJobs(): number {
   return activeChildren.size
+}
+
+/** Open the door again (test seam: the module is one per process). */
+export function resetCancelAllForTests(): void {
+  closed = false
 }
 
 function processNextTitle(): void {
@@ -435,6 +444,7 @@ function generateTitle(
   launch: TitleLaunchContext
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (closed) return reject(new Error('Title generation cancelled'))
     titleQueue.push({ sessionId, userMessage, launch, resolve, reject })
     processNextTitle()
   })

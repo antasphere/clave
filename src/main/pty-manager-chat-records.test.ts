@@ -201,6 +201,14 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it('the quit ends the title jobs with the sessions', async () => {
+    // The one line that makes a quit end a running `claude -p` (PRDCT-3375):
+    // the whole suite stayed green with it removed (round 1 of the verifier).
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    await ptyManager.killAll()
+    expect(mocks.title.cancelAll).toHaveBeenCalledTimes(1)
+  })
+
   it('drops the record on a real close and keeps it on quit', async () => {
     const closed = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     const kept = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })

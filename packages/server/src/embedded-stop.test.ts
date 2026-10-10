@@ -131,15 +131,18 @@ describe('the embedded stop never waits on a client', () => {
     expect(await slow).toMatch(/^cut /)
   })
 
-  it('a kept-alive connection a client holds idle is destroyed, and the stop reports it', async () => {
+  it('a kept-alive connection a client holds idle is gone after the stop, and not counted as destroyed here', async () => {
     const s = await start({})
     const agent = new Agent({ keepAlive: true, maxSockets: 1 })
     expect(await get(s, '/health/live', agent)).toBe('status 200')
     const started = Date.now()
     const report = await s.stop()
     expect(Date.now() - started).toBeLessThan(1500)
-    // One socket was still open: the agent's. Destroyed by the stop.
-    expect(report.destroyed).toBe(1)
+    // Node's own close destroyed the idle socket at step 1 (round 1 of the
+    // verifier: counting it here overstated the stop's work); the next
+    // request on the agent finds it gone and the listener refuses a new one.
+    expect(report.destroyed).toBe(0)
+    expect(await get(s, '/health/live', agent)).toMatch(/^error (ECONNREFUSED|ECONNRESET)/)
     agent.destroy()
   })
 

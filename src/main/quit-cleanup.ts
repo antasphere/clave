@@ -83,3 +83,24 @@ export function awaitQuitWaits(
     }
   })
 }
+
+/**
+ * The hammer: once the cleanup is over and the quit is asked for again, a
+ * process still here `ms` later is exited with code 1, the log saying so. A
+ * quit that reaches it is one that would otherwise never have ended, so what
+ * `app.exit` skips (`will-quit`, the renderers' unload) is the price of
+ * ending at all. Pure: `exit` and the timer are injected, so a unit test
+ * drives it with fake timers.
+ */
+export function armQuitHammer(options: {
+  readonly ms: number
+  readonly exit: (code: number) => void
+  readonly log: (line: string) => void
+  readonly setTimeout?: typeof globalThis.setTimeout
+}): void {
+  const schedule = options.setTimeout ?? globalThis.setTimeout
+  schedule(() => {
+    options.log(`[quit] still running ${options.ms} ms after the cleanup; exiting`)
+    options.exit(1)
+  }, options.ms)
+}

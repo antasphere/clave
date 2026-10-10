@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS, awaitQuitWaits } from './quit-cleanup'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS, armQuitHammer, awaitQuitWaits } from './quit-cleanup'
 
 // Fake timers: the ceiling is driven by hand, so a wait that never settles
 // costs the test nothing.
@@ -81,5 +81,19 @@ describe('the quit cleanup is bounded, and names what it waited on', () => {
     // must give up first, so the log names the wait before the harness kills it.
     expect(QUIT_CEILING_MS + QUIT_HAMMER_MS).toBeLessThan(25_000)
     expect(QUIT_HAMMER_MS).toBeLessThanOrEqual(QUIT_CEILING_MS)
+  })
+})
+
+describe('the hammer', () => {
+  it('exits the process with code 1 once its delay has passed, and says so', () => {
+    const exit = vi.fn()
+    const log = vi.fn()
+    armQuitHammer({ ms: 2000, exit, log })
+    vi.advanceTimersByTime(1999)
+    expect(exit).not.toHaveBeenCalled()
+    expect(log).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(log).toHaveBeenCalledWith('[quit] still running 2000 ms after the cleanup; exiting')
+    expect(exit).toHaveBeenCalledWith(1)
   })
 })

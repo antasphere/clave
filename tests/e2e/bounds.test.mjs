@@ -6,6 +6,8 @@ import {
   specDeadlineMs,
   withDeadline
 } from './bounds.mjs'
+import { CLOSE_TIMEOUT_MS } from './harness.mjs'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS } from '../../src/main/quit-cleanup'
 
 const never = new Promise(() => {})
 
@@ -81,5 +83,11 @@ describe('boundedClose', () => {
     const outcome = await boundedClose(() => never, 1, 30, { kill, log, afterKillMs: 30 })
     expect(outcome).toEqual({ timedOut: true })
     expect(log).toHaveBeenCalledWith('app.close() still pending after the kill of pid 1; moving on')
+  })
+})
+
+describe('the bounds speak in order', () => {
+  it('the app gives up before the harness does, so a stalled quit is named in the app log first', () => {
+    expect(QUIT_CEILING_MS + QUIT_HAMMER_MS).toBeLessThan(CLOSE_TIMEOUT_MS)
   })
 })
