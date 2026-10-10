@@ -29,6 +29,8 @@ import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
+import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
+import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -450,6 +452,31 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+// ── The session records' road (wave 4, lane C) ──
+// Inside the app the records are main's, and IPC lands on the one instance
+// that applies the window's selection rule itself. Attached, the records are
+// the standalone server's: the preload reads the whole listing off it and
+// applies the rule here (`shared/adoption-scope.ts`), from the scope main
+// answers over IPC. A read by id skips the rule: the re-home path asks for
+// exactly those records whatever their window.
+async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
+  if ((await serverMode()) !== 'attached')
+    return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
+  const backing = await serverRouter.backing()
+  if (!backing) throw new Error('The app is attached to a server it cannot reach')
+  if (filter && Array.isArray(filter.ids))
+    return [...(await backing.api.sessions.listAdoptable(filter.ids))]
+  const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
+  const all = [...(await backing.api.sessions.listAdoptable())]
+  return scope ? selectAdoptableRecords(all, scope) : []
+}
+async function discardSessionRecord(key: string): Promise<void> {
+  if ((await serverMode()) !== 'attached') return ipcRenderer.invoke('records:discard', key)
+  const backing = await serverRouter.backing()
+  if (!backing) throw new Error('The app is attached to a server it cannot reach')
+  await backing.api.sessions.discardRecord(key)
+}
+
 /** The IPC listener always; the push binding only once the server is there
  *  AND the app is attached to it. */
 function onAttachedPush(
@@ -932,11 +959,16 @@ const electronAPI = {
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
   // This window's own records (plus the orphans, for the primary); `ids`
-  // fetches specific records whatever their window (the re-home path).
-  listSessionRecords: (filter?: { ids?: string[] }) =>
-    ipcRenderer.invoke('records:list-adoptable', filter),
+  // fetches specific records whatever their window (the re-home path). The
+  // road is the mode's: inside the app (or before a server is named) IPC
+  // lands on main's own listing, which applies the selection rule itself;
+  // attached, the records are the SERVER's, so the preload reads the whole
+  // listing off the server and applies the same rule here, from the scope
+  // main answers over IPC (`records:adoption-scope`, `shared/adoption-scope.ts`).
+  // By id the rule does not apply: the re-home path wants exactly those.
+  listSessionRecords: (filter?: { ids?: string[] }) => listSessionRecords(filter),
 
-  discardSessionRecord: (key: string) => ipcRenderer.invoke('records:discard', key),
+  discardSessionRecord: (key: string) => discardSessionRecord(key),
 
   // Sessions handed to this window to take in — a closing window's (with its
   // groups), or tabs moved here — as ids; the records carry the rest.

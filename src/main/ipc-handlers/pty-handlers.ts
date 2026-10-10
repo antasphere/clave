@@ -22,7 +22,8 @@ import {
 import { getPreference } from './clave-file-handlers'
 import { installSessionWindows } from '../sessions/windows'
 import { electronSessionWindows } from '../sessions/electron-windows'
-import { recordsForIds } from '../sessions/records-by-id'
+import { getSessionHost } from '../sessions/host'
+import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
   // The shell wires the terminal layer's MCP config port to its own MCP
@@ -226,26 +227,36 @@ export function registerPtyHandlers(): void {
   // plus, for the primary, the orphans (no stamp, or a window that no longer
   // exists). `ids` overrides the filter: the re-home path hands a window the
   // ids of sessions another window just released, whatever their stamp.
+  // The listing is the host's (`sessions/records.ts`, the same the server
+  // answers for an attached window); which records THIS window takes is the
+  // shell's rule (`shared/adoption-scope.ts`), applied here over main's
+  // listing and in the preload over the server's, from the scope below.
   ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
-    const all = ptyManager.listAdoptableSessions()
+    const host = getSessionHost()
     if (filter && Array.isArray(filter.ids)) {
-      // By id, the records of sessions this process already runs come back
-      // too, marked `running` (sessions/records-by-id.ts, the rule's own test).
-      return recordsForIds(all, filter.ids, {
-        recordOf: (id) => ptyManager.getSessionRecord(id) ?? undefined,
-        isAlive: (id) => ptyManager.getSession(id)?.alive === true
-      })
+      return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))
     }
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const key = win ? windowRegistry.getKeyForWindow(win.id) : null
-    if (!win || !key) return []
-    if (!windowRegistry.isPrimary(win.id)) return all.filter((r) => r.windowKey === key)
-    const known = new Set([...windowState.keys(), ...windowRegistry.liveKeys()])
-    return all.filter((r) => r.windowKey === key || !r.windowKey || !known.has(r.windowKey))
+    const scope = adoptionScopeOf(event.sender)
+    return scope ? selectAdoptableRecords(host.listAdoptableRecords(), scope) : []
   })
+  // What the asking window is, for the selection rule: its key, whether it is
+  // the primary, and every window that exists (live or persisted). Null for
+  // a sender that is not a Clave window.
+  ipcMain.handle('records:adoption-scope', (event) => adoptionScopeOf(event.sender))
 
   // User declined to bring a survivor back → destroy it (record + tmux session).
   ipcMain.handle('records:discard', (_event, key: string) => {
-    ptyManager.discardSessionRecord(key)
+    if (typeof key === 'string' && key.length > 0) getSessionHost().discardRecord(key)
   })
+}
+
+function adoptionScopeOf(sender: Electron.WebContents): AdoptionScope | null {
+  const win = BrowserWindow.fromWebContents(sender)
+  const key = win ? windowRegistry.getKeyForWindow(win.id) : null
+  if (!win || !key) return null
+  return {
+    windowKey: key,
+    primary: windowRegistry.isPrimary(win.id),
+    knownWindowKeys: [...new Set([...windowState.keys(), ...windowRegistry.liveKeys()])]
+  }
 }

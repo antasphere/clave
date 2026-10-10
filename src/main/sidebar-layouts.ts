@@ -1,6 +1,8 @@
 import { app, BrowserWindow } from 'electron'
 import { SidebarLayouts, fileSidebarStorage, type SidebarHost } from '@clave/server/sidebar-layouts'
 import type { MoveRefusal, MoveResult, WindowLayout } from '@clave/contract/sidebar'
+import type { ReleaseOutcome } from '@clave/contract/sessions'
+import { getClaveServerEndpoint } from './server/endpoint'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { ptyManager } from './pty-manager'
@@ -50,6 +52,92 @@ const refusal = (sessionId: string, target: BrowserWindow | null): MoveRefusal |
   return null
 }
 
+// ── Wave 4, lane C: the attached move's release ──
+// Attached to a server running apart from the app, the sessions are the
+// server's, not main's: a move's detach is the server's `ReleaseSessions`
+// (it alone owns the processes), while the layout bookkeeping stays main's
+// (the sidebar's road is the shell's, attached). The shell releases on the
+// server FIRST, then runs the SAME synchronous layout logic with that
+// outcome: `withAttachedRelease` holds it for the one sync call that follows,
+// so `shellSidebarHost` reports exactly what moved without a promise crossing
+// the sidebar domain. Single-threaded and released in a `finally`, so no two
+// moves ever share it.
+let attachedRelease: ReleaseOutcome | null = null
+export function isAttachedServer(): boolean {
+  return getClaveServerEndpoint()?.mode === 'attached'
+}
+export function withAttachedRelease<T>(outcome: ReleaseOutcome, run: () => T): T {
+  attachedRelease = outcome
+  try {
+    return run()
+  } finally {
+    attachedRelease = null
+  }
+}
+/** The session ids a window's layout holds (its tabs, its groups' members
+ *  and their quick-launch terminals): what a move or a close must release on
+ *  the server, since main keeps no process binding for them attached. */
+export function sessionIdsInWindow(windowKey: string): string[] {
+  const layout = sidebarLayouts().get(windowKey)
+  const ids = new Set<string>(layout.displayOrder)
+  for (const g of layout.groups) {
+    for (const sid of g.sessionIds) ids.add(sid)
+    for (const t of g.terminals) if (t.sessionId) ids.add(t.sessionId)
+  }
+  return [...ids]
+}
+/** The session ids a group holds: its members and its quick-launch
+ *  terminals, the set a group move must release on the server. */
+export function groupLinkedSessionIds(windowKey: string, groupId: string): string[] {
+  const group = sidebarLayouts()
+    .get(windowKey)
+    .groups.find((g) => g.id === groupId)
+  if (!group) return []
+  const ids = new Set<string>(group.sessionIds)
+  for (const t of group.terminals) if (t.sessionId) ids.add(t.sessionId)
+  return [...ids]
+}
+/** The live window whose layout holds a session, for the source-drop notice;
+ *  found through the layout (main keeps no process binding attached). */
+function windowHoldingSession(sessionId: string): BrowserWindow | null {
+  for (const l of sidebarLayouts().list()) {
+    const held =
+      l.displayOrder.includes(sessionId) ||
+      l.groups.some(
+        (g) =>
+          g.sessionIds.includes(sessionId) || g.terminals.some((t) => t.sessionId === sessionId)
+      )
+    if (held) {
+      const win = windowRegistry.getWindowByKey(l.windowKey)
+      if (win && !win.isDestroyed()) return win
+    }
+  }
+  return null
+}
+/** The notifications a move owes, done the attached way: the source window
+ *  drops each released tab (found through the layout), the target takes them
+ *  in. Called by `shellSidebarHost.rehome` with the server's outcome. */
+function notifyAttachedRehome(
+  outcome: ReleaseOutcome,
+  target: BrowserWindow,
+  options: { layout: WindowLayout | null; focus: boolean }
+): void {
+  for (const id of outcome.released) {
+    const source = windowHoldingSession(id)
+    if (source && source.id !== target.id) source.webContents.send('session:removed-for-rehome', id)
+  }
+  if (outcome.released.length > 0 || (options.layout && options.layout.groups.length > 0)) {
+    const payload: RehomePayload = {
+      sessionIds: [...outcome.released],
+      layout: options.layout,
+      focus: options.focus
+    }
+    target.webContents.send('session:rehome', payload)
+  }
+}
+
+/**
+ * Move live sessions to the window `targetWindowKey`: for each tmux-backed
 /**
  * Move live sessions to the window `targetWindowKey`: for each tmux-backed
  * session hosted elsewhere, tell its old host to drop the tab (a MOVE, not
@@ -111,6 +199,10 @@ export const shellSidebarHost: SidebarHost = {
   },
   isLive: (windowKey) => windowRegistry.getWindowByKey(windowKey) !== null,
   movable: (sessionIds, targetWindowKey) => {
+    // Attached, the server decided this in the pre-release the shell ran
+    // just before this sync call: report exactly that.
+    if (attachedRelease)
+      return { movable: [...attachedRelease.released], refused: [...attachedRelease.refused] }
     const target = windowRegistry.getWindowByKey(targetWindowKey)
     const movable: string[] = []
     const refused: MoveRefusal[] = []
@@ -121,8 +213,23 @@ export const shellSidebarHost: SidebarHost = {
     }
     return { movable, refused }
   },
-  rehome: (sessionIds, targetWindowKey, options) =>
-    rehomeSessions(sessionIds, targetWindowKey, options),
+  rehome: (sessionIds, targetWindowKey, options) => {
+    // Attached, the detach already happened on the server (the pre-release);
+    // here only the layout's notifications are owed, the source found through
+    // the layout rather than a process binding main does not keep.
+    if (attachedRelease) {
+      const target = windowRegistry.getWindowByKey(targetWindowKey)
+      const outcome = attachedRelease
+      if (!target)
+        return {
+          moved: [],
+          refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' as const }))
+        }
+      notifyAttachedRehome(outcome, target, options)
+      return { moved: [...outcome.released], refused: [...outcome.refused] }
+    }
+    return rehomeSessions(sessionIds, targetWindowKey, options)
+  },
   groupMovedAway: (windowKey, groupId) => {
     const source = windowRegistry.getWindowByKey(windowKey)
     if (source && !source.isDestroyed()) source.webContents.send('group:removed-for-move', groupId)

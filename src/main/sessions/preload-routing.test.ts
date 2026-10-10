@@ -162,7 +162,12 @@ beforeEach(async () => {
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
     stop: vi.fn(async () => undefined),
-    resize: vi.fn(async () => undefined)
+    resize: vi.fn(async () => undefined),
+    listAdoptable: vi.fn(async () => [
+      { id: 'own', windowKey: 'w-7' },
+      { id: 'elsewhere', windowKey: 'other' }
+    ]),
+    discardRecord: vi.fn(async () => undefined)
   }
   mocks.createApiClient.mockImplementation(() => ({ sessions: mocks.sessions }))
   vi.resetModules()
@@ -567,5 +572,50 @@ describe('unbinding a session listener', () => {
     expect(mocks.push!.onEvent).not.toHaveBeenCalled()
     mocks.emitEvent({ _tag: 'session.title_changed', id: 's1', title: 'Too late' })
     expect(titles).not.toHaveBeenCalled()
+  })
+})
+
+describe('the preload routes the session records', () => {
+  const scope = { windowKey: 'w-7', primary: true, knownWindowKeys: ['w-7', 'other'] }
+  const connectAttached = async (): Promise<void> => {
+    await settle()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint })
+    await api.sessionsList()
+    await settle()
+  }
+
+  it('reads records over IPC inside the app, the selection rule main’s', async () => {
+    answer(onServer)
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('reads the server’s records attached, and applies the window’s selection rule here', async () => {
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    const records = await api.listSessionRecords()
+    // The orphan rule dropped the record of another live window.
+    expect(records.map((r) => r.id)).toEqual(['own'])
+    expect(mocks.sessions.listAdoptable.mock.calls[0]).toEqual([])
+  })
+
+  it('reads by id attached without the selection rule: the re-home wants exactly those', async () => {
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    mocks.sessions.listAdoptable.mockResolvedValueOnce([{ id: 'x', windowKey: 'whatever' }])
+    const records = await api.listSessionRecords({ ids: ['x'] })
+    expect(records.map((r) => r.id)).toEqual(['x'])
+    expect(mocks.sessions.listAdoptable).toHaveBeenCalledWith(['x'])
+    expect(channels()).not.toContain('records:adoption-scope')
+  })
+
+  it('discards over IPC inside the app and through the server attached', async () => {
+    answer(onServer)
+    await api.discardSessionRecord('clave-r1')
+    expect(channels()).toContain('records:discard')
+    await connectAttached()
+    await api.discardSessionRecord('clave-r2')
+    expect(mocks.sessions.discardRecord).toHaveBeenCalledWith('clave-r2')
   })
 })

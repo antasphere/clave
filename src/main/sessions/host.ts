@@ -38,6 +38,7 @@ import {
   stopSession,
   writeTerminal
 } from './lifecycle'
+import { type SessionRecordsSource, sessionRecords } from './records'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -68,6 +69,19 @@ export interface SessionLifecycle {
 export interface SessionHostDeps {
   readonly manager: SessionManager
   readonly lifecycle: SessionLifecycle
+  /** Wave 4, lane C: the records a window brings back, their discard and a
+   *  session's release (`records.ts`). A host built without one, the tests',
+   *  keeps no records and says so. */
+  readonly records?: SessionRecordsSource
+}
+
+const NO_RECORDS = (): never => {
+  throw new Error('This host keeps no session records')
+}
+const noRecords: SessionRecordsSource = {
+  listAdoptableRecords: NO_RECORDS,
+  discardRecord: NO_RECORDS,
+  release: NO_RECORDS
 }
 
 const asInfo = (result: SessionInfoResult): SessionInfo => ({
@@ -87,6 +101,7 @@ const bytesDecoder = new TextDecoder()
 
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
+  const records = deps.records ?? noRecords
   /** The key of the window the session's record names, for the per-window
    *  arm of its news when no server publishes them. */
   const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
@@ -159,7 +174,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     models: (id) => manager.models(id),
     commands: (id) => manager.commands(id),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
-    history: (id, before, limit): HistoryPage => manager.history(id, before, limit)
+    history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
+    // ── Wave 4, lane C: the session records (PRDCT-3376) ──
+    listAdoptableRecords: (ids) => records.listAdoptableRecords(ids),
+    discardRecord: (key) => records.discardRecord(key),
+    release: (ids, fallbackWindowKey) => records.release(ids, fallbackWindowKey)
   }
 }
 
@@ -176,7 +195,8 @@ export function getSessionHost(): SessionHostService {
         stop: stopSession,
         resize: resizeSession,
         writeTerminal
-      }
+      },
+      records: sessionRecords
     })
   }
   return host

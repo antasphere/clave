@@ -4,7 +4,15 @@ import { windowRegistry, type WindowIdentity } from '../window-registry'
 import { workspaceManager } from '../workspace-manager'
 import { windowState } from '../window-state'
 import { rehomeAck } from '../rehome-ack'
-import { rehomeSessions, sidebarLayouts, type RehomePayload } from '../sidebar-layouts'
+import {
+  rehomeSessions,
+  sidebarLayouts,
+  isAttachedServer,
+  withAttachedRelease,
+  groupLinkedSessionIds,
+  type RehomePayload
+} from '../sidebar-layouts'
+import { serverClient } from '../mcp/server-client'
 
 export type { MoveResult, RehomePayload }
 export { rehomeSessions }
@@ -47,14 +55,26 @@ export function awaitRehomed(sessionIds: string[], timeoutMs = 10_000): Promise<
  * gains it, and asks the shell (`rehomeSessions`) to detach and hand them
  * over. A target that is not a live Clave window refuses every id.
  */
-export function moveSessionsToWindow(
+export async function moveSessionsToWindow(
   sessionIds: string[],
   targetWindowId: number,
   focus = true
-): MoveResult {
+): Promise<MoveResult> {
   const targetKey = windowRegistry.getKeyForWindow(targetWindowId)
   if (!targetKey) {
     return { moved: [], refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' })) }
+  }
+  // Attached, the sessions are the server's: release them there first (it
+  // decides which can move), then run the same layout logic with that
+  // outcome (`withAttachedRelease`, sidebar-layouts.ts).
+  if (isAttachedServer()) {
+    const outcome = await serverClient.api().then((api) => api.sessions.release(sessionIds))
+    const moved = withAttachedRelease(outcome, () =>
+      sidebarLayouts().moveSessionsToWindow(sessionIds, targetKey, focus)
+    )
+    return moved.ok
+      ? moved.value
+      : { moved: [], refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' })) }
   }
   const result = sidebarLayouts().moveSessionsToWindow(sessionIds, targetKey, focus)
   if (result.ok) return result.value
@@ -121,7 +141,7 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
 
   ipcMain.handle(
     'window:move-sessions',
-    (_event, sessionIds: unknown, targetWindowId: unknown): MoveResult => {
+    async (_event, sessionIds: unknown, targetWindowId: unknown): Promise<MoveResult> => {
       const ids = Array.isArray(sessionIds)
         ? sessionIds.filter((x): x is string => typeof x === 'string')
         : []
@@ -142,7 +162,11 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
   // nothing changes anywhere.
   ipcMain.handle(
     'window:move-group',
-    (event, group: unknown, targetWindowId: unknown): MoveResult & { ok: boolean } => {
+    async (
+      event,
+      group: unknown,
+      targetWindowId: unknown
+    ): Promise<MoveResult & { ok: boolean }> => {
       const g = group as { id?: unknown } | null
       const sender = BrowserWindow.fromWebContents(event.sender)
       const sourceKey = sender ? windowRegistry.getKeyForWindow(sender.id) : null
@@ -150,6 +174,16 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
         typeof targetWindowId === 'number' ? windowRegistry.getKeyForWindow(targetWindowId) : null
       if (!sourceKey || !targetKey || !g || typeof g.id !== 'string' || sourceKey === targetKey) {
         return { ok: false, moved: [], refused: [] }
+      }
+      if (isAttachedServer()) {
+        // The group's own live sessions are released on the server first,
+        // then the same group-move logic runs with that outcome.
+        const linked = groupLinkedSessionIds(sourceKey, g.id)
+        const outcome = await serverClient.api().then((api) => api.sessions.release(linked))
+        const moved = withAttachedRelease(outcome, () =>
+          sidebarLayouts().moveGroupToWindow(sourceKey, g.id as string, targetKey)
+        )
+        return moved.ok ? moved.value : { ok: false, moved: [], refused: [] }
       }
       const result = sidebarLayouts().moveGroupToWindow(sourceKey, g.id, targetKey)
       return result.ok ? result.value : { ok: false, moved: [], refused: [] }

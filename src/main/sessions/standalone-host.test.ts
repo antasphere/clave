@@ -33,14 +33,16 @@ describe('the standalone server’s session host', () => {
     }
     const { standaloneSessionHost } = await import('./standalone-host')
     const { getSessionHost } = await import('./host')
-    const host = standaloneSessionHost({ dataDir: dir, terminals })
+    const { host, agentTools } = standaloneSessionHost({ dataDir: dir, terminals })
     expect(host).toBe(getSessionHost())
+    expect(typeof agentTools.resolve).toBe('function')
     // The end-to-end seam finds the host where it finds the app's.
     expect((globalThis as Hooked).__claveE2E?.sessionHost).toBe(host)
     const ports = terminalPorts()
     expect(ports.terminals).toBe(terminals)
-    // No MCP server behind the port: a Claude session starts without
-    // --mcp-config rather than refusing to start.
+    // No announced address yet: a Claude session starts without --mcp-config
+    // rather than refusing to start (the shell announces it with
+    // AnnounceAgentTools; agent-tokens.test.ts pins the write once it has).
     expect(ports.mcpConfig.write('session-1')).toBeNull()
     expect(() => ports.mcpConfig.remove('session-1')).not.toThrow()
     // The terminal layer's documents live under the server's folder.
