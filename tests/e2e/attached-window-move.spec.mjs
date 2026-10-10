@@ -176,7 +176,11 @@ export async function run(t) {
       // A subject-session tool via the SAME token must now land in window 2.
       // Old code: main's binding still named window 1, so the rename reached
       // a window that no longer holds the tab and errored.
-      const renamed = await mcp.call('clave_rename', { sessionId: agent.id, name: 'Moved tab' })
+      const renamed = await mcp.call('clave_rename', {
+        target: 'session',
+        id: agent.id,
+        name: 'Moved tab'
+      })
       t.check(
         'a tool call after the move routes to window 2, not the old window',
         !toolErrored(renamed),
