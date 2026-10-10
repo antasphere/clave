@@ -249,6 +249,10 @@ export const sessionHandlers = [
     Effect.gen(function* () {
       const host = yield* SessionHost
       yield* known(host, payload.id)
+      const events = yield* ServerEvents
+      // Said before the kill: the window hears the exit of the old process
+      // first otherwise, and announces the tab as ended.
+      yield* events.publish({ _tag: 'session.restarting', id: payload.id })
       const restarted = yield* Effect.tryPromise({
         try: () => host.restart(payload.id, payload.account, payload.resendRejected === true),
         catch: (error) =>
@@ -256,7 +260,6 @@ export const sessionHandlers = [
             ? error
             : new SessionStartFailed({ message: messageOf(error) })
       })
-      const events = yield* ServerEvents
       yield* events.publish({
         _tag: 'session.restarted',
         id: payload.id,

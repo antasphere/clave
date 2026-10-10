@@ -52,6 +52,9 @@ export const ServerEvent = Schema.Union(
    *  null when it had none): the window marks the row so the message is
    *  never silent. */
   Schema.TaggedStruct('session.typed', { id: Schema.String, from: Schema.NullOr(Schema.String) }),
+  /** The tab is about to be restarted on another account: its process ends
+   *  in a moment, and the window must not announce that end as the tab's. */
+  Schema.TaggedStruct('session.restarting', { id: Schema.String }),
   /** The tab was restarted on another account under the same id: the window
    *  remounts its pane and shows the account. */
   Schema.TaggedStruct('session.restarted', {

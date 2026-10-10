@@ -95,13 +95,16 @@ export async function renderScreen(id: string, lines: number): Promise<SessionSc
     const text = kept.chunks.join('')
     await new Promise<void>((resolve) => terminal.write(text, resolve))
     const buffer = terminal.buffer.active
-    const out: string[] = []
-    for (let i = Math.max(0, buffer.length - wanted); i < buffer.length; i++) {
-      out.push(buffer.getLine(i)?.translateToString(true) ?? '')
+    const all: string[] = []
+    for (let i = 0; i < buffer.length; i++) {
+      all.push(buffer.getLine(i)?.translateToString(true) ?? '')
     }
-    // The TUI viewport is mostly blank padding: drop the trailing empty rows.
-    while (out.length && out[out.length - 1].trim() === '') out.pop()
-    return { lines: out, cols: kept.cols, rows: kept.rows }
+    // The viewport below the cursor is blank padding (the buffer always
+    // holds `rows` lines): the blank tail goes first, then the last `lines`
+    // of what was printed, so a short output answers its lines and not the
+    // empty rows under them.
+    while (all.length && all[all.length - 1].trim() === '') all.pop()
+    return { lines: all.slice(-wanted), cols: kept.cols, rows: kept.rows }
   } finally {
     terminal.dispose()
   }

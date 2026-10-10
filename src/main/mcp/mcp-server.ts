@@ -16,7 +16,14 @@ import { workspaceManager } from '../workspace-manager'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
 import { sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
-import { captureTabClosed } from '../exchange-capture/service'
+import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
+import { launchProfileManager } from '../launch-profile-manager'
+import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { getPreference } from '../ipc-handlers/clave-file-handlers'
+import { parentOf, setParent } from '../sessions/lineage'
+import { publishOrSend } from '../server/session-events'
+import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
+import type { AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
@@ -379,13 +386,13 @@ function windowsListing(callerWin: BrowserWindowLike): unknown[] {
   })
 }
 
-/** Whether an account's last usage read says it is about to stop: the
- *  tightest window critical, or about five percent left (the pool's rule in
- *  the renderer, `lib/account-pool.ts`); an unknown read is not exhaustion. */
-function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
-  if (!read || !('windows' in read)) return false
+/** An account's last usage read as the pool reads it (`shared/account-pool.ts`):
+ *  the tightest window (severity first, then use), and the windows themselves;
+ *  undefined for no read, or a failed one. */
+function summaryOf(read: UsageLimits | UsageError | undefined): AccountUsageSummary | undefined {
+  if (!read || !('windows' in read)) return undefined
   const rank = { normal: 0, warning: 1, critical: 2 } as Record<string, number>
-  let best: { usedPercentage: number; severity?: string | null } | null = null
+  let best: UsageLimits['windows'][number] | null = null
   for (const w of read.windows) {
     if (!best) best = w
     else {
@@ -394,10 +401,21 @@ function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
       if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
     }
   }
+  return { tightest: best, windows: read.windows }
+}
+
+/** Whether an account's last usage read says it is about to stop: the
+ *  tightest window critical, or about five percent left (the pool's rule);
+ *  an unknown read is not exhaustion. */
+function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
+  const best = summaryOf(read)?.tightest
   if (!best) return false
   if (best.severity === 'critical') return true
   return 100 - best.usedPercentage <= 5
 }
+
+const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
+  raw === 'propose' || raw === 'automatic' ? raw : null
 
 /**
  * The shell's facts the served tools read (`served-tools.ts`): which windows
@@ -459,7 +477,54 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   captureTabClosed: (payload) => captureTabClosed(payload),
   windowsListing: (callerWin) => windowsListing(callerWin),
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // ── Wave 4, lane D: what the last seven tools read of the shell ──
+  accounts: (provider) =>
+    provider === 'codex'
+      ? codexAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.hasCredential,
+          ...(a.kind === 'apiKey' ? { fallback: true } : {}),
+          ...(summaryOf(codexUsageManager.snapshot()[a.id])
+            ? { usage: summaryOf(codexUsageManager.snapshot()[a.id]) }
+            : {})
+        }))
+      : claudeAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.id === 'default' || (a.hasToken && !a.tokenInvalid),
+          ...(summaryOf(usageManager.snapshot()[a.id])
+            ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
+            : {})
+        })),
+  selectedAccountId: (provider) => {
+    const raw = getPreference(
+      provider === 'codex' ? 'selectedCodexAccountId' : 'selectedClaudeProfileId'
+    )
+    return typeof raw === 'string' && raw ? raw : undefined
+  },
+  switchMode: (workspaceId) => {
+    const byWorkspace = getPreference('accountSwitchModeByWorkspace')
+    const own =
+      workspaceId && byWorkspace && typeof byWorkspace === 'object'
+        ? switchModeOf((byWorkspace as Record<string, unknown>)[workspaceId])
+        : null
+    return own ?? switchModeOf(getPreference('accountSwitchMode')) ?? 'propose'
+  },
+  launchProfiles: (family) =>
+    [...BUILT_IN_LAUNCH_PROFILES, ...launchProfileManager.getPreferences().customProfiles]
+      .filter((profile) => profile.family === family)
+      .map(({ id, name }) => ({ id, name })),
+  pins: () => workspaceManager.load().pins as PinnedBlueprint[],
+  parentOf: (sessionId) => parentOf(sessionId),
+  setParent: (childId, parentId) => setParent(childId, parentId),
+  captureMessage: (payload) => captureMessage(payload),
+  captureTabSpawn: (payload) => captureTabSpawn(payload),
+  publish: (event) => publishOrSend(event, () => undefined),
+  notify: (title, body) => {
+    if (Notification.isSupported()) new Notification({ title, body }).show()
+  }
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
