@@ -18,10 +18,12 @@
  * resolve through them. Nothing here imports Electron; the entry runs under
  * Bun.
  */
-import type { SessionHostService, TerminalsService } from '@clave/server'
-import { fileStorage, installTerminalPorts, noMcpConfig } from '../ports'
+import type { AgentTokensService, SessionHostService, TerminalsService } from '@clave/server'
+import * as path from 'path'
+import { fileStorage, installTerminalPorts } from '../ports'
 import { installE2eHooks } from './e2e-hooks'
 import { getSessionHost } from './host'
+import { type AgentTokenStore, createAgentTokenStore } from './agent-tokens'
 
 export interface StandaloneHostOptions {
   /** The server's data directory, where the terminal layer keeps its files. */
@@ -30,16 +32,30 @@ export interface StandaloneHostOptions {
   readonly terminals: TerminalsService
 }
 
-export function standaloneSessionHost(options: StandaloneHostOptions): SessionHostService {
+export interface StandaloneSessionHost {
+  readonly host: SessionHostService
+  /** Wave 4, lane C: the agent tokens the server resolves, and whose
+   *  `McpConfigPort` wrote the Claude session's config. The entry passes it
+   *  as `ports.agentTools`; the attached shell announces its MCP address to
+   *  it (`AnnounceAgentTools`), and until it does a Claude session starts
+   *  with no `--mcp-config` (ADR 0003). */
+  readonly agentTools: AgentTokensService
+}
+
+export function standaloneSessionHost(options: StandaloneHostOptions): StandaloneSessionHost {
+  // The agent tools' tokens and the Claude session's config writer are one
+  // store over the server's own `mcp-configs/` folder (`agent-tokens.ts`),
+  // the standalone counterpart of the shell's MCP runtime.
+  const tokens: AgentTokenStore = createAgentTokenStore(path.join(options.dataDir, 'mcp-configs'))
   installTerminalPorts({
     storage: fileStorage(options.dataDir),
     terminals: options.terminals,
-    mcpConfig: noMcpConfig
+    mcpConfig: tokens.mcpConfig
   })
   const host = getSessionHost()
   // The end-to-end seam, under the test flag only (`e2e-hooks.ts`): the
   // suite reaches this process through the server's fixture route and finds
   // the host where it finds the app's.
   installE2eHooks({ sessionHost: host })
-  return host
+  return { host, agentTools: tokens }
 }

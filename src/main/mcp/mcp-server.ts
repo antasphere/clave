@@ -23,11 +23,17 @@ import { usageManager, type UsageError, type UsageLimits } from '../usage-manage
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
-import { BOOT_DECISION_WAIT_MS, whenClaveServerBootSettled } from '../server/endpoint'
+import {
+  BOOT_DECISION_WAIT_MS,
+  getClaveServerEndpoint,
+  whenClaveServerBootSettled
+} from '../server/endpoint'
+import type { AgentTokenOwner } from '@clave/contract/agent-tools'
 import {
   loadOrCreateServerState,
   saveServerState,
   setMcpRuntime,
+  getMcpRuntime,
   resolveSessionByToken,
   rebuildSessionTokens,
   countStaleSessionConfigs
@@ -72,11 +78,24 @@ let serverToken: string | null = null
  * shared discovery token authenticates but stays anonymous (no tab identity,
  * so the identity-gated tools refuse it).
  */
-function authenticate(authHeader: string | undefined): { ok: boolean; callerSessionId?: string } {
+async function authenticate(
+  authHeader: string | undefined
+): Promise<{ ok: boolean; callerSessionId?: string }> {
   if (!authHeader?.startsWith('Bearer ')) return { ok: false }
   const presented = authHeader.slice('Bearer '.length)
   const sessionId = resolveSessionByToken(presented)
   if (sessionId) return { ok: true, callerSessionId: sessionId }
+  // Attached, the token may be one the standalone server minted for a session
+  // it started: main minted nothing for it, so its own map misses. Ask the
+  // server whose session it is and in which window, bind that session to the
+  // window so the tools route to it, and let the request in as that tab
+  // (wave 4, lane C). Asked every time, cached nowhere: the server stays the
+  // authority on a session that ended.
+  const owner = await resolveAttachedToken(presented)
+  if (owner) {
+    bindAttachedSession(owner)
+    return { ok: true, callerSessionId: owner.sessionId }
+  }
   if (serverToken) {
     // Hash both sides so timingSafeEqual gets equal-length buffers.
     const a = createHash('sha256').update(presented).digest()
@@ -84,6 +103,56 @@ function authenticate(authHeader: string | undefined): { ok: boolean; callerSess
     if (timingSafeEqual(a, b)) return { ok: true }
   }
   return { ok: false }
+}
+
+/** The session a token belongs to, asked of an ATTACHED server only; null
+ *  in-process (main resolves its own) and on any failure (an unknown token
+ *  is `AgentTokenUnknown`, a server away is unreachable, both mean "not ours"). */
+async function resolveAttachedToken(token: string): Promise<AgentTokenOwner | null> {
+  if (getClaveServerEndpoint()?.mode !== 'attached') return null
+  try {
+    const api = await serverClient.api()
+    return await api.agentTools.resolveToken(token)
+  } catch {
+    return null
+  }
+}
+
+/** Bind an attached server's session to the window it lives in, so the tool
+ *  routing (`resolveCommandWindow`) finds it in main's registry the way it
+ *  finds an in-process session. A window main does not know, or a session
+ *  already bound, is left as it is. */
+function bindAttachedSession(owner: AgentTokenOwner): void {
+  if (!owner.windowKey) return
+  if (windowRegistry.getWindowForSession(owner.sessionId)) return
+  const win = windowRegistry.getWindowByKey(owner.windowKey)
+  if (win) windowRegistry.bindSession(owner.sessionId, win.id)
+}
+
+/**
+ * Tell an ATTACHED server where Clave's agent tools answer: a Claude session
+ * the server starts is then given this shell's MCP address in its
+ * `--mcp-config` (wave 4, lane C, PRDCT-3376). A no-op in-process, where main
+ * writes its own configs. It waits for the MCP server to be listening, since
+ * the boot that names the attached endpoint and the MCP server's start run
+ * side by side; a server that never answers leaves the sessions without the
+ * flag rather than hanging the boot.
+ */
+export async function announceAgentToolsToServer(): Promise<void> {
+  if (getClaveServerEndpoint()?.mode !== 'attached') return
+  const deadline = Date.now() + 10_000
+  let runtime = getMcpRuntime()
+  while (!runtime && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    runtime = getMcpRuntime()
+  }
+  if (!runtime) return
+  try {
+    const api = await serverClient.api()
+    await api.agentTools.announce(runtime.url)
+  } catch (err) {
+    console.error('[mcp] could not announce the agent tools to the server', err)
+  }
 }
 
 function readBody(req: http.IncomingMessage): Promise<unknown> {
@@ -476,7 +545,7 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
           // The waiter is registered BEFORE the move: the ack can only ever
           // answer this wait, never a stale one (rehome-ack.ts).
           const adopted = awaitRehomed([subjectId])
-          const outcome = moveSessionsToWindow([subjectId], target.id)
+          const outcome = await moveSessionsToWindow([subjectId], target.id)
           const refused = outcome.refused.find((r) => r.sessionId === subjectId)
           if (refused) {
             throw new Error(
@@ -1230,7 +1299,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     res.writeHead(404).end()
     return
   }
-  const auth = authenticate(req.headers.authorization)
+  const auth = await authenticate(req.headers.authorization)
   if (!auth.ok) {
     res.writeHead(401, { 'Content-Type': 'application/json' }).end(
       JSON.stringify({
