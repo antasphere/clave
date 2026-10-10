@@ -82,8 +82,11 @@ const MAX_CONCURRENT_TITLES = 1
  *  handle is held here so the quit ends it with the rest. */
 const activeChildren = new Set<ChildProcess>()
 const cancelled = new WeakSet<ChildProcess>()
-/** Set by `cancelAll`: from then on no title job starts (a tab named during
- *  the quit would spawn a CLI nothing kills; round 1 of the verifier). */
+/** Set by `shutdown`, the quit's call: from then on no title job starts (a
+ *  tab named during the quit would spawn a CLI nothing kills; round 1 of
+ *  the verifier). `cancelAll` alone leaves the door open: the sessions'
+ *  shutdown also runs when the last window closes on macOS, which is not a
+ *  quit, and the tabs reopened from the Dock must still be named (round 2). */
 let closed = false
 /** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
 export const TITLE_CANCEL_GRACE_MS = 1000
@@ -92,9 +95,9 @@ export const TITLE_CANCEL_GRACE_MS = 1000
  *  signalled (SIGTERM, then SIGKILL after the grace), and its answer, if one
  *  still comes, names no tab. Called by the sessions' shutdown
  *  (`pty-manager.ts` killAll), in the app's quit and the standalone
- *  server's stop alike. */
+ *  server's stop alike, and when the last window closes. The door stays
+ *  open: a title asked for afterwards runs. */
 export function cancelAll(): void {
-  closed = true
   for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
   for (const child of [...activeChildren]) {
     cancelled.add(child)
@@ -114,13 +117,21 @@ export function cancelAll(): void {
   }
 }
 
+/** The quit's call (`index.ts`, before-quit): every job ended as `cancelAll`
+ *  does, and the door shut, so a tab named during the quit spawns no CLI
+ *  nothing kills. Never called on a window's close. */
+export function shutdown(): void {
+  closed = true
+  cancelAll()
+}
+
 /** The CLI children running right now (test seam). */
 export function runningTitleJobs(): number {
   return activeChildren.size
 }
 
 /** Open the door again (test seam: the module is one per process). */
-export function resetCancelAllForTests(): void {
+export function resetShutdownForTests(): void {
   closed = false
 }
 

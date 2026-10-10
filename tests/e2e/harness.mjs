@@ -253,7 +253,10 @@ export function serverClient(url, token) {
 /** How long a synchronous child call of the harness (lsof, tmux) may take. */
 export const CHILD_CALL_TIMEOUT_MS = 10_000
 
-export function listeningPorts(pid, { timeoutMs = 2 * CHILD_CALL_TIMEOUT_MS } = {}) {
+export function listeningPorts(
+  pid,
+  { timeoutMs = 2 * CHILD_CALL_TIMEOUT_MS, env = process.env } = {}
+) {
   let out
   try {
     // A timeout on every synchronous child call of the harness: a hung lsof
@@ -261,7 +264,8 @@ export function listeningPorts(pid, { timeoutMs = 2 * CHILD_CALL_TIMEOUT_MS } = 
     // can fire while it does (wave 3's 13-minute launch had that shape).
     out = execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid), '-Fn'], {
       encoding: 'utf-8',
-      timeout: timeoutMs
+      timeout: timeoutMs,
+      env
     })
   } catch (err) {
     // lsof exits 1 when the process has no matching descriptor at all.
@@ -342,8 +346,8 @@ export async function waitForBoot(
       const found = serverEndpoint(dir)
       server = !found ? null : pid != null && found.pid !== pid ? 'stale' : 'written'
     }
-    if ((state === 'complete' || state === 'restore-prompt') && server === 'written')
-      return { state, ms: Date.now() - started }
+    const booted = state === 'complete' || state === 'restore-prompt'
+    if (booted && (!dir || server === 'written')) return { state, ms: Date.now() - started }
     await new Promise((r) => setTimeout(r, 100))
   }
   throw new Error(

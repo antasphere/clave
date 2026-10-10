@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS, armQuitHammer, awaitQuitWaits } from './quit-cleanup'
+import {
+  QUIT_CEILING_MS,
+  QUIT_HAMMER_MS,
+  armQuitHammer,
+  awaitQuitWaits,
+  runQuitCleanup
+} from './quit-cleanup'
 
 // Fake timers: the ceiling is driven by hand, so a wait that never settles
 // costs the test nothing.
@@ -94,6 +100,53 @@ describe('the hammer', () => {
     expect(log).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
     expect(log).toHaveBeenCalledWith('[quit] still running 2000 ms after the cleanup; exiting')
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+})
+
+describe('the quit cleanup, wired', () => {
+  it('quits once the waits settle, says so, and the hammer exits a quit that then hangs', async () => {
+    const quit = vi.fn()
+    const exit = vi.fn()
+    const log = vi.fn()
+    const info = vi.fn()
+    const done = runQuitCleanup([{ name: "the server's stop", promise: Promise.resolve() }], {
+      ceilingMs: 8000,
+      hammerMs: 2000,
+      quit,
+      exit,
+      log,
+      info
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect((await done).pending).toEqual([])
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/^\[quit\] cleanup done in \d+ ms$/))
+    expect(quit).toHaveBeenCalledTimes(1)
+    expect(exit).not.toHaveBeenCalled()
+    // The quit asked for never ends: the hammer does.
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(log).toHaveBeenCalledWith('[quit] still running 2000 ms after the cleanup; exiting')
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('past the ceiling it names the wait, quits anyway, and arms the hammer', async () => {
+    const quit = vi.fn()
+    const exit = vi.fn()
+    const log = vi.fn()
+    const done = runQuitCleanup([{ name: "the sessions' shutdown", promise: never }], {
+      ceilingMs: 8000,
+      hammerMs: 2000,
+      quit,
+      exit,
+      log
+    })
+    await vi.advanceTimersByTimeAsync(8000)
+    expect((await done).pending).toEqual(["the sessions' shutdown"])
+    expect(log).toHaveBeenCalledWith(
+      "[quit] still waiting after 8000 ms on: the sessions' shutdown; quitting anyway"
+    )
+    expect(quit).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(2000)
     expect(exit).toHaveBeenCalledWith(1)
   })
 })

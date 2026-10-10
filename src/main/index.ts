@@ -47,7 +47,8 @@ import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
-import { QUIT_CEILING_MS, QUIT_HAMMER_MS, armQuitHammer, awaitQuitWaits } from './quit-cleanup'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
+import * as titleGenerator from './title-generator'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
@@ -490,6 +491,10 @@ app.on('before-quit', (event) => {
   // The Antasphere login, while this process is its server: nothing stays
   // listening, nothing fires later (attached, the server elsewhere owns it).
   shellAntasphereAccount?.shutdown()
+  // No title job starts from here (title-generator.ts): the sessions'
+  // shutdown below ends the running one, and the door is the quit's alone
+  // to shut (a window's close also runs that shutdown, and is not a quit).
+  titleGenerator.shutdown()
   stopMcpServer()
   // Keep the event loop alive until owned event children finish their escalation.
   // The server goes with them: the boot awaited first (a registration still
@@ -498,25 +503,23 @@ app.on('before-quit', (event) => {
   // PRDCT-3290): past the ceiling the log names the wait still pending and
   // the quit goes on; a quit that then still does not end is exited by the
   // hammer. A quit with nothing wrong takes well under a second.
-  quitCleanup = awaitQuitWaits(
+  quitCleanup = runQuitCleanup(
     [
       { name: "the sessions' shutdown", promise: ptyManager.killAll() },
       { name: "the server's stop", promise: serverBoot.then(() => serverHandle?.stop()) }
     ],
-    { ceilingMs: QUIT_CEILING_MS, log: (line) => console.error(line) }
-  )
-    .then((outcome) => {
-      if (outcome.pending.length === 0) console.log(`[quit] cleanup done in ${outcome.ms} ms`)
-    })
-    .finally(() => {
-      quitReady = true
-      armQuitHammer({
-        ms: QUIT_HAMMER_MS,
-        exit: (code) => app.exit(code),
-        log: (line) => console.error(line)
-      })
-      app.quit()
-    })
+    {
+      ceilingMs: QUIT_CEILING_MS,
+      hammerMs: QUIT_HAMMER_MS,
+      quit: () => {
+        quitReady = true
+        app.quit()
+      },
+      exit: (code) => app.exit(code),
+      log: (line) => console.error(line),
+      info: (line) => console.log(line)
+    }
+  ).then(() => undefined)
 })
 
 app.on('window-all-closed', () => {

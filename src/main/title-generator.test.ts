@@ -243,13 +243,13 @@ describe('a chat tab is named by its first message', () => {
 // the sessions' shutdown calls now.
 describe('a quit ends the title jobs', () => {
   afterEach(async () => {
-    const { resetCancelAllForTests } = await import('./title-generator')
-    resetCancelAllForTests()
+    const { resetShutdownForTests } = await import('./title-generator')
+    resetShutdownForTests()
   })
 
-  it('a title asked for AFTER cancelAll starts no CLI', async () => {
-    const { cancelAll } = await import('./title-generator')
-    cancelAll()
+  it("a title asked for AFTER the quit's shutdown starts no CLI", async () => {
+    const { shutdown } = await import('./title-generator')
+    shutdown()
     const id = `chat-${++sequence}`
     const { win, send } = window()
     scheduleChatTitle(id)
@@ -257,6 +257,21 @@ describe('a quit ends the title jobs', () => {
     await settled()
     expect(mocks.execFile).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalledWith(`session:auto-title:${id}`, expect.anything())
+  })
+
+  it('cancelAll alone leaves the door open: a tab opened after the last window closed is still named', async () => {
+    // Round 2 of the verifier: the sessions' shutdown also runs when the last
+    // window closes on macOS, which is not a quit; a door shut there left
+    // every later chat tab unnamed, silently, for the rest of the process.
+    const { cancelAll } = await import('./title-generator')
+    cancelAll()
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'follow the first message')
   })
 
   it('signals the running CLI, and its late answer names no tab', async () => {

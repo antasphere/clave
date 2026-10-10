@@ -104,3 +104,39 @@ export function armQuitHammer(options: {
     options.exit(1)
   }, options.ms)
 }
+
+/**
+ * The whole quit cleanup, wired: the waits under the ceiling, the outcome in
+ * the log, then `quit` with the hammer armed behind it. `before-quit` in
+ * `index.ts` calls this once with Electron's `app.quit` and `app.exit`; a
+ * unit test calls it with fakes, so the wire from the ceiling to the hammer
+ * is pinned and not only its two parts (round 2 of the verifier).
+ */
+export function runQuitCleanup(
+  waits: readonly QuitWait[],
+  options: {
+    readonly ceilingMs: number
+    readonly hammerMs: number
+    readonly quit: () => void
+    readonly exit: (code: number) => void
+    readonly log: (line: string) => void
+    readonly info?: (line: string) => void
+    readonly setTimeout?: typeof globalThis.setTimeout
+    readonly clearTimeout?: typeof globalThis.clearTimeout
+  }
+): Promise<QuitOutcome> {
+  const timers = {
+    ...(options.setTimeout && { setTimeout: options.setTimeout }),
+    ...(options.clearTimeout && { clearTimeout: options.clearTimeout })
+  }
+  return awaitQuitWaits(waits, { ceilingMs: options.ceilingMs, log: options.log, ...timers })
+    .then((outcome) => {
+      if (outcome.pending.length === 0)
+        (options.info ?? options.log)(`[quit] cleanup done in ${outcome.ms} ms`)
+      return outcome
+    })
+    .finally(() => {
+      armQuitHammer({ ms: options.hammerMs, exit: options.exit, log: options.log, ...timers })
+      options.quit()
+    })
+}
