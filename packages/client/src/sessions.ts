@@ -7,14 +7,19 @@
  */
 import { Schema } from 'effect'
 import {
+  type AccountOverride,
   type CommandOption,
+  type DraftHandling,
   type HistoryPage,
   type ModelOption,
   type ReleaseOutcome,
+  type RestartedSession,
   type Session,
   type SessionCapabilities,
   type SessionInfo,
+  type SessionPage,
   type SessionRecord,
+  type SessionScreen,
   SessionWrite,
   type SpawnOptions
 } from '@clave/contract/sessions'
@@ -50,6 +55,29 @@ export interface SessionsClient {
     ids: ReadonlyArray<string>,
     fallbackWindowKey?: string
   ) => Promise<ReleaseOutcome>
+  // ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
+  /** The tab's name, protected from the auto-title. */
+  readonly rename: (id: string, name: string) => Promise<Session>
+  /** The page on the tab's row, with the session serving it; null takes it off. */
+  readonly setPage: (
+    id: string,
+    page: SessionPage | null,
+    servingSessionId: string | null
+  ) => Promise<void>
+  /** The last rendered lines of a terminal session, 100 by default. */
+  readonly screen: (id: string, lines?: number) => Promise<SessionScreen>
+  /** A message typed into the session as one turn; `from` names the sender's tab. */
+  readonly type: (
+    id: string,
+    text: string,
+    from?: string
+  ) => Promise<{ submitted: boolean; draftHandling: DraftHandling }>
+  /** The same tab restarted on another account under the same id. */
+  readonly restart: (
+    id: string,
+    account: AccountOverride,
+    resendRejected?: boolean
+  ) => Promise<RestartedSession>
 }
 
 /** A write goes over the wire in its encoded form: bytes as base64. */
@@ -108,6 +136,30 @@ export const sessionsClient = (call: Call): SessionsClient => ({
         payload: {
           ids,
           ...(fallbackWindowKey !== undefined && { fallbackWindowKey })
+        }
+      })
+    ),
+  // ── Wave 4, lane D ──
+  rename: (id, name) => call((c) => c.sessions.rename({ payload: { id, name } })),
+  setPage: (id, page, servingSessionId) =>
+    call((c) => c.sessions.setPage({ payload: { id, page, servingSessionId } })).then(
+      () => undefined
+    ),
+  screen: (id, lines) =>
+    call((c) =>
+      c.sessions.screen({
+        payload: { id, ...(lines !== undefined && { lines: asParam(lines) }) }
+      })
+    ),
+  type: (id, text, from) =>
+    call((c) => c.sessions.type({ payload: { id, text, ...(from !== undefined && { from }) } })),
+  restart: (id, account, resendRejected) =>
+    call((c) =>
+      c.sessions.restart({
+        payload: {
+          id,
+          account,
+          ...(resendRejected !== undefined && { resendRejected })
         }
       })
     )

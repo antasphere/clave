@@ -535,6 +535,23 @@ function onAttachedPush(
     pushOff?.()
   }
 }
+/** A server event of one tag, whatever it is about, bound once the server is
+ *  there (wave 4, lane D: the facts the served agent tools publish). */
+function onServerEventOf<E extends ServerEvent['_tag']>(
+  tag: E,
+  callback: (event: Extract<ServerEvent, { _tag: E }>) => void
+): () => void {
+  let off: (() => void) | null = null
+  const withdraw = onServerAvailable((backing) => {
+    off = backing.push.onEvent((envelope) => {
+      if (envelope.event._tag === tag) callback(envelope.event as Extract<ServerEvent, { _tag: E }>)
+    })
+  })
+  return () => {
+    withdraw()
+    off?.()
+  }
+}
 /** A server event about one session, on the push channel. */
 function onSessionEvent<E extends ServerEvent['_tag']>(
   push: import('@clave/client').PushClient,
@@ -1031,6 +1048,65 @@ const electronAPI = {
   // Acknowledge a `session:rehome` once adopted (a cross-window MCP move
   // waits on it before placing the tab in a group here).
   ackRehomed: (sessionIds: string[]) => ipcRenderer.send('window:rehomed', sessionIds),
+
+  // ── Wave 4, lane D: what the served agent tools did to a session, on the push channel ──
+  // Each is a fact the server published after a tool's command (a tab
+  // renamed, a page put on its row, a message typed into it, its account
+  // switched, a pinned group launched); the window follows without writing
+  // anything back. Push only: these facts exist only when a server runs.
+  onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) =>
+    onServerEventOf('session.renamed', (event) => callback({ id: event.id, name: event.name })),
+  onSessionPageChanged: (
+    callback: (payload: {
+      id: string
+      page: { url: string; title?: string; command?: string; cwd?: string } | null
+      servingSessionId: string | null
+    }) => void
+  ) =>
+    onServerEventOf('session.page_changed', (event) =>
+      callback({ id: event.id, page: event.page, servingSessionId: event.servingSessionId })
+    ),
+  onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) =>
+    onServerEventOf('session.typed', (event) => callback({ id: event.id, from: event.from })),
+  onSessionRestarting: (callback: (payload: { id: string }) => void) =>
+    onServerEventOf('session.restarting', (event) => callback({ id: event.id })),
+  onSessionRestarted: (
+    callback: (payload: {
+      id: string
+      resumed: boolean
+      account: {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+      }
+    }) => void
+  ) =>
+    onServerEventOf('session.restarted', (event) =>
+      callback({ id: event.id, resumed: event.resumed, account: event.account })
+    ),
+  // The pin's link is published on the server in-process and sent to the
+  // window over IPC when the app is attached (main publishes nothing there):
+  // one or the other, main's choice, never both.
+  onPinnedGroupLaunched: (
+    callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
+  ) =>
+    onBothTransports(
+      createIpcListener<[{ pinnedId: string; groupId: string; windowKey: string }]>(
+        'pinned-group:launched',
+        callback
+      ),
+      (push) =>
+        push.onEvent((envelope) => {
+          const event = envelope.event
+          if (event._tag === 'pinned_group.launched')
+            callback({
+              pinnedId: event.pinnedId,
+              groupId: event.groupId,
+              windowKey: event.windowKey
+            })
+        })
+    ),
 
   onSessionData: (id: string, callback: (data: string) => void) =>
     onAttachedPush(createIpcListener<[string]>(`pty:data:${id}`, callback), (push) => {

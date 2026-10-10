@@ -14,9 +14,19 @@ import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
-import { sidebarTransport } from '../sidebar-layouts'
+import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
-import { captureTabClosed } from '../exchange-capture/service'
+import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
+import { launchProfileManager } from '../launch-profile-manager'
+import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { getPreference } from '../ipc-handlers/clave-file-handlers'
+import { parentOf, setParent } from '../sessions/lineage'
+import { publishOrSend } from '../server/session-events'
+import { sessionWindows } from '../sessions/windows'
+import { shellSidebarClient } from './shell-sidebar'
+import { usageSummaryOf } from '../../shared/usage-summary'
+import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
+import type { AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
@@ -379,25 +389,22 @@ function windowsListing(callerWin: BrowserWindowLike): unknown[] {
   })
 }
 
+/** An account's last usage read as the pool reads it (`shared/usage-summary.ts`). */
+const summaryOf = (read: UsageLimits | UsageError | undefined): AccountUsageSummary | undefined =>
+  read && 'windows' in read ? usageSummaryOf(read) : undefined
+
 /** Whether an account's last usage read says it is about to stop: the
- *  tightest window critical, or about five percent left (the pool's rule in
- *  the renderer, `lib/account-pool.ts`); an unknown read is not exhaustion. */
+ *  tightest window critical, or about five percent left (the pool's rule);
+ *  an unknown read is not exhaustion. */
 function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
-  if (!read || !('windows' in read)) return false
-  const rank = { normal: 0, warning: 1, critical: 2 } as Record<string, number>
-  let best: { usedPercentage: number; severity?: string | null } | null = null
-  for (const w of read.windows) {
-    if (!best) best = w
-    else {
-      const a = rank[w.severity ?? 'normal'] ?? 0
-      const b = rank[best.severity ?? 'normal'] ?? 0
-      if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-    }
-  }
+  const best = summaryOf(read)?.tightest
   if (!best) return false
   if (best.severity === 'critical') return true
   return 100 - best.usedPercentage <= 5
 }
+
+const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
+  raw === 'propose' || raw === 'automatic' ? raw : null
 
 /**
  * The shell's facts the served tools read (`served-tools.ts`): which windows
@@ -459,7 +466,55 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   captureTabClosed: (payload) => captureTabClosed(payload),
   windowsListing: (callerWin) => windowsListing(callerWin),
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // ── Wave 4, lane D: what the last seven tools read of the shell ──
+  accounts: (provider) =>
+    provider === 'codex'
+      ? codexAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.hasCredential,
+          ...(a.kind === 'apiKey' ? { fallback: true } : {}),
+          ...(summaryOf(codexUsageManager.snapshot()[a.id])
+            ? { usage: summaryOf(codexUsageManager.snapshot()[a.id]) }
+            : {})
+        }))
+      : claudeAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.id === 'default' || (a.hasToken && !a.tokenInvalid),
+          ...(summaryOf(usageManager.snapshot()[a.id])
+            ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
+            : {})
+        })),
+  selectedAccountId: (provider) => {
+    const raw = getPreference(
+      provider === 'codex' ? 'selectedCodexAccountId' : 'selectedClaudeProfileId'
+    )
+    return typeof raw === 'string' && raw ? raw : undefined
+  },
+  switchMode: (workspaceId) => {
+    const byWorkspace = getPreference('accountSwitchModeByWorkspace')
+    const own =
+      workspaceId && byWorkspace && typeof byWorkspace === 'object'
+        ? switchModeOf((byWorkspace as Record<string, unknown>)[workspaceId])
+        : null
+    return own ?? switchModeOf(getPreference('accountSwitchMode')) ?? 'propose'
+  },
+  launchProfiles: (family) =>
+    [...BUILT_IN_LAUNCH_PROFILES, ...launchProfileManager.getPreferences().customProfiles]
+      .filter((profile) => profile.family === family)
+      .map(({ id, name }) => ({ id, name })),
+  pins: () => workspaceManager.load().pins as PinnedBlueprint[],
+  parentOf: (sessionId) => parentOf(sessionId),
+  setParent: (childId, parentId) => setParent(childId, parentId),
+  captureMessage: (payload) => captureMessage(payload),
+  captureTabSpawn: (payload) => captureTabSpawn(payload),
+  publish: (event, windowKey) =>
+    publishOrSend(event, () => sessionWindows().send(windowKey, 'pinned-group:launched', event)),
+  notify: (title, body) => {
+    if (Notification.isSupported()) new Notification({ title, body }).show()
+  }
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -524,15 +579,23 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // change over the push channel. Only while the sidebar's road is the
       // server's: attached to a server that hosts no windows, the shell keeps
       // the sidebar and the tools keep the window, through the view request.
-      if (sidebarTransport() === 'server') {
+      // Attached to a server running apart (wave 4): the sessions are that
+      // server's and the sidebar the shell's, so the wave 4 tools are served
+      // over the client with the sidebar answered by main's own layouts
+      // (`shell-sidebar.ts`); `serveCommand` keeps the wave 3 tools on the
+      // window there.
+      const attached = getClaveServerEndpoint()?.mode === 'attached'
+      if (sidebarTransport() === 'server' || attached) {
+        const api = await serverClient.api()
         const served = await serveCommand(command, p, {
-          api: await serverClient.api(),
+          api: attached ? { ...api, sidebar: shellSidebarClient(sidebarLayouts()) } : api,
           shell: servedShell,
           win,
           callerSessionId,
           targetWindow:
             command === 'moveSession' ? resolveWindowArg(p.window, callerSessionId) : undefined,
-          requestView
+          requestView,
+          attached
         })
         if (served !== NOT_SERVED)
           return { content: [{ type: 'text', text: JSON.stringify(served ?? { ok: true }) }] }

@@ -54,6 +54,7 @@ import {
 import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
+import { initServedToolsEvents } from '../../lib/served-events'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
@@ -154,6 +155,9 @@ export function AppShell(): React.JSX.Element {
     if (mcpDispatcherStarted) return
     mcpDispatcherStarted = true
     initMcpDispatcher()
+    // What the server did to a tab through an agent tool (wave 4): the
+    // window follows the push channel's facts.
+    initServedToolsEvents()
     initSecretStore()
     initCopyOfferStore()
     initPluginUI()

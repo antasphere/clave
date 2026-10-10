@@ -723,6 +723,32 @@ export interface ElectronAPI {
   onSessionRemovedForRehome: (callback: (sessionId: string) => void) => () => void
   onGroupRemovedForMove: (callback: (groupId: string) => void) => () => void
   ackRehomed: (sessionIds: string[]) => void
+  // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
+  onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  onSessionPageChanged: (
+    callback: (payload: {
+      id: string
+      page: { url: string; title?: string; command?: string; cwd?: string } | null
+      servingSessionId: string | null
+    }) => void
+  ) => () => void
+  onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
+  onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  onSessionRestarted: (
+    callback: (payload: {
+      id: string
+      resumed: boolean
+      account: {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+      }
+    }) => void
+  ) => () => void
+  onPinnedGroupLaunched: (
+    callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
+  ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
   onSessionLimitReported: (callback: (sessionId: string) => void) => () => void

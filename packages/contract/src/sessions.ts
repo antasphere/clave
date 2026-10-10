@@ -581,3 +581,123 @@ export const ReleaseSessions = Command.define('ReleaseSessions', {
   success: ReleaseOutcome,
   failure: CapabilityUnavailable
 })
+
+// ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
+// What `clave_rename`, `clave_set_session_view`, `clave_read_session`,
+// `clave_send_to_session` and `clave_switch_account` need of a session that
+// the window used to do itself. Each one answers on the record the server
+// keeps, and the windows follow through the events in `events.ts`.
+
+/** A tab's name, set by the person or by an agent: kept on the record and
+ *  protected from the auto-title, as a rename in the sidebar is. */
+export const RenameSession = Command.define('RenameSession', {
+  payload: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  success: Session,
+  failure: SessionNotFound
+})
+
+/** The page on a tab's row (the view behind its dashboard icon): what it
+ *  shows, and the command that serves it when the page is down. */
+export const SessionPage = Schema.Struct({
+  url: Schema.String,
+  title: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
+  cwd: Schema.optional(Schema.String)
+})
+export type SessionPage = typeof SessionPage.Type
+/** Put a page on a tab's row, or take it off with null. The session that
+ *  serves the page is the caller's to start and stop (a session linked
+ *  `session-view` to this one); its id rides along for the windows, since
+ *  the record never keeps it. */
+export const SetSessionPage = Command.define('SetSessionPage', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    page: Schema.NullOr(SessionPage),
+    servingSessionId: Schema.NullOr(Schema.String)
+  }),
+  success: Schema.Void,
+  failure: SessionNotFound
+})
+
+/** The session has no screen to read: a chat tab, or a terminal whose
+ *  output this host never kept. */
+export class SessionScreenUnavailable extends Schema.TaggedError<SessionScreenUnavailable>()(
+  'SessionScreenUnavailable',
+  { id: Schema.String, message: Schema.String }
+) {}
+/** The last lines of a terminal as a reader would see them, trailing blank
+ *  rows dropped. */
+export const SessionScreen = Schema.Struct({
+  lines: Schema.Array(Schema.String),
+  cols: Schema.Int,
+  rows: Schema.Int
+})
+export type SessionScreen = typeof SessionScreen.Type
+/** The last `lines` rendered lines of a terminal session (100 by default,
+ *  500 at most). A GET carries its number as a string. */
+export const ReadSessionScreen = Query.define('ReadSessionScreen', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    lines: Schema.optional(Schema.NumberFromString.pipe(Schema.int(), Schema.between(1, 500)))
+  }),
+  success: SessionScreen,
+  failure: Schema.Union(SessionNotFound, SessionScreenUnavailable)
+})
+
+/** How the person's half-typed draft was handled around a typed message:
+ *  nothing to do, set aside and put back, or put back on a best guess. */
+export const DraftHandling = Schema.Literal(
+  'none',
+  'stashed-restored',
+  'stashed-restored-best-effort'
+)
+export type DraftHandling = typeof DraftHandling.Type
+/** Type a message into an agent tab as ONE turn and submit it: a terminal
+ *  tab gets it as a bracketed paste with the draft set aside and put back,
+ *  a chat tab as a user message. `from` names the tab it came from, for the
+ *  marker the windows show. The text is written as given: the caller
+ *  sanitizes it and stamps its provenance. */
+export const TypeIntoSession = Command.define('TypeIntoSession', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    text: Schema.String,
+    from: Schema.optional(Schema.String)
+  }),
+  success: Schema.Struct({
+    /** The submit was written after the paste; whether the tab lived to
+     *  take it is read off the session after. */
+    submitted: Schema.Boolean,
+    draftHandling: DraftHandling
+  }),
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
+})
+
+/** The account a session restarts on: the Claude account or the Codex
+ *  account, by id and label, as the spawn options carry them. */
+export const AccountOverride = Schema.Struct({
+  claudeProfileId: Schema.optional(Schema.String),
+  claudeProfileLabel: Schema.optional(Schema.String),
+  codexAccountId: Schema.optional(Schema.String),
+  codexAccountLabel: Schema.optional(Schema.String)
+})
+export type AccountOverride = typeof AccountOverride.Type
+export const RestartedSession = Schema.Struct({
+  ...SessionInfo.fields,
+  /** The conversation came along; false means the tab started fresh. */
+  resumed: Schema.Boolean
+})
+export type RestartedSession = typeof RestartedSession.Type
+/** The same tab restarted under the same id on another account (ADR 0002):
+ *  its process stopped, the same spawn made again, the conversation resumed
+ *  where the agent can resume it. `resendRejected` sends the message the old
+ *  account's limit rejected again on the new one. A session this host did
+ *  not spawn cannot be restarted and answers `SessionStartFailed`. */
+export const RestartSession = Command.define('RestartSession', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    account: AccountOverride,
+    resendRejected: Schema.optional(Schema.Boolean)
+  }),
+  success: RestartedSession,
+  failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)
+})

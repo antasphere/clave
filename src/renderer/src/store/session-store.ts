@@ -1,5 +1,5 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
-import { adoptServerStartedTerminals } from '../lib/adopt-record'
+import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
@@ -342,6 +342,14 @@ interface SessionState {
   setSessionServerCommand: (id: string, command: string | null) => void
   setSessionUnseenActivity: (id: string, unseen: boolean) => void
   setSessionInjectedFrom: (id: string, from: string | null) => void
+  // ── Wave 4, lane D: what the server did to a tab through an agent tool ──
+  /** The server renamed the tab (a served clave_rename): the name as the
+   *  record keeps it, protected from the auto-title, written back nowhere. */
+  applyServedRename: (id: string, name: string) => void
+  /** The server put a page on the tab's row, or took it off (a served
+   *  clave_set_session_view): the record already holds it, nothing is
+   *  written back; the serving session the view had before leaves the store. */
+  applyServedPage: (id: string, view: SessionViewConfig | null) => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -546,6 +554,7 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   let dropped: { id: string; name: string }[] = []
   const closed = new Set<string>()
   const unknownTerminals: string[] = []
+  const unknownSessions: string[] = []
   useSessionStore.setState((state) => {
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
@@ -598,6 +607,19 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       for (const t of g.terminals)
         if (t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
           unknownTerminals.push(t.sessionId)
+    // A TAB the server opened (clave_open_session or clave_launch_group
+    // served by the server, wave 4) is placed by the layout before this
+    // window ever saw it: a member or a top-level row naming no session, no
+    // group and no file tab here is taken in from its record the same way,
+    // visible, and the first one takes the selection as a launch does.
+    const knownIds = new Set<string>([
+      ...state.sessions.map((s) => s.id),
+      ...state.fileTabs.map((f) => f.id),
+      ...groups.map((g) => g.id)
+    ])
+    for (const g of groups)
+      for (const sid of g.sessionIds) if (!knownIds.has(sid)) unknownSessions.push(sid)
+    for (const id of displayOrder) if (!knownIds.has(id)) unknownSessions.push(id)
     groupCounter = Math.max(groupCounter, groups.length)
     const serverJson = JSON.stringify(server)
     const mergedJson = JSON.stringify({ groups, displayOrder })
@@ -621,6 +643,7 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     }
   })
   if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
+  if (unknownSessions.length > 0) void adoptServerStartedSessions([...new Set(unknownSessions)])
   if (dropped.length > 0) {
     const names = dropped.map((d) => `"${d.name}"`).join(', ')
     void window.electronAPI
@@ -1702,6 +1725,27 @@ export const useSessionStore = create<SessionState>((set) => ({
       if (!session || (session.injectedFrom ?? null) === from) return state
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, injectedFrom: from } : s))
+      }
+    }),
+
+  applyServedRename: (id, name) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, name: name.trim() || s.folderName, userRenamed: true } : s
+      )
+    })),
+
+  applyServedPage: (id, view) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session) return state
+      const previous = session.view?.serverSessionId
+      const gone = previous && previous !== view?.serverSessionId ? previous : null
+      return {
+        sessions: state.sessions
+          .filter((s) => s.id !== gone)
+          .map((s) => (s.id === id ? { ...s, view } : s)),
+        ...(view === null && state.activeSessionViewId === id ? { activeSessionViewId: null } : {})
       }
     }),
 

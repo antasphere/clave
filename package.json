@@ -75,6 +75,7 @@
     "@structure-ai/observability": "0.3.0",
     "@structure-ai/runtime": "0.3.0",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/headless": "6.0.0",
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
