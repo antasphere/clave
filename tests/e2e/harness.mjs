@@ -694,10 +694,13 @@ export async function closeWindow(app, page) {
  * and never with pkill.
  */
 export function killLeakedE2eTmux({ env = process.env, timeoutMs = CHILD_CALL_TIMEOUT_MS } = {}) {
+  // `env` names the namespace (a spec passes only CLAVE_E2E_NS); the child
+  // gets the process's environment under it, so tmux is still found, and a
+  // test that puts a tmux of its own on PATH overrides that lookup (Node
+  // looks the command up on `options.env.PATH`).
+  const childEnv = { ...process.env, ...env }
   let rows
   try {
-    // `env` is the child's environment too, so a test can put a tmux of its
-    // own on its PATH (Node looks the command up on `options.env.PATH`).
     // A pipe, not a tab: tmux prints a control character in a format as '_'.
     // The app's session names are [A-Za-z0-9_-], so the first pipe is the cut.
     rows = execFileSync(
@@ -706,7 +709,7 @@ export function killLeakedE2eTmux({ env = process.env, timeoutMs = CHILD_CALL_TI
       {
         encoding: 'utf-8',
         timeout: timeoutMs,
-        env
+        env: childEnv
       }
     )
   } catch {
@@ -717,7 +720,7 @@ export function killLeakedE2eTmux({ env = process.env, timeoutMs = CHILD_CALL_TI
       // `=name` is an EXACT target: never a prefix or a glob match.
       execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`], {
         timeout: timeoutMs,
-        env
+        env: childEnv
       })
     } catch {
       // Gone between the list and the kill.
