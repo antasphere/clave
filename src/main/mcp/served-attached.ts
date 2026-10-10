@@ -80,7 +80,7 @@ export async function attachedShell<W extends ToolWindow>(
   const needs = NEEDS[command] ?? []
   const records = new Map<string, SessionRecord>()
   const loadRecords = async (): Promise<void> => {
-    const all = await api.sessions.listAdoptable().catch(() => [])
+    const all = (await api.sessions.listAdoptable().catch(() => [])) ?? []
     records.clear()
     for (const r of all) records.set(r.id, asRecord(r))
   }
