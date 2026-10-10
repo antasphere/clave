@@ -551,7 +551,8 @@ export async function run(t) {
   {
     const DIR = userDataDir('mcp-served-tools-attached')
     seed(DIR)
-    const { app, win } = await launchApp(DIR, { server: 'attached' })
+    const launched = await launchApp(DIR, { server: 'attached' })
+    const { app, win } = launched
     try {
       const disc = await decided(DIR)
       t.equal('the app is attached', disc?.mode, 'attached')
@@ -588,20 +589,29 @@ export async function run(t) {
       // tab the server opened is placed by main's own layouts and the window
       // hears it over IPC. The caller is a tab the server started: its token
       // is the server's, resolved by main through the server (lane C).
-      const serverDir = fixturePath('mcp-served-tools-attached-server')
+      // The terminal manager that writes the config runs in the server
+      // attached: its folder follows it (lane C's own spec reads it there).
+      const serverDir = launched.server?.dataDir ?? fixturePath('mcp-served-tools-attached-server')
       const configsBefore = new Set(
         existsSync(path.join(serverDir, 'mcp-configs'))
           ? readdirSync(path.join(serverDir, 'mcp-configs'))
           : []
       )
       await win.click('.launcher-split .launcher-btn')
-      const agentCfg = await until(() => {
-        const d = path.join(serverDir, 'mcp-configs')
-        if (!existsSync(d)) return null
-        const f = readdirSync(d).find((x) => x.endsWith('.json') && !configsBefore.has(x))
-        return f ? { sessionId: f.replace(/\.json$/, ''), file: path.join(d, f) } : null
+      const agentCfg = await until(
+        () => {
+          const d = path.join(serverDir, 'mcp-configs')
+          if (!existsSync(d)) return null
+          const f = readdirSync(d).find((x) => x.endsWith('.json') && !configsBefore.has(x))
+          return f ? { sessionId: f.replace(/\.json$/, ''), file: path.join(d, f) } : null
+        },
+        { tries: 80, gapMs: 250 }
+      )
+      t.check('the server minted a config for the agent tab', !!agentCfg, {
+        agentCfg,
+        serverDir
       })
-      t.check('the server minted a config for the agent tab', !!agentCfg, agentCfg)
+      if (!agentCfg) return
       const agentToken = JSON.parse(
         readFileSync(agentCfg.file, 'utf-8')
       ).mcpServers?.clave?.headers?.Authorization?.replace(/^Bearer /, '')
