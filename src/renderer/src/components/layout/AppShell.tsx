@@ -338,7 +338,7 @@ export function AppShell(): React.JSX.Element {
           if (id && takeFocus) takeFocus = false
         }
         for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
-      })()
+      })().catch((err) => console.error('Attached restore top-up failed:', err))
     })()
   }, [addSession])
 

@@ -477,12 +477,26 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
 
 /** The server's adoptable records for the attached restore top-up, with this
  *  window's selection rule applied (`shared/adoption-scope.ts`); empty
- *  in-process, where the boot's IPC read already holds main's own. It waits
- *  for the server to be reachable (the backing), which is why it runs AFTER
- *  the boot rather than inside it. */
+ *  in-process, where the boot's IPC read already holds main's own. It runs
+ *  AFTER the boot (persistence already on), so it WAITS, boundedly, for the
+ *  server to be named and reachable: a window whose renderer finished booting
+ *  before main published the endpoint must still restore its sessions, not
+ *  silently show none (round-3 verifier R-F1). The wait is off the boot
+ *  critical path, so it cannot delay the boot or clobber an early action; a
+ *  server that never comes answers [] rather than hanging. */
 async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
-  if ((await serverMode()) !== 'attached') return []
-  const backing = await serverRouter.backing()
+  const deadline = Date.now() + 15_000
+  let mode = await serverMode()
+  while (mode === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    mode = await serverMode()
+  }
+  if (mode !== 'attached') return []
+  let backing = await serverRouter.backing()
+  while (!backing && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    backing = await serverRouter.backing()
+  }
   if (!backing) return []
   const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
   const all = [...(await backing.api.sessions.listAdoptable())]

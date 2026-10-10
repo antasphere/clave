@@ -617,6 +617,24 @@ describe('the preload routes the session records', () => {
     expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
   })
 
+  it('the restore top-up WAITS for a late endpoint, then reads the server (round-3 R-F1)', async () => {
+    // The renderer booted before main named the server: the top-up must not
+    // answer [] and give up — it waits (off the boot critical path) and then
+    // restores from the server.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+    // The endpoint arrives attached: the wait ends and the server answers.
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    await vi.advanceTimersByTimeAsync(200)
+    await settle()
+    await vi.advanceTimersByTimeAsync(200)
+    const records = await pending
+    expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
+    expect(records.map((r) => r.id)).toEqual(['own'])
+  })
+
   it('reads by id attached without the selection rule: the re-home wants exactly those', async () => {
     await connectAttached()
     answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
