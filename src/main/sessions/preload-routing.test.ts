@@ -591,13 +591,30 @@ describe('the preload routes the session records', () => {
     expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
   })
 
-  it('reads the server’s records attached, and applies the window’s selection rule here', async () => {
+  it('reads the boot records over IPC attached too, keeping the boot fast', async () => {
+    // The boot read never waits on the server (PRDCT-3376): attached, IPC
+    // answers main's own, and the server's surviving records come back
+    // through listServerRestoreRecords (below), after the boot.
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint })
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('the restore top-up reads the server’s records attached, with the window’s selection rule', async () => {
     await connectAttached()
     answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
-    const records = await api.listSessionRecords()
+    const records = await api.listServerRestoreRecords()
     // The orphan rule dropped the record of another live window.
     expect(records.map((r) => r.id)).toEqual(['own'])
     expect(mocks.sessions.listAdoptable.mock.calls[0]).toEqual([])
+  })
+
+  it('the restore top-up is empty in-process (the boot IPC read already has main’s own)', async () => {
+    answer(onServer)
+    expect(await api.listServerRestoreRecords()).toEqual([])
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
   })
 
   it('reads by id attached without the selection rule: the re-home wants exactly those', async () => {
@@ -610,22 +627,13 @@ describe('the preload routes the session records', () => {
     expect(channels()).not.toContain('records:adoption-scope')
   })
 
-  it('waits for a late mode, then takes the server road rather than falling to IPC', async () => {
-    // The boot has not named a server yet (the restore runs early): the read
-    // must WAIT, not read the records off main's own empty folder.
+  it('the boot read never waits on the mode: it goes IPC at once even before a server is named', async () => {
+    // The restore runs early; it must not block the boot waiting for the
+    // endpoint (PRDCT-3376). With no server named yet it reads IPC at once.
     answer({ 'server:endpoint': null, 'window:identity': identity })
-    const pending = api.listSessionRecords()
-    await settle()
-    expect(channels()).not.toContain('records:list-adoptable')
-    // The endpoint arrives, attached: the wait ends and the server answers.
-    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
-    await vi.advanceTimersByTimeAsync(200)
-    await settle()
-    await vi.advanceTimersByTimeAsync(200)
-    const records = await pending
-    expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
-    expect(records.map((r) => r.id)).toEqual(['own'])
-    expect(channels()).not.toContain('records:list-adoptable')
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
   })
 
   it('discards over IPC inside the app and through the server attached', async () => {
