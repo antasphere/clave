@@ -610,6 +610,24 @@ describe('the preload routes the session records', () => {
     expect(channels()).not.toContain('records:adoption-scope')
   })
 
+  it('waits for a late mode, then takes the server road rather than falling to IPC', async () => {
+    // The boot has not named a server yet (the restore runs early): the read
+    // must WAIT, not read the records off main's own empty folder.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    const pending = api.listSessionRecords()
+    await settle()
+    expect(channels()).not.toContain('records:list-adoptable')
+    // The endpoint arrives, attached: the wait ends and the server answers.
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    await vi.advanceTimersByTimeAsync(200)
+    await settle()
+    await vi.advanceTimersByTimeAsync(200)
+    const records = await pending
+    expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
+    expect(records.map((r) => r.id)).toEqual(['own'])
+    expect(channels()).not.toContain('records:list-adoptable')
+  })
+
   it('discards over IPC inside the app and through the server attached', async () => {
     answer(onServer)
     await api.discardSessionRecord('clave-r1')

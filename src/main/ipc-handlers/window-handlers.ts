@@ -10,6 +10,7 @@ import {
   isAttachedServer,
   withAttachedRelease,
   groupLinkedSessionIds,
+  sessionIdsInWindow,
   type RehomePayload
 } from '../sidebar-layouts'
 import { serverClient } from '../mcp/server-client'
@@ -68,13 +69,22 @@ export async function moveSessionsToWindow(
   // decides which can move), then run the same layout logic with that
   // outcome (`withAttachedRelease`, sidebar-layouts.ts).
   if (isAttachedServer()) {
-    const outcome = await serverClient.api().then((api) => api.sessions.release(sessionIds))
+    // A session the target window already holds is a same-window move: never
+    // release it on the server (that would detach a tab onto itself), and
+    // report it the way the in-process path does.
+    const targetHolds = new Set(sessionIdsInWindow(targetKey))
+    const same = sessionIds.filter((id) => targetHolds.has(id))
+    const toMove = sessionIds.filter((id) => !targetHolds.has(id))
+    const sameRefused = same.map((id) => ({ sessionId: id, reason: 'same-window' as const }))
+    if (toMove.length === 0) return { moved: [], refused: sameRefused }
+    const outcome = await serverClient.api().then((api) => api.sessions.release(toMove))
     const moved = withAttachedRelease(outcome, () =>
-      sidebarLayouts().moveSessionsToWindow(sessionIds, targetKey, focus)
+      sidebarLayouts().moveSessionsToWindow(toMove, targetKey, focus)
     )
-    return moved.ok
+    const base = moved.ok
       ? moved.value
-      : { moved: [], refused: sessionIds.map((id) => ({ sessionId: id, reason: 'not-live' })) }
+      : { moved: [], refused: toMove.map((id) => ({ sessionId: id, reason: 'not-live' as const })) }
+    return { moved: base.moved, refused: [...base.refused, ...sameRefused] }
   }
   const result = sidebarLayouts().moveSessionsToWindow(sessionIds, targetKey, focus)
   if (result.ok) return result.value

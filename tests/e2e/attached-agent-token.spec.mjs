@@ -41,15 +41,22 @@ const WS = {
  *  the app's own in-process. Returns { claveId, token } once it is there. */
 async function spawnAgentTabAndToken(win, configsDir, before) {
   await win.click('.launcher-split .launcher-btn')
-  return until(() => {
-    if (!existsSync(configsDir)) return null
-    const file = readdirSync(configsDir).find((f) => f.endsWith('.json') && !before.has(f))
-    if (!file) return null
-    const cfg = JSON.parse(readFileSync(path.join(configsDir, file), 'utf-8'))
-    const auth = cfg.mcpServers?.clave?.headers?.Authorization
-    if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return null
-    return { claveId: file.replace(/\.json$/, ''), token: auth.slice('Bearer '.length), url: cfg.mcpServers.clave.url }
-  }, { tries: 80, gapMs: 250 })
+  return until(
+    () => {
+      if (!existsSync(configsDir)) return null
+      const file = readdirSync(configsDir).find((f) => f.endsWith('.json') && !before.has(f))
+      if (!file) return null
+      const cfg = JSON.parse(readFileSync(path.join(configsDir, file), 'utf-8'))
+      const auth = cfg.mcpServers?.clave?.headers?.Authorization
+      if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return null
+      return {
+        claveId: file.replace(/\.json$/, ''),
+        token: auth.slice('Bearer '.length),
+        url: cfg.mcpServers.clave.url
+      }
+    },
+    { tries: 80, gapMs: 250 }
+  )
 }
 
 async function checkMode(t, { label, dir, server }) {
@@ -85,7 +92,11 @@ async function checkMode(t, { label, dir, server }) {
     // A wrong token is still refused: the resolve is not a blanket let-in.
     const wrong = mcpHttpClient(mcpEndpoint(dir), 'deadbeef'.repeat(8))
     const refused = await wrong.init().catch(() => ({ error: true }))
-    t.check(`${label}: an unknown token is refused`, !!refused?.error || refused?.result === undefined, refused)
+    t.check(
+      `${label}: an unknown token is refused`,
+      !!refused?.error || refused?.result === undefined,
+      refused
+    )
   } finally {
     await app.close()
   }

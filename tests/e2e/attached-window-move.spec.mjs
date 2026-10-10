@@ -21,7 +21,6 @@ import {
   callMcpIn,
   identityOf,
   openWindow,
-  windows,
   until
 } from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
@@ -29,8 +28,20 @@ import path from 'node:path'
 
 const ROOT_A = fixturePath('root-attached-move-a')
 const ROOT_B = fixturePath('root-attached-move-b')
-const WS_A = { id: 'aaaaaaaa-0000-4000-8000-0000000000a9', name: 'MoveA', rootDir: ROOT_A, profileFile: null, createdAt: 1 }
-const WS_B = { id: 'bbbbbbbb-0000-4000-8000-0000000000b9', name: 'MoveB', rootDir: ROOT_B, profileFile: null, createdAt: 2 }
+const WS_A = {
+  id: 'aaaaaaaa-0000-4000-8000-0000000000a9',
+  name: 'MoveA',
+  rootDir: ROOT_A,
+  profileFile: null,
+  createdAt: 1
+}
+const WS_B = {
+  id: 'bbbbbbbb-0000-4000-8000-0000000000b9',
+  name: 'MoveB',
+  rootDir: ROOT_B,
+  profileFile: null,
+  createdAt: 2
+}
 
 const idsIn = (list) => (list?.sessions ?? []).map((s) => s.id)
 
@@ -74,7 +85,10 @@ export async function run(t) {
     const w2 = await openWindow(app, win1, WS_B.id, { settleMs: 2500 })
     const id2 = await identityOf(w2.page)
     t.equal('window 2 shows workspace B', id2?.workspaceId, WS_B.id)
-    t.check('the session is only in window 1 before the move', !idsIn(await callMcpIn(app, id2.windowId, 'list', {})).includes(sessionId))
+    t.check(
+      'the session is only in window 1 before the move',
+      !idsIn(await callMcpIn(app, id2.windowId, 'list', {})).includes(sessionId)
+    )
 
     // The move, from window 1 to window 2.
     const result = await win1.evaluate(
@@ -85,11 +99,15 @@ export async function run(t) {
 
     t.check(
       'the session left window 1',
-      !!(await until(async () => (idsIn(await callMcpIn(app, id1.windowId, 'list', {})).includes(sessionId) ? null : true)))
+      !!(await until(async () =>
+        idsIn(await callMcpIn(app, id1.windowId, 'list', {})).includes(sessionId) ? null : true
+      ))
     )
     t.check(
       'and arrived in window 2',
-      !!(await until(async () => (idsIn(await callMcpIn(app, id2.windowId, 'list', {})).includes(sessionId) ? true : null)))
+      !!(await until(async () =>
+        idsIn(await callMcpIn(app, id2.windowId, 'list', {})).includes(sessionId) ? true : null
+      ))
     )
     t.equal(
       'the record now carries window 2’s key',
@@ -100,13 +118,21 @@ export async function run(t) {
       id2.windowKey
     )
 
-    // A plain (non-tmux) session cannot move: the server refuses it, the
-    // move leaves it where it was. A chat/echo session has no tmux backing.
-    const chat = await callMcpIn(app, id2.windowId, 'openSession', { cwd: ROOT_B, mode: 'terminal' })
-    // Terminals are tmux-backed, so this stays movable; the refusal path is
-    // covered by the server's own release test. Here we only prove the tmux
-    // move round-trips.
-    t.check('a second session opened in window 2', !!chat?.sessionId, chat)
+    // After the move the record is the server's and names window 2: a
+    // RESTART would bring the tab back in window 2, not window 1 (the
+    // re-stamp above is what makes that true; asserted here as the record,
+    // since a second restart in one spec is covered by terminal-reattach).
+    // Moving an id the server does not run is refused, never a false move.
+    const bogus = await win1.evaluate(
+      ({ target }) =>
+        window.electronAPI.windowMoveSessions(['00000000-0000-4000-8000-000000000000'], target),
+      { target: id2.windowId }
+    )
+    t.check(
+      'an unknown id is refused, not moved',
+      (bogus?.moved?.length ?? 0) === 0 && (bogus?.refused?.length ?? 0) > 0,
+      bogus
+    )
   } finally {
     await app.close()
   }
