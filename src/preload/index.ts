@@ -486,27 +486,45 @@ function onSessionEvent<E extends ServerEvent['_tag']>(
 }
 
 /**
- * A settings listener (lane D): main fans a settings change out on BOTH
- * transports from the one source (`src/main/settings/source.ts`: the IPC
- * handlers and the server's events bridge), and the window hears exactly one
- * of them, IPC while the push socket is not open and the push channel while
- * it is (`dual-listener.ts` beside this file, tested there). This differs from
- * `onBothTransports` above on purpose: there main picks the transport, here
- * the window does, so a window whose first call came before the server was up
- * still hears every change, and a reconnection loses none. `pick` turns the
- * event into what the callback has always received; `undefined` drops it (a
- * window's own echo).
+ * A server-event listener (lane D of wave 2, every family since): main fans
+ * a settings change out on BOTH transports from the one source
+ * (`src/main/settings/source.ts`: the IPC handlers and the server's events
+ * bridge), and the window hears exactly one of them, IPC while the push
+ * socket is not open and the push channel while it is (`dual-listener.ts`
+ * beside this file, tested there). This differs from `onBothTransports`
+ * above on purpose: there main picks the transport, here the window does,
+ * so a window whose first call came before the server was up still hears
+ * every change, and a reconnection loses none. `pick` turns the event into
+ * what the callback has always received; `undefined` drops it (a window's
+ * own echo).
+ *
+ * The push side binds when the server IS there, not when the listener is
+ * bound (wave 4, lane B, PRDCT-3295): a window that boots before main names
+ * the server binds these at start, the router answers "no backing" then,
+ * and a one-shot ask left every listener on IPC for good; attached, main's
+ * IPC fan-out is main's own managers, so that window never heard the
+ * server's settings change (wave 3's lane A met it first on the `.clave`
+ * watch, round 5 of its verifier, on the real app). `onServerAvailable` is
+ * the preload's own signal for exactly this, the one the sessions' listeners
+ * wait on, and its withdraw is the listener's unsubscribe. `catchUp` reads
+ * the family's read model off the server at the welcome, so a window whose
+ * state came from main over IPC lands on the server's.
  */
 function viaServerEvent<E extends ServerEvent['_tag'], T>(
   channel: string,
   tag: E,
-  pick: (event: Extract<ServerEvent, { _tag: E }>) => T | undefined
+  pick: (event: Extract<ServerEvent, { _tag: E }>) => T | undefined,
+  catchUp?: (api: Backing['api']) => Promise<ReadonlyArray<T>>
 ): (callback: (value: T) => void) => () => void {
   return dualListener<E, T>({
     bindIpc: (callback) => createIpcListener<[T]>(channel, callback),
-    backing: () => serverRouter.backing().then((backing) => backing?.push ?? null),
+    onPush: (ready) => onServerAvailable((backing) => ready(backing.push)),
     tag,
-    pick
+    pick,
+    ...(catchUp && {
+      catchUp: () =>
+        serverBacking ? catchUp(serverBacking.api) : Promise.reject(new Error('no server'))
+    })
   })
 }
 
@@ -565,7 +583,9 @@ const antasphereSignOut = viaServer<[], unknown>({
 const antasphereChanged = viaServerEvent(
   'antasphere-account:changed',
   'accounts.antasphere_changed',
-  (event) => event.status as unknown
+  (event) => event.status as unknown,
+  // A server that holds no Antasphere account refuses the read; nothing is delivered.
+  async (api) => [await api.settings.antasphere.status()]
 )
 let accountOp = 0
 const nextAccountOp = (): number => ++accountOp
@@ -1356,7 +1376,11 @@ const electronAPI = {
     return viaServerEvent(
       'workspace:state-changed',
       'workspaces.state_changed',
-      workspaceStatePick(() => mine)
+      workspaceStatePick(() => mine),
+      async (api) => {
+        const state = await api.settings.workspaces.load()
+        return [{ workspaces: [...state.workspaces], pins: [...state.pins] }]
+      }
     )(callback)
   },
 
@@ -1440,10 +1464,16 @@ const electronAPI = {
     ipc: () => ipcRenderer.invoke('usage:claude-snapshot'),
     server: ({ api }) => api.settings.usage.claudeSnapshot().then(loose<Record<string, UsageRead>>)
   }),
-  onClaudeAccountUsage: viaServerEvent('usage:claude-account', 'usage.claude_read', (event) => ({
-    accountId: event.accountId,
-    result: event.result as unknown
-  })),
+  onClaudeAccountUsage: viaServerEvent(
+    'usage:claude-account',
+    'usage.claude_read',
+    (event) => ({ accountId: event.accountId, result: event.result as unknown }),
+    async (api) =>
+      Object.entries(await api.settings.usage.claudeSnapshot()).map(([accountId, result]) => ({
+        accountId,
+        result: result as unknown
+      }))
+  ),
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
   // Through the server the token is the one field of one command, redacted
@@ -1484,7 +1514,8 @@ const electronAPI = {
   onClaudeAccountsChanged: viaServerEvent(
     'claude-accounts:changed',
     'accounts.claude_changed',
-    (event) => [...event.accounts] as unknown[]
+    (event) => [...event.accounts] as unknown[],
+    async (api) => [[...(await api.settings.claudeAccounts.list())] as unknown[]]
   ),
   // Codex accounts (ADR 0002): a home per account; no credential crosses.
   codexAccountsList: viaServer<[], unknown[]>({
@@ -1514,7 +1545,8 @@ const electronAPI = {
   onCodexAccountsChanged: viaServerEvent(
     'codex-accounts:changed',
     'accounts.codex_changed',
-    (event) => [...event.accounts] as unknown[]
+    (event) => [...event.accounts] as unknown[],
+    async (api) => [[...(await api.settings.codexAccounts.list())] as unknown[]]
   ),
   // The login flows: a job's status, link and reason cross; nothing else.
   // The API key is the one field of one command, redacted in the contract.
@@ -1541,7 +1573,9 @@ const electronAPI = {
   onAccountLoginProgress: viaServerEvent(
     'accounts:login-progress',
     'accounts.login_progressed',
-    (event) => event.job as unknown
+    (event) => event.job as unknown,
+    // A standalone server carries no login job and refuses the list; nothing is delivered.
+    async (api) => [...(await api.settings.logins.list())] as unknown[]
   ),
   // The Antasphere account (PRDCT-3259): the status crosses, in and out;
   // the login itself and its tokens stay on the server. A sign-in answers
@@ -1595,10 +1629,16 @@ const electronAPI = {
     ipc: () => ipcRenderer.invoke('usage:codex-snapshot'),
     server: ({ api }) => api.settings.usage.codexSnapshot().then(loose<Record<string, UsageRead>>)
   }),
-  onCodexAccountUsage: viaServerEvent('usage:codex-account', 'usage.codex_read', (event) => ({
-    accountId: event.accountId,
-    result: event.result as unknown
-  })),
+  onCodexAccountUsage: viaServerEvent(
+    'usage:codex-account',
+    'usage.codex_read',
+    (event) => ({ accountId: event.accountId, result: event.result as unknown }),
+    async (api) =>
+      Object.entries(await api.settings.usage.codexSnapshot()).map(([accountId, result]) => ({
+        accountId,
+        result: result as unknown
+      }))
+  ),
   // A session moved to another account: the same tab, its process restarted
   // on the account with the conversation resumed (ADR 0002).
   restartSession: (
@@ -1759,23 +1799,17 @@ const electronAPI = {
   },
   unwatchClaveFile: (absolutePath: string): Promise<void> =>
     workspaceFileWatches.unwatch(absolutePath),
-  // The change listener's push side binds when the server IS there, not
-  // when the listener is bound: a window that boots before main names the
-  // server binds this at start, the router answers "no backing" then, and
-  // the one-shot ask of `viaServerEvent` would leave the listener on IPC for
-  // good; attached, once the ledger moved the watch to the server, nothing
-  // came over IPC any more and the hot reload was lost (round 5 of the
-  // lane's verifier, on the real app). `onServerAvailable` is the preload's
-  // own signal for exactly this, the one the sessions' listeners wait on.
-  onClaveFileChanged: dualListener<'workspace_files.changed', string>({
-    bindIpc: (callback) => createIpcListener<[string]>('clave:file-changed', callback),
-    backing: () =>
-      new Promise((resolve) => {
-        onServerAvailable((backing) => resolve(backing.push))
-      }),
-    tag: 'workspace_files.changed',
-    pick: (event) => event.path
-  }),
+  // The change listener binds its push side when the server IS there
+  // (`viaServerEvent`, which every server-event listener goes through since
+  // wave 4's lane B; wave 3's lane A met the one-shot ask here first, round 5
+  // of its verifier on the real app, once the ledger had moved the watch to
+  // the server and nothing came over IPC any more). No catch-up: a change is
+  // a path, and the window re-reads the file on hearing it.
+  onClaveFileChanged: viaServerEvent(
+    'clave:file-changed',
+    'workspace_files.changed',
+    (event) => event.path
+  ),
   saveFileDialog: (defaultName: string, filters: { name: string; extensions: string[] }[]) =>
     ipcRenderer.invoke('dialog:saveFile', defaultName, filters),
   getDownloadsPath: () => ipcRenderer.invoke('app:get-downloads-path') as Promise<string>,

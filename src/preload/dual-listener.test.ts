@@ -54,6 +54,29 @@ class FakeIpc<T> {
   }
 }
 
+/** The preload's `onServerAvailable` as the listener sees it: the waits
+ *  taken, fired by hand when the server comes, withdrawn by unsubscribe. */
+class FakeServer {
+  push: PushLike | null = null
+  waiting = new Set<(push: PushLike) => void>()
+  withdrawn = 0
+  onPush = (ready: (push: PushLike) => void): (() => void) => {
+    if (this.push) {
+      ready(this.push)
+      return () => {}
+    }
+    this.waiting.add(ready)
+    return () => {
+      if (this.waiting.delete(ready)) this.withdrawn += 1
+    }
+  }
+  announce(push: PushLike): void {
+    this.push = push
+    for (const ready of [...this.waiting]) ready(push)
+    this.waiting.clear()
+  }
+}
+
 const changed = (n: number): ServerEventEnvelope['event'] => ({
   _tag: 'accounts.claude_changed',
   accounts: Array.from({ length: n }, (_, i) => ({
@@ -68,7 +91,10 @@ const changed = (n: number): ServerEventEnvelope['event'] => ({
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-function listen(push: FakePush | null): {
+function listen(
+  server: FakeServer,
+  catchUp?: () => Promise<ReadonlyArray<number>>
+): {
   ipc: FakeIpc<number>
   seen: number[]
   off: () => void
@@ -77,16 +103,24 @@ function listen(push: FakePush | null): {
   const seen: number[] = []
   const off = dualListener<'accounts.claude_changed', number>({
     bindIpc: ipc.bind,
-    backing: async () => push,
+    onPush: server.onPush,
     tag: 'accounts.claude_changed',
-    pick: (event) => event.accounts.length
+    pick: (event) => event.accounts.length,
+    ...(catchUp && { catchUp })
   })((value) => seen.push(value))
   return { ipc, seen, off }
 }
 
+/** A server already announced with `push`. */
+const serverWith = (push: PushLike | null): FakeServer => {
+  const server = new FakeServer()
+  server.push = push
+  return server
+}
+
 describe('a listener on both transports hears each event once', () => {
   it('hears IPC at once, and keeps it while there is no server', async () => {
-    const { ipc, seen, off } = listen(null)
+    const { ipc, seen, off } = listen(serverWith(null))
     ipc.send(1)
     await tick()
     ipc.send(2)
@@ -99,8 +133,7 @@ describe('a listener on both transports hears each event once', () => {
 
   it('keeps IPC until the socket is welcomed, then hears the push channel only', async () => {
     const push = new FakePush()
-    const { ipc, seen } = listen(push)
-    await tick()
+    const { ipc, seen } = listen(serverWith(push))
     expect(push.connects).toBe(1)
     // Connected but not yet welcomed: main sends on both, the window hears IPC.
     ipc.send(1)
@@ -117,8 +150,7 @@ describe('a listener on both transports hears each event once', () => {
   it('swaps at once when the socket is already open', async () => {
     const push = new FakePush()
     push.status = 'open'
-    const { ipc, seen } = listen(push)
-    await tick()
+    const { ipc, seen } = listen(serverWith(push))
     push.emit(1, changed(3))
     ipc.send(3)
     expect(seen).toEqual([3])
@@ -127,8 +159,7 @@ describe('a listener on both transports hears each event once', () => {
   it('falls back to IPC while the socket is down and leaves it at the next welcome', async () => {
     const push = new FakePush()
     push.status = 'open'
-    const { ipc, seen } = listen(push)
-    await tick()
+    const { ipc, seen } = listen(serverWith(push))
     push.setStatus('reconnecting')
     expect(ipc.bound.size).toBe(1)
     ipc.send(4)
@@ -147,11 +178,10 @@ describe('a listener on both transports hears each event once', () => {
     const seen: Array<string | null> = []
     dualListener<'workspaces.state_changed', string | null>({
       bindIpc: ipc.bind,
-      backing: async () => push,
+      onPush: serverWith(push).onPush,
       tag: 'workspaces.state_changed',
       pick: (event) => (event.origin === 'mine' ? undefined : event.origin)
     })((value) => seen.push(value))
-    await tick()
     push.emit(1, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'mine' })
     push.emit(2, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'w2' })
     push.emit(3, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: null })
@@ -161,13 +191,11 @@ describe('a listener on both transports hears each event once', () => {
 
   it('leaves nothing bound after unsubscribe, before or after the swap', async () => {
     const push = new FakePush()
-    const early = listen(push)
+    const early = listen(serverWith(push))
     early.off()
-    await tick()
     expect(early.ipc.bound.size).toBe(0)
     expect(push.listeners()).toBe(0)
-    const late = listen(push)
-    await tick()
+    const late = listen(serverWith(push))
     push.setStatus('open')
     late.off()
     expect(late.ipc.bound.size).toBe(0)
@@ -181,11 +209,146 @@ describe('a listener on both transports hears each event once', () => {
     push.connect = () => {
       throw new Error('This push client was closed')
     }
-    const { ipc, seen } = listen(push)
-    await tick()
+    const { ipc, seen } = listen(serverWith(push))
     ipc.send(7)
     expect(seen).toEqual([7])
     expect(ipc.bound.size).toBe(1)
+  })
+})
+
+describe('a listener bound before the server is known', () => {
+  // Wave 4, lane B (PRDCT-3295): the window binds its listeners at start,
+  // main names the server seconds later. A one-shot ask at bind time left
+  // every such listener on IPC for the rest of the window's life.
+  it('hears IPC meanwhile, then the push channel once the server comes and is welcomed', async () => {
+    const server = new FakeServer()
+    const { ipc, seen } = listen(server)
+    ipc.send(1)
+    expect(server.waiting.size).toBe(1)
+    const push = new FakePush()
+    server.announce(push)
+    expect(push.connects).toBe(1)
+    // Announced but not welcomed: still IPC.
+    ipc.send(2)
+    push.emit(1, changed(9))
+    expect(seen).toEqual([1, 2])
+    push.setStatus('open')
+    push.emit(2, changed(3))
+    ipc.send(3)
+    expect(seen).toEqual([1, 2, 3])
+    expect(ipc.bound.size).toBe(0)
+  })
+
+  it('withdraws its wait when unsubscribed before the server comes, and binds nothing after', async () => {
+    const server = new FakeServer()
+    const { ipc, seen, off } = listen(server)
+    expect(server.waiting.size).toBe(1)
+    off()
+    expect(server.waiting.size).toBe(0)
+    expect(server.withdrawn).toBe(1)
+    expect(ipc.bound.size).toBe(0)
+    const push = new FakePush()
+    server.announce(push)
+    expect(push.connects).toBe(0)
+    expect(push.listeners()).toBe(0)
+    push.setStatus('open')
+    push.emit(1, changed(1))
+    expect(seen).toEqual([])
+  })
+})
+
+describe('the catch-up read at the welcome', () => {
+  it('reads the server at the welcome and delivers each value, after the swap', async () => {
+    const server = new FakeServer()
+    let reads = 0
+    const { ipc, seen } = listen(server, async () => {
+      reads += 1
+      return [40 + reads]
+    })
+    ipc.send(1)
+    const push = new FakePush()
+    server.announce(push)
+    expect(reads).toBe(0)
+    push.setStatus('open')
+    expect(reads).toBe(1)
+    expect(ipc.bound.size).toBe(0)
+    await tick()
+    expect(seen).toEqual([1, 41])
+    // A later event is an event; the welcome is not read again without a new one.
+    push.emit(1, changed(5))
+    expect(seen).toEqual([1, 41, 5])
+    expect(reads).toBe(1)
+  })
+
+  it('reads again at every welcome, so a reconnection catches up too', async () => {
+    const push = new FakePush()
+    let reads = 0
+    const { seen } = listen(serverWith(push), async () => [50 + ++reads])
+    push.setStatus('open')
+    await tick()
+    push.setStatus('reconnecting')
+    push.setStatus('open')
+    await tick()
+    expect(reads).toBe(2)
+    expect(seen).toEqual([51, 52])
+  })
+
+  it('reads nothing when bound on a socket already open: the caller reads the server itself', async () => {
+    const push = new FakePush()
+    push.status = 'open'
+    let reads = 0
+    const { seen } = listen(serverWith(push), async () => [++reads])
+    await tick()
+    expect(reads).toBe(0)
+    expect(seen).toEqual([])
+  })
+
+  it('drops the answer when a newer event of the tag arrived while the read was out', async () => {
+    const push = new FakePush()
+    let release: (values: number[]) => void = () => {}
+    const { seen } = listen(
+      serverWith(push),
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+    push.setStatus('open')
+    push.emit(1, changed(7))
+    release([6])
+    await tick()
+    expect(seen).toEqual([7])
+  })
+
+  it('delivers several values in order, and nothing after unsubscribe', async () => {
+    const push = new FakePush()
+    let release: (values: number[]) => void = () => {}
+    const first = listen(serverWith(push), async () => [1, 2, 3])
+    const second = listen(
+      serverWith(push),
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+    push.setStatus('open')
+    await tick()
+    expect(first.seen).toEqual([1, 2, 3])
+    second.off()
+    release([9])
+    await tick()
+    expect(second.seen).toEqual([])
+  })
+
+  it('swallows a read that fails: the next change arrives on the push channel', async () => {
+    const push = new FakePush()
+    const { seen } = listen(serverWith(push), async () => {
+      throw new Error('This server holds no such thing.')
+    })
+    push.setStatus('open')
+    await tick()
+    push.emit(1, changed(2))
+    expect(seen).toEqual([2])
   })
 })
 
