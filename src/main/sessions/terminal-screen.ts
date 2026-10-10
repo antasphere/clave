@@ -80,14 +80,31 @@ let headless: Promise<HeadlessTerminal> | null = null
 /** The constructor, wherever the loader put it: on the namespace under
  *  vitest, under `default` once electron-vite has bundled main as CommonJS
  *  (the first end-to-end run answered "Terminal is not a constructor"). */
+const NOT_LOADED = 'the headless terminal did not load'
+/** How the module is imported; a test hands in the shapes the loader must take. */
+let importHeadless: () => Promise<unknown> = () => import('@xterm/headless')
+/** Tests only: replace the import, or restore it with null. */
+export function setHeadlessImportForTests(next: (() => Promise<unknown>) | null): void {
+  importHeadless = next ?? (() => import('@xterm/headless'))
+  headless = null
+}
 const loadHeadless = (): Promise<HeadlessTerminal> =>
-  (headless ??= import('@xterm/headless').then((mod) => {
-    const found =
-      (mod as { Terminal?: HeadlessTerminal }).Terminal ??
-      (mod as { default?: { Terminal?: HeadlessTerminal } }).default?.Terminal
-    if (typeof found !== 'function') throw new Error('the headless terminal did not load')
-    return found
-  }))
+  (headless ??= importHeadless()
+    .then((mod) => {
+      const found =
+        (mod as { Terminal?: HeadlessTerminal }).Terminal ??
+        (mod as { default?: { Terminal?: HeadlessTerminal } }).default?.Terminal
+      if (typeof found !== 'function') throw new Error(NOT_LOADED)
+      return found
+    })
+    .catch((error: unknown) => {
+      // A module that did not load is said in the loader's own words: the
+      // reason reaches an agent's answer, and Node's names the install path.
+      // Not memoized, so a later read tries again.
+      headless = null
+      console.error('[terminal-screen] the headless terminal did not load', error)
+      throw new Error(NOT_LOADED)
+    }))
 
 /** The last `lines` rendered lines of the session's screen. Throws when the
  *  session printed nothing this process kept. */
