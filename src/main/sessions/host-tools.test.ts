@@ -37,7 +37,8 @@ vi.mock('../title-generator', () => ({ notifyChatMessage: mocks.notifyChatMessag
 vi.mock('./attachments', () => ({ preparePrompt: vi.fn() }))
 vi.mock('./chat-model-default', () => ({ rememberChatEffort: vi.fn(), rememberChatModel: vi.fn() }))
 vi.mock('./chat-view-default', () => ({ rememberChatView: vi.fn() }))
-vi.mock('./records', () => ({ sessionRecords: () => ({}) }))
+// The records source is an object the host reads lazily; nothing here reaches it.
+vi.mock('./records', () => ({ sessionRecords: {} }))
 import { createSessionHost } from './host'
 
 const sessions = new Map<string, { id: string; transport: string; title: string }>()
