@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
     remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     rememberedEffort: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
-    title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
+    title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn(), cancelAll: vi.fn() },
     manager: {
       registerAdapter: vi.fn(),
       getAdapter: vi.fn(),

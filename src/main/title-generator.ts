@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, type ChildProcess } from 'child_process'
 import {
   existsSync,
   watchFile,
@@ -74,6 +74,46 @@ interface TitleJob {
 const titleQueue: TitleJob[] = []
 let activeTitleJobs = 0
 const MAX_CONCURRENT_TITLES = 1
+
+/** The one-shot CLI children running right now, and the ones `cancelAll`
+ *  ended. A `claude -p` is a child of this process in its own process
+ *  group, so nothing of the sessions' shutdown reached it: wave 3's
+ *  verifier found one alive after the server had stopped (PRDCT-3375). The
+ *  handle is held here so the quit ends it with the rest. */
+const activeChildren = new Set<ChildProcess>()
+const cancelled = new WeakSet<ChildProcess>()
+/** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
+export const TITLE_CANCEL_GRACE_MS = 1000
+
+/** End every title job: the queued ones are refused, the running CLI is
+ *  signalled (SIGTERM, then SIGKILL after the grace), and its answer, if one
+ *  still comes, names no tab. Called by the sessions' shutdown
+ *  (`pty-manager.ts` killAll), in the app's quit and the standalone
+ *  server's stop alike. */
+export function cancelAll(): void {
+  for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
+  for (const child of [...activeChildren]) {
+    cancelled.add(child)
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* already gone */
+    }
+    const hard = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }, TITLE_CANCEL_GRACE_MS)
+    child.once('exit', () => clearTimeout(hard))
+  }
+}
+
+/** The CLI children running right now (test seam). */
+export function runningTitleJobs(): number {
+  return activeChildren.size
+}
 
 function processNextTitle(): void {
   if (activeTitleJobs >= MAX_CONCURRENT_TITLES || titleQueue.length === 0) return
@@ -443,6 +483,12 @@ ${userMessage}`
       launch.args,
       { env: launch.env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: TITLE_TIMEOUT_MS },
       (err, stdout, stderr) => {
+        activeChildren.delete(child)
+        if (cancelled.has(child)) {
+          // Ended by the quit: no heuristic, no title for a tab that is going.
+          reject(new Error('Title generation cancelled'))
+          return
+        }
         if (err) {
           console.error('[title-gen] claude CLI error:', err.message, stderr)
           const fallback = heuristicTitle(userMessage)
@@ -481,6 +527,7 @@ ${userMessage}`
         resolve(title)
       }
     )
+    activeChildren.add(child)
     child.stdin?.write(prompt)
     child.stdin?.end()
   })

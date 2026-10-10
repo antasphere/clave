@@ -236,3 +236,69 @@ describe('a chat tab is named by its first message', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+// The quit ends the one-shot CLI (PRDCT-3375): wave 3's verifier found a
+// `claude -p` alive after the server had stopped, a child in its own process
+// group that nothing of the sessions' shutdown reached. `cancelAll` is what
+// the sessions' shutdown calls now.
+describe('a quit ends the title jobs', () => {
+  it('signals the running CLI, and its late answer names no tab', async () => {
+    const { cancelAll, runningTitleJobs } = await import('./title-generator')
+    let finish!: Callback
+    const kill = vi.fn()
+    const exitListeners: Array<() => void> = []
+    mocks.execFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, callback: Callback) => {
+        finish = callback
+        return {
+          stdin: { write: vi.fn(), end: vi.fn() },
+          kill,
+          once: (event: string, listener: () => void) => {
+            if (event === 'exit') exitListeners.push(listener)
+          }
+        }
+      }
+    )
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please make the sidebar tab follow the first message I send', win)
+    await settled()
+    expect(runningTitleJobs()).toBe(1)
+    cancelAll()
+    expect(kill).toHaveBeenCalledWith('SIGTERM')
+    // The CLI dies on the signal: its callback reports the kill.
+    for (const listener of exitListeners) listener()
+    finish(new Error('killed'), '', '')
+    await settled()
+    expect(runningTitleJobs()).toBe(0)
+    // Before the change the kill's error fell to the heuristic, which named
+    // the tab on its way out.
+    expect(send).not.toHaveBeenCalledWith(`session:auto-title:${id}`, expect.anything())
+  })
+
+  it('refuses the jobs still queued behind the running one', async () => {
+    const { cancelAll } = await import('./title-generator')
+    const kill = vi.fn()
+    mocks.execFile.mockImplementation(() => ({
+      stdin: { write: vi.fn(), end: vi.fn() },
+      kill,
+      once: vi.fn()
+    }))
+    const first = `chat-${++sequence}`
+    const second = `chat-${++sequence}`
+    const { win, send } = window()
+    scheduleChatTitle(first)
+    scheduleChatTitle(second)
+    notifyChatMessage(first, 'please make the sidebar tab follow the first message I send', win)
+    notifyChatMessage(second, 'and name the second tab from its own first message too', win)
+    await settled()
+    // One CLI at a time: the second waits in the queue.
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    cancelAll()
+    await settled()
+    expect(kill).toHaveBeenCalledTimes(1)
+    expect(mocks.execFile).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalledWith(`session:auto-title:${second}`, expect.anything())
+  })
+})

@@ -101,7 +101,8 @@ export function takeServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
 export interface InProcessServer {
   url: string
   token: string
-  stop: () => Promise<void>
+  /** Stop the server; what it answers (the stop's report) is the starter's to log. */
+  stop: () => Promise<unknown>
 }
 
 export interface StartServerOptions {

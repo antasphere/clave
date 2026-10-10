@@ -475,6 +475,10 @@ class PtyManager {
     if (tmuxName) await ptyBackend.waitForTmuxSessionGone(tmuxName)
   }
   async killAll(): Promise<void> {
+    // The one-shot title jobs go with the sessions (PRDCT-3375): a `claude -p`
+    // still running would otherwise outlive the app's quit and the
+    // standalone server's stop, both of which end here.
+    titleGenerator.cancelAll()
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {
