@@ -9,10 +9,24 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { NAMESPACE_ENV, defaultNamespace, fixtureRoot } from './namespace.mjs'
-import { finishRun, killLeakedE2eTmux, serverMode, SERVER_MODE_ENV } from './harness.mjs'
+import {
+  finishRun,
+  killLeakedApps,
+  killLeakedE2eTmux,
+  killLeakedServers,
+  liveAppPids,
+  serverMode,
+  SERVER_MODE_ENV
+} from './harness.mjs'
 import { loadKnown, classify, summarize } from './known-failures.mjs'
+import { specDeadlineMs, withDeadline } from './bounds.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
+// Where the specs are read from: this folder, or (for the runner's own test,
+// runner-deadline.test.mjs) a folder named by CLAVE_E2E_SPECS_DIR.
+const SPECS_DIR = process.env.CLAVE_E2E_SPECS_DIR
+  ? path.resolve(process.env.CLAVE_E2E_SPECS_DIR)
+  : DIR
 
 // Every run gets its own fixture namespace (PRDCT-2615). Set before any spec
 // is imported, because the specs build their fixture paths at module load.
@@ -41,17 +55,29 @@ const TAG = {
   pass: GREEN + '  PASS',
   fail: RED + '  FAIL',
   known: YELLOW + ' KNOWN',
-  unstable: YELLOW + ' UNSTABLE'
+  unstable: YELLOW + ' UNSTABLE',
+  late: YELLOW + '  LATE'
 }
 
 /** Assertion collector handed to each spec. */
 function createT(specName) {
   const results = []
+  let sealed = false
   return {
     specName,
     results,
+    /** A spec that outlived its deadline is sealed: what it asserts after
+     *  that is printed as LATE and counted nowhere, so a dead spec cannot
+     *  write into the next one's totals. */
+    seal() {
+      sealed = true
+    },
     /** Assert `cond`. `detail` is printed on failure — make it the actual value. */
     check(name, cond, detail) {
+      if (sealed) {
+        console.log(`${TAG.late}${OFF}  ${name}  (after the deadline, not counted)`)
+        return
+      }
       results.push({ name, ok: !!cond, detail })
       const { kind } = classify(specName, name, !!cond, known)
       console.log(`${TAG[kind]}${OFF}  ${name}`)
@@ -69,7 +95,7 @@ function createT(specName) {
   }
 }
 
-const specs = readdirSync(DIR)
+const specs = readdirSync(SPECS_DIR)
   .filter((f) => f.endsWith('.spec.mjs'))
   .filter((f) => only.length === 0 || only.some((o) => f.includes(o)))
   .sort()
@@ -100,8 +126,26 @@ for (const file of specs) {
   console.log(`\n${BOLD}${file}${OFF}`)
   const t = createT(file)
   try {
-    const mod = await import(pathToFileURL(path.join(DIR, file)).href)
-    await mod.run(t)
+    const mod = await import(pathToFileURL(path.join(SPECS_DIR, file)).href)
+    // A deadline per spec (bounds.mjs, PRDCT-3375): a spec that does not
+    // return fails on this one check, every app the harness launched for it
+    // is killed by its exact pid and every server it started is stopped,
+    // and the run goes on. Wave 3's suite stalled to CI's ceiling twice
+    // because nothing here ever gave up.
+    const deadline = specDeadlineMs(mod, process.env)
+    const outcome = await withDeadline(mod.run(t), deadline)
+    if (outcome.timedOut) {
+      const pids = liveAppPids()
+      t.check(
+        `${file} finished within its deadline`,
+        false,
+        `${deadline} ms passed; Electron pid(s) ${pids.join(', ') || 'none'} killed, servers stopped, the run goes on`
+      )
+      t.seal()
+      killLeakedApps()
+      killLeakedServers()
+      killLeakedE2eTmux()
+    }
   } catch (err) {
     // A spec that throws is a failure, not a silent skip — the two dead
     // PRDCT-1663 scripts exited 0 on a missing selector for exactly this reason.

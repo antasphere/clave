@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, type ChildProcess } from 'child_process'
 import {
   existsSync,
   watchFile,
@@ -74,6 +74,66 @@ interface TitleJob {
 const titleQueue: TitleJob[] = []
 let activeTitleJobs = 0
 const MAX_CONCURRENT_TITLES = 1
+
+/** The one-shot CLI children running right now, and the ones `cancelAll`
+ *  ended. A `claude -p` is a child of this process in its own process
+ *  group, so nothing of the sessions' shutdown reached it: wave 3's
+ *  verifier found one alive after the server had stopped (PRDCT-3375). The
+ *  handle is held here so the quit ends it with the rest. */
+const activeChildren = new Set<ChildProcess>()
+const cancelled = new WeakSet<ChildProcess>()
+/** Set by `shutdown`, the quit's call: from then on no title job starts (a
+ *  tab named during the quit would spawn a CLI nothing kills; round 1 of
+ *  the verifier). `cancelAll` alone leaves the door open: the sessions'
+ *  shutdown also runs when the last window closes on macOS, which is not a
+ *  quit, and the tabs reopened from the Dock must still be named (round 2). */
+let closed = false
+/** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
+export const TITLE_CANCEL_GRACE_MS = 1000
+
+/** End every title job: the queued ones are refused, the running CLI is
+ *  signalled (SIGTERM, then SIGKILL after the grace), and its answer, if one
+ *  still comes, names no tab. Called by the sessions' shutdown
+ *  (`pty-manager.ts` killAll), in the app's quit and the standalone
+ *  server's stop alike, and when the last window closes. The door stays
+ *  open: a title asked for afterwards runs. */
+export function cancelAll(): void {
+  for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
+  for (const child of [...activeChildren]) {
+    cancelled.add(child)
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* already gone */
+    }
+    const hard = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }, TITLE_CANCEL_GRACE_MS)
+    child.once('exit', () => clearTimeout(hard))
+  }
+}
+
+/** The quit's call (`pty-manager.ts` killAll with `quit: true`): every job
+ *  ended as `cancelAll` does, and the door shut, so a tab named during the
+ *  quit spawns no CLI nothing kills. Never called on a window's close. */
+export function shutdown(): void {
+  closed = true
+  cancelAll()
+}
+
+/** The CLI children running right now (test seam). */
+export function runningTitleJobs(): number {
+  return activeChildren.size
+}
+
+/** Open the door again (test seam: the module is one per process). */
+export function resetShutdownForTests(): void {
+  closed = false
+}
 
 function processNextTitle(): void {
   if (activeTitleJobs >= MAX_CONCURRENT_TITLES || titleQueue.length === 0) return
@@ -395,6 +455,7 @@ function generateTitle(
   launch: TitleLaunchContext
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (closed) return reject(new Error('Title generation cancelled'))
     titleQueue.push({ sessionId, userMessage, launch, resolve, reject })
     processNextTitle()
   })
@@ -443,6 +504,12 @@ ${userMessage}`
       launch.args,
       { env: launch.env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: TITLE_TIMEOUT_MS },
       (err, stdout, stderr) => {
+        activeChildren.delete(child)
+        if (cancelled.has(child)) {
+          // Ended by the quit: no heuristic, no title for a tab that is going.
+          reject(new Error('Title generation cancelled'))
+          return
+        }
         if (err) {
           console.error('[title-gen] claude CLI error:', err.message, stderr)
           const fallback = heuristicTitle(userMessage)
@@ -481,6 +548,7 @@ ${userMessage}`
         resolve(title)
       }
     )
+    activeChildren.add(child)
     child.stdin?.write(prompt)
     child.stdin?.end()
   })

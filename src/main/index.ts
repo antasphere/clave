@@ -47,6 +47,7 @@ import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
@@ -493,22 +494,29 @@ app.on('before-quit', (event) => {
   // Keep the event loop alive until owned event children finish their escalation.
   // The server goes with them: the boot awaited first (a registration still
   // in flight must land before it is undone), then deregistered, and stopped
-  // when it is ours.
-  quitCleanup = Promise.all([
-    ptyManager.killAll().catch((error) => {
-      console.error('Session shutdown failed:', error)
-    }),
-    serverBoot
-      .then(() => serverHandle?.stop())
-      .catch((error) => {
-        console.error('[server] stop failed:', error)
-      })
-  ])
-    .then(() => undefined)
-    .finally(() => {
-      quitReady = true
-      app.quit()
-    })
+  // when it is ours. Both waits are bounded (quit-cleanup.ts, PRDCT-3375,
+  // PRDCT-3290): past the ceiling the log names the wait still pending and
+  // the quit goes on; a quit that then still does not end is exited by the
+  // hammer. A quit with nothing wrong takes well under a second.
+  quitCleanup = runQuitCleanup(
+    [
+      // `quit: true`: the title door shuts too (a window's close runs the
+      // same shutdown and is not a quit; pty-manager.ts says why).
+      { name: "the sessions' shutdown", promise: ptyManager.killAll({ quit: true }) },
+      { name: "the server's stop", promise: serverBoot.then(() => serverHandle?.stop()) }
+    ],
+    {
+      ceilingMs: QUIT_CEILING_MS,
+      hammerMs: QUIT_HAMMER_MS,
+      quit: () => {
+        quitReady = true
+        app.quit()
+      },
+      exit: (code) => app.exit(code),
+      log: (line) => console.error(line),
+      info: (line) => console.log(line)
+    }
+  ).then(() => undefined)
 })
 
 app.on('window-all-closed', () => {

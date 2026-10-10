@@ -248,6 +248,9 @@ export function AppShell(): React.JSX.Element {
           if (id) adoptedIds.push(id)
         }
         if (plan.deadTabs.length > 0) {
+          // The boot now waits on the person: the mark says so (below), so a
+          // driver waiting for the boot can answer the prompt.
+          document.documentElement.dataset.boot = 'restore-prompt'
           if (await promptRestore(plan.deadTabs)) {
             for (const s of plan.deadTabs) {
               const id = await adoptRecord(s, activeWorkspaceId)
@@ -313,6 +316,11 @@ export function AppShell(): React.JSX.Element {
         .applyWorkspaceSwitch(null, useWorkspaceStore.getState().activeWorkspaceId)
       initClaveFileWatchers()
       void refreshActiveWorkspacePins()
+      // The boot is complete: the saved layout is merged, the survivors are
+      // back, persistence is on. The end-to-end harness waits for this mark
+      // instead of a fixed delay (PRDCT-1762): a group created before the
+      // merge above was replaced by the saved layout and never drawn.
+      document.documentElement.dataset.boot = 'complete'
     })()
   }, [addSession])
 

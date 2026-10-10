@@ -88,5 +88,14 @@ export async function stopClaveServer(): Promise<void> {
   setServerEventPublisher(null)
   stopStates?.()
   stopStates = null
-  await server?.stop()
+  if (!server) return
+  // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
+  // told, what it had to destroy. A quit measured at ten seconds in wave 3
+  // was this stop waiting on the window's connections; the line says so now.
+  const report = await server.stop()
+  console.log(
+    `[server] stopped in ${report.ms} ms: ${report.inFlight} request(s) in flight` +
+      `${report.drained ? '' : ', NOT all answered'}, ${report.peers} push peer(s) closed, ` +
+      `${report.destroyed} connection(s) destroyed`
+  )
 }

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
 import { fixturePath, fixtureRoot, fixtureTmuxName, namespaceOf } from './namespace.mjs'
 import { startServerProcess } from '../../scripts/server-process.mjs'
+import { boundedClose } from './bounds.mjs'
 
 // Where a run keeps its fixtures (PRDCT-2615): every path a spec seeds goes
 // through `fixturePath`, so a CLAVE_E2E_NS set by the runner moves the whole
@@ -249,11 +250,22 @@ export function serverClient(url, token) {
  *  port, the in-process server's port, and nothing else; in particular no
  *  server started "in place of" one that could not be reached. A probe of
  *  the url that failed proves nothing about a fallback on another port. */
-export function listeningPorts(pid) {
+/** How long a synchronous child call of the harness (lsof, tmux) may take. */
+export const CHILD_CALL_TIMEOUT_MS = 10_000
+
+export function listeningPorts(
+  pid,
+  { timeoutMs = 2 * CHILD_CALL_TIMEOUT_MS, env = process.env } = {}
+) {
   let out
   try {
+    // A timeout on every synchronous child call of the harness: a hung lsof
+    // or tmux blocks the runner's own event loop, and no in-process deadline
+    // can fire while it does (wave 3's 13-minute launch had that shape).
     out = execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid), '-Fn'], {
-      encoding: 'utf-8'
+      encoding: 'utf-8',
+      timeout: timeoutMs,
+      env
     })
   } catch (err) {
     // lsof exits 1 when the process has no matching descriptor at all.
@@ -267,6 +279,81 @@ export function listeningPorts(pid) {
     if (m) ports.add(Number(m[1]))
   }
   return [...ports].sort((a, b) => a - b)
+}
+
+// ── The bounds (wave 4, lane A, PRDCT-3375, PRDCT-1762) ─────────────────────
+// A launch waits on the window's boot, not on a clock; a close is bounded and
+// ends with the Electron pid killed when the app does not quit; every app this
+// run launched is known by its pid, so a spec that outlived its deadline
+// (run.mjs) leaves no app behind.
+
+/** How long `app.close()` may take before the Electron process is killed by
+ *  its exact pid. The app's own quit ceiling and hammer
+ *  (`src/main/quit-cleanup.ts`, 8 s + 2 s) come first, so a stalled quit
+ *  names its pending wait in the app's log before the harness ends it. */
+export const CLOSE_TIMEOUT_MS = 25_000
+/** How long a window may take to finish its boot before the launch fails. */
+export const BOOT_TIMEOUT_MS = 60_000
+/** Every app this run launched and has not closed: Electron pid → data folder. */
+const liveApps = new Map()
+
+/** The pids of the apps still open. */
+export function liveAppPids() {
+  return [...liveApps.keys()]
+}
+
+/** SIGKILL every app a spec left open, by exact pid (never a pattern), for
+ *  the end of a spec that outlived its deadline and the end of the run. */
+export function killLeakedApps() {
+  for (const pid of [...liveApps.keys()]) {
+    liveApps.delete(pid)
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/**
+ * Wait for a window's boot. The renderer marks its document when its boot
+ * tail has run (`<html data-boot="complete">`: the saved layout merged, the
+ * survivors adopted, persistence on), or when the boot stopped to ask the
+ * person about dead sessions (`data-boot="restore-prompt"`): either is a
+ * window a spec may drive. With `dir`, the server's discovery file must be
+ * there too, so a spec never reads an app that has not decided its server.
+ * Fails loudly past `timeoutMs`, naming what was missing.
+ *
+ * Before this (PRDCT-1762) the harness waited a fixed 4 s, and a group a spec
+ * created in that window was wiped by the layout merge: at 2 s never drawn,
+ * at 3 s drawn, measured under load; four specs sat in known-failures.json for it.
+ */
+export async function waitForBoot(
+  page,
+  { timeoutMs = BOOT_TIMEOUT_MS, dir = null, pid = null } = {}
+) {
+  const started = Date.now()
+  let state = null
+  let server = dir ? null : 'not asked'
+  while (Date.now() - started < timeoutMs) {
+    state = await page
+      .evaluate(() => document.documentElement.dataset.boot ?? null)
+      .catch(() => null)
+    if (dir) {
+      // The file must be THIS launch's: the app does not remove it at quit,
+      // so a relaunch into the same folder finds the previous launch's
+      // (round 1 of the verifier). Main writes its own pid into it.
+      const found = serverEndpoint(dir)
+      server = !found ? null : pid != null && found.pid !== pid ? 'stale' : 'written'
+    }
+    const booted = state === 'complete' || state === 'restore-prompt'
+    if (booted && (!dir || server === 'written')) return { state, ms: Date.now() - started }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new Error(
+    `the window did not finish its boot in ${timeoutMs} ms ` +
+      `(data-boot=${state ?? 'unset'}, clave-server.json ${server ?? 'missing'})`
+  )
 }
 
 /** Launch the built app. Run `npx electron-vite build` first — these read `out/`.
@@ -284,7 +371,16 @@ export function listeningPorts(pid) {
  *  dropped, so the app never attaches by accident. */
 export async function launchApp(
   dir,
-  { settleMs = 4000, env = {}, args = [], server = serverMode() } = {}
+  {
+    settleMs = 0,
+    env = {},
+    args = [],
+    server = serverMode(),
+    bootTimeoutMs = BOOT_TIMEOUT_MS,
+    // A spec that makes the server come up late (CLAVE_E2E_SERVER_BOOT_DELAY_MS)
+    // wants the window before the server: it is not waited for then.
+    waitForServer = !(Number(env.CLAVE_E2E_SERVER_BOOT_DELAY_MS) > 0)
+  } = {}
 ) {
   const base = { ...process.env }
   delete base.CLAVE_SERVER_URL
@@ -331,20 +427,26 @@ export async function launchApp(
     await started?.stop()
     throw err
   }
-  if (started) {
-    // The server lives exactly as long as the app it was started for.
-    const close = app.close.bind(app)
-    app.close = async () => {
-      try {
-        await close()
-      } finally {
-        await started.stop()
-      }
+  // The close is bounded (bounds.mjs): past CLOSE_TIMEOUT_MS the Electron
+  // pid is killed and the close resolves. The server, in attached mode,
+  // lives exactly as long as the app it was started for.
+  const pid = app.process().pid
+  liveApps.set(pid, path.resolve(dir))
+  const close = app.close.bind(app)
+  app.close = async () => {
+    try {
+      await boundedClose(close, pid, CLOSE_TIMEOUT_MS)
+    } finally {
+      liveApps.delete(pid)
+      await started?.stop()
     }
   }
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')
-  await win.waitForTimeout(settleMs)
+  // The boot, not a clock (waitForBoot above); a settleMs a spec still
+  // passes is waited after it.
+  await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })
+  if (settleMs > 0) await win.waitForTimeout(settleMs)
   // The fixture: the one way into the process hosting the sessions, in
   // both modes (`serverFixture` below). Attached, the server this call
   // started; in-process, the app's own, read off its discovery file.
@@ -528,7 +630,12 @@ export function identityOf(page) {
  *  the File menu, the popover and clave_open_window do. `workspaceId` null
  *  means "the asking window's own". Resolves once the new window's renderer
  *  has loaded and settled. */
-export async function openWindow(app, fromPage, workspaceId = null, { settleMs = 4000 } = {}) {
+export async function openWindow(
+  app,
+  fromPage,
+  workspaceId = null,
+  { settleMs = 0, bootTimeoutMs = BOOT_TIMEOUT_MS } = {}
+) {
   const before = new Set(app.windows())
   // Subscribe BEFORE asking, so a window that appears between the answer and
   // the wait cannot slip past unobserved.
@@ -541,7 +648,8 @@ export async function openWindow(app, fromPage, workspaceId = null, { settleMs =
   if (!page)
     throw new Error(`window:open answered ${JSON.stringify(result)} but no window appeared`)
   await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(settleMs)
+  await waitForBoot(page, { timeoutMs: bootTimeoutMs })
+  if (settleMs > 0) await page.waitForTimeout(settleMs)
   return { ...result, page }
 }
 
@@ -585,7 +693,12 @@ export async function closeWindow(app, page) {
  * cwd's basename, so the session's start path is what tells two runs apart),
  * and never with pkill.
  */
-export function killLeakedE2eTmux({ env = process.env } = {}) {
+export function killLeakedE2eTmux({ env = process.env, timeoutMs = CHILD_CALL_TIMEOUT_MS } = {}) {
+  // `env` names the namespace (a spec passes only CLAVE_E2E_NS); the child
+  // gets the process's environment under it, so tmux is still found, and a
+  // test that puts a tmux of its own on PATH overrides that lookup (Node
+  // looks the command up on `options.env.PATH`).
+  const childEnv = { ...process.env, ...env }
   let rows
   try {
     // A pipe, not a tab: tmux prints a control character in a format as '_'.
@@ -594,7 +707,9 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
       'tmux',
       ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
       {
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        timeout: timeoutMs,
+        env: childEnv
       }
     )
   } catch {
@@ -603,7 +718,10 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
   for (const n of leakedE2eSessions(rows, { env })) {
     try {
       // `=name` is an EXACT target: never a prefix or a glob match.
-      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`])
+      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${n}`], {
+        timeout: timeoutMs,
+        env: childEnv
+      })
     } catch {
       // Gone between the list and the kill.
     }
@@ -617,6 +735,7 @@ export function killLeakedE2eTmux({ env = process.env } = {}) {
  *  delete whatever /tmp folder a typo happens to name (`tmux-501` is the tmux
  *  socket directory). Returns whether the folder was removed. */
 export function finishRun({ failed, env = process.env }) {
+  killLeakedApps()
   killLeakedE2eTmux({ env })
   killLeakedServers()
   if (failed !== 0 || !namespaceOf(env).startsWith('clave-e2e-')) return false
@@ -642,9 +761,12 @@ export function leakedE2eSessions(rows, { env = process.env } = {}) {
 }
 
 /** Is a tmux session of that name alive on the app's socket? */
-export function tmuxSessionAlive(name) {
+export function tmuxSessionAlive(name, { timeoutMs = CHILD_CALL_TIMEOUT_MS } = {}) {
   try {
-    execFileSync('tmux', ['-L', 'clave', 'has-session', '-t', `=${name}`], { stdio: 'ignore' })
+    execFileSync('tmux', ['-L', 'clave', 'has-session', '-t', `=${name}`], {
+      stdio: 'ignore',
+      timeout: timeoutMs
+    })
     return true
   } catch {
     return false

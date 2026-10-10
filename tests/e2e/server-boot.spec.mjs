@@ -368,9 +368,13 @@ export async function run(t) {
       const DIR = userDataDir('server-boot-quit-race')
       seed(DIR)
       const client = serverClient(own.url, own.token)
+      // The launch must return BEFORE the registration lands (the proxy
+      // holds it 3 s): the harness is told not to wait for the server's
+      // discovery file, which is written by that very registration.
       const { app } = await launchApp(DIR, {
         server: { url: proxy.url, token: own.token },
-        settleMs: 300
+        settleMs: 300,
+        waitForServer: false
       })
       const pid = app.process().pid
       t.check(
