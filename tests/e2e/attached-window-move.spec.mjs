@@ -21,6 +21,9 @@ import {
   callMcpIn,
   identityOf,
   openWindow,
+  mcpEndpoint,
+  mcpHttpClient,
+  toolErrored,
   until
 } from './harness.mjs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
@@ -133,6 +136,53 @@ export async function run(t) {
       (bogus?.moved?.length ?? 0) === 0 && (bogus?.refused?.length ?? 0) > 0,
       bogus
     )
+
+    // ── F1 (round-1 Major): the agent tools follow a TOKENED tab across a
+    //    move. An agent tab started by the server mints a per-session token
+    //    under the server's mcp-configs; a first tool call binds it to
+    //    window 1 in main; after the move a subject-session tool must route
+    //    to window 2, where the tab now lives. With the old stale binding it
+    //    routed to window 1 (the tab's old window) and errored. ──
+    const configsDir = path.join(serverDir, 'mcp-configs')
+    const seen = new Set(existsSync(configsDir) ? readdirSync(configsDir) : [])
+    await win1.click('.launcher-split .launcher-btn')
+    const agent = await until(
+      () => {
+        if (!existsSync(configsDir)) return null
+        const f = readdirSync(configsDir).find((x) => x.endsWith('.json') && !seen.has(x))
+        if (!f) return null
+        const cfg = JSON.parse(readFileSync(path.join(configsDir, f), 'utf-8'))
+        const auth = cfg.mcpServers?.clave?.headers?.Authorization
+        if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return null
+        return { id: f.replace(/\.json$/, ''), token: auth.slice('Bearer '.length) }
+      },
+      { tries: 80, gapMs: 250 }
+    )
+    t.check('an agent tab in window 1 minted a token on the server', !!agent, agent)
+    if (agent) {
+      const mcp = mcpHttpClient(mcpEndpoint(DIR), agent.token)
+      await mcp.init()
+      // Binds the agent session to window 1 in main (first authenticated call).
+      await mcp.call('clave_list', {})
+      // Move it to window 2.
+      const moved2 = await win1.evaluate(
+        ({ ids, target }) => window.electronAPI.windowMoveSessions(ids, target),
+        { ids: [agent.id], target: id2.windowId }
+      )
+      t.check('the agent tab moved to window 2', moved2?.moved?.includes(agent.id), moved2)
+      await until(async () =>
+        idsIn(await callMcpIn(app, id2.windowId, 'list', {})).includes(agent.id) ? true : null
+      )
+      // A subject-session tool via the SAME token must now land in window 2.
+      // Old code: main's binding still named window 1, so the rename reached
+      // a window that no longer holds the tab and errored.
+      const renamed = await mcp.call('clave_rename', { sessionId: agent.id, name: 'Moved tab' })
+      t.check(
+        'a tool call after the move routes to window 2, not the old window',
+        !toolErrored(renamed),
+        renamed
+      )
+    }
   } finally {
     await app.close()
   }
