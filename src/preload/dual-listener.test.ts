@@ -380,6 +380,53 @@ describe('the catch-up read at the welcome', () => {
     expect(seen).toEqual([1, 20])
   })
 
+  it('on a socket drop while the read is out, delivers what it held at once and drops the answer', async () => {
+    // Round 2 of the verifier: back on IPC, a newer value arrives there; what
+    // the read held is older and must land before it, and the answer, taken
+    // before the drop, is stale. The next welcome reads again.
+    const push = new FakePush()
+    const releases: Array<(values: number[]) => void> = []
+    const { ipc, seen } = listen(
+      serverWith(push),
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve)
+        })
+    )
+    push.setStatus('open')
+    push.emit(1, changed(1))
+    expect(seen).toEqual([])
+    push.setStatus('reconnecting')
+    expect(seen).toEqual([1])
+    ipc.send(2)
+    releases[0]([10])
+    await tick()
+    expect(seen).toEqual([1, 2])
+    push.setStatus('open')
+    expect(releases).toHaveLength(2)
+    releases[1]([20])
+    await tick()
+    expect(seen).toEqual([1, 2, 20])
+  })
+
+  it('delivers nothing it held after unsubscribe, on the failure path too', async () => {
+    const push = new FakePush()
+    let fail: (error: Error) => void = () => {}
+    const { seen, off } = listen(
+      serverWith(push),
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        })
+    )
+    push.setStatus('open')
+    push.emit(1, changed(3))
+    off()
+    fail(new Error('This server holds no such thing.'))
+    await tick()
+    expect(seen).toEqual([])
+  })
+
   it('delivers what it held when the read fails', async () => {
     const push = new FakePush()
     let fail: (error: Error) => void = () => {}

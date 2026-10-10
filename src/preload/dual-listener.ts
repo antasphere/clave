@@ -35,9 +35,13 @@
  * window's own echo) marks the answer stale, since the window wrote after
  * the read went out, and the answer is dropped while the held events are
  * delivered; a second welcome while a read is out starts a newer read and
- * the older answer is dropped. A listener bound while the socket is already
- * open witnesses no welcome and reads nothing: its caller reads the server
- * itself, through the routed call it makes next.
+ * the older answer is dropped; a socket DROP while a read is out hands the
+ * window back to IPC, so what was held is delivered at once (older than
+ * anything IPC delivers from then on) and the read is abandoned, the next
+ * welcome reading again (round 2 of the lane's verifier found the held
+ * events landing after a newer IPC one). A listener bound while the socket
+ * is already open witnesses no welcome and reads nothing: its caller reads
+ * the server itself, through the routed call it makes next.
  *
  * Pure, and beside the preload rather than in the client package: the
  * preload may import only the client's router statically (the lazy-load
@@ -102,8 +106,9 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
     let statusOff: Unsubscribe | null = null
     let gone = false
     // The read that is out, if any: the events of the tag heard meanwhile,
-    // and whether one of them was the window's own echo.
-    type Pending = { readonly held: T[]; echoed: boolean }
+    // and whether its answer is stale (the window's own echo heard, or the
+    // socket dropped, since the read went out).
+    type Pending = { readonly held: T[]; stale: boolean }
     let pending: Pending | null = null
     let reads = 0
     const bindIpc = (): void => {
@@ -126,18 +131,18 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
       // is delivered now, and its answer, when it lands, is dropped.
       if (pending) deliverHeld(pending)
       const mine = ++reads
-      const read: Pending = { held: [], echoed: false }
+      const read: Pending = { held: [], stale: false }
       pending = read
       options.catchUp().then(
         (values) => {
           if (gone) return
-          if (mine === reads && !read.echoed) for (const value of values) callback(value)
+          if (mine === reads && !read.stale) for (const value of values) callback(value)
           deliverHeld(read)
         },
         () => {
           // The read failed (a server that holds no such thing): the next
           // change arrives on the push channel; what was held is delivered.
-          deliverHeld(read)
+          if (!gone) deliverHeld(read)
         }
       )
     }
@@ -154,7 +159,7 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
         if (push.status !== 'open' || envelope.event._tag !== options.tag) return
         const value = options.pick(envelope.event as Extract<ServerEvent, { _tag: E }>)
         if (pending) {
-          if (value === undefined) pending.echoed = true
+          if (value === undefined) pending.stale = true
           else pending.held.push(value)
           return
         }
@@ -168,7 +173,15 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
         if (status === 'open') {
           dropIpc()
           catchUp()
-        } else bindIpc()
+        } else {
+          bindIpc()
+          // Back on IPC: what the read held is older than what IPC delivers
+          // from now on, and its answer, taken before the drop, is stale.
+          if (pending) {
+            pending.stale = true
+            deliverHeld(pending)
+          }
+        }
       })
       if (push.status === 'open') dropIpc()
     })
