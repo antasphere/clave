@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
+import { logPullFailures } from '../pull-log'
 import { repoIndexManager } from '../repo-index'
 import type { GitBatchProgress } from '../git-manager'
 import type { GitRangeDirection } from '../../shared/git-range'
@@ -81,9 +82,7 @@ export function registerGitHandlers(): void {
     const results = await gitManager.magicPull(repoPaths, (progress: GitBatchProgress) => {
       event.sender.send('git:batch-progress', progress)
     })
-    for (const r of results) {
-      if (r.error) log.warn(`[git] Pull all could not pull ${r.repoPath}: ${r.error}`)
-    }
+    logPullFailures(results, (line) => log.warn(line))
     return results
   })
   // The discovery sweep the panel's refresh runs — the one operation that goes

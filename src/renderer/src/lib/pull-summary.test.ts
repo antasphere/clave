@@ -20,7 +20,9 @@ describe('summarizePull', () => {
       }
     ])
     expect(s.message).toBe('1 pulled, 1 failed: crm')
-    expect(s.failures).toEqual([{ name: 'crm', reason: 'could not apply 1a2b3c... local' }])
+    expect(s.failures).toEqual([
+      { path: '/w/tools/crm', name: 'crm', reason: 'could not apply 1a2b3c... local' }
+    ])
   })
 
   it('names three failed repos and counts the rest', () => {
@@ -29,6 +31,18 @@ describe('summarizePull', () => {
     )
     expect(s.message).toBe('5 failed: a, b, c +2 more')
     expect(s.failures).toHaveLength(5)
+  })
+})
+
+describe('summarizePull, two failed repos with one name', () => {
+  it('tells them apart by their parent folder', () => {
+    const s = summarizePull([
+      { repoPath: '/w/studio/projects/reb/reb-os', pulled: false, error: 'x' },
+      { repoPath: '/w/studio/projects/reb/client/reb-os', pulled: false, error: 'y' },
+      { repoPath: '/w/crm', pulled: false, error: 'z' }
+    ])
+    expect(s.failures.map((f) => f.name)).toEqual(['reb/reb-os', 'client/reb-os', 'crm'])
+    expect(s.message).toBe('3 failed: reb/reb-os, client/reb-os, crm')
   })
 })
 

@@ -154,7 +154,7 @@ export function GitBatchProgressBar(): React.JSX.Element | null {
           </TooltipTrigger>
           <TooltipContent side="bottom" className="panel-progress-failures">
             {state.failures.map((f) => (
-              <div key={f.name}>
+              <div key={f.path}>
                 <strong>{f.name}</strong>: {f.reason}
               </div>
             ))}

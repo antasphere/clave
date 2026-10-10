@@ -1080,6 +1080,10 @@ ${diff}`
    */
   async integrateUpstream(cwd: string): Promise<void> {
     const git = simpleGit(cwd)
+    // A rebase, merge or cherry-pick the user left halfway is theirs: the
+    // abort below would throw it away (verifier round 1, finding 3).
+    const busy = await this.operationInProgress(git, cwd)
+    if (busy) throw new Error(`A ${busy} is already in progress here; finish or abort it first`)
     try {
       await git.raw(['merge', '--ff-only', '@{u}'])
     } catch {
@@ -1094,6 +1098,37 @@ ${diff}`
         throw err
       }
     }
+    // `rebase --autostash` exits 0 when the rebase lands but putting the
+    // uncommitted changes back conflicts: the tree is left with conflict
+    // markers and the stash entry kept. That is not "pulled" — it is the one
+    // outcome the user must act on (verifier round 1, finding 1).
+    const unmerged = (await git.raw(['diff', '--name-only', '--diff-filter=U']))
+      .split('\n')
+      .filter(Boolean)
+    if (unmerged.length > 0) {
+      throw new Error(
+        `CONFLICT: the incoming commits are in, but your uncommitted changes clash with them in ${unmerged.join(', ')}; they are in the working tree with conflict markers, and a copy is kept in the stash`
+      )
+    }
+  }
+
+  /** Which multi-step git operation, if any, is stopped halfway in `cwd`. */
+  private async operationInProgress(
+    git: ReturnType<typeof simpleGit>,
+    cwd: string
+  ): Promise<string | null> {
+    const markers: Array<[string, string]> = [
+      ['rebase-merge', 'rebase'],
+      ['rebase-apply', 'rebase'],
+      ['MERGE_HEAD', 'merge'],
+      ['CHERRY_PICK_HEAD', 'cherry-pick'],
+      ['REVERT_HEAD', 'revert']
+    ]
+    for (const [marker, name] of markers) {
+      const p = path.resolve(cwd, (await git.raw(['rev-parse', '--git-path', marker])).trim())
+      if (fs.existsSync(p)) return name
+    }
+    return null
   }
 
   /**

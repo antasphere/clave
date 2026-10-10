@@ -15,7 +15,10 @@ export interface PullOutcome {
 }
 
 export interface BatchFailure {
-  /** The repo's folder name, as the panel's rows show it. */
+  /** The repo's path: the identity, two repos may share a folder name. */
+  path: string
+  /** The repo's folder name, as the panel's rows show it — with its parent
+   *  folder when another failed repo has the same name. */
   name: string
   /** The first line of git's own message that says something. */
   reason: string
@@ -56,9 +59,18 @@ export function shortReason(error: string): string {
 export function summarizePull(results: PullOutcome[]): BatchSummary {
   const pulled = results.filter((r) => r.pulled && !r.error).length
   const upToDate = results.filter((r) => !r.pulled && !r.error).length
-  const failures: BatchFailure[] = results
-    .filter((r): r is PullOutcome & { error: string } => !!r.error)
-    .map((r) => ({ name: repoName(r.repoPath), reason: shortReason(r.error) }))
+  const failed = results.filter((r): r is PullOutcome & { error: string } => !!r.error)
+  // Two failed worktrees both called `app`, or one repo name in two orgs,
+  // would read "app, app": those get their parent folder too.
+  const counts = new Map<string, number>()
+  for (const r of failed)
+    counts.set(repoName(r.repoPath), (counts.get(repoName(r.repoPath)) ?? 0) + 1)
+  const failures: BatchFailure[] = failed.map((r) => {
+    const name = repoName(r.repoPath)
+    const parts = r.repoPath.split(/[\\/]/).filter(Boolean)
+    const shown = (counts.get(name) ?? 0) > 1 && parts.length > 1 ? parts.slice(-2).join('/') : name
+    return { path: r.repoPath, name: shown, reason: shortReason(r.error) }
+  })
 
   const parts: string[] = []
   if (pulled > 0) parts.push(`${pulled} pulled`)

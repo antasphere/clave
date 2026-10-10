@@ -222,6 +222,60 @@ describe('magicPull', () => {
     }
   }, 120_000)
 
+  it('names a repo whose uncommitted changes clash with what came in, rather than calling it pulled', async () => {
+    // Verifier round 1, finding 1: `rebase --autostash` exits 0 when only
+    // putting the stashed changes back conflicts.
+    const auto = makeOriginWithClone('autostash')
+    const work = path.join(root, `autostash-up-${Date.now()}`)
+    git(root, 'clone', auto.origin, work)
+    git(work, 'config', 'user.email', 'test@example.com')
+    git(work, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(work, 'README.md'), '# from upstream\n')
+    git(work, 'commit', '-am', 'upstream edit')
+    git(work, 'push', 'origin', 'main')
+    git(auto.clone, 'fetch', 'origin')
+    git(auto.clone, 'config', 'user.email', 'test@example.com')
+    git(auto.clone, 'config', 'user.name', 'Test')
+    // Diverged, so the fast-forward is refused and the rebase runs...
+    writeFileSync(path.join(auto.clone, 'local.txt'), 'mine\n')
+    git(auto.clone, 'add', 'local.txt')
+    git(auto.clone, 'commit', '-m', 'local work')
+    // ...with an uncommitted edit to the very lines upstream changed.
+    writeFileSync(path.join(auto.clone, 'README.md'), '# mine, uncommitted\n')
+
+    const [result] = await gitManager.magicPull([auto.clone])
+    expect(result.pulled).toBe(false)
+    expect(result.error).toMatch(/^CONFLICT: .*README\.md/)
+    expect(result.error).toMatch(/stash/)
+  }, 120_000)
+
+  it('leaves a rebase the user has in progress alone', async () => {
+    // Verifier round 1, finding 3: the cleanup abort used to cancel it.
+    const mid = makeOriginWithClone('midrebase')
+    commitToOrigin(mid.origin, 'midrebase') // writes incoming.txt upstream
+    git(mid.clone, 'fetch', 'origin')
+    git(mid.clone, 'config', 'user.email', 'test@example.com')
+    git(mid.clone, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(mid.clone, 'incoming.txt'), 'local clash\n')
+    git(mid.clone, 'add', '.')
+    git(mid.clone, 'commit', '-m', 'local clash')
+    try {
+      git(mid.clone, 'rebase', 'origin/main')
+    } catch {
+      /* stops on the conflict, which is the point */
+    }
+    const marker = path.resolve(
+      mid.clone,
+      git(mid.clone, 'rev-parse', '--git-path', 'rebase-merge').trim()
+    )
+    expect(existsSync(marker)).toBe(true)
+
+    await expect(gitManager.integrateUpstream(mid.clone)).rejects.toThrow(
+      /rebase is already in progress/
+    )
+    expect(existsSync(marker)).toBe(true)
+  }, 120_000)
+
   it('skips a repo nothing has fetched, rather than failing it', async () => {
     // `brokenRepo` has an unreachable remote too, but its refs say it is level
     // — so there is nothing to pull, and "no work" is the honest answer, not an
