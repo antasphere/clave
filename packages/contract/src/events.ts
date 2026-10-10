@@ -10,7 +10,7 @@
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
-import { AgentState } from './sessions'
+import { AccountOverride, AgentState, SessionPage } from './sessions'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
@@ -36,7 +36,36 @@ export const ServerEvent = Schema.Union(
   // ── Lane C: the sidebar (a window's layout changed or went with its window) ──
   ...SidebarEvent.members,
   // ── Wave 3, lane A: the workspace files (a watched file changed, a review needed) ──
-  ...WorkspaceFilesEvent.members
+  ...WorkspaceFilesEvent.members,
+  // ── Wave 4, lane D: what the served agent tools did to a session, for the windows ──
+  /** The tab was renamed by the person or an agent; the name is protected
+   *  from the auto-title from now on. */
+  Schema.TaggedStruct('session.renamed', { id: Schema.String, name: Schema.String }),
+  /** The page on the tab's row changed, with the session serving it (null
+   *  when the page needs none, or when the page was taken off). */
+  Schema.TaggedStruct('session.page_changed', {
+    id: Schema.String,
+    page: Schema.NullOr(SessionPage),
+    servingSessionId: Schema.NullOr(Schema.String)
+  }),
+  /** Another tab's agent typed a message into this one (`from` is its name,
+   *  null when it had none): the window marks the row so the message is
+   *  never silent. */
+  Schema.TaggedStruct('session.typed', { id: Schema.String, from: Schema.NullOr(Schema.String) }),
+  /** The tab was restarted on another account under the same id: the window
+   *  remounts its pane and shows the account. */
+  Schema.TaggedStruct('session.restarted', {
+    id: Schema.String,
+    resumed: Schema.Boolean,
+    account: AccountOverride
+  }),
+  /** A pinned group was launched by an agent through the server: the group
+   *  with that id in that window is the pin's live group from now on. */
+  Schema.TaggedStruct('pinned_group.launched', {
+    pinnedId: Schema.String,
+    groupId: Schema.String,
+    windowKey: Schema.String
+  })
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type
