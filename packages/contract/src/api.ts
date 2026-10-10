@@ -27,7 +27,13 @@ import {
   // ── Wave 4, lane C: the session records and a session's release ──
   DiscardSessionRecord,
   ListAdoptableRecords,
-  ReleaseSessions
+  ReleaseSessions,
+  // ── Wave 4, lane D: the last agent tools ──
+  ReadSessionScreen,
+  RenameSession,
+  RestartSession,
+  SetSessionPage,
+  TypeIntoSession
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -52,6 +58,12 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('listAdoptable', '/sessions/records', ListAdoptableRecords))
   .add(HttpCqrs.commandEndpoint('discardRecord', '/sessions/records/discard', DiscardSessionRecord))
   .add(HttpCqrs.commandEndpoint('release', '/sessions/release', ReleaseSessions))
+  // ── Wave 4, lane D: the last agent tools ──
+  .add(HttpCqrs.commandEndpoint('rename', '/sessions/rename', RenameSession))
+  .add(HttpCqrs.commandEndpoint('setPage', '/sessions/page', SetSessionPage))
+  .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
+  .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
+  .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')

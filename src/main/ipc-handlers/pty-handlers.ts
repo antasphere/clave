@@ -14,6 +14,7 @@ import { startWatching as startAgentStateWatching } from '../agent-state-manager
 import { hasServerEventPublisher } from '../server/session-events'
 import {
   type SessionInfoResult,
+  restartSession,
   setTmuxPreferenceReader,
   spawnSession,
   stopSession,
@@ -105,25 +106,26 @@ export function registerPtyHandlers(): void {
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
       const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-      const plan = ptyManager.restartSpawn(id, {
-        claudeProfileId: str(overrides?.claudeProfileId),
-        claudeProfileLabel: str(overrides?.claudeProfileLabel),
-        codexAccountId: str(overrides?.codexAccountId),
-        codexAccountLabel: str(overrides?.codexAccountLabel),
-        resendRejected: overrides?.resendRejected === true
-      })
-      if (!plan) return { error: 'This session cannot be restarted from here.' }
-      const record = ptyManager.getSessionRecord(id)
       const win = BrowserWindow.fromWebContents(_event.sender)
-      await ptyManager.killAndWait(id)
-      windowRegistry.unbindSession(id)
-      const info = await spawnForWindow(win, plan.cwd, plan.options)
-      // The kill took the record's name and view with it; put them back.
-      if (record?.displayName) {
-        ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
+      // The restart itself is the lifecycle's (wave 4): the server's
+      // `RestartSession` and this handler make the same one.
+      try {
+        return await restartSession(
+          id,
+          {
+            claudeProfileId: str(overrides?.claudeProfileId),
+            claudeProfileLabel: str(overrides?.claudeProfileLabel),
+            codexAccountId: str(overrides?.codexAccountId),
+            codexAccountLabel: str(overrides?.codexAccountLabel),
+            resendRejected: overrides?.resendRejected === true
+          },
+          win ? windowRegistry.getKeyForWindow(win.id) : null
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message === 'This session cannot be restarted from here.') return { error: message }
+        throw error
       }
-      if (record?.view) ptyManager.setSessionViewRecord(id, record.view)
-      return { ...info, resumed: plan.resumed }
     }
   )
 

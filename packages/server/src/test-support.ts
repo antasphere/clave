@@ -4,16 +4,22 @@
  * tests import it, nothing else does.
  */
 import { WebSocket } from 'ws'
-import type {
-  CommandOption,
-  HistoryPage,
-  ModelOption,
-  ReleaseOutcome,
-  Session,
-  SessionInfo,
-  SessionRecord,
-  SessionStream,
-  SessionWrite
+import {
+  type AccountOverride,
+  type CommandOption,
+  type DraftHandling,
+  type HistoryPage,
+  type ModelOption,
+  type ReleaseOutcome,
+  type RestartedSession,
+  type Session,
+  type SessionInfo,
+  type SessionPage,
+  type SessionRecord,
+  type SessionScreen,
+  SessionScreenUnavailable,
+  type SessionStream,
+  type SessionWrite
 } from '@clave/contract/sessions'
 import {
   type ServerFrame,
@@ -189,6 +195,64 @@ export class FakeSource implements SessionHostService {
       }
     }
     return { released, refused }
+  }
+  // ── Wave 4, lane D: the last agent tools ──
+  readonly renames: Array<{ id: string; name: string }> = []
+  readonly pages: Array<{ id: string; page: SessionPage | null }> = []
+  readonly typed: Array<{ id: string; text: string }> = []
+  readonly restarts: Array<{ id: string; account: AccountOverride; resendRejected: boolean }> = []
+  /** What `screen` answers; null makes it refuse as a chat tab does. */
+  screenOf: SessionScreen | null = { lines: ['$ ls', 'a  b'], cols: 80, rows: 24 }
+  /** What `type` answers. */
+  typeOutcome: { submitted: boolean; draftHandling: DraftHandling } = {
+    submitted: true,
+    draftHandling: 'none'
+  }
+  rename = (id: string, name: string): Session => {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown session: ${id}`)
+    this.renames.push({ id, name })
+    const next = { ...session, title: name.trim() || session.title }
+    this.sessions.set(id, next)
+    return next
+  }
+  setPage = (id: string, page: SessionPage | null): void => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    this.pages.push({ id, page })
+  }
+  screen = async (id: string): Promise<SessionScreen> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (!this.screenOf)
+      throw new SessionScreenUnavailable({ id, message: 'This session has no terminal screen' })
+    return this.screenOf
+  }
+  type = async (
+    id: string,
+    text: string
+  ): Promise<{ submitted: boolean; draftHandling: DraftHandling }> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
+    this.typed.push({ id, text })
+    return this.typeOutcome
+  }
+  restart = async (
+    id: string,
+    account: AccountOverride,
+    resendRejected: boolean
+  ): Promise<RestartedSession> => {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
+    this.restarts.push({ id, account, resendRejected })
+    return {
+      id,
+      cwd: session.cwd,
+      folderName: session.title,
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }
   }
   /** What the test does to a session. */
   emit(id: string, stream: SessionStream): void {

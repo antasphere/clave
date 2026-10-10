@@ -11,11 +11,17 @@
  * (`windows.ts`), which the shell implements over its registry and the
  * standalone server over a map.
  */
-import { ptyManager, type PtySpawnOptions } from '../pty-manager'
+import { ptyManager, type PtySpawnOptions, type RestartOverrides } from '../pty-manager'
 import { workspaceManager } from '../workspace-manager'
 import * as titleGenerator from '../title-generator'
 import { clearState as clearAgentState } from '../agent-state-manager'
 import { sessionWindows } from './windows'
+import { sessionManager } from './session-manager'
+import { dropDraftShadow, getDraftShadow } from '../../shared/draft-shadow'
+import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-screen'
+import { typeIntoTerminal, type TypingOutcome } from './typing'
+import { forgetLineage } from './lineage'
+import type { SessionScreen } from '@clave/contract/sessions'
 
 export type SessionInfoResult = {
   id: string
@@ -43,8 +49,15 @@ export function setTmuxPreferenceReader(reader: (() => unknown) | null): void {
 const inputBuffers = new Map<string, string>()
 
 /** Watch a terminal's input for `/clear`: the title generator then expects
- *  the transcript to rotate. */
+ *  the transcript to rotate. The same bytes feed the session's draft shadow
+ *  (wave 4): what the person typed since their last Enter, so a message an
+ *  agent types into the tab through the server can set the draft aside and
+ *  put it back, as the window did from its own keystrokes. While the agent
+ *  shows a permission prompt the keys drive a dialog, not the input line. */
 export function trackInput(id: string, data: string): void {
+  const shadow = getDraftShadow(id)
+  if (sessionManager.get(id)?.state === 'blocked') shadow.noteOpaqueInput()
+  else shadow.feed(data)
   let buf = inputBuffers.get(id) ?? ''
   for (const ch of data) {
     if (ch === '\r' || ch === '\n') {
@@ -129,10 +142,18 @@ export async function spawnSession(
   // triggers the actual pty.spawn() via pty:start (or first pty:resize).
   ptyManager.attachListeners(
     session.id,
-    (data) => windows.send(windowKey, `pty:data:${session.id}`, data),
+    (data) => {
+      // What the terminal printed is kept for a screen read with no window
+      // (wave 4, `terminal-screen.ts`), then sent to the window as always.
+      retainOutput(session.id, data)
+      windows.send(windowKey, `pty:data:${session.id}`, data)
+    },
     (exitCode) => {
       titleGenerator.cleanup(session.id)
       inputBuffers.delete(session.id)
+      forgetScreen(session.id)
+      dropDraftShadow(session.id)
+      forgetLineage(session.id)
       clearAgentState(session.id)
       windows.unbind(session.id)
       windows.send(windowKey, `pty:exit:${session.id}`, exitCode)
@@ -190,4 +211,56 @@ export async function stopSession(id: string): Promise<void> {
     )
   await ptyManager.kill(id)
   windows.unbind(id)
+}
+
+// ── Wave 4, lane D: what the served agent tools ask of a session (PRDCT-3377) ──
+
+/** The last `lines` rendered lines of a terminal session's screen. Throws
+ *  when the session has no screen this process kept: a chat tab, or a
+ *  terminal that printed nothing yet. */
+export function readScreen(id: string, lines: number): Promise<SessionScreen> {
+  if (sessionManager.get(id)?.transport !== 'pty' || !hasScreen(id))
+    return Promise.reject(new Error('This session has no terminal screen to read'))
+  return renderScreen(id, lines)
+}
+
+/** Type a message into a terminal session as one turn and submit it, the
+ *  person's draft set aside and put back (`typing.ts`). The writes go to the
+ *  PTY manager directly, never through `writeTerminal`: the shadow must not
+ *  read the injection as the person's typing. */
+export function typeIntoSession(id: string, text: string): Promise<TypingOutcome> {
+  if (!ptyManager.getSession(id)) return Promise.reject(new Error(`Unknown session: ${id}`))
+  return typeIntoTerminal(id, text, {
+    shadow: getDraftShadow(id),
+    write: (data) => ptyManager.write(id, data),
+    alive: () => ptyManager.getSession(id)?.alive === true
+  })
+}
+
+/**
+ * The same tab restarted under the same id on another account (ADR 0002):
+ * the spawn read back before the kill, the process stopped and waited for,
+ * the same spawn made again with the account changed and the conversation
+ * resumed, the record's name and view put back (the kill took them). The
+ * window's `pty:restart` and the server's `RestartSession` share it. The
+ * tab stays in the window that holds it unless the caller names another key.
+ */
+export async function restartSession(
+  id: string,
+  overrides: RestartOverrides,
+  windowKey?: string | null
+): Promise<SessionInfoResult & { resumed: boolean }> {
+  const plan = ptyManager.restartSpawn(id, overrides)
+  if (!plan) throw new Error('This session cannot be restarted from here.')
+  const windows = sessionWindows()
+  const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
+  const record = ptyManager.getSessionRecord(id)
+  await ptyManager.killAndWait(id)
+  windows.unbind(id)
+  const info = await spawnSession(key, plan.cwd, plan.options)
+  if (record?.displayName) {
+    ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
+  }
+  if (record?.view) ptyManager.setSessionViewRecord(id, record.view)
+  return { ...info, resumed: plan.resumed }
 }

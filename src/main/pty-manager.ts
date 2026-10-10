@@ -16,6 +16,7 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
+import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
@@ -377,10 +378,15 @@ class PtyManager {
   }
 
   start(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    // The size the pane gave is what a screen read renders at (wave 4).
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   resize(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   write(id: string, data: string): void {
     terminalJournal()?.write(id, data)
