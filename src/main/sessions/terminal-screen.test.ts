@@ -37,6 +37,13 @@ describe('the retained screen', () => {
     retainOutput('t', '\r\n')
     expect((await renderScreen('t', 3)).lines).toEqual(['line 28', 'line 29', 'line 30'])
   })
+  it('evicts whole early chunks once the ring is over its size', async () => {
+    retainOutput('t', 'aaaa', 8)
+    retainOutput('t', 'bbbb', 8)
+    retainOutput('t', 'cc', 8)
+    const screen = await renderScreen('t', 5)
+    expect(screen.lines).toEqual(['bbbbcc'])
+  })
   it('keeps the recent output only, by the ring size', async () => {
     retainOutput('t', 'old '.repeat(10), 32)
     retainOutput('t', 'new', 32)

@@ -20,7 +20,7 @@ import { sessionManager } from './session-manager'
 import { dropDraftShadow, getDraftShadow } from '../../shared/draft-shadow'
 import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-screen'
 import { typeIntoTerminal, type TypingOutcome } from './typing'
-import { forgetLineage } from './lineage'
+import { forgetLineage, parentOf, setParent } from './lineage'
 import type { SessionScreen } from '@clave/contract/sessions'
 
 export type SessionInfoResult = {
@@ -232,8 +232,7 @@ export function typeIntoSession(id: string, text: string): Promise<TypingOutcome
   if (!ptyManager.getSession(id)) return Promise.reject(new Error(`Unknown session: ${id}`))
   return typeIntoTerminal(id, text, {
     shadow: getDraftShadow(id),
-    write: (data) => ptyManager.write(id, data),
-    alive: () => ptyManager.getSession(id)?.alive === true
+    write: (data) => ptyManager.write(id, data)
   })
 }
 
@@ -255,9 +254,14 @@ export async function restartSession(
   const windows = sessionWindows()
   const key = windowKey !== undefined ? windowKey : windows.windowOf(id)
   const record = ptyManager.getSessionRecord(id)
+  // The kill ends the old process, whose exit forgets what a dead tab
+  // leaves behind (the parent link among them); the same tab comes back
+  // under the same id, so its link is kept across (verifier round 1, F1).
+  const parent = parentOf(id)
   await ptyManager.killAndWait(id)
   windows.unbind(id)
   const info = await spawnSession(key, plan.cwd, plan.options)
+  if (parent) setParent(id, parent)
   if (record?.displayName) {
     ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
   }

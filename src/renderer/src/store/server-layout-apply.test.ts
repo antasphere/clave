@@ -210,6 +210,34 @@ describe('a layout pushed by the server', () => {
     expect(recordsAsked).toHaveLength(1)
   })
 
+  it('takes in a TAB the server opened, from its record, selected; leaves one that is not running', async () => {
+    const tab = (id: string, running: boolean): unknown => ({
+      id,
+      cwd: '/w',
+      folderName: 'w',
+      displayName: `Tab ${id}`,
+      live: true,
+      running,
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    records = [tab('opened', true), tab('moving', false)]
+    // The server placed two ids this window never saw: one it runs, one
+    // detached on its way here (the re-home's to reattach).
+    push([], ['opened', 'moving'])
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(recordsAsked).toEqual([{ ids: ['opened', 'moving'] }])
+    expect(state.sessions.map((s) => s.id)).toEqual(['opened'])
+    expect(state.sessions[0]).toMatchObject({ name: 'Tab opened', claudeMode: true })
+    expect(state.selectedSessionIds).toEqual(['opened'])
+    expect(state.focusedSessionId).toBe('opened')
+  })
+
   it('selects the taken-in terminal only when its group shows on screen', async () => {
     const shown = group(
       'g',

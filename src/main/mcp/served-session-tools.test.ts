@@ -345,9 +345,17 @@ describe('who may reach whom', () => {
       'clave_read_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   })
+  it('a tab reaches itself even outside any group', async () => {
+    const h = setup({ ...world(), layouts: [layout('wA', [])] })
+    expect((await run(h, 'readSession', { sessionId: 'caller' })) as object).toMatchObject({
+      sessionId: 'caller'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'mate' })).rejects.toThrow('not related')
+  })
   it('resolves "parent" from the lineage and a name from the records, the routed window first', async () => {
     const h = setup(world())
-    h.w.sessions.push(session('far-twin', { windowKey: 'wB' }))
+    // The twin in another window comes FIRST in the list: the routed window still wins.
+    h.w.sessions.unshift(session('far-twin', { windowKey: 'wB' }))
     h.w.records['far-twin'] = record('far-twin', { displayName: 'name-mate' })
     expect((await run(h, 'readSession', { sessionId: 'parent' })) as object).toMatchObject({
       sessionId: 'parent'
@@ -468,17 +476,25 @@ describe('a message typed into a tab', () => {
       delivered: false
     })
   })
-  it('says not delivered when the tab ended under the message', async () => {
+  it('says not delivered when the tab ended under the message, and records it so', async () => {
     const h = setup(world())
     h.impl['sessions.type'] = () => {
       h.w.sessions = h.w.sessions.map((s) => (s.id === 'mate' ? { ...s, state: 'ended' } : s))
-      return { submitted: false, draftHandling: 'none' }
+      return { submitted: true, draftHandling: 'none' }
     }
     const out = (await run(h, 'sendToSession', { sessionId: 'mate', message: 'x' })) as {
       delivered: boolean
     }
     expect(out.delivered).toBe(false)
-    expect(h.argsOf('captureMessage')).toEqual([])
+    expect(h.argsOf('captureMessage')).toEqual([expect.objectContaining({ delivered: false })])
+  })
+  it('filters the sender’s name in the header as it filters the message', async () => {
+    const h = setup(world())
+    h.w.records.caller = record('caller', { displayName: 'Lane\x1b[201~ D' })
+    await run(h, 'sendToSession', { sessionId: 'mate', message: 'x' })
+    const [, text, from] = h.argsOf('sessions.type')[0] as [string, string, string]
+    expect(text.startsWith('[Message from Clave tab "Lane[201~ D" — reply with')).toBe(true)
+    expect(from).toBe('Lane\x1b[201~ D')
   })
 })
 
@@ -526,7 +542,11 @@ describe('an account switch', () => {
     // The preference says propose: the window's too.
     h.requestView.mockResolvedValueOnce({ pinned: false, mode: null })
     expect(await run(h, 'switchAccount', { sessionId: 's1', account: 'Second' })).toBe(NOT_SERVED)
-    // A window that does not answer keeps the whole call.
+    // A window that does not answer keeps the whole call, whatever the
+    // preference says: the pin is known to that window alone.
+    h.requestView.mockRejectedValueOnce(new Error('timeout'))
+    expect(await run(h, 'switchAccount', { sessionId: 's1', account: 'Second' })).toBe(NOT_SERVED)
+    h.w.switchMode = 'automatic'
     h.requestView.mockRejectedValueOnce(new Error('timeout'))
     expect(await run(h, 'switchAccount', { sessionId: 's1', account: 'Second' })).toBe(NOT_SERVED)
     expect(h.argsOf('sessions.restart')).toEqual([])

@@ -664,7 +664,8 @@ export const TypeIntoSession = Command.define('TypeIntoSession', {
     from: Schema.optional(Schema.String)
   }),
   success: Schema.Struct({
-    /** The submit landed while the session was alive. */
+    /** The submit was written after the paste; whether the tab lived to
+     *  take it is read off the session after. */
     submitted: Schema.Boolean,
     draftHandling: DraftHandling
   }),

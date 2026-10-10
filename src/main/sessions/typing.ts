@@ -17,12 +17,11 @@ import type { DraftHandling } from '@clave/contract/sessions'
 export interface TypingTarget {
   readonly shadow: DraftShadow
   readonly write: (data: string) => void
-  /** Whether the session is still alive, read after the submit. */
-  readonly alive: () => boolean
   readonly sleep?: (ms: number) => Promise<void>
 }
 
 export interface TypingOutcome {
+  /** The submit was written after the paste. */
   submitted: boolean
   draftHandling: DraftHandling
 }
@@ -58,7 +57,9 @@ export function typeIntoTerminal(
       target.write(`\x1b[200~${text}\x1b[201~`)
       await sleep(TYPING_GAP_MS)
       target.write('\r')
-      submitted = target.alive()
+      // The submit went out: what the window called submitted, whether or
+      // not the tab lived to take it (the tool reads the tab after).
+      submitted = true
       if (stash.text) {
         await sleep(TYPING_GAP_MS)
         target.write(`\x1b[200~${sanitizeForPaste(stash.text)}\x1b[201~`)

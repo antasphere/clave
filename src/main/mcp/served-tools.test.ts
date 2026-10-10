@@ -152,6 +152,29 @@ function setup(partial: Partial<World> = {}): Harness {
 }
 
 describe('serveCommand', () => {
+  it('attached, the wave 3 tools keep the window and the wave 4 tools are served', async () => {
+    const h = setup({ sessions: [session('s1')] })
+    expect(await serveCommand('createGroup', { name: 'x' }, h.ctx({ attached: true }))).toBe(
+      NOT_SERVED
+    )
+    expect(
+      await serveCommand(
+        'rename',
+        { target: 'group', id: 'g', name: 'x' },
+        h.ctx({ attached: true })
+      )
+    ).toBe(NOT_SERVED)
+    expect(h.calls).toEqual([])
+    expect(
+      await serveCommand(
+        'rename',
+        { target: 'session', id: 's1', name: 'N' },
+        h.ctx({ attached: true })
+      )
+    ).toEqual({ renamed: 's1', name: 'N' })
+    expect(h.argsOf('sessions.rename')).toEqual([['s1', 'N']])
+  })
+
   it('createGroup stamps the caller workspace and answers the renderer shape', async () => {
     const h = setup({ records: { caller: record('caller', { workspaceId: 'ws2' }) } })
     const out = await serveCommand('createGroup', { name: 'Build', prompt: 'go' }, h.ctx())

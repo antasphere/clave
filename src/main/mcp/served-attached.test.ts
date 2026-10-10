@@ -105,6 +105,13 @@ describe('the attached shell', () => {
     expect(shell.launchProfiles('claude')).toEqual([{ id: 'base-p', name: 'Base profile' }])
     expect(shell.pins().map((p) => p.id)).toEqual(['base-pin'])
   })
+  it('reads the records for every command that names, reads or types into a tab', async () => {
+    for (const command of ['setSessionView', 'readSession', 'sendToSession']) {
+      const f = fakes()
+      await attachedShell(f.base, f.api, command)
+      expect(f.calls, command).toEqual(['records'])
+    }
+  })
   it('answers the records and the serving sessions from the server', async () => {
     const f = fakes()
     const shell = await attachedShell(f.base, f.api, 'readSession')

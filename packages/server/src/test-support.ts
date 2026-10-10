@@ -235,6 +235,9 @@ export class FakeSource implements SessionHostService {
     this.typed.push({ id, text })
     return this.typeOutcome
   }
+  /** Runs inside `restart`, before it answers: a test reads what the server
+   *  had already published by then. */
+  onRestart: (() => Promise<void>) | null = null
   restart = async (
     id: string,
     account: AccountOverride,
@@ -243,6 +246,7 @@ export class FakeSource implements SessionHostService {
     const session = this.sessions.get(id)
     if (!session) throw new Error(`Unknown session: ${id}`)
     if (this.refuse) throw this.refuse
+    await this.onRestart?.()
     this.restarts.push({ id, account, resendRejected })
     return {
       id,

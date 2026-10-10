@@ -12,7 +12,7 @@ interface Fake {
   sleeps: number[]
   target: Parameters<typeof typeIntoTerminal>[2]
 }
-function fakeTarget(shadow = new DraftShadow(), alive = (): boolean => true): Fake {
+function fakeTarget(shadow = new DraftShadow()): Fake {
   const writes: string[] = []
   const sleeps: number[] = []
   return {
@@ -20,7 +20,6 @@ function fakeTarget(shadow = new DraftShadow(), alive = (): boolean => true): Fa
     sleeps,
     target: {
       shadow,
-      alive,
       write: (data: string) => void writes.push(data),
       sleep: async (ms: number) => void sleeps.push(ms)
     }
@@ -58,11 +57,6 @@ describe('typeIntoTerminal', () => {
     expect(out.draftHandling).toBe('stashed-restored-best-effort')
     expect(f.writes).toContain('\x1b[200~msg\x1b[201~')
     expect(f.writes.at(-2)).toBe('\r')
-  })
-  it('reports not submitted when the session ended under the submit', async () => {
-    const f = fakeTarget(new DraftShadow(), () => false)
-    const out = await typeIntoTerminal('t1', 'msg', f.target)
-    expect(out.submitted).toBe(false)
   })
   it('two messages to one terminal never interleave their envelopes', async () => {
     const f = fakeTarget()

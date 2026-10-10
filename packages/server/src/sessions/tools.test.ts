@@ -163,11 +163,16 @@ describe('a restart on another account', () => {
   it('restarts through the host, saying restarting first and restarted after', async () => {
     const peer = await welcomed()
     const account = { claudeProfileId: 'acc-2', claudeProfileLabel: 'Second' }
+    // What the peer had heard by the time the host was asked to restart.
+    let heardBeforeRestart: unknown = null
+    source.onRestart = async () => {
+      heardBeforeRestart = await eventOf(peer)
+    }
     const response = await post('/sessions/restart', { id: 's1', account, resendRejected: true })
     expect(response.status).toBe(200)
+    expect(heardBeforeRestart).toEqual({ _tag: 'session.restarting', id: 's1' })
     expect(await response.json()).toMatchObject({ id: 's1', resumed: true, alive: true })
     expect(source.restarts).toEqual([{ id: 's1', account, resendRejected: true }])
-    expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
     expect(await eventOf(peer)).toEqual({
       _tag: 'session.restarted',
       id: 's1',
