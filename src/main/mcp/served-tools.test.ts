@@ -87,9 +87,10 @@ function setup(partial: Partial<World> = {}): Harness {
       {
         get:
           (_t, method: string) =>
-          async (arg: unknown): Promise<unknown> => {
-            calls.push([`${ns}.${method}`, arg])
-            return impl[`${ns}.${method}`]?.(arg as never)
+          async (...args: unknown[]): Promise<unknown> => {
+            // One argument is recorded as itself, several as the list.
+            calls.push([`${ns}.${method}`, args.length === 1 ? args[0] : args])
+            return impl[`${ns}.${method}`]?.(...(args as [never]))
           }
       }
     )
@@ -117,7 +118,19 @@ function setup(partial: Partial<World> = {}): Harness {
     sleep: async () => {
       note('sleep')
       if (++polls === 2) w.sessions = w.sessions.map((s) => ({ ...s, state: 'ended' as const }))
-    }
+    },
+    // Wave 4's facts: nothing here reads them, the session tools' own test does.
+    accounts: () => [],
+    selectedAccountId: () => undefined,
+    switchMode: () => 'propose',
+    launchProfiles: () => [],
+    pins: () => [],
+    parentOf: () => null,
+    setParent: (child, parent) => note('setParent', [child, parent]),
+    captureMessage: (payload) => note('captureMessage', payload),
+    captureTabSpawn: (payload) => note('captureTabSpawn', payload),
+    publish: (event) => note('publish', event),
+    notify: (title, body) => note('notify', [title, body])
   }
   const requestView = vi.fn(async () => ({ pinnedGroups: [{ id: 'p1' }], focusedSessionId: 'f1' }))
   return {
@@ -154,7 +167,7 @@ describe('serveCommand', () => {
     ).rejects.toThrow('No workspace "No". Available: One, Two')
   })
 
-  it('rename finds a group in another window; a session rename is not served', async () => {
+  it('rename finds a group in another window; a session rename is served too (wave 4)', async () => {
     const h = setup({ layouts: [layout('wA', []), layout('wB', [group('g2')])] })
     const out = await serveCommand('rename', { target: 'group', id: 'g2', name: 'N' }, h.ctx())
     expect(out).toEqual({ renamed: 'g2', name: 'N' })
@@ -167,7 +180,8 @@ describe('serveCommand', () => {
       { target: 'session', id: 's', name: 'N' },
       h.ctx()
     )
-    expect(asSession).toBe(NOT_SERVED)
+    expect(asSession).toEqual({ renamed: 's', name: 'N' })
+    expect(h.argsOf('sessions.rename')).toEqual([['s', 'N']])
   })
 
   it('setGroupView checks the url and marks only the terminal serving it', async () => {

@@ -42,6 +42,7 @@ import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
+import { sanitizeForPaste } from '../../../shared/paste-sanitize'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
@@ -1069,10 +1070,7 @@ function assertCanReach(
  * tabs). With ESC/CR/etc. gone, the whole message stays pasted text under the
  * provenance header and our single trailing submit sends it as one turn.
  */
-function sanitizeForPaste(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
-}
+export { sanitizeForPaste }
 
 // Serialize writes per target so two concurrent sends can't interleave their
 // paste envelopes (envelope-A, envelope-B, submit-A, submit-B → one garbled
@@ -1420,12 +1418,38 @@ async function handleSwitchAccount(payload: {
   }
 }
 
+/** What a served clave_switch_account asks of the window holding the tab
+ *  (wave 4): the tab's own switching mode and its pin, which the person sets
+ *  in the tab's menu and which live in this store alone. */
+function handleSessionSwitchState(payload: { sessionId: string }): unknown {
+  const session = useSessionStore.getState().sessions.find((s) => s.id === payload.sessionId)
+  if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
+  return { pinned: session.accountPinned === true, mode: session.accountSwitchMode ?? null }
+}
+
+/** What a served clave_launch_group asks of the routed window (wave 4):
+ *  whether the pin is idle, running and shown, or running and hidden, with
+ *  the live group when there is one. A pin linked to a group that is gone
+ *  reads idle, as the window's own launch would reset it. */
+function handlePinnedState(payload: { pinnedId: string }): unknown {
+  const pin = usePinnedStore.getState().pinnedGroups.find((p) => p.id === payload.pinnedId)
+  if (!pin) throw new Error(`No pinned group "${payload.pinnedId}"`)
+  const alive =
+    !!pin.activeGroupId && useSessionStore.getState().groups.some((g) => g.id === pin.activeGroupId)
+  if (!alive) return { state: 'idle', groupId: null }
+  return { state: getPinnedState(pin), groupId: pin.activeGroupId }
+}
+
 async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
       return handleList(payload as Parameters<typeof handleList>[0])
     case 'windowState':
       return handleWindowState(payload as Parameters<typeof handleWindowState>[0])
+    case 'sessionSwitchState':
+      return handleSessionSwitchState(payload as { sessionId: string })
+    case 'pinnedState':
+      return handlePinnedState(payload as { pinnedId: string })
     case 'resolveSessionRef':
       return handleResolveSessionRef(payload as { ref: string })
     case 'createGroup':
