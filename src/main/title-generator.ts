@@ -117,9 +117,9 @@ export function cancelAll(): void {
   }
 }
 
-/** The quit's call (`index.ts`, before-quit): every job ended as `cancelAll`
- *  does, and the door shut, so a tab named during the quit spawns no CLI
- *  nothing kills. Never called on a window's close. */
+/** The quit's call (`pty-manager.ts` killAll with `quit: true`): every job
+ *  ended as `cancelAll` does, and the door shut, so a tab named during the
+ *  quit spawns no CLI nothing kills. Never called on a window's close. */
 export function shutdown(): void {
   closed = true
   cancelAll()

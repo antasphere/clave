@@ -48,7 +48,6 @@ import { registerPreviewScheme, installPreviewProtocol } from './preview-protoco
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
-import * as titleGenerator from './title-generator'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
@@ -491,10 +490,6 @@ app.on('before-quit', (event) => {
   // The Antasphere login, while this process is its server: nothing stays
   // listening, nothing fires later (attached, the server elsewhere owns it).
   shellAntasphereAccount?.shutdown()
-  // No title job starts from here (title-generator.ts): the sessions'
-  // shutdown below ends the running one, and the door is the quit's alone
-  // to shut (a window's close also runs that shutdown, and is not a quit).
-  titleGenerator.shutdown()
   stopMcpServer()
   // Keep the event loop alive until owned event children finish their escalation.
   // The server goes with them: the boot awaited first (a registration still
@@ -505,7 +500,9 @@ app.on('before-quit', (event) => {
   // hammer. A quit with nothing wrong takes well under a second.
   quitCleanup = runQuitCleanup(
     [
-      { name: "the sessions' shutdown", promise: ptyManager.killAll() },
+      // `quit: true`: the title door shuts too (a window's close runs the
+      // same shutdown and is not a quit; pty-manager.ts says why).
+      { name: "the sessions' shutdown", promise: ptyManager.killAll({ quit: true }) },
       { name: "the server's stop", promise: serverBoot.then(() => serverHandle?.stop()) }
     ],
     {

@@ -474,11 +474,16 @@ class PtyManager {
     await this.kill(id, true)
     if (tmuxName) await ptyBackend.waitForTmuxSessionGone(tmuxName)
   }
-  async killAll(): Promise<void> {
-    // The one-shot title jobs go with the sessions (PRDCT-3375): a `claude -p`
-    // still running would otherwise outlive the app's quit and the
-    // standalone server's stop, both of which end here.
-    titleGenerator.cancelAll()
+  /** Every session detached or stopped, the way the quit and the last
+   *  window's close want it. The one-shot title jobs go with the sessions
+   *  (PRDCT-3375): a `claude -p` still running would otherwise outlive the
+   *  app's quit and the standalone server's stop, both of which end here.
+   *  `quit: true` also shuts the title door (no job starts from then on);
+   *  the last window's close on macOS is not a quit, and the tabs reopened
+   *  from the Dock must still be named (round 2 of the lane's verifier). */
+  async killAll({ quit = false }: { quit?: boolean } = {}): Promise<void> {
+    if (quit) titleGenerator.shutdown()
+    else titleGenerator.cancelAll()
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {
