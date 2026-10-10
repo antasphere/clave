@@ -107,7 +107,11 @@ function setup(partial: Partial<World> = {}): Harness {
     'sessions.resize': () => undefined,
     'sessions.screen': (id: string) => {
       get(id)
-      if (!w.screen) throw Object.assign(new Error('x'), { _tag: 'SessionScreenUnavailable', id })
+      if (!w.screen)
+        throw Object.assign(new Error('This session has no terminal screen to read'), {
+          _tag: 'SessionScreenUnavailable',
+          id
+        })
       return { lines: w.screen, cols: 80, rows: 24 }
     },
     'sessions.type': (id: string) => {
@@ -388,6 +392,15 @@ describe('who may reach whom', () => {
     h.w.screen = null
     await expect(run(h, 'readSession', { sessionId: 'child' })).rejects.toThrow(
       'Session "name-child" has no terminal buffer (tab not mounted yet)'
+    )
+    h.impl['sessions.screen'] = () => {
+      throw Object.assign(new Error('the renderer did not load'), {
+        _tag: 'SessionScreenUnavailable',
+        id: 'child'
+      })
+    }
+    await expect(run(h, 'readSession', { sessionId: 'child' })).rejects.toThrow(
+      'Session "name-child" could not be read: the renderer did not load'
     )
   })
 })

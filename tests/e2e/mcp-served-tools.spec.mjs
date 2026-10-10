@@ -452,7 +452,13 @@ export async function run(t) {
         refused
       )
       await new Promise((r) => setTimeout(r, 400))
-      t.equal('and nothing was typed into it', await strangerWrites(stranger.sessionId), '')
+      // The pane's own replies to the process (device attributes, colours,
+      // focus) are written; a message would be a bracketed paste.
+      t.check(
+        'and no message was typed into it',
+        !(await strangerWrites(stranger.sessionId)).includes('\x1b[200~'),
+        await strangerWrites(stranger.sessionId)
+      )
 
       // clave_read_session: served, off the server's retained output.
       const read = toolPayload(
