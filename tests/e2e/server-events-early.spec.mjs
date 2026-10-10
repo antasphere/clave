@@ -101,19 +101,22 @@ export async function run(t) {
     // The server comes: main names it, the preload's watch finds it within
     // two seconds, the socket is welcomed, and each listener reads the
     // server's state once (the catch-up) before any change is made.
-    const caughtUp = await until(
+    const found = await until(
       async () => {
         const h = await heard()
         return h.workspaces.length > 0 && h.claude.length > 0 && h.codex.length > 0 ? h : null
       },
       { tries: (BOOT_DELAY_MS + 8000) / 250, gapMs: 250 }
     )
+    // Whatever the catch-up check found, the checks below run on what was
+    // heard: a catch-up that never came must not hide a change never heard.
+    const caughtUp = found ?? (await heard())
     t.check(
       'once the server is named, each listener hears the server’s own state before any change',
-      caughtUp !== null &&
-        caughtUp.workspaces.length >= 1 &&
-        caughtUp.claude.length >= 1 &&
-        caughtUp.codex.length >= 1,
+      found !== null &&
+        found.workspaces.length >= 1 &&
+        found.claude.length >= 1 &&
+        found.codex.length >= 1,
       caughtUp
     )
     t.check(
@@ -180,7 +183,11 @@ export async function run(t) {
       usage
     )
 
-    // Each change once: the IPC listener was dropped at the welcome.
+    // Each change heard once. Attached, main's IPC fan-out carries main's own
+    // managers and never the server's change, so a double delivery cannot
+    // show here: the drop of the IPC listener at the welcome is proven by
+    // the unit tests (`src/preload/dual-listener.test.ts`); what this proves
+    // is that the push side delivers each change exactly once.
     await win.waitForTimeout(1500)
     const all = await heard()
     t.equal('the registry change was heard once', all.workspaces.length, n0.workspaces + 1)

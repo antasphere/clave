@@ -28,10 +28,16 @@
  * main) and the welcome, the server's state may have moved with nobody
  * listening. A listener given `catchUp` reads the server's own read model at
  * every welcome it witnesses and hands each value to the callback as if it
- * were an event; a read whose answer lands after a newer push event of the
- * same tag is dropped, since the event is what is true now. A listener bound
- * while the socket is already open witnesses no welcome and reads nothing:
- * its caller reads the server itself, through the routed call it makes next.
+ * were an event. While the read is out, the push events of the tag are HELD
+ * and delivered after its answer, in their order, so the window ends on the
+ * newest state whatever the two roads' timing (a usage read of one account
+ * never costs the others their catch-up); an event the pick drops (the
+ * window's own echo) marks the answer stale, since the window wrote after
+ * the read went out, and the answer is dropped while the held events are
+ * delivered; a second welcome while a read is out starts a newer read and
+ * the older answer is dropped. A listener bound while the socket is already
+ * open witnesses no welcome and reads nothing: its caller reads the server
+ * itself, through the routed call it makes next.
  *
  * Pure, and beside the preload rather than in the client package: the
  * preload may import only the client's router statically (the lazy-load
@@ -95,9 +101,11 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
     let pushOff: Unsubscribe | null = null
     let statusOff: Unsubscribe | null = null
     let gone = false
-    // Counts the push events delivered, so a catch-up read can tell whether
-    // something newer arrived while it was out.
-    let delivered = 0
+    // The read that is out, if any: the events of the tag heard meanwhile,
+    // and whether one of them was the window's own echo.
+    type Pending = { readonly held: T[]; echoed: boolean }
+    let pending: Pending | null = null
+    let reads = 0
     const bindIpc = (): void => {
       if (!ipcOff && !gone) ipcOff = options.bindIpc(callback)
     }
@@ -105,19 +113,31 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
       ipcOff?.()
       ipcOff = null
     }
+    const deliverHeld = (read: Pending): void => {
+      if (pending === read) pending = null
+      // Taken out before delivery: a read flushed at a second welcome holds
+      // nothing more when its own answer lands.
+      const values = read.held.splice(0)
+      for (const value of values) if (!gone) callback(value)
+    }
     const catchUp = (): void => {
       if (!options.catchUp) return
-      const sentAt = delivered
+      // A read already out answers to a welcome that is over: what it held
+      // is delivered now, and its answer, when it lands, is dropped.
+      if (pending) deliverHeld(pending)
+      const mine = ++reads
+      const read: Pending = { held: [], echoed: false }
+      pending = read
       options.catchUp().then(
         (values) => {
-          // Dropped when the listener is gone, or when an event of this tag
-          // reached it meanwhile: that event is newer than this answer.
-          if (gone || delivered !== sentAt) return
-          for (const value of values) callback(value)
+          if (gone) return
+          if (mine === reads && !read.echoed) for (const value of values) callback(value)
+          deliverHeld(read)
         },
         () => {
           // The read failed (a server that holds no such thing): the next
-          // change arrives on the push channel.
+          // change arrives on the push channel; what was held is delivered.
+          deliverHeld(read)
         }
       )
     }
@@ -133,9 +153,12 @@ export function dualListener<E extends ServerEvent['_tag'], T>(
         // Only an open socket counts: before the welcome the window is on IPC.
         if (push.status !== 'open' || envelope.event._tag !== options.tag) return
         const value = options.pick(envelope.event as Extract<ServerEvent, { _tag: E }>)
-        if (value === undefined) return
-        delivered += 1
-        callback(value)
+        if (pending) {
+          if (value === undefined) pending.echoed = true
+          else pending.held.push(value)
+          return
+        }
+        if (value !== undefined) callback(value)
       })
       // The transport follows the socket: IPC while it is down, push while
       // it is open. The status callback runs in the welcome's own tick,

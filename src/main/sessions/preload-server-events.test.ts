@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     removeListener: vi.fn(),
     settings: {} as Record<string, Record<string, ReturnType<typeof vi.fn>>>,
     push: null as null | PushDouble,
+    pushReads: 0,
     makePush: (): PushDouble => {
       let resolveOpen: () => void = () => {}
       const opened = new Promise<void>((r) => {
@@ -78,7 +79,16 @@ vi.mock('@clave/client/node', () => ({
   connectThroughNode: async () => {
     const push = mocks.makePush()
     mocks.push = push
-    return { api: { settings: mocks.settings }, push }
+    // Every read of `push` off the backing is one wait fired at the announce
+    // (the preload hands each waiting listener `backing.push`), counted so a
+    // wait that should have been withdrawn shows.
+    return {
+      api: { settings: mocks.settings },
+      get push() {
+        mocks.pushReads += 1
+        return push
+      }
+    }
   }
 }))
 
@@ -130,6 +140,7 @@ const read = (n: number): Record<string, unknown> => ({ windows: [], fetchedAt: 
 beforeEach(async () => {
   vi.clearAllMocks()
   mocks.push = null
+  mocks.pushReads = 0
   mocks.settings = {
     claudeAccounts: { list: vi.fn(async () => [account('server-a')]) },
     codexAccounts: { list: vi.fn(async () => [{ id: 'server-c', label: 'C', kind: 'chatgpt' }]) },
@@ -304,6 +315,31 @@ describe.each(families)('$name, bound before the server was named', (family) => 
   })
 })
 
+describe('a listener released before the server comes', () => {
+  it('leaves no wait behind: the announce fires the same number of waits with or without fifty early cycles', async () => {
+    // Round 1 of the lane's verifier: with the withdraw dropped from the
+    // real wiring, every listener bound and released before the server left
+    // its wait in the preload until the announce (500 of them fired on 500
+    // cycles), and the suite stayed green because the released listener's
+    // own guard bound nothing. The count of `backing.push` reads at the
+    // announce is the count of waits that fired.
+    answer({ 'server:endpoint': null })
+    for (let i = 0; i < 50; i++) api.onClaudeAccountsChanged(() => undefined)()
+    await settle()
+    await serverComes()
+    const withCycles = mocks.pushReads
+    vi.resetModules()
+    mocks.push = null
+    mocks.pushReads = 0
+    await import('../../preload/index')
+    api = mocks.exposed.get('electronAPI') as ElectronAPI
+    answer({ 'server:endpoint': null })
+    await settle()
+    await serverComes()
+    expect(withCycles).toBe(mocks.pushReads)
+  })
+})
+
 describe('the catch-up read', () => {
   it('is dropped when the server refuses it, and the push channel is heard regardless', async () => {
     // A standalone server carries no login job: its list is refused.
@@ -321,6 +357,21 @@ describe('the catch-up read', () => {
     expect(heard).toEqual([])
     mocks.emitEvent({ _tag: 'accounts.login_progressed', job: job('j-pushed') })
     expect(heard).toEqual([job('j-pushed')])
+  })
+
+  it('leaves out a usage read that is a cached error, as the renderer’s prime does', async () => {
+    mocks.settings.usage.claudeSnapshot = vi.fn(async () => ({
+      'server-a': read(1),
+      'server-b': { error: 'Sign in to see your usage.' }
+    }))
+    answer({ 'server:endpoint': null })
+    const heard: unknown[] = []
+    api.onClaudeAccountUsage((value) => heard.push(value))
+    await settle()
+    await serverComes()
+    mocks.push!.open()
+    await settle()
+    expect(heard).toEqual([{ accountId: 'server-a', result: read(1) }])
   })
 
   it('is not made for a listener bound once the socket is already open', async () => {

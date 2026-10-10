@@ -532,6 +532,17 @@ function viaServerEvent<E extends ServerEvent['_tag'], T>(
  *  types are not. Same shape (the contract was written from them). */
 const loose = <T>(value: unknown): T => value as T
 
+/** A usage snapshot as the usage listeners' catch-up delivers it: one read
+ *  per account, the cached ERRORS left out, the rule of the renderer's own
+ *  prime (`store/usage-store.ts`): a window taking the server's error would
+ *  sit on it for the freshness window (round 1 of the lane's verifier). */
+const usageCatchUp = (
+  snapshot: Record<string, unknown>
+): Array<{ accountId: string; result: unknown }> =>
+  Object.entries(snapshot)
+    .filter(([, result]) => !(typeof result === 'object' && result !== null && 'error' in result))
+    .map(([accountId, result]) => ({ accountId, result }))
+
 /** The sign-in's answer as the server (or main, before it) gives it: the
  *  status and the handoff. Routed like every settings call; the method on
  *  the bridge splits it so the handoff never reaches the page. */
@@ -1468,11 +1479,7 @@ const electronAPI = {
     'usage:claude-account',
     'usage.claude_read',
     (event) => ({ accountId: event.accountId, result: event.result as unknown }),
-    async (api) =>
-      Object.entries(await api.settings.usage.claudeSnapshot()).map(([accountId, result]) => ({
-        accountId,
-        result: result as unknown
-      }))
+    async (api) => usageCatchUp(await api.settings.usage.claudeSnapshot())
   ),
 
   // Claude accounts: the list crosses; a token goes in and never comes back.
@@ -1633,11 +1640,7 @@ const electronAPI = {
     'usage:codex-account',
     'usage.codex_read',
     (event) => ({ accountId: event.accountId, result: event.result as unknown }),
-    async (api) =>
-      Object.entries(await api.settings.usage.codexSnapshot()).map(([accountId, result]) => ({
-        accountId,
-        result: result as unknown
-      }))
+    async (api) => usageCatchUp(await api.settings.usage.codexSnapshot())
   ),
   // A session moved to another account: the same tab, its process restarted
   // on the account with the conversation resumed (ADR 0002).

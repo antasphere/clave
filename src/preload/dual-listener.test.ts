@@ -303,7 +303,10 @@ describe('the catch-up read at the welcome', () => {
     expect(seen).toEqual([])
   })
 
-  it('drops the answer when a newer event of the tag arrived while the read was out', async () => {
+  it('holds an event of the tag that arrives while the read is out, and delivers it after the answer', async () => {
+    // One usage read of one account must not cost the other accounts their
+    // catch-up (the verifier's P2): the event waits, the answer lands, the
+    // event follows, and the window ends on the newest state.
     const push = new FakePush()
     let release: (values: number[]) => void = () => {}
     const { seen } = listen(
@@ -315,9 +318,83 @@ describe('the catch-up read at the welcome', () => {
     )
     push.setStatus('open')
     push.emit(1, changed(7))
+    push.emit(2, changed(8))
+    expect(seen).toEqual([])
     release([6])
     await tick()
-    expect(seen).toEqual([7])
+    expect(seen).toEqual([6, 7, 8])
+    // The read is over: the next event is delivered at once.
+    push.emit(3, changed(9))
+    expect(seen).toEqual([6, 7, 8, 9])
+  })
+
+  it('drops the answer when the window’s own echo arrived while the read was out', async () => {
+    // The window wrote after the read went out (the verifier's P1): the
+    // answer is older than the window's own state and is dropped; what else
+    // was held is delivered.
+    const push = new FakePush()
+    push.status = 'connecting'
+    const ipc = new FakeIpc<string | null>()
+    const seen: Array<string | null> = []
+    let release: (values: Array<string | null>) => void = () => {}
+    dualListener<'workspaces.state_changed', string | null>({
+      bindIpc: ipc.bind,
+      onPush: serverWith(push).onPush,
+      tag: 'workspaces.state_changed',
+      pick: (event) => (event.origin === 'mine' ? undefined : event.origin),
+      catchUp: () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    })((value) => seen.push(value))
+    push.setStatus('open')
+    push.emit(1, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'w2' })
+    push.emit(2, { _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'mine' })
+    release(['server'])
+    await tick()
+    expect(seen).toEqual(['w2'])
+  })
+
+  it('drops the older answer when a second welcome starts a newer read', async () => {
+    // Two welcomes with the first read still out (the verifier's P3): the
+    // first answer, whenever it lands, is older than the second's.
+    const push = new FakePush()
+    const releases: Array<(values: number[]) => void> = []
+    const { seen } = listen(
+      serverWith(push),
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve)
+        })
+    )
+    push.setStatus('open')
+    push.emit(1, changed(1))
+    push.setStatus('reconnecting')
+    push.setStatus('open')
+    // The first welcome's held event is delivered when the second read starts.
+    expect(seen).toEqual([1])
+    releases[1]([20])
+    await tick()
+    releases[0]([10])
+    await tick()
+    expect(seen).toEqual([1, 20])
+  })
+
+  it('delivers what it held when the read fails', async () => {
+    const push = new FakePush()
+    let fail: (error: Error) => void = () => {}
+    const { seen } = listen(
+      serverWith(push),
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        })
+    )
+    push.setStatus('open')
+    push.emit(1, changed(3))
+    fail(new Error('This server holds no such thing.'))
+    await tick()
+    expect(seen).toEqual([3])
   })
 
   it('delivers several values in order, and nothing after unsubscribe', async () => {
