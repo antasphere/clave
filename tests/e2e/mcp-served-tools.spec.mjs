@@ -21,7 +21,7 @@
  * the adopted terminal never reaches the window's store (the window's own
  * listing lacks it).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -577,23 +577,140 @@ export async function run(t) {
         !layouts.some((l) => l.groups.some((g) => g.id === created?.groupId)),
         layouts
       )
-      // Wave 4: the tools of the last seven keep the window too while attached.
-      const tab = toolPayload(
-        await client.call('clave_open_session', { cwd: ROOT, mode: 'terminal', name: 'plain' })
+      // ── Wave 4: the last seven take the server road attached too. The
+      // sessions are the standalone's; the sidebar stays the shell's, so a
+      // tab the server opened is placed by main's own layouts and the window
+      // hears it over IPC. The caller is a tab the server started: its token
+      // is the server's, resolved by main through the server (lane C).
+      const serverDir = fixturePath('mcp-served-tools-attached-server')
+      const configsBefore = new Set(
+        existsSync(path.join(serverDir, 'mcp-configs'))
+          ? readdirSync(path.join(serverDir, 'mcp-configs'))
+          : []
       )
-      t.check('a tab opens through the window', typeof tab?.sessionId === 'string', tab)
-      t.equal('on the window road', await lastRoad(app, 'openSession'), 'window')
-      const renamed = await client.call('clave_rename', {
+      await win.click('.launcher-split .launcher-btn')
+      const agentCfg = await until(() => {
+        const d = path.join(serverDir, 'mcp-configs')
+        if (!existsSync(d)) return null
+        const f = readdirSync(d).find((x) => x.endsWith('.json') && !configsBefore.has(x))
+        return f ? { sessionId: f.replace(/\.json$/, ''), file: path.join(d, f) } : null
+      })
+      t.check('the server minted a config for the agent tab', !!agentCfg, agentCfg)
+      const agentToken = JSON.parse(
+        readFileSync(agentCfg.file, 'utf-8')
+      ).mcpServers?.clave?.headers?.Authorization?.replace(/^Bearer /, '')
+      const agent = mcpHttpClient(mcpEndpoint(DIR), agentToken)
+      await agent.init()
+
+      // A tab opened, named and placed: served; the window takes it in.
+      const worker = toolPayload(
+        await agent.call('clave_open_session', { cwd: ROOT, mode: 'claude', name: 'Worker' })
+      )
+      t.check('clave_open_session answers a session', typeof worker?.sessionId === 'string', worker)
+      t.equal('on the server road, attached', await lastRoad(app, 'openSession'), 'server')
+      const workerDrawn = await until(async () =>
+        (await rowDrawn(win, worker.sessionId)) ? true : null
+      )
+      t.check('the window draws the tab the server opened', workerDrawn === true)
+      const onServer = await sessionOn(disc, worker.sessionId)
+      t.check('and the standalone runs it', onServer.status === 200, onServer)
+
+      // A rename: served; the standalone's record carries it, the window shows it.
+      const renamed = await agent.call('clave_rename', {
         target: 'session',
-        id: tab.sessionId,
-        name: 'Renamed through the window'
+        id: worker.sessionId,
+        name: 'Renamed on the server'
       })
       t.check('a tab’s rename answers', !toolErrored(renamed), renamed)
-      t.equal('on the window road', await lastRoad(app, 'rename'), 'window')
+      t.equal('on the server road, attached', await lastRoad(app, 'rename'), 'server')
       const shown = await until(async () =>
-        (await sidebarRows(win)).some((r) => r.includes('Renamed through the window')) ? true : null
+        (await sidebarRows(win)).some((r) => r.includes('Renamed on the server')) ? true : null
       )
-      t.check('and the window shows the name', shown === true)
+      t.check('and the window shows the name', shown === true, await sidebarRows(win))
+      const records = await fetch(`${disc.url}/sessions/records?ids=${worker.sessionId}`, {
+        headers: { authorization: `Bearer ${disc.token}` }
+      }).then((r) => r.json())
+      t.check(
+        'the standalone’s record holds the name',
+        records?.[0]?.displayName === 'Renamed on the server',
+        records
+      )
+
+      // A message typed into the worker: served; the bytes reach the
+      // standalone's terminal, journaled there.
+      const writes = writeJournal(DIR)
+      const sent = toolPayload(
+        await agent.call('clave_send_to_session', {
+          sessionId: worker.sessionId,
+          message: 'hello attached'
+        })
+      )
+      t.check('clave_send_to_session answers delivered', sent?.delivered === true, sent)
+      t.equal('on the server road, attached', await lastRoad(app, 'sendToSession'), 'server')
+      const typed = await until(async () => {
+        const w = await writes(worker.sessionId)
+        return w.includes('hello attached\x1b[201~') ? w : null
+      })
+      t.check('the message was typed into the standalone’s terminal', !!typed, typed)
+
+      // A screen read: served, off the standalone's retained output.
+      const read = toolPayload(
+        await agent.call('clave_read_session', { sessionId: worker.sessionId })
+      )
+      t.check(
+        'clave_read_session answers the worker’s screen',
+        read?.sessionId === worker.sessionId && typeof read?.text === 'string',
+        read
+      )
+      t.equal('on the server road, attached', await lastRoad(app, 'readSession'), 'server')
+
+      // A page on the worker's row: served; the standalone's record carries it.
+      const paged = toolPayload(
+        await agent.call('clave_set_session_view', {
+          sessionId: worker.sessionId,
+          url: 'http://127.0.0.1:1/attached-page',
+          title: 'Attached page'
+        })
+      )
+      t.equal(
+        'clave_set_session_view answers',
+        paged?.view?.url,
+        'http://127.0.0.1:1/attached-page'
+      )
+      t.equal('on the server road, attached', await lastRoad(app, 'setSessionView'), 'server')
+      const pageRecords = await fetch(`${disc.url}/sessions/records?ids=${worker.sessionId}`, {
+        headers: { authorization: `Bearer ${disc.token}` }
+      }).then((r) => r.json())
+      t.equal(
+        'the standalone’s record holds the page',
+        pageRecords?.[0]?.view?.url,
+        'http://127.0.0.1:1/attached-page'
+      )
+      const pageShown = await until(async () => {
+        const l = await callMcp(app, 'list', {})
+        return l?.sessions?.find((x) => x.id === worker.sessionId)?.view?.url ===
+          'http://127.0.0.1:1/attached-page'
+          ? true
+          : null
+      })
+      t.check('and the window’s store shows it', pageShown === true)
+
+      // A switch: served in automatic mode, the window asked for the tab's own pin first.
+      const switched = toolPayload(
+        await agent.call('clave_switch_account', {
+          sessionId: worker.sessionId,
+          account: 'default'
+        })
+      )
+      t.check('clave_switch_account answers a switch', switched?.switched === true, switched)
+      t.equal('on the server road, attached', await lastRoad(app, 'switchAccount'), 'server')
+
+      // The wave 3 tools keep the window attached, as before.
+      const grouped = toolPayload(
+        await agent.call('clave_create_group', { name: 'Still the window' })
+      )
+      t.check('clave_create_group still answers', typeof grouped?.groupId === 'string', grouped)
+      t.equal('through the window', await lastRoad(app, 'createGroup'), 'window')
     } finally {
       await app.close()
     }

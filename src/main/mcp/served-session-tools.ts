@@ -540,6 +540,8 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
       throw new Error((err as { message?: string }).message ?? 'The session could not start')
     throw err
   }
+  // Attached, the new record is the server's: read again before it is named.
+  await ctx.shell.syncRecords?.()
   // The parent link for "parent": only when the open came from inside
   // another tab (an agent's delegation), never from the app's own UI.
   if (ctx.callerSessionId) ctx.shell.setParent(info.id, ctx.callerSessionId)
@@ -800,12 +802,10 @@ async function launchGroup(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
   }
   launched.set(pin.id, group.id)
   // The windows learn which pin this group belongs to.
-  ctx.shell.publish({
-    _tag: 'pinned_group.launched',
-    pinnedId: pin.id,
-    groupId: group.id,
-    windowKey: key
-  })
+  ctx.shell.publish(
+    { _tag: 'pinned_group.launched', pinnedId: pin.id, groupId: group.id, windowKey: key },
+    key
+  )
   return { pinnedId: pin.id, groupId: group.id, status: 'launched' }
 }
 

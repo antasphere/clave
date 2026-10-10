@@ -107,7 +107,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   /** The key of the window the session's record names, for the per-window
    *  arm of its news when no server publishes them. */
   const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
-  const host = {
+  const host: SessionHostService = {
     list: (windowKey) => manager.list(windowKey),
     get: (id) => manager.get(id),
     subscribe: (id, listener) => {
@@ -210,12 +210,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       return typeIntoSession(id, text)
     },
     restart: (id, account, resendRejected) => restartSession(id, { ...account, resendRejected })
-    // Lane C of wave 4 adds the records (`listAdoptableRecords`,
-    // `discardRecord`, `release`) in its own commits; its published contract
-    // already names them, so the shape is checked here without them until
-    // lane D rebases onto lane C's finished branch.
-  } satisfies Omit<SessionHostService, 'listAdoptableRecords' | 'discardRecord' | 'release'>
-  return host as unknown as SessionHostService
+  }
+  return host
 }
 
 let host: SessionHostService | null = null

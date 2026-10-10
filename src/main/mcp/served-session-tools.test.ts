@@ -54,7 +54,17 @@ interface World {
   screen: string[] | null
 }
 
-function setup(partial: Partial<World> = {}) {
+interface Harness {
+  w: World
+  calls: [string, unknown][]
+  impl: Record<string, (...args: never[]) => unknown>
+  requestView: ReturnType<typeof vi.fn>
+  argsOf: (name: string) => unknown[]
+  names: () => string[]
+  ctx: (over?: Partial<ServedContext>) => ServedContext
+}
+
+function setup(partial: Partial<World> = {}): Harness {
   const w: World = {
     layouts: [layout('wA', [])],
     sessions: [],
@@ -165,10 +175,10 @@ function setup(partial: Partial<World> = {}) {
     },
     captureMessage: (payload) => note('captureMessage', payload),
     captureTabSpawn: (payload) => note('captureTabSpawn', payload),
-    publish: (event) => note('publish', event),
+    publish: (event, windowKey) => note('publish', [event, windowKey]),
     notify: (title, body) => note('notify', [title, body])
   }
-  const requestView = vi.fn(async (): Promise<unknown> => ({}))
+  const requestView = vi.fn(async (): Promise<unknown> => ({})) as Harness['requestView']
   return {
     w,
     calls,
@@ -186,7 +196,6 @@ function setup(partial: Partial<World> = {}) {
     })
   }
 }
-type Harness = ReturnType<typeof setup>
 const run = (
   h: Harness,
   command: string,
@@ -817,7 +826,10 @@ describe('launching a pinned group', () => {
     expect(terminals[0]).toMatchObject({ command: 'npm run dev', sessionId: null })
     expect((made.group.view as { terminalId: string }).terminalId).toBe(terminals[0].id)
     expect(h.argsOf('publish')).toEqual([
-      { _tag: 'pinned_group.launched', pinnedId: 'Clave', groupId: 'g-new', windowKey: 'wA' }
+      [
+        { _tag: 'pinned_group.launched', pinnedId: 'Clave', groupId: 'g-new', windowKey: 'wA' },
+        'wA'
+      ]
     ])
     // No window: the processes are kicked at a plain size.
     expect(h.argsOf('sessions.resize')).toEqual([

@@ -38,6 +38,7 @@ import {
   workspaceNameOf
 } from './served-core'
 import { sessionTools } from './served-session-tools'
+import { ATTACHED_COMMANDS, attachedShell } from './served-attached'
 
 export {
   NOT_SERVED,
@@ -429,7 +430,14 @@ export async function serveCommand<W extends ToolWindow>(
   ctx: ServedContext<W>
 ): Promise<unknown | NotServed> {
   if (!SERVED.has(command)) return NOT_SERVED
-  const c = ctx as unknown as Ctx
+  // Attached, the wave 4 tools alone take the server road (the wave 3 tools
+  // keep the window there), over the server's own facts for this call.
+  if (ctx.attached && !(ATTACHED_COMMANDS.has(command) && payload.target !== 'group'))
+    return NOT_SERVED
+  const base = ctx as unknown as Ctx
+  const c: Ctx = ctx.attached
+    ? { ...base, shell: await attachedShell(base.shell, base.api, command) }
+    : base
   const key = c.win ? c.shell.keyOf(c.win) : null
   if (!key) throw new Error('Clave window not available')
   const result = await TOOLS[command](c, key, payload)

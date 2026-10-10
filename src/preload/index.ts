@@ -1085,11 +1085,27 @@ const electronAPI = {
     onServerEventOf('session.restarted', (event) =>
       callback({ id: event.id, resumed: event.resumed, account: event.account })
     ),
+  // The pin's link is published on the server in-process and sent to the
+  // window over IPC when the app is attached (main publishes nothing there):
+  // one or the other, main's choice, never both.
   onPinnedGroupLaunched: (
     callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
   ) =>
-    onServerEventOf('pinned_group.launched', (event) =>
-      callback({ pinnedId: event.pinnedId, groupId: event.groupId, windowKey: event.windowKey })
+    onBothTransports(
+      createIpcListener<[{ pinnedId: string; groupId: string; windowKey: string }]>(
+        'pinned-group:launched',
+        callback
+      ),
+      (push) =>
+        push.onEvent((envelope) => {
+          const event = envelope.event
+          if (event._tag === 'pinned_group.launched')
+            callback({
+              pinnedId: event.pinnedId,
+              groupId: event.groupId,
+              windowKey: event.windowKey
+            })
+        })
     ),
 
   onSessionData: (id: string, callback: (data: string) => void) =>
