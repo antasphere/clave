@@ -10,9 +10,11 @@ import {
   type CommandOption,
   type HistoryPage,
   type ModelOption,
+  type ReleaseOutcome,
   type Session,
   type SessionCapabilities,
   type SessionInfo,
+  type SessionRecord,
   SessionWrite,
   type SpawnOptions
 } from '@clave/contract/sessions'
@@ -37,6 +39,17 @@ export interface SessionsClient {
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
   readonly capabilities: (id: string) => Promise<SessionCapabilities>
   readonly history: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
+  // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+  /** The records a window may bring back: every adoptable one, or those of
+   *  `ids` (the sessions the server runs among them marked `running`). */
+  readonly listAdoptable: (ids?: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionRecord>>
+  /** Destroy a surviving session nobody brings back, by its record key. */
+  readonly discardRecord: (key: string) => Promise<void>
+  /** Let go of live sessions for another window to take in. */
+  readonly release: (
+    ids: ReadonlyArray<string>,
+    fallbackWindowKey?: string
+  ) => Promise<ReleaseOutcome>
 }
 
 /** A write goes over the wire in its encoded form: bytes as base64. */
@@ -77,6 +90,24 @@ export const sessionsClient = (call: Call): SessionsClient => ({
           id,
           ...(before !== undefined && { before: asParam(before) }),
           ...(limit !== undefined && { limit: asParam(limit) })
+        }
+      })
+    ),
+  // ── Wave 4, lane C: the records travel comma-joined on a GET (the contract says why) ──
+  listAdoptable: (ids) =>
+    call((c) =>
+      c.sessions.listAdoptable({
+        payload: ids === undefined ? {} : { ids: ids.join(',') }
+      })
+    ),
+  discardRecord: (key) =>
+    call((c) => c.sessions.discardRecord({ payload: { key } })).then(() => undefined),
+  release: (ids, fallbackWindowKey) =>
+    call((c) =>
+      c.sessions.release({
+        payload: {
+          ids,
+          ...(fallbackWindowKey !== undefined && { fallbackWindowKey })
         }
       })
     )

@@ -25,6 +25,8 @@ export { sidebarClient, type SidebarClient } from './sidebar'
 export { workspaceFilesClient, type WorkspaceFilesClient } from './workspace-files'
 // ── Lane D (wave 3): the view requests ──
 export { viewsClient, type ViewsClient, type ViewRequestInput } from './views'
+// ── Wave 4, lane C: the agent tools' address and tokens ──
+export { agentToolsClient, type AgentToolsClient } from './agent-tools'
 // ── Lane B: terminals ──
 export {
   PushClient,

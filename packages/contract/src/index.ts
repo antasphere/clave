@@ -27,5 +27,7 @@ export * as Sidebar from './sidebar'
 export * as WorkspaceFiles from './workspace-files'
 // ── Lane D (wave 3): the view requests ──
 export * as Views from './views'
+// ── Wave 4, lane C: the agent tools' address and tokens ──
+export * as AgentTools from './agent-tools'
 
 // ── Lane B: terminals · Lane D: settings served ──

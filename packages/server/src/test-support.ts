@@ -8,8 +8,10 @@ import type {
   CommandOption,
   HistoryPage,
   ModelOption,
+  ReleaseOutcome,
   Session,
   SessionInfo,
+  SessionRecord,
   SessionStream,
   SessionWrite
 } from '@clave/contract/sessions'
@@ -32,6 +34,20 @@ export const aSession = (id: string, windowKey = 'w1'): Session => ({
   createdAt: 1,
   adapterId: 'echo',
   title: id
+})
+
+/** A plain record of a session, for the tests of the records' road. */
+export const aRecord = (id: string, windowKey?: string): SessionRecord => ({
+  id,
+  cwd: '/work',
+  folderName: 'work',
+  claudeMode: false,
+  antigravityMode: false,
+  codexMode: false,
+  piMode: false,
+  claudeAgentsMode: false,
+  dangerousMode: false,
+  ...(windowKey !== undefined && windowKey !== '' && { windowKey })
 })
 
 /** A host whose sessions the test emits into and exits by hand. Every
@@ -131,6 +147,49 @@ export class FakeSource implements SessionHostService {
     return this.historyOf
   }
   readonly historyAsked: Array<{ id: string; before?: number; limit?: number }> = []
+  // ── Wave 4, lane C: the records, kept by hand ──
+  /** The adoptable records this host would list; a test seeds them. */
+  readonly records: SessionRecord[] = []
+  readonly discards: string[] = []
+  readonly releases: Array<{ ids: ReadonlyArray<string>; fallbackWindowKey?: string }> = []
+  /** Which of the live sessions are tmux-backed (released on a move). */
+  readonly tmuxBacked = new Set<string>()
+  listAdoptableRecords = (ids?: ReadonlyArray<string>): SessionRecord[] => {
+    if (ids === undefined) return [...this.records]
+    const wanted = new Set(ids)
+    const found = this.records.filter((r) => wanted.has(r.id))
+    for (const id of wanted) {
+      if (found.some((r) => r.id === id)) continue
+      const session = this.sessions.get(id)
+      if (session) found.push({ ...aRecord(id, session.windowKey), live: true, running: true })
+    }
+    return found
+  }
+  discardRecord = (key: string): void => {
+    this.discards.push(key)
+    const at = this.records.findIndex((r) => (r.tmuxName ?? r.id) === key)
+    if (at >= 0) this.records.splice(at, 1)
+  }
+  release = (ids: ReadonlyArray<string>, fallbackWindowKey?: string): ReleaseOutcome => {
+    this.releases.push(fallbackWindowKey === undefined ? { ids } : { ids, fallbackWindowKey })
+    const released: string[] = []
+    const refused: ReleaseOutcome['refused'][number][] = []
+    for (const id of ids) {
+      const session = this.sessions.get(id)
+      if (!session) refused.push({ sessionId: id, reason: 'not-live' })
+      else if (!this.tmuxBacked.has(id)) refused.push({ sessionId: id, reason: 'not-tmux' })
+      else {
+        this.sessions.delete(id)
+        this.records.push({
+          ...aRecord(id, session.windowKey),
+          tmuxName: `clave-${id}`,
+          live: true
+        })
+        released.push(id)
+      }
+    }
+    return { released, refused }
+  }
   /** What the test does to a session. */
   emit(id: string, stream: SessionStream): void {
     for (const listener of [...(this.streams.get(id) ?? [])]) listener(stream)

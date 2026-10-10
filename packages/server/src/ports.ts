@@ -27,6 +27,9 @@ import { WorkspaceFilesPort } from './workspace-files/port'
 import type { WorkspaceFiles } from './workspace-files/files'
 
 export { WorkspaceFilesPort } from './workspace-files/port'
+import { AgentTokens, type AgentTokensService } from './agent-tools/port'
+
+export { AgentTokens, type AgentTokensService } from './agent-tools/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
@@ -43,18 +46,23 @@ export interface ServerPorts {
    *  entry's data directory. `WorkspaceFilesPort.none` when absent: the
    *  trust store kept in memory. */
   readonly workspaceFiles?: WorkspaceFiles
+  /** Wave 4, lane C: who writes a Claude session's agent tool config and keeps
+   *  its tokens. `AgentTokens.none` when absent: nothing minted, nothing resolved. */
+  readonly agentTools?: AgentTokensService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
 export const PortsLive = (
   ports: ServerPorts
 ): Layer.Layer<
-  SessionHost | SettingsSource | Terminals | SidebarLayoutsPort | WorkspaceFilesPort
+  SessionHost | SettingsSource | Terminals | SidebarLayoutsPort | WorkspaceFilesPort | AgentTokens
 > =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
     Terminals.layer(ports.terminals ?? Terminals.none),
     SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none),
-    WorkspaceFilesPort.layer(ports.workspaceFiles ?? WorkspaceFilesPort.none)
+    WorkspaceFilesPort.layer(ports.workspaceFiles ?? WorkspaceFilesPort.none),
+    // ── Wave 4, lane C: the agent tools' tokens ──
+    AgentTokens.layer(ports.agentTools ?? AgentTokens.none)
   )
