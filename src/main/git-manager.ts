@@ -1066,23 +1066,51 @@ ${diff}`
   }
 
   /**
-   * Pull the repos that have something to pull — and ONLY those.
+   * Bring a branch level with the upstream commits it ALREADY HAS, without
+   * touching the network: a fast-forward to `@{u}`, else a rebase onto it with
+   * the working tree stashed around it, aborted (and the stash put back) when
+   * it stops on a conflict.
    *
-   * The caller passes the repos the panel shows as behind, and this pulls them.
-   * It does not fetch, and it does not go looking: discovery is `refreshRemotes`,
-   * which is what the panel's refresh runs, and the ↓ badges are its result.
+   * This is Pull all's integration, and the reason it is not `git pull`: the ↓
+   * badge is read from the remote-tracking ref, so the commits it promises are
+   * on disk already. Fetching them again bought nothing but a round trip per
+   * repo, and on a network where GitHub's git hosts hang one connection in
+   * three (measured 9 October 2026), every hung round trip was a repo the
+   * click silently left behind (PRDCT-3372).
+   */
+  async integrateUpstream(cwd: string): Promise<void> {
+    const git = simpleGit(cwd)
+    try {
+      await git.raw(['merge', '--ff-only', '@{u}'])
+    } catch {
+      try {
+        await git.raw(['rebase', '--autostash', '@{u}'])
+      } catch (err) {
+        try {
+          await git.rebase(['--abort'])
+        } catch {
+          /* abort may fail if the rebase never started */
+        }
+        throw err
+      }
+    }
+  }
+
+  /**
+   * Pull the repos that have something to pull — and ONLY those, from what
+   * they already know.
    *
-   * The split is the whole design. `behind` can only come from a repo's
-   * remote-tracking refs, so a button that "makes sure" by fetching every repo
-   * first is a button that talks to N remotes — a minute of network on a folder
-   * of ninety, for a click the user made because they could see three arrows.
-   * Pull all now pulls those three, in about a second, and finding the fourth is
-   * the refresh's job.
+   * The caller passes the repos the panel shows as behind, and this brings
+   * each one level with its remote-tracking ref (`integrateUpstream`). It does
+   * not fetch and it does not go looking: discovery is `refreshRemotes`, which
+   * is what the panel's refresh runs, and the ↓ badges are its result. So Pull
+   * all needs no network at all, and a remote that is slow, unreachable or
+   * gone cannot stop it.
    *
    * Status is still re-read here rather than trusted from the renderer: the
    * check is local and instant, and it is what stops a stale click (the repo was
-   * pulled in a terminal a moment ago) turning into a pointless `git pull`. A
-   * repo that turns out not to be behind is skipped, not an error.
+   * pulled in a terminal a moment ago) turning into a pointless merge. A repo
+   * that turns out not to be behind is skipped, not an error.
    */
   async magicPull(
     repoPaths: string[],
@@ -1127,7 +1155,7 @@ ${diff}`
       const result = resultFor(repoPath)
       try {
         progress.step(repoPath, 'pulling')
-        await this.pull(repoPath, 'auto')
+        await this.integrateUpstream(repoPath)
         result.pulled = true
       } catch (err) {
         result.error = err instanceof Error ? err.message : String(err)

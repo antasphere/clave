@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -145,22 +145,81 @@ describe('magicPull', () => {
     expect(events.some((e) => e.phase === 'fetching')).toBe(false)
   }, 120_000)
 
-  it('reports a badged repo whose remote has gone, without stopping the others', async () => {
-    // Behind by its own refs — so a pull IS attempted — and then its remote is
-    // taken away underneath it. That is the shape of a repo whose origin was
-    // renamed or whose access was revoked since the last fetch.
+  it('pulls a badged repo whose remote is unreachable: the commits are already on disk', async () => {
+    // Behind by its own refs, then its remote is taken away underneath it —
+    // the shape of a GitHub host that hangs, a revoked access, a renamed
+    // origin. The badge's commits were fetched already, so none of that may
+    // stop the pull (PRDCT-3372: a pull that went back to the network failed
+    // whenever the network did, and the arrow stayed).
     const gone = makeOriginWithClone('gone')
-    commitToOrigin(gone.origin, 'gone')
+    const head = commitToOrigin(gone.origin, 'gone')
     git(gone.clone, 'fetch', 'origin')
     expect((await gitManager.getStatus(gone.clone)).behind).toBeGreaterThan(0)
     git(gone.clone, 'remote', 'set-url', 'origin', path.join(root, 'does-not-exist.git'))
 
     const results = await gitManager.magicPull([gone.clone, cleanRepo])
     const byPath = new Map(results.map((r) => [r.repoPath, r]))
-    expect(byPath.get(gone.clone)?.error).toBeTruthy()
-    expect(byPath.get(gone.clone)?.pulled).toBe(false)
-    // The failure is that repo's alone.
+    expect(byPath.get(gone.clone)).toMatchObject({ pulled: true, error: null })
+    expect(git(gone.clone, 'rev-parse', 'HEAD').trim()).toBe(head)
+    expect((await gitManager.getStatus(gone.clone)).behind).toBe(0)
     expect(byPath.get(cleanRepo)).toMatchObject({ pulled: false, error: null })
+  }, 120_000)
+
+  it('rebases local commits onto the fetched upstream when it cannot fast-forward', async () => {
+    const div = makeOriginWithClone('diverged')
+    const upstream = commitToOrigin(div.origin, 'diverged')
+    git(div.clone, 'fetch', 'origin')
+    git(div.clone, 'config', 'user.email', 'test@example.com')
+    git(div.clone, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(div.clone, 'local.txt'), 'mine\n')
+    git(div.clone, 'add', '.')
+    git(div.clone, 'commit', '-m', 'local work')
+    git(div.clone, 'remote', 'set-url', 'origin', path.join(root, 'does-not-exist.git'))
+
+    const [result] = await gitManager.magicPull([div.clone])
+    expect(result).toMatchObject({ pulled: true, error: null })
+    // The local commit now sits on top of the upstream one.
+    expect(git(div.clone, 'rev-parse', 'HEAD~1').trim()).toBe(upstream)
+    expect(git(div.clone, 'log', '-1', '--format=%s').trim()).toBe('local work')
+    const status = await gitManager.getStatus(div.clone)
+    expect(status).toMatchObject({ behind: 0, ahead: 1 })
+  }, 120_000)
+
+  it('carries uncommitted changes across the integration', async () => {
+    const dirty = makeOriginWithClone('dirty')
+    const upstream = commitToOrigin(dirty.origin, 'dirty')
+    git(dirty.clone, 'fetch', 'origin')
+    // The incoming commit writes incoming.txt; the local edit is to README.md.
+    writeFileSync(path.join(dirty.clone, 'README.md'), '# edited, not committed\n')
+
+    const [result] = await gitManager.magicPull([dirty.clone])
+    expect(result).toMatchObject({ pulled: true, error: null })
+    expect(git(dirty.clone, 'rev-parse', 'HEAD').trim()).toBe(upstream)
+    expect(git(dirty.clone, 'status', '--porcelain')).toContain('README.md')
+  }, 120_000)
+
+  it('fails a repo it cannot integrate with the reason, and leaves it as it was', async () => {
+    const clash = makeOriginWithClone('clash')
+    commitToOrigin(clash.origin, 'clash') // writes incoming.txt upstream
+    git(clash.clone, 'fetch', 'origin')
+    git(clash.clone, 'config', 'user.email', 'test@example.com')
+    git(clash.clone, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(clash.clone, 'incoming.txt'), 'a different local line\n')
+    git(clash.clone, 'add', '.')
+    git(clash.clone, 'commit', '-m', 'local clash')
+    const before = git(clash.clone, 'rev-parse', 'HEAD').trim()
+
+    const results = await gitManager.magicPull([clash.clone, behindRepo])
+    const byPath = new Map(results.map((r) => [r.repoPath, r]))
+    expect(byPath.get(clash.clone)?.pulled).toBe(false)
+    expect(byPath.get(clash.clone)?.error).toMatch(/conflict|could not apply/i)
+    // Aborted: same head, no rebase left half-done, a clean tree.
+    expect(git(clash.clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(git(clash.clone, 'status', '--porcelain').trim()).toBe('')
+    for (const dir of ['rebase-merge', 'rebase-apply']) {
+      const p = path.resolve(clash.clone, git(clash.clone, 'rev-parse', '--git-path', dir).trim())
+      expect(existsSync(p)).toBe(false)
+    }
   }, 120_000)
 
   it('skips a repo nothing has fetched, rather than failing it', async () => {

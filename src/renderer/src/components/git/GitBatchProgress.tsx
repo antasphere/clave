@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { XMarkIcon } from '@heroicons/react/24/outline'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
 import type { GitBatchOp, GitBatchProgress } from '../../../../shared/git-batch'
 import { GIT_BATCH_PHASE_LABELS } from '../../../../shared/git-batch'
 import { GitBatchContext, IDLE, RESULT_HOLD_MS, useGitBatch } from './git-batch-context'
 import type { BatchState } from './git-batch-context'
+import type { BatchSummary } from '../../lib/pull-summary'
 
 /**
  * The state behind the git bar's batch operations — Pull all, Magic sync, and
@@ -41,26 +44,35 @@ export function GitBatchProvider({ children }: { children: React.ReactNode }): R
   }, [])
 
   // Clear the summary after its hold. Keyed on the message so a second batch
-  // finishing restarts the timer instead of inheriting the first one's.
+  // finishing restarts the timer instead of inheriting the first one's. A
+  // summary naming failures is NOT cleared: four seconds is how the old
+  // "2 failed" went by unread while the arrows stayed (PRDCT-3372).
+  const hasFailures = state.failures.length > 0
   useEffect(() => {
-    if (!state.resultMessage) return
+    if (!state.resultMessage || hasFailures) return
     const timer = setTimeout(() => setState((s) => ({ ...s, resultMessage: null })), RESULT_HOLD_MS)
     return () => clearTimeout(timer)
-  }, [state.resultMessage])
+  }, [state.resultMessage, hasFailures])
 
-  const run = useCallback(async (op: GitBatchOp, task: () => Promise<string>) => {
+  const dismiss = useCallback(() => {
+    setState((s) => (s.running ? s : { ...s, resultMessage: null, failures: [] }))
+  }, [])
+
+  const run = useCallback(async (op: GitBatchOp, task: () => Promise<string | BatchSummary>) => {
     if (runningRef.current) return
     runningRef.current = true
     setState({ ...IDLE, running: true, op, phase: 'checking' })
     try {
-      const summary = await task()
+      const outcome = await task()
+      const summary = typeof outcome === 'string' ? { message: outcome, failures: [] } : outcome
       setState((s) => ({
         ...s,
         running: false,
         phase: null,
         // Land the bar full: the batch is over, whatever the counter last saw.
         done: s.total > 0 ? s.total : s.done,
-        resultMessage: summary
+        resultMessage: summary.message,
+        failures: summary.failures
       }))
     } catch (err) {
       console.error(`[git-batch:${op}]`, err)
@@ -76,7 +88,9 @@ export function GitBatchProvider({ children }: { children: React.ReactNode }): R
     }
   }, [])
 
-  return <GitBatchContext.Provider value={{ state, run }}>{children}</GitBatchContext.Provider>
+  return (
+    <GitBatchContext.Provider value={{ state, run, dismiss }}>{children}</GitBatchContext.Provider>
+  )
 }
 
 /**
@@ -88,8 +102,9 @@ export function GitBatchProvider({ children }: { children: React.ReactNode }): R
  * is back to one line the rest of the time.
  */
 export function GitBatchProgressBar(): React.JSX.Element | null {
-  const { state } = useGitBatch()
+  const { state, dismiss } = useGitBatch()
   if (!state.running && !state.resultMessage) return null
+  const failed = !state.running && !!state.resultMessage && state.failures.length > 0
 
   // Before the first event there is no denominator — an empty track with a
   // count of 0/0 would read as stuck, so the track shimmers instead.
@@ -123,9 +138,33 @@ export function GitBatchProgressBar(): React.JSX.Element | null {
           style={indeterminate ? undefined : { width: `${fraction * 100}%` }}
         />
       </span>
-      <span className="panel-progress-count">
-        {state.resultMessage ?? (indeterminate ? phaseLabel : `${state.done}/${state.total}`)}
-      </span>
+      {failed ? (
+        // Held until clicked away, and the one place the reasons are read.
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="panel-progress-count is-failed"
+              onClick={dismiss}
+              aria-label={`${state.resultMessage}. Dismiss`}
+            >
+              {state.resultMessage}
+              <XMarkIcon className="panel-progress-dismiss" aria-hidden />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="panel-progress-failures">
+            {state.failures.map((f) => (
+              <div key={f.name}>
+                <strong>{f.name}</strong>: {f.reason}
+              </div>
+            ))}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <span className="panel-progress-count">
+          {state.resultMessage ?? (indeterminate ? phaseLabel : `${state.done}/${state.total}`)}
+        </span>
+      )}
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import log from 'electron-log/main'
 import { gitManager } from '../git-manager'
 import { repoIndexManager } from '../repo-index'
 import type { GitBatchProgress } from '../git-manager'
@@ -74,11 +75,17 @@ export function registerGitHandlers(): void {
       event.sender.send('git:batch-progress', progress)
     })
   )
-  ipcMain.handle('git:magic-pull', (event, repoPaths: string[]) =>
-    gitManager.magicPull(repoPaths, (progress: GitBatchProgress) => {
+  // Each repo Pull all could not bring level goes to the app's log file with
+  // its reason: the bar names them, but only until it is dismissed.
+  ipcMain.handle('git:magic-pull', async (event, repoPaths: string[]) => {
+    const results = await gitManager.magicPull(repoPaths, (progress: GitBatchProgress) => {
       event.sender.send('git:batch-progress', progress)
     })
-  )
+    for (const r of results) {
+      if (r.error) log.warn(`[git] Pull all could not pull ${r.repoPath}: ${r.error}`)
+    }
+    return results
+  })
   // The discovery sweep the panel's refresh runs — the one operation that goes
   // to every remote, reporting on the same channel as the other two.
   ipcMain.handle('git:refresh-remotes', (event, repoPaths: string[]) =>
