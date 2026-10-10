@@ -29,6 +29,7 @@ import {
   whenClaveServerBootSettled
 } from '../server/endpoint'
 import type { AgentTokenOwner } from '@clave/contract/agent-tools'
+import { shouldBindAttachedSession } from './attached-binding'
 import {
   loadOrCreateServerState,
   saveServerState,
@@ -118,15 +119,20 @@ async function resolveAttachedToken(token: string): Promise<AgentTokenOwner | nu
   }
 }
 
-/** Bind an attached server's session to the window it lives in, so the tool
- *  routing (`resolveCommandWindow`) finds it in main's registry the way it
- *  finds an in-process session. A window main does not know, or a session
- *  already bound, is left as it is. */
+/** Reconcile main's binding of an attached server's session to the window the
+ *  SERVER says it lives in, so the tool routing (`resolveCommandWindow`)
+ *  finds it the way it finds an in-process session. Done on every
+ *  authenticated tool call: a move re-homes the session to another window on
+ *  the server, and main must follow or the tools keep routing to the window
+ *  the tab left (round-1 verifier F1). `bindSession` overwrites, so a re-bind
+ *  is cheap; a window main does not know is left as it is. */
 function bindAttachedSession(owner: AgentTokenOwner): void {
   if (!owner.windowKey) return
-  if (windowRegistry.getWindowForSession(owner.sessionId)) return
   const win = windowRegistry.getWindowByKey(owner.windowKey)
-  if (win) windowRegistry.bindSession(owner.sessionId, win.id)
+  if (!win) return
+  const current = windowRegistry.getWindowForSession(owner.sessionId)
+  if (shouldBindAttachedSession(current ? current.id : null, win.id))
+    windowRegistry.bindSession(owner.sessionId, win.id)
 }
 
 /**

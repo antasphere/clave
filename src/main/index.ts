@@ -209,10 +209,20 @@ async function onWindowClosed(windowId: number, windowKey: string): Promise<void
   }
   const hosted = windowRegistry.getSessionsForWindow(windowId)
   // Attached, the sessions are the server's and main keeps no process
-  // binding for them: the closing window's sessions come from its LAYOUT
-  // (main's, since the sidebar's road is the shell's attached).
+  // binding for them: the closing window's sessions come from the SERVER's
+  // own list for this window (its hidden sessions — a toolbar server, a
+  // view's serving process — are not in the layout), with the layout as a
+  // fallback when the server cannot be reached.
   const attached = isAttachedServer()
-  const attachedIds = attached ? sessionIdsInWindow(windowKey) : []
+  let attachedIds: string[] = []
+  if (attached) {
+    const fromServer = await serverClient
+      .api()
+      .then((api) => api.sessions.list(windowKey))
+      .then((sessions) => sessions.map((session) => session.id))
+      .catch(() => [] as string[])
+    attachedIds = [...new Set([...fromServer, ...sessionIdsInWindow(windowKey)])]
+  }
   windowRegistry.unregisterWindow(windowId)
   windowState.remove(windowKey)
   const primary = windowRegistry.getPrimaryWindow()
