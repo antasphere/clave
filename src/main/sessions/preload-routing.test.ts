@@ -580,6 +580,7 @@ describe('the preload routes the session records', () => {
   const connectAttached = async (): Promise<void> => {
     await settle()
     answer({ ...onServer, 'server:endpoint': attachedEndpoint })
+    mocks.apiList.mockResolvedValue([])
     await api.sessionsList()
     await settle()
   }
@@ -625,14 +626,45 @@ describe('the preload routes the session records', () => {
     const pending = api.listServerRestoreRecords()
     await settle()
     expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
-    // The endpoint arrives attached: the wait ends and the server answers.
+    // The endpoint arrives attached and a routed call connects the backing
+    // (the top-up never forces the connect itself: it rides the announce, as
+    // the watch would connect for it); the wait ends and the server answers.
     answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
     await vi.advanceTimersByTimeAsync(200)
+    mocks.apiList.mockResolvedValue([])
+    await api.sessionsList()
     await settle()
     await vi.advanceTimersByTimeAsync(200)
     const records = await pending
     expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
     expect(records.map((r) => r.id)).toEqual(['own'])
+  })
+
+  it('the restore top-up rides the watch already running for the window, never forcing a connect', async () => {
+    // In the app, the window's server listeners bind at window start and
+    // start the server watch (first ask: no endpoint yet). The top-up must
+    // queue on that watch's tick, not build the backing itself: a connect
+    // forced at the boot mark fires every listener's catch-up over the state
+    // the window just loaded (PRDCT-3405). A session listener starts the
+    // watch here through the same `onServerAvailable` the others use.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    const off = api.onSessionData('s1', () => {})
+    await settle()
+    expect(mocks.push).toBeNull()
+    // The endpoint is named attached; the top-up starts and must not connect.
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    mocks.apiList.mockResolvedValue([])
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    expect(mocks.push).toBeNull()
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+    // The watch's own tick connects (as it does for every window); now it reads.
+    await vi.advanceTimersByTimeAsync(2000)
+    await settle()
+    const records = await pending
+    expect(mocks.push).not.toBeNull()
+    expect(records.map((r) => r.id)).toEqual(['own'])
+    off()
   })
 
   it('reads by id attached without the selection rule: the re-home wants exactly those', async () => {

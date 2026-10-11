@@ -1,9 +1,11 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec restarts the app and expects its sessions back. On
-// an attached server the records are the server's, but the window's restore
-// still reads main's own list (`pty:list`) and main's folder, so nothing is
-// brought back: the restore of persisted sessions on the standalone server
-// is wave 3's named leftover (ADR 0003). Not a known failure.
+// Pinned to the in-process server. The attached restore itself works since wave 4
+// (PRDCT-3376: the records are the server's, read off it after the boot; see
+// terminal-reattach, which runs in both modes). This spec stays pinned because
+// it seeds session records (and transcripts) by hand into the APP's data folder
+// before the launch, and attached the records live in the standalone server's
+// folder, which the harness does not seed with session-records (a harness
+// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
+// records it restores through the prompt are the in-process boot's too.
 /**
  * Launch profiles and Pi are wired through the real settings UI, preload IPC,
  * main-process persistence, launcher, and keyboard shortcut.

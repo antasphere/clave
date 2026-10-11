@@ -492,11 +492,30 @@ async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
     mode = await serverMode()
   }
   if (mode !== 'attached') return []
-  let backing = await serverRouter.backing()
-  while (!backing && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    backing = await serverRouter.backing()
-  }
+  // Ride the server's own arrival (`onServerAvailable`: at once when a backing
+  // is known, else when a routed call or the watch connects one), and never
+  // force the connect from here. A connect made at the boot mark fires every
+  // listener's catch-up over the state the window has just loaded (the pins
+  // the switcher reads), which is how this top-up once made switcher-collapse
+  // red attached while bare dev stayed green; the watch connects on its own
+  // tick for every window, this read simply waits for it, boundedly.
+  const backing = await new Promise<Backing | null>((resolve) => {
+    let settled = false
+    // `onServerAvailable` runs the wire SYNCHRONOUSLY when a backing is already
+    // known, i.e. before `withdraw` below is assigned: declared first, called
+    // optionally, so that path neither throws nor withdraws anything.
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now()))
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
   if (!backing) return []
   const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
   const all = [...(await backing.api.sessions.listAdoptable())]

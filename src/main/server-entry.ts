@@ -157,7 +157,10 @@ async function main(): Promise<void> {
 
   let stopping = false
   const sessions_shutdown = (): void => {
-    stopping_sessions = ptyManager.killAll().catch((error) => {
+    // `quit: true`: the standalone server's stop is a quit for its sessions,
+    // so the title generator's one-shot CLI dies with them, as on the app's
+    // quit (lane A, wave 4; the round-3 verifier of wave 3 found one alive).
+    stopping_sessions = ptyManager.killAll({ quit: true }).catch((error) => {
       process.stderr.write(`clave-server: session shutdown failed: ${(error as Error).message}\n`)
     })
   }

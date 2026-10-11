@@ -198,6 +198,7 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
+    let hadSavedSessions = false
     void (async () => {
       try {
         // Workspace registry + pins hydrate FIRST: adoption stamps each
@@ -218,6 +219,15 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
+        // Did this window HAVE sessions to bring back? (its saved layout names
+        // at least one.) Read here where the saved layout is in scope; the
+        // attached restore top-up in the boot tail gates on it (PRDCT-3376).
+        const savedSessionIds = new Set<string>(persisted.displayOrder)
+        for (const g of persisted.groups) {
+          for (const sid of g.sessionIds) savedSessionIds.add(sid)
+          for (const t of g.terminals) if (t.sessionId) savedSessionIds.add(t.sessionId)
+        }
+        hadSavedSessions = savedSessionIds.size > 0
         // The revision the server handed this layout out at (every save
         // names it, and a stale one is refused rather than merged) and the
         // layout itself as the base the first merge reasons from.
@@ -328,6 +338,14 @@ export function AppShell(): React.JSX.Element {
       // persistence is on, bring the window's surviving sessions back from the
       // server, additively — never touching a tab opened meanwhile. A no-op
       // in-process (the server read answers empty there).
+      //
+      // Gate on the window having HAD sessions (its saved layout names at
+      // least one): a window that reopens with nothing to bring back must not
+      // reach for the server here, because that first connect would fire every
+      // server-event listener's catch-up over the state the window just loaded
+      // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
+      // A window with sessions to restore connects anyway, and warrants it.
+      if (!hadSavedSessions) return
       void (async () => {
         const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
         if (serverRecords.length === 0) return
