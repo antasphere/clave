@@ -215,8 +215,9 @@ function UsageChart({
   )
 }
 
-/** A headline number: the question it answers, the answer, whose it is. */
-function StatTile({
+/** A headline number: the question it answers, the answer, whose it is.
+ *  Shared with the Activity page's headlines. */
+export function StatTile({
   label,
   value,
   detail,
