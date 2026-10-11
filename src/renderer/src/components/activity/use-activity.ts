@@ -103,6 +103,7 @@ export function useActivity(range: ActivityRange): ActivityState {
       .then((answer) => {
         if (seq !== daySeq.current) return
         setDay(answer.days[0] ?? null)
+        setNow(answer.now)
         setError(null)
         setDayAnswered(key)
       })

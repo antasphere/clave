@@ -446,9 +446,12 @@ function Tape({
   const onClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
     const at = minuteAt(e)
     if (at === null) return
-    // On today a click past the present holds the last minute there is.
-    const m = nowMin !== null ? Math.min(at, Math.max(0, Math.floor(nowMin))) : at
-    onPin(pin === m ? null : m)
+    // On today a click past the present holds the present minute, read off
+    // the clock at the click (the data's `now` is the last fetch's); a click
+    // there never lets go of a held minute, it holds the present again.
+    const present = nowMin !== null ? Math.floor(minuteOfDay(Date.now())) : null
+    const m = present !== null ? Math.min(at, Math.max(0, present)) : at
+    onPin(pin === m && at === m ? null : m)
     setTip(null)
   }
 
