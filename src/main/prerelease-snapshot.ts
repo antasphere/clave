@@ -51,6 +51,7 @@ export const SNAPSHOT_DIRS = [
   'agent-state', // agent-state-manager.ts
   'session-history', // session-history/service.ts
   'exchange-capture', // exchange-capture/service.ts
+  'activity', // activity/service.ts
   'linked-documents' // linked-documents/runtime.ts
 ] as const
 

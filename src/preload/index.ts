@@ -1100,6 +1100,14 @@ const electronAPI = {
   captureTabClosed: (payload: { ts: string; session: unknown; by: string; closer: unknown }) =>
     ipcRenderer.send('exchange:capture-tab-closed', payload),
 
+  // The activity record (PRDCT-3384, PRDCT-3385): the fold over a local day
+  // range, and the push when a row lands. A Codex terminal's run state, read
+  // off its title by the renderer, is reported to main here.
+  activityQuery: (from: string, to: string) => ipcRenderer.invoke('activity:query', { from, to }),
+  onActivityChanged: (callback: () => void) => createIpcListener<[]>('activity:changed', callback),
+  sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') =>
+    ipcRenderer.invoke('sessions:report-state', id, state),
+
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.
   historyStamp: (row: unknown) => ipcRenderer.send('history:stamp', row),

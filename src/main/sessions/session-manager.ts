@@ -28,6 +28,11 @@ interface Entry {
   background: BackgroundTask[]
 }
 
+/** What an adoption knows beyond the record. */
+export interface AdoptMeta {
+  model?: string | null
+}
+
 /** Process-independent registry: closing a view never kills its provider. */
 export class SessionManager {
   private adapters = new Map<string, SessionAdapter>()
@@ -35,6 +40,7 @@ export class SessionManager {
   private pending = new Set<string>()
   private removed = new Set<(id: string) => void>()
   private all = new Set<(id: string, stream: SessionStream) => void>()
+  private added = new Set<(session: Session, meta: AdoptMeta) => void>()
 
   registerAdapter(adapter: SessionAdapter): void {
     const previous = this.adapters.get(adapter.id)
@@ -70,7 +76,12 @@ export class SessionManager {
   }
 
   /** Registers an already prepared handle before its deferred PTY starts. */
-  adopt(session: Session, handle: SessionHandle, adapter: SessionAdapter): Session {
+  adopt(
+    session: Session,
+    handle: SessionHandle,
+    adapter: SessionAdapter,
+    meta: AdoptMeta = {}
+  ): Session {
     if (this.entries.has(session.id)) throw new Error(`Session already exists: ${session.id}`)
     const parsed = SessionSchema.parse(session)
     if (!adapter.transports.includes(parsed.transport))
@@ -94,6 +105,7 @@ export class SessionManager {
       this.forget(parsed.id)
       throw error
     }
+    for (const callback of this.added) this.notify(() => callback({ ...parsed }, meta))
     return { ...parsed }
   }
 
@@ -266,6 +278,15 @@ export class SessionManager {
     this.all.add(callback)
     return () => {
       this.all.delete(callback)
+    }
+  }
+
+  /** Every adoption, whichever transport: the activity recorder's open row.
+   *  `meta` carries what the record itself does not (the model asked for). */
+  subscribeAdded(callback: (session: Session, meta: AdoptMeta) => void): Unsubscribe {
+    this.added.add(callback)
+    return () => {
+      this.added.delete(callback)
     }
   }
 
