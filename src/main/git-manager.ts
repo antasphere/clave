@@ -1066,23 +1066,86 @@ ${diff}`
   }
 
   /**
-   * Pull the repos that have something to pull — and ONLY those.
+   * Bring a branch level with the upstream commits it ALREADY HAS, without
+   * touching the network: a fast-forward to `@{u}`, else a rebase onto it with
+   * the working tree stashed around it, aborted (and the stash put back) when
+   * it stops on a conflict.
    *
-   * The caller passes the repos the panel shows as behind, and this pulls them.
-   * It does not fetch, and it does not go looking: discovery is `refreshRemotes`,
-   * which is what the panel's refresh runs, and the ↓ badges are its result.
+   * This is Pull all's integration, and the reason it is not `git pull`: the ↓
+   * badge is read from the remote-tracking ref, so the commits it promises are
+   * on disk already. Fetching them again bought nothing but a round trip per
+   * repo, and on a network where GitHub's git hosts hang one connection in
+   * three (measured 9 October 2026), every hung round trip was a repo the
+   * click silently left behind (PRDCT-3372).
+   */
+  async integrateUpstream(cwd: string): Promise<void> {
+    const git = simpleGit(cwd)
+    // A rebase, merge or cherry-pick the user left halfway is theirs: the
+    // abort below would throw it away (verifier round 1, finding 3).
+    const busy = await this.operationInProgress(git, cwd)
+    if (busy) throw new Error(`A ${busy} is already in progress here; finish or abort it first`)
+    try {
+      await git.raw(['merge', '--ff-only', '@{u}'])
+    } catch {
+      try {
+        await git.raw(['rebase', '--autostash', '@{u}'])
+      } catch (err) {
+        try {
+          await git.rebase(['--abort'])
+        } catch {
+          /* abort may fail if the rebase never started */
+        }
+        throw err
+      }
+    }
+    // `rebase --autostash` exits 0 when the rebase lands but putting the
+    // uncommitted changes back conflicts: the tree is left with conflict
+    // markers and the stash entry kept. That is not "pulled" — it is the one
+    // outcome the user must act on (verifier round 1, finding 1).
+    const unmerged = (await git.raw(['diff', '--name-only', '--diff-filter=U']))
+      .split('\n')
+      .filter(Boolean)
+    if (unmerged.length > 0) {
+      throw new Error(
+        `CONFLICT: the incoming commits are in, but your uncommitted changes clash with them in ${unmerged.join(', ')}; they are in the working tree with conflict markers, and a copy is kept in the stash`
+      )
+    }
+  }
+
+  /** Which multi-step git operation, if any, is stopped halfway in `cwd`. */
+  private async operationInProgress(
+    git: ReturnType<typeof simpleGit>,
+    cwd: string
+  ): Promise<string | null> {
+    const markers: Array<[string, string]> = [
+      ['rebase-merge', 'rebase'],
+      ['rebase-apply', 'rebase'],
+      ['MERGE_HEAD', 'merge'],
+      ['CHERRY_PICK_HEAD', 'cherry-pick'],
+      ['REVERT_HEAD', 'revert']
+    ]
+    for (const [marker, name] of markers) {
+      const p = path.resolve(cwd, (await git.raw(['rev-parse', '--git-path', marker])).trim())
+      if (fs.existsSync(p)) return name
+    }
+    return null
+  }
+
+  /**
+   * Pull the repos that have something to pull — and ONLY those, from what
+   * they already know.
    *
-   * The split is the whole design. `behind` can only come from a repo's
-   * remote-tracking refs, so a button that "makes sure" by fetching every repo
-   * first is a button that talks to N remotes — a minute of network on a folder
-   * of ninety, for a click the user made because they could see three arrows.
-   * Pull all now pulls those three, in about a second, and finding the fourth is
-   * the refresh's job.
+   * The caller passes the repos the panel shows as behind, and this brings
+   * each one level with its remote-tracking ref (`integrateUpstream`). It does
+   * not fetch and it does not go looking: discovery is `refreshRemotes`, which
+   * is what the panel's refresh runs, and the ↓ badges are its result. So Pull
+   * all needs no network at all, and a remote that is slow, unreachable or
+   * gone cannot stop it.
    *
    * Status is still re-read here rather than trusted from the renderer: the
    * check is local and instant, and it is what stops a stale click (the repo was
-   * pulled in a terminal a moment ago) turning into a pointless `git pull`. A
-   * repo that turns out not to be behind is skipped, not an error.
+   * pulled in a terminal a moment ago) turning into a pointless merge. A repo
+   * that turns out not to be behind is skipped, not an error.
    */
   async magicPull(
     repoPaths: string[],
@@ -1127,7 +1190,7 @@ ${diff}`
       const result = resultFor(repoPath)
       try {
         progress.step(repoPath, 'pulling')
-        await this.pull(repoPath, 'auto')
+        await this.integrateUpstream(repoPath)
         result.pulled = true
       } catch (err) {
         result.error = err instanceof Error ? err.message : String(err)

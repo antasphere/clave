@@ -6,6 +6,7 @@
  */
 import { createContext, useContext } from 'react'
 import type { GitBatchOp, GitBatchPhase } from '../../../../shared/git-batch'
+import type { BatchFailure, BatchSummary } from '../../lib/pull-summary'
 
 export interface BatchState {
   running: boolean
@@ -18,6 +19,9 @@ export interface BatchState {
   repoName: string | null
   /** The summary held for a few seconds after the batch ends. */
   resultMessage: string | null
+  /** The repos the batch could not do, with why. Non-empty, the summary is
+   *  held until dismissed instead of for a few seconds. */
+  failures: BatchFailure[]
 }
 
 export const IDLE: BatchState = {
@@ -27,7 +31,8 @@ export const IDLE: BatchState = {
   done: 0,
   total: 0,
   repoName: null,
-  resultMessage: null
+  resultMessage: null,
+  failures: []
 }
 
 /** How long the finished summary stays on screen. */
@@ -35,8 +40,11 @@ export const RESULT_HOLD_MS = 4000
 
 export interface GitBatchContextValue {
   state: BatchState
-  /** Run one batch op. `task` returns the summary line to hold afterwards. */
-  run: (op: GitBatchOp, task: () => Promise<string>) => Promise<void>
+  /** Run one batch op. `task` returns the summary line to hold afterwards,
+   *  or the line with the repos that failed. */
+  run: (op: GitBatchOp, task: () => Promise<string | BatchSummary>) => Promise<void>
+  /** Put away a held summary (the failures' one is held until this). */
+  dismiss: () => void
 }
 
 export const GitBatchContext = createContext<GitBatchContextValue | null>(null)

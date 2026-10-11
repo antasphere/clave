@@ -1200,6 +1200,34 @@ body,
   white-space: nowrap;
 }
 
+/* A summary naming the repos a batch could not do: held until clicked away,
+   so it is a button, and red, so it is not read as the routine count. Its
+   tooltip carries each repo's reason. */
+.panel-progress-count.is-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-red-400);
+  cursor: pointer;
+}
+.panel-progress-count.is-failed:hover {
+  filter: brightness(1.2);
+}
+.panel-progress-dismiss {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+.panel-progress-failures {
+  max-width: 360px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .panel-bar-label {
   display: flex;
   align-items: center;
