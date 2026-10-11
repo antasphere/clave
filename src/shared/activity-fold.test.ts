@@ -8,6 +8,7 @@ import {
   isDayKey,
   localDayKey,
   minuteOfDay,
+  primePaintSeqForTests,
   spansFromRows
 } from './activity-fold'
 
@@ -210,6 +211,13 @@ describe('foldActivity', () => {
     expect(day.hours.agentMin[10]).toBe(2)
     expect(day.sessions[0].workingMin).toBeCloseTo(0.75)
     expect(day.totals.bursts).toBe(2)
+    // The stamp's sequence at its 32-bit limit: the dedupe must survive the wrap.
+    primePaintSeqForTests(0x7ffffffe)
+    const [again] = foldActivity(rows, DAY, DAY, NOW)
+    expect(again.working[600]).toBe(1)
+    expect(again.totals.peak).toBe(1)
+    const [once] = foldActivity(rows, DAY, DAY, NOW)
+    expect(once.totals.peak).toBe(1)
   })
 
   it('a tab reopened on a later day is live on that day only', () => {

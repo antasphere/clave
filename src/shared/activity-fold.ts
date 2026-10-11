@@ -316,10 +316,23 @@ function nextMinute(t: number): number {
  *  (two bursts inside one minute, the clock's repeated hour). */
 const paintStamp = new Int32Array(MINUTES_PER_DAY)
 let paintSeq = 0
+const PAINT_SEQ_MAX = 0x7fffffff
+
+/** Test hook: start the sequence near its limit, to prove the wrap. */
+export function primePaintSeqForTests(seq: number): void {
+  paintSeq = seq
+}
 
 /** Count each wall-clock minute touched by the intervals into `cells`, once
- *  per call: the intervals of one session count that session once a minute. */
+ *  per call: the intervals of one session count that session once a minute.
+ *  The sequence is a 32-bit stamp: at its limit (about a day of the page
+ *  open under continuous activity) the scratch is cleared and it starts
+ *  over, so the dedupe never stops silently. */
 function paint(cells: number[], intervals: Interval[], dayStart: number, dayEnd: number): void {
+  if (paintSeq >= PAINT_SEQ_MAX) {
+    paintStamp.fill(0)
+    paintSeq = 0
+  }
   const seq = ++paintSeq
   for (const iv of intervals) {
     const c = clip(iv, dayStart, dayEnd)
