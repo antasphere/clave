@@ -5,12 +5,7 @@ import { ActivityRecorder } from './recorder'
 import { backfillRows } from './backfill'
 import { CaptureStore } from '../exchange-capture/store'
 import { SessionLedger } from '../session-history/ledger'
-import {
-  foldActivity,
-  localDayKey,
-  localDayStart,
-  type DayActivity
-} from '../../shared/activity-fold'
+import { foldActivity, isDayKey, type DayActivity } from '../../shared/activity-fold'
 import type { ActivityRow } from '../../shared/activity-model'
 
 /**
@@ -89,14 +84,6 @@ export interface ActivityAnswer {
   now: number
   skipped: number
   file: string
-}
-
-const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/
-
-/** A real local day: the shape, and a round trip through the calendar (a
- *  13th month or a 45th day would otherwise be answered as some later day). */
-function isDayKey(key: unknown): key is string {
-  return typeof key === 'string' && DAY_KEY.test(key) && localDayKey(localDayStart(key)) === key
 }
 
 /** The fold over the rows in memory, for a local day range (inclusive). A

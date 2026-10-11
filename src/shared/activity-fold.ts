@@ -129,6 +129,16 @@ export function localDayStart(key: string): number {
   return new Date(y, m - 1, d).getTime()
 }
 
+/** A real local day key: the shape, and a round trip through the calendar
+ *  (a 13th month or a 45th day would otherwise be read as some later day). */
+export function isDayKey(key: unknown): key is string {
+  return (
+    typeof key === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(key) &&
+    localDayKey(localDayStart(key)) === key
+  )
+}
+
 /** Every local day key from `from` to `to`, inclusive, in order. */
 export function dayRange(from: string, to: string): string[] {
   const keys: string[] = []
@@ -301,20 +311,34 @@ function nextMinute(t: number): number {
   return Math.floor(t / 60_000) * 60_000 + 60_000
 }
 
-/** Count each wall-clock minute touched by each interval into `cells`, each
- *  interval counting a cell once even where the clock repeats an hour. */
+/** The dedupe scratch of `paint`: one call is one session (or the app), and
+ *  a cell counts once per call however many of the call's intervals touch it
+ *  (two bursts inside one minute, the clock's repeated hour). */
+const paintStamp = new Int32Array(MINUTES_PER_DAY)
+let paintSeq = 0
+
+/** Count each wall-clock minute touched by the intervals into `cells`, once
+ *  per call: the intervals of one session count that session once a minute. */
 function paint(cells: number[], intervals: Interval[], dayStart: number, dayEnd: number): void {
-  const stamp = new Int32Array(MINUTES_PER_DAY).fill(-1)
-  intervals.forEach((iv, i) => {
+  const seq = ++paintSeq
+  for (const iv of intervals) {
     const c = clip(iv, dayStart, dayEnd)
-    if (!c) return
+    if (!c) continue
     for (let t = c[0]; t < c[1]; t = nextMinute(t)) {
       const m = Math.min(MINUTES_PER_DAY - 1, Math.floor(minuteOfDay(t)))
-      if (stamp[m] === i) continue
-      stamp[m] = i
+      if (paintStamp[m] === seq) continue
+      paintStamp[m] = seq
       cells[m]++
     }
-  })
+  }
+}
+
+/** Real minutes of a set of intervals, in milliseconds on the clock of the
+ *  epoch: a burst across a clock change is as long as it really was. */
+function realMinutes(intervals: Interval[]): number {
+  let total = 0
+  for (const [a, b] of intervals) total += (b - a) / 60_000
+  return total
 }
 
 function median(values: number[]): number | null {
@@ -322,12 +346,6 @@ function median(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-}
-
-function sumMinutes(intervals: [number, number][]): number {
-  let total = 0
-  for (const [a, b] of intervals) total += b - a
-  return total
 }
 
 /** One day's picture from the spans. */
@@ -367,13 +385,15 @@ export function foldDay(day: string, spans: SessionSpan[], app: Interval[]): Day
       cwd: span.cwd,
       model: span.model,
       tracked: span.tracked,
-      live: span.close === null,
+      // Live on the day the open stretch reaches, not on an earlier day of
+      // a tab reopened since.
+      live: span.close === null && span.opens[span.opens.length - 1][0] < dayEnd,
       open: [om[0][0], om[om.length - 1][1]],
       opens: om,
       working: wm,
       blocked: bm,
-      workingMin: sumMinutes(wm),
-      blockedMin: sumMinutes(bm)
+      workingMin: realMinutes(w),
+      blockedMin: realMinutes(b)
     })
   }
   paint(appCells, app, dayStart, dayEnd)

@@ -5,6 +5,7 @@ import {
   dayRange,
   daysBack,
   foldActivity,
+  isDayKey,
   localDayKey,
   minuteOfDay,
   spansFromRows
@@ -194,6 +195,34 @@ describe('foldActivity', () => {
     expect(summary.sessions).toEqual(day.sessions)
   })
 
+  it('two bursts of one session inside one minute count that session once', () => {
+    const rows = [
+      open('a', at(10, 0)),
+      state('a', at(10, 0, 5), 'working'),
+      state('a', at(10, 0, 20), 'idle'),
+      state('a', at(10, 0, 40), 'working'),
+      state('a', at(10, 1, 10), 'idle')
+    ]
+    const [day] = foldActivity(rows, DAY, DAY, NOW)
+    expect(day.working[600]).toBe(1)
+    expect(day.working[601]).toBe(1)
+    expect(day.totals.peak).toBe(1)
+    expect(day.hours.agentMin[10]).toBe(2)
+    expect(day.sessions[0].workingMin).toBeCloseTo(0.75)
+    expect(day.totals.bursts).toBe(2)
+  })
+
+  it('a tab reopened on a later day is live on that day only', () => {
+    const rows = [
+      open('a', at(9, 0, 0, 10)),
+      close('a', at(10, 0, 0, 10)),
+      open('a', at(9, 0, 0, 11))
+    ]
+    const [d10, d11] = foldActivity(rows, '2026-10-10', DAY, NOW)
+    expect(d10.sessions[0].live).toBe(false)
+    expect(d11.sessions[0].live).toBe(true)
+  })
+
   it('a burst crossing midnight is split between the two days', () => {
     const rows = [
       open('a', at(23, 50, 0, 10)),
@@ -233,6 +262,11 @@ describe('foldActivity', () => {
     const from = daysBack(new Date(2026, 2, 30, 0, 30).getTime(), 7)
     expect(from).toBe('2026-03-24')
     expect(dayRange(from, '2026-03-30')).toHaveLength(7)
+    expect(isDayKey('2026-10-11')).toBe(true)
+    expect(isDayKey('2026-13-45')).toBe(false)
+    expect(isDayKey('2026-02-30')).toBe(false)
+    expect(isDayKey('2026-1-1')).toBe(false)
+    expect(isDayKey(20261011)).toBe(false)
   })
 
   it('a legacy span with no close is cut by the backfill, and an empty range is empty days', () => {

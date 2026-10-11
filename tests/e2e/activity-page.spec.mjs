@@ -155,6 +155,24 @@ export async function run(t) {
       ),
       await win.locator('[data-activity-tape] .activity-tape-closed').count()
     )
+    const hatches = await win
+      .locator('[data-activity-tape] .activity-tape-closed')
+      .evaluateAll((els) =>
+        els.map((el) =>
+          [parseFloat(el.style.left), parseFloat(el.style.width)].map(
+            (v) => Math.round(v * 100) / 100
+          )
+        )
+      )
+    t.check(
+      'the hatches cover midnight to nine and one to midnight, nothing under the open session',
+      JSON.stringify(hatches) ===
+        JSON.stringify([
+          [0, 37.5],
+          [54.17, 45.83]
+        ]),
+      JSON.stringify(hatches)
+    )
     const sum = (await win.locator('.activity-day-sum').textContent()) ?? ''
     t.check(
       'the day header sums two hours of agent time and 8 % covered',
