@@ -18,7 +18,14 @@ import {
   rangeBounds,
   rangeTotals,
   modelLabel,
-  streak
+  streak,
+  activitySummary,
+  fmtDayMonth,
+  laneDetails,
+  laneOrder,
+  mondayOf,
+  plural,
+  weeklyTrend
 } from './activity-shape'
 
 // Sunday 11 October 2026, mid-afternoon, local time.
@@ -279,5 +286,141 @@ describe('modelLabel', () => {
     expect(modelLabel('opus', 'claude')).toBe('Opus')
     expect(modelLabel('gpt-5-codex', 'codex')).toBe('gpt-5-codex')
     expect(modelLabel(null, 'claude')).toBe('Claude Code')
+  })
+})
+
+describe('laneOrder', () => {
+  it('reads by first burst, then the tracked sessions that never worked, then the untracked', () => {
+    const late = session({ id: 'late', open: [0, 600], working: [[500, 520]] })
+    const early = session({
+      id: 'early',
+      open: [300, 900],
+      working: [
+        [700, 710],
+        [310, 320]
+      ]
+    })
+    const idle = session({ id: 'idle', open: [10, 50], working: [], workingMin: 0 })
+    const pi = session({ id: 'pi', provider: 'pi', tracked: false, open: [5, 50], working: [] })
+    const idleLater = session({ id: 'idle2', open: [20, 50], working: [], workingMin: 0 })
+    expect(laneOrder([pi, idleLater, late, idle, early]).map((s) => s.id)).toEqual([
+      'early',
+      'late',
+      'idle',
+      'idle2',
+      'pi'
+    ])
+  })
+})
+
+describe('laneDetails', () => {
+  it('names the project, the model, the time and the bursts', () => {
+    const s = session({
+      name: 'build',
+      model: 'claude-opus-5-5',
+      working: [
+        [603.4, 640],
+        [800, 881.2]
+      ],
+      workingMin: 72,
+      blockedMin: 6,
+      live: true
+    })
+    expect(laneDetails(s)).toEqual([
+      'build',
+      'alpha',
+      'Opus 5.5',
+      'working 1 h 12 · waiting 6 min',
+      'first burst 10:03 · last 14:41',
+      'still open'
+    ])
+  })
+
+  it('leaves the model out when none was asked for, and the bursts when none ran', () => {
+    const s = session({ model: null, working: [], workingMin: 0 })
+    expect(laneDetails(s)).toEqual(['one', 'alpha', 'working 0 min · waiting 0 min'])
+  })
+
+  it('gives an untracked agent its open time', () => {
+    const s = session({ provider: 'pi', tracked: false, model: null, working: [], open: [60, 180] })
+    expect(laneDetails(s)[2]).toBe('open 2 h 00, run state not known')
+  })
+})
+
+describe('weeklyTrend', () => {
+  it('folds the days into ISO weeks, Monday first', () => {
+    expect(mondayOf('2026-10-11')).toBe('2026-10-05') // a Sunday
+    expect(mondayOf('2026-10-05')).toBe('2026-10-05')
+    expect(mondayOf('2026-10-01')).toBe('2026-09-28')
+    const days = [
+      day('2026-09-30', { coverageMin: 144, peak: 3, agentMin: 200 }),
+      day('2026-10-01', { coverageMin: 432, peak: 9, agentMin: 500 }),
+      day('2026-10-04', { coverageMin: 0, peak: 0, agentMin: 0 }),
+      day('2026-10-05', { coverageMin: 0, peak: 0, agentMin: 0 }),
+      day('2026-10-06', { coverageMin: 0, peak: 0, agentMin: 0 })
+    ]
+    const weeks = weeklyTrend(days)
+    expect(weeks.map((w) => w.monday)).toEqual(['2026-09-28', '2026-10-05'])
+    const [a, b] = weeks
+    expect(a.days).toBe(3)
+    expect(a.avgCoveragePct).toBeCloseTo((0.1 + 0.3 + 0) / 3)
+    expect(a.peak).toBe(9)
+    expect(a.agentMin).toBe(700)
+    expect(a.target).toBe('2026-10-01')
+    expect(a.monthLabel).toBe('Oct')
+    // A week without any agent time opens on its Monday, and holds no first.
+    expect(b.target).toBe('2026-10-05')
+    expect(b.monthLabel).toBeNull()
+    expect(b.avgCoveragePct).toBe(0)
+  })
+
+  it('crosses a year', () => {
+    const weeks = weeklyTrend([day('2026-12-31'), day('2027-01-03'), day('2027-01-04')])
+    expect(weeks.map((w) => [w.monday, w.days, w.monthLabel])).toEqual([
+      ['2026-12-28', 2, 'Jan'],
+      ['2027-01-04', 1, null]
+    ])
+  })
+})
+
+describe('activitySummary', () => {
+  it('says what one day held', () => {
+    const d = day('2026-10-11', { agentMin: 485, peak: 6 }, [
+      session({ id: 'a', workingMin: 400 }),
+      session({ id: 'b', workingMin: 85 })
+    ])
+    expect(activitySummary([d])).toBe('Sessions worked 8 h 05 across 2 sessions, up to 6 at once.')
+    expect(activitySummary([day('2026-10-11', {}, [session({ workingMin: 0 })])])).toBe(
+      'No session worked that day.'
+    )
+    expect(
+      activitySummary([day('2026-10-11', { agentMin: 30, peak: 1 }, [session({ workingMin: 30 })])])
+    ).toBe('Sessions worked 30 min across 1 session, up to 1 at once.')
+  })
+
+  it('averages a range over its days with activity', () => {
+    const days = [
+      day('2026-10-09', { agentMin: 600, peak: 15 }, [
+        session({ id: 'a', workingMin: 300 }),
+        session({ id: 'b', workingMin: 300 }),
+        session({ id: 'c', workingMin: 0 })
+      ]),
+      day('2026-10-10', { agentMin: 0 }),
+      day('2026-10-11', { agentMin: 370, peak: 4 }, [session({ id: 'a', workingMin: 370 })])
+    ]
+    expect(activitySummary(days)).toBe(
+      'On an average active day, sessions worked 8 h 05 across 2 sessions, up to 15 at once; 2 of 3 days had activity.'
+    )
+    expect(activitySummary([day('2026-10-10'), day('2026-10-11')])).toBe(
+      'No session worked in these 2 days.'
+    )
+  })
+})
+
+describe('the small words', () => {
+  it('writes one and many, and a day with its month', () => {
+    expect(plural(1, 'session')).toBe('1 session')
+    expect(plural(0, 'day')).toBe('0 days')
+    expect(fmtDayMonth('2026-04-06')).toBe('6 April')
   })
 })

@@ -10,7 +10,8 @@ import {
   localDayKey,
   localDayStart,
   minuteOfDay,
-  type DayActivity
+  type DayActivity,
+  type DaySession
 } from '../../../../shared/activity-fold'
 
 export { daysBack, localDayKey, localDayStart, minuteOfDay, MINUTES_PER_DAY }
@@ -208,6 +209,111 @@ function basename(cwd: string): string {
   return parts[parts.length - 1] ?? ''
 }
 
+/** The order the lanes read in: the sessions that worked by their first
+ *  burst, then the tracked ones that never worked, then the agents whose run
+ *  state is not known (Pi, terminals), those two by the moment they opened. */
+export function laneOrder<T extends Pick<DaySession, 'working' | 'open' | 'tracked'>>(
+  sessions: T[]
+): T[] {
+  const group = (s: T): number => (s.working.length > 0 ? 0 : s.tracked ? 1 : 2)
+  const start = (s: T): number =>
+    s.working.length > 0 ? Math.min(...s.working.map(([a]) => a)) : s.open[0]
+  return [...sessions].sort(
+    (a, b) => group(a) - group(b) || start(a) - start(b) || a.open[0] - b.open[0]
+  )
+}
+
+/** What a selected lane says under the lanes, part by part: the name, the
+ *  project, the model when one was asked for, the time worked and waited,
+ *  the first burst and the end of the last, and whether it is still open. */
+export function laneDetails(s: DaySession): string[] {
+  const parts = [s.name || providerLabel(s.provider), basename(s.cwd) || 'No folder']
+  if (s.model) parts.push(modelLabel(s.model, s.provider))
+  parts.push(
+    s.tracked
+      ? `working ${fmtMinutes(s.workingMin)} · waiting ${fmtMinutes(s.blockedMin)}`
+      : `open ${fmtMinutes(s.opens.reduce((t, [a, b]) => t + (b - a), 0))}, run state not known`
+  )
+  if (s.working.length > 0) {
+    const first = Math.min(...s.working.map(([a]) => a))
+    const last = Math.max(...s.working.map(([, b]) => b))
+    parts.push(`first burst ${fmtClock(first)} · last ${fmtClock(last)}`)
+  }
+  if (s.live) parts.push('still open')
+  return parts
+}
+
+/** The Monday that opens a day's ISO week. */
+export function mondayOf(key: string): string {
+  return nextDay(key, -weekdayIndex(key))
+}
+
+export interface WeekBar {
+  /** The Monday the week starts on. */
+  monday: string
+  /** How many of the week's days the range carries. */
+  days: number
+  /** The mean of those days' coverage, 0..1. */
+  avgCoveragePct: number
+  /** Most sessions working in one minute, over the week. */
+  peak: number
+  agentMin: number
+  /** The day a click opens: the week's busiest, or its Monday when none worked. */
+  target: string
+  /** The short month when the week holds the first of a month, else null. */
+  monthLabel: string | null
+}
+
+/** The range one bar per ISO week (Monday first), oldest first. */
+export function weeklyTrend(days: DayActivity[]): WeekBar[] {
+  const weeks = new Map<string, DayActivity[]>()
+  for (const d of days) {
+    const monday = mondayOf(d.day)
+    const list = weeks.get(monday)
+    if (list) list.push(d)
+    else weeks.set(monday, [d])
+  }
+  return [...weeks.keys()].sort().map((monday) => {
+    const list = weeks.get(monday) ?? []
+    let first: string | null = null
+    for (let i = 0; i < 7 && first === null; i++) {
+      const key = nextDay(monday, i)
+      if (key.endsWith('-01')) first = key
+    }
+    return {
+      monday,
+      days: list.length,
+      avgCoveragePct:
+        list.reduce((t, d) => t + d.totals.coverageMin / MINUTES_PER_DAY, 0) / list.length,
+      peak: Math.max(0, ...list.map((d) => d.totals.peak)),
+      agentMin: list.reduce((t, d) => t + d.totals.agentMin, 0),
+      target: busiestDay(list)?.day ?? monday,
+      monthLabel: first ? fmtMonthShort(first) : null
+    }
+  })
+}
+
+/** One sentence under the tiles. One day: what it held. A range: its average
+ *  day with activity, the most at once, and how many days had any. */
+export function activitySummary(days: DayActivity[]): string {
+  const t = rangeTotals(days)
+  if (days.length === 1) {
+    if (t.agentMin <= 0) return 'No session worked that day.'
+    return `Sessions worked ${fmtMinutes(t.agentMin)} across ${plural(t.sessionsWorked, 'session')}, up to ${t.peak} at once.`
+  }
+  const active = days.filter((d) => d.totals.agentMin > 0)
+  if (active.length === 0) return `No session worked in these ${plural(days.length, 'day')}.`
+  const avgAgent = t.agentMin / active.length
+  const avgSessions = Math.max(
+    1,
+    Math.round(
+      active.reduce((n, d) => n + d.sessions.filter((s) => s.workingMin > 0).length, 0) /
+        active.length
+    )
+  )
+  return `On an average active day, sessions worked ${fmtMinutes(avgAgent)} across ${plural(avgSessions, 'session')}, up to ${t.peak} at once; ${t.daysWithActivity} of ${plural(days.length, 'day')} had activity.`
+}
+
 export interface ProjectShare {
   cwd: string
   label: string
@@ -321,6 +427,11 @@ export function modelLabel(model: string | null, provider: string): string {
 
 // ── Words and numbers, as the house writes them ────────────────────────────
 
+/** `1 session`, `3 sessions`. */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
 /** `2 h 05`, `48 min`, `0 min`. */
 export function fmtMinutes(min: number): string {
   const total = Math.max(0, Math.round(min))
@@ -375,6 +486,12 @@ const MONTHS = [
 export function fmtDayLong(key: string): string {
   const d = new Date(localDayStart(key))
   return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`
+}
+
+/** `6 April`. */
+export function fmtDayMonth(key: string): string {
+  const d = new Date(localDayStart(key))
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
 
 /** `11 Oct`. */

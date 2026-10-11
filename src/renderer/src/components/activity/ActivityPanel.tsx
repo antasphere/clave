@@ -1,7 +1,9 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode
@@ -15,11 +17,13 @@ import { useActivity } from './use-activity'
 import {
   MINUTES_PER_DAY,
   OTHER_PROJECTS,
+  activitySummary,
   busiestDay,
   byProject,
   byProvider,
   fmtClock,
   fmtDayLong,
+  fmtDayMonth,
   fmtDayShort,
   fmtLeverage,
   fmtMinutes,
@@ -28,13 +32,18 @@ import {
   fmtSeconds,
   heatmapCells,
   hourProfile,
+  laneDetails,
+  laneOrder,
   localDayKey,
   minuteOfDay,
   modelLabel,
+  mondayOf,
   nextDay,
+  plural,
   providerLabel,
   rangeTotals,
   streak,
+  weeklyTrend,
   type ActivityRange,
   type HeatCell
 } from './activity-shape'
@@ -105,10 +114,9 @@ function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] 
 }
 
 interface TipState {
+  /** The pointer, in the host's own coordinates. */
   x: number
   y: number
-  /** Past the host's middle: the tip opens to the left of the pointer. */
-  flip: boolean
   /** The first line is the value, the rest what it is about. */
   lines: string[]
 }
@@ -116,40 +124,57 @@ interface TipState {
 /** The pointer in a host's own coordinates, as a tip. */
 function tipAt(e: ReactPointerEvent<Element>, host: HTMLElement | null, lines: string[]): TipState {
   const rect = host?.getBoundingClientRect()
-  const x = rect ? e.clientX - rect.left : 0
-  const y = rect ? e.clientY - rect.top : 0
-  return { x, y, flip: rect ? x > rect.width / 2 : false, lines }
+  return {
+    x: rect ? e.clientX - rect.left : 0,
+    y: rect ? e.clientY - rect.top : 0,
+    lines
+  }
+}
+
+const TIP_GAP = 12
+
+/** The tip itself, placed beside the pointer and held inside its host: it
+ *  opens up and to the right, flips where that would leave the host, and is
+ *  clamped to the host's box on both axes, so no edge ever cuts it. */
+function TipBox({ tip }: { tip: TipState }): ReactElement {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const host = el?.offsetParent
+    if (!el || !(host instanceof HTMLElement)) return
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    let left = tip.x + TIP_GAP
+    if (left + w > host.clientWidth) left = tip.x - TIP_GAP - w
+    left = Math.max(0, Math.min(host.clientWidth - w, left))
+    let top = tip.y - TIP_GAP - h
+    if (top < 0) top = tip.y + TIP_GAP
+    top = Math.max(0, Math.min(host.clientHeight - h, top))
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+  })
+  return (
+    <motion.div
+      ref={ref}
+      className="menu-surface activity-tip"
+      data-activity-tip
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.14, ease: 'easeOut' }}
+    >
+      {tip.lines.map((line, i) => (
+        <span key={i} className={i === 0 ? 'activity-tip-lead' : 'activity-tip-line'}>
+          {line}
+        </span>
+      ))}
+    </motion.div>
+  )
 }
 
 /** The hover readout: a menu surface over the chart, fading in and out. */
 function Tip({ tip }: { tip: TipState | null }): ReactElement {
-  return (
-    <AnimatePresence>
-      {tip && (
-        <div
-          key="tip"
-          className="activity-tip-anchor"
-          data-flip={tip.flip ? 'true' : undefined}
-          style={{ left: tip.x, top: tip.y }}
-        >
-          <motion.div
-            className="menu-surface activity-tip"
-            data-activity-tip
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14, ease: 'easeOut' }}
-          >
-            {tip.lines.map((line, i) => (
-              <span key={i} className={i === 0 ? 'activity-tip-lead' : 'activity-tip-line'}>
-                {line}
-              </span>
-            ))}
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
-  )
+  return <AnimatePresence>{tip && <TipBox key="tip" tip={tip} />}</AnimatePresence>
 }
 
 /** A column with its top corners rounded and its foot square on the baseline. */
@@ -176,6 +201,14 @@ function RangeFade({ range, children }: { range: string; children: ReactNode }):
   )
 }
 
+/** The day's drawing comes in with the day: a short fade keyed on it, so a
+ *  refresh of the same day never flickers. */
+const DAY_FADE = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  transition: { duration: 0.14, ease: 'easeOut' }
+} as const
+
 function Skeleton(): ReactElement {
   return (
     <div className="settings-card activity-skeleton" aria-label="Reading the record">
@@ -189,57 +222,68 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`
-}
-
 // ── a. The range in numbers ───────────────────────────────────────────────
 
 function Headlines({ days }: { days: DayActivity[] }): ReactElement {
   const t = rangeTotals(days)
   const n = days.length
   return (
-    <div className="usage-tiles activity-tiles" data-activity-headlines>
-      <StatTile
-        label="Coverage"
-        value={fmtPct(n > 0 ? t.coverageMin / (n * MINUTES_PER_DAY) : 0)}
-        detail={`${fmtMinutes(t.coverageMin)} of ${plural(n, 'day')}`}
-      />
-      <StatTile
-        label="At once"
-        value={plural(t.peak, 'session')}
-        detail="most working in one minute"
-      />
-      <StatTile
-        label="Agent time"
-        value={fmtMinutes(t.agentMin)}
-        detail={`across ${plural(t.sessionsWorked, 'session')}`}
-      />
-      <StatTile
-        label="Leverage"
-        value={fmtLeverage(t.leverage)}
-        detail="agent time per hour with a session working"
-      />
-      <StatTile
-        label="Waited on you"
-        value={fmtMinutes(t.blockedMin)}
-        detail={`median wait ${fmtSeconds(t.medianBlockedS)}`}
-      />
-      <StatTile
-        label="Sessions"
-        value={String(t.sessionsOpened)}
-        detail={`median burst ${fmtSeconds(t.medianBurstS)}`}
-      />
-    </div>
+    <>
+      <div className="usage-tiles activity-tiles" data-activity-headlines>
+        <StatTile
+          label="Coverage"
+          value={fmtPct(n > 0 ? t.coverageMin / (n * MINUTES_PER_DAY) : 0)}
+          detail={`${fmtMinutes(t.coverageMin)} of ${plural(n, 'day')}`}
+          hint="The share of the range's time with at least one session working."
+        />
+        <StatTile
+          label="At once"
+          value={plural(t.peak, 'session')}
+          detail="most working in one minute"
+          hint="The most sessions working in the same minute."
+        />
+        <StatTile
+          label="Agent time"
+          value={fmtMinutes(t.agentMin)}
+          detail={`across ${plural(t.sessionsWorked, 'session')}`}
+          hint="The sum of every session's working time."
+        />
+        <StatTile
+          label="Leverage"
+          value={fmtLeverage(t.leverage)}
+          detail="agent time per hour with a session working"
+          hint="Agent time divided by the time with at least one session working: how many sessions worked at once on average."
+        />
+        <StatTile
+          label="Waited on you"
+          value={fmtMinutes(t.blockedMin)}
+          detail={`median wait ${fmtSeconds(t.medianBlockedS)}`}
+          hint="Time a session sat on a question or a permission."
+        />
+        <StatTile
+          label="Sessions"
+          value={String(t.sessionsOpened)}
+          detail={`median burst ${fmtSeconds(t.medianBurstS)}`}
+          hint="Sessions opened in the range."
+        />
+      </div>
+      <p className="activity-summary" data-activity-summary>
+        {activitySummary(days)}
+      </p>
+    </>
   )
 }
 
 // ── b. The day: the tape and the lanes ────────────────────────────────────
 
 const TAPE_H = 96
-const LANE_H = 22
+const LANE_H = 28
 const MAX_LANES = 40
+const MAX_CHIPS = 8
 const TICKS = [0, 3, 6, 9, 12, 15, 18, 21, 24]
+/** The narrowest a burst is drawn, and a wait, in pixels. */
+const MIN_BURST_PX = 3
+const MIN_WAIT_PX = 2
 
 /** Contiguous runs of minutes where `keep(m)` holds, as [start, end). */
 function runs(keep: (m: number) => boolean, limit = MINUTES_PER_DAY): [number, number][] {
@@ -281,6 +325,30 @@ function stepLine(top: number[], y: (v: number) => number): string {
   return d
 }
 
+/** An interval widened to `minW` and kept inside the day, as [x, width]. */
+function span([a, b]: [number, number], minW: number): [number, number] {
+  const w = Math.max(minW, b - a)
+  return [Math.max(0, Math.min(a, MINUTES_PER_DAY - w)), w]
+}
+
+/** One session's bursts on the tape: a strip on the baseline as tall as the
+ *  one session it adds, and a faint band over the height of the tape. */
+function focusPaths(
+  s: DaySession,
+  unit: number,
+  y: (v: number) => number
+): { strip: string; band: string } {
+  const h = Math.max(MIN_BURST_PX, TAPE_H - y(1))
+  let strip = ''
+  let band = ''
+  for (const iv of s.working) {
+    const [x, w] = span(iv, MIN_BURST_PX * unit)
+    strip += `M${x},${TAPE_H}V${TAPE_H - h}H${x + w}V${TAPE_H}Z`
+    band += `M${x},0V${TAPE_H}H${x + w}V0Z`
+  }
+  return { strip, band }
+}
+
 function workingAt(s: DaySession, m: number): boolean {
   return s.working.some(([a, b]) => a < m + 1 && b > m)
 }
@@ -295,7 +363,43 @@ function sessionName(s: DaySession): string {
   return s.name || providerLabel(s.provider)
 }
 
-function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): ReactElement {
+/** The minute of the day under the pointer. */
+function minuteAt(e: ReactPointerEvent<Element> | ReactMouseEvent<Element>): number | null {
+  const rect = e.currentTarget.getBoundingClientRect()
+  if (rect.width <= 0) return null
+  return Math.max(
+    0,
+    Math.min(
+      MINUTES_PER_DAY - 1,
+      Math.floor(((e.clientX - rect.left) / rect.width) * MINUTES_PER_DAY)
+    )
+  )
+}
+
+interface LaneLink {
+  /** The lane drawn over the tape: the one hovered, else the one selected. */
+  focus: DaySession | null
+  selectedId: string | null
+  onHoverLane: (id: string | null) => void
+  onSelectLane: (id: string) => void
+}
+
+function Tape({
+  day,
+  nowMin,
+  unit,
+  pin,
+  onPin,
+  link
+}: {
+  day: DayActivity
+  nowMin: number | null
+  /** viewBox units per pixel of the plot. */
+  unit: number
+  pin: number | null
+  onPin: (minute: number | null) => void
+  link: LaneLink
+}): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
   const [tip, setTip] = useState<TipState | null>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -317,15 +421,18 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
           nowMin === null ? MINUTES_PER_DAY : Math.ceil(nowMin)
         )
       : []
+  const focus = link.focus ? focusPaths(link.focus, unit, y) : null
+  const pinnedNames = pin === null ? [] : laneOrder(day.sessions.filter((s) => workingAt(s, pin)))
 
   const onMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    if (rect.width <= 0) return
-    const m = Math.max(
-      0,
-      Math.min(MINUTES_PER_DAY - 1, Math.floor(((e.clientX - rect.left) / rect.width) * 1440))
-    )
+    const m = minuteAt(e)
+    if (m === null) return
     setHover(m)
+    // A held minute keeps its readout under the tape: no tip over it.
+    if (pin !== null) {
+      setTip(null)
+      return
+    }
     const names = day.sessions.filter((s) => workingAt(s, m)).map(sessionName)
     const lines = [`${fmtClock(m)} · ${working[m]} working · ${open[m]} open`]
     const who = namesLine(names)
@@ -334,6 +441,14 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
   }
   const onLeave = (): void => {
     setHover(null)
+    setTip(null)
+  }
+  const onClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    const at = minuteAt(e)
+    if (at === null) return
+    // On today a click past the present holds the last minute there is.
+    const m = nowMin !== null ? Math.min(at, Math.max(0, Math.floor(nowMin))) : at
+    onPin(pin === m ? null : m)
     setTip(null)
   }
 
@@ -349,6 +464,7 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
           className="activity-tape-plot"
           onPointerMove={onMove}
           onPointerLeave={onLeave}
+          onClick={onClick}
           data-activity-tape
         >
           {closed.map(([a, b]) => (
@@ -384,17 +500,33 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
               className="activity-baseline"
               vectorEffect="non-scaling-stroke"
             />
-            <path d={stepArea(working, empty, y)} className="activity-tape-working" />
-            <path
-              d={stepLine(working, y)}
-              className="activity-tape-working-edge"
-              vectorEffect="non-scaling-stroke"
-            />
-            <path d={stepArea(stacked, working, y)} className="activity-tape-blocked" />
+            <motion.g key={day.day} {...DAY_FADE}>
+              <path d={stepArea(working, empty, y)} className="activity-tape-working" />
+              <path
+                d={stepLine(working, y)}
+                className="activity-tape-working-edge"
+                vectorEffect="non-scaling-stroke"
+              />
+              <path d={stepArea(stacked, working, y)} className="activity-tape-blocked" />
+            </motion.g>
+            {focus && (
+              <g data-activity-tape-focus={link.focus?.id}>
+                <path d={focus.band} className="activity-tape-focus-band" />
+                <path d={focus.strip} className="activity-tape-focus" />
+              </g>
+            )}
           </svg>
-          {hover !== null && (
+          {pin !== null && (
             <span
               className="activity-hairline"
+              data-pinned="true"
+              style={{ left: `${((pin + 0.5) / 1440) * 100}%` }}
+            />
+          )}
+          {hover !== null && hover !== pin && (
+            <span
+              className="activity-hairline"
+              data-light={pin !== null ? 'true' : undefined}
               style={{ left: `${((hover + 0.5) / 1440) * 100}%` }}
             />
           )}
@@ -410,6 +542,36 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
             </span>
           ))}
         </div>
+        <div className="activity-readout-row">
+          {pin !== null ? (
+            <div className="activity-readout" data-activity-readout>
+              <span className="activity-readout-lead">
+                {`${fmtClock(pin)} · ${working[pin]} working · ${open[pin]} open`}
+              </span>
+              {pinnedNames.slice(0, MAX_CHIPS).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="badge badge-muted activity-readout-chip"
+                  data-selected={link.selectedId === s.id ? 'true' : undefined}
+                  title={[sessionName(s), basename(s.cwd)].filter(Boolean).join(' · ')}
+                  onPointerEnter={() => link.onHoverLane(s.id)}
+                  onPointerLeave={() => link.onHoverLane(null)}
+                  onClick={() => link.onSelectLane(s.id)}
+                >
+                  {sessionName(s)}
+                </button>
+              ))}
+              {pinnedNames.length > MAX_CHIPS && (
+                <span className="activity-readout-more">+{pinnedNames.length - MAX_CHIPS}</span>
+              )}
+            </div>
+          ) : (
+            <p className="activity-readout-hint">
+              Click the tape to hold a minute, a lane to follow one session.
+            </p>
+          )}
+        </div>
         <Tip tip={tip} />
       </div>
     </div>
@@ -419,29 +581,35 @@ function Tape({ day, nowMin }: { day: DayActivity; nowMin: number | null }): Rea
 function Lane({
   session,
   unit,
+  dim,
+  selected,
   onHover,
-  onLeave
+  onLeave,
+  onSelect
 }: {
   session: DaySession
   /** viewBox units per pixel of the track. */
   unit: number
+  dim: boolean
+  selected: boolean
   onHover: (e: ReactPointerEvent<HTMLDivElement>, s: DaySession) => void
   onLeave: () => void
+  onSelect: (s: DaySession) => void
 }): ReactElement {
-  const minW = 2 * unit
   const bar = (
-    [a, b]: [number, number],
+    iv: [number, number],
+    minPx: number,
     className: string,
     attrs: Record<string, string> = {}
   ): ReactElement => {
-    const w = Math.max(minW, b - a)
+    const [x, w] = span(iv, minPx * unit)
     return (
       <rect
-        key={`${className}-${a}`}
-        x={Math.min(a, MINUTES_PER_DAY - w)}
-        y={4}
+        key={`${className}-${iv[0]}`}
+        x={x}
+        y={7}
         width={w}
-        height={LANE_H - 8}
+        height={LANE_H - 14}
         rx={2 * unit}
         ry={2}
         className={className}
@@ -449,47 +617,66 @@ function Lane({
       />
     )
   }
+  // The project, unless the name already is it (a terminal named for its folder).
+  const project = basename(session.cwd)
+  const sub = [
+    project !== sessionName(session) ? project : null,
+    session.model ? modelLabel(session.model, session.provider) : null
+  ]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <div
       className="activity-lane"
       data-activity-lane
       data-session-id={session.id}
       data-tracked={session.tracked ? 'true' : 'false'}
+      data-selected={selected ? 'true' : undefined}
+      data-dim={dim ? 'true' : undefined}
       onPointerMove={(e) => onHover(e, session)}
       onPointerLeave={onLeave}
+      onClick={() => onSelect(session)}
     >
       <div
         className="activity-lane-label"
         title={[sessionName(session), session.cwd, session.model].filter(Boolean).join(' · ')}
       >
         <span className="activity-lane-dot" />
-        <span className="activity-lane-name">{sessionName(session)}</span>
+        <span className="activity-lane-text">
+          <span className="activity-lane-name">{sessionName(session)}</span>
+          {sub && <span className="activity-lane-sub">{sub}</span>}
+        </span>
       </div>
       <svg
         viewBox={`0 0 ${MINUTES_PER_DAY} ${LANE_H}`}
         preserveAspectRatio="none"
         className="activity-lane-track"
       >
-        {session.opens.map(([a, b]) => (
-          <rect
-            key={`open-${a}`}
-            x={Math.min(a, MINUTES_PER_DAY - minW)}
-            y={9}
-            width={Math.max(minW, b - a)}
-            height={4}
-            rx={2 * unit}
-            ry={2}
-            className="activity-lane-open"
-          />
-        ))}
-        {session.working.map((iv) => bar(iv, 'activity-lane-burst', { 'data-activity-burst': '' }))}
-        {session.blocked.map((iv) => bar(iv, 'activity-lane-wait'))}
+        {session.opens.map((iv) => {
+          const [x, w] = span(iv, MIN_WAIT_PX * unit)
+          return (
+            <rect
+              key={`open-${iv[0]}`}
+              x={x}
+              y={12}
+              width={w}
+              height={4}
+              rx={2 * unit}
+              ry={2}
+              className="activity-lane-open"
+            />
+          )
+        })}
+        {session.working.map((iv) =>
+          bar(iv, MIN_BURST_PX, 'activity-lane-burst', { 'data-activity-burst': '' })
+        )}
+        {session.blocked.map((iv) => bar(iv, MIN_WAIT_PX, 'activity-lane-wait'))}
         {session.live && (
           <rect
-            x={Math.max(0, session.open[1] - minW)}
-            y={4}
-            width={minW}
-            height={LANE_H - 8}
+            x={Math.max(0, session.open[1] - MIN_BURST_PX * unit)}
+            y={7}
+            width={MIN_BURST_PX * unit}
+            height={LANE_H - 14}
             className="activity-lane-live"
           />
         )}
@@ -498,37 +685,118 @@ function Lane({
   )
 }
 
-function Lanes({ day, width }: { day: DayActivity; width: number }): ReactElement {
+function Lanes({
+  day,
+  shown,
+  width,
+  link,
+  focusId
+}: {
+  day: DayActivity
+  shown: DaySession[]
+  width: number
+  link: LaneLink
+  focusId: string | null
+}): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
   const [tip, setTip] = useState<TipState | null>(null)
-  const chosen =
-    day.sessions.length > MAX_LANES
-      ? [...day.sessions].sort((a, b) => b.workingMin - a.workingMin).slice(0, MAX_LANES)
-      : day.sessions
-  const shown = [...chosen].sort((a, b) => a.open[0] - b.open[0])
   const unit = width > 0 ? MINUTES_PER_DAY / width : 1
+  const selected = shown.find((s) => s.id === link.selectedId) ?? null
   const onHover = (e: ReactPointerEvent<HTMLDivElement>, s: DaySession): void => {
+    link.onHoverLane(s.id)
     setTip(
       tipAt(e, hostRef.current, [
         sessionName(s),
-        [basename(s.cwd), s.model].filter(Boolean).join(' · '),
         s.tracked
           ? `${fmtMinutes(s.workingMin)} working · ${fmtMinutes(s.blockedMin)} waiting`
-          : `open ${fmtMinutes(s.open[1] - s.open[0])}, run state not known`
+          : `open ${fmtMinutes(s.open[1] - s.open[0])}, run state not known`,
+        link.selectedId === s.id ? 'Click to let go' : 'Click to follow on the tape'
       ])
     )
   }
+  const onLeave = (): void => {
+    link.onHoverLane(null)
+    setTip(null)
+  }
   return (
-    <div className="activity-lanes" ref={hostRef} data-activity-lanes>
-      {shown.map((s) => (
-        <Lane key={s.id} session={s} unit={unit} onHover={onHover} onLeave={() => setTip(null)} />
-      ))}
-      {day.sessions.length > MAX_LANES && (
-        <p className="activity-lanes-more">and {day.sessions.length - MAX_LANES} more</p>
-      )}
-      <Tip tip={tip} />
-    </div>
+    <>
+      <motion.div className="activity-lanes" ref={hostRef} data-activity-lanes {...DAY_FADE}>
+        {shown.map((s) => (
+          <Lane
+            key={s.id}
+            session={s}
+            unit={unit}
+            dim={focusId !== null && focusId !== s.id}
+            selected={link.selectedId === s.id}
+            onHover={onHover}
+            onLeave={onLeave}
+            onSelect={(lane) => link.onSelectLane(lane.id)}
+          />
+        ))}
+        {day.sessions.length > MAX_LANES && (
+          <p className="activity-lanes-more">and {day.sessions.length - MAX_LANES} more</p>
+        )}
+        <Tip tip={tip} />
+      </motion.div>
+      <AnimatePresence initial={false}>
+        {selected && (
+          <motion.p
+            key={selected.id}
+            className="activity-lane-details"
+            data-activity-lane-details
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14, ease: 'easeOut' }}
+          >
+            {laneDetails(selected).map((part, i) => (
+              <span key={i} className={i === 0 ? 'activity-lane-details-lead' : undefined}>
+                {part}
+              </span>
+            ))}
+          </motion.p>
+        )}
+      </AnimatePresence>
+    </>
   )
+}
+
+/** The page's keys, live while the Activity page is on screen and the focus
+ *  is not in a field: ← and → step a day, T comes back to today, Esc lets
+ *  go of what is held. The settings view stays mounted when hidden, so the
+ *  page's own box being laid out is the test that it is on screen. */
+const NOT_OURS =
+  'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [role="listbox"]'
+
+function useDayKeys(
+  rootRef: React.RefObject<HTMLElement | null>,
+  handle: (key: 'prev' | 'next' | 'today' | 'escape') => boolean
+): void {
+  const handleRef = useRef(handle)
+  useLayoutEffect(() => {
+    handleRef.current = handle
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      const root = rootRef.current
+      if (!root || root.offsetParent === null) return
+      if (e.target instanceof Element && e.target.closest(NOT_OURS)) return
+      const key =
+        e.key === 'ArrowLeft'
+          ? 'prev'
+          : e.key === 'ArrowRight'
+            ? 'next'
+            : (e.key === 't' || e.key === 'T') && !e.shiftKey
+              ? 'today'
+              : e.key === 'Escape'
+                ? 'escape'
+                : null
+      if (key && handleRef.current(key)) e.preventDefault()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [rootRef])
 }
 
 function DayCard({
@@ -544,17 +812,61 @@ function DayCard({
   now: number
   onSelect: (day: string) => void
 }): ReactElement {
+  const rootRef = useRef<HTMLDivElement>(null)
   const [measureRef, plotWidth] = useWidth<HTMLDivElement>()
+  const [pin, setPin] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
+  // Another day lets go of the minute and the lane held on this one, however
+  // the day changed (the arrows, the heatmap, the trend).
+  const [heldDay, setHeldDay] = useState(selectedDay)
+  if (heldDay !== selectedDay) {
+    setHeldDay(selectedDay)
+    setPin(null)
+    setSelectedId(null)
+    setHoverId(null)
+  }
   const stale = !day || day.day !== selectedDay
   const isToday = selectedDay === today
+  const isYesterday = selectedDay === nextDay(today, -1)
   const nowMin = day && day.day === today ? minuteOfDay(now) : null
+  const unit = plotWidth > 0 ? MINUTES_PER_DAY / plotWidth : 1
+
+  const sessions = day?.sessions ?? []
+  const chosen =
+    sessions.length > MAX_LANES
+      ? [...sessions].sort((a, b) => b.workingMin - a.workingMin).slice(0, MAX_LANES)
+      : sessions
+  const shown = laneOrder(chosen)
+  const focusId = hoverId ?? selectedId
+  const link: LaneLink = {
+    focus: shown.find((s) => s.id === focusId) ?? null,
+    selectedId,
+    onHoverLane: setHoverId,
+    onSelectLane: (id) => setSelectedId((cur) => (cur === id ? null : id))
+  }
+
+  useDayKeys(rootRef, (key) => {
+    if (key === 'prev') onSelect(nextDay(selectedDay, -1))
+    else if (key === 'next') {
+      if (selectedDay < today) onSelect(nextDay(selectedDay, 1))
+    } else if (key === 'today') {
+      if (!isToday) onSelect(today)
+    } else {
+      if (pin === null && selectedId === null) return false
+      setPin(null)
+      setSelectedId(null)
+    }
+    return true
+  })
+
   return (
-    <div className="settings-card activity-card" data-activity-day={selectedDay}>
+    <div className="settings-card activity-card" data-activity-day={selectedDay} ref={rootRef}>
       <div className="activity-day-head">
         <button
           className="btn-icon btn-icon-md"
           aria-label="Previous day"
-          title="Previous day"
+          title="Previous day (←)"
           data-activity-day-prev
           onClick={() => onSelect(nextDay(selectedDay, -1))}
         >
@@ -563,16 +875,27 @@ function DayCard({
         <span className="activity-day-title" data-activity-day-title>
           {isToday ? 'Today' : fmtDayLong(selectedDay)}
         </span>
+        {isYesterday && <span className="activity-day-suffix">yesterday</span>}
         <button
           className="btn-icon btn-icon-md"
           aria-label="Next day"
-          title="Next day"
+          title="Next day (→)"
           data-activity-day-next
           disabled={selectedDay >= today}
           onClick={() => onSelect(nextDay(selectedDay, 1))}
         >
           <ChevronRightIcon className="w-4 h-4" />
         </button>
+        {!isToday && (
+          <button
+            className="panel-tab"
+            title="Back to today (T)"
+            data-activity-day-today
+            onClick={() => onSelect(today)}
+          >
+            Today
+          </button>
+        )}
         {day && !stale && day.sessions.length > 0 && (
           <span className="activity-day-sum">
             {fmtMinutes(day.totals.agentMin)} agent time ·{' '}
@@ -592,8 +915,15 @@ function DayCard({
           <p className="activity-empty">No session ran that day.</p>
         ) : (
           <>
-            <Tape day={day} nowMin={nowMin} />
-            <Lanes day={day} width={plotWidth} />
+            <Tape day={day} nowMin={nowMin} unit={unit} pin={pin} onPin={setPin} link={link} />
+            <Lanes
+              key={day.day}
+              day={day}
+              shown={shown}
+              width={plotWidth}
+              link={link}
+              focusId={link.focus?.id ?? null}
+            />
           </>
         )}
       </div>
@@ -778,49 +1108,102 @@ function HourCard({ days }: { days: DayActivity[] }): ReactElement {
   )
 }
 
-// ── e. Day by day ─────────────────────────────────────────────────────────
+// ── e. Day by day, or week by week over the year ──────────────────────────
 
 const DOTS_H = 28
 
+interface TrendBar {
+  key: string
+  pct: number
+  peak: number
+  /** The day a click opens. */
+  target: string
+  selected: boolean
+  /** The axis label this bar may carry, before the spacing rule. */
+  label: string | null
+  tip: string[]
+  attrs: Record<string, string>
+}
+
+function dayBars(days: DayActivity[], selectedDay: string): TrendBar[] {
+  const n = days.length
+  return days.map((d, i) => {
+    const pct = d.totals.coverageMin / MINUTES_PER_DAY
+    // The first of each month, and every seventh day back from the last when
+    // the range is short enough for them.
+    const weekly = n <= 7 || (n <= 31 && (n - 1 - i) % 7 === 0)
+    return {
+      key: d.day,
+      pct,
+      peak: d.totals.peak,
+      target: d.day,
+      selected: d.day === selectedDay,
+      label: d.day.endsWith('-01') || weekly ? fmtDayShort(d.day) : null,
+      tip: [
+        `${fmtPct(pct)} covered · ${plural(d.totals.peak, 'session')} at once`,
+        `${fmtMinutes(d.totals.agentMin)} agent time`,
+        fmtDayLong(d.day)
+      ],
+      attrs: { 'data-activity-trend-day': d.day }
+    }
+  })
+}
+
+function weekBars(days: DayActivity[], selectedDay: string): TrendBar[] {
+  const selectedWeek = mondayOf(selectedDay)
+  return weeklyTrend(days).map((w) => ({
+    key: w.monday,
+    pct: w.avgCoveragePct,
+    peak: w.peak,
+    target: w.target,
+    selected: w.monday === selectedWeek,
+    label: w.monthLabel,
+    tip: [
+      `Week of ${fmtDayMonth(w.monday)}`,
+      `${fmtPct(w.avgCoveragePct)} covered on average · up to ${w.peak} at once · ${fmtMinutes(w.agentMin)} agent time`
+    ],
+    attrs: { 'data-activity-trend-week': w.monday }
+  }))
+}
+
 function TrendCard({
   days,
+  range,
   selectedDay,
   onSelect
 }: {
   days: DayActivity[]
+  range: ActivityRange
   selectedDay: string
   onSelect: (day: string) => void
 }): ReactElement {
   const [hostRef, width] = useWidth<HTMLDivElement>()
   const [tip, setTip] = useState<TipState | null>(null)
-  const n = days.length
-  const pct = days.map((d) => d.totals.coverageMin / MINUTES_PER_DAY)
-  const maxPct = Math.max(0.0001, ...pct)
-  const maxPeak = Math.max(1, ...days.map((d) => d.totals.peak))
+  const weekly = range === 'year'
+  const bars = weekly ? weekBars(days, selectedDay) : dayBars(days, selectedDay)
+  const n = bars.length
+  const maxPct = Math.max(0.0001, ...bars.map((b) => b.pct))
+  const maxPeak = Math.max(1, ...bars.map((b) => b.peak))
   const slot = n > 0 ? width / n : 0
   const barW = Math.min(24, Math.max(1, slot >= 6 ? slot - 2 : slot * 0.75))
   const dotR = Math.max(1.25, Math.min(4, slot * 0.3))
   const top = DOTS_H + 6
   const plotH = BARS_H
   const base = top + plotH
-  // Sparse labels: the first of each month, and every seventh day back from
-  // the last when the range is short enough for them; never two too close.
+  // Never two labels too close.
   const labels: { i: number; text: string }[] = []
-  for (let i = 0; i < n; i++) {
-    const key = days[i].day
-    const firstOfMonth = key.endsWith('-01')
-    const weekly = n <= 7 || (n <= 31 && (n - 1 - i) % 7 === 0)
-    if (!firstOfMonth && !weekly) continue
+  bars.forEach((b, i) => {
+    if (!b.label) return
     const x = i * slot + slot / 2
-    if (labels.length > 0 && x - (labels[labels.length - 1].i * slot + slot / 2) < 44) continue
-    labels.push({ i, text: fmtDayShort(key) })
-  }
+    if (labels.length > 0 && x - (labels[labels.length - 1].i * slot + slot / 2) < 44) return
+    labels.push({ i, text: b.label })
+  })
   return (
     <div className="settings-card activity-card">
       <div className="activity-legend" aria-hidden>
         <span className="activity-legend-item">
           <span className="activity-legend-bar" />
-          Share of the day covered
+          {weekly ? 'Share of the day covered, the week’s average' : 'Share of the day covered'}
         </span>
         <span className="activity-legend-item">
           <span className="activity-legend-dot" />
@@ -831,50 +1214,44 @@ function TrendCard({
         className="activity-bars"
         ref={hostRef}
         onPointerLeave={() => setTip(null)}
-        data-activity-trend
+        data-activity-trend={weekly ? 'week' : 'day'}
       >
         {width > 0 && n > 0 && (
           <svg
             width={width}
             height={base + BAR_LABEL_H}
             role="img"
-            aria-label="Coverage and most at once, day by day"
+            aria-label={
+              weekly
+                ? 'Coverage and most at once, week by week'
+                : 'Coverage and most at once, day by day'
+            }
           >
             <line x1={0} x2={width} y1={top} y2={top} className="activity-grid" />
             <text x={0} y={top - 3} className="activity-axis-text">
               {fmtPct(maxPct)}
             </text>
             <line x1={0} x2={width} y1={base} y2={base} className="activity-baseline" />
-            {days.map((d, i) => {
-              const bh = (pct[i] / maxPct) * (plotH - 2)
+            {bars.map((b, i) => {
+              const bh = (b.pct / maxPct) * (plotH - 2)
               const x = i * slot + (slot - barW) / 2
               const cx = i * slot + slot / 2
-              const cy = DOTS_H - 2 - (d.totals.peak / maxPeak) * (DOTS_H - 2 * dotR - 4) - dotR
+              const cy = DOTS_H - 2 - (b.peak / maxPeak) * (DOTS_H - 2 * dotR - 4) - dotR
               return (
-                <g key={d.day}>
+                <g key={b.key}>
                   <rect
                     x={i * slot}
                     y={0}
                     width={slot}
                     height={base}
                     className="activity-hit"
-                    data-selected={d.day === selectedDay ? 'true' : undefined}
-                    data-activity-trend-day={d.day}
-                    onClick={() => onSelect(d.day)}
-                    onPointerMove={(e) =>
-                      setTip(
-                        tipAt(e, hostRef.current, [
-                          `${fmtPct(pct[i])} covered · ${plural(d.totals.peak, 'session')} at once`,
-                          `${fmtMinutes(d.totals.agentMin)} agent time`,
-                          fmtDayLong(d.day)
-                        ])
-                      )
-                    }
+                    data-selected={b.selected ? 'true' : undefined}
+                    {...b.attrs}
+                    onClick={() => onSelect(b.target)}
+                    onPointerMove={(e) => setTip(tipAt(e, hostRef.current, b.tip))}
                   />
                   <path d={columnPath(x, base - bh, barW, bh)} className="activity-bar" />
-                  {d.totals.peak > 0 && (
-                    <circle cx={cx} cy={cy} r={dotR} className="activity-dot" />
-                  )}
+                  {b.peak > 0 && <circle cx={cx} cy={cy} r={dotR} className="activity-dot" />}
                 </g>
               )
             })}
@@ -999,7 +1376,13 @@ export function ActivityPanel({ range }: { range: ActivityRange }): ReactElement
     )
 
   return (
-    <div className="space-y-8" data-activity-page data-loading={a.loading ? 'true' : undefined}>
+    // Focusable so the page's keys have somewhere to land (useDayKeys).
+    <div
+      className="space-y-8 activity-page"
+      data-activity-page
+      tabIndex={-1}
+      data-loading={a.loading ? 'true' : undefined}
+    >
       {a.error && (
         <SettingsCallout
           tone="danger"
@@ -1064,13 +1447,18 @@ export function ActivityPanel({ range }: { range: ActivityRange }): ReactElement
 
       {shownRange !== 'today' && (
         <SettingsSection
-          title="Day by day"
-          description="How much of each day had a session working, and the most that worked at once."
+          title={shownRange === 'year' ? 'Week by week' : 'Day by day'}
+          description={
+            shownRange === 'year'
+              ? 'How much of the day a session was working, on average over each week, and the most that worked at once. Pick a week to open its busiest day.'
+              : 'How much of each day had a session working, and the most that worked at once.'
+          }
         >
           {ready ? (
             <RangeFade range={shownRange}>
               <TrendCard
                 days={a.summary ?? []}
+                range={shownRange}
                 selectedDay={a.selectedDay}
                 onSelect={a.setSelectedDay}
               />

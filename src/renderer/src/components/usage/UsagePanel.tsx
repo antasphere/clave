@@ -222,7 +222,8 @@ export function StatTile({
   value,
   detail,
   level,
-  full = false
+  full = false,
+  hint
 }: {
   label: string
   value: string
@@ -230,9 +231,11 @@ export function StatTile({
   level?: 'normal' | 'warning' | 'critical'
   /** At its limit already: the value says so, the warning icon would repeat it. */
   full?: boolean
+  /** The tile's plain definition, as a native tooltip. */
+  hint?: string
 }): ReactElement {
   return (
-    <div className="settings-card" data-level={level}>
+    <div className="settings-card" data-level={level} title={hint}>
       {/* One child, so the card's row seams never cut the tile. */}
       <div className="usage-tile">
         <span className="usage-tile-label">{label}</span>

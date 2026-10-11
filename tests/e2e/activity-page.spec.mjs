@@ -111,12 +111,78 @@ export async function run(t) {
       await until(async () => ((await coverage.textContent())?.trim() ?? '') === '1 %'),
       await coverage.textContent()
     )
+    const summary = win.locator('[data-activity-summary]')
+    t.check(
+      'the sentence under the tiles says how much worked, across how many, and how many at once',
+      await until(async () => {
+        const text = (await summary.textContent()) ?? ''
+        return text.includes('across') && text.includes('at once')
+      }),
+      await summary.textContent()
+    )
 
     const title = win.locator('[data-activity-day-title]')
     const prev = win.locator('[data-activity-day-prev]')
     const next = win.locator('[data-activity-day-next]')
     t.check('the day opens on Today', (await title.textContent()) === 'Today')
     t.check('the next-day button is disabled on today', await next.isDisabled())
+
+    // The page's keys, pressed on the page root: → stops at today, ← then →
+    // comes back, and the Today button shows only off today.
+    const page = win.locator('[data-activity-page]')
+    const todayButton = win.locator('[data-activity-day-today]')
+    t.check('no Today button on today', (await todayButton.count()) === 0)
+    await page.press('ArrowRight')
+    await pause(150)
+    t.check('→ on today stays on today', (await title.textContent()) === 'Today')
+    await page.press('ArrowLeft')
+    t.check(
+      '← goes to the previous day',
+      await until(async () => ((await title.textContent()) ?? 'Today') !== 'Today'),
+      await title.textContent()
+    )
+    t.check(
+      'yesterday says so beside its date',
+      ((await win.locator('.activity-day-suffix').textContent()) ?? '') === 'yesterday'
+    )
+    t.check('the Today button shows on yesterday', (await todayButton.count()) === 1)
+    await page.press('ArrowRight')
+    t.check(
+      '→ comes back to today',
+      await until(async () => (await title.textContent()) === 'Today'),
+      await title.textContent()
+    )
+    t.check('and the Today button goes', (await todayButton.count()) === 0)
+    await prev.click()
+    await todayButton.click()
+    t.check(
+      'the Today button brings today back',
+      await until(async () => (await title.textContent()) === 'Today'),
+      await title.textContent()
+    )
+
+    // A click on the tape holds the minute under it: the readout line under
+    // the tape, the hairline kept; Esc lets go. Just right of the middle, so
+    // the minute is past noon whatever the rounding of the centre.
+    const tape = win.locator('[data-activity-tape]')
+    const readout = win.locator('[data-activity-readout]')
+    t.check('nothing is held before a click', (await readout.count()) === 0)
+    const box = await tape.boundingBox()
+    await tape.click({ position: { x: box.width / 2 + 2, y: box.height / 2 } })
+    t.check(
+      'a click on the tape holds a minute with its readout',
+      await until(async () =>
+        /^\d\d:\d\d · \d+ working · \d+ open/.test((await readout.textContent()) ?? '')
+      ),
+      await readout.textContent().catch(() => null)
+    )
+    t.check(
+      'the held minute keeps its hairline',
+      (await win.locator('[data-activity-tape] .activity-hairline[data-pinned="true"]').count()) ===
+        1
+    )
+    await page.press('Escape')
+    t.check('Esc lets go of the minute', await until(async () => (await readout.count()) === 0))
 
     await prev.click()
     const yesterday = (await title.textContent()) ?? ''
@@ -178,6 +244,35 @@ export async function run(t) {
       'the day header sums two hours of agent time and 8 % covered',
       sum.startsWith('2 h 00 agent time · 8 % covered'),
       sum
+    )
+
+    // A click on the lane follows it: selected, its details under the lanes,
+    // its bursts over the tape.
+    await win.locator(seededLane).click()
+    const details = win.locator('[data-activity-lane-details]')
+    t.check(
+      'a click on the seeded lane selects it',
+      await until(
+        async () => (await win.locator(seededLane).getAttribute('data-selected')) === 'true'
+      )
+    )
+    t.check(
+      'and says how long it worked under the lanes',
+      await until(async () => ((await details.textContent()) ?? '').includes('working 2 h 00')),
+      await details.textContent().catch(() => null)
+    )
+    t.check(
+      'and draws its bursts over the tape',
+      (await win.locator('[data-activity-tape] .activity-tape-focus').count()) === 1
+    )
+    await win.locator(seededLane).click()
+    t.check(
+      'a second click lets the lane go',
+      await until(
+        async () =>
+          (await win.locator(seededLane).getAttribute('data-selected')) === null &&
+          (await details.count()) === 0
+      )
     )
 
     await next.click()
