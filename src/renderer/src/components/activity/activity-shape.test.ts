@@ -34,6 +34,7 @@ function session(over: Partial<DaySession> = {}): DaySession {
     tracked: true,
     live: false,
     open: [60, 180],
+    opens: over.open ? [over.open] : [[60, 180]],
     working: [[60, 120]],
     blocked: [],
     workingMin: 60,

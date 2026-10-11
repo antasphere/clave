@@ -29,7 +29,7 @@ import {
   heatmapCells,
   hourProfile,
   localDayKey,
-  localDayStart,
+  minuteOfDay,
   modelLabel,
   nextDay,
   providerLabel,
@@ -470,15 +470,18 @@ function Lane({
         preserveAspectRatio="none"
         className="activity-lane-track"
       >
-        <rect
-          x={session.open[0]}
-          y={9}
-          width={Math.max(minW, session.open[1] - session.open[0])}
-          height={4}
-          rx={2 * unit}
-          ry={2}
-          className="activity-lane-open"
-        />
+        {session.opens.map(([a, b]) => (
+          <rect
+            key={`open-${a}`}
+            x={Math.min(a, MINUTES_PER_DAY - minW)}
+            y={9}
+            width={Math.max(minW, b - a)}
+            height={4}
+            rx={2 * unit}
+            ry={2}
+            className="activity-lane-open"
+          />
+        ))}
         {session.working.map((iv) => bar(iv, 'activity-lane-burst', { 'data-activity-burst': '' }))}
         {session.blocked.map((iv) => bar(iv, 'activity-lane-wait'))}
         {session.live && (
@@ -544,7 +547,7 @@ function DayCard({
   const [measureRef, plotWidth] = useWidth<HTMLDivElement>()
   const stale = !day || day.day !== selectedDay
   const isToday = selectedDay === today
-  const nowMin = day && day.day === today ? (now - localDayStart(today)) / 60_000 : null
+  const nowMin = day && day.day === today ? minuteOfDay(now) : null
   return (
     <div className="settings-card activity-card" data-activity-day={selectedDay}>
       <div className="activity-day-head">

@@ -30,7 +30,10 @@ export async function openChat(
   suffix = 'chat-view',
   extraArgs = [],
   ready = '[data-testid="chat-view"] textarea:not(:disabled)',
-  env = {}
+  env = {},
+  /** Runs on the fresh user-data directory before the launch: a spec that
+   *  needs a file the app reads at boot (a record, a ledger) writes it here. */
+  beforeLaunch = null
 ) {
   const dir = fixturePath(`${suffix}`)
   const root = `${dir}-root`
@@ -41,6 +44,7 @@ export async function openChat(
     fresh: true
   })
   seedTrustedRoots(dir, [root])
+  if (beforeLaunch) await beforeLaunch(dir)
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
     env,

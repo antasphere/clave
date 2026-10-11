@@ -41,6 +41,8 @@ export class ActivityRecorder {
   private readonly onRow?: (row: ActivityRow) => void
   private readonly onError: (error: unknown) => void
   private rows: ActivityRow[] = []
+  /** Lines of the file that were not rows, counted at load. */
+  skippedLines = 0
   private offs: (() => void)[] = []
   private aliveTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
@@ -61,7 +63,9 @@ export class ActivityRecorder {
   /** Load the file, close a run that never quit, write this run's start,
    *  subscribe to the manager, and start the alive stamp. */
   start(source: RecorderSource): void {
-    this.rows = this.store.readAll().rows
+    const read = this.store.readAll()
+    this.rows = read.rows
+    this.skippedLines = read.skippedLines
     this.closePreviousRun()
     this.write({ v: 1, ts: this.iso(), kind: 'app', app: 'start' })
     this.offs.push(
@@ -110,11 +114,6 @@ export class ActivityRecorder {
     this.offs = []
     if (this.aliveTimer) clearInterval(this.aliveTimer)
     this.aliveTimer = null
-  }
-
-  /** Rows written by someone else into the same store (the backfill), kept in memory. */
-  absorb(rows: ActivityRow[]): void {
-    this.rows = [...this.rows, ...rows]
   }
 
   private closePreviousRun(): void {

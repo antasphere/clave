@@ -30,9 +30,13 @@ export interface SessionSpan {
   model: string | null
   /** The provider's run state is known (Claude, Codex); false for Pi and terminals. */
   tracked: boolean
+  /** The first open. */
   open: number
   /** null while the session is still open at `now`. */
   close: number | null
+  /** Every stretch the session was open: a tab restored at boot or respawned
+   *  on another account opens the same id again, and it stays one session. */
+  opens: Interval[]
   working: Interval[]
   blocked: Interval[]
 }
@@ -47,7 +51,10 @@ export interface DaySession {
   tracked: boolean
   /** Still open at `now`. */
   live: boolean
+  /** The envelope of the day's open stretches, in minutes of the day. */
   open: [number, number]
+  /** The open stretches themselves, for the lane's faint bar. */
+  opens: [number, number][]
   working: [number, number][]
   blocked: [number, number][]
   workingMin: number
@@ -102,7 +109,6 @@ export interface DayActivity {
   totals: DayTotals
 }
 
-const DAY_MS = 86_400_000
 /** The longest a working burst is believed: a turn that never got its idle
  *  word (a dropped hook, a tab closed days later) would otherwise read as
  *  days of work. Six hours is past any turn seen; a longer one is cut there. */
@@ -140,6 +146,7 @@ export function dayRange(from: string, to: string): string[] {
 
 interface OpenSession {
   span: SessionSpan
+  openSince: number
   workingSince: number | null
   blockedSince: number | null
 }
@@ -169,12 +176,15 @@ export function spansFromRows(
     .filter((x) => !Number.isNaN(x.t))
     .sort((a, b) => a.t - b.t)
   const open = new Map<string, OpenSession>()
+  const byId = new Map<string, SessionSpan>()
   const spans: SessionSpan[] = []
   const app: Interval[] = []
   let appSince: number | null = null
   const closeSession = (s: OpenSession, at: number): void => {
     closeBursts(s, at)
-    s.span.close = Math.max(at, s.span.open)
+    const end = Math.max(at, s.openSince)
+    s.span.close = end
+    if (end > s.openSince) s.span.opens.push([s.openSince, end])
     open.delete(s.span.id)
   }
   for (const { r, t } of sorted) {
@@ -194,6 +204,17 @@ export function spansFromRows(
     const id = r.id!
     if (r.kind === 'open') {
       if (open.has(id)) continue
+      const known = byId.get(id)
+      if (known) {
+        // The same tab again (restored at boot, respawned on another
+        // account): the one session opens a new stretch.
+        known.close = null
+        if (r.name) known.name = r.name
+        if (r.cwd && !known.cwd) known.cwd = r.cwd
+        if (r.model && !known.model) known.model = r.model
+        open.set(id, { span: known, openSince: t, workingSince: null, blockedSince: null })
+        continue
+      }
       const span: SessionSpan = {
         id,
         provider: r.provider ?? 'terminal',
@@ -203,11 +224,13 @@ export function spansFromRows(
         tracked: isTrackedProvider(r.provider),
         open: t,
         close: null,
+        opens: [],
         working: [],
         blocked: []
       }
       spans.push(span)
-      open.set(id, { span, workingSince: null, blockedSince: null })
+      byId.set(id, span)
+      open.set(id, { span, openSince: t, workingSince: null, blockedSince: null })
       continue
     }
     const s = open.get(id)
@@ -243,6 +266,7 @@ export function spansFromRows(
   for (const s of open.values()) {
     closeBursts(s, now)
     // still open: close stays null, the page reads it as live
+    if (now > s.openSince) s.span.opens.push([s.openSince, now])
   }
   if (appSince !== null && now > appSince) app.push([appSince, now])
   return { spans, app }
@@ -254,19 +278,43 @@ function clip(iv: Interval, start: number, end: number): Interval | null {
   return b > a ? [a, b] : null
 }
 
-function toMinutes(iv: Interval, dayStart: number): [number, number] {
-  return [(iv[0] - dayStart) / 60_000, (iv[1] - dayStart) / 60_000]
+/** The minute of the local day a moment falls in, as the clock on the wall
+ *  reads it (a float, seconds included). On the day the clocks go back the
+ *  repeated hour lands on the same cells twice; on the day they go forward
+ *  the missing hour leaves its cells empty. The page draws clock time. */
+export function minuteOfDay(ms: number): number {
+  const d = new Date(ms)
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + (ms % 1000) / 60_000
 }
 
-/** Count each minute touched by each interval into `cells`. */
+/** An interval of a day in minutes of that day; an end on the day's last
+ *  moment is 1440, never the next day's 0. */
+function toMinutes(iv: Interval, dayEnd: number): [number, number] {
+  const a = minuteOfDay(iv[0])
+  const b = iv[1] >= dayEnd ? MINUTES_PER_DAY : minuteOfDay(iv[1])
+  return [a, Math.max(a, b)]
+}
+
+/** The next whole-minute boundary after `t` (they align with the wall clock:
+ *  every zone offset is a whole number of minutes). */
+function nextMinute(t: number): number {
+  return Math.floor(t / 60_000) * 60_000 + 60_000
+}
+
+/** Count each wall-clock minute touched by each interval into `cells`, each
+ *  interval counting a cell once even where the clock repeats an hour. */
 function paint(cells: number[], intervals: Interval[], dayStart: number, dayEnd: number): void {
-  for (const iv of intervals) {
+  const stamp = new Int32Array(MINUTES_PER_DAY).fill(-1)
+  intervals.forEach((iv, i) => {
     const c = clip(iv, dayStart, dayEnd)
-    if (!c) continue
-    const first = Math.floor((c[0] - dayStart) / 60_000)
-    const last = Math.min(MINUTES_PER_DAY - 1, Math.ceil((c[1] - dayStart) / 60_000) - 1)
-    for (let m = first; m <= last; m++) cells[m]++
-  }
+    if (!c) return
+    for (let t = c[0]; t < c[1]; t = nextMinute(t)) {
+      const m = Math.min(MINUTES_PER_DAY - 1, Math.floor(minuteOfDay(t)))
+      if (stamp[m] === i) continue
+      stamp[m] = i
+      cells[m]++
+    }
+  })
 }
 
 function median(values: number[]): number | null {
@@ -283,12 +331,7 @@ function sumMinutes(intervals: [number, number][]): number {
 }
 
 /** One day's picture from the spans. */
-export function foldDay(
-  day: string,
-  spans: SessionSpan[],
-  app: Interval[],
-  now: number
-): DayActivity {
+export function foldDay(day: string, spans: SessionSpan[], app: Interval[]): DayActivity {
   const dayStart = localDayStart(day)
   const next = new Date(dayStart)
   const dayEnd = new Date(next.getFullYear(), next.getMonth(), next.getDate() + 1).getTime()
@@ -300,22 +343,23 @@ export function foldDay(
   const burstSeconds: number[] = []
   const blockedSeconds: number[] = []
   let sessionsOpened = 0
+  const inDay = (iv: Interval): Interval | null => clip(iv, dayStart, dayEnd)
   for (const span of spans) {
-    const end = span.close ?? now
-    const openClipped = clip([span.open, end], dayStart, dayEnd)
-    if (!openClipped) continue
+    const o = span.opens.map(inDay).filter((x): x is Interval => !!x)
+    if (o.length === 0) continue
     if (span.open >= dayStart && span.open < dayEnd) sessionsOpened++
-    const w = span.working.map((iv) => clip(iv, dayStart, dayEnd)).filter((x): x is Interval => !!x)
-    const b = span.blocked.map((iv) => clip(iv, dayStart, dayEnd)).filter((x): x is Interval => !!x)
-    paint(open, [openClipped], dayStart, dayEnd)
+    const w = span.working.map(inDay).filter((x): x is Interval => !!x)
+    const b = span.blocked.map(inDay).filter((x): x is Interval => !!x)
+    paint(open, o, dayStart, dayEnd)
     paint(working, w, dayStart, dayEnd)
     paint(blocked, b, dayStart, dayEnd)
     for (const iv of span.working)
       if (iv[0] >= dayStart && iv[0] < dayEnd) burstSeconds.push((iv[1] - iv[0]) / 1000)
     for (const iv of span.blocked)
       if (iv[0] >= dayStart && iv[0] < dayEnd) blockedSeconds.push((iv[1] - iv[0]) / 1000)
-    const wm = w.map((iv) => toMinutes(iv, dayStart))
-    const bm = b.map((iv) => toMinutes(iv, dayStart))
+    const om = o.map((iv) => toMinutes(iv, dayEnd))
+    const wm = w.map((iv) => toMinutes(iv, dayEnd))
+    const bm = b.map((iv) => toMinutes(iv, dayEnd))
     sessions.push({
       id: span.id,
       provider: span.provider,
@@ -324,7 +368,8 @@ export function foldDay(
       model: span.model,
       tracked: span.tracked,
       live: span.close === null,
-      open: toMinutes(openClipped, dayStart),
+      open: [om[0][0], om[om.length - 1][1]],
+      opens: om,
       working: wm,
       blocked: bm,
       workingMin: sumMinutes(wm),
@@ -392,13 +437,15 @@ export function foldActivity(
 ): DayActivity[] {
   const { spans, app } = spansFromRows(rows, now)
   return dayRange(from, to).map((day) => {
-    const folded = foldDay(day, spans, app, now)
+    const folded = foldDay(day, spans, app)
     if (detail) return folded
     return { ...folded, working: [], open: [], blocked: [], app: [] }
   })
 }
 
-/** The last local day key of a range `days` long ending today. */
+/** The first local day key of a range `days` long ending today, by calendar
+ *  day: a clock change inside the range neither adds nor drops a day. */
 export function daysBack(now: number, days: number): string {
-  return localDayKey(now - (days - 1) * DAY_MS)
+  const d = new Date(now)
+  return localDayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1)).getTime())
 }

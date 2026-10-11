@@ -9,10 +9,11 @@ import {
   daysBack,
   localDayKey,
   localDayStart,
+  minuteOfDay,
   type DayActivity
 } from '../../../../shared/activity-fold'
 
-export { daysBack, localDayKey, localDayStart, MINUTES_PER_DAY }
+export { daysBack, localDayKey, localDayStart, minuteOfDay, MINUTES_PER_DAY }
 
 export type ActivityRange = 'today' | '7d' | '30d' | 'year'
 
@@ -275,7 +276,7 @@ export function byProvider(days: DayActivity[]): ProviderShare[] {
         ids: new Set<string>()
       }
       entry.agentMin += s.tracked ? s.workingMin : 0
-      entry.openMin += s.open[1] - s.open[0]
+      for (const [a, b] of s.opens) entry.openMin += b - a
       entry.ids.add(s.id)
       map.set(key, entry)
     }
@@ -349,8 +350,8 @@ export function fmtLeverage(x: number | null): string {
 }
 
 /** `09:41` for a minute of the day. */
-export function fmtClock(minuteOfDay: number): string {
-  const m = Math.max(0, Math.min(MINUTES_PER_DAY, Math.floor(minuteOfDay)))
+export function fmtClock(minute: number): string {
+  const m = Math.max(0, Math.min(MINUTES_PER_DAY, Math.floor(minute)))
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 

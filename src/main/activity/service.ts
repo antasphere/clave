@@ -5,7 +5,12 @@ import { ActivityRecorder } from './recorder'
 import { backfillRows } from './backfill'
 import { CaptureStore } from '../exchange-capture/store'
 import { SessionLedger } from '../session-history/ledger'
-import { foldActivity, type DayActivity } from '../../shared/activity-fold'
+import {
+  foldActivity,
+  localDayKey,
+  localDayStart,
+  type DayActivity
+} from '../../shared/activity-fold'
 import type { ActivityRow } from '../../shared/activity-model'
 
 /**
@@ -88,11 +93,17 @@ export interface ActivityAnswer {
 
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/
 
+/** A real local day: the shape, and a round trip through the calendar (a
+ *  13th month or a 45th day would otherwise be answered as some later day). */
+function isDayKey(key: unknown): key is string {
+  return typeof key === 'string' && DAY_KEY.test(key) && localDayKey(localDayStart(key)) === key
+}
+
 /** The fold over the rows in memory, for a local day range (inclusive). A
  *  live session's name is the manager's current title, so a tab renamed
  *  since it opened reads under its name. */
 export function queryActivity(query: ActivityQuery): ActivityAnswer {
-  if (!DAY_KEY.test(query.from) || !DAY_KEY.test(query.to)) throw new Error('Invalid day range')
+  if (!isDayKey(query.from) || !isDayKey(query.to)) throw new Error('Invalid day range')
   const rec = startActivityRecord()
   const now = Date.now()
   const rows: ActivityRow[] = rec.all()
@@ -103,5 +114,5 @@ export function queryActivity(query: ActivityQuery): ActivityAnswer {
       const title = s.live ? titles.get(s.id) : undefined
       if (title) s.name = title
     }
-  return { days, now, skipped: 0, file: rec.store.filePath() }
+  return { days, now, skipped: rec.skippedLines, file: rec.store.filePath() }
 }

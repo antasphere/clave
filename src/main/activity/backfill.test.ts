@@ -80,6 +80,21 @@ describe('backfillRows', () => {
     expect(spans.find((s) => s.id === 'i')!.close).toBe(T0 + 3 * 60_000)
   })
 
+  it('state words after the close are dropped', () => {
+    const capture = [
+      { kind: 'session_state', ts: iso(0), state: 'working', session: identity('c') },
+      { kind: 'tab_closed', ts: iso(5), session: identity('c') },
+      { kind: 'session_state', ts: iso(9), state: 'idle', session: identity('c') }
+    ]
+    const { rows } = backfillRows(capture, [], NOW)
+    expect(rows.map((r) => `${r.kind}:${r.state ?? ''}`)).toEqual([
+      'open:',
+      'state:working',
+      'close:'
+    ])
+    expect(rows[2].ts).toBe(iso(5))
+  })
+
   it('exited maps to ended, rows after now are dropped, malformed lines are skipped', () => {
     const capture = [
       { kind: 'session_state', ts: iso(0), state: 'working', session: identity('x') },

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityRow } from './activity-model'
 import { normalizeActivityRow } from './activity-model'
-import { dayRange, foldActivity, localDayKey, spansFromRows } from './activity-fold'
+import {
+  dayRange,
+  daysBack,
+  foldActivity,
+  localDayKey,
+  minuteOfDay,
+  spansFromRows
+} from './activity-fold'
 
 // All times are built with the local Date constructor, so the expectations hold
 // in whatever zone the test runs: `at(h, m)` is that clock time on the 11th.
@@ -91,6 +98,35 @@ describe('spansFromRows', () => {
     expect(live.spans[0].working).toEqual([
       [Date.parse(at(1, 0, 0, 10)), Date.parse(at(7, 0, 0, 10))]
     ])
+  })
+
+  it('the same id opened again is one session with two open stretches', () => {
+    const rows = [
+      open('a', at(9, 0)),
+      state('a', at(9, 0), 'working'),
+      state('a', at(9, 10), 'idle'),
+      close('a', at(9, 30)),
+      open('a', at(10, 0)),
+      state('a', at(10, 0), 'working'),
+      state('a', at(10, 5), 'idle')
+    ]
+    const { spans } = spansFromRows(rows, NOW)
+    expect(spans).toHaveLength(1)
+    expect(spans[0].opens).toEqual([
+      [Date.parse(at(9, 0)), Date.parse(at(9, 30))],
+      [Date.parse(at(10, 0)), NOW]
+    ])
+    expect(spans[0].close).toBeNull()
+    expect(spans[0].working).toHaveLength(2)
+    const [day] = foldActivity(rows, DAY, DAY, NOW)
+    expect(day.sessions).toHaveLength(1)
+    expect(day.totals.sessionsOpened).toBe(1)
+    expect(day.sessions[0].opens).toEqual([
+      [540, 570],
+      [600, 23 * 60]
+    ])
+    expect(day.sessions[0].open).toEqual([540, 23 * 60])
+    expect(day.totals.openMin).toBe(30 + 13 * 60)
   })
 
   it('an untracked provider keeps its span and ignores state words', () => {
@@ -188,6 +224,15 @@ describe('foldActivity', () => {
     expect(d11.totals.agentMin).toBe(0)
     expect(d11.totals.appMin).toBe(14 * 60)
     expect(d11.sessions).toEqual([])
+  })
+
+  it('minutes of the day read as the clock on the wall, and a range counts calendar days', () => {
+    expect(minuteOfDay(new Date(2026, 9, 11, 9, 41, 30).getTime())).toBeCloseTo(581.5)
+    // Seven days ending 30 March: the clocks changed on the 29th in Europe,
+    // and the range is seven calendar days whatever the zone.
+    const from = daysBack(new Date(2026, 2, 30, 0, 30).getTime(), 7)
+    expect(from).toBe('2026-03-24')
+    expect(dayRange(from, '2026-03-30')).toHaveLength(7)
   })
 
   it('a legacy span with no close is cut by the backfill, and an empty range is empty days', () => {
