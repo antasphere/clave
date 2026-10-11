@@ -130,6 +130,14 @@ describe('foldActivity', () => {
     expect(day.working[10 * 60 + 20]).toBe(0)
     expect(day.sessions.map((s) => s.id)).toEqual(['a', 'b'])
     expect(day.sessions[1].working).toEqual([[605, 620]])
+    expect(day.hours.coverageMin[10]).toBe(20)
+    expect(day.hours.agentMin[10]).toBe(25)
+    expect(day.hours.coverageMin[11]).toBe(0)
+    const [summary] = foldActivity(rows, DAY, DAY, NOW, false)
+    expect(summary.working).toEqual([])
+    expect(summary.totals).toEqual(day.totals)
+    expect(summary.hours).toEqual(day.hours)
+    expect(summary.sessions).toEqual(day.sessions)
   })
 
   it('a burst crossing midnight is split between the two days', () => {

@@ -1103,7 +1103,8 @@ const electronAPI = {
   // The activity record (PRDCT-3384, PRDCT-3385): the fold over a local day
   // range, and the push when a row lands. A Codex terminal's run state, read
   // off its title by the renderer, is reported to main here.
-  activityQuery: (from: string, to: string) => ipcRenderer.invoke('activity:query', { from, to }),
+  activityQuery: (from: string, to: string, detail = true) =>
+    ipcRenderer.invoke('activity:query', { from, to, detail }),
   onActivityChanged: (callback: () => void) => createIpcListener<[]>('activity:changed', callback),
   sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') =>
     ipcRenderer.invoke('sessions:report-state', id, state),

@@ -75,6 +75,8 @@ export function quitActivityRecord(): void {
 export interface ActivityQuery {
   from: string
   to: string
+  /** Per-minute arrays wanted (one day for the tape); false for a range's totals. */
+  detail?: boolean
 }
 
 export interface ActivityAnswer {
@@ -94,7 +96,7 @@ export function queryActivity(query: ActivityQuery): ActivityAnswer {
   const rec = startActivityRecord()
   const now = Date.now()
   const rows: ActivityRow[] = rec.all()
-  const days = foldActivity(rows, query.from, query.to, now)
+  const days = foldActivity(rows, query.from, query.to, now, query.detail !== false)
   const titles = new Map(sessionManager.list().map((s) => [s.id, s.title]))
   for (const day of days)
     for (const s of day.sessions) {

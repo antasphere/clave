@@ -81,14 +81,23 @@ export interface DayTotals {
   leverage: number | null
 }
 
+export interface DayHours {
+  /** Minutes of each hour (24 cells) with at least one session working. */
+  coverageMin: number[]
+  /** Session-minutes of each hour: the sum over sessions of their working minutes in it. */
+  agentMin: number[]
+}
+
 export interface DayActivity {
   /** `YYYY-MM-DD` in local time. */
   day: string
+  /** The per-minute arrays (1440 cells); empty when the day was folded as a summary. */
   working: number[]
   open: number[]
   blocked: number[]
   /** 1 where the app was running in the minute, 0 elsewhere. */
   app: number[]
+  hours: DayHours
   sessions: DaySession[]
   totals: DayTotals
 }
@@ -334,12 +343,19 @@ export function foldDay(
   }
   const agentMin = sessions.reduce((t, s) => t + s.workingMin, 0)
   const blockedMin = sessions.reduce((t, s) => t + s.blockedMin, 0)
+  const hours: DayHours = { coverageMin: new Array(24).fill(0), agentMin: new Array(24).fill(0) }
+  for (let m = 0; m < MINUTES_PER_DAY; m++) {
+    const h = Math.floor(m / 60)
+    if (working[m] > 0) hours.coverageMin[h]++
+    hours.agentMin[h] += working[m]
+  }
   return {
     day,
     working,
     open,
     blocked,
     app: appCells,
+    hours,
     sessions,
     totals: {
       coverageMin,
@@ -358,15 +374,23 @@ export function foldDay(
   }
 }
 
-/** The whole fold: rows → one `DayActivity` per local day of the range. */
+/** The whole fold: rows → one `DayActivity` per local day of the range. With
+ *  `detail` false the per-minute arrays are left empty (a year of days is
+ *  then a few hundred small objects); the hours, the sessions and the totals
+ *  are computed either way. */
 export function foldActivity(
   rows: ActivityRow[],
   from: string,
   to: string,
-  now: number
+  now: number,
+  detail = true
 ): DayActivity[] {
   const { spans, app } = spansFromRows(rows, now)
-  return dayRange(from, to).map((day) => foldDay(day, spans, app, now))
+  return dayRange(from, to).map((day) => {
+    const folded = foldDay(day, spans, app, now)
+    if (detail) return folded
+    return { ...folded, working: [], open: [], blocked: [], app: [] }
+  })
 }
 
 /** The last local day key of a range `days` long ending today. */
