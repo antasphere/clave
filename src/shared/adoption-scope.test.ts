@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { savedLayoutSessionIds, selectAdoptableRecords } from './adoption-scope'
+import {
+  savedLayoutSessionIds,
+  selectAdoptableRecords,
+  type SavedLayoutLike
+} from './adoption-scope'
 
 const records = [
   { id: 'own', windowKey: 'w1' },
@@ -46,7 +50,7 @@ describe('which records a window brings back', () => {
 })
 
 describe('the session ids a saved layout names (the attached restore gate)', () => {
-  const layout = (over: Partial<import('./adoption-scope').SavedLayoutLike> = {}) => ({
+  const layout = (over: Partial<SavedLayoutLike> = {}): SavedLayoutLike => ({
     displayOrder: [] as string[],
     groups: [] as { sessionIds: string[]; terminals: { sessionId: string | null }[] }[],
     ...over
