@@ -4228,6 +4228,45 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   white-space: nowrap;
 }
 
+/* Context, in the chat's material: a quiet rounded track, its fill, the count. */
+.chat-context {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  flex-shrink: 0;
+}
+.chat-context-bar {
+  position: relative;
+  display: inline-block;
+  inline-size: calc(var(--spacing) * 16);
+  block-size: calc(var(--spacing) * 1);
+  overflow: hidden;
+  border-radius: 9999px;
+  background-color: var(--surface-200);
+}
+.chat-context-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: inherit;
+  background-color: var(--text-tertiary);
+  transition:
+    inline-size var(--default-transition-duration) var(--ease-out-expo),
+    background-color var(--default-transition-duration);
+}
+.chat-context-fill[data-some] {
+  min-inline-size: calc(var(--spacing) / 2);
+}
+.chat-context-bar[data-level='mid'] .chat-context-fill {
+  background-color: var(--color-warning);
+}
+.chat-context-bar[data-level='high'] .chat-context-fill {
+  background-color: var(--color-destructive);
+}
+.chat-context-count {
+  font-variant-numeric: tabular-nums;
+}
+
 /* The footer's right end: the permission-mode chip, then the model's. */
 .chat-composer-controls {
   display: inline-flex;
