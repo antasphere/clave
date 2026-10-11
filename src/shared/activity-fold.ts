@@ -103,6 +103,10 @@ export interface DayActivity {
 }
 
 const DAY_MS = 86_400_000
+/** The longest a working burst is believed: a turn that never got its idle
+ *  word (a dropped hook, a tab closed days later) would otherwise read as
+ *  days of work. Six hours is past any turn seen; a longer one is cut there. */
+export const MAX_BURST_MS = 6 * 3_600_000
 
 /** The local `YYYY-MM-DD` of a timestamp. */
 export function localDayKey(ms: number): string {
@@ -140,11 +144,15 @@ interface OpenSession {
   blockedSince: number | null
 }
 
+function endWorking(s: OpenSession, at: number): void {
+  if (s.workingSince === null) return
+  const end = Math.min(at, s.workingSince + MAX_BURST_MS)
+  if (end > s.workingSince) s.span.working.push([s.workingSince, end])
+  s.workingSince = null
+}
+
 function closeBursts(s: OpenSession, at: number): void {
-  if (s.workingSince !== null) {
-    if (at > s.workingSince) s.span.working.push([s.workingSince, at])
-    s.workingSince = null
-  }
+  endWorking(s, at)
   if (s.blockedSince !== null) {
     if (at > s.blockedSince) s.span.blocked.push([s.blockedSince, at])
     s.blockedSince = null
@@ -225,10 +233,7 @@ export function spansFromRows(
       continue
     }
     if (state === 'blocked') {
-      if (s.workingSince !== null) {
-        if (t > s.workingSince) s.span.working.push([s.workingSince, t])
-        s.workingSince = null
-      }
+      endWorking(s, t)
       if (s.blockedSince === null) s.blockedSince = t
       continue
     }

@@ -75,6 +75,24 @@ describe('spansFromRows', () => {
     ])
   })
 
+  it('a working burst that never got its idle word is cut at six hours', () => {
+    const rows = [
+      open('a', at(1, 0, 0, 10)),
+      state('a', at(1, 0, 0, 10), 'working'),
+      close('a', at(20, 0, 0, 11))
+    ]
+    const { spans } = spansFromRows(rows, NOW)
+    expect(spans[0].working).toEqual([[Date.parse(at(1, 0, 0, 10)), Date.parse(at(7, 0, 0, 10))]])
+    expect(spans[0].close).toBe(Date.parse(at(20, 0, 0, 11)))
+    const live = spansFromRows(
+      [open('b', at(1, 0, 0, 10)), state('b', at(1, 0, 0, 10), 'working')],
+      NOW
+    )
+    expect(live.spans[0].working).toEqual([
+      [Date.parse(at(1, 0, 0, 10)), Date.parse(at(7, 0, 0, 10))]
+    ])
+  })
+
   it('an untracked provider keeps its span and ignores state words', () => {
     const rows = [open('t', at(8, 0), 'pi'), state('t', at(8, 1), 'working')]
     const { spans } = spansFromRows(rows, NOW)
