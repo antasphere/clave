@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     createApiClient: vi.fn(),
     router: null as null | { reset: () => void },
     push: null as null | PushDouble,
+    blockConnect: false,
     pushes: [] as PushDouble[],
     makePush: (): PushDouble => {
       const push: PushDouble = {
@@ -102,6 +103,7 @@ vi.mock('@clave/client/router', async (importActual) => {
 // listeners and never opens a socket.
 vi.mock('@clave/client/node', () => ({
   connectThroughNode: async (endpoint: { url: string; token: string }) => {
+    if (mocks.blockConnect) await new Promise<void>(() => {})
     const push = mocks.makePush()
     mocks.push = push
     mocks.pushes.push(push)
@@ -151,6 +153,7 @@ beforeEach(async () => {
   delete process.env.CLAVE_SERVER_URL
   delete process.env.CLAVE_SERVER_TOKEN
   mocks.push = null
+  mocks.blockConnect = false
   mocks.pushes = []
   mocks.sessions = {
     list: mocks.apiList,
@@ -638,6 +641,20 @@ describe('the preload routes the session records', () => {
     const records = await pending
     expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
     expect(records.map((r) => r.id)).toEqual(['own'])
+  })
+
+  it('the restore top-up gives up with [] when the server never becomes reachable (bounded, no hang)', async () => {
+    // The mode is attached, but the backing never connects (the connect hangs):
+    // the top-up's bounded wait resolves [] rather than hanging the restore.
+    mocks.blockConnect = true
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    await vi.advanceTimersByTimeAsync(16_000)
+    await settle()
+    const records = await pending
+    expect(records).toEqual([])
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
   })
 
   it('the restore top-up rides the watch already running for the window, never forcing a connect', async () => {

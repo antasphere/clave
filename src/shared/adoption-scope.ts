@@ -32,3 +32,27 @@ export function selectAdoptableRecords<R extends ScopedRecord>(
     (r) => r.windowKey === scope.windowKey || !r.windowKey || !known.has(r.windowKey)
   )
 }
+
+/** The session ids a window's saved sidebar layout names: its top-level
+ *  tabs, its groups' members and its groups' quick-launch terminals. The
+ *  attached restore top-up (`AppShell`) runs only when this is non-empty — a
+ *  window that reopens with nothing to bring back must not reach the server at
+ *  boot, since that first connect would fire every server-event listener's
+ *  catch-up over the state the window has just loaded (PRDCT-3376, PRDCT-3405).
+ *  Pure, so one test pins what counts (a group-terminal-only window counts). */
+export interface SavedLayoutLike {
+  displayOrder: ReadonlyArray<string>
+  groups: ReadonlyArray<{
+    sessionIds: ReadonlyArray<string>
+    terminals: ReadonlyArray<{ sessionId: string | null }>
+  }>
+}
+
+export function savedLayoutSessionIds(layout: SavedLayoutLike): string[] {
+  const ids = new Set<string>(layout.displayOrder)
+  for (const g of layout.groups) {
+    for (const sid of g.sessionIds) ids.add(sid)
+    for (const t of g.terminals) if (t.sessionId) ids.add(t.sessionId)
+  }
+  return [...ids]
+}

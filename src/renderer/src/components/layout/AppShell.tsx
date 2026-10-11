@@ -57,6 +57,7 @@ import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
+import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
@@ -222,12 +223,7 @@ export function AppShell(): React.JSX.Element {
         // Did this window HAVE sessions to bring back? (its saved layout names
         // at least one.) Read here where the saved layout is in scope; the
         // attached restore top-up in the boot tail gates on it (PRDCT-3376).
-        const savedSessionIds = new Set<string>(persisted.displayOrder)
-        for (const g of persisted.groups) {
-          for (const sid of g.sessionIds) savedSessionIds.add(sid)
-          for (const t of g.terminals) if (t.sessionId) savedSessionIds.add(t.sessionId)
-        }
-        hadSavedSessions = savedSessionIds.size > 0
+        hadSavedSessions = savedLayoutSessionIds(persisted).length > 0
         // The revision the server handed this layout out at (every save
         // names it, and a stale one is refused rather than merged) and the
         // layout itself as the base the first merge reasons from.
