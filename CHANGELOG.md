@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-10-11
+
 - **A context meter in the chat view** — the composer's footer shows how full the conversation's context is, a bar and `used/window` in the chat's own material, warning past 70% and alarming past 90%, read from the same stream as the Terminal view's status line. The "Enter to send · Shift+Enter for a new line" hint is gone; the Esc hint stays while the agent works.
 
 - **Clave's server apart from its client, the foundation** — three packages on the `@structure-ai` framework: `packages/contract` (the wire contract in Effect Schema: the session model, the clients domain, the event envelope, the push frames, the shared API), `packages/server` (the command and query buses, the in-memory event store, the HTTP API behind a token on loopback, and the push channel on the same listener) and `packages/client` (the typed request client, the reconnecting push client, the router a preload moves methods through one at a time). The server runs inside the app once the shell starts it (the boot wiring is the next lane's); nothing changes for the person using Clave yet.
