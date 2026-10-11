@@ -50,6 +50,7 @@ import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
+import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
 import { setClaveServerEndpoint } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
@@ -488,6 +489,9 @@ app.on('before-quit', (event) => {
   agentUpdateManager.stop()
   cleanupTelemetry()
   cleanupMissionControl()
+  // The activity record's quit row, before the shutdown forgets the sessions:
+  // written now, nothing that follows reads as a close (activity/service.ts).
+  quitActivityRecord()
   usageManager.stopPolling()
   codexUsageManager.stopPolling()
   accountLoginManager.cancelAll()

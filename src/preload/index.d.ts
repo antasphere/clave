@@ -7,6 +7,7 @@ import type {
   CommandOption,
   HistoryPage
 } from '../shared/session-model'
+import type { DayActivity } from '../shared/activity-fold'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
@@ -19,6 +20,13 @@ import type {
 } from '../shared/github-pull'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface ActivityAnswer {
+  days: DayActivity[]
+  now: number
+  skipped: number
+  file: string
+}
+
 export interface SessionIPC {
   'sessions:list': { args: []; result: Session[] }
   'sessions:subscribe': { args: [sessionId: string]; result: Session }
@@ -767,6 +775,13 @@ export interface ElectronAPI {
     by: 'user' | 'agent' | 'app'
     closer: ExchangeEndpoint | null
   }) => void
+  /** The activity record (PRDCT-3384, PRDCT-3385): one `DayActivity` per
+   *  local day of the range, inclusive, and the push when a row lands. */
+  activityQuery: (from: string, to: string, detail?: boolean) => Promise<ActivityAnswer>
+  onActivityChanged: (callback: () => void) => () => void
+  /** A run state the renderer alone sees (a Codex terminal's title), reported
+   *  so main holds one state per session. */
+  sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') => Promise<void>
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void

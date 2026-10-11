@@ -4,6 +4,7 @@ import {
   SwatchIcon,
   ArrowDownTrayIcon,
   ChartBarIcon,
+  ClockIcon,
   CommandLineIcon,
   PuzzlePieceIcon,
   CpuChipIcon,
@@ -35,7 +36,8 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     rows: [
       { id: 'agents', label: 'Agents', icon: CpuChipIcon },
       { id: 'accounts', label: 'Accounts', icon: UserCircleIcon },
-      { id: 'usage', label: 'Usage', icon: ChartBarIcon }
+      { id: 'usage', label: 'Usage', icon: ChartBarIcon },
+      { id: 'activity', label: 'Activity', icon: ClockIcon }
     ]
   },
   {

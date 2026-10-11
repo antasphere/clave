@@ -1555,6 +1555,574 @@ html[data-ui-font='synonym'] {
   color: var(--text-secondary);
 }
 
+/* ── The Activity page ──
+   Settings → Activity (components/activity/). The headline tiles reuse the
+   Usage page's; the day is a tape (how many sessions worked, minute by
+   minute) over one lane per session, both on the same time column so a
+   burst in a lane sits under its bump in the tape. Working wears the status
+   blue, waiting on you the status amber, the year the heatmap ramp. */
+.activity-tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.activity-tiles .usage-tile-detail {
+  white-space: normal;
+}
+.activity-tiles > .settings-card[title] {
+  cursor: help;
+}
+/* The range in one sentence, under the tiles. */
+.activity-summary {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* The page root takes the focus only so its keys land somewhere (← → T Esc);
+   it is a container, not a control, and draws no ring of its own. */
+.activity-page:focus {
+  outline: none;
+}
+@media (max-width: 720px) {
+  .activity-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* The charts' tips float over the card's edge, so these cards do not clip. */
+.settings-card.activity-card {
+  overflow: visible;
+}
+
+.activity-day-head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+}
+.activity-day-title {
+  padding: 0 0.25rem;
+  font-size: var(--control-text);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-day-suffix {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-day-sum {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.activity-day-body {
+  --activity-label-w: 10rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 0.875rem;
+  transition: opacity 120ms ease-out;
+}
+.activity-day-body[data-refreshing='true'] {
+  opacity: 0.6;
+}
+.activity-day-row {
+  display: grid;
+  grid-template-columns: var(--activity-label-w) minmax(0, 1fr);
+  column-gap: 0.75rem;
+}
+.activity-day-measure {
+  height: 0;
+}
+.activity-day-row[aria-hidden] {
+  margin-bottom: -0.75rem;
+}
+
+.activity-tape-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 6rem;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-tape {
+  position: relative;
+  min-width: 0;
+}
+.activity-tape-plot {
+  position: relative;
+  height: 6rem;
+  cursor: crosshair;
+}
+.activity-tape-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.activity-tape-closed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text-tertiary) 25%, transparent) 0 1px,
+    transparent 1px 0.375rem
+  );
+}
+.activity-tape-working {
+  fill: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-tape-working-edge {
+  fill: none;
+  stroke: var(--color-status-working);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+.activity-tape-blocked {
+  fill: color-mix(in srgb, var(--color-status-waiting) 65%, transparent);
+}
+.activity-grid {
+  stroke: var(--border-subtle-color);
+  stroke-width: 1px;
+}
+.activity-baseline {
+  stroke: var(--color-border);
+  stroke-width: 1px;
+}
+.activity-hairline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--text-secondary);
+  pointer-events: none;
+}
+/* The minute held by a click, and the pointer's lighter one beside it. */
+.activity-hairline[data-pinned='true'] {
+  background-color: var(--text-primary);
+}
+.activity-hairline[data-light='true'] {
+  opacity: 0.45;
+}
+/* A lane's bursts over the tape: its own share on the baseline, and a faint
+   band over the tape's height so the bump it belongs to reads at a glance. */
+.activity-tape-focus {
+  fill: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+.activity-tape-focus-band {
+  fill: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+/* One line under the tape, reserved, so holding a minute never moves the
+   lanes: the hint while nothing is held, the readout once a minute is. */
+.activity-readout-row {
+  display: flex;
+  align-items: center;
+  height: 1.5rem;
+  margin-top: 0.25rem;
+  min-width: 0;
+}
+.activity-readout-hint {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+.activity-readout {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-readout-lead {
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+  color: var(--text-primary);
+}
+.activity-readout-chip {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background-color 150ms;
+}
+.activity-readout-chip:hover,
+.activity-readout-chip[data-selected='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-300);
+}
+.activity-readout-more {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+.activity-tape-axis {
+  position: relative;
+  height: 1rem;
+  margin-top: 0.25rem;
+}
+.activity-tape-axis > span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-tape-axis > span[data-edge='start'] {
+  transform: none;
+}
+.activity-tape-axis > span[data-edge='end'] {
+  transform: translateX(-100%);
+}
+
+.activity-lanes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.activity-lane {
+  display: grid;
+  grid-template-columns: var(--activity-label-w) minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: center;
+  height: 1.75rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    opacity 150ms,
+    background-color 150ms;
+}
+.activity-lane:hover {
+  background-color: var(--surface-100);
+}
+.activity-lane[data-selected='true'] {
+  background-color: var(--surface-200);
+}
+/* Another lane hovered or followed: this one steps back. */
+.activity-lane[data-dim='true'] {
+  opacity: 0.55;
+}
+.activity-lane-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  padding-left: 0.25rem;
+}
+.activity-lane-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity-lane-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  line-height: 0.8125rem;
+  color: var(--text-tertiary);
+}
+.activity-lane-dot {
+  flex-shrink: 0;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--color-status-working);
+}
+.activity-lane[data-tracked='false'] .activity-lane-dot {
+  background-color: var(--color-status-inactive);
+}
+.activity-lane-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--control-text);
+  line-height: 0.9375rem;
+  color: var(--text-primary);
+}
+.activity-lane-track {
+  display: block;
+  width: 100%;
+  height: 1.75rem;
+}
+.activity-lane-open {
+  fill: var(--surface-300);
+}
+.activity-lane[data-tracked='false'] .activity-lane-open {
+  fill: color-mix(in srgb, var(--color-status-inactive) 35%, transparent);
+}
+.activity-lane-burst {
+  fill: var(--color-status-working);
+}
+.activity-lane-wait {
+  fill: var(--color-status-waiting);
+}
+.activity-lane-live {
+  fill: color-mix(in srgb, var(--color-status-working) 45%, transparent);
+}
+.activity-lane-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0.5rem;
+  padding: 0.25rem 0.25rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-lane-details > span + span::before {
+  content: '·';
+  margin-right: 0.5rem;
+  color: var(--text-tertiary);
+}
+.activity-lane-details-lead {
+  color: var(--text-primary);
+}
+.activity-lanes-more {
+  padding: 0.25rem 0 0 calc(var(--activity-label-w) + 0.75rem);
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.activity-year {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+}
+.activity-heatmap {
+  position: relative;
+}
+.activity-heatmap > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.activity-cell {
+  fill: var(--heatmap-0);
+  cursor: pointer;
+}
+.activity-cell[data-level='1'] {
+  fill: var(--heatmap-1);
+}
+.activity-cell[data-level='2'] {
+  fill: var(--heatmap-2);
+}
+.activity-cell[data-level='3'] {
+  fill: var(--heatmap-3);
+}
+.activity-cell[data-level='4'] {
+  fill: var(--heatmap-4);
+}
+.activity-cell[data-in-range='false'] {
+  fill: var(--heatmap-0);
+  opacity: 0.4;
+  cursor: default;
+}
+.activity-cell[data-selected='true'] {
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+.activity-axis-text {
+  font-size: 0.625rem;
+  fill: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.activity-captions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-bars {
+  position: relative;
+  padding: 0.875rem 1rem 0.5rem;
+  min-height: 7.25rem;
+}
+.activity-bars > svg {
+  display: block;
+  overflow: visible;
+}
+.activity-bar {
+  fill: color-mix(in srgb, var(--color-status-working) 70%, transparent);
+  pointer-events: none;
+}
+[data-activity-trend] .activity-bar {
+  fill: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-dot {
+  fill: var(--text-primary);
+  stroke: var(--surface-0);
+  stroke-width: 1px;
+  pointer-events: none;
+}
+.activity-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.activity-hit:hover,
+.activity-hit[data-hover='true'],
+.activity-hit[data-selected='true'] {
+  fill: var(--surface-100);
+}
+[data-activity-hours] .activity-hit {
+  cursor: default;
+}
+.activity-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0.75rem 1rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.settings-card > .activity-legend + .activity-bars {
+  border-top: 0;
+}
+.activity-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.activity-legend-bar {
+  width: 0.5rem;
+  height: 0.625rem;
+  border-radius: 2px 2px 0 0;
+  background-color: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-legend-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--text-primary);
+}
+
+.activity-breakdown {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.activity-breakdown > .settings-card + .settings-card {
+  margin-top: 0;
+}
+@container (max-width: 640px) {
+  .activity-breakdown > * {
+    grid-column: 1 / -1;
+  }
+}
+.activity-share {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  min-width: 0;
+}
+.activity-share-title {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.activity-share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.75rem;
+}
+.activity-share-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.activity-share-track {
+  display: block;
+  height: 0.5rem;
+}
+.activity-share-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background-color: color-mix(in srgb, var(--color-status-working) 55%, transparent);
+}
+.activity-share-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.activity-share-value[data-quiet='true'] {
+  color: var(--text-tertiary);
+}
+
+/* Placed and clamped inside its host by TipBox (ActivityPanel.tsx). */
+.activity-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-width: 22rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.activity-tip-lead {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.activity-tip-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.activity-empty {
+  padding: 1.5rem 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.activity-skeleton {
+  padding: 0.875rem 1rem;
+}
+.activity-skeleton-block {
+  height: 6rem;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-200);
+}
+.activity-foot {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
 /* Markdown page editor: the Notion-style editable document surface
    (components/files/MarkdownPageEditor.tsx). Element styles mirror the `page`
    variant in MarkdownRenderer so the editable page and the read-only page

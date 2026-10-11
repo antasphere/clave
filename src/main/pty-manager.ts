@@ -262,7 +262,7 @@ class PtyManager {
         })
       : session
     try {
-      sessionManager.adopt(record, handle, adapter)
+      sessionManager.adopt(record, handle, adapter, { model: options?.model ?? null })
     } catch (error) {
       await adapter.kill(handle)
       throw error

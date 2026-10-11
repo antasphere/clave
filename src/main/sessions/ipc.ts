@@ -92,6 +92,15 @@ export function registerSessionIpc(): void {
     if (viewId !== null && typeof viewId !== 'string') throw new Error('Invalid view id')
     return getSessionHost().setView(id, viewId)
   })
+  // A run state the renderer alone can see (a Codex terminal's title) lands
+  // on the manager, so main holds one state per session whatever its source
+  // (the activity record, PRDCT-3384). Only the three words a title carries.
+  ipcMain.handle('sessions:report-state', (event, id: string, state: unknown) => {
+    owning(event, id)
+    if (state !== 'idle' && state !== 'working' && state !== 'blocked')
+      throw new Error(`Invalid reported state: ${String(state)}`)
+    sessionManager.setState(id, state)
+  })
   ipcMain.handle('sessions:write', (event, id: string, input: unknown) => {
     owning(event, id)
     const write: SessionWrite =
