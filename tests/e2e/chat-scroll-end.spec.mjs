@@ -19,8 +19,8 @@ export async function run(t) {
   const chat = await openChat('chat-scroll-end')
   const { win, record, fixture } = chat
   try {
-    // Scoped to the conversation view: the compact view is mounted on the
-    // same session behind it and scrolls on its own.
+    // Scoped to the conversation view: another view of the plugin may be
+    // mounted on the same session behind it and scrolls on its own.
     const view = win.locator('[data-testid="chat-view"]')
     const scroller = view.locator('.chat-scroll')
     // The rows are virtualised: only turns near the viewport are in the

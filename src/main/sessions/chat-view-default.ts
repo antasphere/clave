@@ -6,7 +6,7 @@ const pluginOf = (viewId: string): string => viewId.split('/')[0]
 
 /**
  * The view a new chat opens in: the last one the reader picked in a pane's
- * view picker (Chat, Compact, Terminal…), so a reader who settled on one is
+ * view picker (Chat, Terminal…), so a reader who settled on one is
  * not sent back to the profile's default on every new tab. Clearing a
  * session's view (a null pick) forgets nothing: that is the host resetting a
  * pane, not the reader choosing.

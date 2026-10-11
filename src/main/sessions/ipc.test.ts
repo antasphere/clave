@@ -250,14 +250,14 @@ it('sets the view only for the window that owns the session, and only on a valid
     })
   }
   const setView = mocks.handlers.get('sessions:set-view')
-  expect(setView(event, id, 'clave.chat-view/compact')).toMatchObject({
+  expect(setView(event, id, 'clave.chat-view/terminal')).toMatchObject({
     id,
-    viewId: 'clave.chat-view/compact'
+    viewId: 'clave.chat-view/terminal'
   })
-  expect(sessionManager.get(id)?.viewId).toBe('clave.chat-view/compact')
+  expect(sessionManager.get(id)?.viewId).toBe('clave.chat-view/terminal')
   // The pick is what the next new chat opens in.
-  expect(mocks.rememberChatView).toHaveBeenLastCalledWith('clave.chat-view/compact')
-  expect(() => setView(event, id, 'compact')).toThrow('Invalid view id')
+  expect(mocks.rememberChatView).toHaveBeenLastCalledWith('clave.chat-view/terminal')
+  expect(() => setView(event, id, 'terminal')).toThrow('Invalid view id')
   expect(() => setView(event, id, 42)).toThrow('Invalid view id')
   expect(setView(event, id, null).viewId).toBeUndefined()
   // Another window may not decide how this session is read, the rule every

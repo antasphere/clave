@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+- **An unsent prompt survives a quit or an update** — what you typed into a chat or Terminal view's composer and did not send is saved as you type, per tab, and is back in the same tab's composer when Clave reopens, after a quit, a restart or an update. Closing the tab discards it.
+
+- **The Compact view is gone** — the chat plugin now offers two views, Chat and Terminal. A tab that was on Compact opens on Chat.
+
 ## [2.1.0] — 2026-10-11
 
 - **A context meter in the chat view** — the composer's footer shows how full the conversation's context is, a bar and `used/window` in the chat's own material, warning past 70% and alarming past 90%, read from the same stream as the Terminal view's status line. The "Enter to send · Shift+Enter for a new line" hint is gone; the Esc hint stays while the agent works.

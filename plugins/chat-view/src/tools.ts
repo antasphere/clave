@@ -24,9 +24,9 @@ export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
  *  non-tool entry, so one permission split a single step into two rows.) */
 /** An assistant turn that opened and said nothing renders nowhere, so it may
  *  not end a run either — otherwise the run breaks in a place the reader cannot
- *  see. Both views filter through THIS, so both break a run in the same place;
- *  the conversation view used to filter before grouping and the compact view
- *  not at all, which split a run in one view and not the other. */
+ *  see. Every view filters through THIS, so all break a run in the same place;
+ *  one view used to filter before grouping and another not at all, which split
+ *  a run in one view and not the other. */
 export function visibleEntries(entries: Entry[]): Entry[] {
   return entries.filter(
     (e) => (e.kind !== 'assistant' || e.text.trim() !== '') && !(e.kind === 'user' && e.withdrawn)

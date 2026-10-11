@@ -22,8 +22,8 @@ it('opens every new chat in the last view picked', () => {
   rememberChatView('clave.chat-view/terminal')
   expect(initialChatView('clave.chat-view/chat')).toBe('clave.chat-view/terminal')
   expect(initialChatView(undefined)).toBe('clave.chat-view/terminal')
-  rememberChatView('clave.chat-view/compact')
-  expect(initialChatView('clave.chat-view/chat')).toBe('clave.chat-view/compact')
+  rememberChatView('clave.chat-view/terminal')
+  expect(initialChatView('clave.chat-view/chat')).toBe('clave.chat-view/terminal')
 })
 
 it("leaves a profile that names another plugin's view on it", () => {

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
-import { choose } from './plugin-views.spec.mjs'
 
 /* A run of tool calls is ONE row between two messages. What this spec holds, in
    the real app, that a unit test cannot: the row renders, a click opens it, the
@@ -17,7 +16,6 @@ export async function run(t) {
   const chat = await openChat('chat-tool-groups')
   const { win, record, fixture } = chat
   const view = win.locator('[data-testid="chat-view"]')
-  const compact = win.locator('.chat-view[data-view="compact"]')
   try {
     // A run of four tools between two messages, one of them still running.
     await inject(fixture, record.id, [
@@ -158,29 +156,10 @@ export async function run(t) {
     )
     t.check('a failure is counted from the adapter flag alone and never auto-expands', true)
 
-    // The compact view reads the same runs, one line each, no bodies. Its rows
-    // are virtualised like the conversation's: they are mounted once the view
-    // is on screen, so the reader switches to it first.
-    const picker = win.getByLabel('Change view', { exact: true })
-    await choose(win, picker, 'Compact')
-    const compactRows = compact.locator('li[data-kind="tool-group"]')
-    await until(async () => (await compactRows.count()) === 3)
-    assert.equal(await compactRows.first().locator('span').first().innerText(), 'Tools')
-    assert.equal(
-      await compactRows.first().locator('span').nth(1).innerText(),
-      'Read 3 files · Ran 1 command · Searched once'
-    )
-    assert.equal(await compactRows.nth(2).getAttribute('data-state'), 'failed')
-    assert.equal(await compactRows.nth(2).getAttribute('data-failures'), '1')
-    assert.match(await compactRows.nth(2).innerText(), /1 failed/)
-    assert.equal(await compact.locator('.chat-tool-item').count(), 0)
-    t.check('the compact view groups the same runs as one line each, with no tool bodies', true)
-
     // The rows are virtualised: a row scrolled far out of view leaves the
     // document, and the reader's open rows must come back open. A <details>
     // keeps its state in the DOM, so without the view's memory of it
     // (ToolDisclosure) the first run returns closed.
-    await choose(win, picker, 'Chat')
     const scroller = view.locator('.chat-scroll')
     const opened = view.locator('.chat-tool-run[data-tools="5"]')
     const filler = 'A long answer that pushes the first run far out of view. '.repeat(12)

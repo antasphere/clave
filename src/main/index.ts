@@ -5,6 +5,7 @@ import './user-data-override'
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
 import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
+import { flushRendererStorage } from './flush-storage'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -479,6 +480,9 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (quitCleanup) return
   quitting = true
+  // The unsent composer drafts live in localStorage: commit them to disk
+  // before anything else of the quit runs.
+  flushRendererStorage()
   cleanupClaveWatchers()
   cleanupAutoUpdater()
   agentUpdateManager.stop()

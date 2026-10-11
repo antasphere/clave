@@ -1,6 +1,7 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { adoptServerStartedTerminals } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
+import { clearSessionDraft } from '../views/draft-store'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import type { GitRangeDirection } from '../../../shared/git-range'
@@ -996,7 +997,10 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     // The one app-initiated close: every tab goes, recorded as such. (An app
     // QUIT is not a close — sessions survive in tmux and are re-adopted.)
-    for (const s of sessions) emitTabClosed(s, groups, 'app', null)
+    for (const s of sessions) {
+      emitTabClosed(s, groups, 'app', null)
+      clearSessionDraft(s.id)
+    }
 
     // Kill all PTYs
     await Promise.allSettled(
@@ -1085,6 +1089,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   removeSession: (id) =>
     set((state) => {
       if (linkedEditorBlocksClose(id)) return state
+      // A closed tab's unsent prompt goes with it, from storage too: the draft
+      // store persists drafts across quits, so a stale one would otherwise
+      // linger until it ages out. (A move to another window is
+      // `removeSessionForRehome`, which keeps it.)
+      clearSessionDraft(id)
       // A closed session takes its hidden serving session (session.view) with
       // it: nothing else owns that process, and an orphan would idle invisibly.
       const owner = state.sessions.find((s) => s.id === id)

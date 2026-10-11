@@ -90,26 +90,26 @@ export async function run(t) {
   } finally {
     await chat.close()
   }
-  const compact = await openChat(
-    'compact-input-history',
-    ['--dev-echo-view=clave.chat-view/compact'],
-    '[data-view="compact"] input:not(:disabled)'
+  const terminal = await openChat(
+    'terminal-input-history',
+    ['--dev-echo-view=clave.chat-view/terminal'],
+    '.terminal-view textarea:not(:disabled)'
   )
   try {
-    const input = compact.win.locator('[data-view="compact"] input')
-    await input.fill('Sent from compact')
+    const input = terminal.win.locator('.terminal-view textarea')
+    await input.fill('Sent from terminal')
     await input.press('Enter')
     assert.ok(await until(async () => (await input.inputValue()) === ''))
     await input.press('ArrowUp')
-    assert.equal(await input.inputValue(), 'Sent from compact')
+    assert.equal(await input.inputValue(), 'Sent from terminal')
     await input.press('ArrowDown')
     assert.equal(await input.inputValue(), '')
-    t.check('compact chat also recalls sent messages', true)
+    t.check('the terminal view also recalls sent messages', true)
     await input.press('ArrowUp')
-    await reloadChat(compact.win, input)
-    assert.equal(await input.inputValue(), 'Sent from compact', 'compact recall survives reload')
-    t.check('a recalled compact draft survives its plugin restarting', true)
+    await reloadChat(terminal.win, input)
+    assert.equal(await input.inputValue(), 'Sent from terminal', 'terminal recall survives reload')
+    t.check('a recalled terminal draft survives its plugin restarting', true)
   } finally {
-    await compact.close()
+    await terminal.close()
   }
 }

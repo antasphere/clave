@@ -1,12 +1,11 @@
 # Chat view
 
 Two bundled first-party native views for the public `events` transport, chosen
-per session from the pane header: `chat` (this file's subject) and `compact`
-(`src/CompactView.tsx`, one line per turn, no markdown, no tool bodies). Compact
-reads the host's per-session event log (`src/renderer/src/views/conversation-store.ts`)
-and reduces it with the same `reducer.ts`, so it shows the whole conversation
-however late it is opened; chat still keeps its own reducer and subscription, and
-moves onto the log once PRDCT-2549 has merged (PRDCT-2616).
+per session from the pane header: `chat` (this file's subject) and `terminal`
+(`src/TerminalView.tsx`, started as a copy of chat and diverging on purpose). Each
+keeps its own reducer and subscription. A third view, `compact` (one line per
+turn), was removed in 2.2: nobody used it. A session that still names it falls
+back to the first view the plugin contributes, which is chat.
 
 A resumed conversation opens on its end: both views read its past from main a
 page at a time (`sessions:history`, `src/main/sessions/README.md`), the newest
@@ -22,10 +21,7 @@ turn at all. A loader pill (`.chat-earlier`) shows over the transcript's head
 only when a page takes longer than a beat. The empty state waits for the first
 page, so a long conversation never flashes "Start a conversation" on its way in.
 
-The compact composer deliberately does NOT wear the `chat-composer` class: both
-views are mounted at once, and one class on two elements is a strict locator
-resolving to two — which is exactly how this plugin's own end-to-end spec went
-red during PRDCT-2610. Activation,
+Activation,
 grants and disablement use the ordinary plugin host. The renderer registry owns
 pane chrome; this plugin owns only the conversation content and the public session
 bridge subscription. It does not launch a provider or read provider files.
@@ -41,7 +37,6 @@ reducer marks the last user entry `interrupted`, the row reads muted with
 "Interrupted" under it, an answer still streaming is closed as it stands, and no
 error card is raised — Claude closes such a turn with an `is_error` result that
 carries no text, which used to read as "Claude turn failed" under the message.
-Compact says "You · interrupted" on the line.
 
 The composer takes the caret the moment it can accept input and this session is
 the focused one (`src/focus.ts`, both views): a new tab opens ready to type, the
@@ -71,8 +66,7 @@ agent needed mid-run is part of that step, and only a message ends it. The row i
 an uncontrolled `<details>` keyed by the run's first tool id, so the reader's
 choice is DOM state a re-render cannot touch — a result arriving neither closes an
 open row nor opens a closed one, and a failure, having no way to set `open`, can
-never expand the row by itself. `CompactView` groups the same runs with the same
-function, one line each and no bodies, which is that view's whole contract. The
+never expand the row by itself. The
 grouping, the summary and the preview are `src/tools.ts`, pure and unit-tested. A
 CLOSED row still summarises itself on every render of the session, so the summary
 reads `describeToolHead` and never turns an output into text; `describeTool` builds

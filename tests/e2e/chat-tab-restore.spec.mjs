@@ -40,6 +40,7 @@ const TRANSCRIPTS = `${ROOT}/transcripts`
 const ARGV_LOG = `${ROOT}/argv.jsonl`
 const FIRST_PROMPT = 'first launch prompt'
 const SECOND_PROMPT = 'after restore prompt'
+const DRAFT = 'a prompt typed and never sent'
 const recordPath = (id) => path.join(DIR, 'session-records', `${id}.json`)
 const readRecord = (id) => {
   try {
@@ -201,6 +202,15 @@ export async function run(t) {
     )
     if (!record) throw new Error('no chat record after launch 1: nothing to restore')
 
+    // ── An unsent prompt in the composer when the app quits ──
+    const composer = win.locator(
+      `section.chat-host[data-session-id="${tabId}"] [data-testid="chat-view"] textarea:not(:disabled)`
+    )
+    await composer.waitFor()
+    await composer.click()
+    await win.keyboard.type(DRAFT)
+    t.equal('launch 1: the draft is in the composer', await composer.inputValue(), DRAFT)
+
     // ── Assertion 2: a normal quit keeps the record ──
     await app.close()
     app = null
@@ -237,6 +247,16 @@ export async function run(t) {
         (await win.getByTestId('chat-view').first().innerText()).includes(FIRST_PROMPT)
     )
     t.check('launch 2: the restored chat view shows the first conversation', !!replayed)
+    // The unsent prompt from launch 1 is back in the same tab's composer.
+    const restoredComposer = win.locator(
+      `section.chat-host[data-session-id="${tabId}"] [data-testid="chat-view"] textarea`
+    )
+    await restoredComposer.waitFor()
+    t.equal(
+      'launch 2: the unsent prompt typed before the quit is back in the composer',
+      await restoredComposer.inputValue(),
+      DRAFT
+    )
 
     // The CLI starts on first input: send one and read the argv it got.
     const before = launches().length
@@ -275,6 +295,11 @@ export async function run(t) {
     t.check(
       'close: the tab left the renderer store',
       !(await callMcp(app, 'list', {})).sessions.some((s) => s.id === tabId)
+    )
+    t.equal(
+      "close: the closed tab's unsent prompt is gone from storage",
+      await win.evaluate((id) => localStorage.getItem(`clave-draft:${id}`), tabId),
+      null
     )
   } finally {
     if (app) await app.close()

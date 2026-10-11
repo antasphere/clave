@@ -130,7 +130,7 @@ export async function run(t) {
     assert.match(await win.locator('.chat-turn[data-role="assistant"]').innerText(), /\/help/)
     // Tools now render as ONE run row per step (PRDCT-2613); the raw input is
     // under each item's own "Raw input and output". Scoped to the conversation
-    // view because the compact view is mounted on this session too.
+    // view because another view of the plugin may be mounted on this session too.
     const view = win.locator('[data-testid="chat-view"]')
     await view.locator('.chat-tool-run[data-state="complete"]').waitFor()
     await view.locator('.chat-tool-run > summary').first().click()
