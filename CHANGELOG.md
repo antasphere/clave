@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-11
+
 - **Pull all works without reaching GitHub, and names what it could not pull** — the git panel's Pull all brings each badged repo level with the commits its last fetch already downloaded (a fast-forward, else a local rebase with uncommitted changes carried across, aborted on a conflict) instead of running `git pull`, so a slow, unreachable or removed remote no longer leaves a repo behind its arrow. A repo it cannot integrate (a conflict, uncommitted changes that clash with what came in, a rebase or merge already in progress) is named on the bar (`1 pulled, 1 failed: crm`), the line stays until clicked away, its tooltip gives git's reason, and each failure is written to the app's log (PRDCT-3372).
 
 - **Clave's server apart from its client, the foundation** — three packages on the `@structure-ai` framework: `packages/contract` (the wire contract in Effect Schema: the session model, the clients domain, the event envelope, the push frames, the shared API), `packages/server` (the command and query buses, the in-memory event store, the HTTP API behind a token on loopback, and the push channel on the same listener) and `packages/client` (the typed request client, the reconnecting push client, the router a preload moves methods through one at a time). The server runs inside the app once the shell starts it (the boot wiring is the next lane's); nothing changes for the person using Clave yet.
