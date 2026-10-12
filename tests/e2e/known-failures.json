@@ -20,7 +20,6 @@
     "agent-updates.spec.mjs",
     "chat-view.spec.mjs",
     "claude-chat-adapter.spec.mjs",
-    "codex-chat-tab-restore.spec.mjs",
     "group-dissolve.spec.mjs",
     "multi-window-routing.spec.mjs",
     "plugin-surface-view.spec.mjs"

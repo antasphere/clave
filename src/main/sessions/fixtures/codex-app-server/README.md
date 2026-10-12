@@ -45,3 +45,41 @@ Clave deliberately limits the UI to exactly the offered choices.
 File-change/MCP items, permission grants, and elicitation edge cases in unit tests
 are schema-derived synthetic cases, not claimed as live captures. Tests never
 contact a real provider.
+
+## Resumed chat history
+
+`codex-history.test.ts` covers the rollout formats used by resumed chats: older
+`response_item` messages and tools, and the newer `event_msg/item_completed`
+items. The latter use `UserMessage`, `AgentMessage`, `CommandExecution` and
+`FileChange`. Agent text blocks use `Text`; user text blocks use `text`.
+These shapes were checked against a local Codex rollout on 2026-10-12. Tests use
+synthetic content; no user transcript is checked in.
+
+The `codex/resumed-chat` scenario uses `@structure-ai/fixtures`. A recording
+provider writes a rollout after a message sent through `SessionManager.write`.
+The scenario then closes and resumes the conversation through the session
+manager and checks its history query. Its input is `{}` and its target is the
+test's isolated manager and temporary Codex home. No external provider runs.
+
+Load and verify it with:
+
+```sh
+npx vitest run src/main/sessions/adapters/codex-history.fixtures.test.ts
+```
+
+The test prints its run ID, session IDs and temporary directory. It releases
+the sessions and retains the rollout for inspection. To clean up a run,
+remove only the printed `clave-codex-fixture-<run-id>` directory.
+
+After `npm run build`, the Electron check is:
+
+```sh
+npm run test:e2e -- codex-chat-tab-restore
+```
+
+It quits and relaunches the app, restores a hidden workspace, checks the saved
+answer in the chat before sending anything, then verifies that a new answer
+appears without duplicating the saved one. It counts provider requests from
+the relaunch, including startup triggered by the view or model picker.
+Historical images are represented by `[Image]`; their binary content is not
+sent through the history endpoint.
