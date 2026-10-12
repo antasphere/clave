@@ -2510,9 +2510,8 @@ html[data-ui-font='synonym'] {
 .linked-email-attachment-remove:focus-visible { opacity: 1; }
 .linked-email-attachment-remove:hover { color: var(--text-primary); background: var(--surface-300); }
 
-/* Save state and delivery state are the same question — "where is this draft?"
-   — so they share one bar at the foot instead of one living in the titlebar and
-   the other in the alert surface. */
+/* The save state of an email lives in one bar at the foot, under its
+   attachments, instead of in the titlebar; the alert surface stays for trouble. */
 .linked-email-foot {
   display: flex;
   align-items: center;

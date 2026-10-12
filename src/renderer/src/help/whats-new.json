@@ -12,7 +12,7 @@
   {
     "version": "1.85.0",
     "title": "Edit documents and emails beside your agent",
-    "description": "Ask Claude Code or Codex to open a Markdown file, HTML file or email in your session. Your conversation stays on the left and the editor opens on the right; switching sessions brings both back together. Edits save automatically, with a visible conflict if the source changes elsewhere.\n\nEmails have their own composer for recipients, the rendered body, signatures and attachments. Set a default signature file for future emails, choose a custom signature or leave it out for one draft. Existing drafts keep their staged signature and attachment copies. When ready, ask your agent to send the exact reviewed version through your configured Gmail connection."
+    "description": "Ask Claude Code or Codex to open a Markdown file, HTML file or email in your session. Your conversation stays on the left and the editor opens on the right; switching sessions brings both back together. Edits save automatically, with a visible conflict if the source changes elsewhere.\n\nEmails have their own composer for recipients, the rendered body, signatures and attachments. Set a default signature file for future emails, choose a custom signature or leave it out for one draft. Existing drafts keep their staged signature and attachment copies. When ready, ask your agent to read the reviewed version back and send it through its own channel. (The built-in Gmail send this version shipped was removed later: Clave holds no mail credentials, and the panel is for reviewing.)"
   },
   {
     "version": "1.84.0",

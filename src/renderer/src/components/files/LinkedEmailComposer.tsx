@@ -97,7 +97,7 @@ function SignaturePreview({ html }: { html: string }): React.JSX.Element {
 
 /**
  * The email body of the linked-document card: header fields, the message
- * sheet, signature, attachments and the save/delivery foot. The card around it
+ * sheet, signature, attachments and the save foot. The card around it
  * (`LinkedDocumentPanel`) owns the revisioned save queue; every edit goes
  * through its `update`.
  */
@@ -156,10 +156,6 @@ export function LinkedEmailComposer({
     }
   }
 
-  const delivery = doc.delivery
-  const deliveryLine = delivery
-    ? `${delivery.status === 'sent' ? 'Sent' : delivery.status === 'failed' ? 'Sending failed' : 'Delivery uncertain'} · revision ${delivery.revision}${delivery.revision !== doc.revision ? ' · current edits are unsent' : ''}${delivery.detail ? '. ' + delivery.detail : ''}`
-    : 'Ask your agent to send this email'
   const saveState = status.startsWith('Saving')
     ? 'saving'
     : status.startsWith('Saved')
@@ -257,7 +253,7 @@ export function LinkedEmailComposer({
           </button>
         </div>
         {/* Outside the collapsible content on purpose: a signature that
-            blocks preparation has to stay visible with the section shut. */}
+            failed to load has to stay visible with the section shut. */}
         {(signatureError || doc.signatureError) && (
           <div className="linked-document-notice" role="alert">
             {signatureError || doc.signatureError}
@@ -320,16 +316,13 @@ export function LinkedEmailComposer({
           )}
         </CollapsibleContent>
       </Collapsible>
-      {/* Save state and delivery state answer the same question, so they
-          share the foot; the notice surface goes back to meaning trouble. */}
+      {/* The foot carries the save state alone: the panel is review-only,
+          sending is the agent's through its own channel (PRDCT-3438), so
+          there is no delivery state to show; the notice surface means trouble. */}
       <div className="linked-email-foot">
         <span className="linked-email-foot-dot" data-state={saveState} />
         <span role="status" className="truncate" title={status}>
           {status} · revision {doc.revision}
-        </span>
-        <span className="flex-1" />
-        <span className="truncate" title={deliveryLine}>
-          {deliveryLine}
         </span>
       </div>
     </div>
