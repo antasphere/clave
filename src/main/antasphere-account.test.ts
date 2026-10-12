@@ -568,6 +568,28 @@ describe('a token that does not validate is no login', () => {
 })
 
 describe('the issuer is pinned and every request bounded', () => {
+  it.each(['issuer', 'endpoint origin'])(
+    'does not adapt registration from discovery with a foreign %s',
+    async (foreign) => {
+      const issuer = new URL(provider.issuer)
+      const other = 'https://other.example.test'
+      const endpoint = `${foreign === 'endpoint origin' ? other : issuer.origin}/register`
+      const adapted = registrationFetch(async (url) => {
+        if (new URL(url).pathname === '/.well-known/openid-configuration') {
+          return Response.json({
+            issuer: foreign === 'issuer' ? other : issuer.origin,
+            registration_endpoint: endpoint
+          })
+        }
+        return Response.json({ client_id: 'example' })
+      }, issuer)
+      const options = { method: 'GET', body: undefined, headers: {}, redirect: 'manual' as const }
+      await adapted(`${issuer.origin}/.well-known/openid-configuration`, options)
+      const response = await adapted(endpoint, { ...options, method: 'POST' })
+      expect(response.status).toBe(200)
+    }
+  )
+
   it('adapts only the first registration POST at the advertised endpoint', async () => {
     const issuer = new URL(provider.issuer)
     const endpoint = `${provider.issuer}/api/v1/auth/oauth2/register?client=native`
