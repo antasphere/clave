@@ -384,6 +384,40 @@ export function boundedFetch(base: typeof globalThis.fetch, origin: string): cli
   }
 }
 
+/** Better Auth returns 200 for a successful registration; openid-client
+ *  requires RFC 7591's 201. Adapt only the first POST to the endpoint named
+ *  by this issuer's discovery document. The library still validates the
+ *  response body, and every other request keeps its original status. */
+export function registrationFetch(fetch: client.CustomFetch, issuer: URL): client.CustomFetch {
+  const discovery = new URL('/.well-known/openid-configuration', issuer).href
+  let endpoint: string | null = null
+  return async (url, options) => {
+    const response = await fetch(url, options)
+    const target = new URL(url).href
+    if (options.method === 'GET' && target === discovery && response.status === 200) {
+      const metadata: unknown = await response.clone().json()
+      if (
+        isRecord(metadata) &&
+        metadata.issuer === issuer.origin &&
+        typeof metadata.registration_endpoint === 'string'
+      ) {
+        const registrationUrl = new URL(metadata.registration_endpoint)
+        if (registrationUrl.origin === issuer.origin) endpoint = registrationUrl.href
+      }
+    } else if (options.method === 'POST' && target === endpoint) {
+      endpoint = null
+      if (response.status === 200) {
+        return new Response(response.body, {
+          status: 201,
+          statusText: 'Created',
+          headers: response.headers
+        })
+      }
+    }
+    return response
+  }
+}
+
 /** The page the browser lands on after the hub sends it back. It never
  *  claims a sign-in: the tokens are still to be exchanged and checked when
  *  it is served, and the outcome is told in Clave. */
@@ -935,6 +969,7 @@ export class AntasphereAccountManager {
       return { config, registration: null }
     }
     if (redirectPort === null) throw new LoginFailure('registration', 'no port to register')
+    options[client.customFetch] = registrationFetch(options[client.customFetch]!, issuer.issuer)
     let config: client.Configuration
     try {
       config = await client.dynamicClientRegistration(

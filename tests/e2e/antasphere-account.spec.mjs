@@ -69,6 +69,7 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   const provider = await startOidcProvider({
+    registrationStatus: 200,
     user: { sub: 'e2e-user-1', name: 'E2E Person', email: 'e2e@example.test', email_verified: true }
   })
   const env = { CLAVE_ANTASPHERE_ISSUER: provider.issuer }

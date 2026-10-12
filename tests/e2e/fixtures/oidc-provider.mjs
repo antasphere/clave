@@ -65,7 +65,8 @@ export async function startOidcProvider({
   user = DEFAULT_USER,
   issueRefresh = true,
   idTokenTtlSec = 3600,
-  accessTokenTtlSec = 3600
+  accessTokenTtlSec = 3600,
+  registrationStatus = 201
 } = {}) {
   const keys = { signing: makeKey('clave-test-signing'), other: makeKey('clave-test-other') }
   const state = {
@@ -73,6 +74,8 @@ export async function startOidcProvider({
     issueRefresh,
     idTokenTtlSec,
     accessTokenTtlSec,
+    /** The hub answers 200; RFC 7591 providers answer 201. */
+    registrationStatus,
     /** Every request as `{ method, path, body }`, in order. */
     log: [],
     /** The registrations accepted, with the metadata as sent. */
@@ -198,7 +201,7 @@ export async function startOidcProvider({
       }
       state.confidentialNext = false
       state.registrations.push({ sent: metadata, registered })
-      return json(res, 201, registered)
+      return json(res, state.registrationStatus, registered)
     }
 
     if (url.pathname === '/authorize' && req.method === 'GET') {

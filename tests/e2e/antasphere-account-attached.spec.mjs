@@ -172,6 +172,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   createKeychain()
   const provider = await startOidcProvider({
+    registrationStatus: 200,
     user: {
       sub: 'e2e-attached-1',
       name: 'Zoë Attachée',
