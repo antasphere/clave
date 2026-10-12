@@ -82,10 +82,11 @@ const push = (
   known: string[],
   displayOrder: string[],
   groups: Groups = [],
-  knownGroups: Groups = groups
+  knownGroups: Groups = groups,
+  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans' | undefined = 'command'
 ): void => {
   setSidebarBase({ windowKey: 'w', revision, groups: knownGroups, displayOrder: known })
-  applyServerLayout({ windowKey: 'w', revision: ++revision, groups, displayOrder })
+  applyServerLayout({ windowKey: 'w', revision: ++revision, groups, displayOrder }, cause)
 }
 const group = (
   id: string,
@@ -208,6 +209,130 @@ describe('a layout pushed by the server', () => {
     push(['g'], ['g'], [g])
     await new Promise((r) => setTimeout(r, 10))
     expect(recordsAsked).toHaveLength(1)
+  })
+
+  it('takes in a TAB the server opened, from its record, selected; leaves one that is not running', async () => {
+    const tab = (id: string, running: boolean): unknown => ({
+      id,
+      cwd: '/w',
+      folderName: 'w',
+      displayName: `Tab ${id}`,
+      live: true,
+      running,
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    records = [tab('opened', true), tab('moving', false)]
+    // The server placed two ids this window never saw: one it runs, one
+    // detached on its way here (the re-home's to reattach).
+    push([], ['opened', 'moving'])
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(recordsAsked).toEqual([{ ids: ['opened', 'moving'] }])
+    expect(state.sessions.map((s) => s.id)).toEqual(['opened'])
+    expect(state.sessions[0]).toMatchObject({ name: 'Tab opened', claudeMode: true })
+    expect(state.selectedSessionIds).toEqual(['opened'])
+    expect(state.focusedSessionId).toBe('opened')
+  })
+
+  it('leaves a tab that arrives with a move or a closing window to the re-home, and takes no focus for a save', async () => {
+    const tab = (id: string): unknown => ({
+      id,
+      cwd: '/w',
+      folderName: 'w',
+      live: true,
+      running: true,
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    records = [tab('moved')]
+    // Main hands the layouts over before it detaches the sessions: at this
+    // push the record still reads running, and the re-home's own adoption is
+    // what must take the tab in, with the focus a close must not take.
+    push([], ['moved'], [], [], 'window-closed')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+    push([], ['moved'], [], [], 'move')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    // A save, or a refused save's current layout, may name a tab this window
+    // never saw: taken in, but the selection is an agent's placement's alone.
+    push([], ['moved'], [], [], 'save')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([{ ids: ['moved'] }])
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['moved'])
+    expect(state.selectedSessionIds).toEqual([])
+    expect(state.focusedSessionId).toBeNull()
+  })
+
+  it('leaves a group terminal that arrives with a closing window to the re-home, like a tab', async () => {
+    const g = group(
+      'g',
+      [],
+      [{ id: 't1', command: 'npm run dev', commandMode: 'auto', color: 'green', sessionId: 'term' }]
+    )
+    records = [
+      {
+        id: 'term',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        link: { kind: 'group-terminal', groupId: 'g', terminalId: 't1' },
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    useSessionStore.setState({ groups: [], displayOrder: [] })
+    // The closing window's dev-server pane rides the re-home with its group:
+    // a take-in here would adopt it, and select it, before the re-home does.
+    push([], ['g'], [g], [], 'window-closed')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('takes in a tab from a snapshot with no cause, selected nowhere', async () => {
+    records = [
+      {
+        id: 'tab',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    // A refused save's current layout, or the read after the restore: nobody's
+    // change in particular, so the tab is taken in and nothing is selected.
+    // Applied directly: the helper's default would read an absent cause as a command.
+    setSidebarBase({ windowKey: 'w', revision, groups: [], displayOrder: [] })
+    applyServerLayout({ windowKey: 'w', revision: ++revision, groups: [], displayOrder: ['tab'] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([{ ids: ['tab'] }])
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['tab'])
+    expect(state.selectedSessionIds).toEqual([])
+    expect(state.focusedSessionId).toBeNull()
   })
 
   it('selects the taken-in terminal only when its group shows on screen', async () => {

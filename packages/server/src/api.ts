@@ -24,7 +24,13 @@ import {
   // ── Wave 4, lane C: the session records and a session's release ──
   DiscardSessionRecord,
   ListAdoptableRecords,
-  ReleaseSessions
+  ReleaseSessions,
+  // ── Wave 4, lane D: the last agent tools ──
+  ReadSessionScreen,
+  RenameSession,
+  RestartSession,
+  SetSessionPage,
+  TypeIntoSession
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
@@ -70,6 +76,12 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('listAdoptable', HttpCqrs.query(ListAdoptableRecords))
     .handle('discardRecord', HttpCqrs.command(DiscardSessionRecord))
     .handle('release', HttpCqrs.command(ReleaseSessions))
+    // ── Wave 4, lane D: the last agent tools ──
+    .handle('rename', HttpCqrs.command(RenameSession))
+    .handle('setPage', HttpCqrs.command(SetSessionPage))
+    .handle('screen', HttpCqrs.query(ReadSessionScreen))
+    .handle('type', HttpCqrs.command(TypeIntoSession))
+    .handle('restart', HttpCqrs.command(RestartSession))
 )
 
 // ── Lane A: the clients the shell registers as ──

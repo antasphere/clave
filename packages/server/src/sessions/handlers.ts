@@ -9,6 +9,12 @@ import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
+  ReadSessionScreen,
+  RenameSession,
+  RestartSession,
+  SessionScreenUnavailable,
+  SetSessionPage,
+  TypeIntoSession,
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
@@ -31,6 +37,7 @@ import {
   ReleaseSessions
 } from '@clave/contract/sessions'
 import { SessionHost, type SessionHostService } from './port'
+import { ServerEvents } from '../events'
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -182,5 +189,84 @@ export const sessionHandlers = [
             : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
       })
     )
+  ),
+  // ── Wave 4, lane D: the last agent tools (PRDCT-3377). What an agent did
+  // to a session is a fact the windows follow, so each handler publishes it
+  // once the host took it. ──
+  CommandHandler.make(RenameSession, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      yield* known(host, payload.id)
+      const session = host.rename(payload.id, payload.name)
+      const events = yield* ServerEvents
+      yield* events.publish({ _tag: 'session.renamed', id: payload.id, name: session.title })
+      return session
+    })
+  ),
+  CommandHandler.make(SetSessionPage, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      yield* known(host, payload.id)
+      host.setPage(payload.id, payload.page)
+      const events = yield* ServerEvents
+      yield* events.publish({
+        _tag: 'session.page_changed',
+        id: payload.id,
+        page: payload.page,
+        servingSessionId: payload.servingSessionId
+      })
+    })
+  ),
+  QueryHandler.make(ReadSessionScreen, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: () => host.screen(payload.id, payload.lines ?? 100),
+            catch: (error) =>
+              error instanceof SessionScreenUnavailable
+                ? error
+                : new SessionScreenUnavailable({ id: payload.id, message: messageOf(error) })
+          })
+        )
+      )
+    )
+  ),
+  CommandHandler.make(TypeIntoSession, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      yield* known(host, payload.id)
+      const outcome = yield* Effect.tryPromise({
+        try: () => host.type(payload.id, payload.text),
+        catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
+      })
+      const events = yield* ServerEvents
+      yield* events.publish({ _tag: 'session.typed', id: payload.id, from: payload.from ?? null })
+      return outcome
+    })
+  ),
+  CommandHandler.make(RestartSession, (payload) =>
+    Effect.gen(function* () {
+      const host = yield* SessionHost
+      yield* known(host, payload.id)
+      const events = yield* ServerEvents
+      // Said before the kill: the window hears the exit of the old process
+      // first otherwise, and announces the tab as ended.
+      yield* events.publish({ _tag: 'session.restarting', id: payload.id })
+      const restarted = yield* Effect.tryPromise({
+        try: () => host.restart(payload.id, payload.account, payload.resendRejected === true),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new SessionStartFailed({ message: messageOf(error) })
+      })
+      yield* events.publish({
+        _tag: 'session.restarted',
+        id: payload.id,
+        resumed: restarted.resumed,
+        account: payload.account
+      })
+      return restarted
+    })
   )
 ] as const
