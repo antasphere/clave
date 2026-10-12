@@ -1,8 +1,8 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): the window's restart of a tab is an IPC call main answers
+// from its own PTY manager (`pty:restart`), which cannot restart a session
+// the attached server holds; the spec also stubs that handler and main's
+// host directly. Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —

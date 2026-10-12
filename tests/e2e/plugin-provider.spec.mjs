@@ -30,11 +30,12 @@ async function open(dir) {
     fresh: true
   })
   seedTrustedRoots(dir, [root])
-  // In-process (PRDCT-3293): the plugin's adapter and its launch profile
-  // register with the shell's plugin host and main's managers; attached, the
-  // window reads its profiles from the standalone server, which never hears
-  // of them. The session host is reached through the fixture either way.
-  const { app, win, fixture } = await launchApp(dir, { server: 'in-process' })
+  // Runs in both modes (wave 5, lane C, PRDCT-3433): the plugin store and
+  // host are the server's, so an adapter plugin enabled from the window
+  // registers with the server's session manager and its launch profile is
+  // offered among the server's own. The session host is reached through the
+  // fixture either way.
+  const { app, win, fixture } = await launchApp(dir)
   // Record the raw stream before any session exists: what the plugin emits is
   // only assertable here, ahead of whatever the view chooses to render. The
   // stream reaches the window over the server's push channel, so the record

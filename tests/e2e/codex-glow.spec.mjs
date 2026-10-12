@@ -1,8 +1,7 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): its plain-PTY leg turns tmux off through the shell's own
+// preferences file, which the standalone server never reads, so attached
+// that leg would quietly run under tmux and prove nothing. Not a known failure.
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import {
   launchApp,

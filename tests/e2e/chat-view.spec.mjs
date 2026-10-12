@@ -1,10 +1,6 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): the chat's views are plugin views leased from the shell's
-// plugin host, which knows main's sessions and not the server's; attached,
-// a session on the standalone server mounts its chat but gets no view lease
-// (no view switcher, no chip that the view reports), so the pin stays until
-// the plugin host reaches the server, which the spec keeps in the shell
-// through wave 3. Not a known failure.
+// Runs in both modes (wave 5, lane C, PRDCT-3433): the plugin host runs
+// beside the server's sessions, so a chat on the separate server gets its
+// views and its view switcher as an in-process one does.
 // The chat view on the echo fixture. This spec and every spec built on its
 // `openChat` reach the sessions from inside (the echo adapter, the session host
 // wrapped to see what the composer wrote, synthetic frames) through the
@@ -14,8 +10,7 @@
 // `fixture.evaluate` runs the wraps there. Synthetic frames are injected where
 // the session lives (`__claveE2E.echo.inject`) and reach the window over its own
 // transport. Only what is Electron's (an `ipcMain` stub, a `BrowserWindow`
-// send) stays on `app.evaluate`. The specs themselves run in-process for the
-// reason above; the road is the same in both modes.
+// send) stays on `app.evaluate`. The road is the same in both modes.
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync } from 'node:fs'
 import { launchApp, seedWorkspaces, seedTrustedRoots, until, fixturePath } from './harness.mjs'
@@ -47,8 +42,7 @@ export async function openChat(
   if (beforeLaunch) await beforeLaunch(dir)
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
-    env,
-    server: 'in-process'
+    env
   })
   // The session calls cross the server, not IPC (PRDCT-3239): what a spec
   // wraps is the session host the server exposes under --test-no-activate, the
