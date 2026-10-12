@@ -274,74 +274,51 @@ export async function run(t) {
     )
     if (process.env.CLAVE_LINKED_CAPTURE)
       await win.screenshot({ path: fixturePath('linked-email.png') })
-    const prepared = await client.call('clave_side_panel', {
-      action: 'prepare',
-      revision: final.revision
-    })
-    t.check('MCP prepares saved email revision', !toolErrored(prepared), prepared)
-    const pkgInfo = toolPayload(prepared),
-      pkg = JSON.parse(
-        readFileSync(`${DIR}/linked-documents/${pkgInfo.packageId}.package.json`, 'utf8')
+    // The panel is review-only (PRDCT-3438): the agent reads the reviewed
+    // email back, attachment paths included, and sends through its own channel.
+    const retained = final.attachments[0]
+    t.check(
+      'read names each attachment by an absolute path under the profile',
+      typeof retained?.path === 'string' &&
+        retained.path.startsWith(`${DIR}/linked-documents/${emailDoc.id}/`) &&
+        retained.path.endsWith('/attachment.txt'),
+      retained
+    )
+    t.equal(
+      'the retained attachment holds the copied bytes after the source was removed',
+      readFileSync(retained.path, 'utf8'),
+      'SYNTHETIC ATTACHMENT BYTES'
+    )
+    t.check(
+      'read carries the reply fields the agent sends with',
+      ['from', 'to', 'subject', 'bodyHtml', 'signatureHtml', 'signatureText'].every(
+        (k) => k in final.email
+      ) && !('delivery' in final),
+      Object.keys(final)
+    )
+    t.check(
+      'prepare is no longer an action of the panel',
+      toolErrored(
+        await client.call('clave_side_panel', { action: 'prepare', revision: final.revision })
       )
-    const mime = Buffer.from(pkg.raw, 'base64url').toString()
-    t.check(
-      'immutable package contains reviewed body and copied attachment',
-      mime.includes('Reviewed body and final Z') &&
-        mime.includes(Buffer.from('SYNTHETIC ATTACHMENT BYTES').toString('base64')),
-      mime.slice(0, 200)
     )
     t.check(
-      'signature image compiled into CID MIME part',
-      mime.includes('Content-ID:') && mime.includes('cid:')
-    )
-    // Replace only this isolated Electron instance's fetch: no external email request is possible.
-    await app.evaluate(() => {
-      globalThis.__linkedSent = []
-      globalThis.fetch = async (url, opts) => {
-        if (String(url).includes('oauth2.googleapis.com'))
-          return Response.json({ access_token: 'fake' })
-        if (String(url).includes('gmail.googleapis.com')) {
-          globalThis.__linkedSent.push(JSON.parse(opts.body))
-          return Response.json({ id: 'synthetic-sent-id' })
-        }
-        throw Error('Unexpected network request')
-      }
-      process.env.GMAIL_CLIENT_ID = 'fake'
-      process.env.GMAIL_CLIENT_SECRET = 'fake'
-      process.env.GMAIL_REFRESH_TOKEN = 'fake'
-    })
-    t.check(
-      'send requires explicit user confirmation',
-      toolErrored(await client.call('clave_side_panel', { action: 'send', packageId: pkg.id }))
-    )
-    const sent = await client.call('clave_side_panel', {
-      action: 'send',
-      packageId: pkg.id,
-      userConfirmed: true
-    })
-    t.check(
-      'actual MCP and Gmail adapter persist fake transport success',
-      !toolErrored(sent) && toolPayload(sent).delivery.status === 'sent',
-      sent
-    )
-    const submitted = await app.evaluate(() => globalThis.__linkedSent)
-    t.equal('Gmail raw transport receives exact frozen package bytes', submitted[0].raw, pkg.raw)
-    t.check(
-      'duplicate send is refused',
+      'send is no longer an action of the panel',
       toolErrored(
         await client.call('clave_side_panel', {
           action: 'send',
-          packageId: pkg.id,
+          packageId: 'synthetic',
           userConfirmed: true
         })
       )
     )
-    await win.getByLabel('Subject', { exact: true }).fill('Unsent revision after delivery')
-    await client.call('clave_side_panel', { action: 'read' })
-    t.check(
-      'UI distinguishes current unsent edits from earlier sent revision',
-      (await win.getByText(/current edits are unsent/).count()) > 0
+    t.equal(
+      'the composer foot carries no delivery line',
+      await win.getByText(/Ask your agent to send|current edits are unsent|Delivery/).count(),
+      0
     )
+    await win.getByLabel('Subject', { exact: true }).fill('Subject after review')
+    await client.call('clave_side_panel', { action: 'read' })
     await win.getByRole('button', { name: 'Hide linked document' }).click()
     await until(() => win.getByRole('button', { name: 'Open linked document' }).count())
     await win.getByRole('button', { name: 'Open linked document' }).click()
@@ -349,6 +326,18 @@ export async function run(t) {
     // Restart against the SAME isolated profile; durable document survives renderer/main teardown.
     await client.call('clave_side_panel', { action: 'read' })
     await app.close()
+    // A document an earlier build wrote carries the removed delivery fields:
+    // it must still load, and nothing of them must reach the composer.
+    const persistedEmail = `${DIR}/linked-documents/${emailDoc.id}.json`
+    writeFileSync(
+      persistedEmail,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(persistedEmail, 'utf8')),
+        delivery: { revision: 1, packageId: 'legacy', status: 'sent', messageId: 'legacy' },
+        deliveries: { 1: { revision: 1, packageId: 'legacy', status: 'sent' } },
+        preparedPackages: { legacy: 'seal' }
+      })
+    )
     ;({ app, win } = await launchApp(DIR, { server: 'in-process', settleMs: 8000 }))
     if (await win.getByRole('button', { name: 'Restore', exact: true }).count())
       await win.getByRole('button', { name: 'Restore', exact: true }).click()
@@ -359,7 +348,7 @@ export async function run(t) {
     t.equal(
       'restart preserves exact edited subject',
       restored.email.subject,
-      'Unsent revision after delivery'
+      'Subject after review'
     )
     t.equal(
       'default file pointer survives restart',
@@ -371,13 +360,27 @@ export async function run(t) {
       restored.email.signatureHtml,
       final.email.signatureHtml
     )
-    t.equal('restart preserves delivery revision', restored.delivery.status, 'sent')
     await callMcp(app, 'focus', { sessionId: agent.sessionId })
     await win.getByLabel('Subject', { exact: true }).waitFor()
     t.equal(
-      'restart restores paired composer in real UI',
+      'restart restores paired composer in real UI, legacy delivery fields and all',
       await win.getByLabel('Subject', { exact: true }).inputValue(),
-      'Unsent revision after delivery'
+      'Subject after review'
+    )
+    t.equal(
+      'nothing of the legacy delivery fields reaches the composer',
+      await win.getByText(/Sent · revision|Delivery|current edits are unsent/).count(),
+      0
+    )
+    await win.getByLabel('Subject', { exact: true }).fill('Saved by the new build')
+    await until(
+      () =>
+        JSON.parse(readFileSync(persistedEmail, 'utf8')).email.subject === 'Saved by the new build'
+    )
+    t.check(
+      'the next save writes the document without the legacy delivery fields',
+      !('delivery' in JSON.parse(readFileSync(persistedEmail, 'utf8'))) &&
+        !('preparedPackages' in JSON.parse(readFileSync(persistedEmail, 'utf8')))
     )
   } finally {
     await app.close()

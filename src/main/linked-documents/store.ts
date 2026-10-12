@@ -6,21 +6,16 @@ import {
   linkedUpdateSchema,
   type LinkedDocument,
   type DefaultSignature,
-  type LinkedDelivery,
+  type LinkedDocumentRead,
   type LinkedOpen,
-  type LinkedUpdate,
-  type PreparedEmail
+  type LinkedUpdate
 } from '../../shared/linked-documents'
-import {
-  digest,
-  prepareMime,
-  sendGmail,
-  validateEmailHtml,
-  importSignature,
-  type RawSender
-} from './email'
+import { digest, validateEmailHtml, importSignature } from './email'
 
-/** Synchronous disk critical sections serialize IPC/MCP edits. Async MIME/send use revision checks and durable send intent. */
+/** Fields a build before PRDCT-3438 persisted for the composer's built-in send, removed since. */
+const LEGACY_DELIVERY_FIELDS = ['delivery', 'deliveries', 'preparedPackages'] as const
+
+/** Synchronous disk critical sections serialize IPC/MCP edits; the async signature imports use revision checks. */
 export class LinkedDocumentStore {
   constructor(
     private root: string,
@@ -45,7 +40,12 @@ export class LinkedDocumentStore {
     return Object.values(this.index()).map((id) => this.get(id))
   }
   get(id: string, sessionId?: string): LinkedDocument {
-    const doc = JSON.parse(readFileSync(this.file(id), 'utf8')) as LinkedDocument
+    const doc = JSON.parse(readFileSync(this.file(id), 'utf8')) as LinkedDocument &
+      Partial<Record<(typeof LEGACY_DELIVERY_FIELDS)[number], unknown>>
+    // A document written before the built-in send was removed still loads; its
+    // delivery fields are dropped here so neither the composer nor an agent sees
+    // them, and the next save writes the document without them.
+    for (const field of LEGACY_DELIVERY_FIELDS) delete doc[field]
     if (sessionId && doc.sessionId !== sessionId)
       throw new Error('Document belongs to another session')
     return doc
@@ -317,85 +317,15 @@ export class LinkedDocumentStore {
       doc.attachments.find((a) => a.id === attachmentId)!.name
     )
   }
-  private deliveryAt(doc: LinkedDocument, revision: number): LinkedDelivery | undefined {
-    return (
-      doc.deliveries?.[revision] ?? (doc.delivery?.revision === revision ? doc.delivery : undefined)
-    )
-  }
-  private recordDelivery(doc: LinkedDocument, delivery: LinkedDelivery): void {
-    doc.deliveries ??= {}
-    if (doc.delivery && !doc.deliveries[doc.delivery.revision])
-      doc.deliveries[doc.delivery.revision] = doc.delivery
-    doc.deliveries[delivery.revision] = delivery
-    // A slower old send must not replace the newer revision's displayed result or retry guard.
-    if (!doc.delivery || delivery.revision >= doc.delivery.revision) doc.delivery = delivery
-  }
-  async prepare(id: string, revision: number, sessionId: string): Promise<PreparedEmail> {
-    const doc = this.get(id, sessionId)
-    this.check(doc, revision)
-    if (!doc.email) throw new Error('Only emails can be prepared')
-    if (doc.signatureError) throw new Error(doc.signatureError)
-    const delivery = this.deliveryAt(doc, revision)
-    if (delivery && delivery.status !== 'failed')
-      throw new Error(
-        `Revision already has a delivery attempt (${delivery.status}); inspect its result, do not prepare a duplicate`
-      )
-    const files = doc.attachments.map((a) => {
-      const bytes = readFileSync(this.attachmentPath(id, a.id))
-      if (digest(bytes) !== a.sha256) throw new Error('Attachment integrity mismatch')
-      return { filename: a.name, content: bytes }
-    })
-    const pkg = await prepareMime(doc, files)
-    const latest = this.get(id, sessionId)
-    this.check(latest, revision)
-    this.write(join(this.root, pkg.id + '.package.json'), pkg)
-    latest.preparedPackages ??= {}
-    latest.preparedPackages[pkg.id] = digest(JSON.stringify(pkg))
-    this.save(latest)
-    return pkg
-  }
-  async send(
-    packageId: string,
-    sessionId: string,
-    sender: RawSender = sendGmail
-  ): Promise<LinkedDocument> {
-    this.file(packageId)
-    const pkg = JSON.parse(
-      readFileSync(join(this.root, packageId + '.package.json'), 'utf8')
-    ) as PreparedEmail
-    const doc = this.get(pkg.documentId, sessionId)
-    if (this.current(sessionId).id !== pkg.documentId)
-      throw new Error('Package is no longer the linked email; reopen and review it before sending')
-    if (
-      pkg.id !== packageId ||
-      doc.preparedPackages?.[packageId] !== digest(JSON.stringify(pkg)) ||
-      pkg.sessionId !== sessionId ||
-      digest(Buffer.from(pkg.raw, 'base64url')) !== pkg.sha256
-    )
-      throw new Error('Package ownership or integrity mismatch')
-    this.check(doc, pkg.revision)
-    const delivery = this.deliveryAt(doc, pkg.revision)
-    if (delivery && delivery.status !== 'failed')
-      throw new Error(`Delivery already attempted (${delivery.status}); no automatic retry`)
-    this.recordDelivery(doc, {
-      revision: pkg.revision,
-      packageId,
-      status: 'unknown',
-      detail: 'Submission started; outcome not yet known. Do not retry.'
-    })
-    this.save(doc)
-    let result: Awaited<ReturnType<RawSender>>
-    try {
-      result = await sender(pkg)
-    } catch {
-      result = {
-        status: 'unknown',
-        detail: 'Delivery interrupted; check Sent before further action.'
-      }
+  /**
+   * The document as an agent reads it: every attachment carries the absolute
+   * path of the copy Clave retains, so the agent can attach it through its own
+   * channel. Derived here from the store's root, never written to disk.
+   */
+  forAgent(doc: LinkedDocument): LinkedDocumentRead {
+    return {
+      ...doc,
+      attachments: doc.attachments.map((a) => ({ ...a, path: this.attachmentPath(doc.id, a.id) }))
     }
-    // Preserve any user edits made while the send was in flight.
-    const latest = this.get(doc.id, sessionId)
-    this.recordDelivery(latest, { revision: pkg.revision, packageId, ...result })
-    return this.save(latest)
   }
 }

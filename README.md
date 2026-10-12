@@ -75,7 +75,7 @@ npx plugins add antasphere/clave   # re-run to pull latest
 
 - **Run a fleet of agents** — Open unlimited Claude Code, Antigravity, Codex, and Pi sessions, each in its own PTY, plus plain terminals. Named launch profiles can wrap a CLI with tools such as TokenOps while Clave keeps session and resume flags under its control.
 - **Git, built in** — A full git panel with diff viewer and commit history, plus MagicSync: pull, stage, write an AI commit message, commit, and push in one click.
-- **Edit beside your agent** — Link Markdown, HTML, or a structured email to its originating session. Edit in a focused two-pane view, with autosave, managed attachments and signatures, and agent-driven Gmail sending. [Workflow and dev testing](docs/linked-documents.md).
+- **Edit beside your agent** — Link Markdown, HTML, or a structured email to its originating session. Edit in a focused two-pane view, with autosave, managed attachments and signatures; the agent reads the reviewed draft back and sends it through its own channel. [Workflow and dev testing](docs/linked-documents.md).
 - **Local & remote files** — Browse and edit files with syntax-highlighted previews, on your machine or on remote hosts over SSH/SFTP.
 - **Remote sessions** — Connect to any host over SSH and run your agents there with the same UI and shortcuts.
 - **Fully local** — A desktop app with no cloud backend and no account; your code, sessions, and keys stay on your machine.

@@ -68,7 +68,7 @@ const MCP_PATH = '/mcp'
 const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name and Clave routes the call. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel then reads, updates, prepares and sends it. That is what "open it in the panel" means. clave_open_file is not.
+- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means. clave_open_file is not.
 - they only need to READ a file -> clave_open_file (a tab; .html renders live).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view (dashboard, preview, dev server).
 - work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a plain terminal, any directory, optional prompt and model) or clave_add_group_terminal (a saved command such as a dev server). clave_launch_group starts a pinned .clave template.
@@ -1060,7 +1060,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_side_panel',
     {
       description:
-        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. Reopening a path preserves edits. Then use clave_side_panel to read/update/prepare/send. Never send without an explicit user instruction.',
+        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. Reopening a path preserves edits. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
       inputSchema: linkedOpenSchema
     },
     async (args) => {
@@ -1076,13 +1076,11 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_side_panel',
     {
       description:
-        'Companion to clave_open_side_panel: work on the document or email now open in YOUR side panel. Read it, update it with the expected revision, prepare an immutable email package, or send a prepared package via Gmail. Read returns exact current content. Revision conflicts require reading again, never overwriting user edits. Prepare is NOT send. Send ONLY after explicit user instruction, with the returned packageId and userConfirmed=true. Do not reconstruct MIME. Sent/failed/unknown results are persisted; never automatically retry an unknown result or create duplicate revisions to bypass delivery guards.',
+        'Companion to clave_open_side_panel: read or update the document or email now open in YOUR side panel. Read returns the exact current content with its revision, and for an email the recipients, subject, body HTML, signature HTML and text, the reply headers (replyTo, inReplyTo, references, threadId) and each attachment with its absolute file path: everything your own send needs. Update takes the expected revision; a conflict means the user edited since, so read again and never overwrite their edits. There is no send here, by design: the user reviews in the panel, and you send what read returns through your own channel (your mail tool or script) once they say so.',
       inputSchema: {
-        action: z.enum(['read', 'update', 'prepare', 'send']),
+        action: z.enum(['read', 'update']),
         revision: z.number().int().positive().optional(),
-        update: linkedUpdateSchema.optional(),
-        packageId: z.string().optional(),
-        userConfirmed: z.boolean().optional()
+        update: linkedUpdateSchema.optional()
       }
     },
     async (args) => {
@@ -1093,25 +1091,17 @@ function buildServer(callerSessionId: string | undefined): McpServer {
         await callRenderer('flushLinkedDocument', { sessionId: callerSessionId }, owner)
         const store = linkedDocuments(),
           doc = store.current(callerSessionId)
+        // Both actions answer with the agent's read shape (attachment paths
+        // included): the panel is review-only, the agent sends through its
+        // own channel from what it reads here (PRDCT-3438).
         let result: unknown
-        if (args.action === 'read') result = doc
-        else if (args.action === 'update') {
+        if (args.action === 'read') result = store.forAgent(doc)
+        else {
           if (args.revision === undefined || !args.update)
             throw new Error('revision and update required')
-          result = await store.update(doc.id, args.revision, args.update, callerSessionId)
-        } else if (args.action === 'prepare') {
-          if (args.revision === undefined) throw new Error('revision required')
-          const pkg = await store.prepare(doc.id, args.revision, callerSessionId)
-          result = {
-            packageId: pkg.id,
-            revision: pkg.revision,
-            sha256: pkg.sha256,
-            messageId: pkg.messageId
-          }
-        } else {
-          if (!args.packageId || args.userConfirmed !== true)
-            throw new Error('Explicit user instruction required: packageId and userConfirmed=true')
-          result = await store.send(args.packageId, callerSessionId)
+          result = store.forAgent(
+            await store.update(doc.id, args.revision, args.update, callerSessionId)
+          )
         }
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
       } catch (error) {
