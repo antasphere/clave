@@ -22,9 +22,13 @@ let useWorkspaceStore: typeof import('./workspace-store').useWorkspaceStore
 let applyServerLayout: typeof import('./session-store').applyServerLayout
 let setSidebarBase: typeof import('./session-store').setSidebarBase
 let adoptServerStartedTerminals: typeof import('../lib/adopt-record').adoptServerStartedTerminals
+let adoptRecord: typeof import('../lib/adopt-record').adoptRecord
 /** What main answers to `listSessionRecords`, set per test. */
 let records: unknown[] = []
 const recordsAsked: unknown[] = []
+/** What the kernel lists (`sessionsList`): the id and the state of each session, set per test. */
+let listed: { id: string; state: string }[] = []
+let listedAnswer: (() => Promise<unknown[]>) | null = null
 
 beforeAll(async () => {
   const mem = new Map<string, string>()
@@ -41,6 +45,15 @@ beforeAll(async () => {
       recordsAsked.push(filter)
       return records
     },
+    sessionsList: async () => (listedAnswer ? listedAnswer() : listed),
+    spawnSession: async (cwd: string, options: { adoptSessionId?: string }) => ({
+      id: options.adoptSessionId,
+      cwd,
+      folderName: 'w',
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null
+    }),
     showNotification: async () => 'shown'
   }
   const store = await import('./session-store')
@@ -49,6 +62,7 @@ beforeAll(async () => {
   applyServerLayout = store.applyServerLayout
   setSidebarBase = store.setSidebarBase
   adoptServerStartedTerminals = (await import('../lib/adopt-record')).adoptServerStartedTerminals
+  adoptRecord = (await import('../lib/adopt-record')).adoptRecord
 })
 
 const session = (id: string, alive = true, extra: Partial<Session> = {}): Session =>
@@ -99,6 +113,8 @@ beforeEach(() => {
   blocksClose = false
   records = []
   recordsAsked.length = 0
+  listed = []
+  listedAnswer = null
   useSessionStore.setState({
     sessions: [],
     groups: [],
@@ -483,6 +499,86 @@ describe('a layout pushed by the server', () => {
     expect(state.selectedSessionIds).toEqual([])
   })
 
+  it('paints the state the kernel holds for a tab the server opened, at once (PRDCT-3289)', async () => {
+    records = [
+      {
+        id: 'opened',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    listed = [{ id: 'opened', state: 'working' }]
+    push([], ['opened'])
+    await new Promise((r) => setTimeout(r, 10))
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'opened')?.agentState).toBe(
+      'working'
+    )
+  })
+
+  it("paints the kernel's state on a tab adopted from its record, and never over a word heard live", async () => {
+    const record = {
+      id: 'r1',
+      cwd: '/w',
+      folderName: 'w',
+      live: true,
+      tmuxName: 'clave-r1',
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    } as never
+    listed = [{ id: 'r1', state: 'blocked' }]
+    await adoptRecord(record, null)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'r1')?.agentState).toBe(
+      'blocked'
+    )
+    // A second tab: the hook's word lands while the kernel's list is still in flight; the live word stays.
+    const pending: { answer: ((value: unknown[]) => void) | null } = { answer: null }
+    listedAnswer = () => new Promise<unknown[]>((resolve) => (pending.answer = resolve))
+    const r2 = { ...(record as object), id: 'r2', tmuxName: 'clave-r2' } as never
+    const adopting = adoptRecord(r2, null)
+    await new Promise((r) => setTimeout(r, 10))
+    useSessionStore.getState().setAgentState('r2', 'done')
+    pending.answer?.([{ id: 'r2', state: 'working' }])
+    await adopting
+    await new Promise((r) => setTimeout(r, 10))
+    expect(useSessionStore.getState().sessions.find((s) => s.id === 'r2')?.agentState).toBe('done')
+  })
+
+  it("seeds nothing from a kernel word of 'ended' or from a session the kernel does not list", async () => {
+    const tab = (id: string): unknown => ({
+      id,
+      cwd: '/w',
+      folderName: 'w',
+      live: true,
+      running: true,
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    records = [tab('gone'), tab('unlisted')]
+    listed = [{ id: 'gone', state: 'ended' }]
+    push([], ['gone', 'unlisted'])
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(state.sessions.find((s) => s.id === 'gone')?.agentState).toBeUndefined()
+    expect(state.sessions.find((s) => s.id === 'unlisted')?.agentState).toBeUndefined()
+  })
+
   it('takes a terminal in as ended when its record says its process is gone', async () => {
     const g = group(
       'g',
@@ -552,5 +648,37 @@ describe('a layout pushed by the server', () => {
     const state = useSessionStore.getState()
     expect(state.sessions.map((s) => s.id)).toEqual(['member'])
     expect(state.focusedSessionId).toBe('member')
+  })
+})
+
+describe('the shells a restore kept are settled by the store (PRDCT-3432)', () => {
+  it('drops the candidates that are no session, group or file tab now, and keeps the rest', () => {
+    const g = group(
+      'g',
+      ['back', 'gone'],
+      [{ id: 't1', command: 'x', commandMode: 'auto', color: 'green', sessionId: 'term-gone' }]
+    )
+    useSessionStore.setState({
+      sessions: [session('back'), session('top-back')],
+      groups: [g],
+      displayOrder: ['g', 'top-back', 'top-gone']
+    })
+    useSessionStore
+      .getState()
+      .pruneRestoredShells(['back', 'gone', 'term-gone', 'top-back', 'top-gone'])
+    const state = useSessionStore.getState()
+    expect(state.groups[0].sessionIds).toEqual(['back'])
+    expect(state.groups[0].terminals[0].sessionId).toBeNull()
+    expect(state.displayOrder).toEqual(['g', 'top-back'])
+  })
+
+  it('changes nothing, not even the references, when every candidate is held', () => {
+    const g = group('g', ['back'])
+    useSessionStore.setState({ sessions: [session('back')], groups: [g], displayOrder: ['g'] })
+    const before = useSessionStore.getState()
+    useSessionStore.getState().pruneRestoredShells(['back', 'g'])
+    const after = useSessionStore.getState()
+    expect(after.groups).toBe(before.groups)
+    expect(after.displayOrder).toBe(before.displayOrder)
   })
 })
