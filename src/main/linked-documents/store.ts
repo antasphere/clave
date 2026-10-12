@@ -325,7 +325,10 @@ export class LinkedDocumentStore {
   forAgent(doc: LinkedDocument): LinkedDocumentRead {
     return {
       ...doc,
-      attachments: doc.attachments.map((a) => ({ ...a, path: this.attachmentPath(doc.id, a.id) }))
+      attachments: doc.attachments.map((a) => ({
+        ...a,
+        path: join(this.root, doc.id, a.id, a.name)
+      }))
     }
   }
 }

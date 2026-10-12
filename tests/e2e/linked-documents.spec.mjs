@@ -205,7 +205,11 @@ export async function run(t) {
         from: 'sender@example.test',
         to: 'reader@example.test',
         subject: 'Synthetic email',
-        bodyHtml: '<p>Hello reader.</p>'
+        bodyHtml: '<p>Hello reader.</p>',
+        replyTo: 'replies@example.test',
+        inReplyTo: '<original@example.test>',
+        references: '<original@example.test>',
+        threadId: 'synthetic-thread'
       },
       attachments: [`${ROOT}/attachment.txt`]
     })
@@ -290,11 +294,16 @@ export async function run(t) {
       'SYNTHETIC ATTACHMENT BYTES'
     )
     t.check(
-      'read carries the reply fields the agent sends with',
+      'read carries the reply headers and the fields the agent sends with',
       ['from', 'to', 'subject', 'bodyHtml', 'signatureHtml', 'signatureText'].every(
         (k) => k in final.email
-      ) && !('delivery' in final),
-      Object.keys(final)
+      ) &&
+        final.email.replyTo === 'replies@example.test' &&
+        final.email.inReplyTo === '<original@example.test>' &&
+        final.email.references === '<original@example.test>' &&
+        final.email.threadId === 'synthetic-thread' &&
+        !('delivery' in final),
+      final.email
     )
     t.check(
       'prepare is no longer an action of the panel',
