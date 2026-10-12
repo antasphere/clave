@@ -538,10 +538,16 @@ export async function run(t) {
         await readiness(disc.url)
       )
 
-      // A terminal on the pair as started.
+      // A terminal on the pair as started, and the window listening for its
+      // exit the way the pane does (`onSessionExit`, off the push channel on
+      // a server in another process).
       const g = await callMcp(app, 'createGroup', { name: 'separate' })
       const first = await terminalPrinting(app, win, g.groupId, 'FIRST')
       t.check('a terminal started on the separate server runs', first.seen === true, first)
+      await win.evaluate((sid) => {
+        window.__e2eExits = []
+        window.electronAPI.onSessionExit(sid, (code) => window.__e2eExits.push(code))
+      }, first.sessionId)
 
       // The terminal process killed under the running app: started again.
       process.kill(firstTp, 'SIGKILL')
@@ -572,19 +578,21 @@ export async function run(t) {
         }
       )
       t.check('readiness answers true again', readyAgain === true, await readiness(disc.url))
-      // The terminal the old process held ended with its exit: the window's
-      // list no longer carries it alive.
-      const ended = await until(
+      // The terminal the old process held ended with its exit, said to the
+      // window: the lost exit the port reports (code 1), heard by the
+      // listener bound before the kill.
+      const exits = await until(
         async () => {
-          const list = await win.evaluate(() => window.electronAPI.sessionsList())
-          const s = Array.isArray(list) ? list.find((x) => x.id === first.sessionId) : null
-          return !s || s.alive === false ? true : null
+          const seen = await win.evaluate(() => window.__e2eExits ?? [])
+          return seen.length > 0 ? seen : null
         },
         { tries: 40, gapMs: 250 }
       )
-      t.check('the terminal the old process held ended with its exit', ended === true, {
-        sessionId: first.sessionId
+      t.check('the terminal the old process held ended, its exit told to the window', !!exits, {
+        sessionId: first.sessionId,
+        exits
       })
+      t.equal('with the lost exit code', exits?.[0], 1)
       // A new terminal runs on the new process.
       const second = await terminalPrinting(app, win, g.groupId, 'SECOND')
       t.check(
