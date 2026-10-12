@@ -188,7 +188,7 @@ export function AppShell(): React.JSX.Element {
       if (!isSidebarPersistenceEnabled()) return
       const mine = useWorkspaceStore.getState().windowKey
       if (mine && event.layout.windowKey !== mine) return
-      applyServerLayout(event.layout as SidebarLayoutSnapshot)
+      applyServerLayout(event.layout as SidebarLayoutSnapshot, event.cause)
     })
     // What the agent button relaunches, per workspace. Deliberately NOT in the
     // session-adoption effect below: that one awaits the "restore sessions?"

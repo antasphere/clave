@@ -296,16 +296,20 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
  * clave_launch_group answered by the server, wave 4): their records exist
  * and their processes are bound to this window by main, but no spawn went
  * through this window. They join the store from their record alone, in the
- * place the layout already gave them (never nested by a heuristic), and the
- * first one takes the selection when it lands in the workspace on screen,
- * as the window's own launch would. Records main no longer has, and a
+ * place the layout already gave them (never nested by a heuristic), and,
+ * when the caller says so (an agent's own placement), the first one takes
+ * the selection when it lands in the workspace on screen, as the window's
+ * own launch would. Records main no longer has, and a
  * session detached on its way here (the re-home's to reattach), are skipped.
  */
-export async function adoptServerStartedSessions(ids: string[]): Promise<void> {
+export async function adoptServerStartedSessions(
+  ids: string[],
+  options: { focus?: boolean } = {}
+): Promise<void> {
   if (ids.length === 0) return
   const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
-  let first = true
+  let first = options.focus === true
   for (const id of ids) {
     const record = records.find((r) => r.id === id)
     if (!record || record.running !== true) continue

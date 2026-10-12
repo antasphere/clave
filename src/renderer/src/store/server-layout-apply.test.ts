@@ -82,10 +82,11 @@ const push = (
   known: string[],
   displayOrder: string[],
   groups: Groups = [],
-  knownGroups: Groups = groups
+  knownGroups: Groups = groups,
+  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans' | undefined = 'command'
 ): void => {
   setSidebarBase({ windowKey: 'w', revision, groups: knownGroups, displayOrder: known })
-  applyServerLayout({ windowKey: 'w', revision: ++revision, groups, displayOrder })
+  applyServerLayout({ windowKey: 'w', revision: ++revision, groups, displayOrder }, cause)
 }
 const group = (
   id: string,
@@ -236,6 +237,42 @@ describe('a layout pushed by the server', () => {
     expect(state.sessions[0]).toMatchObject({ name: 'Tab opened', claudeMode: true })
     expect(state.selectedSessionIds).toEqual(['opened'])
     expect(state.focusedSessionId).toBe('opened')
+  })
+
+  it('leaves a tab that arrives with a move or a closing window to the re-home, and takes no focus for a save', async () => {
+    const tab = (id: string): unknown => ({
+      id,
+      cwd: '/w',
+      folderName: 'w',
+      live: true,
+      running: true,
+      claudeMode: true,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    })
+    records = [tab('moved')]
+    // Main hands the layouts over before it detaches the sessions: at this
+    // push the record still reads running, and the re-home's own adoption is
+    // what must take the tab in, with the focus a close must not take.
+    push([], ['moved'], [], [], 'window-closed')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+    push([], ['moved'], [], [], 'move')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    // A save, or a refused save's current layout, may name a tab this window
+    // never saw: taken in, but the selection is an agent's placement's alone.
+    push([], ['moved'], [], [], 'save')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([{ ids: ['moved'] }])
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['moved'])
+    expect(state.selectedSessionIds).toEqual([])
+    expect(state.focusedSessionId).toBeNull()
   })
 
   it('selects the taken-in terminal only when its group shows on screen', async () => {

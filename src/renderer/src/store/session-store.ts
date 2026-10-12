@@ -530,10 +530,21 @@ function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: str
   savePipeline.save()
 }
 
+/** Who made the change a push carries (`sidebar.layout_changed`'s cause):
+ *  an agent's command, a window's save, a move between windows, a closing
+ *  window's hand-over, the primary taking orphans. A snapshot with no cause
+ *  (a refused save's current layout) is read as nobody's in particular. */
+export type SidebarChangeCause = 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+type PushedSnapshot = SidebarLayoutSnapshot & { cause?: SidebarChangeCause }
+
 /** What the server pushed for this window: applied through the pipeline,
- *  which holds it while a save is out and drops what is already known. */
-export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
-  savePipeline.incoming(snapshot)
+ *  which holds it while a save is out and drops what is already known. The
+ *  cause rides on the snapshot so the apply knows whose change it is. */
+export function applyServerLayout(
+  snapshot: SidebarLayoutSnapshot,
+  cause?: SidebarChangeCause
+): void {
+  savePipeline.incoming(cause ? ({ ...snapshot, cause } as PushedSnapshot) : snapshot)
 }
 
 /**
@@ -556,6 +567,17 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   const closed = new Set<string>()
   const unknownTerminals: string[] = []
   const unknownSessions: string[] = []
+  const cause = (snapshot as PushedSnapshot).cause
+  // A session that arrives with a move or a closing window's hand-over is
+  // the RE-HOME's to take in: main hands the layouts over first and detaches
+  // the processes after, so at this push their records still read as running
+  // and a take-in from the record here would adopt the tab before the
+  // re-home reattaches it, and take the focus a close must not take
+  // (plugin-context-windows, 12 October). An agent's command, a save or a
+  // refused save's current layout may name a tab this window never saw.
+  const rehoming = cause === 'move' || cause === 'window-closed'
+  // Only an agent's own placement selects the tab, as the window's launch would.
+  const focusTakenIn = cause === 'command'
   useSessionStore.setState((state) => {
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
@@ -606,7 +628,7 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     // seen: it is taken in from its record once the state is set, below.
     for (const g of groups)
       for (const t of g.terminals)
-        if (t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
+        if (!rehoming && t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
           unknownTerminals.push(t.sessionId)
     // A TAB the server opened (clave_open_session or clave_launch_group
     // served by the server, wave 4) is placed by the layout before this
@@ -618,9 +640,11 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       ...state.fileTabs.map((f) => f.id),
       ...groups.map((g) => g.id)
     ])
-    for (const g of groups)
-      for (const sid of g.sessionIds) if (!knownIds.has(sid)) unknownSessions.push(sid)
-    for (const id of displayOrder) if (!knownIds.has(id)) unknownSessions.push(id)
+    if (!rehoming) {
+      for (const g of groups)
+        for (const sid of g.sessionIds) if (!knownIds.has(sid)) unknownSessions.push(sid)
+      for (const id of displayOrder) if (!knownIds.has(id)) unknownSessions.push(id)
+    }
     groupCounter = Math.max(groupCounter, groups.length)
     const serverJson = JSON.stringify(server)
     const mergedJson = JSON.stringify({ groups, displayOrder })
@@ -644,7 +668,8 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     }
   })
   if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
-  if (unknownSessions.length > 0) void adoptServerStartedSessions([...new Set(unknownSessions)])
+  if (unknownSessions.length > 0)
+    void adoptServerStartedSessions([...new Set(unknownSessions)], { focus: focusTakenIn })
   if (dropped.length > 0) {
     const names = dropped.map((d) => `"${d.name}"`).join(', ')
     void window.electronAPI
