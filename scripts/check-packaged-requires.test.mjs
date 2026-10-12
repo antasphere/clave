@@ -166,6 +166,34 @@ describe('check-packaged-requires', () => {
   })
 })
 
+describe('check-packaged-requires, the edges', () => {
+  it('counts a missing electron-* package as missing: only electron itself is stubbed', () => {
+    const app = fakeApp({ 'out/main/index.js': 'require("electron-updater")\n' })
+    expect(probePackagedApp(app).results).toEqual([
+      expect.objectContaining({ spec: 'electron-updater', ok: false, missing: true })
+    ])
+  })
+
+  it('--dist on the command line checks the universal app, not a stale good arm64 one', () => {
+    const dist = path.join(root, 'dist')
+    const make = (sub, files) => {
+      const app = path.join(dist, sub, 'Clave.app')
+      const asar = path.join(app, 'Contents', 'Resources', 'app.asar')
+      mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true })
+      symlinkSync(process.execPath, path.join(app, 'Contents', 'MacOS', 'Clave'))
+      for (const [rel, body] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(asar, rel)), { recursive: true })
+        writeFileSync(path.join(asar, rel), body)
+      }
+    }
+    make('mac-arm64', { 'out/main/index.js': 'module.exports = 1\n' })
+    make('mac-universal', { 'out/main/index.js': 'require("not-packed")\n' })
+    const cli = spawnSync(process.execPath, [SCRIPT, '--dist', dist], { encoding: 'utf8' })
+    expect(cli.status).toBe(1)
+    expect(cli.stderr).toMatch(/not-packed/)
+  })
+})
+
 // The gates themselves: a release that publishes without the check, or a CI
 // job that stops running it, would pass every test above.
 describe('the gates that run the check', () => {
@@ -173,7 +201,13 @@ describe('the gates that run the check', () => {
   it('release.sh checks the packaged app before it tags, pushes or publishes', () => {
     const lines = readFileSync(path.join(repo, 'scripts', 'release.sh'), 'utf8').split('\n')
     const at = (re) => lines.findIndex((l) => re.test(l) && !/^\s*#/.test(l))
-    const check = at(/node scripts\/check-packaged-requires\.mjs --dist dist \|\|/)
+    // The check is a bare command line, its only fallback the `error` on the
+    // next line: no condition before it, no `|| true` after it.
+    const check = lines.findIndex((l) =>
+      /^node scripts\/check-packaged-requires\.mjs --dist dist \|\| \\$/.test(l)
+    )
+    expect(check).toBeGreaterThan(-1)
+    expect(lines[check + 1]).toMatch(/^\s+error "/)
     expect(check).toBeGreaterThan(at(/npm run build:mac/))
     for (const step of [/^\s*git tag -a /, /^\s*git push origin /, /^\s*gh release create /]) {
       const first = at(step)
@@ -181,9 +215,29 @@ describe('the gates that run the check', () => {
     }
   })
 
-  it('the macOS CI job packages the app and checks it', () => {
+  it('the macOS CI job packages the app and checks it, unconditionally', () => {
     const yml = readFileSync(path.join(repo, '.github', 'workflows', 'checks.yml'), 'utf8')
-    expect(yml).toMatch(/npx electron-builder --dir --mac --arm64/)
-    expect(yml).toMatch(/node scripts\/check-packaged-requires\.mjs dist\/mac-arm64\/Clave\.app/)
+    const lines = yml.split('\n')
+    const start = lines.findIndex((l) =>
+      /^ {6}- name: Gate, the packaged app loads what its bundles require$/.test(l)
+    )
+    expect(start).toBeGreaterThan(-1)
+    let end = start + 1
+    while (end < lines.length && !/^ {6}- /.test(lines[end]) && !/^ {2}\S/.test(lines[end])) end++
+    const step = lines.slice(start, end)
+    // Nothing may turn the step off or let it fail quietly.
+    expect(step.filter((l) => /^\s+(if|continue-on-error):/.test(l))).toEqual([])
+    expect(step.some((l) => /^ {10}npx electron-builder --dir --mac --arm64/.test(l))).toBe(true)
+    expect(
+      step.some((l) =>
+        /^ {10}node scripts\/check-packaged-requires\.mjs dist\/mac-arm64\/Clave\.app$/.test(l)
+      )
+    ).toBe(true)
+    // ...and it sits in the macOS job.
+    const job = lines
+      .slice(0, start)
+      .reverse()
+      .find((l) => /^ {2}\S+:$/.test(l))
+    expect(job).toBe('  e2e:')
   })
 })

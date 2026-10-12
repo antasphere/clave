@@ -23,8 +23,11 @@
 // other requires.
 //
 // What it cannot see: a specifier built at runtime (a variable, a template
-// literal), a require a dependency makes lazily inside a function, and the
-// other architecture's slice of a universal binary. It proves the eager
+// literal), a require a dependency makes lazily inside a function, an
+// `import()` of an ESM-only package (probed with require, it throws a
+// not-exported error and is not counted; today's two import() targets both
+// export a require entry), and the other architecture's slice of a
+// universal binary. It proves the eager
 // load graph of every literal external, not every code path.
 //
 // What fails it: a module that cannot be FOUND (MODULE_NOT_FOUND,
