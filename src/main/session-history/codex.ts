@@ -72,8 +72,12 @@ export function listCodexFiles(root: string): string[] {
  *  A thread that never got a message has none, and `thread/resume` of it
  *  fails ("no rollout found"), so a restore resumes only what this finds. */
 export function hasCodexRollout(threadId: string, root: string = codexRoot()): boolean {
+  return findCodexRollout(threadId, root) !== undefined
+}
+
+export function findCodexRollout(threadId: string, root: string = codexRoot()): string | undefined {
   const suffix = `-${threadId}.jsonl`
-  return listCodexFiles(root).some((file) => file.endsWith(suffix))
+  return listCodexFiles(root).find((file) => file.endsWith(suffix))
 }
 
 function isInjected(text: string): boolean {

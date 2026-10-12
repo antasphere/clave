@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { codexRoot, findCodexRollout } from '../../session-history/codex'
+import { replayCodexHistory } from './codex-history'
 import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
@@ -7,6 +10,7 @@ import {
   type PreparedPrompt,
   type SessionInput,
   type SessionEvent,
+  type HistoryItem,
   type ModelOption,
   type CommandOption
 } from '../../../shared/session-model'
@@ -299,6 +303,8 @@ export class CodexTranslator {
 
 interface HandleState {
   spec: SpawnSpec
+  history: HistoryItem[]
+  historyError?: unknown
   profile?: LaunchProfile
   env?: Record<string, string>
   /** A model chosen after launch; every later turn/start carries it. */
@@ -366,6 +372,7 @@ export class CodexAdapter implements SessionAdapter {
     const launchEffort = text(object(spec.options).effort)
     const state: HandleState = {
       spec,
+      history: [],
       ...(launchEffort && isValidEffort(launchEffort) ? { effort: launchEffort } : {}),
       profile: context?.profile,
       env: context?.env,
@@ -379,6 +386,17 @@ export class CodexAdapter implements SessionAdapter {
       ended: false,
       closing: false
     }
+    // Snapshot before the process can append new turns. The views page this
+    // past separately from the live stream, including after switching views.
+    const resume = text(object(spec.options).resume)
+    if (resume) {
+      try {
+        const path = findCodexRollout(resume, codexRoot(context?.env))
+        if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
+      } catch (error) {
+        state.historyError = error
+      }
+    }
     this.profiles.delete(spec.id)
     this.handles.set(spec.id, state)
     return { id: spec.id }
@@ -386,6 +404,19 @@ export class CodexAdapter implements SessionAdapter {
   async attach(id: string): Promise<SessionHandle> {
     this.require({ id })
     return { id }
+  }
+
+  history(handle: SessionHandle): HistoryItem[] {
+    const state = this.require(handle)
+    if (state.historyError) {
+      this.error(
+        state,
+        new Error(`Could not replay the conversation: ${String(state.historyError)}`),
+        false
+      )
+      state.historyError = undefined
+    }
+    return state.history
   }
 
   write(handle: SessionHandle, input: Uint8Array | SessionInput): void {
