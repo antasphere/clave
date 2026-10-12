@@ -85,26 +85,39 @@ export function seedTrustedRoots(dir, roots) {
 }
 
 // ── The server (ADR 0003, PRDCT-3154) ────────────────────────────────────────
-// The app runs on a server: in-process by default, or ATTACHED to one started
-// elsewhere (`CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`). The suite runs both
-// ways, and the way is `CLAVE_E2E_SERVER`: `in-process` (the default, what the
-// shipped app does) or `attached` (one server per spec, its own process on its
-// own data directory and port, started before the app and stopped with it).
-// The server's HTTP API is how a spec asserts on it (`serverClient`), never a
-// hook inside the main process; `clave-server.json` in the app's user data
-// says which server the app ended up on (`serverEndpoint`).
+// The app runs on a server: in-process by default, ATTACHED to one started
+// elsewhere (`CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`), or, since wave 5
+// (PRDCT-3434), on a SEPARATE one the app starts itself as a child
+// (`--server=separate`: the standalone entry and its terminal process from
+// the built bundles, under the app's own binary as Node, on
+// `<user data>/server`). The suite runs all three ways, and the way is
+// `CLAVE_E2E_SERVER`: `in-process` (the default, what the shipped app does
+// until the second pull request of PRDCT-3434), `attached` (one server per
+// spec, its own process on its own data directory and port, started before
+// the app and stopped with it) or `separate` (the harness starts nothing: it
+// passes the flag and waits for the app's discovery file). The server's
+// HTTP API is how a spec asserts on it (`serverClient`), never a hook inside
+// the main process; `clave-server.json` in the app's user data says which
+// server the app ended up on (`serverEndpoint`).
 
 export const SERVER_MODE_ENV = 'CLAVE_E2E_SERVER'
+export const SERVER_MODES = ['in-process', 'attached', 'separate']
 
-/** The suite's server mode. Anything but the two names is refused loudly: a
+/** The suite's server mode. Anything but the three names is refused loudly: a
  *  typo must not silently run the suite the default way. */
 export function serverMode(env = process.env) {
   const raw = (env[SERVER_MODE_ENV] ?? 'in-process').trim() || 'in-process'
-  if (raw !== 'in-process' && raw !== 'attached')
+  if (!SERVER_MODES.includes(raw))
     throw new Error(
-      `${SERVER_MODE_ENV} must be "in-process" or "attached", got ${JSON.stringify(raw)}`
+      `${SERVER_MODE_ENV} must be one of ${SERVER_MODES.map((m) => `"${m}"`).join(', ')}, got ${JSON.stringify(raw)}`
     )
   return raw
+}
+
+/** Where a separate server the app started keeps its data: under the app's
+ *  own folder, never in it (ADR 0003). */
+export function separateServerDataDir(dir) {
+  return path.join(dir, 'server')
 }
 
 // The servers this run started and has not stopped yet, so the end of the
@@ -365,10 +378,11 @@ export async function waitForBoot(
  *
  *  `server` is the suite's mode by default (`serverMode()`); a spec that must
  *  prove one path whatever the suite runs passes `'attached'`, `'in-process'`,
- *  or `{ url, token }` to attach to a server of its own (a dead one included).
- *  In attached mode the server is started here and stopped by `app.close()`;
- *  in in-process mode a stray `CLAVE_SERVER_URL` in the caller's shell is
- *  dropped, so the app never attaches by accident. */
+ *  `'separate'`, or `{ url, token }` to attach to a server of its own (a dead
+ *  one included). In attached mode the server is started here and stopped by
+ *  `app.close()`; in separate mode the app starts and stops its own and the
+ *  harness only passes the flag; in every mode a stray `CLAVE_SERVER_URL` in
+ *  the caller's shell is dropped, so the app never attaches by accident. */
 export async function launchApp(
   dir,
   {
@@ -387,11 +401,19 @@ export async function launchApp(
   delete base.CLAVE_SERVER_TOKEN
   let started = null
   let serverEnv = {}
+  const serverArgs = []
   launchedModes.set(
     path.resolve(dir),
-    server === 'attached' || (server && typeof server === 'object') ? 'attached' : 'in-process'
+    server === 'attached' || (server && typeof server === 'object')
+      ? 'attached'
+      : server === 'separate'
+        ? 'separate'
+        : 'in-process'
   )
-  if (server === 'attached') {
+  if (server === 'separate') {
+    // The app starts its own: the flag, and nothing in the environment.
+    serverArgs.push('--server=separate')
+  } else if (server === 'attached') {
     // The server gets the app's own test flags (`--test-no-activate` is
     // what turns its fixture route and its terminal journal on; the echo
     // adapter's flags reach the process that spawns the sessions), the
@@ -417,7 +439,7 @@ export async function launchApp(
       executablePath: ELECTRON_BIN,
       // `args` are extra main-process flags a spec needs (`--test-version=…`,
       // see src/main/test-mode.ts); the three fixed ones always come first.
-      args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...args],
+      args: ['.', `--user-data-dir=${dir}`, '--test-no-activate', ...serverArgs, ...args],
       cwd: REPO,
       // Extra environment for the main process (e.g. CLAVE_TRANSCRIPTS_ROOT, so
       // a spec seeds transcripts without touching the real ~/.claude/projects).
@@ -864,11 +886,14 @@ const launchedModes = new Map()
 export function terminalJournalPath(dir) {
   // Attached, the terminal manager runs in the standalone server, which
   // keeps the journal under its own data folder (the folder `startE2eServer`
-  // names for the app's `dir`); in-process it is the app's.
+  // names for the app's `dir`); separate, under the app's `server/` folder;
+  // in-process it is the app's.
   const mode = launchedModes.get(path.resolve(dir)) ?? 'in-process'
   return mode === 'attached'
     ? path.join(fixturePath(`${path.basename(dir)}-server`), 'terminal-journal.jsonl')
-    : path.join(dir, 'terminal-journal.jsonl')
+    : mode === 'separate'
+      ? path.join(separateServerDataDir(dir), 'terminal-journal.jsonl')
+      : path.join(dir, 'terminal-journal.jsonl')
 }
 
 function readTerminalJournal(dir) {

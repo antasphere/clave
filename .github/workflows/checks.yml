@@ -68,8 +68,9 @@ jobs:
   # the specs spawn tmux sessions and the login shell. Bun runs the server's
   # own process for the attached mode (ADR 0003).
   #
-  # Two kinds of step. The GATE: the server spec, in-process and attached,
-  # fails the job (it is deterministic, and proven to go red under mutation).
+  # Two kinds of step. The GATE: the server spec, in-process, attached and
+  # separate, fails the job (it is deterministic, and proven to go red under
+  # mutation).
   # The REPORT: the whole suite in-process, with continue-on-error, its
   # result line in the job summary. On 2 October 2026 the suite on dev fails
   # 25 checks on a laptop and 28 on this runner with 15 in common, and the
@@ -132,6 +133,16 @@ jobs:
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: attached
+
+      # The app starting its own server as a child, from the bundles it
+      # carries, under its own binary as Node (wave 5, PRDCT-3434): the pair
+      # starts, a killed terminal process is started again, the quit stops
+      # both.
+      - name: Gate, the server spec with the server separate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs server-boot
+        env:
+          CLAVE_E2E_SERVER: separate
 
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

@@ -1,19 +1,27 @@
 /**
  * How the Electron shell gets its server (ADR 0003, PRDCT-3154).
  *
- * Two ways, decided by the environment the app was launched with:
+ * Three ways, decided by the environment and the command line the app was
+ * launched with (`resolveServerLaunch`):
  *
- *  - IN-PROCESS (the default, what the shipped app does): the server starts
+ *  - IN-PROCESS (the default, what the shipped app does until the second
+ *    pull request of PRDCT-3434 flips `PACKAGED_DEFAULT`): the server starts
  *    inside Electron main on a loopback port with a fresh token: `@clave/server`
  *    over the session manager, through `server/clave-server.ts` (lane A's),
  *    which also publishes the address to the windows over IPC.
  *  - ATTACHED (`CLAVE_SERVER_URL`, with `CLAVE_SERVER_TOKEN`): the app uses a
  *    server somebody else started, the standalone entry under Bun (`npm run
  *    dev:attached`, or the e2e harness, one server per spec). The shell
- *    registers on it and the harness proves the boot; the address is NOT
- *    published to the windows in this wave: a standalone server has no
- *    sessions until the sessions move to the server (wave 2), and a window
- *    routed to it would list none. The windows stay on IPC.
+ *    registers on it and the harness proves the boot. Since wave 2 the
+ *    address is published to the windows, which route to it.
+ *  - SEPARATE (`--server=separate` on the command line, wave 5): the app
+ *    starts the same standalone entry itself, as a child of its own, from
+ *    the bundle it carries and under its own binary run as Node
+ *    (`server-child.ts`), with the terminal process beside it, and then
+ *    attaches to it exactly as above. A child that cannot start is said on
+ *    screen and in the log, and nothing runs in its place. `--server=in-process`
+ *    keeps the in-process server for development and the harness; the
+ *    environment's url wins over the flag.
  *
  * Either way the shell then REGISTERS itself with the server (`POST /clients`,
  * its pid and version), so the server knows which app is on it, and writes
@@ -35,7 +43,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { ENV_SERVER_URL, ENV_SERVER_TOKEN } from '@clave/contract/env'
 
-export type ServerMode = 'in-process' | 'attached'
+export type ServerMode = 'in-process' | 'attached' | 'separate'
 
 /** A server the shell can use: where it is and how to let go of it. */
 export interface ServerHandle {
@@ -44,6 +52,8 @@ export interface ServerHandle {
   mode: ServerMode
   /** The id the server gave this app on registration. */
   clientId: string | null
+  /** The separate server's pid, when the shell started one as a child. */
+  serverPid?: number
   /** Deregister, and stop the server when it is ours. Idempotent. */
   stop: () => Promise<void>
 }
@@ -64,22 +74,68 @@ export interface ServerDiscovery {
   mode: ServerMode
   ok: boolean
   error?: string
+  /** The shell's own pid (the harness tells a stale file from this launch's by it). */
   pid: number
   clientId: string | null
+  /** The separate server's pid, when the shell started one (wave 5). */
+  serverPid?: number
 }
 
 export const DISCOVERY_FILE = 'clave-server.json'
 
 export type ServerLaunch =
   | { mode: 'in-process' }
+  | { mode: 'separate' }
   | { mode: 'attached'; url: string; token: string | null }
 
-/** Read the launch decision off the environment. Pure. */
-export function resolveServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
+/** The command-line flag that picks the shell's own server: `--server=in-process`
+ *  or `--server=separate` (`--server <mode>` too). */
+export const SERVER_FLAG = '--server'
+
+/** What a PACKAGED app runs with no flag given. `in-process` until the
+ *  second pull request of PRDCT-3434, which flips it to `separate` once lane
+ *  C of wave 5 (the chat views on the separate server) is on dev; a
+ *  development run and the harness stay in-process whatever this says. */
+export const PACKAGED_DEFAULT: 'in-process' | 'separate' = 'in-process'
+
+export interface LaunchInput {
+  /** The process's arguments, where `--server` is read. */
+  argv?: readonly string[]
+  /** Whether the app runs packaged (`app.isPackaged`): decides the default. */
+  packaged?: boolean
+}
+
+/** The `--server` flag's value, or undefined when the flag is absent:
+ *  `--server=x` and `--server x`; a bare `--server` with nothing after it
+ *  answers the empty string, which is not a mode and is refused. */
+export function serverFlag(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === SERVER_FLAG) return argv[i + 1] ?? ''
+    if (a.startsWith(`${SERVER_FLAG}=`)) return a.slice(SERVER_FLAG.length + 1)
+  }
+  return undefined
+}
+
+/**
+ * Read the launch decision off the environment and the command line. Pure.
+ * The environment's url means attached and wins; then the flag; then the
+ * default, which depends on whether the app runs packaged. A flag with a
+ * value that is not a mode throws: a typo must not silently pick a mode.
+ */
+export function resolveServerLaunch(env: NodeJS.ProcessEnv, input: LaunchInput = {}): ServerLaunch {
   const url = env[ENV_SERVER_URL]?.trim()
-  if (!url) return { mode: 'in-process' }
-  const token = env[ENV_SERVER_TOKEN]?.trim()
-  return { mode: 'attached', url: url.replace(/\/+$/, ''), token: token || null }
+  if (url) {
+    const token = env[ENV_SERVER_TOKEN]?.trim()
+    return { mode: 'attached', url: url.replace(/\/+$/, ''), token: token || null }
+  }
+  const flag = serverFlag(input.argv ?? [])
+  if (flag !== undefined) {
+    if (flag !== 'in-process' && flag !== 'separate')
+      throw new Error(`${SERVER_FLAG} must be in-process or separate, got ${JSON.stringify(flag)}`)
+    return { mode: flag }
+  }
+  return { mode: input.packaged ? PACKAGED_DEFAULT : 'in-process' }
 }
 
 /**
@@ -91,19 +147,25 @@ export function resolveServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
  * find the outer app's server in its environment. Call it before anything
  * spawns.
  */
-export function takeServerLaunch(env: NodeJS.ProcessEnv): ServerLaunch {
-  const launch = resolveServerLaunch(env)
+export function takeServerLaunch(env: NodeJS.ProcessEnv, input: LaunchInput = {}): ServerLaunch {
+  const launch = resolveServerLaunch(env, input)
   delete env[ENV_SERVER_URL]
   delete env[ENV_SERVER_TOKEN]
   return launch
 }
 
-export interface InProcessServer {
+/** A server the shell started itself: inside its process, or as a child. */
+export interface OwnServer {
   url: string
   token: string
+  /** The child's pid, when the server is a process of its own. */
+  pid?: number
   /** Stop the server; what it answers (the stop's report) is the starter's to log. */
   stop: () => Promise<unknown>
 }
+
+/** The in-process server's handle; the same shape as `OwnServer`. */
+export type InProcessServer = OwnServer
 
 export interface StartServerOptions {
   /** The decision, when already taken off the environment (`takeServerLaunch`). */
@@ -116,6 +178,9 @@ export interface StartServerOptions {
   /** Starts the in-process server. Injected so the boot is testable and so the
    *  swap to lane A's package is one argument at the call site. */
   startInProcess: () => Promise<InProcessServer>
+  /** Starts the separate server as a child (`server-child.ts`), wave 5.
+   *  Required when the launch says `separate`; the boot refuses otherwise. */
+  startSeparate?: () => Promise<OwnServer>
   /** `fetch`, injectable for the tests. */
   fetch?: typeof fetch
   /** How long one call to the server may take. */
@@ -175,30 +240,34 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const launch = options.launch ?? resolveServerLaunch(options.env ?? {})
   const pid = options.identity.pid
 
-  let server: InProcessServer | null = null
+  let server: OwnServer | null = null
   let url: string
   let token: string | null
   if (launch.mode === 'attached') {
     url = launch.url
     token = launch.token
   } else {
+    const what = launch.mode === 'separate' ? 'the separate server' : 'the in-process server'
+    const start = launch.mode === 'separate' ? options.startSeparate : options.startInProcess
     try {
-      server = await options.startInProcess()
+      if (!start) throw new Error('the shell has no starter for it')
+      server = await start()
     } catch (err) {
       // A start that throws (a listener that could not bind, the package
-      // failing to load) must not leave a previous boot's `ok: true` file
-      // behind: a reader would find a live-looking server that is not there.
-      const message = `the in-process server did not start: ${(err as Error).message}`
+      // failing to load, a child that never announced itself) must not leave
+      // a previous boot's `ok: true` file behind: a reader would find a
+      // live-looking server that is not there.
+      const message = `${what} did not start: ${(err as Error).message}`
       writeDiscovery(options.userData, {
         url: '',
         token: null,
-        mode: 'in-process',
+        mode: launch.mode,
         ok: false,
         error: message,
         pid,
         clientId: null
       })
-      throw new ServerBootError(message, 'in-process', '')
+      throw new ServerBootError(message, launch.mode, '')
     }
     url = server.url
     token = server.token
@@ -253,11 +322,12 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     mode: launch.mode,
     ok: true,
     pid,
-    clientId
+    clientId,
+    ...(server?.pid !== undefined && { serverPid: server.pid })
   })
   // The in-process start publishes its own address to the windows
-  // (server/clave-server.ts); an attached one publishes nothing in this wave,
-  // the header says why.
+  // (server/clave-server.ts); an attached or separate one is published by
+  // the boot in `index.ts`, once this resolves.
 
   let stopped = false
   return {
@@ -265,6 +335,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     token: token ?? '',
     mode: launch.mode,
     clientId,
+    ...(server?.pid !== undefined && { serverPid: server.pid }),
     stop: async () => {
       if (stopped) return
       stopped = true

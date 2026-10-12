@@ -2,31 +2,43 @@
  * `clave-server`: the server as its own process (ADR 0003).
  *
  *   bun src/main/server-entry.ts --data-dir <dir> [--port <n>] [--token <t>]
- *                                [--terminals <host:port>]
+ *       [--terminal-process <bundle> [--node <exec>]] | [--terminals <host:port>]
+ *       [--parent <pid>]
  *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
- * both start it this way. It binds 127.0.0.1 on the port given (0, the
- * default, asks the OS), writes `clave-server.json` into `--data-dir` the way
- * the app writes its own, and prints ONE line of JSON on stdout once it
- * listens: `{"url":"http://127.0.0.1:<port>","token":"<token>"}`. Whoever
- * started it reads that line and hands the pair to the app as
- * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it.
+ * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
+ * shell starts the same entry from the bundle electron-vite writes,
+ * `out/main/server-entry.js`, under the app's own binary run as Node
+ * (`src/main/server-child.ts`). Either way it binds 127.0.0.1 on the port
+ * given (0, the default, asks the OS), writes `clave-server.json` into
+ * `--data-dir` the way the app writes its own, and prints ONE line of JSON
+ * on stdout once it listens: `{"url":"http://127.0.0.1:<port>","token":"<token>"}`.
+ * Whoever started it reads that line and hands the pair to the app as
+ * `CLAVE_SERVER_URL` and `CLAVE_SERVER_TOKEN`. SIGTERM or SIGINT stops it;
+ * so does the end of the parent named by `--parent`, polled, so an app that
+ * died without a word leaves no server behind.
  *
  * The process runs `@clave/server`, the same package the app runs in-process,
  * over the app's own session host built in this process
  * (`sessions/standalone-host.ts`, wave 3): a chat session runs its CLI as a
  * child of this process, a terminal session gets its process from the
  * terminals port. The terminals come from the terminal process (lane B of
- * wave 3, ADR 0003): with `--terminals <host:port>` and the process's token
- * in `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment),
- * `ports.terminals` is the gRPC port to it, and the server's readiness
- * carries a `terminals` check that turns false when the process stops
- * answering. Without `--terminals` the server runs on `Terminals.none`, said
- * on stderr, and a terminal's first resize answers the declared
- * `CapabilityUnavailable`. A client sees the same API, the same token check
- * and the same push channel as in-process. Nothing here imports
- * Electron.
+ * wave 3, ADR 0003), and since wave 5 this entry OWNS it: with
+ * `--terminal-process <bundle>` it starts the process itself, from that
+ * bundle, under `--node <exec>` when given (the dev script and the harness
+ * name their Node, since the Bun this entry runs under cannot run node-pty)
+ * and under its own executable otherwise (the app's binary as Node), and
+ * starts it again when it dies (`terminal-process/supervisor.ts`): the
+ * terminals it held end with their exit, new sessions start on the new
+ * process, and the readiness check `terminals` answers false in between and
+ * true again after. `--terminals <host:port>` with the process's token in
+ * `CLAVE_TERMINALS_TOKEN` (read once and taken out of this environment)
+ * still attaches to a process somebody else started, with no restart.
+ * Without either the server runs on `Terminals.none`, said on stderr, and a
+ * terminal's first resize answers the declared `CapabilityUnavailable`. A
+ * client sees the same API, the same token check and the same push channel
+ * as in-process. Nothing here imports Electron.
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -47,6 +59,12 @@ import { ptyManager } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
+import { RUN_AS_NODE_ENV, TOKEN_ENV } from './terminal-process/token-env'
+import {
+  spawnTerminalProcess,
+  supervisedTerminals,
+  type SupervisorState
+} from './terminal-process/supervisor'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -71,8 +89,16 @@ function readAppVersion(): string {
     'clave-server: --app-version <version> is required when no package.json is beside the entry'
   )
 }
+/** How often the parent named by `--parent` is checked for. */
+const PARENT_POLL_MS = 2_000
 
 async function main(): Promise<void> {
+  // Started as Node by the app's own binary: the variable that made it so is
+  // nobody else's (`terminal-process/token-env.ts`), taken out before
+  // anything spawns, as the server's own two variables are by the shell.
+  // The terminal process this entry starts is told it again, explicitly.
+  delete process.env[RUN_AS_NODE_ENV]
+
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -83,30 +109,75 @@ async function main(): Promise<void> {
     process.stderr.write(`clave-server: --port must be 0..65535, got ${arg('port')}\n`)
     process.exit(2)
   }
+  const parentRaw = arg('parent')
+  const parent = parentRaw === undefined ? null : Number(parentRaw)
+  if (parent !== null && (!Number.isInteger(parent) || parent <= 0)) {
+    process.stderr.write(`clave-server: --parent must be a pid, got ${parentRaw}\n`)
+    process.exit(2)
+  }
 
-  // ── Lane B: the terminals, over the wire to the terminal process ──
+  const log = (line: string): void => {
+    process.stderr.write(`clave-server: ${line}\n`)
+  }
+
+  // ── Lane B (wave 3): the terminals, over the wire to the terminal process ──
+  // ── Wave 5: the process started and kept alive by this entry ──
   const terminalsAddress = arg('terminals')
-  const terminalsToken = process.env.CLAVE_TERMINALS_TOKEN
-  delete process.env.CLAVE_TERMINALS_TOKEN
+  const terminalProcessBundle = arg('terminal-process')
+  const terminalsToken = process.env[TOKEN_ENV]
+  delete process.env[TOKEN_ENV]
   let terminals: TerminalsService = Terminals.none
   let closeTerminals: () => Promise<void> = async () => {}
-  if (terminalsAddress !== undefined) {
+  let terminalState: SupervisorState | null = null
+  // The discovery file follows the terminal process (its pid and address
+  // change at every restart); written once the server listens, below.
+  let writeDiscovery: () => void = () => {}
+  if (terminalProcessBundle !== undefined && terminalsAddress !== undefined) {
+    process.stderr.write('clave-server: give --terminal-process or --terminals, not both\n')
+    process.exit(2)
+  }
+  if (terminalProcessBundle !== undefined) {
+    if (!fs.existsSync(terminalProcessBundle)) {
+      process.stderr.write(
+        `clave-server: the terminal process bundle is missing (${terminalProcessBundle}): run \`npx electron-vite build\` first\n`
+      )
+      process.exit(2)
+    }
+    const exec = arg('node') ?? process.execPath
+    const supervisor = await supervisedTerminals({
+      start: () =>
+        spawnTerminalProcess({
+          exec,
+          bundle: terminalProcessBundle,
+          parent: process.pid,
+          log: (line) => process.stderr.write(`${line}\n`)
+        }),
+      log: (line) => log(`terminals: ${line}`),
+      onChange: (state) => {
+        terminalState = state
+        writeDiscovery()
+      }
+    })
+    terminalState = supervisor.state()
+    terminals = supervisor
+    closeTerminals = supervisor.close
+  } else if (terminalsAddress !== undefined) {
     if (!terminalsToken) {
       process.stderr.write(
-        'clave-server: --terminals needs the terminal process token in CLAVE_TERMINALS_TOKEN\n'
+        `clave-server: --terminals needs the terminal process token in ${TOKEN_ENV}\n`
       )
       process.exit(2)
     }
     const port = grpcTerminals({
       address: terminalsAddress,
       token: terminalsToken,
-      log: (line) => process.stderr.write(`clave-server: terminals: ${line}\n`)
+      log: (line) => log(`terminals: ${line}`)
     })
     terminals = port
     closeTerminals = port.close
   } else {
     process.stderr.write(
-      'clave-server: no --terminals given, this server runs no terminals (a spawn answers CapabilityUnavailable)\n'
+      'clave-server: no --terminal-process and no --terminals given, this server runs no terminals (a spawn answers CapabilityUnavailable)\n'
     )
   }
 
@@ -171,23 +242,43 @@ async function main(): Promise<void> {
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(
-    tmp,
-    JSON.stringify(
-      { url: server.url, token: server.token, mode: 'standalone', ok: true, pid: process.pid },
-      null,
-      2
-    ),
-    { encoding: 'utf-8', mode: 0o600 }
-  )
-  fs.renameSync(tmp, file)
-  fs.chmodSync(file, 0o600)
+  // What the file says of the terminal process is read by the harness and
+  // the process starter's tests; it carries no token of the process's.
+  writeDiscovery = (): void => {
+    const tmp = `${file}.tmp`
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(
+        {
+          url: server.url,
+          token: server.token,
+          mode: 'standalone',
+          ok: true,
+          pid: process.pid,
+          terminals: terminalState?.address ?? terminalsAddress ?? null,
+          terminalProcessPid: terminalState?.pid ?? null,
+          terminalProcessGeneration: terminalState?.generation ?? null,
+          terminalProcessGivenUp: terminalState?.givenUp ?? null
+        },
+        null,
+        2
+      ),
+      { encoding: 'utf-8', mode: 0o600 }
+    )
+    fs.renameSync(tmp, file)
+    fs.chmodSync(file, 0o600)
+  }
+  writeDiscovery()
 
   process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
   process.stderr.write(
     `clave-server: listening on ${server.url} (data in ${dataDir}` +
-      (terminalsAddress === undefined ? '' : `, terminals at ${terminalsAddress}`) +
+      (terminalState
+        ? `, terminal process ${terminalState.pid} at ${terminalState.address}`
+        : terminalsAddress === undefined
+          ? ''
+          : `, terminals at ${terminalsAddress}`) +
+      (parent === null ? '' : `, parent ${parent}`) +
       ')\n'
   )
 
@@ -204,6 +295,7 @@ async function main(): Promise<void> {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    writeDiscovery = (): void => {}
     process.stderr.write(`clave-server: ${signal}, stopping\n`)
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
@@ -235,6 +327,22 @@ async function main(): Promise<void> {
   }
   process.on('SIGTERM', () => stop('SIGTERM'))
   process.on('SIGINT', () => stop('SIGINT'))
+
+  // The parent's end stops this server, the way it stops the terminal
+  // process (`terminal-process/main.ts`): an app that died without a word
+  // leaves no server behind, and no terminal process either, since that one
+  // polls this server.
+  if (parent !== null) {
+    const watch = setInterval(() => {
+      try {
+        process.kill(parent, 0)
+      } catch {
+        clearInterval(watch)
+        stop(`parent ${parent} is gone`)
+      }
+    }, PARENT_POLL_MS)
+    watch.unref()
+  }
 }
 
 main().catch((err) => {

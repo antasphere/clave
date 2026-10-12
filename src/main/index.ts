@@ -59,6 +59,7 @@ import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
 import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { flagsForServerChild, startSeparateServer } from './server-child'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
@@ -75,8 +76,13 @@ import { shellPlugins } from './plugins/shell-plugins'
 // The server to attach to, if any, read ONCE off the environment and taken
 // out of it here, before anything in this process spawns: the token belongs
 // to what is meant to call the server, and no session, helper or nested Clave
-// may inherit it (ADR 0003).
-const serverLaunch = takeServerLaunch(process.env)
+// may inherit it (ADR 0003). The command line's `--server` flag picks the
+// shell's own server otherwise (in-process, or a separate child of the
+// app, wave 5), and a packaged app has its own default (server-boot.ts).
+const serverLaunch = takeServerLaunch(process.env, {
+  argv: process.argv,
+  packaged: app.isPackaged
+})
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -108,9 +114,11 @@ let quitting = false
 
 /**
  * The server the shell runs on (ADR 0003). In-process by default; attached to
- * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`. In
- * this wave nothing the window shows comes from it yet, so a failure is not
- * fatal — but it is never silent: an attach that fails is logged, written to
+ * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`; or,
+ * under `--server=separate` (wave 5), started by the shell as a child of its
+ * own from the bundles it carries, under its own binary as Node
+ * (server-child.ts), and attached to the same way. A failure is never
+ * silent: an attach or a child start that fails is logged, written to
  * `clave-server.json` as `ok: false`, and shown as a notification, and the
  * app does NOT start an in-process server in its place (server-boot.ts says
  * why). The url and the token live in `clave-server.json` (owner-only) and in
@@ -160,19 +168,47 @@ async function bootServer(): Promise<void> {
           testFixtures: TEST_NO_ACTIVATE
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
-      }
+      },
+      // The separate server (wave 5): the standalone entry as a child of this
+      // process, from the bundles beside this one, on a data directory of
+      // its own under the app's, told this shell's test flags and pid.
+      startSeparate: () =>
+        startSeparateServer({
+          execPath: process.execPath,
+          bundleDir: __dirname,
+          dataDir: join(app.getPath('userData'), 'server'),
+          parent: process.pid,
+          flags: flagsForServerChild(process.argv),
+          log: (line) => console.error(`[server] ${line}`),
+          onExit: (code) => {
+            // Nothing runs in its place and the windows keep its address:
+            // their calls say the server is gone, which is the truth.
+            console.error(`[server] the separate server is gone (${code}); the app runs without it`)
+            if (!TEST_NO_ACTIVATE && Notification.isSupported())
+              new Notification({
+                title: "Clave's server stopped",
+                body: `It exited (${code}). Restart Clave to get it back.`,
+                silent: false
+              }).show()
+          }
+        })
     })
-    console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+    console.log(
+      `[server] ${serverHandle.mode} at ${serverHandle.url}` +
+        (serverHandle.serverPid ? ` (pid ${serverHandle.serverPid})` : '')
+    )
     // The sidebar's transport follows the boot: through the server's client
     // when the server runs in this process (the same instance main holds),
-    // over IPC when the app is attached to a server that cannot host windows.
-    setSidebarTransport(serverHandle.mode === 'in-process' ? 'server' : 'shell')
-    // An attached server is published to the windows too (wave 2): the
-    // sessions domain lives on the server now, so a window on an attached
-    // app asks that server, which says what it cannot do (a standalone
-    // server runs no sessions until its terminal process, wave 3). The
-    // in-process start publishes its own address in server/clave-server.ts.
-    if (serverHandle.mode === 'attached') {
+    // over IPC when the server is another process, which hosts no windows.
+    const external = serverHandle.mode !== 'in-process'
+    setSidebarTransport(external ? 'shell' : 'server')
+    // A server in another process, attached or the shell's own child, is
+    // published to the windows too (wave 2): the sessions domain lives on
+    // the server, so a window asks that server. The windows read the mode
+    // as `attached` either way: what it decides for them (the terminal
+    // pane's road, the sidebar's) is the same whoever started the process.
+    // The in-process start publishes its own address in server/clave-server.ts.
+    if (external) {
       setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
       // Tell the server where this shell's agent tools answer, so a Claude
       // session it starts reaches them (wave 4, lane C). It waits for the MCP
@@ -185,12 +221,15 @@ async function bootServer(): Promise<void> {
     setSidebarTransport('shell')
     if (
       err instanceof ServerBootError &&
-      err.mode === 'attached' &&
+      err.mode !== 'in-process' &&
       !TEST_NO_ACTIVATE &&
       Notification.isSupported()
     ) {
       new Notification({
-        title: 'Clave could not reach its server',
+        title:
+          err.mode === 'separate'
+            ? 'Clave could not start its server'
+            : 'Clave could not reach its server',
         body: `${message}. The app runs without it.`,
         silent: false
       }).show()
