@@ -1100,6 +1100,10 @@ body,
   padding: var(--frame-inset);
 }
 
+.panel-tabs[data-icon-only='true'] > .panel-tab > span {
+  display: none;
+}
+
 /* Opting a bar out of wrapping, for the path bar: it is a line of text with a
    control at each end, and a path is a thing that truncates. The git bar used
    to take this too, on the theory that wrapping drops one orphan icon onto a
