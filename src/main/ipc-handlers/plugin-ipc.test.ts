@@ -232,12 +232,20 @@ describe('the plugin IPC arms around the service', () => {
       url: 'clave-preview://token/index.html'
     })
     expect(mocks.remote.plugins.panel).toHaveBeenCalledWith('p', 'side')
+    // A change that leaves the plugin active keeps its page, and the same
+    // event relayed by a second window is not acted on again: one list.
+    mocks.remote.plugins.list.mockResolvedValueOnce([{ id: 'p', enabled: true, status: 'active' }])
+    await invoke('plugins:changed-heard', window.event, 'e1')
     await invoke('plugins:changed-heard', window.event, 'e1')
     expect(mocks.remote.plugins.list).toHaveBeenCalledTimes(1)
+    expect(mocks.unregistered).toEqual([])
+    // The plugin disabled on the server: the next event releases its page.
+    mocks.remote.plugins.list.mockResolvedValueOnce([
+      { id: 'p', enabled: false, status: 'disabled' }
+    ])
+    await invoke('plugins:changed-heard', window.event, 'e2')
+    expect(mocks.remote.plugins.list).toHaveBeenCalledTimes(2)
     expect(mocks.unregistered).toEqual(['/plugins/p/ui/index.html'])
-    // The same event relayed by a second window is not acted on again.
-    await invoke('plugins:changed-heard', window.event, 'e1')
-    expect(mocks.remote.plugins.list).toHaveBeenCalledTimes(1)
   })
   it('keys a focus report by the window and clears it when the window closes', async () => {
     await invoke('plugins:context', window.event, 's1')
