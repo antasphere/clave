@@ -208,7 +208,12 @@ describe('the gates that run the check', () => {
     )
     expect(check).toBeGreaterThan(-1)
     expect(lines[check + 1]).toMatch(/^\s+error "/)
-    expect(check).toBeGreaterThan(at(/npm run build:mac/))
+    // After the build's whole if/else (pre-release and stable), at the top
+    // level: inside one branch it would check one kind of release only.
+    const lastBuild = lines.findLastIndex((l) => /npm run build:mac/.test(l))
+    expect(lastBuild).toBeGreaterThan(-1)
+    expect(check).toBeGreaterThan(lastBuild)
+    expect(lines.slice(lastBuild, check).some((l) => /^fi\b/.test(l))).toBe(true)
     for (const step of [/^\s*git tag -a /, /^\s*git push origin /, /^\s*gh release create /]) {
       const first = at(step)
       expect(first, String(step)).toBeGreaterThan(check)
@@ -225,19 +230,20 @@ describe('the gates that run the check', () => {
     let end = start + 1
     while (end < lines.length && !/^ {6}- /.test(lines[end]) && !/^ {2}\S/.test(lines[end])) end++
     const step = lines.slice(start, end)
-    // Nothing may turn the step off or let it fail quietly.
-    expect(step.filter((l) => /^\s+(if|continue-on-error):/.test(l))).toEqual([])
+    // Nothing may turn the step off or let it fail quietly: no if,
+    // continue-on-error or shell override on the step, quoted keys included...
+    const key = (k) => new RegExp(`^\\s+['"]?(${k})['"]?\\s*:`)
+    expect(step.filter((l) => key('if|continue-on-error|shell').test(l))).toEqual([])
     expect(step.some((l) => /^ {10}npx electron-builder --dir --mac --arm64/.test(l))).toBe(true)
     expect(
       step.some((l) =>
         /^ {10}node scripts\/check-packaged-requires\.mjs dist\/mac-arm64\/Clave\.app$/.test(l)
       )
     ).toBe(true)
-    // ...and it sits in the macOS job.
-    const job = lines
-      .slice(0, start)
-      .reverse()
-      .find((l) => /^ {2}\S+:$/.test(l))
-    expect(job).toBe('  e2e:')
+    // ...and it sits in the macOS job, which nothing turns off either.
+    const jobStart = lines.slice(0, start).findLastIndex((l) => /^ {2}\S+:$/.test(l))
+    expect(lines[jobStart]).toBe('  e2e:')
+    const jobKeys = lines.slice(jobStart + 1, start).filter((l) => /^ {4}\S/.test(l))
+    expect(jobKeys.filter((l) => key('if|continue-on-error').test(l))).toEqual([])
   })
 })
