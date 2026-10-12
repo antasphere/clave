@@ -275,6 +275,66 @@ describe('a layout pushed by the server', () => {
     expect(state.focusedSessionId).toBeNull()
   })
 
+  it('leaves a group terminal that arrives with a closing window to the re-home, like a tab', async () => {
+    const g = group(
+      'g',
+      [],
+      [{ id: 't1', command: 'npm run dev', commandMode: 'auto', color: 'green', sessionId: 'term' }]
+    )
+    records = [
+      {
+        id: 'term',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        link: { kind: 'group-terminal', groupId: 'g', terminalId: 't1' },
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    useSessionStore.setState({ groups: [], displayOrder: [] })
+    // The closing window's dev-server pane rides the re-home with its group:
+    // a take-in here would adopt it, and select it, before the re-home does.
+    push([], ['g'], [g], [], 'window-closed')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('takes in a tab from a snapshot with no cause, selected nowhere', async () => {
+    records = [
+      {
+        id: 'tab',
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        claudeMode: true,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    // A refused save's current layout, or the read after the restore: nobody's
+    // change in particular, so the tab is taken in and nothing is selected.
+    // Applied directly: the helper's default would read an absent cause as a command.
+    setSidebarBase({ windowKey: 'w', revision, groups: [], displayOrder: [] })
+    applyServerLayout({ windowKey: 'w', revision: ++revision, groups: [], displayOrder: ['tab'] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(recordsAsked).toEqual([{ ids: ['tab'] }])
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['tab'])
+    expect(state.selectedSessionIds).toEqual([])
+    expect(state.focusedSessionId).toBeNull()
+  })
+
   it('selects the taken-in terminal only when its group shows on screen', async () => {
     const shown = group(
       'g',
