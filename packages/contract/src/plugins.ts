@@ -112,11 +112,12 @@ export const RefusedOrUnavailable = Schema.Union(PluginRefused, CapabilityUnavai
 
 // ── Queries ──
 
-/** Every installed plugin, with its running state. */
+/** Every installed plugin, with its running state. A registry the host could
+ *  not read refuses the list with its sentence, as it refuses every call. */
 export const ListPlugins = Query.define('ListPlugins', {
   payload: Schema.Struct({}),
   success: Schema.Array(PluginRecord),
-  failure: CapabilityUnavailable
+  failure: RefusedOrUnavailable
 })
 
 /** The page of one panel of a plugin, for the window that shows it. */
@@ -130,7 +131,7 @@ export const GetPluginPanel = Query.define('GetPluginPanel', {
 export const ListPluginSecretRequests = Query.define('ListPluginSecretRequests', {
   payload: Schema.Struct({}),
   success: Schema.Array(PluginSecretRequest),
-  failure: CapabilityUnavailable
+  failure: RefusedOrUnavailable
 })
 
 // ── Commands ──

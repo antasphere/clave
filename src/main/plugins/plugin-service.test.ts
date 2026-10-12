@@ -3,7 +3,9 @@ import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Schema } from 'effect'
 import type { PluginsEvent } from '@clave/server'
+import { PluginRecord as WirePluginRecord } from '@clave/contract/plugins'
 import { SessionManager } from '../sessions/session-manager'
 import type {
   SessionAdapter,
@@ -51,9 +53,11 @@ const ready = (index = spawned.length - 1): void => {
 }
 
 class RecordingAdapter implements SessionAdapter {
-  readonly id = 'echo'
+  constructor(
+    readonly id = 'echo',
+    readonly transports: readonly ['events'] | readonly ['pty'] = ['events'] as const
+  ) {}
   readonly provider = 'echo'
-  readonly transports = ['events'] as const
   readonly written: unknown[] = []
   readonly emitters = new Map<string, EventEmitter>()
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -174,9 +178,77 @@ describe('the plugin service as the server port', () => {
       id: 'session-1'
     })
   })
-  it('refuses a lease on an unknown session, an undeclared view and a transport the view does not render', () => {
+  it('refuses a lease on an unknown session, an undeclared view, a transport the view does not render and a plugin without the read grant', async () => {
     expect(() => service.leaseView('test.surface', 'log', 'nope')).toThrow('Unknown session')
     expect(() => service.leaseView('test.surface', 'other', 'session-1')).toThrow('Undeclared view')
+    // The view renders events; a terminal session is refused by name.
+    manager.registerAdapter(new RecordingAdapter('tty', ['pty'] as const))
+    await manager.create({
+      id: 'session-tty',
+      cwd: temporary,
+      adapterId: 'tty',
+      transport: 'pty',
+      provider: 'echo',
+      state: 'idle',
+      windowKey: 'w1',
+      createdAt: 2,
+      title: 'shell'
+    })
+    expect(() => service.leaseView('test.surface', 'log', 'session-tty')).toThrow(
+      'does not render this transport'
+    )
+    // Reading is the bar to be leased at all; the grants are the record's as
+    // they stand, poked here the way a review narrows them.
+    service.store.get('test.surface').permissionsGranted = ['sessions.write']
+    expect(() => service.leaseView('test.surface', 'log', 'session-1')).toThrow(
+      'may not read sessions'
+    )
+  })
+  it('reads the grants again on every call, not once at the lease', () => {
+    const lease = service.leaseView('test.surface', 'log', 'session-1')
+    expect(service.requestView(lease.leaseId, 'session.get', undefined)).toMatchObject({
+      id: 'session-1'
+    })
+    // The write grant is taken away while the lease lives on.
+    service.store.get('test.surface').permissionsGranted = ['sessions.read']
+    expect(() =>
+      service.requestView(lease.leaseId, 'session.write', { type: 'user_message', text: 'x' })
+    ).toThrow('may not write')
+    expect(adapter.written).toEqual([])
+    // Reading survives it: the lease is narrowed, not revoked.
+    expect(service.requestView(lease.leaseId, 'session.get', undefined)).toMatchObject({
+      id: 'session-1'
+    })
+  })
+  it('refuses a malformed write with a sentence, as a plain Error the server can answer', () => {
+    const lease = service.leaseView('test.surface', 'log', 'session-1')
+    let thrown: unknown
+    try {
+      service.requestView(lease.leaseId, 'session.write', { type: 'nope' })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).constructor).toBe(Error)
+    expect((thrown as Error).message).toMatch(/^Invalid session input: /)
+    expect(adapter.written).toEqual([])
+  })
+  it('sends every field of the store’s record across the wire', () => {
+    // A field the contract does not name is dropped on the wire silently
+    // (CLAUDE.md): the encoded record must carry every key the store set.
+    const record = service.list().find((r) => r.id === 'test.surface')!
+    const encoded = Schema.encodeSync(WirePluginRecord)(record) as Record<string, unknown>
+    const defined = (o: object): string[] =>
+      Object.keys(o)
+        .filter((key) => (o as Record<string, unknown>)[key] !== undefined)
+        .sort()
+    expect(defined(encoded)).toEqual(defined(record))
+    expect(defined(record)).toContain('manifest')
+  })
+  it('releases its listener on the manager when it closes', () => {
+    expect(manager['removed'].size).toBe(1)
+    service.close()
+    expect(manager['removed'].size).toBe(0)
   })
   it('writes through a lease to the leased session only, and refuses once the grant is gone', () => {
     const lease = service.leaseView('test.surface', 'log', 'session-1')

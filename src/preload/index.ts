@@ -937,8 +937,8 @@ const electronAPI = {
   // The store, the host and the view leases are the server's. A page's URL is
   // the shell's, minted by the preview protocol from the file the server
   // named and released by the shell when the page is gone, so the lease, the
-  // revoke and the panel go through the IPC arms in both modes: the arms
-  // answer from the plugins the boot named. A view's events are the
+  // revoke, the panel and the focus report go through the IPC arms in both
+  // modes: the arms answer from the plugins the boot named. A view's events are the
   // session's own stream, heard on the transport the session's subscription
   // is on: the lease fixes the session and this file remembers which, so
   // nothing per-lease crosses from main. "Link folder…" keeps its IPC road
@@ -1012,16 +1012,12 @@ const electronAPI = {
   }),
   pluginsPanel: (id: string, panel: string) =>
     ipcRenderer.invoke('plugins:panel', id, panel) as Promise<{ url: string }>,
-  pluginsContext: viaServer<[string | null], void>({
-    ipc: (sessionId) => ipcRenderer.invoke('plugins:context', sessionId),
-    server: async ({ api }, sessionId) => {
-      const key = await windowKey()
-      // A window the shell has not keyed yet reports through main, which
-      // keys it itself.
-      if (!key) return ipcRenderer.invoke('plugins:context', sessionId) as Promise<void>
-      return api.plugins.context(key, sessionId)
-    }
-  }),
+  // The focus report goes through the arm in both modes too: the shell keys
+  // the window and clears its report on the window's own `closed` event,
+  // which only the shell sees. A routed call takes the server arm in-process
+  // as well (the in-process server names an endpoint) and skipped that watch.
+  pluginsContext: (sessionId: string | null) =>
+    ipcRenderer.invoke('plugins:context', sessionId) as Promise<void>,
   pluginsSecrets: viaServer<[], PluginSecretPrompt[]>({
     ipc: () => ipcRenderer.invoke('plugins:secrets'),
     server: async ({ api }) => [...(await api.plugins.secrets())] as PluginSecretPrompt[]

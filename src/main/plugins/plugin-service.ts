@@ -194,8 +194,9 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
     options.spawner
   )
   // A session that is gone takes its leases with it: nothing is left holding
-  // authority over an id the manager no longer knows.
-  manager.subscribeRemoved((sessionId) => {
+  // authority over an id the manager no longer knows. Released with the
+  // service, so a service built again on the same manager stacks nothing.
+  const offRemoved = manager.subscribeRemoved((sessionId) => {
     for (const [id, lease] of viewLeases) if (lease.sessionId === sessionId) viewLeases.delete(id)
   })
 
@@ -205,7 +206,9 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
   const service: PluginService = {
     store,
     host,
-    list: () => store.list() as unknown as ReadonlyArray<WirePluginRecord>,
+    // The store's record is the wire's, field by field (the contract mirrors
+    // it); `plugin-service.test.ts` holds the two together on a real record.
+    list: (): ReadonlyArray<WirePluginRecord> => store.list(),
     enable: (id, grants) => {
       if (!Array.isArray(grants)) throw new Error('Permission grants are required')
       store.enable(id, grants as PluginPermission[])
@@ -294,8 +297,15 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
         if (!record.permissionsGranted.includes('sessions.write'))
           throw new Error('Plugin may not write sessions')
         // The lease's session, never one the guest named: `params` carries the
-        // input and nothing else that could select a target.
-        manager.write(lease.sessionId, SessionInputSchema.parse(params))
+        // input and nothing else that could select a target. A malformed input
+        // is refused with a sentence, a plain Error the server answers as the
+        // declared refusal; a thrown ZodError was a defect there, a bare 500.
+        const input = SessionInputSchema.safeParse(params)
+        if (!input.success)
+          throw new Error(
+            `Invalid session input: ${input.error.issues.map((issue) => issue.message).join('; ')}`
+          )
+        manager.write(lease.sessionId, input.data)
         return null
       }
       throw new Error(`Unknown plugin view method: ${method}`)
@@ -326,7 +336,10 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
         listeners.delete(listener)
       }
     },
-    close: () => host.close()
+    close: () => {
+      offRemoved()
+      host.close()
+    }
   }
   host.startAll()
   return service

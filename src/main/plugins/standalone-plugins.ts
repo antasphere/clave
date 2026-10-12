@@ -12,7 +12,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { forkRunner } from './fork-runner'
-import { createPluginService, type PluginService } from './plugin-service'
+import { createPluginService, refusingPluginService, type PluginService } from './plugin-service'
 
 export interface StandalonePluginsOptions {
   /** The server's data directory; under the test flag the plugins live there
@@ -33,10 +33,20 @@ export function standaloneRunnerPath(dir = __dirname): string {
 
 export function standalonePlugins(options: StandalonePluginsOptions): PluginService {
   const root = TEST_NO_ACTIVATE ? join(options.dataDir, 'clave-plugins') : join(homedir(), '.clave')
-  return createPluginService({
-    root,
-    bundled: options.bundled,
-    version: options.version,
-    spawner: forkRunner({ runner: standaloneRunnerPath() })
-  })
+  try {
+    return createPluginService({
+      root,
+      bundled: options.bundled,
+      version: options.version,
+      spawner: forkRunner({ runner: standaloneRunnerPath() })
+    })
+  } catch (error) {
+    // The shell's own degradation (`shell-plugins.ts`): a registry that cannot
+    // be read refuses every plugin call with the sentence, and the server
+    // keeps its sessions. Without this the entry died at boot on one bad row
+    // of installed.json, and an app attached to it had no sessions at all.
+    const message = `Plugin registry could not be read: ${String(error)}`
+    console.error(`clave-server: ${message}`)
+    return refusingPluginService(message)
+  }
 }

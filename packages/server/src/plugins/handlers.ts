@@ -5,9 +5,9 @@
  *
  * A thrown `CapabilityUnavailable` (the class, or an error carrying its tag
  * and fields) is that declared failure; a plain `Error` is the store's or the
- * host's refusal, `PluginRefused` with its sentence, wherever it is declared
- * (every command, and the panel query); anything else is a defect. The two
- * list queries declare the capability alone, so a refusal there is a defect.
+ * host's refusal, `PluginRefused` with its sentence, on every endpoint (a
+ * registry the host could not read refuses the lists too, and the person
+ * reads why in Settings); anything else is a defect.
  */
 import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
@@ -72,20 +72,13 @@ const call = <A>(
     )
   )
 
-/** A list query: it declares the capability alone, so a refusal is a defect. */
-const ask = <A>(
-  run: (plugins: PluginsService) => A | Promise<A>
-): Effect.Effect<A, CapabilityUnavailable, Plugins> =>
-  call(run).pipe(Effect.catchTag('PluginRefused', (error) => Effect.die(error)))
-
 export const pluginHandlers = [
   // The records, the panel page, the secrets waiting for an answer
-  QueryHandler.make(ListPlugins, () => ask((p) => p.list())),
-  // The panel query declares the refusal too: an unknown plugin or panel.
+  QueryHandler.make(ListPlugins, () => call((p) => p.list())),
   QueryHandler.make(GetPluginPanel, (payload) =>
     call((p) => p.panel(payload.pluginId, payload.panelId))
   ),
-  QueryHandler.make(ListPluginSecretRequests, () => ask((p) => p.secrets())),
+  QueryHandler.make(ListPluginSecretRequests, () => call((p) => p.secrets())),
   // The lifecycle
   CommandHandler.make(EnablePlugin, (payload) => call((p) => p.enable(payload.id, payload.grants))),
   CommandHandler.make(DisablePlugin, (payload) => call((p) => p.disable(payload.id))),

@@ -187,9 +187,18 @@ describe('the plugins group of the HTTP API', () => {
   it('takes an error that is not a plain Error as a defect, never a refusal', async () => {
     fake.refuse = new TypeError('records is not iterable')
     expect((await post('/plugins/remove', { id: 'clave.demo' })).status).toBe(500)
-    // The list query declares the capability alone: a refusal there is a defect.
-    fake.refuse = new Error('The store is locked')
-    expect((await get('/plugins')).status).toBe(500)
+  })
+
+  it('answers the list with the registry’s own sentence when it could not be read', async () => {
+    // The entry that could not read installed.json runs a refusing service:
+    // the person reads why in Settings instead of an empty list or a 500.
+    fake.refuse = new Error('Plugin registry could not be read: ZodError')
+    const response = await get('/plugins')
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({
+      _tag: 'PluginRefused',
+      message: 'Plugin registry could not be read: ZodError'
+    })
   })
 
   it('answers a link with the id the port gave', async () => {
