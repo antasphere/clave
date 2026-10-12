@@ -576,7 +576,8 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   // (plugin-context-windows, 12 October). An agent's command, a save or a
   // refused save's current layout may name a tab this window never saw.
   const rehoming = cause === 'move' || cause === 'window-closed'
-  // Only an agent's own placement selects the tab, as the window's launch would.
+  // Only an agent's own placement selects the tab, or the terminal, as the
+  // window's launch would (PRDCT-3428 closed the terminal's road).
   const focusTakenIn = cause === 'command'
   useSessionStore.setState((state) => {
     const server = {
@@ -667,7 +668,8 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
         state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
     }
   })
-  if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
+  if (unknownTerminals.length > 0)
+    void adoptServerStartedTerminals(unknownTerminals, { focus: focusTakenIn })
   if (unknownSessions.length > 0)
     void adoptServerStartedSessions([...new Set(unknownSessions)], { focus: focusTakenIn })
   if (dropped.length > 0) {

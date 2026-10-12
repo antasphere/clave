@@ -92,6 +92,42 @@ describe('the sidebar save pipeline', () => {
     expect(h.accepted).toEqual([])
   })
 
+  it('a refused save applies the push held meanwhile when it is at the refusal’s revision, so its cause survives', async () => {
+    // The closing window's hand-over arrives while this window's save is
+    // out; the save is refused on the same revision. The held push IS the
+    // refusal's layout, with the cause the apply needs (PRDCT-3428, F10).
+    const h = harness(3)
+    h.edit('a')
+    h.pipeline.incoming({ revision: 4, tag: 'window-closed' })
+    h.sent[0].answer({ ok: false, reason: 'conflict', current: { revision: 4, tag: 'theirs' } })
+    await h.tick()
+    await h.tick()
+    expect(h.applied).toEqual([{ revision: 4, tag: 'window-closed' }])
+    expect(h.pipeline.revision()).toBe(4)
+  })
+
+  it('a refused save applies a held push NEWER than the refusal in its place, once', async () => {
+    const h = harness(3)
+    h.edit('a')
+    h.pipeline.incoming({ revision: 5, tag: 'a move' })
+    h.sent[0].answer({ ok: false, reason: 'conflict', current: { revision: 4, tag: 'theirs' } })
+    await h.tick()
+    await h.tick()
+    expect(h.applied).toEqual([{ revision: 5, tag: 'a move' }])
+    expect(h.pipeline.revision()).toBe(5)
+  })
+
+  it('a refused save drops a held push OLDER than the refusal and applies the refusal’s snapshot', async () => {
+    const h = harness(3)
+    h.edit('a')
+    h.pipeline.incoming({ revision: 4, tag: 'stale' })
+    h.sent[0].answer({ ok: false, reason: 'conflict', current: { revision: 7, tag: 'theirs' } })
+    await h.tick()
+    await h.tick()
+    expect(h.applied).toEqual([{ revision: 7, tag: 'theirs' }])
+    expect(h.pipeline.revision()).toBe(7)
+  })
+
   it('ignores a snapshot at or below the revision it knows, idle or not', async () => {
     const h = harness(5)
     h.pipeline.incoming({ revision: 5, tag: 'old' })

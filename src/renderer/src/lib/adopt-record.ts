@@ -226,11 +226,18 @@ export async function adoptRehomed(
  * them, since no spawn went through it. They join the store as the hidden
  * half of their group's terminal, from their record alone and WITHOUT a
  * spawn (the process is already bound to this window by main); the layout
- * that named them already links each to its terminal. A terminal whose
- * group's workspace is the one on screen is selected, as the window's own
- * launch of a terminal does. Records main no longer has are skipped.
+ * that named them already links each to its terminal. When the caller says
+ * so (an agent's own command, as for a tab), a terminal whose group's
+ * workspace is the one on screen is selected, as the window's own launch of
+ * a terminal does; a save, a refused save's current layout or a snapshot
+ * with no cause selects nothing (PRDCT-3428: a closing window's dev-server
+ * pane took the selection on that road). Records main no longer has are
+ * skipped.
  */
-export async function adoptServerStartedTerminals(ids: string[]): Promise<void> {
+export async function adoptServerStartedTerminals(
+  ids: string[],
+  options: { focus?: boolean } = {}
+): Promise<void> {
   if (ids.length === 0) return
   const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
@@ -244,6 +251,7 @@ export async function adoptServerStartedTerminals(ids: string[]): Promise<void> 
     if (store.sessions.some((s) => s.id === record.id)) continue
     const session = sessionOfRecord(record, record.workspaceId ?? activeWorkspaceId ?? undefined)
     store.addHiddenSession(session)
+    if (options.focus !== true) continue
     const group = store.groups.find((g) => g.terminals.some((t) => t.sessionId === record.id))
     if (group && inActiveWorkspace({ workspaceId: group.workspaceId }, activeWorkspaceId)) {
       useSessionStore.setState({ selectedSessionIds: [record.id], focusedSessionId: record.id })

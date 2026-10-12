@@ -365,10 +365,10 @@ describe('a layout pushed by the server', () => {
       dangerousMode: false
     })
     records = [base('b', 'ws-hidden')]
-    await adoptServerStartedTerminals(['b'])
+    await adoptServerStartedTerminals(['b'], { focus: true })
     expect(useSessionStore.getState().focusedSessionId).toBeNull()
     records = [base('a', 'ws-shown')]
-    await adoptServerStartedTerminals(['a'])
+    await adoptServerStartedTerminals(['a'], { focus: true })
     expect(useSessionStore.getState().focusedSessionId).toBe('a')
     expect(
       useSessionStore
@@ -407,13 +407,80 @@ describe('a layout pushed by the server', () => {
         dangerousMode: false
       }
     ]
-    await adoptServerStartedTerminals(['a'])
+    await adoptServerStartedTerminals(['a'], { focus: true })
     expect(useSessionStore.getState().focusedSessionId).toBe('a')
     useSessionStore.setState({ selectedSessionIds: ['elsewhere'], focusedSessionId: 'elsewhere' })
     // Two pushes racing on the same id: the second lands after the first adopted it.
-    await adoptServerStartedTerminals(['a'])
+    await adoptServerStartedTerminals(['a'], { focus: true })
     expect(useSessionStore.getState().focusedSessionId).toBe('elsewhere')
     expect(useSessionStore.getState().sessions.filter((s) => s.id === 'a')).toHaveLength(1)
+  })
+
+  /** A visible group with one quick-launch terminal running `sid`, and the record main answers. */
+  const shownTerminalGroup = (sid: string): Groups[number] => {
+    const g = group(
+      'g',
+      [],
+      [{ id: 't1', command: 'x', commandMode: 'auto', color: 'green', sessionId: sid }]
+    )
+    g.workspaceId = 'ws-shown'
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-shown' })
+    records = [
+      {
+        id: sid,
+        cwd: '/w',
+        folderName: 'w',
+        live: true,
+        running: true,
+        workspaceId: 'ws-shown',
+        link: { kind: 'group-terminal', groupId: 'g', terminalId: 't1' },
+        claudeMode: false,
+        antigravityMode: false,
+        codexMode: false,
+        piMode: false,
+        claudeAgentsMode: false,
+        dangerousMode: false
+      }
+    ]
+    return g
+  }
+
+  it("selects the terminal an agent's command took in, as the window's own launch would", async () => {
+    const g = shownTerminalGroup('term')
+    useSessionStore.setState({ sessions: [session('other')], displayOrder: ['other'] })
+    push(['other'], ['g', 'other'], [g], [], 'command')
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id).sort()).toEqual(['other', 'term'])
+    expect(state.focusedSessionId).toBe('term')
+  })
+
+  it('takes in but does not select a terminal that arrives with a save: only a command selects (PRDCT-3428)', async () => {
+    const g = shownTerminalGroup('term')
+    useSessionStore.setState({
+      sessions: [session('other')],
+      displayOrder: ['other'],
+      selectedSessionIds: ['other'],
+      focusedSessionId: 'other'
+    })
+    push(['other'], ['g', 'other'], [g], [], 'save')
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id).sort()).toEqual(['other', 'term'])
+    expect(state.focusedSessionId).toBe('other')
+    expect(state.selectedSessionIds).toEqual(['other'])
+  })
+
+  it('takes in but does not select a terminal from a snapshot with no cause (the refused save, the catch-up)', async () => {
+    const g = shownTerminalGroup('term')
+    useSessionStore.setState({ sessions: [], displayOrder: [] })
+    setSidebarBase({ windowKey: 'w', revision, groups: [], displayOrder: [] })
+    applyServerLayout({ windowKey: 'w', revision: ++revision, groups: [g], displayOrder: ['g'] })
+    await new Promise((r) => setTimeout(r, 10))
+    const state = useSessionStore.getState()
+    expect(state.sessions.map((s) => s.id)).toEqual(['term'])
+    expect(state.focusedSessionId).toBeNull()
+    expect(state.selectedSessionIds).toEqual([])
   })
 
   it('takes a terminal in as ended when its record says its process is gone', async () => {
