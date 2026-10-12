@@ -1,11 +1,8 @@
-// Pinned to the in-process server. The attached restore itself works since wave 4
-// (PRDCT-3376: the records are the server's, read off it after the boot; see
-// terminal-reattach, which runs in both modes). This spec stays pinned because
-// it seeds session records (and transcripts) by hand into the APP's data folder
-// before the launch, and attached the records live in the standalone server's
-// folder, which the harness does not seed with session-records (a harness
-// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
-// records it restores through the prompt are the in-process boot's too.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The records this spec relies
+// on are read and written where the launch's terminal manager keeps them (the
+// app's folder in-process, the server's attached), and the attached restore now
+// reattaches a live agent session the way the in-process boot does. Wave 4
+// pinned it for the records seeded into the app's folder.
 /**
  * Launch profiles and Pi are wired through the real settings UI, preload IPC,
  * main-process persistence, launcher, and keyboard shortcut.
@@ -83,7 +80,7 @@ export async function run(t) {
     // Pi's own test-only override keeps the real ~/.pi session store untouched.
     PI_CODING_AGENT_SESSION_DIR: PI_ROOT
   }
-  let { app, win } = await launchApp(DIR, { server: 'in-process', env: launchEnv })
+  let { app, win } = await launchApp(DIR, { env: launchEnv })
   try {
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.send('menu:open-settings-section', 'agents')
@@ -230,7 +227,6 @@ export async function run(t) {
     await app.close()
     app = null
     const relaunched = await launchApp(DIR, {
-      server: 'in-process',
       env: launchEnv,
       settleMs: 6000
     })

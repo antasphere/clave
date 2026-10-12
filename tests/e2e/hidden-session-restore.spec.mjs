@@ -1,12 +1,10 @@
-// Pinned to the in-process server. The attached moves and restore work since
-// wave 4 (PRDCT-3376: a move releases the session on the server first; see
-// attached-window-move, attached-agent-token and terminal-reattach, which run
-// attached). This spec stays pinned because it seeds session records by hand
-// into the APP's folder (attached they are the server's, which the harness does
-// not seed), reads an agent tab's config from the app's mcp-configs folder
-// (attached the server writes it), and/or relies on group membership surviving
-// an attached quit, which the attached boot flattens (pre-existing, on the
-// wave's owed list). Not a known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The records it reads are
+// read where the launch's terminal manager keeps them (`recordsRootOf`: the
+// app's folder in-process, the server's attached), and the attached restore
+// now brings every record kind back the way the in-process boot does: the
+// group's terminal into its group, the view's server to its owner, the toolbar
+// survivor parked for its button. Wave 4 pinned it for the flattened groups
+// and the hidden halves the attached top-up left behind.
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).
@@ -39,7 +37,8 @@ import {
   until,
   killLeakedE2eTmux,
   fixturePath,
-  freePorts
+  freePorts,
+  recordsRootOf
 } from './harness.mjs'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -60,9 +59,10 @@ const WS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Every session record on disk, so a spec can read a record's `link`. */
+/** Every session record on disk, so a spec can read a record's `link`: under
+ *  the folder of the launch that wrote them (the server's, attached). */
 function sessionRecords() {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.json'))
@@ -107,7 +107,7 @@ export async function run(t) {
   try {
     // ── Before the restart: a group whose last tab is closed while its
     //    quick-launch terminal keeps running, and a tab with a served view ──
-    const first = await launchApp(DIR, { server: 'in-process' })
+    const first = await launchApp(DIR)
     app = first.app
     let win = first.win
 
@@ -185,7 +185,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
+    const second = await launchApp(DIR, { settleMs: 8000 })
     app = second.app
     win = second.win
 

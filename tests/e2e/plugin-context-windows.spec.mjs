@@ -1,8 +1,8 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3428): the agent tools this spec
+// opens its sessions through answer from the server since PRDCT-3377, and a
+// closing window's hand-over selects nothing in the window that takes it in,
+// whatever road the layout took (the push, the catch-up read, the refused
+// save's held push). Wave 3 pinned it while the tools still asked main.
 // The focused session a plugin is told about, across two windows.
 //
 // Focus is a renderer fact, so each window reports its own and the most recent report wins.
@@ -26,7 +26,7 @@ export async function run(t) {
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
-  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
   let alphaSession
   let betaSession
   try {

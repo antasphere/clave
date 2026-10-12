@@ -1,12 +1,9 @@
-// Pinned to the in-process server. The attached moves and restore work since
-// wave 4 (PRDCT-3376: a move releases the session on the server first; see
-// attached-window-move, attached-agent-token and terminal-reattach, which run
-// attached). This spec stays pinned because it seeds session records by hand
-// into the APP's folder (attached they are the server's, which the harness does
-// not seed), reads an agent tab's config from the app's mcp-configs folder
-// (attached the server writes it), and/or relies on group membership surviving
-// an attached quit, which the attached boot flattens (pre-existing, on the
-// wave's owed list). Not a known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). An agent tab's config is
+// read where the process that spawns the tab writes it (`recordsRootOf`: the
+// app's folder in-process, the server's attached), and the agent tools answer
+// from the server since PRDCT-3377. Wave 4 pinned it for records seeded into
+// the app's folder, the agent tab's config read from the app's folder and the
+// groups the attached boot flattened.
 /**
  * MCP routing across windows (PRDCT-1703). With several windows the sidebar
  * state is per window, so mcp-server resolves WHICH window's renderer runs
@@ -41,7 +38,8 @@ import {
   toolPayload,
   toolErrored,
   until,
-  fixturePath
+  fixturePath,
+  recordsRootOf
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
@@ -83,7 +81,7 @@ export async function run(t) {
   let app = null
   const opened = []
   try {
-    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 5000 })
+    const launched = await launchApp(DIR, { settleMs: 5000 })
     app = launched.app
     const winA = launched.win
     const idA = await identityOf(winA)
@@ -96,9 +94,9 @@ export async function run(t) {
     t.equal('two windows are open', (await windows(app)).length, 2)
 
     // Agent tabs (they mint per-session tokens) — one per window.
-    const P = await spawnAgentTabIn(app, winA, DIR)
+    const P = await spawnAgentTabIn(app, winA, recordsRootOf(DIR))
     t.check('an agent tab P minted a token in window A', !!P?.token, P?.sessionId)
-    const Q = await spawnAgentTabIn(app, b.page, DIR)
+    const Q = await spawnAgentTabIn(app, b.page, recordsRootOf(DIR))
     t.check('an agent tab Q minted a token in window B', !!Q?.token, Q?.sessionId)
     if (!P?.token || !Q?.token) return
     opened.push(P.sessionId, Q.sessionId)
