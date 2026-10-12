@@ -10,23 +10,28 @@
  * routed to the server gets the same answer as one that calls the server.
  *
  * What is Electron's and nothing else's: the folder dialog of "Link
- * folder…", the preview protocol that mints a plugin page's URL (the service
- * answers the file and its policy; `plugins:preview-url` is reached only
- * through the preload, after the server named the file), the OS notification
- * a plugin raises on a server that cannot show one, the window a focus report
- * comes from (its key, and the clearing of its report when it closes), and
- * the drop of a lease when the window that holds it reloads or dies.
+ * folder…"; the preview protocol that mints a plugin page's URL (the service
+ * answers the file and its policy, the arm registers the page and holds it
+ * for the lease or the panel that shows it, and releases it when the lease
+ * is revoked, when the window holding it reloads or dies, and when the plugin
+ * is no longer active, so a revoked page stops answering); the OS
+ * notification a plugin raises on a server that cannot show one; the window
+ * a focus report comes from (its key, and the clearing of its report when it
+ * closes); and the drop of a lease when the window that holds it reloads or
+ * dies. The lease, the panel and the revoke therefore come through these arms
+ * in both modes; the other methods the preload sends to the server itself.
  */
 import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
 import type { ClaveApiClient } from '@clave/client'
 import type {
   PluginPage,
   PluginPermission,
+  PluginRecord,
   PluginSecretRequest,
   PluginViewLease
 } from '@clave/contract/plugins'
 import { windowRegistry } from '../window-registry'
-import { registerPreviewFile } from '../preview-protocol'
+import { registerPreviewFile, unregisterPreviewFile } from '../preview-protocol'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { getClaveServerEndpoint, whenClaveServerBootSettled } from '../server/endpoint'
 import { serverClient } from '../mcp/server-client'
@@ -35,7 +40,7 @@ import { shellPlugins } from '../plugins/shell-plugins'
 /** The plugins as the arms call them: every method a promise, whether the
  *  service is in this process or across the loopback. */
 export interface PluginsFacade {
-  list(): Promise<ReadonlyArray<unknown>>
+  list(): Promise<ReadonlyArray<PluginRecord>>
   enable(id: string, grants: ReadonlyArray<PluginPermission>): Promise<void>
   disable(id: string): Promise<void>
   link(folder: string): Promise<string>
@@ -124,6 +129,50 @@ export function registerPluginHandlers(): void {
         .catch(() => undefined)
     })
   }
+
+  /** The pages this shell serves to its windows: one holder per lease
+   *  (`lease:<id>`) and per panel (`panel:<plugin>/<panel>`), with the file
+   *  and the plugin behind it. The token is per FILE and shared
+   *  (`registerPreviewFile` is idempotent), so a page stops being served only
+   *  when nothing else still shows that file: another lease of the same
+   *  plugin, or its panel. A page released and asked for again gets a new
+   *  token, so the URL a revoked lease or a disabled plugin held answers 404. */
+  const pages = new Map<string, { file: string; pluginId: string }>()
+  const hold = (holder: string, pluginId: string, page: PluginPage): { url: string } => {
+    pages.set(holder, { file: page.file, pluginId })
+    return registerPreviewFile(page.file, page.csp)
+  }
+  const release = (holder: string): void => {
+    const page = pages.get(holder)
+    if (!page) return
+    pages.delete(holder)
+    for (const other of pages.values()) if (other.file === page.file) return
+    unregisterPreviewFile(page.file)
+  }
+  /** A plugin that is no longer active keeps no page: the service dropped its
+   *  leases already, and the window took its panel down. */
+  const releaseStale = (records: ReadonlyArray<PluginRecord>): void => {
+    const active = new Set(
+      records.filter((r) => r.enabled && r.status === 'active' && !r.error).map((r) => r.id)
+    )
+    for (const [holder, page] of [...pages]) if (!active.has(page.pluginId)) release(holder)
+  }
+  const refreshPages = (): Promise<void> =>
+    pages.size === 0
+      ? Promise.resolve()
+      : pluginsFacade()
+          .then((plugins) => plugins.list())
+          .then(releaseStale)
+          .catch(() => undefined)
+  // In this process the shell's own service says when the plugins changed;
+  // attached, the windows relay the server's event (`plugins:changed-heard`).
+  void whenClaveServerBootSettled().then(() => {
+    if (getClaveServerEndpoint()?.mode === 'attached') return
+    shellPlugins().subscribe((event) => {
+      if (event._tag === 'plugins.changed') void refreshPages()
+    })
+  })
+
   /** A renderer that reloads or dies cannot revoke what it no longer
    *  remembers, so main drops the lease itself. `did-navigate` is the MAIN
    *  frame's, never a guest iframe's, so a reload of the app drops the lease
@@ -132,6 +181,7 @@ export function registerPluginHandlers(): void {
   const dropOnReload = (win: BrowserWindow, leaseId: string): void => {
     const drop = (): void => {
       drops.get(leaseId)?.()
+      release(`lease:${leaseId}`)
       void pluginsFacade()
         .then((plugins) => plugins.revokeView(leaseId))
         .catch(() => undefined)
@@ -184,15 +234,7 @@ export function registerPluginHandlers(): void {
   ipcMain.handle('plugins:panel', async (event, id: string, panel: string) => {
     guard(event)
     const page = await (await pluginsFacade()).panel(id, panel)
-    return registerPreviewFile(page.file, page.csp)
-  })
-  /** The URL of a page the server named: reached only through the preload,
-   *  which passes what `GetPluginPanel` or `LeasePluginView` answered. */
-  ipcMain.handle('plugins:preview-url', (event, file: string, csp: string) => {
-    guard(event)
-    if (typeof file !== 'string' || !file || typeof csp !== 'string')
-      throw new Error('A plugin page needs a file and a policy')
-    return registerPreviewFile(file, csp)
+    return hold(`panel:${id}/${panel}`, id, page)
   })
   // The renderer reports its focused session whenever it changes; the host
   // turns that into the plugins' `context.changed`. Null clears this window's report.
@@ -208,7 +250,7 @@ export function registerPluginHandlers(): void {
     async (event, pluginId: string, viewId: string, sessionId: string) => {
       const win = guard(event)
       const lease = await (await pluginsFacade()).leaseView(pluginId, viewId, sessionId)
-      const { url } = registerPreviewFile(lease.file, lease.csp)
+      const { url } = hold(`lease:${lease.leaseId}`, pluginId, lease)
       dropOnReload(win, lease.leaseId)
       return { leaseId: lease.leaseId, url, sessionId: lease.sessionId }
     }
@@ -220,6 +262,7 @@ export function registerPluginHandlers(): void {
   ipcMain.handle('plugins:view-revoke', async (event, leaseId: string) => {
     guard(event)
     drops.get(leaseId)?.()
+    release(`lease:${leaseId}`)
     await (await pluginsFacade()).revokeView(leaseId)
   })
   ipcMain.handle('plugins:secrets', async (event) => {
@@ -232,21 +275,32 @@ export function registerPluginHandlers(): void {
       throw new Error('Invalid secret')
     await (await pluginsFacade()).replySecret(id, value)
   })
-  /** A notification the attached server could not show itself
-   *  (`plugins.notified`): the preload relays it here once per window; the
-   *  first relay of an event shows it, the others are dropped by its id. */
-  const shown = new Set<string>()
+  /** The server's plugin events a window relays here when the server runs
+   *  apart from the app, each acted on once whichever windows relayed it (the
+   *  first relay of an event's id counts): a notification the server could
+   *  not show itself, and a change of the plugins, on which the pages of a
+   *  plugin no longer active are released. */
+  const relayed = new Set<string>()
+  const once = (id: unknown): boolean => {
+    if (typeof id !== 'string' || relayed.has(id)) return false
+    relayed.add(id)
+    if (relayed.size > 200) relayed.delete(relayed.values().next().value as string)
+    return true
+  }
   ipcMain.handle(
     'plugins:show-notification',
     (event, id: string, name: string, title: string, body?: string) => {
       guard(event)
-      if (typeof id !== 'string' || shown.has(id)) return
-      shown.add(id)
-      if (shown.size > 200) shown.delete(shown.values().next().value as string)
+      if (!once(id)) return
       if (!TEST_NO_ACTIVATE && Notification.isSupported())
         new Notification({ title: `${name}: ${title}`, body: body ?? '' }).show()
     }
   )
+  ipcMain.handle('plugins:changed-heard', async (event, id: string) => {
+    guard(event)
+    if (!once(id)) return
+    await refreshPages()
+  })
   app.once('before-quit', () => {
     for (const drop of [...drops.values()]) drop()
   })

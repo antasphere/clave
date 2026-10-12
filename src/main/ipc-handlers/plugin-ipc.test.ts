@@ -5,11 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * around a service that may live in this process or on an attached server.
  * The service itself is `plugins/plugin-service.test.ts`'s subject; here it
  * is a fake, and the arms are proven on what they add: the page's URL
- * minted by the preview protocol, the lease dropped when the window reloads,
- * the window's key on a focus report and its clearing when the window
- * closes, the folder dialog of "Link folder…", the notification shown once
- * per event, the guest frame refused everywhere, and the attached road
- * through the typed client.
+ * minted by the preview protocol and released when nothing shows the page
+ * any more (a revoked lease, a reload, a plugin no longer active), the lease
+ * dropped when the window reloads, the window's key on a focus report and
+ * its clearing when the window closes, the folder dialog of "Link folder…",
+ * the notification shown once per event, the guest frame refused everywhere,
+ * and the attached road through the typed client.
  */
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: never[]) => unknown>(),
@@ -17,10 +18,12 @@ const mocks = vi.hoisted(() => ({
   showOpenDialog: vi.fn(),
   notifications: [] as { title: string; body: string }[],
   registered: [] as { file: string; csp?: string }[],
+  unregistered: [] as string[],
   keyForWindow: vi.fn(() => 'w1'),
   endpoint: { mode: 'in-process' } as { mode: string } | null,
+  shellListeners: new Set<(event: { _tag: string }) => void>(),
   shell: {
-    list: vi.fn(() => [{ id: 'p' }]),
+    list: vi.fn(() => [{ id: 'p', enabled: true, status: 'active' }]),
     enable: vi.fn(),
     disable: vi.fn(),
     link: vi.fn(() => 'linked.plugin'),
@@ -37,12 +40,14 @@ const mocks = vi.hoisted(() => ({
     requestView: vi.fn(() => ({ id: 's1' })),
     revokeView: vi.fn(),
     secrets: vi.fn(() => []),
-    replySecret: vi.fn()
+    replySecret: vi.fn(),
+    subscribe: vi.fn()
   },
   remote: {
     plugins: {
-      list: vi.fn(async () => [{ id: 'remote' }]),
-      context: vi.fn(async () => undefined)
+      list: vi.fn(async () => [{ id: 'remote', enabled: true, status: 'active' }]),
+      context: vi.fn(async () => undefined),
+      panel: vi.fn(async () => ({ file: '/plugins/p/ui/index.html', csp: "default-src 'self'" }))
     }
   }
 }))
@@ -69,6 +74,9 @@ vi.mock('../preview-protocol', () => ({
   registerPreviewFile: (file: string, csp?: string) => {
     mocks.registered.push({ file, ...(csp !== undefined && { csp }) })
     return { url: `clave-preview://token/${file.split('/').pop()}` }
+  },
+  unregisterPreviewFile: (file: string) => {
+    mocks.unregistered.push(file)
   }
 }))
 vi.mock('../server/endpoint', () => ({
@@ -128,21 +136,34 @@ const invoke = (channel: string, event: unknown, ...args: unknown[]): Promise<un
     (mocks.handlers.get(channel) as (...a: unknown[]) => unknown)(event, ...args)
   )
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+/** The shell's own service says the plugins changed. */
+const shellChanged = async (): Promise<void> => {
+  for (const listener of [...mocks.shellListeners]) listener({ _tag: 'plugins.changed' })
+  await flush()
+}
 
 let window: ReturnType<typeof makeWindow>
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   mocks.handlers.clear()
   mocks.registered.length = 0
+  mocks.unregistered.length = 0
   mocks.notifications.length = 0
+  mocks.shellListeners.clear()
+  mocks.shell.subscribe.mockImplementation((listener: (event: { _tag: string }) => void) => {
+    mocks.shellListeners.add(listener)
+    return () => mocks.shellListeners.delete(listener)
+  })
   mocks.endpoint = { mode: 'in-process' }
   window = makeWindow()
   mocks.fromWebContents.mockImplementation(() => window.win)
   registerPluginHandlers()
+  // The arms subscribe to the shell's service once the boot has settled.
+  await flush()
 })
 
 describe('the plugin IPC arms around the service', () => {
-  it("mints a lease's URL from the page the service named, and drops the lease when the window reloads", async () => {
+  it("mints a lease's URL from the page the service named, and drops the lease and its page when the window reloads", async () => {
     const granted = await invoke('plugins:view-lease', window.event, 'p', 'log', 's1')
     expect(mocks.shell.leaseView).toHaveBeenCalledWith('p', 'log', 's1')
     expect(granted).toEqual({
@@ -156,31 +177,67 @@ describe('the plugin IPC arms around the service', () => {
     window.emit('did-navigate')
     await flush()
     expect(mocks.shell.revokeView).toHaveBeenCalledWith('lease-1')
+    expect(mocks.unregistered).toEqual(['/plugins/p/ui/view.html'])
     // The drop fired once: the listeners went with it.
     expect(window.listeners.get('did-navigate')).toEqual([])
   })
-  it('revokes through the service and forgets the reload drop', async () => {
+  it('revokes through the service, forgets the reload drop, and stops serving the page only once nothing shows it', async () => {
     await invoke('plugins:view-lease', window.event, 'p', 'log', 's1')
+    mocks.shell.leaseView.mockReturnValueOnce({
+      leaseId: 'lease-2',
+      sessionId: 's2',
+      file: '/plugins/p/ui/view.html',
+      csp: "default-src 'self'; frame-src 'none'"
+    })
+    await invoke('plugins:view-lease', window.event, 'p', 'log', 's2')
     await invoke('plugins:view-revoke', window.event, 'lease-1')
     expect(mocks.shell.revokeView).toHaveBeenCalledTimes(1)
+    // The second lease still shows the same file: the page stays served.
+    expect(mocks.unregistered).toEqual([])
+    await invoke('plugins:view-revoke', window.event, 'lease-2')
+    expect(mocks.unregistered).toEqual(['/plugins/p/ui/view.html'])
     window.emit('did-navigate')
     await flush()
-    expect(mocks.shell.revokeView).toHaveBeenCalledTimes(1)
+    expect(mocks.shell.revokeView).toHaveBeenCalledTimes(2)
   })
-  it("mints a panel's URL, and a preview URL only from a file and a policy", async () => {
+  it("mints a panel's URL from the page the service named, and serves no page from a bare file", async () => {
     expect(await invoke('plugins:panel', window.event, 'p', 'side')).toEqual({
       url: 'clave-preview://token/index.html'
     })
-    expect(mocks.registered[0]).toEqual({
-      file: '/plugins/p/ui/index.html',
-      csp: "default-src 'self'"
+    expect(mocks.registered).toEqual([
+      { file: '/plugins/p/ui/index.html', csp: "default-src 'self'" }
+    ])
+    expect(mocks.handlers.has('plugins:preview-url')).toBe(false)
+  })
+  it("releases a plugin's pages when it is no longer active, on the shell's own word in this process", async () => {
+    await invoke('plugins:panel', window.event, 'p', 'side')
+    await invoke('plugins:view-lease', window.event, 'p', 'log', 's1')
+    // A change that leaves the plugin active releases nothing.
+    await shellChanged()
+    expect(mocks.unregistered).toEqual([])
+    mocks.shell.list.mockReturnValue([{ id: 'p', enabled: false, status: 'disabled' }])
+    await shellChanged()
+    expect(mocks.unregistered.sort()).toEqual([
+      '/plugins/p/ui/index.html',
+      '/plugins/p/ui/view.html'
+    ])
+    // Nothing held any more: the next change asks the service for nothing.
+    mocks.shell.list.mockClear()
+    await shellChanged()
+    expect(mocks.shell.list).not.toHaveBeenCalled()
+  })
+  it("releases them on a window's relay of the attached server's change, once per event", async () => {
+    mocks.endpoint = { mode: 'attached' }
+    expect(await invoke('plugins:panel', window.event, 'p', 'side')).toEqual({
+      url: 'clave-preview://token/index.html'
     })
-    expect(await invoke('plugins:preview-url', window.event, '/plugins/p/ui/a.html', 'x')).toEqual({
-      url: 'clave-preview://token/a.html'
-    })
-    await expect(invoke('plugins:preview-url', window.event, '', 'x')).rejects.toThrow(
-      'a file and a policy'
-    )
+    expect(mocks.remote.plugins.panel).toHaveBeenCalledWith('p', 'side')
+    await invoke('plugins:changed-heard', window.event, 'e1')
+    expect(mocks.remote.plugins.list).toHaveBeenCalledTimes(1)
+    expect(mocks.unregistered).toEqual(['/plugins/p/ui/index.html'])
+    // The same event relayed by a second window is not acted on again.
+    await invoke('plugins:changed-heard', window.event, 'e1')
+    expect(mocks.remote.plugins.list).toHaveBeenCalledTimes(1)
   })
   it('keys a focus report by the window and clears it when the window closes', async () => {
     await invoke('plugins:context', window.event, 's1')
@@ -213,10 +270,11 @@ describe('the plugin IPC arms around the service', () => {
       'plugins:list',
       'plugins:view-lease',
       'plugins:view-request',
-      'plugins:preview-url',
+      'plugins:panel',
       'plugins:context',
       'plugins:secrets',
-      'plugins:show-notification'
+      'plugins:show-notification',
+      'plugins:changed-heard'
     ])
       await expect(invoke(channel, window.guestEvent, 'x', 'y', 'z')).rejects.toThrow(
         'requires the app renderer'
@@ -226,7 +284,9 @@ describe('the plugin IPC arms around the service', () => {
   })
   it('answers from the attached server once the boot named one', async () => {
     mocks.endpoint = { mode: 'attached' }
-    expect(await invoke('plugins:list', window.event)).toEqual([{ id: 'remote' }])
+    expect(await invoke('plugins:list', window.event)).toEqual([
+      { id: 'remote', enabled: true, status: 'active' }
+    ])
     expect(mocks.shell.list).not.toHaveBeenCalled()
     await invoke('plugins:context', window.event, null)
     expect(mocks.remote.plugins.context).toHaveBeenCalledWith('w1', null)

@@ -591,41 +591,25 @@ function onServerEventOf<E extends ServerEvent['_tag']>(
 /** Which session each view lease this window took is on: the lease answer
  *  names it, and the view's event listener reads the session's own stream. */
 const leaseSessions = new Map<string, string>()
-const leaseViewRoute = viaServer<
-  [string, string, string],
-  { leaseId: string; url: string; sessionId: string }
->({
-  ipc: (pluginId, viewId, sessionId) =>
-    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
-  server: async ({ api }, pluginId, viewId, sessionId) => {
-    const granted = await api.plugins.leaseView(pluginId, viewId, sessionId)
-    const { url } = (await ipcRenderer.invoke(
-      'plugins:preview-url',
-      granted.file,
-      granted.csp
-    )) as { url: string }
-    return { leaseId: granted.leaseId, url, sessionId: granted.sessionId }
-  }
-})
-const revokeViewRoute = viaServer<[string], void>({
-  ipc: (leaseId) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
-  server: ({ api }, leaseId) => api.plugins.revokeView(leaseId)
-})
-/** A plugin's notification on a server that shows none itself (the server
- *  running apart from the app): relayed to the shell, which shows it once
- *  whichever windows heard it. Bound beside the view-request tracker in
+/** The server's plugin events the shell cannot hear itself when the server
+ *  runs apart from the app: a plugin's notification, which the shell shows,
+ *  and a change of the plugins, on which the shell releases the pages of a
+ *  plugin no longer active. Every window relays them; the shell acts on each
+ *  once, by the event's id. Bound beside the view-request tracker in
  *  `onMcpCommand`, which every window binds at load and releases with it,
  *  rather than at module load: a waiter of its own would be one more push
  *  binding than the window's own listeners account for. */
-const relayPluginNotices = (push: import('@clave/client').PushClient): (() => void) => {
+const relayPluginEvents = (push: import('@clave/client').PushClient): (() => void) => {
   // Never throws: a test's partial push client has no `onEvent`.
   if (typeof push.onEvent !== 'function') return noop
   return push.onEvent((envelope) => {
     const event = envelope.event
-    if (event._tag !== 'plugins.notified') return
-    void ipcRenderer
-      .invoke('plugins:show-notification', envelope.id, event.name, event.title, event.body)
-      .catch(() => undefined)
+    if (event._tag === 'plugins.notified')
+      void ipcRenderer
+        .invoke('plugins:show-notification', envelope.id, event.name, event.title, event.body)
+        .catch(() => undefined)
+    else if (event._tag === 'plugins.changed')
+      void ipcRenderer.invoke('plugins:changed-heard', envelope.id).catch(() => undefined)
   })
 }
 
@@ -950,13 +934,15 @@ const electronAPI = {
     ),
 
   // ── Wave 5, lane C: the plugins, served (PRDCT-3433) ──
-  // The store, the host and the view leases are the server's; a page's URL is
+  // The store, the host and the view leases are the server's. A page's URL is
   // the shell's, minted by the preview protocol from the file the server
-  // named (`plugins:preview-url`, reached from here only). A view's events
-  // are the session's own stream, heard on the transport the session's
-  // subscription is on: the lease fixes the session and this file remembers
-  // which, so nothing per-lease crosses from main. "Link folder…" keeps its
-  // IPC road because the folder dialog is the shell's.
+  // named and released by the shell when the page is gone, so the lease, the
+  // revoke and the panel go through the IPC arms in both modes: the arms
+  // answer from the plugins the boot named. A view's events are the
+  // session's own stream, heard on the transport the session's subscription
+  // is on: the lease fixes the session and this file remembers which, so
+  // nothing per-lease crosses from main. "Link folder…" keeps its IPC road
+  // because the folder dialog is the shell's.
   pluginsList: viaServer<[], import('../main/plugins/plugin-store').PluginRecord[]>({
     ipc: () => ipcRenderer.invoke('plugins:list'),
     server: async ({ api }) =>
@@ -969,7 +955,11 @@ const electronAPI = {
     viewId: string,
     sessionId: string
   ): Promise<{ leaseId: string; url: string; sessionId: string }> => {
-    const lease = await leaseViewRoute(pluginId, viewId, sessionId)
+    const lease = (await ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId)) as {
+      leaseId: string
+      url: string
+      sessionId: string
+    }
     leaseSessions.set(lease.leaseId, lease.sessionId)
     return lease
   },
@@ -980,7 +970,7 @@ const electronAPI = {
   }),
   pluginsViewRevoke: async (leaseId: string): Promise<void> => {
     leaseSessions.delete(leaseId)
-    await revokeViewRoute(leaseId)
+    await ipcRenderer.invoke('plugins:view-revoke', leaseId)
   },
   onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => {
     const sessionId = leaseSessions.get(leaseId)
@@ -1020,15 +1010,8 @@ const electronAPI = {
     ipc: (id, command) => ipcRenderer.invoke('plugins:command', id, command),
     server: ({ api }, id, command) => api.plugins.command(id, command)
   }),
-  pluginsPanel: viaServer<[string, string], { url: string }>({
-    ipc: (id, panel) => ipcRenderer.invoke('plugins:panel', id, panel),
-    server: async ({ api }, id, panel) => {
-      const page = await api.plugins.panel(id, panel)
-      return ipcRenderer.invoke('plugins:preview-url', page.file, page.csp) as Promise<{
-        url: string
-      }>
-    }
-  }),
+  pluginsPanel: (id: string, panel: string) =>
+    ipcRenderer.invoke('plugins:panel', id, panel) as Promise<{ url: string }>,
   pluginsContext: viaServer<[string | null], void>({
     ipc: (sessionId) => ipcRenderer.invoke('plugins:context', sessionId),
     server: async ({ api }, sessionId) => {
@@ -1337,8 +1320,8 @@ const electronAPI = {
       callback
     )
     let offPush: (() => void) | null = null
-    // ── Wave 5, lane C: the plugin notices ride this window-long binding ──
-    let offNotices: (() => void) | null = null
+    // ── Wave 5, lane C: the plugin events ride this window-long binding ──
+    let offPluginEvents: (() => void) | null = null
     const withdraw = onServerAvailable((backing) => {
       const mine = windowKey()
       offPush = backing.push.onRequest((request) => {
@@ -1352,13 +1335,13 @@ const electronAPI = {
           })
         })
       })
-      offNotices = relayPluginNotices(backing.push)
+      offPluginEvents = relayPluginEvents(backing.push)
     })
     return () => {
       offIpc()
       withdraw()
       offPush?.()
-      offNotices?.()
+      offPluginEvents?.()
     }
   },
 
