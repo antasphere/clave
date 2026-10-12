@@ -156,6 +156,7 @@ export const antasphereFixtureHandlers = [
       const world = yield* AntasphereFixtureWorld
       const provider = yield* Effect.promise(() =>
         startOidcProvider({
+          registrationStatus: 200,
           user: {
             sub: payload.subject,
             name: payload.name,
