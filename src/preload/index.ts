@@ -1032,9 +1032,18 @@ const electronAPI = {
   }),
   // The one `plugins.changed` the window hears: IPC from the shell's own
   // service while the push socket is not open, the push channel while it is.
-  // No catch-up: the store re-lists on hearing it.
+  // The event carries nothing, so the pick answers null, never undefined: the
+  // dual listener drops an event whose pick answers undefined, and a window
+  // attached to a server apart heard no plugin change at all. The catch-up
+  // at a welcome is one more null: the stores re-list on hearing it, which is
+  // the read of the family's model a welcome owes.
   onPluginsChanged: (callback: () => void) =>
-    viaServerEvent('plugins:changed', 'plugins.changed', () => undefined as void)(callback),
+    viaServerEvent<'plugins.changed', null>(
+      'plugins:changed',
+      'plugins.changed',
+      () => null,
+      async () => [null]
+    )(callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
