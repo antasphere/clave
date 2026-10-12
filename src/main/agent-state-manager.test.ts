@@ -7,6 +7,7 @@ import { tempDataDir } from './ports/testing'
 import {
   clearState,
   getStateDir,
+  lastHookState,
   startWatching,
   stateFilePath,
   stopWatching
@@ -107,5 +108,35 @@ describe('the agent state folder', () => {
     expect(await until(() => states.length === 3)).toBe(true)
     expect(states[2]).toEqual(['s1', 'done'])
     setState.mockRestore()
+  })
+})
+
+describe('the word a taken-back session is born with (PRDCT-3289)', () => {
+  it('reads the word the hooks last wrote, and the watch then forwards the next change but never a repeat', async () => {
+    const states: [string, string][] = []
+    const setState = vi.spyOn(sessionManager, 'setState').mockImplementation(() => {})
+    fs.writeFileSync(stateFilePath('back'), 'working')
+    expect(lastHookState('back')).toBe('working')
+    startWatching((id, state) => states.push([id, state]))
+    await new Promise((r) => setTimeout(r, 300))
+    // The hook writes the same word again (every tool call does): no transition.
+    fs.writeFileSync(stateFilePath('back'), 'working')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(states).toEqual([])
+    fs.writeFileSync(stateFilePath('back'), 'done')
+    expect(await until(() => states.length >= 1)).toBe(true)
+    expect(states).toEqual([['back', 'done']])
+    clearState('back')
+    setState.mockRestore()
+  })
+
+  it('answers null for no file, for a word that is not a state, and for ended', () => {
+    expect(lastHookState('nobody')).toBeNull()
+    fs.writeFileSync(stateFilePath('garbled'), 'wor')
+    expect(lastHookState('garbled')).toBeNull()
+    fs.writeFileSync(stateFilePath('gone'), 'ended')
+    expect(lastHookState('gone')).toBeNull()
+    clearState('garbled')
+    clearState('gone')
   })
 })

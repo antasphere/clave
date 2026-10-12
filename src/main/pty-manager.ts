@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
+import { lastHookState } from './agent-state-manager'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -178,6 +179,16 @@ class PtyManager {
           model: options?.model
         }
       : ptyAdapter.prepare(cwd, options)
+    // A live tmux session this process takes BACK (an app relaunch, a move
+    // from another window) is born with the word its hooks last wrote, not
+    // idle: the hook watch forwards a change only, so a tab adopted while its
+    // agent works read idle until the agent's next word (PRDCT-3289). A dead
+    // record relaunched fresh, and a chat, start idle as before.
+    const reattached =
+      !isEvents &&
+      options?.tmuxMode === true &&
+      !!options?.adoptTmuxName &&
+      !!options?.adoptSessionId
     const record: Session = {
       id: session.id,
       cwd,
@@ -197,7 +208,7 @@ class PtyManager {
       transport: isEvents ? 'events' : 'pty',
       adapterId: adapter.id,
       windowKey: options?.windowKey ?? '',
-      state: 'idle',
+      state: reattached ? (lastHookState(session.id) ?? 'idle') : 'idle',
       createdAt: Date.now(),
       title: session.folderName,
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
