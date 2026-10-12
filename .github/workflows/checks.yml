@@ -104,6 +104,19 @@ jobs:
         id: build
         run: npx electron-vite build
 
+      # The packaged app, not the checkout: electron-builder leaves out the
+      # peers npm installs on its own, so a module the bundles require can
+      # resolve here from node_modules and be missing from the asar. 2.1.0
+      # and 2.2.0 shipped that way (PRDCT-3418). An unsigned arm64 --dir
+      # package is the same asar the release builds, without the signing.
+      - name: Gate, the packaged app loads what its bundles require
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --dir --mac --arm64 \
+            -c.mac.notarize=false -c.mac.identity=null
+          node scripts/check-packaged-requires.mjs dist/mac-arm64/Clave.app
+
       # The terminal process beside the standalone server, from the bundle
       # the build wrote (the tests that need it skip without one, so they run
       # here and not in the Linux job): a terminal spawned through it streams
