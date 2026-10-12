@@ -15,16 +15,29 @@
 //
 // So the check runs where the defect lives: the app's own Electron binary as
 // Node (ELECTRON_RUN_AS_NODE, which still reads the asar), requiring every
-// bare specifier found in `out/main` and `out/preload` from the file that
-// names it, inside `app.asar`. A require pulls in what the module loads
-// eagerly, so a missing package anywhere below is a failure too.
+// bare specifier found in `out/main` and `out/preload` (`require("x")` and
+// `import("x")`, both quote styles) from the file that names it, inside
+// `app.asar`. A require pulls in what the module loads eagerly, so a missing
+// package anywhere below is a failure too. `electron` answers with a stub
+// inside the probe, so a dependency that loads it first still goes on to its
+// other requires.
+//
+// What it cannot see: a specifier built at runtime (a variable, a template
+// literal), a require a dependency makes lazily inside a function, and the
+// other architecture's slice of a universal binary. It proves the eager
+// load graph of every literal external, not every code path.
 //
 // What fails it: a module that cannot be FOUND (MODULE_NOT_FOUND,
 // ERR_MODULE_NOT_FOUND), whoever asked for it. A module that is found and then
-// throws because it is not running inside Electron proper (it wants `app`, a
-// window) is reported and not counted: that is a runtime condition of this
-// probe, not a packaging defect. `electron` itself and Node's builtins are
-// never probed.
+// throws for another reason (the stub is not the real Electron) is reported
+// and not counted: a runtime condition of this probe, not a packaging defect.
+// `electron` itself and Node's builtins are never probed.
+//
+//   node scripts/check-packaged-requires.mjs --dist dist
+//
+// picks the app electron-builder just wrote, the universal one first: a
+// `dist/` that still holds an arm64 `--dir` package from an earlier run must
+// not be what a universal release is checked on.
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
@@ -35,7 +48,21 @@ import path from 'node:path'
 const PROBE = String.raw`
 const fs = require('fs')
 const path = require('path')
-const { builtinModules, createRequire } = require('module')
+const Module = require('module')
+const { builtinModules, createRequire } = Module
+// Electron-as-Node has no 'electron' module. A stub that answers every
+// property and every call keeps a dependency that loads it going, so the
+// requires it makes after it are probed too.
+const stub = new Proxy(function () {}, {
+  get: (_t, k) => (k === Symbol.toPrimitive ? () => '' : k === 'then' ? undefined : stub),
+  apply: () => stub,
+  construct: () => stub
+})
+const load = Module._load
+Module._load = function (request, ...rest) {
+  if (request === 'electron' || request.startsWith('electron/')) return stub
+  return load.call(this, request, ...rest)
+}
 const asar = process.argv[2]
 const builtins = new Set(builtinModules.flatMap((m) => [m, 'node:' + m]))
 const files = []
@@ -55,7 +82,9 @@ if (files.length === 0) {
   process.exit(0)
 }
 const specs = new Map()
-const re = /\brequire\(\s*["']([^"'./][^"']*)["']\s*\)/g
+// Not after a dot: \`ObjC.import('AppKit')\` in a JXA script the main
+// process carries as a string is a member call, never a module load.
+const re = /(?<![.\w$])(?:require|import)\(\s*["']([^"'./][^"']*)["']\s*\)/g
 for (const file of files) {
   const src = fs.readFileSync(file, 'utf8')
   for (const m of src.matchAll(re)) {
@@ -99,9 +128,20 @@ export function locateApp(appPath) {
   return { binary: path.join(macos, bins[0]), asar }
 }
 
+/** The packaged app under an electron-builder output folder, the universal
+ *  build first (what a release publishes), then the single-architecture ones. */
+export const DIST_APPS = ['mac-universal', 'mac-arm64', 'mac']
+export function pickPackagedApp(distDir) {
+  for (const sub of DIST_APPS) {
+    const app = path.join(distDir, sub, 'Clave.app')
+    if (existsSync(app)) return app
+  }
+  throw new Error(`no Clave.app under ${DIST_APPS.map((s) => path.join(distDir, s)).join(', ')}`)
+}
+
 /** Run the probe in the packaged binary; resolve to its parsed report. */
 export function probePackagedApp(appPath) {
-  const { binary, asar } = locateApp(appPath)
+  const { binary, asar } = locateApp(path.resolve(appPath))
   const dir = mkdtempSync(path.join(os.tmpdir(), 'clave-packaged-requires-'))
   const probe = path.join(dir, 'probe.cjs')
   writeFileSync(probe, PROBE)
@@ -132,9 +172,12 @@ export function probePackagedApp(appPath) {
 }
 
 async function main() {
-  const appPath = process.argv[2]
-  if (!appPath) {
-    console.error('usage: node scripts/check-packaged-requires.mjs <path/to/Clave.app>')
+  const args = process.argv.slice(2)
+  const appPath = args[0] === '--dist' && args[1] ? pickPackagedApp(args[1]) : args[0]
+  if (!appPath || appPath === '--dist') {
+    console.error(
+      'usage: node scripts/check-packaged-requires.mjs <path/to/Clave.app> | --dist <dir>'
+    )
     process.exit(2)
   }
   const report = probePackagedApp(path.resolve(appPath))
@@ -145,7 +188,7 @@ async function main() {
   )
   for (const r of runtime) {
     console.log(
-      `  found, threw outside Electron (not counted): ${r.spec} — ${r.message.split('\n')[0]}`
+      `  found, threw in the probe (not counted): ${r.spec} — ${r.message.split('\n')[0]}`
     )
   }
   if (missing.length > 0) {

@@ -313,9 +313,9 @@ ZIP_BLOCKMAP=$(ls dist/Clave-"${NEW_VERSION}"-universal-mac.zip.blockmap 2>/dev/
 # from the asar. 2.1.0 and 2.2.0 shipped that way and their in-process
 # server never started. Checked here, on the app that was just built, before
 # anything is tagged, pushed or published.
-PACKAGED_APP=$(ls -d dist/mac-universal/Clave.app dist/mac-arm64/Clave.app dist/mac/Clave.app 2>/dev/null | head -1 || true)
-[[ -n "$PACKAGED_APP" ]] || error "No packaged Clave.app under dist/ to check"
-node scripts/check-packaged-requires.mjs "$PACKAGED_APP" || \
+# `--dist` takes dist/mac-universal first: a dist/ still holding an arm64
+# `--dir` package from an earlier run is not what this release publishes.
+node scripts/check-packaged-requires.mjs --dist dist || \
   error "The packaged app cannot load a module its bundles require (see above) — refusing to publish"
 
 info "Build artifacts:"
