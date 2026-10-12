@@ -92,11 +92,12 @@ export type ServerLaunch =
  *  or `--server=separate` (`--server <mode>` too). */
 export const SERVER_FLAG = '--server'
 
-/** What a PACKAGED app runs with no flag given. `in-process` until the
- *  second pull request of PRDCT-3434, which flips it to `separate` once lane
- *  C of wave 5 (the chat views on the separate server) is on dev; a
- *  development run and the harness stay in-process whatever this says. */
-export const PACKAGED_DEFAULT: 'in-process' | 'separate' = 'in-process'
+/** What a PACKAGED app runs with no flag given: the separate server, since
+ *  the second pull request of PRDCT-3434 (wave 5, after lane C put the chat
+ *  views on the separate server). A development run and the harness stay
+ *  in-process whatever this says; `--server=in-process` is the way back for
+ *  a packaged app (`open -a Clave --args --server=in-process`). */
+export const PACKAGED_DEFAULT: 'in-process' | 'separate' = 'separate'
 
 export interface LaunchInput {
   /** The process's arguments, where `--server` is read. */

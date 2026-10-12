@@ -40,7 +40,9 @@
  *     terminal process killed under the running app is started again (a
  *     new pid, generation 2, readiness true again), the terminal it held
  *     ends, and a new terminal runs on the new process; the quit leaves
- *     neither process behind. In separate mode part 1 adds: the harness
+ *     neither process behind; and the app's own documents were carried into
+ *     the server's directory at that first boot (the migration of the second
+ *     pull request). In separate mode part 1 adds: the harness
  *     started no server, the discovery names the child by its pid, and a
  *     spawned terminal sees no ELECTRON_RUN_AS_NODE either.
  *
@@ -537,6 +539,30 @@ export async function run(t) {
       })
       t.check("the server's own discovery names its terminal process", !!serverDisc, serverDisc)
       t.equal('the server the app attached to is that child', disc?.url, serverDisc?.url)
+      // The app's data carried into the server's directory at this first
+      // separate boot (the second pull request of PRDCT-3434): the workspace
+      // registry the spec seeded for the app is the server's too, and the
+      // marker says the migration was done, with nothing to re-seal here.
+      const migrated = (() => {
+        try {
+          return JSON.parse(
+            readFileSync(path.join(separateServerDataDir(DIR), 'migrated-from-app.json'), 'utf-8')
+          )
+        } catch {
+          return null
+        }
+      })()
+      t.check("the app's data was carried into the server's directory once", !!migrated, migrated)
+      t.check(
+        'the workspace registry among it',
+        migrated?.copied?.includes('workspace-state.json') === true,
+        migrated?.copied
+      )
+      t.check(
+        "and the window shows the app's workspace on the separate server",
+        (await win.evaluate(() => document.body.innerText)).includes(WS.name),
+        WS.name
+      )
       const firstTp = serverDisc?.terminalProcessPid
       t.equal('the terminal process is a child of the server', ppidOf(firstTp), serverPid)
       t.equal('generation 1', serverDisc?.terminalProcessGeneration, 1)

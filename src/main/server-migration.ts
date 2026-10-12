@@ -1,0 +1,266 @@
+/**
+ * The app's data carried into its separate server's, once (ADR 0003, wave 5,
+ * PRDCT-3434, the second pull request). The server reads only its own data
+ * directory, `<userData>/server`, and a server starting on an empty one would
+ * show an updated install no workspaces, no accounts and no profiles. So, at
+ * the first boot on the separate server, the shell copies what the server
+ * needs out of its own folder, BEFORE the child starts:
+ *
+ * - the plain documents (`MIGRATED_DOCUMENTS`): the workspace registry and
+ *   pins, the trusted roots and contents, the preferences, the launch
+ *   profiles, the account lists, the `.clave` preferences;
+ * - the sealed ones, RE-SEALED: the Claude tokens and the Antasphere session
+ *   are opened with the app's adapter (Electron's `safeStorage`) and sealed
+ *   again with the server's (the macOS Keychain), in this process's memory
+ *   and never in clear on disk, because an opaque string of one adapter
+ *   opens to nothing on the other by design (`ports/secrets.ts`); a value
+ *   that cannot be opened here is left out and named, and that account
+ *   asks for a login again;
+ * - the Codex homes (`codex-homes/<id>`, a real `auth.json` beside symlinks
+ *   to the machine home's entries), copied with the symlinks as they are.
+ *
+ * Nothing in the app's folder is removed or changed: the in-process server
+ * (`--server=in-process`) still finds everything where it was. Nothing in
+ * the server's folder is overwritten: a document already there is kept. The
+ * marker `migrated-from-app.json` in the server's folder says it was done,
+ * and no later boot does it again; a boot where a step failed writes no
+ * marker and the next boot resumes, every step being idempotent.
+ *
+ * Pure apart from the file system: the two secret adapters come in as
+ * arguments, so the unit test drives it with fakes.
+ */
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+
+export const MIGRATION_MARKER = 'migrated-from-app.json'
+
+/** The documents copied as they are. */
+export const MIGRATED_DOCUMENTS: readonly string[] = [
+  'workspace-state.json',
+  'clave-trusted-roots.json',
+  'clave-trusted.json',
+  'preferences.json',
+  'clave-preferences.json',
+  'agent-launch-profiles.json',
+  'claude-accounts.json',
+  'codex-accounts.json',
+  'antasphere-account-client.json'
+]
+export const CLAUDE_CREDENTIALS_FILE = 'claude-accounts-credentials.json'
+export const ANTASPHERE_SESSION_FILE = 'antasphere-account-session.json'
+export const CODEX_HOMES_DIR = 'codex-homes'
+
+/** What the migration asks of a secret adapter: the app's opens, the server's seals. */
+export interface OpensSecrets {
+  open(sealed: string): string | undefined
+}
+export interface SealsSecrets {
+  available(): boolean
+  seal(plain: string): string
+}
+
+export interface MigrationOptions {
+  readonly appDir: string
+  readonly serverDir: string
+  /** The app's adapter, which opens what the app sealed. */
+  readonly from: OpensSecrets
+  /** The server's adapter, which seals for the server. */
+  readonly to: SealsSecrets
+  readonly log?: (line: string) => void
+  readonly now?: () => Date
+}
+
+export interface MigrationReport {
+  /** `migrated` this time, `already` done before, or `nothing` to migrate. */
+  readonly outcome: 'migrated' | 'already' | 'nothing'
+  /** The documents copied this run. */
+  readonly copied: string[]
+  /** The documents the server already had, left as they were. */
+  readonly kept: string[]
+  /** The Claude tokens re-sealed, and whether the Antasphere session was. */
+  readonly resealed: { claude: number; antasphere: boolean }
+  /** The secrets that could not be opened here, by name (`claude:<id>`, `antasphere`). */
+  readonly unopened: string[]
+  /** The Codex homes copied. */
+  codexHomes: number
+  /** The steps that failed, with the reason; the marker is not written when any did. */
+  readonly failed: string[]
+}
+
+const exists = (file: string): boolean => fs.existsSync(file)
+
+const readJson = (file: string): unknown => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+const writeJson = (file: string, value: unknown, mode: number): void => {
+  const tmp = `${file}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode })
+  fs.renameSync(tmp, file)
+  fs.chmodSync(file, mode)
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export function migrateAppDataToServer(options: MigrationOptions): MigrationReport {
+  const log = options.log ?? (() => {})
+  const { appDir, serverDir } = options
+  const report: MigrationReport = {
+    outcome: 'migrated',
+    copied: [],
+    kept: [],
+    resealed: { claude: 0, antasphere: false },
+    unopened: [],
+    codexHomes: 0,
+    failed: []
+  }
+  const marker = path.join(serverDir, MIGRATION_MARKER)
+  if (exists(marker)) return { ...report, outcome: 'already' }
+  fs.mkdirSync(serverDir, { recursive: true })
+
+  const hasAnything =
+    MIGRATED_DOCUMENTS.some((name) => exists(path.join(appDir, name))) ||
+    exists(path.join(appDir, CLAUDE_CREDENTIALS_FILE)) ||
+    exists(path.join(appDir, ANTASPHERE_SESSION_FILE)) ||
+    exists(path.join(appDir, CODEX_HOMES_DIR))
+  if (!hasAnything) {
+    writeMarker(marker, appDir, { ...report, outcome: 'nothing' }, options.now)
+    log('nothing to migrate: the app has no data of its own')
+    return { ...report, outcome: 'nothing' }
+  }
+
+  const step = (name: string, run: () => void): void => {
+    try {
+      run()
+    } catch (err) {
+      const reason = `${name}: ${(err as Error).message}`
+      report.failed.push(reason)
+      log(`failed, will be tried again at the next start: ${reason}`)
+    }
+  }
+
+  // The plain documents, as they are, with their mode.
+  for (const name of MIGRATED_DOCUMENTS) {
+    const source = path.join(appDir, name)
+    const target = path.join(serverDir, name)
+    if (!exists(source)) continue
+    if (exists(target)) {
+      report.kept.push(name)
+      continue
+    }
+    step(name, () => {
+      const mode = fs.statSync(source).mode & 0o777
+      fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
+      fs.chmodSync(target, mode)
+      report.copied.push(name)
+    })
+  }
+
+  // The Claude tokens: `{ [id]: { token: sealed, setAt, invalidAt? } }`.
+  step(CLAUDE_CREDENTIALS_FILE, () => {
+    const source = path.join(appDir, CLAUDE_CREDENTIALS_FILE)
+    const target = path.join(serverDir, CLAUDE_CREDENTIALS_FILE)
+    if (!exists(source)) return
+    if (exists(target)) {
+      report.kept.push(CLAUDE_CREDENTIALS_FILE)
+      return
+    }
+    const parsed = readJson(source)
+    if (!isRecord(parsed)) return
+    const out: Record<string, unknown> = {}
+    for (const [id, credential] of Object.entries(parsed)) {
+      if (!isRecord(credential) || typeof credential.token !== 'string') continue
+      const plain = options.from.open(credential.token)
+      if (plain === undefined || !options.to.available()) {
+        report.unopened.push(`claude:${id}`)
+        continue
+      }
+      out[id] = { ...credential, token: options.to.seal(plain) }
+      report.resealed.claude += 1
+    }
+    writeJson(target, out, 0o600)
+    report.copied.push(CLAUDE_CREDENTIALS_FILE)
+  })
+
+  // The Antasphere session: `{ v: 1, issuer, clientId, sealed, savedAt }`,
+  // or `{ v: 1, revoked: true }`, which is copied as it is.
+  step(ANTASPHERE_SESSION_FILE, () => {
+    const source = path.join(appDir, ANTASPHERE_SESSION_FILE)
+    const target = path.join(serverDir, ANTASPHERE_SESSION_FILE)
+    if (!exists(source)) return
+    if (exists(target)) {
+      report.kept.push(ANTASPHERE_SESSION_FILE)
+      return
+    }
+    const parsed = readJson(source)
+    if (!isRecord(parsed)) return
+    if (typeof parsed.sealed !== 'string') {
+      writeJson(target, parsed, 0o600)
+      report.copied.push(ANTASPHERE_SESSION_FILE)
+      return
+    }
+    const plain = options.from.open(parsed.sealed)
+    if (plain === undefined || !options.to.available()) {
+      report.unopened.push('antasphere')
+      return
+    }
+    writeJson(target, { ...parsed, sealed: options.to.seal(plain) }, 0o600)
+    report.resealed.antasphere = true
+    report.copied.push(ANTASPHERE_SESSION_FILE)
+  })
+
+  // The Codex homes, symlinks kept as symlinks.
+  step(CODEX_HOMES_DIR, () => {
+    const source = path.join(appDir, CODEX_HOMES_DIR)
+    const target = path.join(serverDir, CODEX_HOMES_DIR)
+    if (!exists(source)) return
+    if (exists(target)) {
+      report.kept.push(CODEX_HOMES_DIR)
+      return
+    }
+    fs.cpSync(source, target, { recursive: true, verbatimSymlinks: true, errorOnExist: false })
+    report.codexHomes = fs
+      .readdirSync(target, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory()).length
+    report.copied.push(CODEX_HOMES_DIR)
+  })
+
+  if (report.failed.length === 0) writeMarker(marker, appDir, report, options.now)
+  log(
+    `${report.copied.length} document(s) copied, ${report.kept.length} kept, ` +
+      `${report.resealed.claude} Claude token(s) re-sealed` +
+      (report.resealed.antasphere ? ', the Antasphere session re-sealed' : '') +
+      (report.unopened.length ? `, not opened here: ${report.unopened.join(', ')}` : '') +
+      (report.codexHomes ? `, ${report.codexHomes} Codex home(s)` : '') +
+      (report.failed.length ? `; ${report.failed.length} step(s) failed` : '')
+  )
+  return report
+}
+
+function writeMarker(
+  marker: string,
+  appDir: string,
+  report: MigrationReport,
+  now: (() => Date) | undefined
+): void {
+  writeJson(
+    marker,
+    {
+      v: 1,
+      at: (now ?? (() => new Date()))().toISOString(),
+      from: appDir,
+      outcome: report.outcome,
+      copied: report.copied,
+      kept: report.kept,
+      resealed: report.resealed,
+      unopened: report.unopened,
+      codexHomes: report.codexHomes
+    },
+    0o600
+  )
+}

@@ -95,8 +95,8 @@ describe('resolveServerLaunch, the --server flag (wave 5)', () => {
     expect(resolveServerLaunch({}, { argv: [], packaged: true })).toEqual({
       mode: PACKAGED_DEFAULT
     })
-    // Until the second pull request of PRDCT-3434 flips it.
-    expect(PACKAGED_DEFAULT).toBe('in-process')
+    // Flipped by the second pull request of PRDCT-3434.
+    expect(PACKAGED_DEFAULT).toBe('separate')
   })
 })
 
