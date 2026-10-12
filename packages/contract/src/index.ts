@@ -29,5 +29,7 @@ export * as WorkspaceFiles from './workspace-files'
 export * as Views from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export * as AgentTools from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export * as Plugins from './plugins'
 
 // ── Lane B: terminals · Lane D: settings served ──

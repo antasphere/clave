@@ -30,6 +30,10 @@ export { WorkspaceFilesPort } from './workspace-files/port'
 import { AgentTokens, type AgentTokensService } from './agent-tools/port'
 
 export { AgentTokens, type AgentTokensService } from './agent-tools/port'
+// ── Wave 5, lane C: the plugins ──
+import { Plugins, type PluginsService } from './plugins/port'
+
+export { Plugins, type PluginsService } from './plugins/port'
 
 export interface ServerPorts {
   /** Lane A: the sessions. `SessionHost.none` when absent. */
@@ -49,13 +53,23 @@ export interface ServerPorts {
   /** Wave 4, lane C: who writes a Claude session's agent tool config and keeps
    *  its tokens. `AgentTokens.none` when absent: nothing minted, nothing resolved. */
   readonly agentTools?: AgentTokensService
+  // ── Wave 5, lane C: the plugins ──
+  /** Wave 5, lane C: the installed plugins, their host and the view leases. `Plugins.none` when absent: nothing installed, every call refused as unavailable. */
+  readonly plugins?: PluginsService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
 export const PortsLive = (
   ports: ServerPorts
 ): Layer.Layer<
-  SessionHost | SettingsSource | Terminals | SidebarLayoutsPort | WorkspaceFilesPort | AgentTokens
+  | SessionHost
+  | SettingsSource
+  | Terminals
+  | SidebarLayoutsPort
+  | WorkspaceFilesPort
+  | AgentTokens
+  // ── Wave 5, lane C: the plugins ──
+  | Plugins
 > =>
   Layer.mergeAll(
     SessionHost.layer(ports.sessions ?? SessionHost.none),
@@ -64,5 +78,7 @@ export const PortsLive = (
     SidebarLayoutsPort.layer(ports.sidebar ?? SidebarLayoutsPort.none),
     WorkspaceFilesPort.layer(ports.workspaceFiles ?? WorkspaceFilesPort.none),
     // ── Wave 4, lane C: the agent tools' tokens ──
-    AgentTokens.layer(ports.agentTools ?? AgentTokens.none)
+    AgentTokens.layer(ports.agentTools ?? AgentTokens.none),
+    // ── Wave 5, lane C: the plugins ──
+    Plugins.layer(ports.plugins ?? Plugins.none)
   )

@@ -34,6 +34,22 @@ import {
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
+// ── Wave 5, lane C: the plugins ──
+import {
+  DisablePlugin,
+  EnablePlugin,
+  GetPluginPanel,
+  LeasePluginView,
+  LinkPlugin,
+  ListPluginSecretRequests,
+  ListPlugins,
+  RemovePlugin,
+  ReplyPluginSecret,
+  ReportPluginContext,
+  RequestPluginView,
+  RevokePluginView,
+  RunPluginCommand
+} from '@clave/contract/plugins'
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
 import {
@@ -135,6 +151,24 @@ export const AgentToolsLive = HttpApiBuilder.group(ClaveApi, 'agentTools', (hand
     .handle('resolveToken', HttpCqrs.command(ResolveAgentToken))
 )
 
+// ── Wave 5, lane C: the plugins ──
+export const PluginsLive = HttpApiBuilder.group(ClaveApi, 'plugins', (handlers) =>
+  handlers
+    .handle('list', HttpCqrs.query(ListPlugins))
+    .handle('panel', HttpCqrs.query(GetPluginPanel))
+    .handle('secrets', HttpCqrs.query(ListPluginSecretRequests))
+    .handle('enable', HttpCqrs.command(EnablePlugin))
+    .handle('disable', HttpCqrs.command(DisablePlugin))
+    .handle('link', HttpCqrs.command(LinkPlugin))
+    .handle('remove', HttpCqrs.command(RemovePlugin))
+    .handle('command', HttpCqrs.command(RunPluginCommand))
+    .handle('context', HttpCqrs.command(ReportPluginContext))
+    .handle('leaseView', HttpCqrs.command(LeasePluginView))
+    .handle('requestView', HttpCqrs.command(RequestPluginView))
+    .handle('revokeView', HttpCqrs.command(RevokePluginView))
+    .handle('replySecret', HttpCqrs.command(ReplyPluginSecret))
+)
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -151,6 +185,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       ViewsLive,
       // ── Wave 4, lane C: the agent tools ──
       AgentToolsLive,
+      // ── Wave 5, lane C: the plugins ──
+      PluginsLive,
       HealthLive
     )
   )
