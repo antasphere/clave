@@ -212,6 +212,53 @@ export function placeAdopted<G extends LayoutGroupLike>(
   return [...state.displayOrder, sessionId]
 }
 
+/**
+ * Settle the session ids a restore kept provisionally (PRDCT-3432): among
+ * `candidates`, every id that `known` does not hold is dropped from the groups'
+ * members and the top-level order, and a group terminal linked to one is
+ * unlinked. Only the candidates are judged, never the whole layout: a tab the
+ * server placed a moment ago, whose record is still being fetched, is no
+ * candidate and stays where the layout put it. The same references come back
+ * when nothing was pruned, so a store that compares them saves nothing.
+ */
+export function pruneUnknownSessions<G extends LayoutGroupLike>(
+  state: { groups: G[]; displayOrder: string[] },
+  candidates: Iterable<string>,
+  known: Iterable<string>
+): { groups: G[]; displayOrder: string[]; pruned: string[] } {
+  const keep = new Set(known)
+  const gone = new Set<string>()
+  for (const id of candidates) if (!keep.has(id)) gone.add(id)
+  if (gone.size === 0) return { groups: state.groups, displayOrder: state.displayOrder, pruned: [] }
+  const pruned = new Set<string>()
+  let changed = false
+  const groups = state.groups.map((g) => {
+    const sessionIds = g.sessionIds.filter((sid) => {
+      if (!gone.has(sid)) return true
+      pruned.add(sid)
+      return false
+    })
+    const terminals = g.terminals.map((t) => {
+      if (!t.sessionId || !gone.has(t.sessionId)) return t
+      pruned.add(t.sessionId)
+      return { ...t, sessionId: null }
+    })
+    const touched =
+      sessionIds.length !== g.sessionIds.length || terminals.some((t, i) => t !== g.terminals[i])
+    if (!touched) return g
+    changed = true
+    return { ...g, sessionIds, terminals }
+  })
+  const displayOrder = state.displayOrder.filter((id) => {
+    if (!gone.has(id)) return true
+    pruned.add(id)
+    return false
+  })
+  if (displayOrder.length !== state.displayOrder.length) changed = true
+  if (!changed) return { groups: state.groups, displayOrder: state.displayOrder, pruned: [] }
+  return { groups, displayOrder, pruned: [...pruned] }
+}
+
 export interface MergeGroupLike extends LayoutGroupLike {
   name: string
 }
