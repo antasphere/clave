@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-10-12
+
+- **The agent tools work again in the installed app** — since the in-process server arrived, the packaged Clave could not start it: `@effect/platform-bun`, which the server framework loads, requires `@effect/cluster` and four other Effect packages that npm installs only as peers, and the release build leaves peers out. Every `clave_*` tool answered "Clave's server is not running" while a development run, which resolves from `node_modules`, worked. The five packages (`@effect/cluster`, `@effect/rpc`, `@effect/sql`, `@effect/workflow`, `@effect/experimental`) are now dependencies of the app, pinned at the versions the lockfile already resolved, and every release checks the packaged app before it publishes: `scripts/check-packaged-requires.mjs` loads every module the bundles require from inside the built `app.asar` with the app's own Electron, and refuses the release if one cannot be found (PRDCT-3418).
+
 ## [2.2.0] — 2026-10-11
 
 - **An unsent prompt survives a quit or an update** — what you typed into a chat or Terminal view's composer and did not send is saved as you type, per tab, and is back in the same tab's composer when Clave reopens, after a quit, a restart or an update. Closing the tab discards it.

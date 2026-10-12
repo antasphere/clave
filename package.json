@@ -1,6 +1,6 @@
 {
   "name": "clave",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Manage multiple Claude Code sessions from a single desktop app",
   "author": "Codika <hello@codika.io> (https://codika.io)",
   "license": "MIT",
@@ -31,6 +31,7 @@
     "release": "bash scripts/release.sh",
     "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs",
+    "check:packaged": "node scripts/check-packaged-requires.mjs",
     "proto:gen": "buf generate"
   },
   "dependencies": {
@@ -44,10 +45,15 @@
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
+    "@effect/cluster": "0.60.2",
+    "@effect/experimental": "0.61.1",
     "@effect/opentelemetry": "0.64.0",
     "@effect/platform": "0.97.1",
     "@effect/platform-bun": "0.91.2",
     "@effect/platform-node": "0.108.1",
+    "@effect/rpc": "0.76.2",
+    "@effect/sql": "0.52.1",
+    "@effect/workflow": "0.19.1",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@fontsource/geist-sans": "^5.2.5",
