@@ -31,7 +31,13 @@ import { workspaceManager } from './workspace-manager'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
-import { sidebarLayouts, setSidebarTransport } from './sidebar-layouts'
+import {
+  sidebarLayouts,
+  setSidebarTransport,
+  isAttachedServer,
+  sessionIdsInWindow
+} from './sidebar-layouts'
+import { serverClient } from './mcp/server-client'
 import { sessionWorkspaceResolver } from './session-records-index'
 import type { PersistedWindow } from '../shared/workspace-types'
 import {
@@ -40,7 +46,12 @@ import {
   attachMissionControlWindow
 } from './mission-control-manager'
 import { cleanupClaveWatchers } from './ipc-handlers/clave-file-handlers'
-import { startMcpServer, stopMcpServer, registerMcpWindowOpener } from './mcp/mcp-server'
+import {
+  startMcpServer,
+  stopMcpServer,
+  registerMcpWindowOpener,
+  announceAgentToolsToServer
+} from './mcp/mcp-server'
 import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { accountLoginManager } from './account-login'
@@ -157,8 +168,13 @@ async function bootServer(): Promise<void> {
     // app asks that server, which says what it cannot do (a standalone
     // server runs no sessions until its terminal process, wave 3). The
     // in-process start publishes its own address in server/clave-server.ts.
-    if (serverHandle.mode === 'attached')
+    if (serverHandle.mode === 'attached') {
       setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
+      // Tell the server where this shell's agent tools answer, so a Claude
+      // session it starts reaches them (wave 4, lane C). It waits for the MCP
+      // server inside its own call, so the order of the two boots is safe.
+      void announceAgentToolsToServer()
+    }
   } catch (err) {
     const message = err instanceof ServerBootError ? err.message : String(err)
     console.error(`[server] not available: ${message}`)
@@ -178,7 +194,7 @@ async function bootServer(): Promise<void> {
   }
 }
 
-function onWindowClosed(windowId: number, windowKey: string): void {
+async function onWindowClosed(windowId: number, windowKey: string): Promise<void> {
   // Only CLAVE windows count (the registry's), never a stray BrowserWindow a
   // dialog or a picker might own — or the final close would skip the app's
   // shutdown.
@@ -195,6 +211,21 @@ function onWindowClosed(windowId: number, windowKey: string): void {
     return
   }
   const hosted = windowRegistry.getSessionsForWindow(windowId)
+  // Attached, the sessions are the server's and main keeps no process
+  // binding for them: the closing window's sessions come from the SERVER's
+  // own list for this window (its hidden sessions — a toolbar server, a
+  // view's serving process — are not in the layout), with the layout as a
+  // fallback when the server cannot be reached.
+  const attached = isAttachedServer()
+  let attachedIds: string[] = []
+  if (attached) {
+    const fromServer = await serverClient
+      .api()
+      .then((api) => api.sessions.list(windowKey))
+      .then((sessions) => sessions.map((session) => session.id))
+      .catch(() => [] as string[])
+    attachedIds = [...new Set([...fromServer, ...sessionIdsInWindow(windowKey)])]
+  }
   windowRegistry.unregisterWindow(windowId)
   windowState.remove(windowKey)
   const primary = windowRegistry.getPrimaryWindow()
@@ -204,6 +235,25 @@ function onWindowClosed(windowId: number, windowKey: string): void {
   // domain (its layout absorbed, its file removed), and its live sessions
   // follow them in the same hand-over.
   const layout = sidebarLayouts().windowClosed(windowKey, primaryKey)
+  if (attached) {
+    // Release the closing window's sessions on the server, each re-stamped
+    // to the primary (the plain ones the way an in-process close re-stamps
+    // and drops them), then hand the primary the layout to take them into.
+    if (primaryKey && attachedIds.length > 0) {
+      const outcome = await serverClient
+        .api()
+        .then((api) => api.sessions.release(attachedIds, primaryKey))
+        .catch(() => ({ released: [] as string[], refused: [] }))
+      if (!primary.isDestroyed())
+        primary.webContents.send('session:rehome', {
+          sessionIds: outcome.released,
+          layout,
+          focus: false
+        })
+    }
+    broadcastIdentities()
+    return
+  }
   // Plain-pty sessions die with their renderer (as on close before); their
   // records follow the primary so the next boot offers them there.
   const tmuxBacked: string[] = []
@@ -317,7 +367,7 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
   win.on('leave-full-screen', sendFullScreen(false))
 
   const windowId = win.id
-  win.on('closed', () => onWindowClosed(windowId, entry.key))
+  win.on('closed', () => void onWindowClosed(windowId, entry.key))
 
   win.webContents.on('will-navigate', (event, url) => {
     if (url.startsWith('clave://')) {

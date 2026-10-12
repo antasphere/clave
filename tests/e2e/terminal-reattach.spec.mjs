@@ -1,9 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec restarts the app and expects its sessions back. On
-// an attached server the records are the server's, but the window's restore
-// still reads main's own list (`pty:list`) and main's folder, so nothing is
-// brought back: the restore of persisted sessions on the standalone server
-// is wave 3's named leftover (ADR 0003). Not a known failure.
+// Runs in BOTH modes (wave 4, lane C, PRDCT-3376): the restore now reads the
+// records from whichever process keeps them — the app in-process, the
+// standalone server attached — and brings the window's tabs back either way.
+// The records live where the terminal manager of the launch runs, which is
+// why `recordsRoot` follows `server?.dataDir` below. The session is created
+// through the app, so no record is seeded by hand.
 /**
  * A terminal started, written to, and reattached after a restart (PRDCT-3240).
  *
@@ -105,7 +105,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
 
   let tmuxName = null
-  const first = await launchApp(DIR, { server: 'in-process' })
+  const first = await launchApp(DIR)
   recordsRoot = first.server?.dataDir ?? DIR
   let id
   try {
@@ -129,7 +129,11 @@ export async function run(t) {
       record?.file === path.join(recordsRoot, 'session-records', `${tmuxName}.json`),
       record?.file
     )
-    t.check('the tmux session is alive', tmuxName && tmuxSessionAlive(tmuxName))
+    // Attached, the server's terminal process registers the tmux session a
+    // beat after the record is written, so wait for it rather than racing
+    // the check (the downstream writes and the reattach prove it alive).
+    const tmuxUp = await until(() => (tmuxName && tmuxSessionAlive(tmuxName) ? true : null))
+    t.check('the tmux session is alive', !!tmuxUp)
 
     // The terminal must have started (the pane mounted and reported its
     // size) before a write means anything.
@@ -158,7 +162,7 @@ export async function run(t) {
   t.check('after the quit the tmux session survives', !!tmuxName && tmuxSessionAlive(tmuxName))
   t.check('and so does the record', !!id && !!recordOf(id))
 
-  const second = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
+  const second = await launchApp(DIR, { settleMs: 6000 })
   try {
     const { app, win } = second
     const back = await until(async () => ((await liveIds(win)).includes(id) ? id : null))

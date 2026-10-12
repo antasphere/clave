@@ -29,6 +29,8 @@ import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
+import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
+import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -450,6 +452,87 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+// ── The session records' road (wave 4, lane C) ──
+// Inside the app the records are main's, and IPC lands on the one instance
+// that applies the window's selection rule itself. Attached, the records are
+// the standalone server's: the preload reads the whole listing off it and
+// applies the rule here (`shared/adoption-scope.ts`), from the scope main
+// answers over IPC. A read by id skips the rule: the re-home path asks for
+// exactly those records whatever their window.
+// The records a window brings back. The BOOT read (no ids) goes over IPC
+// always, the fast road, so the restore never delays the rest of the boot;
+// attached, IPC answers main's own empty folder and the window's own sessions
+// come back through the deferred top-up (`listServerRestoreRecords`), after
+// persistence is on, so an app that opens a file or a tab in the first
+// seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
+// the re-home path (post-boot): attached it must reach the server, which owns
+// a moved session's record.
+async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
+  if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) return [...(await backing.api.sessions.listAdoptable(filter.ids))]
+  }
+  return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
+}
+
+/** The server's adoptable records for the attached restore top-up, with this
+ *  window's selection rule applied (`shared/adoption-scope.ts`); empty
+ *  in-process, where the boot's IPC read already holds main's own. It runs
+ *  AFTER the boot (persistence already on), so it WAITS, boundedly, for the
+ *  server to be named and reachable: a window whose renderer finished booting
+ *  before main published the endpoint must still restore its sessions, not
+ *  silently show none (round-3 verifier R-F1). The wait is off the boot
+ *  critical path, so it cannot delay the boot or clobber an early action; a
+ *  server that never comes answers [] rather than hanging. */
+async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
+  const deadline = Date.now() + 15_000
+  let mode = await serverMode()
+  while (mode === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    mode = await serverMode()
+  }
+  if (mode !== 'attached') return []
+  // Ride the server's own arrival (`onServerAvailable`: at once when a backing
+  // is known, else when a routed call or the watch connects one), and never
+  // force the connect from here. A connect made at the boot mark fires every
+  // listener's catch-up over the state the window has just loaded (the pins
+  // the switcher reads), which is how this top-up once made switcher-collapse
+  // red attached while bare dev stayed green; the watch connects on its own
+  // tick for every window, this read simply waits for it, boundedly.
+  const backing = await new Promise<Backing | null>((resolve) => {
+    let settled = false
+    // `onServerAvailable` runs the wire SYNCHRONOUSLY when a backing is already
+    // known, i.e. before `withdraw` below is assigned: declared first, called
+    // optionally, so that path neither throws nor withdraws anything.
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now()))
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
+  if (!backing) return []
+  const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
+  const all = [...(await backing.api.sessions.listAdoptable())]
+  return scope ? selectAdoptableRecords(all, scope) : []
+}
+
+async function discardSessionRecord(key: string): Promise<void> {
+  if ((await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) {
+      await backing.api.sessions.discardRecord(key)
+      return
+    }
+  }
+  await ipcRenderer.invoke('records:discard', key)
+}
+
 /** The IPC listener always; the push binding only once the server is there
  *  AND the app is attached to it. */
 function onAttachedPush(
@@ -932,11 +1015,20 @@ const electronAPI = {
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
   // This window's own records (plus the orphans, for the primary); `ids`
-  // fetches specific records whatever their window (the re-home path).
-  listSessionRecords: (filter?: { ids?: string[] }) =>
-    ipcRenderer.invoke('records:list-adoptable', filter),
+  // fetches specific records whatever their window (the re-home path). The
+  // road is the mode's: inside the app (or before a server is named) IPC
+  // lands on main's own listing, which applies the selection rule itself;
+  // attached, the records are the SERVER's, so the preload reads the whole
+  // listing off the server and applies the same rule here, from the scope
+  // main answers over IPC (`records:adoption-scope`, `shared/adoption-scope.ts`).
+  // By id the rule does not apply: the re-home path wants exactly those.
+  listSessionRecords: (filter?: { ids?: string[] }) => listSessionRecords(filter),
 
-  discardSessionRecord: (key: string) => ipcRenderer.invoke('records:discard', key),
+  // The attached restore top-up: the server's surviving records for this
+  // window, empty in-process (PRDCT-3376).
+  listServerRestoreRecords: () => listServerRestoreRecords(),
+
+  discardSessionRecord: (key: string) => discardSessionRecord(key),
 
   // Sessions handed to this window to take in — a closing window's (with its
   // groups), or tabs moved here — as ids; the records carry the rest.

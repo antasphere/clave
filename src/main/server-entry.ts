@@ -104,7 +104,8 @@ async function main(): Promise<void> {
   // namespace for the quota specs, as the shell's is.
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
-  const sessions = standaloneSessionHost({ dataDir, terminals })
+  // and, wave 4, the agent tokens the server resolves for the attached shell.
+  const { host: sessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -113,7 +114,9 @@ async function main(): Promise<void> {
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
       // is published to the clients and the read waits for the answer.
-      workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir))
+      workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
+      // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
+      agentTools
     },
     port,
     ...(token !== undefined && { token }),
@@ -154,7 +157,10 @@ async function main(): Promise<void> {
 
   let stopping = false
   const sessions_shutdown = (): void => {
-    stopping_sessions = ptyManager.killAll().catch((error) => {
+    // `quit: true`: the standalone server's stop is a quit for its sessions,
+    // so the title generator's one-shot CLI dies with them, as on the app's
+    // quit (lane A, wave 4; the round-3 verifier of wave 3 found one alive).
+    stopping_sessions = ptyManager.killAll({ quit: true }).catch((error) => {
       process.stderr.write(`clave-server: session shutdown failed: ${(error as Error).message}\n`)
     })
   }

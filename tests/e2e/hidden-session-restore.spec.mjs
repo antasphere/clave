@@ -1,12 +1,12 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
-// or without it (measured on 9 October 2026, the same checks red on both):
-// the session records are the server's while the window reads main's folder,
-// a tab's move between windows detaches and re-adopts through main's own
-// terminals, and an agent tab's token file is written by the process that
-// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
-// a failure of the agent tools, and the pin goes with them (wave 4). Not a
-// known failure.
+// Pinned to the in-process server. The attached moves and restore work since
+// wave 4 (PRDCT-3376: a move releases the session on the server first; see
+// attached-window-move, attached-agent-token and terminal-reattach, which run
+// attached). This spec stays pinned because it seeds session records by hand
+// into the APP's folder (attached they are the server's, which the harness does
+// not seed), reads an agent tab's config from the app's mcp-configs folder
+// (attached the server writes it), and/or relies on group membership surviving
+// an attached quit, which the attached boot flattens (pre-existing, on the
+// wave's owed list). Not a known failure.
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).

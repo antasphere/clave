@@ -57,6 +57,7 @@ import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
+import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
@@ -198,6 +199,7 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
+    let hadSavedSessions = false
     void (async () => {
       try {
         // Workspace registry + pins hydrate FIRST: adoption stamps each
@@ -218,6 +220,10 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
+        // Did this window HAVE sessions to bring back? (its saved layout names
+        // at least one.) Read here where the saved layout is in scope; the
+        // attached restore top-up in the boot tail gates on it (PRDCT-3376).
+        hadSavedSessions = savedLayoutSessionIds(persisted).length > 0
         // The revision the server handed this layout out at (every save
         // names it, and a stale one is refused rather than merged) and the
         // layout itself as the base the first merge reasons from.
@@ -321,6 +327,40 @@ export function AppShell(): React.JSX.Element {
       // instead of a fixed delay (PRDCT-1762): a group created before the
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
+
+      // Attached, the records are the SERVER's: the boot read above went over
+      // IPC (main's own, empty attached) so the boot stayed fast and an early
+      // action is never clobbered by a late restore (PRDCT-3376). Now that
+      // persistence is on, bring the window's surviving sessions back from the
+      // server, additively — never touching a tab opened meanwhile. A no-op
+      // in-process (the server read answers empty there).
+      //
+      // Gate on the window having HAD sessions (its saved layout names at
+      // least one): a window that reopens with nothing to bring back must not
+      // reach for the server here, because that first connect would fire every
+      // server-event listener's catch-up over the state the window just loaded
+      // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
+      // A window with sessions to restore connects anyway, and warrants it.
+      if (!hadSavedSessions) return
+      void (async () => {
+        const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
+        if (serverRecords.length === 0) return
+        const here = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+        const fresh = serverRecords.filter((r) => !here.has(r.id))
+        if (fresh.length === 0) return
+        const ws = useWorkspaceStore.getState().activeWorkspaceId
+        const serverPlan = planBootAdoption(fresh)
+        // Focus the first restored tab only when nothing is selected yet, so
+        // its pane mounts and the tmux session reattaches (the repaint and
+        // the keystroke road need a mounted pane) — but never steal focus
+        // from a tab the user opened during boot.
+        let takeFocus = useSessionStore.getState().selectedSessionIds.length === 0
+        for (const s of serverPlan.liveTabs) {
+          const id = await adoptRecord(s, ws, { focus: takeFocus })
+          if (id && takeFocus) takeFocus = false
+        }
+        for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
+      })().catch((err) => console.error('Attached restore top-up failed:', err))
     })()
   }, [addSession])
 
