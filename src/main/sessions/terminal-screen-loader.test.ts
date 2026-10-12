@@ -42,16 +42,21 @@ describe('the headless loader', () => {
     }
   })
   it('says its own words, never the install path, when the module does not load, and tries again', async () => {
-    setHeadlessImportForTests(async () => {
+    // The import is installed ONCE and flipped through a closure between the
+    // reads: the retry must come from the loader forgetting the failure, not
+    // from the test's setter (verifier round 4, G2).
+    let shape: () => Promise<unknown> = async () => {
       throw new Error("Cannot find module '@xterm/headless' imported from /Applications/Clave.app")
-    })
+    }
+    setHeadlessImportForTests(() => shape())
     retainOutput('d', 'x')
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       await expect(renderScreen('d', 5)).rejects.toThrow('the headless terminal did not load')
       await expect(renderScreen('d', 5)).rejects.not.toThrow('Clave.app')
-      // The failure is not kept: the next read asks the loader again.
-      setHeadlessImportForTests(async () => ({ Terminal: real.Terminal }))
+      // The failure is not kept: the next read asks the loader again, and the
+      // module is there this time.
+      shape = async () => ({ Terminal: real.Terminal })
       expect((await renderScreen('d', 5)).lines).toEqual(['x'])
     } finally {
       spy.mockRestore()
