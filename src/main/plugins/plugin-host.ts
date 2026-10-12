@@ -1,17 +1,35 @@
-import {
-  MessageChannelMain,
-  utilityProcess,
-  type MessagePortMain,
-  type UtilityProcess
-} from 'electron'
 import { watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
 import { assertMethodPermission, type RPCMessage, type PluginSession } from '@clave/plugin-sdk'
 import { pluginFile, PluginStore, type PluginRecord } from './plugin-store'
 
+/** The process a plugin's `main` runs in, as the host sees it: one per start,
+ *  a JSON-RPC channel in and out, an exit, and a kill. Electron main spawns it
+ *  on `utilityProcess` with a MessagePort (`electron-runner.ts`); the
+ *  standalone server forks the same runner under Node IPC (`fork-runner.ts`).
+ *  Nothing of either runtime crosses this: the host imports no Electron
+ *  (PRDCT-3433), so the server package can run it in any entry. */
+export interface RunnerProcess {
+  /** Hand the runner a message; throws once the channel is gone. */
+  postMessage(message: unknown): void
+  onMessage(listener: (message: unknown) => void): void
+  /** Called once the process has ended; several listeners may wait on it. */
+  onExit(listener: (code: number | null) => void): void
+  onOutput(listener: (stream: 'stdout' | 'stderr', text: string) => void): void
+  kill(): void
+}
+export interface RunnerSpawn {
+  /** The plugin id, for the process's name and its log lines. */
+  readonly id: string
+  /** The plugin's `main` file, resolved inside its directory. */
+  readonly main: string
+  readonly cwd: string
+  /** The trimmed environment the runner gets; never the host's own. */
+  readonly env: Record<string, string>
+}
+export type RunnerSpawner = (spawn: RunnerSpawn) => RunnerProcess
+
 interface RunningPlugin {
-  child: UtilityProcess
-  port: MessagePortMain
+  process: RunnerProcess
   stopping: boolean
   subscribed: boolean
   snapshot?: string
@@ -47,7 +65,7 @@ export class PluginHost {
   constructor(
     readonly store: PluginStore,
     private services: PluginServices,
-    private runner = join(__dirname, 'plugin-runner.js')
+    private spawner: RunnerSpawner
   ) {
     this.poll = setInterval(() => {
       this.publishSessions()
@@ -80,46 +98,42 @@ export class PluginHost {
     record.status = 'starting'
     try {
       const main = pluginFile(record.directory, record.manifest.main)
-      const { port1, port2 } = new MessageChannelMain()
-      // Deliberately do not pass the application's credential-bearing environment.
+      // Deliberately do not pass the application's credential-bearing
+      // environment. ELECTRON_RUN_AS_NODE rides along when set: a server run
+      // on the app's own binary as Node must fork its runners the same way.
       const env = Object.fromEntries(
-        ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'SystemRoot'].flatMap((key) =>
+        ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'SystemRoot', 'ELECTRON_RUN_AS_NODE'].flatMap((key) =>
           process.env[key] ? [[key, process.env[key]!]] : []
         )
       )
-      const child = utilityProcess.fork(this.runner, [], {
-        cwd: record.directory,
-        env,
-        stdio: 'pipe',
-        serviceName: `Clave plugin: ${id}`
-      })
+      const child = this.spawner({ id, main, cwd: record.directory, env })
       const running: RunningPlugin = {
-        child,
-        port: port1,
+        process: child,
         stopping: false,
         subscribed: false,
         pending: new Map()
       }
       this.running.set(id, running)
-      child.stdout?.on('data', (data) => console.info(`[plugin:${id}] ${data}`))
-      child.stderr?.on('data', (data) => console.error(`[plugin:${id}] ${data}`))
-      port1.on('message', (event) => {
-        void this.receive(record, running, event.data).catch((error) => {
+      child.onOutput((stream, text) =>
+        stream === 'stdout'
+          ? console.info(`[plugin:${id}] ${text}`)
+          : console.error(`[plugin:${id}] ${text}`)
+      )
+      child.onMessage((message) => {
+        void this.receive(record, running, message).catch((error) => {
           record.error = `Plugin bridge failed: ${String(error)}`
           this.services.changed()
           child.kill()
         })
       })
-      port1.start()
       const startup = setTimeout(() => {
         if (record.status === 'starting' && this.running.get(id) === running) {
           record.error = 'Plugin activation timed out'
           child.kill()
         }
       }, 15_000)
-      child.on('exit', (code) => {
+      child.onExit((code) => {
         clearTimeout(startup)
-        port1.close()
         this.rejectPending(running)
         if (this.running.get(id) !== running) return
         this.running.delete(id)
@@ -153,15 +167,13 @@ export class PluginHost {
         }
         this.services.changed()
       })
-      child.postMessage({ main }, [port2])
     } catch (error) {
       const running = this.running.get(id)
       if (running) {
         running.stopping = true
         this.running.delete(id)
         this.rejectPending(running)
-        running.port.close()
-        running.child.kill()
+        running.process.kill()
       }
       record.status = 'error'
       record.error = `Plugin startup failed: ${String(error)}`
@@ -199,7 +211,7 @@ export class PluginHost {
         record.error = String((message.params as { message?: string })?.message)
         record.status = 'error'
         this.services.changed()
-        running.child.kill()
+        running.process.kill()
       }
       return
     }
@@ -277,12 +289,12 @@ export class PluginHost {
         default:
           throw new Error(`Unknown host method ${message.method}`)
       }
-      if (canReply()) running.port.postMessage({ jsonrpc: '2.0', id: message.id, result })
+      if (canReply()) running.process.postMessage({ jsonrpc: '2.0', id: message.id, result })
     } catch (error) {
       const e = error as Error & { code?: number; data?: unknown }
       if (canReply()) {
         try {
-          running.port.postMessage({
+          running.process.postMessage({
             jsonrpc: '2.0',
             id: message.id,
             error: { code: e.code ?? -32602, message: e.message, data: e.data }
@@ -307,7 +319,11 @@ export class PluginHost {
       const serialized = JSON.stringify(snapshot)
       if (serialized !== running.snapshot) {
         running.snapshot = serialized
-        running.port.postMessage({ jsonrpc: '2.0', method: 'sessions.changed', params: snapshot })
+        running.process.postMessage({
+          jsonrpc: '2.0',
+          method: 'sessions.changed',
+          params: snapshot
+        })
       }
     }
   }
@@ -328,7 +344,7 @@ export class PluginHost {
       const serialized = JSON.stringify(session)
       if (serialized !== running.context) {
         running.context = serialized
-        running.port.postMessage({
+        running.process.postMessage({
           jsonrpc: '2.0',
           method: 'context.changed',
           params: { session }
@@ -359,7 +375,7 @@ export class PluginHost {
       }, 125_000)
       running.pending.set(requestId, { resolve, reject, timer })
       try {
-        running.port.postMessage({
+        running.process.postMessage({
           jsonrpc: '2.0',
           id: requestId,
           method: 'commands.execute',
@@ -400,14 +416,14 @@ export class PluginHost {
       this.running.delete(id)
       this.rejectPending(running)
       try {
-        running.port.postMessage({ jsonrpc: '2.0', method: 'host.deactivate' })
+        running.process.postMessage({ jsonrpc: '2.0', method: 'host.deactivate' })
       } catch {
-        running.child.kill()
+        running.process.kill()
         this.services.changed()
         return
       }
-      const timer = setTimeout(() => running.child.kill(), 1000)
-      running.child.once('exit', () => clearTimeout(timer))
+      const timer = setTimeout(() => running.process.kill(), 1000)
+      running.process.onExit(() => clearTimeout(timer))
     }
     this.services.changed()
   }

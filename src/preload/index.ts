@@ -20,7 +20,7 @@ import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
-import type { SessionInfo } from './index.d'
+import type { PluginSecretPrompt, SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
@@ -587,6 +587,48 @@ function onServerEventOf<E extends ServerEvent['_tag']>(
     off?.()
   }
 }
+// ── Wave 5, lane C: the plugins' roads (PRDCT-3433) ──
+/** Which session each view lease this window took is on: the lease answer
+ *  names it, and the view's event listener reads the session's own stream. */
+const leaseSessions = new Map<string, string>()
+const leaseViewRoute = viaServer<
+  [string, string, string],
+  { leaseId: string; url: string; sessionId: string }
+>({
+  ipc: (pluginId, viewId, sessionId) =>
+    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
+  server: async ({ api }, pluginId, viewId, sessionId) => {
+    const granted = await api.plugins.leaseView(pluginId, viewId, sessionId)
+    const { url } = (await ipcRenderer.invoke(
+      'plugins:preview-url',
+      granted.file,
+      granted.csp
+    )) as { url: string }
+    return { leaseId: granted.leaseId, url, sessionId: granted.sessionId }
+  }
+})
+const revokeViewRoute = viaServer<[string], void>({
+  ipc: (leaseId) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
+  server: ({ api }, leaseId) => api.plugins.revokeView(leaseId)
+})
+/** A plugin's notification on a server that shows none itself (the server
+ *  running apart from the app): relayed to the shell, which shows it once
+ *  whichever windows heard it. Bound beside the view-request tracker in
+ *  `onMcpCommand`, which every window binds at load and releases with it,
+ *  rather than at module load: a waiter of its own would be one more push
+ *  binding than the window's own listeners account for. */
+const relayPluginNotices = (push: import('@clave/client').PushClient): (() => void) => {
+  // Never throws: a test's partial push client has no `onEvent`.
+  if (typeof push.onEvent !== 'function') return noop
+  return push.onEvent((envelope) => {
+    const event = envelope.event
+    if (event._tag !== 'plugins.notified') return
+    void ipcRenderer
+      .invoke('plugins:show-notification', envelope.id, event.name, event.title, event.body)
+      .catch(() => undefined)
+  })
+}
+
 /** A server event about one session, on the push channel. */
 function onSessionEvent<E extends ServerEvent['_tag']>(
   push: import('@clave/client').PushClient,
@@ -907,27 +949,109 @@ const electronAPI = {
       () => subscribedVia.get(id) === 'ipc'
     ),
 
-  pluginsList: () => ipcRenderer.invoke('plugins:list'),
-  pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
-    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
-  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) =>
-    ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
-  pluginsViewRevoke: (leaseId: string) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
-  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) =>
-    createIpcListener(`plugins:view-event:${leaseId}`, callback),
-  pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
-    ipcRenderer.invoke('plugins:enable', id, grants),
-  pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  // ── Wave 5, lane C: the plugins, served (PRDCT-3433) ──
+  // The store, the host and the view leases are the server's; a page's URL is
+  // the shell's, minted by the preview protocol from the file the server
+  // named (`plugins:preview-url`, reached from here only). A view's events
+  // are the session's own stream, heard on the transport the session's
+  // subscription is on: the lease fixes the session and this file remembers
+  // which, so nothing per-lease crosses from main. "Link folder…" keeps its
+  // IPC road because the folder dialog is the shell's.
+  pluginsList: viaServer<[], import('../main/plugins/plugin-store').PluginRecord[]>({
+    ipc: () => ipcRenderer.invoke('plugins:list'),
+    server: async ({ api }) =>
+      [
+        ...(await api.plugins.list())
+      ] as unknown as import('../main/plugins/plugin-store').PluginRecord[]
+  }),
+  pluginsViewLease: async (
+    pluginId: string,
+    viewId: string,
+    sessionId: string
+  ): Promise<{ leaseId: string; url: string; sessionId: string }> => {
+    const lease = await leaseViewRoute(pluginId, viewId, sessionId)
+    leaseSessions.set(lease.leaseId, lease.sessionId)
+    return lease
+  },
+  pluginsViewRequest: viaServer<[string, string, unknown?], unknown>({
+    ipc: (leaseId, method, params) =>
+      ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
+    server: ({ api }, leaseId, method, params) => api.plugins.requestView(leaseId, method, params)
+  }),
+  pluginsViewRevoke: async (leaseId: string): Promise<void> => {
+    leaseSessions.delete(leaseId)
+    await revokeViewRoute(leaseId)
+  },
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => {
+    const sessionId = leaseSessions.get(leaseId)
+    if (!sessionId) return noop
+    // The lease's session and no other: the guest never named it, the lease
+    // did. A session nobody in this window subscribed to yet (a surface view
+    // alone on it) is subscribed here and released with the listener.
+    const taken = !subscribedVia.has(sessionId)
+    if (taken) void subscribeRoute(sessionId).catch(() => undefined)
+    const onStream = (stream: SessionStream): void => {
+      if (stream.kind === 'event') callback(stream.event)
+    }
+    const off = onBothTransports(
+      createIpcListener(`sessions:stream:${sessionId}`, onStream),
+      (push) => push.subscribe(sessionId, onStream as (stream: unknown) => void),
+      () => subscribedVia.get(sessionId) === 'ipc'
+    )
+    return () => {
+      off()
+      if (taken) void unsubscribeRoute(sessionId).catch(() => undefined)
+    }
+  },
+  pluginsEnable: viaServer<[string, import('@clave/plugin-sdk').PluginPermission[]], void>({
+    ipc: (id, grants) => ipcRenderer.invoke('plugins:enable', id, grants),
+    server: ({ api }, id, grants) => api.plugins.enable(id, grants)
+  }),
+  pluginsDisable: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:disable', id),
+    server: ({ api }, id) => api.plugins.disable(id)
+  }),
   pluginsLink: (folder?: string) => ipcRenderer.invoke('plugins:link', folder),
-  pluginsRemove: (id: string) => ipcRenderer.invoke('plugins:remove', id),
-  pluginsCommand: (id: string, command: string) =>
-    ipcRenderer.invoke('plugins:command', id, command),
-  pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
-  pluginsContext: (sessionId: string | null) => ipcRenderer.invoke('plugins:context', sessionId),
-  pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
-  pluginsSecretReply: (id: string, value: string | null) =>
-    ipcRenderer.invoke('plugins:secret-reply', id, value),
-  onPluginsChanged: (callback: () => void) => createIpcListener('plugins:changed', callback),
+  pluginsRemove: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:remove', id),
+    server: ({ api }, id) => api.plugins.remove(id)
+  }),
+  pluginsCommand: viaServer<[string, string], void>({
+    ipc: (id, command) => ipcRenderer.invoke('plugins:command', id, command),
+    server: ({ api }, id, command) => api.plugins.command(id, command)
+  }),
+  pluginsPanel: viaServer<[string, string], { url: string }>({
+    ipc: (id, panel) => ipcRenderer.invoke('plugins:panel', id, panel),
+    server: async ({ api }, id, panel) => {
+      const page = await api.plugins.panel(id, panel)
+      return ipcRenderer.invoke('plugins:preview-url', page.file, page.csp) as Promise<{
+        url: string
+      }>
+    }
+  }),
+  pluginsContext: viaServer<[string | null], void>({
+    ipc: (sessionId) => ipcRenderer.invoke('plugins:context', sessionId),
+    server: async ({ api }, sessionId) => {
+      const key = await windowKey()
+      // A window the shell has not keyed yet reports through main, which
+      // keys it itself.
+      if (!key) return ipcRenderer.invoke('plugins:context', sessionId) as Promise<void>
+      return api.plugins.context(key, sessionId)
+    }
+  }),
+  pluginsSecrets: viaServer<[], PluginSecretPrompt[]>({
+    ipc: () => ipcRenderer.invoke('plugins:secrets'),
+    server: async ({ api }) => [...(await api.plugins.secrets())] as PluginSecretPrompt[]
+  }),
+  pluginsSecretReply: viaServer<[string, string | null], void>({
+    ipc: (id, value) => ipcRenderer.invoke('plugins:secret-reply', id, value),
+    server: ({ api }, id, value) => api.plugins.replySecret(id, value)
+  }),
+  // The one `plugins.changed` the window hears: IPC from the shell's own
+  // service while the push socket is not open, the push channel while it is.
+  // No catch-up: the store re-lists on hearing it.
+  onPluginsChanged: (callback: () => void) =>
+    viaServerEvent('plugins:changed', 'plugins.changed', () => undefined as void)(callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
@@ -1213,6 +1337,8 @@ const electronAPI = {
       callback
     )
     let offPush: (() => void) | null = null
+    // ── Wave 5, lane C: the plugin notices ride this window-long binding ──
+    let offNotices: (() => void) | null = null
     const withdraw = onServerAvailable((backing) => {
       const mine = windowKey()
       offPush = backing.push.onRequest((request) => {
@@ -1226,11 +1352,13 @@ const electronAPI = {
           })
         })
       })
+      offNotices = relayPluginNotices(backing.push)
     })
     return () => {
       offIpc()
       withdraw()
       offPush?.()
+      offNotices?.()
     }
   },
 
