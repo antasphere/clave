@@ -67,7 +67,11 @@ describe('the typed settings calls', () => {
       ok: false,
       reason: 'invalid-key'
     })
-    expect(await api.settings.workspaces.updateRegistry([], 'w1')).toEqual({ ok: true })
+    expect(await api.settings.workspaces.updateRegistry([], 'w1')).toEqual({
+      ok: true,
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(last('workspaces.updateRegistry')).toEqual([[], 'w1'])
     await api.settings.workspaces.updateRegistry([])
     expect(last('workspaces.updateRegistry')).toEqual([[], undefined])

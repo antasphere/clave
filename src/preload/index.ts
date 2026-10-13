@@ -19,10 +19,10 @@ import type {
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type { PluginSecretPrompt, SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
-import { dualListener, workspaceStatePick } from './dual-listener'
+import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { createViewRequestTracker } from './view-request-tracker'
 import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
@@ -1663,9 +1663,9 @@ const electronAPI = {
   // carries this window's key as its origin, and the change event carries it
   // back so this window drops its own echo, the way the IPC handler skips
   // the sender. ──
-  workspaceLoad: viaServer<[], WorkspaceStateFile>({
+  workspaceLoad: viaServer<[], WorkspaceState>({
     ipc: () => ipcRenderer.invoke('workspace:load'),
-    server: async ({ api }) => loose<WorkspaceStateFile>(await api.settings.workspaces.load())
+    server: async ({ api }) => loose<WorkspaceState>(await api.settings.workspaces.load())
   }),
   workspaceUpdateRegistry: viaServer<[unknown[]], RegistryWriteResult>({
     ipc: (workspaces) => ipcRenderer.invoke('workspace:update-registry', workspaces),
@@ -1687,9 +1687,11 @@ const electronAPI = {
       return { ok: true as const }
     }
   }),
-  onWorkspaceStateChanged: (
-    callback: (state: { workspaces: unknown[]; pins: unknown[] }) => void
-  ): (() => void) => {
+  // The value carries the state's stamp (wave 5, lane A, PRDCT-3405): the
+  // renderer drops a fold that is not newer than what it holds, which is
+  // what keeps the catch-up read at a welcome from resetting pins the
+  // window wrote after the read went out.
+  onWorkspaceStateChanged: (callback: (state: WorkspaceStateFold) => void): (() => void) => {
     // This window's key, read once: the echo test needs it synchronously.
     let mine: string | null = null
     void windowKey().then((key) => {
@@ -1701,7 +1703,14 @@ const electronAPI = {
       workspaceStatePick(() => mine),
       async (api) => {
         const state = await api.settings.workspaces.load()
-        return [{ workspaces: [...state.workspaces], pins: [...state.pins] }]
+        return [
+          {
+            workspaces: [...state.workspaces],
+            pins: [...state.pins],
+            revision: state.revision,
+            instance: state.instance
+          }
+        ]
       }
     )(callback)
   },

@@ -60,7 +60,9 @@ const changed = (origin: string | null): unknown => ({
   _tag: 'workspaces.state_changed',
   workspaces: [],
   pins: [],
-  origin
+  origin,
+  revision: 7,
+  instance: 'main-1'
 })
 
 describe('the workspace writes over IPC name their writer and skip it on the way back', () => {
@@ -88,9 +90,12 @@ describe('the workspace writes over IPC name their writer and skip it on the way
   it('a change with no writer reaches every window', () => {
     subscribers[0](changed(null))
     expect(sent.map((s) => s.id)).toEqual([1, 2, 3])
-    expect(sent[0]).toMatchObject({
+    // The stamp rides with the change (PRDCT-3405): the window drops a fold
+    // that is not newer than what it holds.
+    expect(sent[0]).toEqual({
+      id: 1,
       channel: 'workspace:state-changed',
-      payload: { workspaces: [], pins: [] }
+      payload: { workspaces: [], pins: [], revision: 7, instance: 'main-1' }
     })
   })
 })

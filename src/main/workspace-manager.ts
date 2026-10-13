@@ -1,7 +1,12 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import type { Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type {
+  Workspace,
+  WorkspaceStamp,
+  WorkspaceState,
+  WorkspaceStateFile
+} from '../shared/workspace-types'
 import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
 import { readJson, writeJson, type StoragePort } from './ports/storage'
 
@@ -180,10 +185,26 @@ export class WorkspaceManager {
   private cache: WorkspaceStateFile | null = null
   /** realpath is a syscall per call; roots barely change, so cache them. */
   private normalizedRoots = new Map<string, string>()
+  /** The stamp (`WorkspaceStamp`, PRDCT-3405): this process's id, minted
+   *  once, and the revision of the registry and the pins, bumped at every
+   *  write of either and never persisted, so a fresh process starts at 0
+   *  under a new id. `setLastActive` changes neither: the change event
+   *  does not carry the last-active workspace. */
+  private readonly instance = randomUUID()
+  private revision = 0
 
   constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
-  load(): WorkspaceStateFile {
+  /** Where the registry and the pins stand now. */
+  stamp(): WorkspaceStamp {
+    return { revision: this.revision, instance: this.instance }
+  }
+
+  load(): WorkspaceState {
+    return { ...this.loadFile(), ...this.stamp() }
+  }
+
+  private loadFile(): WorkspaceStateFile {
     if (this.cache) return this.cache
     const raw = readJson(this.ports.storage, STATE_FILE)
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -226,11 +247,14 @@ export class WorkspaceManager {
     }
   }
 
-  /** Replace the registry (the list of workspaces). Global: any window. */
-  updateRegistry(workspaces: Workspace[]): void {
-    const state = this.load()
+  /** Replace the registry (the list of workspaces). Global: any window.
+   *  Answers the stamp the write produced. */
+  updateRegistry(workspaces: Workspace[]): WorkspaceStamp {
+    const state = this.loadFile()
     this.cache = { ...state, workspaces: Array.isArray(workspaces) ? workspaces : [] }
+    this.revision += 1
     this.persist()
+    return this.stamp()
   }
 
   /** Replace ONE partition of the pins — the blueprints stamped with
@@ -238,14 +262,16 @@ export class WorkspaceManager {
    *  workspace's pins untouched. `'all'` replaces the whole list: the one-time
    *  localStorage import (Phase B) is its only caller. Either way the pins
    *  are now migrated. */
-  updatePins(scope: string | null | 'all', pins: unknown[]): void {
-    const state = this.load()
+  updatePins(scope: string | null | 'all', pins: unknown[]): WorkspaceStamp {
+    const state = this.loadFile()
     this.cache = { ...state, pins: mergePinsPartition(state.pins, scope, pins), pinsMigrated: true }
+    this.revision += 1
     this.persist()
+    return this.stamp()
   }
 
   setLastActive(workspaceId: string | null): void {
-    const state = this.load()
+    const state = this.loadFile()
     if (state.lastActiveWorkspaceId === workspaceId) return
     this.cache = withLastActive(state, workspaceId)
     this.persist()
