@@ -69,6 +69,8 @@ describe('the typed settings calls', () => {
     })
     expect(await api.settings.workspaces.updateRegistry([], 'w1')).toEqual({
       ok: true,
+      workspaces: [],
+      pins: [],
       revision: 1,
       instance: 'fake-settings'
     })

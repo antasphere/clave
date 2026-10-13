@@ -192,7 +192,13 @@ describe('the settings source over the real managers', () => {
     // Every write that lands answers the state's stamp, and the change event
     // carries the same one (PRDCT-3405): a window compares a fold with it.
     const first = await source.workspaces.updateRegistry([ws1], 'w1')
-    expect(first).toEqual({ ok: true, revision: 1, instance: expect.any(String) })
+    expect(first).toEqual({
+      ok: true,
+      workspaces: [ws1],
+      pins: [],
+      revision: 1,
+      instance: expect.any(String)
+    })
     const instance = (first as { instance: string }).instance
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
@@ -220,6 +226,8 @@ describe('the settings source over the real managers', () => {
     // A refused write bumps nothing: the next landed one is revision 2.
     expect(await source.workspaces.updatePins(null, [{ p: 1 }], undefined)).toEqual({
       ok: true,
+      workspaces: [ws1],
+      pins: [{ p: 1 }],
       revision: 2,
       instance
     })

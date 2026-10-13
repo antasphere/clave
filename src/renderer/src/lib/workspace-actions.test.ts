@@ -1,23 +1,30 @@
 /**
  * What a window does with a copy of the registry and the pins that arrives
- * from outside: another window's change, or the server's own copy read at
- * the push socket's welcome (wave 5, lane A, PRDCT-3405 and PRDCT-3264).
+ * from outside: another window's change, the server's own copy read at the
+ * push socket's welcome, or the answer of a write of its own (wave 5, lane A,
+ * PRDCT-3405 and PRDCT-3264).
  *
  * The copy carries a stamp, the revision of the state in the process that
  * holds it and that process's id. The window keeps the last stamp it loaded,
  * wrote or took in: a copy that is not newer is dropped, which is what keeps
  * the catch-up read at a welcome from resetting the pins the boot refresh
  * wrote after the read went out; a copy that lands while the window's own
- * writes are in flight waits for them; a copy from another instance is
- * adopted, the window keeping what it shows and writing it there. And a copy
- * that is folded is recorded as persisted BEFORE the store is set, so the
+ * writes are in flight waits for the last of them; a landed write answers the
+ * whole state as it left it and the window folds that answer like a change,
+ * so a change of another window that landed between this window's read and
+ * its write is not lost (round 1 of the lane's verifier); a copy from another
+ * instance is merged in, the window keeping the partitions it wrote this
+ * session and taking the other instance's copy of the rest. And a copy that
+ * is folded is recorded as persisted BEFORE the store is set, so the
  * persistence subscriber writes nothing back (the fold's old order wrote
  * every folded partition back with this window's origin, one change landing
  * as three writes).
  *
  * The stores read localStorage and the preload bridge at import time, so
  * both are stubbed first, as group-dissolve.test.ts does; the bridge's
- * workspace writes answer when the test says, with the stamp it gives.
+ * workspace writes answer when the test says, with the stamp it gives and
+ * the state the server would hold after the write (this window's own, unless
+ * the test names what else landed there).
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PinnedGroup } from '../store/session-types'
@@ -30,20 +37,27 @@ vi.mock('./switch-account', () => ({
 
 type Stamp = { revision: number; instance: string }
 type State = { workspaces: unknown[]; pins: unknown[] } & Partial<Stamp>
+/** What a landed write answers: its stamp, and the state after it (this
+ *  window's own registry and pins unless the test names what else landed). */
+type Answer = Stamp & { workspaces?: unknown[]; pins?: unknown[] }
 type Write = {
   kind: 'pins' | 'registry'
   scope?: string | null
   pins?: unknown[]
-  land: (stamp: Stamp | { ok: false }) => Promise<void>
+  land: (answer: Answer | { ok: false }) => Promise<void>
 }
+
+const WS = { id: 'ws1', name: 'One', rootDir: '/w', profileFile: null, createdAt: 1 }
+const WS2 = { id: 'ws2', name: 'Two', rootDir: '/w2', profileFile: null, createdAt: 2 }
 
 /** The writes the bridge received and has not answered yet. */
 const writes: Write[] = []
-const WS = { id: 'ws1', name: 'One', rootDir: '/w', profileFile: null, createdAt: 1 }
 /** What `workspaceLoad` answers at the next boot. */
 let loaded: State & { version: 1; lastActiveWorkspaceId: null; pinsMigrated: true } = boot(0)
 /** The listener the module bound on `onWorkspaceStateChanged`. */
 let fold: ((state: State) => void) | null = null
+/** What the window told main it now shows (`windowSetWorkspace`). */
+const switches: unknown[] = []
 
 function boot(revision: number, pins: unknown[] = [], instance = 'main'): typeof loaded {
   return {
@@ -83,6 +97,7 @@ const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
 let actions: typeof import('./workspace-actions')
 let usePinnedStore: typeof import('../store/pinned-store').usePinnedStore
+let serializePinnedGroups: typeof import('../store/pinned-store').serializePinnedGroups
 let useWorkspaceStore: typeof import('../store/workspace-store').useWorkspaceStore
 
 beforeAll(() => {
@@ -99,7 +114,18 @@ beforeAll(() => {
         kind,
         ...extra,
         land: async (answer) => {
-          resolve('ok' in answer ? answer : { ok: true, ...answer })
+          resolve(
+            'ok' in answer
+              ? answer
+              : {
+                  ok: true,
+                  workspaces: answer.workspaces ?? useWorkspaceStore.getState().workspaces,
+                  pins:
+                    answer.pins ?? serializePinnedGroups(usePinnedStore.getState().pinnedGroups),
+                  revision: answer.revision,
+                  instance: answer.instance
+                }
+          )
           await tick()
         }
       })
@@ -117,7 +143,10 @@ beforeAll(() => {
     workspaceUpdatePins: (scope: string | null, pins: unknown[]) =>
       pending('pins', { scope, pins }),
     workspaceUpdateRegistry: () => pending('registry', {}),
-    windowSetWorkspace: async () => ({ ok: true }),
+    windowSetWorkspace: async (id: unknown) => {
+      switches.push(id)
+      return { ok: true }
+    },
     onWindowIdentityChanged: () => () => {},
     onWorkspaceStateChanged: (cb: (state: State) => void) => {
       fold = cb
@@ -129,21 +158,27 @@ beforeAll(() => {
 })
 
 beforeEach(async () => {
-  // Fresh module state per test: the stamp, the in-flight count and the
-  // persisted record are the module's own.
+  // Fresh module state per test: the stamp, the in-flight count, the written
+  // partitions and the persisted record are the module's own.
   vi.resetModules()
   writes.length = 0
+  switches.length = 0
   fold = null
   loaded = boot(0)
   actions = await import('./workspace-actions')
-  usePinnedStore = (await import('../store/pinned-store')).usePinnedStore
+  const pinned = await import('../store/pinned-store')
+  usePinnedStore = pinned.usePinnedStore
+  serializePinnedGroups = pinned.serializePinnedGroups
   useWorkspaceStore = (await import('../store/workspace-store')).useWorkspaceStore
 })
 
 const names = (): string[] => usePinnedStore.getState().pinnedGroups.map((p) => p.name)
-const landAll = async (stamp: Stamp): Promise<void> => {
-  for (const w of writes.splice(0)) await w.land(stamp)
+const registry = (): string[] => useWorkspaceStore.getState().workspaces.map((w) => w.id)
+const landAll = async (answer: Answer): Promise<void> => {
+  for (const w of writes.splice(0)) await w.land(answer)
 }
+const scopes = (): Array<string | null | 'registry'> =>
+  writes.map((w) => (w.kind === 'pins' ? w.scope! : 'registry'))
 const fromServer = (revision: number, pins: unknown[], instance = 'main'): State => ({
   workspaces: [WS],
   pins,
@@ -164,8 +199,7 @@ describe('a fold is recorded as persisted before the store is set (PRDCT-3264)',
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 4, instance: 'main' })
     // A change of this window's own after the fold is written once, as before.
     usePinnedStore.getState().addPinnedGroup(pin('c', 'C'))
-    expect(writes.map((w) => w.kind)).toEqual(['pins'])
-    expect(writes[0].scope).toBe('ws1')
+    expect(scopes()).toEqual(['ws1'])
   })
 
   it('keeps the runtime state of a pin it already shows, and takes a deletion made elsewhere', async () => {
@@ -180,6 +214,17 @@ describe('a fold is recorded as persisted before the store is set (PRDCT-3264)',
       visible: true
     })
     expect(writes).toHaveLength(0)
+  })
+
+  it('writes nothing back on the answer of its own write either', async () => {
+    loaded = boot(1, [pin('a', 'A')])
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('b', 'B'))
+    expect(scopes()).toEqual(['ws1'])
+    await landAll({ revision: 2, instance: 'main' })
+    expect(names()).toEqual(['A', 'B'])
+    expect(writes).toHaveLength(0)
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 2, instance: 'main' })
   })
 })
 
@@ -201,7 +246,7 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 7, instance: 'main' })
   })
 
-  it('holds a copy while its own write is in flight, and drops it once the write’s stamp overtakes it', async () => {
+  it('holds a copy while its own write is in flight, and drops it once the write’s answer overtakes it', async () => {
     // The race lane C of wave 4 met: the catch-up read goes out, the boot
     // refresh adds a pin and writes, the read answers with the older copy.
     loaded = boot(5, [pin('a', 'A')])
@@ -239,64 +284,169 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     usePinnedStore.getState().addPinnedGroup(pin('b', 'B', null))
     // The second change re-sends the ws1 partition too, its first write
     // still out (the persistence subscriber compares with what LANDED): three
-    // writes in flight, and the held copy waits for the last of them.
-    expect(writes.map((w) => w.scope)).toEqual(['ws1', 'ws1', null])
-    fold!(fromServer(1, []))
+    // writes in flight. The copy is held at a revision BETWEEN the landings
+    // (round 1 of the verifier): released at the first landing it would be
+    // applied as newer and reset the pins; released at the last, it is older
+    // than the last answer and dropped.
+    expect(scopes()).toEqual(['ws1', 'ws1', null])
     await writes[0].land({ revision: 2, instance: 'main' })
-    await writes[1].land({ revision: 3, instance: 'main' })
+    fold!(fromServer(3, [pin('z', 'Z')]))
     expect(names()).toEqual(['A', 'B'])
-    await writes[2].land({ revision: 4, instance: 'main' })
+    await writes[1].land({ revision: 4, instance: 'main' })
     expect(names()).toEqual(['A', 'B'])
-    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 4, instance: 'main' })
+    // The answers are held with the copy: nothing is known past the boot
+    // read until the last write has landed.
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'main' })
+    await writes[2].land({ revision: 5, instance: 'main' })
+    expect(names()).toEqual(['A', 'B'])
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 5, instance: 'main' })
   })
 
-  it('adopts a copy from another instance: keeps what it shows and writes it there', async () => {
+  it('learns through its write’s answer what another window wrote meanwhile', async () => {
+    // Window B's write to ws2 lands at 6 while this window's ws1 write is
+    // out; B's event is held and then older than this window's answer at 7.
+    // The answer carries the whole state, B's pin and workspace with it
+    // (round 1 of the verifier, F1).
+    loaded = boot(5, [pin('a', 'A')])
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('b', 'B'))
+    fold!({
+      workspaces: [WS, WS2],
+      pins: [pin('a', 'A'), pin('c', 'C', 'ws2')],
+      revision: 6,
+      instance: 'main'
+    })
+    expect(names()).toEqual(['A', 'B'])
+    await landAll({
+      revision: 7,
+      instance: 'main',
+      workspaces: [WS, WS2],
+      pins: [pin('a', 'A'), pin('c', 'C', 'ws2'), pin('b', 'B')]
+    })
+    expect(names()).toEqual(['A', 'C', 'B'])
+    expect(registry()).toEqual(['ws1', 'ws2'])
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 7, instance: 'main' })
+    expect(writes).toHaveLength(0)
+    // The same with no hold: B's event arrives after the answer, is older,
+    // and is dropped; the answer had already brought C.
+    fold!({
+      workspaces: [WS, WS2],
+      pins: [pin('a', 'A'), pin('c', 'C', 'ws2')],
+      revision: 6,
+      instance: 'main'
+    })
+    expect(names()).toEqual(['A', 'C', 'B'])
+    // And a later write of ws2 here carries C, not a stale copy without it.
+    usePinnedStore.getState().addPinnedGroup(pin('d', 'D', 'ws2'))
+    const ws2 = writes.find((w) => w.scope === 'ws2')
+    expect((ws2?.pins as PinnedGroup[]).map((p) => p.name)).toEqual(['C', 'D'])
+  })
+
+  it('a window’s own answer never moves it off its workspace: the landing is its caller’s', async () => {
+    loaded = boot(1, [])
+    await actions.bootWorkspaces()
+    useWorkspaceStore.setState({ workspaces: [WS, WS2], activeWorkspaceId: 'ws2' })
+    // The window removed ws2 itself: its answer lacks ws2, and the fold must
+    // not land anywhere; removeWorkspace does, after the write.
+    useWorkspaceStore.setState({ workspaces: [WS] })
+    const written = actions.persistWorkspaceRegistry()
+    await writes[0].land({ revision: 2, instance: 'main', workspaces: [WS], pins: [] })
+    await written
+    expect(switches).toEqual([])
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 2, instance: 'main' })
+    // Another window's change that removes the shown workspace does land.
+    fold!({ workspaces: [], pins: [], revision: 3, instance: 'main' })
+    expect(switches).toEqual([null])
+  })
+
+  it('adopts a copy from another instance by partition: its own where it wrote, the copy’s elsewhere', async () => {
     // Attached, a window that booted on main's copy and reached the server
-    // later: the server's stamp is another instance's.
-    loaded = boot(9, [pin('a', 'A')], 'main')
+    // later: the server's stamp is another instance's. The window wrote ws1
+    // this session (its boot refresh); ws2 and the registry it did not.
+    loaded = boot(9, [pin('a', 'A'), pin('old', 'Old', 'ws2')], 'main')
     await actions.bootWorkspaces()
     usePinnedStore.getState().addPinnedGroup(pin('b', 'B'))
     await landAll({ revision: 10, instance: 'main' })
-    fold!(fromServer(0, [], 'server'))
-    expect(names()).toEqual(['A', 'B'])
-    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 0, instance: 'server' })
-    // Every partition and the registry are written to the new source.
-    expect(writes.map((w) => w.kind).sort()).toEqual(['pins', 'registry'])
-    expect(writes.find((w) => w.kind === 'pins')).toMatchObject({ scope: 'ws1' })
-    expect(
-      (writes.find((w) => w.kind === 'pins')!.pins as PinnedGroup[]).map((p) => p.name)
-    ).toEqual(['A', 'B'])
-    await landAll({ revision: 2, instance: 'server' })
-    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 2, instance: 'server' })
+    fold!({
+      workspaces: [WS, WS2],
+      pins: [pin('x', 'X'), pin('y', 'Y', 'ws2')],
+      revision: 5,
+      instance: 'server'
+    })
+    // ws1 is this window's (X is not taken); ws2 is the server's (Old goes,
+    // Y comes); the registry is the server's.
+    expect(names()).toEqual(['Y', 'A', 'B'])
+    expect(registry()).toEqual(['ws1', 'ws2'])
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 5, instance: 'server' })
+    // Only what is this window's own is written to the new source.
+    expect(scopes()).toEqual(['ws1'])
+    expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A', 'B'])
+    await landAll({ revision: 6, instance: 'server' })
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 6, instance: 'server' })
     // From then on the server's revisions are the ones compared.
-    fold!(fromServer(2, [], 'server'))
-    expect(names()).toEqual(['A', 'B'])
-    fold!(fromServer(3, [pin('b', 'B')], 'server'))
+    fold!(fromServer(6, [], 'server'))
+    expect(names()).toEqual(['Y', 'A', 'B'])
+    fold!(fromServer(7, [pin('b', 'B')], 'server'))
     expect(names()).toEqual(['B'])
+  })
+
+  it('writes the registry it changed and a partition it emptied to the instance it adopts', async () => {
+    // Both workspaces registered at boot: a pin of an unregistered one is
+    // dropped by the boot's reconciliation.
+    loaded = { ...boot(1, [pin('a', 'A'), pin('q', 'Q', 'ws2')], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    const renamed = actions.renameWorkspace('ws2', 'Deux')
+    await landAll({ revision: 2, instance: 'main' })
+    await renamed
+    usePinnedStore.getState().removePinnedGroup('q')
+    expect(scopes()).toEqual(['ws2'])
+    await landAll({ revision: 3, instance: 'main' })
+    // The answer's fold records the emptied partition as empty: nothing goes
+    // out again (the first fix round sent it empty at every answer, without end).
+    expect(writes).toHaveLength(0)
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 3, instance: 'main' })
+    fold!({
+      workspaces: [WS],
+      pins: [pin('q', 'Q', 'ws2'), pin('s', 'S')],
+      revision: 0,
+      instance: 'server'
+    })
+    // The emptied ws2 is this window's and goes out empty (Q is not taken);
+    // ws1, which this window never wrote, is the copy's (A gives way to S);
+    // the registry it renamed goes out too and is kept over the copy's.
+    expect(names()).toEqual(['S'])
+    expect(useWorkspaceStore.getState().workspaces.map((w) => w.name)).toEqual(['One', 'Deux'])
+    expect(scopes().sort()).toEqual(['registry', 'ws2'])
+    expect(writes.find((w) => w.scope === 'ws2')!.pins).toEqual([])
+    expect(switches).toEqual([])
   })
 
   it('adopts the instance a write of its own landed on, without rewriting that partition', async () => {
     loaded = boot(4, [pin('a', 'A')], 'main')
     await actions.bootWorkspaces()
     usePinnedStore.getState().addPinnedGroup(pin('b', 'B', null))
-    expect(writes.map((w) => w.scope)).toEqual([null])
-    await landAll({ revision: 1, instance: 'server' })
+    expect(scopes()).toEqual([null])
+    // The answer is the server's state: the null partition as written, and
+    // a ws1 of its own, taken since this window did not write ws1.
+    await landAll({
+      revision: 1,
+      instance: 'server',
+      workspaces: [WS],
+      pins: [pin('s', 'S'), pin('b', 'B', null)]
+    })
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'server' })
-    // The ws1 partition and the registry follow; the null one just landed.
-    expect(writes.map((w) => (w.kind === 'pins' ? w.scope : 'registry')).sort()).toEqual([
-      'registry',
-      'ws1'
-    ])
+    expect(names()).toEqual(['S', 'B'])
+    // Nothing of this window's is left to write: the null partition just landed.
+    expect(writes).toHaveLength(0)
   })
 
   it('takes the registry a fold carries, and the stamp of a registry write', async () => {
     loaded = boot(1, [])
     await actions.bootWorkspaces()
-    const two = { ...WS, id: 'ws2', name: 'Two' }
-    fold!({ workspaces: [WS, two], pins: [], revision: 2, instance: 'main' })
-    expect(useWorkspaceStore.getState().workspaces.map((w) => w.id)).toEqual(['ws1', 'ws2'])
+    fold!({ workspaces: [WS, WS2], pins: [], revision: 2, instance: 'main' })
+    expect(registry()).toEqual(['ws1', 'ws2'])
     const renamed = actions.renameWorkspace('ws2', 'Deux')
-    expect(writes.map((w) => w.kind)).toEqual(['registry'])
+    expect(scopes()).toEqual(['registry'])
     await writes[0].land({ revision: 3, instance: 'main' })
     await renamed
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 3, instance: 'main' })
@@ -309,5 +459,21 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect(names()).toEqual(['Z'])
     expect(writes).toHaveLength(0)
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'main' })
+  })
+
+  it('says a rejected write in the console and goes on', async () => {
+    loaded = boot(1, [])
+    await actions.bootWorkspaces()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    usePinnedStore.getState().addPinnedGroup(pin('a', 'A'))
+    const write = writes.splice(0)[0]
+    // A rejected write (not a refusal): the hold is released, the partition
+    // goes out again at the next change, and the failure is said.
+    fold!(fromServer(2, [pin('a', 'A'), pin('b', 'B')]))
+    expect(names()).toEqual(['A'])
+    await write.land({ ok: false })
+    expect(error).not.toHaveBeenCalled()
+    expect(names()).toEqual(['A', 'B'])
+    error.mockRestore()
   })
 })

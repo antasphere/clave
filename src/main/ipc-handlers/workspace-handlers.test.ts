@@ -39,7 +39,7 @@ vi.mock('../window-registry', () => ({
 vi.mock('../settings/shell-source', () => ({
   shellSettingsSource: {
     workspaces: {
-      load: () => ({ workspaces: [], pins: [] }),
+      load: () => ({ workspaces: [], pins: [], revision: 7, instance: 'main-1' }),
       updateRegistry: () => ({ ok: true }),
       updatePins: (scope: unknown, _pins: unknown, origin: unknown) => {
         writes.push({ scope, origin })
@@ -86,6 +86,16 @@ describe('the workspace writes over IPC name their writer and skip it on the way
     expect(writes).toEqual([{ scope: null, origin: 'webContents:13' }])
     subscribers[0](changed('webContents:13'))
     expect(sent.map((s) => s.id)).toEqual([1, 2])
+  })
+  it('the load over IPC answers the state with its stamp, the boot read of every window', async () => {
+    // Round 1 of the lane's verifier: with the stamp dropped here a window
+    // starts with nothing known and applies the first fold whatever its age.
+    expect(await handlers.get('workspace:load')!({ sender: { id: 11 } })).toEqual({
+      workspaces: [],
+      pins: [],
+      revision: 7,
+      instance: 'main-1'
+    })
   })
   it('a change with no writer reaches every window', () => {
     subscribers[0](changed(null))

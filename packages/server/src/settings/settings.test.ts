@@ -197,7 +197,13 @@ describe('the settings events on the push channel', () => {
     expect(pins.status).toBe(200)
     // The write answers the state's stamp, and the event carries the same
     // (PRDCT-3405): what a window compares a fold against.
-    expect(await pins.json()).toEqual({ ok: true, revision: 1, instance: 'fake-settings' })
+    expect(await pins.json()).toEqual({
+      ok: true,
+      workspaces: [],
+      pins: [{ a: 1 }],
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(await peer.next()).toMatchObject({
       _tag: 'event',
       event: {

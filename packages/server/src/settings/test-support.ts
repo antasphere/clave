@@ -337,7 +337,13 @@ export class FakeSettingsSource implements SettingsSourceService {
         revision: this.state.revision,
         instance: this.state.instance
       })
-      return { ok: true as const, revision: this.state.revision, instance: this.state.instance }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     updatePins: (scope, pins, origin) => {
       this.record('workspaces.updatePins', scope, [...pins], origin)
@@ -351,7 +357,13 @@ export class FakeSettingsSource implements SettingsSourceService {
         revision: this.state.revision,
         instance: this.state.instance
       })
-      return { ok: true as const, revision: this.state.revision, instance: this.state.instance }
+      return {
+        ok: true as const,
+        workspaces: this.state.workspaces,
+        pins: this.state.pins,
+        revision: this.state.revision,
+        instance: this.state.instance
+      }
     },
     setLastActive: (workspaceId) => {
       this.record('workspaces.setLastActive', workspaceId)

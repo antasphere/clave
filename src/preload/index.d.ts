@@ -71,10 +71,15 @@ export type SetWorkspaceResult =
   | { ok: false; reason: 'unknown-workspace' | 'no-window' }
 
 /** Main's answer to a state write (layout, pins). */
-/** A pins write: landed with the state's stamp, or refused. */
-export type WriteResult =
-  | ({ ok: true } & WorkspaceStamp)
-  | { ok: false; reason: 'invalid-key' | 'no-window' }
+/** A registry or pins write that landed: the state as the write left it,
+ *  with its stamp; the writer folds it like a change (PRDCT-3405). */
+export type WorkspaceWritten = {
+  ok: true
+  workspaces: Workspace[]
+  pins: unknown[]
+} & WorkspaceStamp
+/** A pins write: landed, or refused. */
+export type WriteResult = WorkspaceWritten | { ok: false; reason: 'invalid-key' | 'no-window' }
 
 export interface HistoryLedgerRow {
   v: 1
@@ -963,7 +968,7 @@ export interface ElectronAPI {
   workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
-  ) => Promise<({ ok: true } & WorkspaceStamp) | { ok: false; reason: 'invalid' }>
+  ) => Promise<WorkspaceWritten | { ok: false; reason: 'invalid' }>
   workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) => Promise<WriteResult>
   workspaceSetLastActive: (workspaceId: string | null) => Promise<{ ok: true }>
   onWorkspaceStateChanged: (

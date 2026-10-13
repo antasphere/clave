@@ -33,36 +33,54 @@ let persistEnabled = false
 const lastPersistedPins = new Map<string | null, string>()
 
 // ── The stamp (wave 5, lane A, PRDCT-3405) ───────────────────────────────────
-// The state and every write result carry a stamp: the revision of the
-// registry and the pins in the process holding them, and that process's id
-// (`WorkspaceStamp`). This window keeps the last stamp it loaded, wrote or
-// took in, and a fold that is not newer is dropped: the catch-up read the
-// push socket makes at its welcome used to hand the server's copy to the
-// fold whatever its age, and a copy read before the boot refresh wrote and
-// answered after it reset the pins that refresh had just loaded (the
-// listener's own guard, this window's echo heard while the read was out,
-// misses an answer that lands first). A fold that arrives while this
-// window's own writes are in flight is held and folded once they have
-// landed, when the window knows the stamp each write produced; applied in
-// between, it would revert the first write and record the reverted content
-// as persisted. A stamp from another instance (an attached window that
-// booted on main's copy and reached the server later) is adopted and the
-// window keeps what it shows, writing it to the new source.
+// The state, every change event and every landed write's answer carry a
+// stamp: the revision of the registry and the pins in the process holding
+// them, and that process's id (`WorkspaceStamp`). This window keeps the last
+// stamp it loaded, wrote or took in, and a fold that is not newer is
+// dropped: the catch-up read the push socket makes at its welcome used to
+// hand the server's copy to the fold whatever its age, and a copy read
+// before the boot refresh wrote and answered after it reset the pins that
+// refresh had just loaded (the listener's own guard, this window's echo
+// heard while the read was out, misses an answer that lands first). A fold
+// that arrives while this window's own writes are in flight is held and
+// folded once they have landed; applied in between, it would revert the
+// first write and record the reverted content as persisted. A landed write
+// answers the whole state as it left it, and the window folds that answer
+// like a change: the writes are per partition while the stamp is for the
+// whole state, so without the answer a change of another window that landed
+// between this window's read and its write was dropped as older than the
+// write's own stamp and clobbered at the next write of its partition (round
+// 1 of the lane's verifier). A stamp from another instance (an attached
+// window that booted on main's copy and reached the server later) is
+// adopted by merging: this window keeps the partitions it wrote this
+// session and writes them to the new source, and takes the other instance's
+// copy of every other partition and of the registry.
 
-/** What arrives on `workspace:state-changed`: the registry, the pins and the
- *  stamp (absent from nothing this build sends; tolerated for a fold with
- *  none, which is applied as before). */
+/** What arrives on `workspace:state-changed` and in a landed write's answer:
+ *  the registry, the pins and the stamp (absent from nothing this build
+ *  sends; tolerated for a fold with none, which is applied as before). */
 export type ExternalWorkspaceState = {
   workspaces: Workspace[]
   pins: unknown[]
 } & Partial<WorkspaceStamp>
 
+/** Where a copy came from: a change heard, or this window's own write
+ *  landing (the landing logic below is then the caller's, not the fold's). */
+type Provenance =
+  | { own: false }
+  | { own: true; landed: { partition: string | null } | { registry: true } }
+const heard: Provenance = { own: false }
+
 /** The last stamp this window loaded, wrote or took in; null until the boot
  *  read answers, and outside Electron. */
 let known: WorkspaceStamp | null = null
-/** This window's writes still in flight, and the newest fold held meanwhile. */
+/** This window's writes still in flight, and the newest copy held meanwhile. */
 let writesInFlight = 0
-let deferred: ExternalWorkspaceState | null = null
+let deferred: { state: ExternalWorkspaceState; from: Provenance } | null = null
+/** The pins partitions this window wrote this session, and whether it wrote
+ *  the registry: what it keeps as its own when it adopts another instance. */
+const writtenPartitions = new Set<string | null>()
+let registryWritten = false
 
 function stampOf(value: Partial<WorkspaceStamp> | null | undefined): WorkspaceStamp | null {
   return value && typeof value.revision === 'number' && typeof value.instance === 'string'
@@ -81,44 +99,19 @@ export function knownWorkspaceStamp(): WorkspaceStamp | null {
   return known
 }
 
-/** This window now writes to another instance than the one it loaded from
- *  (attached, the server reached after a boot on main's copy): its stamp is
- *  the window's from here on, and what the window shows is written there,
- *  every pins partition and the registry, except what `written` names as
- *  just landed on it. The window's pins are the newer copy: they carry the
- *  boot refresh of its files, which the server's copy does not. */
-function adoptSource(
-  stamp: WorkspaceStamp,
-  written?: { partition: string | null } | { registry: true }
+/** The state a landed write answered, folded like a change. */
+function foldWritten(
+  res: { ok: boolean; workspaces?: Workspace[]; pins?: unknown[] } & Partial<WorkspaceStamp>,
+  landed: { partition: string | null } | { registry: true }
 ): void {
-  known = stamp
-  const keptPartition = written && 'partition' in written ? written.partition : undefined
-  for (const key of [...lastPersistedPins.keys()]) {
-    if (keptPartition !== undefined && key === keptPartition) continue
-    lastPersistedPins.delete(key)
-  }
-  if (persistEnabled) persistPins()
-  if (!(written && 'registry' in written)) void persistWorkspaceRegistry()
+  if (!res.ok || !Array.isArray(res.workspaces) || !Array.isArray(res.pins)) return
+  foldExternalState(
+    { workspaces: res.workspaces, pins: res.pins, revision: res.revision, instance: res.instance },
+    { own: true, landed }
+  )
 }
 
-/** A write of this window landed with `stamp`: the window holds at least
- *  that now. Another instance's stamp means the window's source changed. */
-function takeStamp(
-  stamp: WorkspaceStamp,
-  written?: { partition: string | null } | { registry: true }
-): void {
-  if (!known) {
-    known = stamp
-    return
-  }
-  if (stamp.instance !== known.instance) {
-    adoptSource(stamp, written)
-    return
-  }
-  if (stamp.revision > known.revision) known = stamp
-}
-
-/** One write of this window is out; its landing releases the fold held
+/** One write of this window is out; its landing releases the copy held
  *  meanwhile once nothing else is in flight. */
 function writeStarted(): void {
   writesInFlight += 1
@@ -128,7 +121,7 @@ function writeLanded(): void {
   if (writesInFlight > 0 || !deferred) return
   const held = deferred
   deferred = null
-  foldExternalState(held)
+  foldExternalState(held.state, held.from)
 }
 
 function pinPartition(pin: { workspaceId?: string | null }): string | null {
@@ -143,21 +136,28 @@ function persistPins(): void {
   const keys = new Set<string | null>()
   for (const pg of groups) keys.add(pinPartition(pg))
   for (const key of lastPersistedPins.keys()) keys.add(key)
+  // A partition this window emptied is written empty to a source that has
+  // not seen it yet (the adoption below): it is among the written ones.
+  for (const key of writtenPartitions) keys.add(key)
   for (const key of keys) {
     const partition = serializePinnedGroups(groups.filter((pg) => pinPartition(pg) === key))
     const json = JSON.stringify(partition)
     if (lastPersistedPins.get(key) === json) continue
     const write = window.electronAPI?.workspaceUpdatePins?.(key, partition)
     if (!write) continue
+    writtenPartitions.add(key)
     writeStarted()
     void write
       .then((res) => {
         if (!res?.ok) return
         lastPersistedPins.set(key, json)
-        const stamp = stampOf(res)
-        if (stamp) takeStamp(stamp, { partition: key })
+        foldWritten(res, { partition: key })
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        // The partition stays unrecorded and goes out again at the next
+        // change; the failure is said, since the window shows nothing of it.
+        console.error('[workspace] the pins write failed:', error)
+      })
       .then(writeLanded)
   }
 }
@@ -167,11 +167,11 @@ export function persistWorkspaceRegistry(): Promise<unknown> {
   const { workspaces } = useWorkspaceStore.getState()
   const write = window.electronAPI?.workspaceUpdateRegistry?.(workspaces)
   if (!write) return Promise.resolve()
+  registryWritten = true
   writeStarted()
   return write
     .then((res) => {
-      const stamp = res?.ok ? stampOf(res) : null
-      if (stamp) takeStamp(stamp, { registry: true })
+      if (res?.ok) foldWritten(res, { registry: true })
       return res
     })
     .finally(writeLanded)
@@ -220,42 +220,90 @@ function seedPersistedPins(blueprints: PinnedGroupBlueprint[]): void {
   for (const [key, list] of byKey) {
     lastPersistedPins.set(key, JSON.stringify(serializePinnedGroups(list as PinnedGroup[])))
   }
+  // A partition this window emptied has no pin to put it in the record, and
+  // a record without it would send it empty again at the next persist, and
+  // again at the fold of that write's answer, without end: it is recorded
+  // as the empty list the copy holds for it.
+  for (const key of writtenPartitions) {
+    if (!lastPersistedPins.has(key)) lastPersistedPins.set(key, '[]')
+  }
 }
 
-/** A change another window made, or the server's copy read at a welcome:
- *  folded only when its stamp is newer than what this window holds, held
- *  while this window's own writes are in flight, adopted as the new source
- *  when it comes from another instance (the stamp, above). Exported for the
- *  unit test; the listener bound at boot is its one caller in the app. */
-export function foldExternalState(state: ExternalWorkspaceState): void {
+/** The blueprints of `pins` that are objects with an id, one per id. */
+function blueprintsOf(pins: unknown[]): PinnedGroupBlueprint[] {
+  return dedupePinsById(
+    (pins as PinnedGroupBlueprint[]).filter(
+      (bp) => typeof bp === 'object' && bp !== null && typeof bp.id === 'string'
+    )
+  )
+}
+
+/** This window now writes to another instance than the one it loaded from
+ *  (attached, the server reached after a boot on main's copy): its stamp is
+ *  the window's from here on. The two copies merge by partition: what this
+ *  window wrote this session is its own and is written to the new source
+ *  (except what `landed` names as just written there), the other instance's
+ *  copy of every other partition and of the registry is taken, since it may
+ *  hold what other windows wrote there and what the source kept across the
+ *  app's restarts, which main's copy never gets once the server is named. */
+function adoptSource(
+  copy: ExternalWorkspaceState,
+  stamp: WorkspaceStamp,
+  landed?: { partition: string | null } | { registry: true }
+): void {
+  known = stamp
+  const ours = serializePinnedGroups(usePinnedStore.getState().pinnedGroups)
+  const merged = [
+    ...blueprintsOf(copy.pins).filter((bp) => !writtenPartitions.has(pinPartition(bp))),
+    ...ours.filter((bp) => writtenPartitions.has(pinPartition(bp)))
+  ]
+  const workspaces = registryWritten ? useWorkspaceStore.getState().workspaces : copy.workspaces
+  applyExternalState({ workspaces, pins: merged }, { landing: !registryWritten })
+  const landedPartition = landed && 'partition' in landed ? landed.partition : undefined
+  for (const key of writtenPartitions) {
+    if (landedPartition !== undefined && key === landedPartition) continue
+    lastPersistedPins.delete(key)
+  }
+  if (persistEnabled) persistPins()
+  if (registryWritten && !(landed && 'registry' in landed)) void persistWorkspaceRegistry()
+}
+
+/** A change another window made, the server's copy read at a welcome, or
+ *  this window's own write landing: folded only when its stamp is newer
+ *  than what this window holds, held while this window's own writes are in
+ *  flight, merged in when it comes from another instance (the stamp,
+ *  above). Exported for the unit test; the listener bound at boot and the
+ *  write results are its callers in the app. */
+export function foldExternalState(state: ExternalWorkspaceState, from: Provenance = heard): void {
   const stamp = stampOf(state)
   if (stamp) {
     if (writesInFlight > 0) {
-      const held = stampOf(deferred)
+      const held = stampOf(deferred?.state)
       if (!held || held.instance !== stamp.instance || stamp.revision > held.revision)
-        deferred = state
+        deferred = { state, from }
       return
     }
     if (known && stamp.instance !== known.instance) {
-      adoptSource(stamp)
+      adoptSource(state, stamp, from.own ? from.landed : undefined)
       return
     }
     if (!isNewer(stamp)) return
   }
-  applyExternalState(state)
+  applyExternalState(state, { landing: !from.own })
   if (stamp) known = stamp
 }
 
 /** The registry is taken whole; the pin blueprints are replaced from the
- *  file, keeping the runtime state (the launched group, visibility) of every
- *  pin already known here. Groups and sessions are never touched. */
-function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] }): void {
+ *  copy, keeping the runtime state (the launched group, visibility) of every
+ *  pin already known here. Groups and sessions are never touched. `landing`
+ *  is the fold's own move to another workspace when the one this window
+ *  shows was removed; a window's own write leaves that to its caller. */
+function applyExternalState(
+  state: { workspaces: Workspace[]; pins: unknown[] },
+  options: { landing: boolean }
+): void {
   useWorkspaceStore.setState({ workspaces: state.workspaces })
-  const blueprints = dedupePinsById(
-    (state.pins as PinnedGroupBlueprint[]).filter(
-      (bp) => typeof bp === 'object' && bp !== null && typeof bp.id === 'string'
-    )
-  )
+  const blueprints = blueprintsOf(state.pins)
   const current = new Map(usePinnedStore.getState().pinnedGroups.map((pg) => [pg.id, pg]))
   const next: PinnedGroup[] = blueprints.map((bp) => {
     const prev = current.get(bp.id)
@@ -278,6 +326,7 @@ function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] })
   // recorded is the store's own content, normalised, so the comparison holds.
   seedPersistedPins(serializePinnedGroups(next))
   usePinnedStore.setState({ pinnedGroups: next })
+  if (!options.landing) return
   // The workspace this window shows was removed from another window: land on
   // the first remaining one, else the unscoped state.
   const { activeWorkspaceId, workspaces } = useWorkspaceStore.getState()
@@ -423,8 +472,7 @@ export async function bootWorkspaces(): Promise<void> {
       'all',
       serializePinnedGroups(usePinnedStore.getState().pinnedGroups)
     )
-    const stamp = migrated?.ok ? stampOf(migrated) : null
-    if (stamp) takeStamp(stamp)
+    if (migrated) foldWritten(migrated, { partition: null })
     localStorage.removeItem('clave-pinned-groups')
   }
 }

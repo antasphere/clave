@@ -56,8 +56,18 @@ export const WorkspaceStateView = Schema.Struct({
 })
 
 const Ok = Schema.Struct({ ok: Schema.Literal(true) })
-/** A registry or pins write that landed: the stamp it produced. */
-const Written = Schema.Struct({ ok: Schema.Literal(true), ...WorkspaceStampFields })
+/** A registry or pins write that landed: the registry and the pins as the
+ *  write left them, with the stamp it produced. The writer folds this the
+ *  way it folds a change event, so what it knows at that revision is the
+ *  whole state and not only the partition it wrote (round 1 of the lane's
+ *  verifier: a change of another window that landed between the writer's
+ *  read and its write was dropped as older than the write's own stamp). */
+const Written = Schema.Struct({
+  ok: Schema.Literal(true),
+  workspaces: Schema.Array(WorkspaceView),
+  pins: PinsView,
+  ...WorkspaceStampFields
+})
 
 /** The window key of the writer, when a window wrote. The change event
  *  carries it back so the writer drops its own echo: it already holds the
