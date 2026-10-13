@@ -37,7 +37,7 @@ import type {
 } from '../adapter'
 import { findExecutable, resolvePosixShellLaunch } from '../../shell-launch'
 import { launchProfileManager } from '../../launch-profile-manager'
-import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../../mcp/mcp-runtime'
+import { lazyTerminalPorts } from '../../ports/terminals'
 import {
   accountTokenForSpawn,
   buildSpawnEnv,
@@ -984,7 +984,7 @@ export class ClaudeAdapter implements SessionAdapter {
           request.reject(new Error('Claude session has ended'))
         live.translator.listRequests.clear()
         live.translator.clearBackground()
-        deleteSessionMcpConfig(spec.id)
+        lazyTerminalPorts.mcpConfig.remove(spec.id)
         emit({ type: 'state_change', state: 'ended' })
         for (const listener of emitter.listeners('exit')) {
           try {
@@ -997,7 +997,10 @@ export class ClaudeAdapter implements SessionAdapter {
       // Started at ready (a consumer is bound) or by the first input, whichever
       // comes first; either way no init frame can precede a listener.
       start: () => {
-        const mcpConfigPath = getMcpRuntime() ? writeSessionMcpConfig(spec.id) : undefined
+        // The session's `--mcp-config` is the MCP config port's (the shell
+        // wires its MCP server in; a server with none answers null and the
+        // flag is omitted), the same port the terminal backend writes through.
+        const mcpConfigPath = lazyTerminalPorts.mcpConfig.write(spec.id) ?? undefined
         const argv = buildAgentArgv({
           kind: 'claude',
           profile,

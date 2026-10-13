@@ -143,7 +143,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     }
     await app.close()
     app = undefined
-    const persisted = JSON.parse(readFileSync(`${data}/agent-launch-profiles.json`, 'utf8'))
+    // Attached, the profiles are the standalone server's, in its own folder.
+    const persisted = JSON.parse(
+      readFileSync(`${launched.server?.dataDir ?? data}/agent-launch-profiles.json`, 'utf8')
+    )
     assert.equal(persisted.workspaceOverrides.profiles.claude, 'chat:claude:claude-work')
     assert.ok(
       persisted.customProfiles.every((p) => !p.id.startsWith('chat:')),

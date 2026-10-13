@@ -1,8 +1,9 @@
-import { app } from 'electron'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { randomUUID } from 'crypto'
+import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
+import { readJson, writeJson } from './ports/storage'
 
 /**
  * The Codex accounts a session can run on, owned by the main process
@@ -10,11 +11,11 @@ import { randomUUID } from 'crypto'
  *
  * Codex keeps its credential in `$CODEX_HOME/auth.json` and refreshes it in
  * place, so an account is a HOME: the Default account is the machine's own
- * `~/.codex`, untouched; every other account is a directory under Clave's
- * user data used as `CODEX_HOME` for the sessions that run on it. That
- * directory holds a real `auth.json` and a symlink for every other top-level
- * entry of the default home, so config, sessions, memories, skills and hooks
- * stay shared and `codex resume` works across accounts.
+ * `~/.codex`, untouched; every other account is a directory under the data
+ * directory the storage port owns, used as `CODEX_HOME` for the sessions that
+ * run on it. That directory holds a real `auth.json` and a symlink for every
+ * other top-level entry of the default home, so config, sessions, memories,
+ * skills and hooks stay shared and `codex resume` works across accounts.
  *
  * The credential file is Codex's, not ours: this manager never reads it
  * beyond "is there one", never copies it, and protects it the way Codex
@@ -37,6 +38,9 @@ export interface CodexAccount {
 
 export const DEFAULT_CODEX_ACCOUNT_ID = 'default'
 export const CODEX_AUTH_FILE = 'auth.json'
+
+const ACCOUNTS_FILE = 'codex-accounts.json'
+const HOMES_DIR = 'codex-homes'
 
 interface StoredAccount {
   id: string
@@ -128,26 +132,19 @@ export function syncCodexHome(home: string, defaultHome: string): string[] {
 
 type ChangeListener = (accounts: CodexAccount[]) => void
 
-class CodexAccountsManager {
+export class CodexAccountsManager {
   private accounts: StoredAccount[] | null = null
   private listeners = new Set<ChangeListener>()
 
-  private accountsPath(): string {
-    return path.join(app.getPath('userData'), 'codex-accounts.json')
-  }
+  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
   private homesRoot(): string {
-    return path.join(app.getPath('userData'), 'codex-homes')
+    return this.ports.storage.pathOf(HOMES_DIR)
   }
 
   private loadAccounts(): StoredAccount[] {
     if (this.accounts) return this.accounts
-    let parsed: unknown = null
-    try {
-      parsed = JSON.parse(fs.readFileSync(this.accountsPath(), 'utf-8'))
-    } catch {
-      parsed = null
-    }
+    const parsed = readJson(this.ports.storage, ACCOUNTS_FILE)
     const file = parsed as Partial<AccountsFile> | null
     this.accounts =
       file && Array.isArray(file.accounts)
@@ -160,11 +157,7 @@ class CodexAccountsManager {
 
   private saveAccounts(): void {
     const file: AccountsFile = { v: 1, accounts: this.accounts ?? [] }
-    const target = this.accountsPath()
-    const tmp = `${target}.tmp`
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { mode: 0o600 })
-    fs.renameSync(tmp, target)
+    writeJson(this.ports.storage, ACCOUNTS_FILE, file, { mode: 0o600 })
   }
 
   private emit(): void {

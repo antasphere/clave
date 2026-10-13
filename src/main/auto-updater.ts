@@ -6,6 +6,7 @@ import { broadcastToAllWindows } from './window-routing'
 import { TEST_VERSION } from './test-mode'
 import { isPrereleaseVersion } from '../shared/version'
 import type { PrereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
+import { flushRendererStorage } from './flush-storage'
 import type {
   DownloadProgress,
   ReleaseNote,
@@ -651,5 +652,7 @@ export function installUpdate(): void {
   // app.relaunch() fires immediately on quit, relaunching the OLD binary before
   // ShipIt has finished replacing it. Let quitAndInstall() handle everything:
   // Squirrel.Mac's ShipIt waits for the app to quit, replaces the binary, then relaunches.
+  // The unsent composer drafts are committed to disk first (flush-storage.ts).
+  flushRendererStorage()
   autoUpdater.quitAndInstall()
 }

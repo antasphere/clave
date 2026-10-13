@@ -14,7 +14,21 @@ explicit close destroys the backing session. `attach()` is reserved for event
 adapters and has no production caller in this wave. Restoring a persisted PTY
 uses the existing adoption spawn options so the same tmux session is reattached at the terminal's measured size.
 
-## IPC
+## The server, and IPC behind it
+
+Since wave 2 of the split (PRDCT-3239) every session call a window makes goes
+through Clave's server once main names it: the preload routes each method to the
+typed client (`packages/client`, `sessions.ts`), the server's handlers
+(`packages/server/src/sessions/handlers.ts`) answer from the `SessionHost` port,
+and the shell implements that port over the manager in `host.ts`, the one object
+the IPC handlers below answer from too. The stream and the exit travel on the
+push channel; a session's title, plan, clear and state are server events
+(`src/main/server/session-events.ts`), the per-window sends kept only for an app
+without a server. Starting and stopping are `lifecycle.ts`, shared by the PTY
+handlers and the server's `StartSession`. The IPC channels stay for a window the
+server has not reached (the first moments of a boot, an app whose server did not
+start):
+
 
 - `sessions:list` returns the asking window's records.
 - `sessions:subscribe(id)` refuses sessions outside the caller’s window, returns the record and starts notifications on

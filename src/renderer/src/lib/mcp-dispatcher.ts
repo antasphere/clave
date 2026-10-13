@@ -42,6 +42,7 @@ import type { PiThinkingLevel } from '../../../shared/agent-launch'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
+import { sanitizeForPaste } from '../../../shared/paste-sanitize'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
@@ -136,21 +137,63 @@ function resolveGroup(
   )
 }
 
-function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
-  const state = useSessionStore.getState()
-  const wsState = useWorkspaceStore.getState()
-
-  // Optional scoping: 'all' (default — agents may orchestrate across
-  // workspaces), 'active', or a workspace id/name.
-  const scope = payload.workspace ?? 'all'
+/** The scope a listing is asked with: 'all' (default — agents may
+ *  orchestrate across workspaces), 'active', or a workspace id/name. */
+function listScope(workspace: string | undefined): (x: { workspaceId?: string | null }) => boolean {
+  const scope = workspace ?? 'all'
   const scopeId: string | null | 'all' =
     scope === 'all'
       ? 'all'
       : scope === 'active'
-        ? wsState.activeWorkspaceId
+        ? useWorkspaceStore.getState().activeWorkspaceId
         : resolveWorkspace(scope).id
-  const inScope = (x: { workspaceId?: string | null }): boolean =>
-    scopeId === 'all' || inActiveWorkspace(x, scopeId)
+  return (x) => scopeId === 'all' || inActiveWorkspace(x, scopeId)
+}
+
+/** The pinned groups in scope: launchable templates from .clave files
+ *  (auto-discovered or imported), which clave_launch_group spawns by id or
+ *  name. */
+function pinnedGroupsInScope(inScope: (x: { workspaceId?: string | null }) => boolean): unknown[] {
+  const pinnedSessionMode = (s: PinnedGroupSession): SessionMode => {
+    if (s.antigravityMode) return 'antigravity'
+    if (s.codexMode) return 'codex'
+    if (s.piMode) return 'pi'
+    if (s.claudeAgentsMode) return 'claude-agents'
+    if (s.claudeMode) return 'claude'
+    return 'terminal'
+  }
+  return usePinnedStore
+    .getState()
+    .pinnedGroups.filter(inScope)
+    .map((pg) => ({
+      id: pg.id,
+      name: pg.name,
+      cwd: pg.cwd,
+      category: pg.category ?? null,
+      sourceFile: pg.filePath ?? pg.discoveredBy ?? null,
+      state: getPinnedState(pg),
+      activeGroupId: pg.activeGroupId,
+      workspaceId: pg.workspaceId ?? null,
+      workspaceName: workspaceNameOf(pg.workspaceId),
+      sessions: pg.sessions.map((s) => ({ name: s.name, cwd: s.cwd, mode: pinnedSessionMode(s) })),
+      terminals: pg.terminals.map((t) => ({ command: t.command, commandMode: t.commandMode }))
+    }))
+}
+
+/** What only this window knows of a listing, for the agent tools the server
+ *  answers (wave 3): the pinned groups, whose store is the window's until the
+ *  workspace files move to the server, and the focused tab. */
+function handleWindowState(payload: { workspace?: string }): unknown {
+  return {
+    pinnedGroups: pinnedGroupsInScope(listScope(payload.workspace)),
+    focusedSessionId: useSessionStore.getState().focusedSessionId
+  }
+}
+
+function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
+  const state = useSessionStore.getState()
+  const wsState = useWorkspaceStore.getState()
+  const inScope = listScope(payload.workspace)
 
   const sessions = state.sessions
     .filter((s) => s.sessionType === 'local' && inScope(s))
@@ -194,32 +237,7 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       sessionId: t.sessionId
     }))
   }))
-  const pinnedSessionMode = (s: PinnedGroupSession): SessionMode => {
-    if (s.antigravityMode) return 'antigravity'
-    if (s.codexMode) return 'codex'
-    if (s.piMode) return 'pi'
-    if (s.claudeAgentsMode) return 'claude-agents'
-    if (s.claudeMode) return 'claude'
-    return 'terminal'
-  }
-  // Pinned groups = launchable templates from .clave files (auto-discovered or
-  // imported). clave_launch_group spawns them by id or name.
-  const pinnedGroups = usePinnedStore
-    .getState()
-    .pinnedGroups.filter(inScope)
-    .map((pg) => ({
-      id: pg.id,
-      name: pg.name,
-      cwd: pg.cwd,
-      category: pg.category ?? null,
-      sourceFile: pg.filePath ?? pg.discoveredBy ?? null,
-      state: getPinnedState(pg),
-      activeGroupId: pg.activeGroupId,
-      workspaceId: pg.workspaceId ?? null,
-      workspaceName: workspaceNameOf(pg.workspaceId),
-      sessions: pg.sessions.map((s) => ({ name: s.name, cwd: s.cwd, mode: pinnedSessionMode(s) })),
-      terminals: pg.terminals.map((t) => ({ command: t.command, commandMode: t.commandMode }))
-    }))
+  const pinnedGroups = pinnedGroupsInScope(inScope)
   const callerSessionId = payload.callerSessionId ?? null
   return {
     workspaces: wsState.workspaces.map((w) => ({
@@ -1052,10 +1070,7 @@ function assertCanReach(
  * tabs). With ESC/CR/etc. gone, the whole message stays pasted text under the
  * provenance header and our single trailing submit sends it as one turn.
  */
-function sanitizeForPaste(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
-}
+export { sanitizeForPaste }
 
 // Serialize writes per target so two concurrent sends can't interleave their
 // paste envelopes (envelope-A, envelope-B, submit-A, submit-B → one garbled
@@ -1403,10 +1418,38 @@ async function handleSwitchAccount(payload: {
   }
 }
 
+/** What a served clave_switch_account asks of the window holding the tab
+ *  (wave 4): the tab's own switching mode and its pin, which the person sets
+ *  in the tab's menu and which live in this store alone. */
+function handleSessionSwitchState(payload: { sessionId: string }): unknown {
+  const session = useSessionStore.getState().sessions.find((s) => s.id === payload.sessionId)
+  if (!session) throw new Error(`No session with id "${payload.sessionId}"`)
+  return { pinned: session.accountPinned === true, mode: session.accountSwitchMode ?? null }
+}
+
+/** What a served clave_launch_group asks of the routed window (wave 4):
+ *  whether the pin is idle, running and shown, or running and hidden, with
+ *  the live group when there is one. A pin linked to a group that is gone
+ *  reads idle, as the window's own launch would reset it. */
+function handlePinnedState(payload: { pinnedId: string }): unknown {
+  const pin = usePinnedStore.getState().pinnedGroups.find((p) => p.id === payload.pinnedId)
+  if (!pin) throw new Error(`No pinned group "${payload.pinnedId}"`)
+  const alive =
+    !!pin.activeGroupId && useSessionStore.getState().groups.some((g) => g.id === pin.activeGroupId)
+  if (!alive) return { state: 'idle', groupId: null }
+  return { state: getPinnedState(pin), groupId: pin.activeGroupId }
+}
+
 async function execute(command: string, payload: unknown): Promise<unknown> {
   switch (command) {
     case 'list':
       return handleList(payload as Parameters<typeof handleList>[0])
+    case 'windowState':
+      return handleWindowState(payload as Parameters<typeof handleWindowState>[0])
+    case 'sessionSwitchState':
+      return handleSessionSwitchState(payload as { sessionId: string })
+    case 'pinnedState':
+      return handlePinnedState(payload as { pinnedId: string })
     case 'resolveSessionRef':
       return handleResolveSessionRef(payload as { ref: string })
     case 'createGroup':

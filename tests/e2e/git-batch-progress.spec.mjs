@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * Pull all pulls what the panel shows, and the refresh is what goes looking.
  *
@@ -155,7 +160,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', name: 'batch' })
     await win.waitForTimeout(2000)
@@ -317,6 +322,100 @@ export async function run(t) {
     await win.waitForTimeout(500)
     const rowGone = await win.evaluate(() => !!document.querySelector('.panel-bar-progress'))
     t.check('the row clears itself afterwards', rowGone === false, rowGone)
+
+    // ── Pull all needs no network, and names what it could not do ─────────
+    // (PRDCT-3372.) known-behind gets a new commit, fetched, and then loses its
+    // remote: the pull must still land, from what is on disk. up-to-date gets
+    // an upstream commit and a local one writing the same file differently:
+    // it cannot be integrated, and the bar must say so by name and keep
+    // saying it until clicked away.
+    for (const name of ['known-behind', 'up-to-date']) {
+      const work = path.join(ORIGINS, `${name}-push-2`)
+      execFileSync('git', ['clone', '-q', path.join(ORIGINS, `${name}.git`), work], {
+        stdio: 'ignore'
+      })
+      writeFileSync(path.join(work, 'second.txt'), `upstream: ${name}\n`)
+      git(work, 'add', '-A')
+      git(work, '-c', 'user.email=e2e@clave', '-c', 'user.name=e2e', 'commit', '-qm', 'second')
+      git(work, 'push', '-q')
+      git(path.join(ROOT, name), 'fetch', '-q')
+    }
+    git(
+      path.join(ROOT, 'known-behind'),
+      'remote',
+      'set-url',
+      'origin',
+      path.join(ORIGINS, 'gone.git')
+    )
+    const clash = path.join(ROOT, 'up-to-date')
+    writeFileSync(path.join(clash, 'second.txt'), 'local, and different\n')
+    git(clash, 'add', '-A')
+    git(clash, '-c', 'user.email=e2e@clave', '-c', 'user.name=e2e', 'commit', '-qm', 'local clash')
+    const clashHead = execFileSync('git', ['-C', clash, 'rev-parse', 'HEAD']).toString().trim()
+
+    // The panel is paused at this size: a window focus is what re-reads it.
+    await win.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await win.waitForTimeout(3000)
+    const badged = await repoState(win, ROOT)
+    t.check(
+      'both repos are visibly behind before the pull',
+      badged['known-behind'].behind > 0 && badged['up-to-date'].behind > 0,
+      badged
+    )
+
+    await win.click('[aria-label="Pull all"]')
+    await win.waitForTimeout(3000)
+    const failedRow = await win.evaluate(() => {
+      const el = document.querySelector('.panel-progress-count.is-failed')
+      return el ? { text: el.textContent?.trim() ?? '', tag: el.tagName } : null
+    })
+    t.check(
+      'the summary names the repo it could not pull',
+      !!failedRow &&
+        failedRow.text.includes('1 pulled') &&
+        failedRow.text.includes('1 failed: up-to-date'),
+      failedRow
+    )
+    const level = await repoState(win, ROOT)
+    t.check(
+      'the repo whose remote is gone was pulled anyway, from what it had fetched',
+      level['known-behind'].behind === 0,
+      level
+    )
+    const clashAfter = execFileSync('git', ['-C', clash, 'rev-parse', 'HEAD']).toString().trim()
+    const clashStatus = execFileSync('git', ['-C', clash, 'status', '--porcelain'])
+      .toString()
+      .trim()
+    t.check(
+      'the repo it could not integrate is left as it was',
+      clashAfter === clashHead && clashStatus === '',
+      { clashAfter, clashHead, clashStatus }
+    )
+
+    await win.hover('.panel-progress-count.is-failed')
+    await win.waitForTimeout(800)
+    const tip = await win.evaluate(() =>
+      [...document.querySelectorAll('.panel-progress-failures')]
+        .map((e) => e.textContent ?? '')
+        .join(' ')
+    )
+    t.check(
+      "its tooltip gives git's reason",
+      tip.includes('up-to-date') && /conflict|could not apply/i.test(tip),
+      tip
+    )
+
+    // Past the four seconds a routine summary is held: this one stays.
+    await win.waitForTimeout(5000)
+    const stillThere = await win.evaluate(
+      () => !!document.querySelector('.panel-progress-count.is-failed')
+    )
+    t.check('the failure stays on screen past the usual hold', stillThere, stillThere)
+
+    await win.click('.panel-progress-count.is-failed')
+    await win.waitForTimeout(500)
+    const dismissed = await win.evaluate(() => !!document.querySelector('.panel-bar-progress'))
+    t.check('a click puts it away', dismissed === false, dismissed)
   } finally {
     await app.close()
     rmSync(ROOT, { recursive: true, force: true })

@@ -13,6 +13,7 @@ import {
   QueueListIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
+import { summarizePull } from '../../lib/pull-summary'
 import { useGitBatch } from './git-batch-context'
 
 // ---------------------------------------------------------------------------
@@ -411,16 +412,7 @@ export function MagicPullButton({
   const handlePull = useCallback(() => {
     void run('pull', async () => {
       try {
-        const results = await window.electronAPI.gitMagicPull(repoPaths)
-        const pulled = results.filter((r) => r.pulled && !r.error)
-        const upToDate = results.filter((r) => !r.pulled && !r.error)
-        const errors = results.filter((r) => r.error)
-
-        const parts: string[] = []
-        if (pulled.length > 0) parts.push(`${pulled.length} pulled`)
-        if (upToDate.length > 0) parts.push(`${upToDate.length} up to date`)
-        if (errors.length > 0) parts.push(`${errors.length} failed`)
-        return parts.join(', ')
+        return summarizePull(await window.electronAPI.gitMagicPull(repoPaths))
       } finally {
         // Refresh even when the batch threw: a partial run still moved repos.
         onDone?.()

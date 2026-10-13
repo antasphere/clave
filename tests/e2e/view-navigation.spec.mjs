@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * A link followed inside a view is never a dead end.
  *
@@ -222,7 +227,7 @@ export async function run(t) {
   const { server, port } = await serve()
   const HOME = `http://127.0.0.1:${port}`
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     // Count what leaves for the system browser instead of letting it open.
     await app.evaluate(({ shell }) => {

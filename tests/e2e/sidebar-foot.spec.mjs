@@ -17,6 +17,10 @@
  *  - The saved profile used to be a hex. A migration that silently drops it
  *    leaves the default palette, which is indistinguishable from a user who
  *    never chose one.
+ *
+ * The quota it shows comes from a read stubbed on the settings source of
+ * whichever server runs (`globalThis.__claveE2E.settings`, reached through
+ * the fixture route in both modes, PRDCT-3293).
  */
 import {
   launchApp,
@@ -92,7 +96,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  let { app, win } = await launchApp(DIR)
+  let { app, win, fixture } = await launchApp(DIR)
   try {
     // Hand the renderer a fixed set of limit windows. Without this the second
     // line renders whichever branch the RUNNING MACHINE's own Claude session
@@ -100,9 +104,10 @@ export async function run(t) {
     // the row-shaped control they sit in — was checked on some machines and
     // silently skipped on others. Canned, both branches are reachable and the
     // geometry below is always asserted against the real thing.
-    await app.evaluate(({ ipcMain }) => {
-      ipcMain.removeHandler('usage:get-limits')
-      ipcMain.handle('usage:get-limits', () => ({
+    await fixture.evaluate(() => {
+      const settings = globalThis.__claveE2E?.settings
+      if (!settings) throw new Error('no settings source: is --test-no-activate on?')
+      settings.usage.readClaude = async () => ({
         windows: [
           {
             key: 'weekly_all',
@@ -115,7 +120,7 @@ export async function run(t) {
           }
         ],
         fetchedAt: Date.now()
-      }))
+      })
     })
 
     // ── what a profile nobody has touched looks like ──

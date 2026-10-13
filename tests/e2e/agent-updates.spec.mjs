@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // The agent updater in the running app (PRDCT-2927): Clave keeps the agent
 // CLIs it launches on their latest release, through the installer that owns
 // each one, and the app never waits on it.
@@ -117,6 +122,7 @@ async function settingsAndInstallers(t) {
   const { server, port } = await registry(tags)
   const dir = userDataDir('agent-updates')
   const { app, win } = await launchApp(dir, {
+    server: 'in-process',
     env: {
       CLAVE_TEST_AGENT_PATH: bin,
       CLAVE_TEST_NPM_REGISTRY: `http://127.0.0.1:${port}`
@@ -274,6 +280,7 @@ async function restartHint(t) {
   seedTrustedRoots(dir, [ws])
   const TOKEN = 'sk-ant-oat01-hint-token-for-the-agent-updates-run-0123456789'
   const { app, win } = await launchApp(dir, {
+    server: 'in-process',
     env: { CLAVE_TEST_AGENT_PATH: bin, CLAVE_TEST_NPM_REGISTRY: `http://127.0.0.1:${port}` }
   })
   try {

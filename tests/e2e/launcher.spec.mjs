@@ -7,6 +7,7 @@
  * at all, never turn it into a no-op that still exits 0.
  */
 import {
+  until,
   launchApp,
   seedWorkspaces,
   userDataDir,
@@ -75,10 +76,17 @@ export async function run(t) {
 
     // ── PRDCT-1664: launches at the workspace root, no folder dialog ──
     await win.click('.launcher-row button')
-    await win.waitForTimeout(4000)
+    // The tab is drawn once the start answered (over the server, attached:
+    // a round trip more than the IPC it was), so the rows are waited for.
+    const rows = await until(
+      async () => {
+        const seen = await sidebarRows(win)
+        return seen.includes('clave-e2e-root-a') ? seen : null
+      },
+      { tries: 40, gapMs: 250 }
+    )
     t.equal('clicking Terminal opened no folder dialog', await dialogCalls(), 0)
-    const rows = await sidebarRows(win)
-    t.check('it spawned a session at the workspace root', rows.includes('clave-e2e-root-a'), rows)
+    t.check('it spawned a session at the workspace root', !!rows, await sidebarRows(win))
 
     // ── the caret changes what a plain click launches ──
     t.equal('the agent button starts on Claude', await agentButtonLabel(win), 'Claude')

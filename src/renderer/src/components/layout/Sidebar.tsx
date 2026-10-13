@@ -91,11 +91,16 @@ import {
   GlobeAltIcon
 } from '@heroicons/react/24/outline'
 
+// The height of a tab menu's account header with its usage chart, its
+// separator and the menu's padding (AccountMenuHeader with `chart`).
+const ACCOUNT_HEADER_LIFT = 200
+
 interface ContextMenuState {
   x: number
   y: number
   items: ContextMenuItem[]
   header?: React.ReactNode
+  headerLift?: number
 }
 
 function GroupColorPickerHeader({
@@ -1175,7 +1180,9 @@ export function Sidebar(): React.JSX.Element {
       // account is left, at the top of its menu: the one place to look when a
       // window runs out and the question is "which subscription is this on".
       const header =
-        session && accountProviderOf(session) ? <AccountMenuHeader session={session} /> : undefined
+        session && accountProviderOf(session) ? (
+          <AccountMenuHeader session={session} chart />
+        ) : undefined
       // Every other account of the tab's provider, those with headroom first
       // and the one whose week renews soonest on top (Suggested), in one
       // submenu beside the menu, a card of its caps beside the highlighted
@@ -1253,7 +1260,9 @@ export function Sidebar(): React.JSX.Element {
         onClick: () => handleDeleteSession(sessionId)
       })
       const { clientX: x, clientY: y } = e
-      setContextMenu({ x, y, items, header })
+      // The account header with its chart is a fixed height: the menu rises
+      // by it so the chart sits above the cursor, the first item under it.
+      setContextMenu({ x, y, items, header, headerLift: header ? ACCOUNT_HEADER_LIFT : 0 })
       // The window entries arrive a beat later (main is asked which windows
       // exist); the menu re-renders in place with them appended.
       if (session?.alive) {
@@ -2020,6 +2029,7 @@ export function Sidebar(): React.JSX.Element {
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           header={contextMenu.header}
+          headerLift={contextMenu.headerLift}
         />
       )}
 

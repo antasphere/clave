@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
     remembered: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     rememberedEffort: vi.fn<(adapterId: string) => string | undefined>(() => undefined),
     findTranscript: vi.fn<(id: string, cwd: string, configDir?: string) => string | null>(),
-    title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn() },
+    title: { scheduleChatTitle: vi.fn(), cleanup: vi.fn(), cancelAll: vi.fn(), shutdown: vi.fn() },
     manager: {
       registerAdapter: vi.fn(),
       getAdapter: vi.fn(),
@@ -199,6 +199,24 @@ describe('a Claude chat tab survives a restart', () => {
       TAB,
       expect.objectContaining({ claudeSessionId: CONVERSATION })
     )
+  })
+
+  it('the quit ends the title jobs with the sessions and shuts the door', async () => {
+    // The one call that makes a quit end a running `claude -p` and start no
+    // other (PRDCT-3375): the whole suite stayed green with it removed
+    // (round 1 of the verifier), and the door shut on a window's close
+    // left every later tab unnamed (round 2).
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    await ptyManager.killAll({ quit: true })
+    expect(mocks.title.shutdown).toHaveBeenCalledTimes(1)
+    expect(mocks.title.cancelAll).not.toHaveBeenCalled()
+  })
+
+  it("the last window's close ends the title jobs and leaves the door open", async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    await ptyManager.killAll()
+    expect(mocks.title.cancelAll).toHaveBeenCalledTimes(1)
+    expect(mocks.title.shutdown).not.toHaveBeenCalled()
   })
 
   it('drops the record on a real close and keeps it on quit', async () => {

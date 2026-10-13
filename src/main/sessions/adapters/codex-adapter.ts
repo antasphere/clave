@@ -1,4 +1,8 @@
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { codexRoot, findCodexRollout } from '../../session-history/codex'
+import { replayCodexHistory } from './codex-history'
 import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
 import {
   SessionInputSchema,
@@ -7,6 +11,7 @@ import {
   type PreparedPrompt,
   type SessionInput,
   type SessionEvent,
+  type HistoryItem,
   type ModelOption,
   type CommandOption
 } from '../../../shared/session-model'
@@ -27,6 +32,8 @@ import {
   type RpcId
 } from './codex-app-server'
 import { effortLabel, isValidEffort } from '../../../shared/effort'
+import { lazyTerminalPorts } from '../../ports/terminals'
+import type { McpConfigPort } from '../../ports/mcp-config'
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
 /** The efforts a model/list row says its model takes, with Codex's gloss. */
@@ -299,8 +306,11 @@ export class CodexTranslator {
 
 interface HandleState {
   spec: SpawnSpec
+  history: HistoryItem[]
+  historyError?: unknown
   profile?: LaunchProfile
   env?: Record<string, string>
+  mcpConfig?: McpConfigPort
   /** A model chosen after launch; every later turn/start carries it. */
   model?: string | null
   /** The effort chosen at launch or since; every later turn/start carries it
@@ -366,6 +376,7 @@ export class CodexAdapter implements SessionAdapter {
     const launchEffort = text(object(spec.options).effort)
     const state: HandleState = {
       spec,
+      history: [],
       ...(launchEffort && isValidEffort(launchEffort) ? { effort: launchEffort } : {}),
       profile: context?.profile,
       env: context?.env,
@@ -379,6 +390,17 @@ export class CodexAdapter implements SessionAdapter {
       ended: false,
       closing: false
     }
+    // Snapshot before the process can append new turns. The views page this
+    // past separately from the live stream, including after switching views.
+    const resume = text(object(spec.options).resume)
+    if (resume) {
+      try {
+        const path = findCodexRollout(resume, codexRoot(context?.env))
+        if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
+      } catch (error) {
+        state.historyError = error
+      }
+    }
     this.profiles.delete(spec.id)
     this.handles.set(spec.id, state)
     return { id: spec.id }
@@ -386,6 +408,19 @@ export class CodexAdapter implements SessionAdapter {
   async attach(id: string): Promise<SessionHandle> {
     this.require({ id })
     return { id }
+  }
+
+  history(handle: SessionHandle): HistoryItem[] {
+    const state = this.require(handle)
+    if (state.historyError) {
+      this.error(
+        state,
+        new Error(`Could not replay the conversation: ${String(state.historyError)}`),
+        false
+      )
+      state.historyError = undefined
+    }
+    return state.history
   }
 
   write(handle: SessionHandle, input: Uint8Array | SessionInput): void {
@@ -610,6 +645,38 @@ export class CodexAdapter implements SessionAdapter {
       const sandbox = text(options.sandbox) || profilePolicy.sandbox
       if (sandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(sandbox))
         throw new Error(`Unsupported Codex sandbox: ${sandbox}`)
+      // Reuse the same private per-tab credential issuer as the terminal and
+      // Claude adapters. Only its environment variable name crosses JSON-RPC.
+      state.mcpConfig = lazyTerminalPorts.mcpConfig
+      await state.mcpConfig.ready?.()
+      if (state.ended || state.closing) return
+      const configPath = state.mcpConfig.write(state.spec.id)
+      if (!configPath) throw new Error('Clave MCP is unavailable for this Codex session')
+      let url: string
+      let token: string
+      try {
+        const server = object(object(JSON.parse(readFileSync(configPath, 'utf8'))).mcpServers)
+        const clave = object(server.clave)
+        url = text(clave.url)
+        const authorization = text(object(clave.headers).Authorization)
+        token = authorization.startsWith('Bearer ') ? authorization.slice(7) : ''
+        const endpoint = new URL(url)
+        if (
+          endpoint.protocol !== 'http:' ||
+          !['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname) ||
+          !token
+        )
+          throw new Error('Invalid Clave MCP config')
+      } catch {
+        throw new Error("Could not read this Codex session's private Clave MCP config")
+      }
+      state.env = {
+        // The cached login/account snapshot is authoritative, including
+        // variables it intentionally omitted from the host environment.
+        ...(state.env ?? process.env),
+        CLAVE_SESSION_ID: state.spec.id,
+        CLAVE_CODEX_MCP_TOKEN: token
+      } as Record<string, string>
       state.connection = this.connect(
         state.spec.cwd,
         {
@@ -641,13 +708,29 @@ export class CodexAdapter implements SessionAdapter {
       })
       state.connection.notify('initialized')
       const resume = text(options.resume)
+      // Codex deep-merges MCP tables, even when the override supplies the
+      // whole server. A fresh name keeps legacy user transport, authorization
+      // headers and tool filters from contaminating this invocation's binding.
+      const mcpServerName = `clave_${randomBytes(6).toString('hex')}`
       const result = await state.connection.request(resume ? 'thread/resume' : 'thread/start', {
         ...(resume ? { threadId: resume } : {}),
         cwd: state.spec.cwd,
         ...(text(options.model) ? { model: text(options.model) } : {}),
         ...(sandbox ? { sandbox } : {}),
         approvalPolicy: permissionMode,
-        approvalsReviewer: profilePolicy.approvalsReviewer ?? 'user'
+        approvalsReviewer: profilePolicy.approvalsReviewer ?? 'user',
+        // Add only this invocation's server, preserving existing user MCP
+        // servers and the profile's developer instructions. Required
+        // makes a failed handshake fail start/resume rather than lose tools.
+        config: {
+          'shell_environment_policy.set.CLAVE_SESSION_ID': state.spec.id,
+          [`mcp_servers.${mcpServerName}`]: {
+            url,
+            bearer_token_env_var: 'CLAVE_CODEX_MCP_TOKEN',
+            enabled: true,
+            required: true
+          }
+        }
       })
       state.translator.metadata(result)
       if (!state.translator.threadId) throw new Error('Codex returned no thread id')
@@ -703,6 +786,7 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended) return
     state.ended = true
     state.translator.approvals.clear()
+    state.mcpConfig?.remove(state.spec.id)
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)
     if (this.handles.get(state.spec.id) === state) this.handles.delete(state.spec.id)

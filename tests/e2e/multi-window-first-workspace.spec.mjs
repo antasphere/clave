@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * Registering the FIRST workspace must not destroy existing groups
  * (PRDCT-1703 — the single-window regression floor). This is the F1
@@ -50,7 +55,7 @@ export async function run(t) {
   let app = null
   const opened = []
   try {
-    const launched = await launchApp(DIR, { settleMs: 5000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 5000 })
     app = launched.app
     const win = launched.win
     const idBefore = await win.evaluate(() => window.electronAPI.windowIdentity())
@@ -139,7 +144,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const relaunched = await launchApp(DIR, { settleMs: 6000 })
+    const relaunched = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = relaunched.app
     const listed =
       (await until(async () => {

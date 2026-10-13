@@ -80,13 +80,10 @@ the transport: with no view resolved the pane falls back to the terminal, and a
 claim kept there would never reach zero, so main would go on streaming into a log
 nobody reads. It keeps the event LOG, not a reduction of it, because reducing is
 a view's reading of the session and two views of one plugin read the same events
-differently. A native view reduces that log with its own reducer (`CompactView`
-does) and therefore renders the whole conversation however late it is opened.
-A resumed session's past is not in the stream: the log reads its newest page
-(`sessions:history`) into `past` once subscribed, and a view reads further back
-with `loadEarlierLog` as its reader scrolls up, the same way `ChatView` pages its
-own;
-`ChatView` still keeps its own reducer and its own subscription, which the
+differently. Today its one reader is the pane's background-tasks chip; the
+compact view, which reduced the whole log, was removed in 2.2, and the log's
+read of the resumed past (`sessions:history`) went with it.
+`ChatView` and `TerminalView` still keep its own reducer and its own subscription, which the
 preload's reference count makes safe beside the log, and moves onto it once
 PRDCT-2549 has merged (PRDCT-2616).
 

@@ -1,36 +1,58 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { sidebarLayoutManager, type SidebarLayout } from '../sidebar-layout-manager'
+import type { WindowLayout } from '@clave/contract/sidebar'
 import { windowRegistry } from '../window-registry'
-import { windowState } from '../window-state'
+import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
+import { TEST_NO_ACTIVATE } from '../test-mode'
 
-/** One layout file per window: a renderer loads and saves ITS OWN, resolved
- *  from the sender — a renderer never names a window key. The primary's
- *  load also takes in the orphans (files whose window no longer exists). */
+/** The end-to-end suite's seam, under --test-no-activate only: how many
+ *  sidebar calls came over IPC, so a spec can tell the server's road from
+ *  the shell's (`globalThis.__claveE2E.sidebarIpc`). */
+function countIpc(kind: 'load' | 'save'): void {
+  if (!TEST_NO_ACTIVATE) return
+  const g = globalThis as typeof globalThis & {
+    __claveE2E?: { sidebarIpc?: { load: number; save: number } }
+  }
+  const counts = (g.__claveE2E ??= {}).sidebarIpc ?? { load: 0, save: 0 }
+  counts[kind] += 1
+  g.__claveE2E.sidebarIpc = counts
+}
+
+/**
+ * The sidebar over IPC: the same domain the server answers for over its
+ * API (`src/main/sidebar-layouts.ts`), reached directly by a window that
+ * has no server yet or whose server runs elsewhere. A renderer loads and
+ * saves ITS OWN layout, resolved from the sender; it never names a window
+ * key. The primary's load also takes in the orphans (the layouts of windows
+ * that no longer exist), which the domain decides through its host.
+ */
 export function registerSidebarLayoutHandlers(): void {
-  ipcMain.handle('sidebar-layout:load', (event) => {
+  const keyOf = (event: Electron.IpcMainInvokeEvent): string | null => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    const key = win ? windowRegistry.getKeyForWindow(win.id) : null
-    if (!win || !key) return { groups: [], displayOrder: [] } satisfies SidebarLayout
-    const own = sidebarLayoutManager.loadForWindow(key)
-    if (!windowRegistry.isPrimary(win.id)) return own
-    // Known = every window that exists (live or persisted for the next boot).
-    const known = new Set([...windowState.keys(), ...windowRegistry.liveKeys()])
-    const orphans = sidebarLayoutManager.takeOrphans(known)
-    if (orphans.groups.length === 0 && orphans.displayOrder.length === 0) return own
-    return {
-      groups: [...own.groups, ...orphans.groups],
-      displayOrder: [...own.displayOrder, ...orphans.displayOrder]
-    } satisfies SidebarLayout
+    return win ? windowRegistry.getKeyForWindow(win.id) : null
+  }
+
+  ipcMain.handle('sidebar:transport', () => sidebarTransport())
+
+  ipcMain.handle('sidebar-layout:load', (event) => {
+    countIpc('load')
+    const key = keyOf(event)
+    if (!key) return { windowKey: '', revision: 0, groups: [], displayOrder: [] }
+    return sidebarLayouts().get(key)
   })
 
-  ipcMain.handle('sidebar-layout:save', (event, data: SidebarLayout) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const key = win ? windowRegistry.getKeyForWindow(win.id) : null
+  ipcMain.handle('sidebar-layout:save', (event, data: WindowLayout, baseRevision?: unknown) => {
+    countIpc('save')
+    const key = keyOf(event)
     if (!key) {
       console.error('[sidebar-layout] refused: save from an unknown window')
       return { ok: false as const, reason: 'no-window' as const }
     }
-    sidebarLayoutManager.saveForWindow(key, data)
-    return { ok: true as const }
+    const result = sidebarLayouts().save(
+      key,
+      data,
+      typeof baseRevision === 'number' ? baseRevision : undefined
+    )
+    if (result.ok) return { ok: true as const, layout: result.value }
+    return { ok: false as const, reason: 'conflict' as const, current: result.error.current }
   })
 }

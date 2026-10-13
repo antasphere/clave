@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * A rendered HTML page SURVIVES being switched away from and back (PRDCT-2122).
  *
@@ -175,7 +180,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     // Open the HTML page as a file tab, rendered.
     const openedHtml = await callMcp(app, 'openFile', { path: PAGE, view: 'rendered' })
@@ -263,7 +268,7 @@ export async function run(t) {
     const openView = () =>
       win.evaluate(() => {
         const icon = [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] span[role="button"]')
+          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
         ].find((s) => s.getAttribute('title') === 'Dash')
         icon?.click()
         return !!icon

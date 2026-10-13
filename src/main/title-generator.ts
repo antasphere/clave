@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, type ChildProcess } from 'child_process'
 import {
   existsSync,
   watchFile,
@@ -10,7 +10,6 @@ import {
 } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import { BrowserWindow } from 'electron'
 import {
   accountTokenForSpawn,
   getLoginShellEnv,
@@ -19,6 +18,7 @@ import {
 import { launchProfileManager } from './launch-profile-manager'
 import { buildOneShotLaunch, type OneShotLaunch } from './claude-one-shot'
 import { TITLE_HELPER_MARKER } from './session-history'
+import { sessionCleared, sessionPlanDetected, sessionTitleChanged } from './server/session-events'
 
 // --- Session tracking ---
 
@@ -36,7 +36,9 @@ export interface TitleLaunchContext {
 interface SessionEntry {
   cwd: string
   claudeSessionId: string
-  win: BrowserWindow
+  /** The key of the window the tab is in, for the per-window arm of its
+   *  news when no server publishes it; null for a windowless caller. */
+  windowKey: string | null
   launch: TitleLaunchContext
   jsonlPath: string
   titleDone: boolean
@@ -73,6 +75,66 @@ const titleQueue: TitleJob[] = []
 let activeTitleJobs = 0
 const MAX_CONCURRENT_TITLES = 1
 
+/** The one-shot CLI children running right now, and the ones `cancelAll`
+ *  ended. A `claude -p` is a child of this process in its own process
+ *  group, so nothing of the sessions' shutdown reached it: wave 3's
+ *  verifier found one alive after the server had stopped (PRDCT-3375). The
+ *  handle is held here so the quit ends it with the rest. */
+const activeChildren = new Set<ChildProcess>()
+const cancelled = new WeakSet<ChildProcess>()
+/** Set by `shutdown`, the quit's call: from then on no title job starts (a
+ *  tab named during the quit would spawn a CLI nothing kills; round 1 of
+ *  the verifier). `cancelAll` alone leaves the door open: the sessions'
+ *  shutdown also runs when the last window closes on macOS, which is not a
+ *  quit, and the tabs reopened from the Dock must still be named (round 2). */
+let closed = false
+/** How long a cancelled child gets to leave on SIGTERM before SIGKILL. */
+export const TITLE_CANCEL_GRACE_MS = 1000
+
+/** End every title job: the queued ones are refused, the running CLI is
+ *  signalled (SIGTERM, then SIGKILL after the grace), and its answer, if one
+ *  still comes, names no tab. Called by the sessions' shutdown
+ *  (`pty-manager.ts` killAll), in the app's quit and the standalone
+ *  server's stop alike, and when the last window closes. The door stays
+ *  open: a title asked for afterwards runs. */
+export function cancelAll(): void {
+  for (const job of titleQueue.splice(0)) job.reject(new Error('Title generation cancelled'))
+  for (const child of [...activeChildren]) {
+    cancelled.add(child)
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* already gone */
+    }
+    const hard = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }, TITLE_CANCEL_GRACE_MS)
+    child.once('exit', () => clearTimeout(hard))
+  }
+}
+
+/** The quit's call (`pty-manager.ts` killAll with `quit: true`): every job
+ *  ended as `cancelAll` does, and the door shut, so a tab named during the
+ *  quit spawns no CLI nothing kills. Never called on a window's close. */
+export function shutdown(): void {
+  closed = true
+  cancelAll()
+}
+
+/** The CLI children running right now (test seam). */
+export function runningTitleJobs(): number {
+  return activeChildren.size
+}
+
+/** Open the door again (test seam: the module is one per process). */
+export function resetShutdownForTests(): void {
+  closed = false
+}
+
 function processNextTitle(): void {
   if (activeTitleJobs >= MAX_CONCURRENT_TITLES || titleQueue.length === 0) return
   const job = titleQueue.shift()!
@@ -99,14 +161,14 @@ export function scheduleTitleGeneration(
   sessionId: string,
   cwd: string,
   claudeSessionId: string,
-  win: BrowserWindow,
+  windowKey: string | null,
   launch: TitleLaunchContext = {}
 ): void {
   const jsonlPath = getJsonlPath(cwd, claudeSessionId)
   const entry: SessionEntry = {
     cwd,
     claudeSessionId,
-    win,
+    windowKey,
     launch,
     jsonlPath,
     titleDone: false,
@@ -164,9 +226,7 @@ export function scheduleTitleGeneration(
         // (before this the tab kept the pre-/clear id, and a Resume or a
         // restart reopened the conversation the user had just cleared).
         const stem = filename.slice(0, -'.jsonl'.length)
-        if (entry.win && !entry.win.isDestroyed()) {
-          entry.win.webContents.send(`session:clear-detected:${sessionId}`, stem)
-        }
+        sessionCleared(sessionId, stem, entry.windowKey)
       }, 500)
     })
     entry.dirWatcher = dirWatcher
@@ -201,7 +261,7 @@ export function scheduleChatTitle(sessionId: string, launch: TitleLaunchContext 
  *  slash command, not a bare yes/no — becomes the tab's name, delivered on the
  *  same channel a terminal tab's title arrives on. Anything else leaves the tab
  *  waiting for the message that does state what the conversation is about. */
-export function notifyChatMessage(sessionId: string, text: string, win: BrowserWindow): void {
+export function notifyChatMessage(sessionId: string, text: string, windowKey: string | null): void {
   const launch = chatAwaitingTitle.get(sessionId)
   if (!launch) return
   const message = text.trim()
@@ -209,9 +269,7 @@ export function notifyChatMessage(sessionId: string, text: string, win: BrowserW
   chatAwaitingTitle.delete(sessionId)
   console.log(`[title-gen] Chat ${sessionId} message: "${message.slice(0, 80)}"`)
   generateTitle(sessionId, message, launch)
-    .then((title) => {
-      if (!win.isDestroyed()) win.webContents.send(`session:auto-title:${sessionId}`, title)
-    })
+    .then((title) => sessionTitleChanged(sessionId, title, windowKey))
     .catch(() => {})
 }
 
@@ -303,11 +361,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
       console.log(`[title-gen] Session ${sessionId} message: "${userMessage.slice(0, 80)}"`)
 
       generateTitle(sessionId, userMessage, entry.launch)
-        .then((title) => {
-          if (entry.win && !entry.win.isDestroyed()) {
-            entry.win.webContents.send(`session:auto-title:${sessionId}`, title)
-          }
-        })
+        .then((title) => sessionTitleChanged(sessionId, title, entry.windowKey))
         .catch(() => {})
       break
     }
@@ -322,9 +376,7 @@ async function processJsonl(sessionId: string, entry: SessionEntry): Promise<voi
         const planPath = extractPlanPath(parsed)
         if (planPath && existsSync(planPath)) {
           entry.planDetected = true
-          if (entry.win && !entry.win.isDestroyed()) {
-            entry.win.webContents.send(`session:plan-detected:${sessionId}`, planPath)
-          }
+          sessionPlanDetected(sessionId, planPath, entry.windowKey)
           console.log(`[title-gen] Session ${sessionId}: plan detected at ${planPath}`)
           break
         }
@@ -403,6 +455,7 @@ function generateTitle(
   launch: TitleLaunchContext
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (closed) return reject(new Error('Title generation cancelled'))
     titleQueue.push({ sessionId, userMessage, launch, resolve, reject })
     processNextTitle()
   })
@@ -451,6 +504,12 @@ ${userMessage}`
       launch.args,
       { env: launch.env, encoding: 'utf-8', maxBuffer: 1024 * 1024, timeout: TITLE_TIMEOUT_MS },
       (err, stdout, stderr) => {
+        activeChildren.delete(child)
+        if (cancelled.has(child)) {
+          // Ended by the quit: no heuristic, no title for a tab that is going.
+          reject(new Error('Title generation cancelled'))
+          return
+        }
         if (err) {
           console.error('[title-gen] claude CLI error:', err.message, stderr)
           const fallback = heuristicTitle(userMessage)
@@ -489,6 +548,7 @@ ${userMessage}`
         resolve(title)
       }
     )
+    activeChildren.add(child)
     child.stdin?.write(prompt)
     child.stdin?.end()
   })

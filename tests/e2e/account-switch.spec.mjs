@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // Account pools and the switch (ADR 0002): a Claude tab moved from one token
 // account to another keeps its id and its conversation and its PROCESS gets
 // the other token; a Codex tab moved to another account gets that account's
@@ -7,6 +12,14 @@
 //
 // The checks are what the session's own shell prints, never a badge: a
 // dropped spawn field renders a perfect UI and runs on the wrong subscription.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it
+// shows comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync, writeFileSync, existsSync, lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -37,12 +50,14 @@ export async function run(t) {
   writeFileSync(path.join(CODEX_HOME, 'auth.json'), '{"machine":true}')
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { env: { CODEX_HOME } })
+  const { app, win } = await launchApp(DIR, { server: 'in-process', env: { CODEX_HOME } })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
         const state = (globalThis.__switchFixture = { quota: {}, codexReads: [] })
         const window = (used, kind = 'session') => ({
           key: `${kind}:x`,
@@ -53,21 +68,20 @@ export async function run(t) {
           resetsAt: Date.now() + 3600_000,
           severity: null
         })
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
+        const original = settings.usage.readClaude
         // The Default account is the machine login: never read here.
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') {
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default') {
             return { windows: [window(30)], fetchedAt: Date.now() }
           }
-          return original(event, accountId, options)
-        })
-        const snapshot = handlers.get('usage:claude-snapshot')
-        handlers.set('usage:claude-snapshot', async (event) => {
-          const all = await snapshot(event)
+          return original(accountId, force)
+        }
+        const snapshot = settings.usage.claudeSnapshot
+        settings.usage.claudeSnapshot = async () => {
+          const all = await snapshot()
           delete all.default
           return all
-        })
+        }
         // The probe answers per token, with a quota the test moves.
         state.quota = { [WORK_TOKEN]: 0.1, [PLAY_TOKEN]: 0.2 }
         globalThis.fetch = async (url, init) => {
@@ -91,14 +105,13 @@ export async function run(t) {
           })
         }
         // Codex usage: a canned read per account, no codex process.
-        ipcMain.removeHandler('usage:get-codex-limits')
-        ipcMain.handle('usage:get-codex-limits', (_event, accountId) => {
+        settings.usage.readCodex = async (accountId) => {
           state.codexReads.push(accountId ?? 'default')
           return {
             windows: [window(accountId === 'default' || !accountId ? 20 : 10, 'weekly_all')],
             fetchedAt: Date.now()
           }
-        })
+        }
       },
       { WORK_TOKEN, PLAY_TOKEN }
     )
@@ -194,6 +207,22 @@ export async function run(t) {
       'the menu header names the account',
       await header.getAttribute('data-account-header'),
       accounts.work
+    )
+    // The header's chart raises the menu above the cursor; on a row near the
+    // top of the sidebar that lift must never carry it off the window.
+    await win.waitForTimeout(300)
+    const [tabMenuBox, viewport] = await Promise.all([
+      win.locator('[role="menu"]').first().boundingBox(),
+      win.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+    ])
+    t.check(
+      'the tab menu, raised by its chart, stays inside the window',
+      !!tabMenuBox &&
+        tabMenuBox.y >= 0 &&
+        tabMenuBox.x >= 0 &&
+        tabMenuBox.y + tabMenuBox.height <= viewport.height &&
+        tabMenuBox.x + tabMenuBox.width <= viewport.width,
+      JSON.stringify({ tabMenuBox, viewport })
     )
     const switchEntry = win.locator('[role="menuitem"]', { hasText: 'Switch account' })
     t.check('the menu offers one Switch account entry', (await switchEntry.count()) === 1)

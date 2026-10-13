@@ -29,24 +29,24 @@ const plugin = (patch: Record<string, unknown> = {}): PluginRecord =>
       contributes: {
         views: [
           { id: 'chat', title: 'Chat', renders: ['events'] },
-          { id: 'compact', title: 'Compact', renders: ['events'] }
+          { id: 'terminal', title: 'Terminal', renders: ['events'] }
         ]
       }
     },
     ...patch
   }) as unknown as PluginRecord
-const both: ReadonlySet<string> = new Set(['clave.chat-view/chat', 'clave.chat-view/compact'])
+const both: ReadonlySet<string> = new Set(['clave.chat-view/chat', 'clave.chat-view/terminal'])
 
 describe('view resolution', () => {
   it('offers one entry per contributed view, keyed by plugin and view', () => {
     expect(availableViews(session(), [plugin()], both)).toEqual([
       { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat', kind: 'native' },
-      { id: 'clave.chat-view/compact', title: 'Compact', pluginName: 'Chat', kind: 'native' }
+      { id: 'clave.chat-view/terminal', title: 'Terminal', pluginName: 'Chat', kind: 'native' }
     ])
   })
   it('resolves the view the session names', () => {
-    expect(resolveView(session({ viewId: 'clave.chat-view/compact' }), [plugin()], both)).toBe(
-      'clave.chat-view/compact'
+    expect(resolveView(session({ viewId: 'clave.chat-view/terminal' }), [plugin()], both)).toBe(
+      'clave.chat-view/terminal'
     )
   })
   it('falls back to the first matching view when the session names none', () => {
@@ -74,7 +74,7 @@ describe('view resolution', () => {
       contributes: { views: [{ id: 'chat', title: 'Chat', renders: ['events'] }] }
     }
     expect(
-      resolveView(session({ viewId: 'clave.chat-view/compact' }), [plugin({ manifest })], both)
+      resolveView(session({ viewId: 'clave.chat-view/terminal' }), [plugin({ manifest })], both)
     ).toBe('clave.chat-view/chat')
   })
   it('falls back to the terminal when the plugin is disabled', () => {
@@ -87,7 +87,7 @@ describe('view resolution', () => {
       { id: 'clave.chat-view/chat', title: 'Chat', pluginName: 'Chat', kind: 'native' }
     ])
     expect(
-      resolveView(session({ viewId: 'clave.chat-view/compact' }), [plugin()], new Set())
+      resolveView(session({ viewId: 'clave.chat-view/terminal' }), [plugin()], new Set())
     ).toBeUndefined()
   })
   it('names a view by its id when the manifest gives no title', () => {
@@ -107,17 +107,17 @@ describe('view resolution', () => {
       contributes: {
         views: [
           { id: 'chat', title: 'Chat', renders: ['pty'] },
-          { id: 'compact', title: 'Compact', renders: ['events'] }
+          { id: 'terminal', title: 'Terminal', renders: ['events'] }
         ]
       }
     }
     // The per-view filter, not the early return: this session IS an events one.
     expect(availableViews(session(), [plugin({ manifest })], both)).toEqual([
-      { id: 'clave.chat-view/compact', title: 'Compact', pluginName: 'Chat', kind: 'native' }
+      { id: 'clave.chat-view/terminal', title: 'Terminal', pluginName: 'Chat', kind: 'native' }
     ])
     expect(
       resolveView(session({ viewId: 'clave.chat-view/chat' }), [plugin({ manifest })], both)
-    ).toBe('clave.chat-view/compact')
+    ).toBe('clave.chat-view/terminal')
   })
   it('offers nothing to a PTY session, whatever a manifest claims', () => {
     const manifest = {

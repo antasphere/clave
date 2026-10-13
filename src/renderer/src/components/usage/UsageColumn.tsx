@@ -30,7 +30,7 @@ export function UsageColumn({
       tabIndex={tooltip ? 0 : undefined}
     >
       <span className="usage-column-value" aria-label={`${pct}% used`}>
-        {level === 'critical' && <ExclamationTriangleIcon aria-hidden />}
+        {level === 'critical' && !full && <ExclamationTriangleIcon aria-hidden />}
         {pct}%
       </span>
       <span className="usage-column-track">

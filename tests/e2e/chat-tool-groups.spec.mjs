@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { openChat, inject } from './chat-view.spec.mjs'
 import { until } from './harness.mjs'
-import { choose } from './plugin-views.spec.mjs'
 
 /* A run of tool calls is ONE row between two messages. What this spec holds, in
    the real app, that a unit test cannot: the row renders, a click opens it, the
@@ -14,13 +13,12 @@ import { choose } from './plugin-views.spec.mjs'
    fails on strictness (src/renderer/src/views/README.md). */
 
 export async function run(t) {
-  const fixture = await openChat('chat-tool-groups')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-tool-groups')
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="chat-view"]')
-  const compact = win.locator('.chat-view[data-view="compact"]')
   try {
     // A run of four tools between two messages, one of them still running.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'look around' },
       { type: 'tool_call', id: 'g1', name: 'Read', input: { file_path: '/one.ts' } },
       { type: 'tool_result', id: 'g1', output: 'first file' },
@@ -93,7 +91,7 @@ export async function run(t) {
     // commoner live case — the agent keeps calling tools while the row is open —
     // and keying the row on the run's length rather than its first tool id
     // passes every other check here while closing the row under the reader.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'tool_call', id: 'g5', name: 'Grep', input: { pattern: 'TODO' } }
     ])
     await until(async () => (await run1.locator('.chat-tool-item').count()) === 5)
@@ -106,7 +104,7 @@ export async function run(t) {
     t.check('a new call joining an open run leaves it open', true)
 
     // And the choice survives the last results arriving.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'tool_result', id: 'g5', output: 'one match' },
       { type: 'tool_result', id: 'g4', output: 'third file' }
     ])
@@ -117,7 +115,7 @@ export async function run(t) {
     t.check('a result arriving mid-run leaves an opened row open', true)
 
     // A message ends the run; a permission card does not.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'assistant_text', delta: 'Here is what I found.', final: true },
       { type: 'tool_call', id: 'h1', name: 'Read', input: { file_path: '/four.ts' } },
       { type: 'tool_result', id: 'h1', output: 'fourth' },
@@ -137,7 +135,7 @@ export async function run(t) {
     t.check('a message breaks the run into two rows; a permission card inside one does not', true)
 
     // A failure is counted, shown, and NEVER opens the row by itself.
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'assistant_text', delta: 'Trying something.', final: true },
       { type: 'tool_call', id: 'f1', name: 'Bash', input: { command: 'false' } },
       { type: 'tool_result', id: 'f1', output: 'boom', error: true },
@@ -158,34 +156,15 @@ export async function run(t) {
     )
     t.check('a failure is counted from the adapter flag alone and never auto-expands', true)
 
-    // The compact view reads the same runs, one line each, no bodies. Its rows
-    // are virtualised like the conversation's: they are mounted once the view
-    // is on screen, so the reader switches to it first.
-    const picker = win.getByLabel('Change view', { exact: true })
-    await choose(win, picker, 'Compact')
-    const compactRows = compact.locator('li[data-kind="tool-group"]')
-    await until(async () => (await compactRows.count()) === 3)
-    assert.equal(await compactRows.first().locator('span').first().innerText(), 'Tools')
-    assert.equal(
-      await compactRows.first().locator('span').nth(1).innerText(),
-      'Read 3 files · Ran 1 command · Searched once'
-    )
-    assert.equal(await compactRows.nth(2).getAttribute('data-state'), 'failed')
-    assert.equal(await compactRows.nth(2).getAttribute('data-failures'), '1')
-    assert.match(await compactRows.nth(2).innerText(), /1 failed/)
-    assert.equal(await compact.locator('.chat-tool-item').count(), 0)
-    t.check('the compact view groups the same runs as one line each, with no tool bodies', true)
-
     // The rows are virtualised: a row scrolled far out of view leaves the
     // document, and the reader's open rows must come back open. A <details>
     // keeps its state in the DOM, so without the view's memory of it
     // (ToolDisclosure) the first run returns closed.
-    await choose(win, picker, 'Chat')
     const scroller = view.locator('.chat-scroll')
     const opened = view.locator('.chat-tool-run[data-tools="5"]')
     const filler = 'A long answer that pushes the first run far out of view. '.repeat(12)
     await inject(
-      app,
+      fixture,
       record.id,
       Array.from({ length: 40 }, (_, i) =>
         i % 2 === 0
@@ -223,6 +202,6 @@ export async function run(t) {
     )
     t.check('a row scrolled back into view does not replay its entrance', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

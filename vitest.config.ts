@@ -16,7 +16,15 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
-    environment: 'node'
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      'scripts/**/*.test.mjs',
+      'tests/e2e/**/*.test.mjs',
+      'packages/{contract,server,client}/src/**/*.test.ts'
+    ],
+    environment: 'node',
+    // The framework ships TypeScript source, not compiled output, so Node
+    // cannot load it from node_modules on its own: vite transforms it instead.
+    server: { deps: { inline: [/@structure-ai\//] } }
   }
 })

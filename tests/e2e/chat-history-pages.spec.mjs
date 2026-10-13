@@ -1,3 +1,11 @@
+// Pinned to the in-process server. The attached restore itself works since wave 4
+// (PRDCT-3376: the records are the server's, read off it after the boot; see
+// terminal-reattach, which runs in both modes). This spec stays pinned because
+// it seeds session records (and transcripts) by hand into the APP's data folder
+// before the launch, and attached the records live in the standalone server's
+// folder, which the harness does not seed with session-records (a harness
+// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
+// records it restores through the prompt are the in-process boot's too.
 /**
  * A long conversation restored into a chat tab opens on its end at once, and
  * reads further back only as the reader scrolls there, without moving them.
@@ -137,7 +145,7 @@ export async function run(t) {
   let app = null
   try {
     // ── Launch 1: a chat tab talks once, so it has a record and a transcript ──
-    let launched = await launchApp(DIR, { env })
+    let launched = await launchApp(DIR, { server: 'in-process', env })
     app = launched.app
     let win = launched.win
     await win.evaluate(async (command) => {
@@ -176,7 +184,7 @@ export async function run(t) {
     writeFileSync(transcript, longTranscript())
 
     // ── Launch 2: the tab comes back on a long conversation ──
-    launched = await launchApp(DIR, { env, settleMs: 3000 })
+    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })

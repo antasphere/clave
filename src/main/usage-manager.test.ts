@@ -63,11 +63,13 @@ describe('parseUnifiedRateLimitHeaders', () => {
     expect(parseUnifiedRateLimitEntries([['content-type', 'application/json']])).toEqual([])
   })
 
-  it('takes a value above one as a percentage already', () => {
+  it('reads a window past its cap as full, never as a percentage of one', () => {
     expect(
-      parseUnifiedRateLimitEntries([['anthropic-ratelimit-unified-7d-utilization', '42']])[0]
-        .usedPercentage
-    ).toBe(42)
+      parseUnifiedRateLimitEntries([
+        ['anthropic-ratelimit-unified-7d_oi-utilization', '1.01'],
+        ['anthropic-ratelimit-unified-7d_oi-status', 'rejected']
+      ])[0]
+    ).toMatchObject({ usedPercentage: 100, severity: 'critical' })
   })
 
   it('renders a window it has never seen, scoped by its name', () => {

@@ -68,6 +68,20 @@ describe('PTY adapter compatibility', () => {
     manager.write(id, new Uint8Array([0xa9]))
     expect(backend.write).toHaveBeenCalledExactlyOnceWith(id, 'é')
   })
+  it('a detach kills the client only and a kill destroys: the word reaches the backend as given', () => {
+    const adapter = new PtyAdapter()
+    const handle = adapter.prepare('/project', { claudeMode: false })
+    const exits = vi.fn()
+    adapter.on(handle, 'exit', exits)
+    // The sidebar's rehoming and the app's quit detach: the tmux session and
+    // the record must survive, so the backend is told `false` and nothing else.
+    adapter.detach(handle)
+    expect(backend.kill).toHaveBeenCalledExactlyOnceWith(handle.id, false)
+    expect(exits).not.toHaveBeenCalled()
+    const other = adapter.prepare('/project', { claudeMode: false })
+    adapter.kill(other)
+    expect(backend.kill).toHaveBeenLastCalledWith(other.id)
+  })
   it('leaves Codex titles as bytes for the existing renderer state path', () => {
     const adapter = new PtyAdapter()
     const handle = adapter.prepare('/project', { codexMode: true })

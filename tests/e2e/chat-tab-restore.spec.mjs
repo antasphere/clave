@@ -1,3 +1,11 @@
+// Pinned to the in-process server. The attached restore itself works since wave 4
+// (PRDCT-3376: the records are the server's, read off it after the boot; see
+// terminal-reattach, which runs in both modes). This spec stays pinned because
+// it seeds session records (and transcripts) by hand into the APP's data folder
+// before the launch, and attached the records live in the standalone server's
+// folder, which the harness does not seed with session-records (a harness
+// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
+// records it restores through the prompt are the in-process boot's too.
 /**
  * A Claude chat tab survives an app restart, and a real close forgets it.
  *
@@ -34,6 +42,7 @@ const TRANSCRIPTS = `${ROOT}/transcripts`
 const ARGV_LOG = `${ROOT}/argv.jsonl`
 const FIRST_PROMPT = 'first launch prompt'
 const SECOND_PROMPT = 'after restore prompt'
+const DRAFT = 'a prompt typed and never sent'
 const recordPath = (id) => path.join(DIR, 'session-records', `${id}.json`)
 const readRecord = (id) => {
   try {
@@ -124,7 +133,7 @@ export async function run(t) {
   const pids = new Set()
   try {
     // ── Launch 1: a chat tab from the launcher, one message ──
-    let launched = await launchApp(DIR, { env })
+    let launched = await launchApp(DIR, { server: 'in-process', env })
     app = launched.app
     let win = launched.win
     await win.evaluate(async (command) => {
@@ -195,13 +204,22 @@ export async function run(t) {
     )
     if (!record) throw new Error('no chat record after launch 1: nothing to restore')
 
+    // ── An unsent prompt in the composer when the app quits ──
+    const composer = win.locator(
+      `section.chat-host[data-session-id="${tabId}"] [data-testid="chat-view"] textarea:not(:disabled)`
+    )
+    await composer.waitFor()
+    await composer.click()
+    await win.keyboard.type(DRAFT)
+    t.equal('launch 1: the draft is in the composer', await composer.inputValue(), DRAFT)
+
     // ── Assertion 2: a normal quit keeps the record ──
     await app.close()
     app = null
     t.check('quit: the chat record survives app.close()', existsSync(recordPath(tabId)))
 
     // ── Launch 2: accept the restore prompt ──
-    launched = await launchApp(DIR, { env, settleMs: 3000 })
+    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })
@@ -231,6 +249,16 @@ export async function run(t) {
         (await win.getByTestId('chat-view').first().innerText()).includes(FIRST_PROMPT)
     )
     t.check('launch 2: the restored chat view shows the first conversation', !!replayed)
+    // The unsent prompt from launch 1 is back in the same tab's composer.
+    const restoredComposer = win.locator(
+      `section.chat-host[data-session-id="${tabId}"] [data-testid="chat-view"] textarea`
+    )
+    await restoredComposer.waitFor()
+    t.equal(
+      'launch 2: the unsent prompt typed before the quit is back in the composer',
+      await restoredComposer.inputValue(),
+      DRAFT
+    )
 
     // The CLI starts on first input: send one and read the argv it got.
     const before = launches().length
@@ -269,6 +297,11 @@ export async function run(t) {
     t.check(
       'close: the tab left the renderer store',
       !(await callMcp(app, 'list', {})).sessions.some((s) => s.id === tabId)
+    )
+    t.equal(
+      "close: the closed tab's unsent prompt is gone from storage",
+      await win.evaluate((id) => localStorage.getItem(`clave-draft:${id}`), tabId),
+      null
     )
   } finally {
     if (app) await app.close()

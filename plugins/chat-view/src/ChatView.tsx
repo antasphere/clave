@@ -14,7 +14,8 @@ import type {
   Session,
   SessionInput,
   AgentState,
-  CommandOption
+  CommandOption,
+  SessionEvent
 } from '../../../src/shared/session-model'
 import { answeredSince, emptyConversation, reduceConversation, type Entry } from './reducer'
 import { PermissionModeMenu } from './PermissionModeMenu'
@@ -36,6 +37,9 @@ import { endIsCurrent } from '../../../src/renderer/src/views/session-end'
 import { acceptAccountProposal } from '../../../src/renderer/src/lib/account-policy'
 import type { HistoryListEntry } from '../../../src/preload/index.d'
 import { ChatCode } from './code'
+import { ContextMeter } from './TerminalStatus'
+import { emptyStatus, reduceStatus, type TerminalStatus } from './terminal-status'
+import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
@@ -364,6 +368,11 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     ...emptyConversation,
     state: session.state
   })
+  // The footer's context meter reads the same stream the terminal's status line does.
+  const [status, dispatchStatus] = useReducer(
+    (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
+    emptyStatus
+  )
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -412,9 +421,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
       if (value.kind !== 'event') return
       const event = value.event
-      if (event.type === 'state_change' && event.state === 'ended')
-        confirmed(() => dispatch({ event }))
-      else dispatch({ event })
+      const take = (): void => {
+        dispatch({ event })
+        dispatchStatus(event)
+      }
+      if (event.type === 'state_change' && event.state === 'ended') confirmed(take)
+      else take()
     })
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
       confirmed(() => dispatch({ exit: code }))
@@ -432,6 +444,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             if (!live) return
             dispatch({ prepend: page.items })
             setBefore(page.before)
+            // The newest page holds the context as the conversation left it.
+            const usage = page.items.findLast((item) => item.event.type === 'context_usage')
+            if (usage) dispatchStatus(usage.event)
           })
           .catch(() => {})
           .finally(() => {
@@ -948,9 +963,16 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             >
               <PaperClipIcon />
             </button>
-            {state === 'working'
-              ? 'Esc to interrupt and take the message back'
-              : 'Enter to send · Shift+Enter for a new line'}
+            <ContextMeter
+              variant="chat"
+              used={status.contextUsed}
+              window={
+                status.contextWindow ??
+                // Named by a turn's result; until one has come, the model says it.
+                claudeContextWindow(conversation.model)
+              }
+            />
+            {state === 'working' && <span>Esc to interrupt and take the message back</span>}
           </span>
           <div className="chat-composer-controls">
             {conversation.permissionMode && (

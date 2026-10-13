@@ -1,3 +1,12 @@
+// Pinned to the in-process server. The attached moves and restore work since
+// wave 4 (PRDCT-3376: a move releases the session on the server first; see
+// attached-window-move, attached-agent-token and terminal-reattach, which run
+// attached). This spec stays pinned because it seeds session records by hand
+// into the APP's folder (attached they are the server's, which the harness does
+// not seed), reads an agent tab's config from the app's mcp-configs folder
+// (attached the server writes it), and/or relies on group membership surviving
+// an attached quit, which the attached boot flattens (pre-existing, on the
+// wave's owed list). Not a known failure.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).
@@ -123,7 +132,7 @@ export async function run(t) {
   const PFX = `clave-e2e-pfx-${rand}`
   const SIBLING = `${PFX}-2`
   try {
-    const first = await launchApp(DIR)
+    const first = await launchApp(DIR, { server: 'in-process' })
     app = first.app
     let win = first.win
 
@@ -314,7 +323,7 @@ export async function run(t) {
         recordExists(PFX)
     )
 
-    const second = await launchApp(DIR, { settleMs: 8000 })
+    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
     app = second.app
     win = second.win
     const booted = await until(async () => {

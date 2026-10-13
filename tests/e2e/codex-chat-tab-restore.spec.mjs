@@ -1,3 +1,11 @@
+// Pinned to the in-process server. The attached restore itself works since wave 4
+// (PRDCT-3376: the records are the server's, read off it after the boot; see
+// terminal-reattach, which runs in both modes). This spec stays pinned because
+// it seeds session records (and transcripts) by hand into the APP's data folder
+// before the launch, and attached the records live in the standalone server's
+// folder, which the harness does not seed with session-records (a harness
+// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
+// records it restores through the prompt are the in-process boot's too.
 /**
  * A Codex chat tab survives an app restart, in whichever workspace it lives.
  *
@@ -87,8 +95,20 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     return send({ id: f.id, result: { thread: { id: thread }, model: 'gpt-stub' } });
   }
   if (f.method === 'turn/start') {
-    fs.writeFileSync(path.join(${JSON.stringify(ROLLOUTS)}, 'rollout-2026-09-28T10-00-00-' + thread + '.jsonl'), '{}\\n');
-    return send({ id: f.id, result: { turn: { id: 'turn-' + Date.now(), status: 'completed' } } });
+    const turnId = 'turn-' + Date.now();
+    const prompt = f.params.input.filter(i => i.type === 'text').map(i => i.text).join('\\n');
+    const answer = 'Reply to ' + prompt;
+    const stamp = new Date().toISOString();
+    const record = (type, payload) => JSON.stringify({ timestamp: stamp, type, payload });
+    const completed = item => record('event_msg', { type: 'item_completed', thread_id: thread, turn_id: turnId, item });
+    fs.appendFileSync(path.join(${JSON.stringify(ROLLOUTS)}, 'rollout-2026-09-28T10-00-00-' + thread + '.jsonl'), [
+      record('event_msg', { type: 'task_started', turn_id: turnId }),
+      completed({ type: 'UserMessage', id: turnId + '-u', content: [{ type: 'text', text: prompt }] }),
+      completed({ type: 'AgentMessage', id: turnId + '-a', content: [{ type: 'Text', text: answer }] })
+    ].join('\\n') + '\\n');
+    send({ id: f.id, result: { turn: { id: turnId, status: 'completed' } } });
+    send({ method: 'item/completed', params: { threadId: thread, turnId, item: { type: 'agentMessage', id: turnId + '-a', text: answer } } });
+    return send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turnId, status: 'completed' } } });
   }
   send({ id: f.id, result: {} });
 });
@@ -120,7 +140,7 @@ export async function run(t) {
     )
   try {
     // ── Launch 1: two Codex chat tabs in the workspace NOT shown ──
-    let launched = await launchApp(DIR, { env })
+    let launched = await launchApp(DIR, { server: 'in-process', env })
     app = launched.app
     let win = launched.win
     const open = async () =>
@@ -188,7 +208,8 @@ export async function run(t) {
     )
 
     // ── Launch 2: accept the restore prompt ──
-    launched = await launchApp(DIR, { env, settleMs: 3000 })
+    const beforeRestore = requests().length
+    launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
     const restore = win.getByRole('button', { name: 'Restore', exact: true })
@@ -214,13 +235,34 @@ export async function run(t) {
         (await kernel(win, silent))?.transport === 'events'
     )
 
-    // The app-server comes up on first input: send one to each and read
-    // which thread method it got.
-    const before = requests().length
+    // A view may start the app-server before input. Count from the relaunch
+    // so eager startup and deferred startup are both covered.
+    const history = await win.evaluate((id) => window.electronAPI.sessionsHistory(id), talked)
+    t.check(
+      'launch 2: the restored history contains the earlier message and answer',
+      history.items.length === 2 &&
+        history.items[0].event.text === 'first message' &&
+        history.items[1].event.delta === 'Reply to first message',
+      history
+    )
+    await callMcp(app, 'switchWorkspace', { workspace: HIDDEN.id })
+    await callMcp(app, 'focus', { sessionId: talked })
+    const view = win.locator(
+      `section.chat-host[data-session-id="${talked}"] [data-testid="chat-view"]`
+    )
+    t.check(
+      'launch 2: the chat renders the saved answer before another message is sent',
+      !!(await until(() =>
+        view
+          .getByText('Reply to first message', { exact: true })
+          .isVisible()
+          .catch(() => false)
+      ))
+    )
     await say(win, talked, 'after restore')
     await say(win, silent, 'after restore')
     const after = await until(() => {
-      const fresh = requests().slice(before)
+      const fresh = requests().slice(beforeRestore)
       return fresh.filter((r) => r.method === 'turn/start').length === 2 ? fresh : null
     })
     const resumes = (after ?? []).filter((r) => r.method === 'thread/resume')
@@ -234,6 +276,25 @@ export async function run(t) {
       'launch 2: the silent tab started a fresh thread instead of failing a resume',
       starts.length === 1,
       after
+    )
+    t.check(
+      'launch 2: the new answer appears alongside the saved answer',
+      !!(await until(() =>
+        view
+          .getByText('Reply to after restore', { exact: true })
+          .isVisible()
+          .catch(() => false)
+      ))
+    )
+    t.check(
+      'launch 2: the saved answer is rendered exactly once',
+      (await view.getByText('Reply to first message', { exact: true }).count()) === 1
+    )
+    const past = await win.evaluate((id) => window.electronAPI.sessionsHistory(id), talked)
+    t.check(
+      'launch 2: a live turn does not get appended to the paged history',
+      past.items.length === 2,
+      past
     )
 
     // ── A real close forgets the tab ──

@@ -1,3 +1,12 @@
+// Pinned to the in-process server. The attached moves and restore work since
+// wave 4 (PRDCT-3376: a move releases the session on the server first; see
+// attached-window-move, attached-agent-token and terminal-reattach, which run
+// attached). This spec stays pinned because it seeds session records by hand
+// into the APP's folder (attached they are the server's, which the harness does
+// not seed), reads an agent tab's config from the app's mcp-configs folder
+// (attached the server writes it), and/or relies on group membership surviving
+// an attached quit, which the attached boot flattens (pre-existing, on the
+// wave's owed list). Not a known failure.
 /**
  * Moving between windows (PRDCT-1703). A live tmux session lives in exactly
  * one window; the user (or an agent) can MOVE it to another, and a whole
@@ -174,7 +183,7 @@ export async function run(t) {
   try {
     // Window 1 (primary, on A) adopts the unstamped record as an orphan —
     // hidden, since it belongs to workspace B.
-    const launched = await launchApp(DIR, { settleMs: 6000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = launched.app
     const win1 = launched.win
     const id1 = await identityOf(win1)

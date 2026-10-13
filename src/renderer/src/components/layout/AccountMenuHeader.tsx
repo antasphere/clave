@@ -19,13 +19,23 @@ import {
 } from '../../store/usage-store'
 import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
+import { useNow } from '../../lib/use-now'
+import { AccountUsagePlot } from './AccountSwitchMenu'
 
 /**
  * The header of a Claude or Codex session's context menu: which account the
  * session runs on and that account's headroom. Live while the menu is open:
- * a read that lands meanwhile updates the line.
+ * a read that lands meanwhile updates the line. With `chart`, the account's
+ * caps follow as columns, the same plot the Switch account card draws.
  */
-export function AccountMenuHeader({ session }: { session: Session }): React.JSX.Element {
+export function AccountMenuHeader({
+  session,
+  chart = false
+}: {
+  session: Session
+  chart?: boolean
+}): React.JSX.Element {
+  const now = useNow()
   const codex = !!session.codexMode
   const claudeProfiles = useClaudeProfileStore((s) => s.profiles)
   const codexAccounts = useCodexAccountStore((s) => s.accounts)
@@ -52,7 +62,7 @@ export function AccountMenuHeader({ session }: { session: Session }): React.JSX.
         : null
   const single = (codex ? codexAccounts : claudeProfiles).length <= 1
   const Logo = codex ? CodexLogo : ClaudeLogo
-  return (
+  const line = (
     <div
       className="flex items-center gap-2 min-w-0"
       data-claude-account-header={codex ? undefined : own.id}
@@ -74,6 +84,13 @@ export function AccountMenuHeader({ session }: { session: Session }): React.JSX.
               : 'Reading usage…'}
         </div>
       </div>
+    </div>
+  )
+  if (!chart) return line
+  return (
+    <div className="flex flex-col gap-2.5 min-w-0">
+      {line}
+      <AccountUsagePlot summary={summary} now={now} even />
     </div>
   )
 }

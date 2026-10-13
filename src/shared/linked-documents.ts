@@ -27,13 +27,6 @@ export interface LinkedAttachment {
   size: number
   sha256: string
 }
-export interface LinkedDelivery {
-  revision: number
-  packageId: string
-  status: 'sent' | 'failed' | 'unknown'
-  messageId?: string
-  detail?: string
-}
 export interface LinkedDocument {
   id: string
   sessionId: string
@@ -52,10 +45,19 @@ export interface LinkedDocument {
   hidden: boolean
   split: number
   scroll: number
-  delivery?: LinkedDelivery
-  deliveries?: Record<string, LinkedDelivery>
-  /** Authoritative seals cover the complete immutable package, not only MIME bytes. */
-  preparedPackages?: Record<string, string>
+}
+/**
+ * What an agent reads back through `clave_side_panel`: the document with each
+ * attachment's absolute file path, so the agent can attach the retained copy
+ * through its own channel. The panel is review-only by design (PRDCT-3438):
+ * Clave holds no mail credentials, so the agent sends, never the panel. The
+ * path is derived from the store's root at read time and never persisted.
+ */
+export interface LinkedAttachmentRead extends LinkedAttachment {
+  path: string
+}
+export type LinkedDocumentRead = Omit<LinkedDocument, 'attachments'> & {
+  attachments: LinkedAttachmentRead[]
 }
 export const linkedOpenSchema = z
   .object({
@@ -88,16 +90,6 @@ export const linkedUpdateSchema = z
   .strict()
   .refine((v) => !(v.signatureMode && v.signaturePath), 'Choose signatureMode or signaturePath')
 export type LinkedUpdate = z.infer<typeof linkedUpdateSchema>
-export interface PreparedEmail {
-  id: string
-  documentId: string
-  sessionId: string
-  revision: number
-  raw: string
-  sha256: string
-  threadId?: string
-  messageId: string
-}
 export interface DefaultSignature {
   path: string
   textPath?: string

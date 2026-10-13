@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —
@@ -8,6 +13,14 @@
 // The checks are what the stub CLI's own processes record — the token they
 // got, the `--resume` they were given, the messages they received — plus the
 // pane: no ended notice, the composer open, a new message answered.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it shows
+// comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -92,19 +105,38 @@ export async function run(t) {
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { env })
+  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  // The old process's end (below) travels through the session host, and a
+  // wrap only reaches the subscriptions made after it: so the host's stream is
+  // wrapped here, before the tab exists, and asks a hold the move installs
+  // later whether to keep a frame back. The exit is not held: the server's
+  // push hub drops a session's subscription on its exit listener, so holding
+  // that listener in main kept the hub bound to the killed process, and the
+  // pane's re-subscribe joined that stale subscription and never saw Play.
+  await app.evaluate(() => {
+    globalThis.__endHold = null
+    const host = globalThis.__claveE2E.sessionHost
+    const subscribe = host.subscribe
+    host.subscribe = (sid, listener) =>
+      subscribe.call(host, sid, (frame) => {
+        const end = frame?.kind === 'event' && frame.event?.state === 'ended'
+        if (!(end && globalThis.__endHold?.(sid, () => listener(frame)))) listener(frame)
+      })
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     // Both accounts have headroom: the move is the reader's choice, not a limit's.
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') return { windows: [], fetchedAt: Date.now() }
-          return original(event, accountId, options)
-        })
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
+        const original = settings.usage.readClaude
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default')
+            return { windows: [], fetchedAt: Date.now() }
+          return original(accountId, force)
+        }
         const quota = { [WORK_TOKEN]: 0.3, [PLAY_TOKEN]: 0.2 }
         globalThis.fetch = async (_url, init) => {
           const token = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')
@@ -184,20 +216,16 @@ export async function run(t) {
     // (`ended` on the stream and the state channel, the exit) until just after
     // the restart has answered, so every run takes the late order.
     await app.evaluate(
-      ({ BrowserWindow, ipcMain }, { id }) => {
+      ({ ipcMain }, { id }) => {
         let restarting = false
         const held = []
-        for (const w of BrowserWindow.getAllWindows()) {
-          const wc = w.webContents
-          const send = wc.send.bind(wc)
-          wc.send = (channel, ...args) => {
-            const end =
-              channel === `sessions:exit:${id}` ||
-              channel === `agent:state:${id}` ||
-              (channel === `sessions:stream:${id}` && args[0]?.event?.state === 'ended')
-            if (restarting && end) held.push(() => send(channel, ...args))
-            else send(channel, ...args)
-          }
+        // The `agent:state` end is no longer held: that state travels as a
+        // server event now, not through a channel main sends on.
+        // Only the `ended` stream frame is held (see the host wrap above).
+        globalThis.__endHold = (sid, flush) => {
+          if (!restarting || sid !== id) return false
+          held.push(flush)
+          return true
         }
         const handlers = ipcMain._invokeHandlers
         const restart = handlers.get('pty:restart')

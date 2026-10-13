@@ -10,8 +10,8 @@
 //    with its text (`draft-store.ts` holds it; keep it in the view's own state
 //    and the text is gone).
 // Then the kept draft is sent and read back as the user's turn. Two more
-// checks close the draft store's own seams: the compact view reads the same
-// draft (keep it in CompactView's own state and it is gone after a toggle),
+// checks close the draft store's own seams: the terminal view reads the same
+// draft (keep it in TerminalView's own state and it is gone after a toggle),
 // and the draft is keyed by session (key it globally and a second tab opens
 // with the first tab's text).
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -115,7 +115,7 @@ export async function run(t) {
     state = await composerState()
     t.check('and the composer is empty after the send', state.value === '', state)
 
-    // ── The compact view keeps its draft the same way ────────────────────────
+    // ── The terminal view keeps its draft the same way ───────────────────────
     const switchTo = async (title) => {
       await win.getByLabel('Change view', { exact: true }).click()
       const item = win.locator('.menu-item', { hasText: title })
@@ -124,23 +124,23 @@ export async function run(t) {
       await item.click({ force: true })
       await win.waitForTimeout(300)
     }
-    await switchTo(/^Compact$/)
-    const compact = win.locator('[data-view="compact"] input:not(:disabled)')
-    await compact.waitFor()
-    await compact.click()
-    await win.keyboard.type('compact draft')
+    await switchTo(/^Terminal$/)
+    const terminal = win.locator('.terminal-view textarea:not(:disabled)')
+    await terminal.waitFor()
+    await terminal.click()
+    await win.keyboard.type('terminal draft')
     await win.evaluate((id) => window.electronAPI.pluginsDisable(id), CHAT)
-    await until(async () => (await win.locator('[data-view="compact"]').count()) === 0)
+    await until(async () => (await win.locator('.terminal-view').count()) === 0)
     await win.evaluate(
       (id) => window.electronAPI.pluginsEnable(id, ['sessions.read', 'sessions.write']),
       CHAT
     )
-    await compact.waitFor()
-    const compactValue = await compact.inputValue()
+    await terminal.waitFor()
+    const terminalValue = await terminal.inputValue()
     t.check(
-      'the compact view, its plugin switched off and on, comes back with the draft',
-      compactValue === 'compact draft',
-      compactValue
+      'the terminal view, its plugin switched off and on, comes back with the draft',
+      terminalValue === 'terminal draft',
+      terminalValue
     )
 
     // ── Each tab keeps its own draft ─────────────────────────────────────────
@@ -155,13 +155,13 @@ export async function run(t) {
       return list.find((s) => s.adapterId === 'echo' && s.id !== record.id) ?? null
     })
     const secondField = win.locator(
-      `section.chat-host[data-session-id="${second?.id}"] textarea:not(:disabled)`
+      `section.chat-host[data-session-id="${second?.id}"] [data-testid="chat-view"] textarea:not(:disabled)`
     )
     await secondField.waitFor()
     const drafts = { first: await first.inputValue(), second: await secondField.inputValue() }
     t.check(
       "a second chat tab opens with an empty composer, the first tab's draft still its own",
-      drafts.first === 'compact draft' && drafts.second === '',
+      drafts.first === 'terminal draft' && drafts.second === '',
       drafts
     )
   } finally {

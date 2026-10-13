@@ -1,6 +1,3 @@
-import * as fs from 'fs'
-import * as path from 'path'
-import { app } from 'electron'
 import {
   BUILT_IN_LAUNCH_PROFILES,
   DEFAULT_LAUNCH_PROFILE_PREFERENCES,
@@ -14,6 +11,10 @@ import {
 
 import { sessionManager } from './sessions/session-manager'
 import { pluginAdapterProfiles, unavailablePluginAdapter } from './sessions/plugin-adapters'
+import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
+import { readJson, writeJson } from './ports/storage'
+
+const LAUNCH_PROFILES_FILE = 'agent-launch-profiles.json'
 
 /** An events profile names its adapter and, optionally, the view its sessions
  *  open in (`<pluginId>/<viewId>`). Absent means the host picks the first view
@@ -114,28 +115,29 @@ function offeredChatProfiles(customProfiles: LaunchProfile[] = []): EventsLaunch
 const echoEnabled = process.argv.includes('--dev-echo-adapter')
 
 export class LaunchProfileManager {
-  private preferences: LaunchProfilePreferences
+  private stored: LaunchProfilePreferences | null = null
 
-  constructor(private readonly filePath: string) {
-    this.preferences = this.load()
+  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
+
+  private get preferences(): LaunchProfilePreferences {
+    if (!this.stored) this.stored = this.load()
+    return this.stored
+  }
+
+  private set preferences(value: LaunchProfilePreferences) {
+    this.stored = value
   }
 
   private load(): LaunchProfilePreferences {
     try {
-      return sanitizeLaunchProfilePreferences(JSON.parse(fs.readFileSync(this.filePath, 'utf-8')))
+      return sanitizeLaunchProfilePreferences(readJson(this.ports.storage, LAUNCH_PROFILES_FILE))
     } catch {
       return { ...DEFAULT_LAUNCH_PROFILE_PREFERENCES }
     }
   }
 
   private save(): void {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
-    const tempPath = `${this.filePath}.tmp`
-    fs.writeFileSync(tempPath, JSON.stringify(this.preferences, null, 2), {
-      encoding: 'utf-8',
-      mode: 0o600
-    })
-    fs.renameSync(tempPath, this.filePath)
+    writeJson(this.ports.storage, LAUNCH_PROFILES_FILE, this.preferences, { mode: 0o600 })
   }
 
   getPreferences(): LaunchProfilePreferences {
@@ -307,9 +309,7 @@ export class LaunchProfileManager {
   }
 }
 
-export const launchProfileManager = new LaunchProfileManager(
-  path.join(app.getPath('userData'), 'agent-launch-profiles.json')
-)
+export const launchProfileManager = new LaunchProfileManager()
 
 /** Does this profile's command start the Claude CLI? An events profile does
  *  only when its adapter is the Claude chat's; the echo fixture never. */

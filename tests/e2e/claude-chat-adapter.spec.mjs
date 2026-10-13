@@ -1,3 +1,10 @@
+// Pinned to the in-process server (`server: 'in-process'`): the token probe
+// it relies on is a `fetch` stubbed in this process, which only the
+// in-process server's usage read goes through; an attached app answers its
+// settings from the standalone server's own data directory, where no fixture
+// in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -66,7 +73,8 @@ setInterval(()=>{},1000);
     { mode: 0o755 }
   )
   const { app, win } = await launchApp(DIR, {
-    env: { SHELL: `${ROOT}/bin/bash`, PATH: `${ROOT}/bin:${process.env.PATH}` }
+    env: { SHELL: `${ROOT}/bin/bash`, PATH: `${ROOT}/bin:${process.env.PATH}` },
+    server: 'in-process'
   })
   let closed = false
   try {

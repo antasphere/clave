@@ -65,7 +65,7 @@ describe('plugin manifest v1', () => {
         ...input.contributes,
         views: [
           { id: 'chat', title: 'Chat', renders: ['events'] },
-          { id: 'compact', title: 'Compact', renders: ['events'] }
+          { id: 'terminal', title: 'Terminal', renders: ['events'] }
         ]
       }
     }

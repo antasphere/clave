@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 import {
   mkdtempSync,
   mkdirSync,
@@ -18,7 +23,7 @@ export async function run(t) {
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
   // Unique profile gives MCP an ephemeral port; tmux gets its own socket directory.
-  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
   let targetId
   try {
     const terminal = await callMcp(app, 'openSession', {
@@ -422,7 +427,7 @@ async function closedSwapChecks(t) {
   })
   let app
   try {
-    let launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    let launched = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
     app = launched.app
     for (const f of fixtures) {
       await launched.win.evaluate((id) => window.electronAPI.pluginsEnable(id, []), f.manifest.id)
@@ -447,7 +452,7 @@ async function closedSwapChecks(t) {
         symlinkSync(replacement, f.directory)
       }
     }
-    launched = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+    launched = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
     app = launched.app
     const win = launched.win
     await win.click('.sidebar-footer-btn[aria-label="Settings"]')

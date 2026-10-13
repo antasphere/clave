@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { accountOverrides } from './restart-overrides'
+import { dismissSessionOffers } from './copy-offer-manager'
+import { terminalJournal } from './terminal-journal'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -13,6 +15,8 @@ import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
+import { installE2eHooks } from './sessions/e2e-hooks'
+import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
@@ -29,6 +33,9 @@ import type { Session, UserMessageInput } from '../shared/session-model'
 // behind the adapter. No renderer PTY channel or spawn result changes.
 export * from './sessions/adapters/pty-backend'
 const echoAdapter = new EchoAdapter()
+// The suite's way to inject a frame into an echo session, in test mode only
+// (`sessions/e2e-hooks.ts`); outside test mode nothing is installed.
+installE2eHooks({ echo: { inject: (id, stream) => echoAdapter.inject(id, stream) } })
 const claudeAdapter = new ClaudeAdapter()
 sessionManager.registerAdapter(ptyAdapter)
 sessionManager.registerAdapter(echoAdapter)
@@ -115,6 +122,10 @@ class PtyManager {
   }
 
   async spawn(cwd: string, options?: PtySpawnOptions): Promise<PtySession> {
+    // The journal (test mode only) sees every spawn here, below IPC and the
+    // server alike, before anything can refuse it: the specs that assert a
+    // launch read it where they used to tap `pty:spawn` inside main.
+    terminalJournal()?.spawn(cwd, options)
     const family = options?.piMode
       ? 'pi'
       : options?.antigravityMode
@@ -252,7 +263,7 @@ class PtyManager {
         })
       : session
     try {
-      sessionManager.adopt(record, handle, adapter)
+      sessionManager.adopt(record, handle, adapter, { model: options?.model ?? null })
     } catch (error) {
       await adapter.kill(handle)
       throw error
@@ -367,12 +378,18 @@ class PtyManager {
   }
 
   start(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    // The size the pane gave is what a screen read renders at (wave 4).
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   resize(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   write(id: string, data: string): void {
+    terminalJournal()?.write(id, data)
     if (sessionManager.get(id)?.transport === 'pty')
       sessionManager.write(id, new TextEncoder().encode(data))
   }
@@ -392,6 +409,9 @@ class PtyManager {
       this.spawns.delete(id)
       this.codexThreads.delete(id)
       this.rejected.delete(id)
+      // Copy offers are surfaced in the tab's own header: once the tab is
+      // gone they are unreachable, so their values leave memory with it.
+      dismissSessionOffers(id)
     }
     sessionManager.forget(id)
   }
@@ -460,7 +480,16 @@ class PtyManager {
     await this.kill(id, true)
     if (tmuxName) await ptyBackend.waitForTmuxSessionGone(tmuxName)
   }
-  async killAll(): Promise<void> {
+  /** Every session detached or stopped, the way the quit and the last
+   *  window's close want it. The one-shot title jobs go with the sessions
+   *  (PRDCT-3375): a `claude -p` still running would otherwise outlive the
+   *  app's quit and the standalone server's stop, both of which end here.
+   *  `quit: true` also shuts the title door (no job starts from then on);
+   *  the last window's close on macOS is not a quit, and the tabs reopened
+   *  from the Dock must still be named (round 2 of the lane's verifier). */
+  async killAll({ quit = false }: { quit?: boolean } = {}): Promise<void> {
+    if (quit) titleGenerator.shutdown()
+    else titleGenerator.cancelAll()
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {

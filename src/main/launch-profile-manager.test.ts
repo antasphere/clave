@@ -12,20 +12,25 @@ import {
   eventsProfile,
   isEchoLaunchProfile
 } from './launch-profile-manager'
+import { eachTestPorts, electronTestPorts } from './ports/testing'
 
-vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
+type TestPorts = ReturnType<ReturnType<typeof eachTestPorts>[number][1]>
 
-function withManager(test: (manager: LaunchProfileManager, filePath: string) => void): void {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clave-launch-profiles-'))
+const PROFILES_FILE = 'agent-launch-profiles.json'
+
+function withManager(
+  makePorts: () => TestPorts,
+  test: (manager: LaunchProfileManager, ports: TestPorts) => void
+): void {
+  const ports = makePorts()
   try {
-    const filePath = path.join(dir, 'profiles.json')
-    test(new LaunchProfileManager(filePath), filePath)
+    test(new LaunchProfileManager(ports), ports)
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(ports.dir, { recursive: true, force: true })
   }
 }
 
-describe('LaunchProfileManager', () => {
+describe.each(eachTestPorts())('LaunchProfileManager on %s', (_name, makePorts) => {
   it.each(['claude', 'codex'] as const)(
     'offers a %s chat variant using the saved command and arguments',
     (family) => {
@@ -33,7 +38,7 @@ describe('LaunchProfileManager', () => {
       const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(new EchoAdapter())
       try {
         Object.defineProperty(process, 'platform', { value: 'darwin' })
-        withManager((manager, filePath) => {
+        withManager(makePorts, (manager, ports) => {
           const profile = {
             id: 'work',
             name: 'Work',
@@ -57,11 +62,13 @@ describe('LaunchProfileManager', () => {
           expect(defaultViewFor(id)).toBe('clave.chat-view/chat')
           manager.setGlobalDefault(family, id)
           manager.setWorkspaceDefault('workspace', family, id)
-          const reloaded = new LaunchProfileManager(filePath)
+          const reloaded = new LaunchProfileManager(ports)
           expect(reloaded.resolve(family, 'workspace').id).toBe(id)
           // A preferences round trip must not persist synthetic profile copies.
           reloaded.replace(reloaded.getPreferences())
-          const stored = JSON.parse(fs.readFileSync(filePath, 'utf8')).customProfiles
+          const stored = JSON.parse(
+            fs.readFileSync(path.join(ports.dir, PROFILES_FILE), 'utf8')
+          ).customProfiles
           expect(stored).toContainEqual(profile)
           expect(stored.some((item: { id: string }) => item.id === id)).toBe(false)
           expect(reloaded.resolve(family, 'workspace').id).toBe(id)
@@ -80,7 +87,7 @@ describe('LaunchProfileManager', () => {
   )
 
   it('persists custom profiles with global and workspace defaults', () => {
-    withManager((manager, filePath) => {
+    withManager(makePorts, (manager, ports) => {
       manager.upsert({
         id: 'tokenops-claude',
         name: 'Claude through TokenOps',
@@ -91,7 +98,7 @@ describe('LaunchProfileManager', () => {
       manager.setGlobalDefault('claude', 'tokenops-claude')
       manager.setWorkspaceDefault('workspace-1', 'claude', 'tokenops-claude')
 
-      const reloaded = new LaunchProfileManager(filePath)
+      const reloaded = new LaunchProfileManager(ports)
       expect(reloaded.resolve('claude').command).toEqual([
         'tokenops',
         'run',
@@ -102,12 +109,13 @@ describe('LaunchProfileManager', () => {
         'claude'
       ])
       expect(reloaded.resolve('claude', 'workspace-1').id).toBe('tokenops-claude')
-      if (process.platform !== 'win32') expect(fs.statSync(filePath).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32')
+        expect(fs.statSync(path.join(ports.dir, PROFILES_FILE)).mode & 0o777).toBe(0o600)
     })
   })
 
   it('removes stale defaults when a custom profile is deleted', () => {
-    withManager((manager) => {
+    withManager(makePorts, (manager) => {
       manager.upsert({
         id: 'pi-custom',
         name: 'Pi custom',
@@ -127,14 +135,14 @@ describe('LaunchProfileManager', () => {
   })
 
   it('falls back to built-ins when persisted JSON is malformed', () => {
-    withManager((_manager, filePath) => {
-      fs.writeFileSync(filePath, '{nope')
-      expect(new LaunchProfileManager(filePath).resolve('codex').id).toBe('builtin-codex')
+    withManager(makePorts, (_manager, ports) => {
+      fs.writeFileSync(path.join(ports.dir, PROFILES_FILE), '{nope')
+      expect(new LaunchProfileManager(ports).resolve('codex').id).toBe('builtin-codex')
     })
   })
 
   it('does not allow a custom profile to replace an immutable built-in', () => {
-    withManager((manager) => {
+    withManager(makePorts, (manager) => {
       expect(() =>
         manager.upsert({
           id: 'builtin-claude',
@@ -149,7 +157,7 @@ describe('LaunchProfileManager', () => {
   })
 
   it('rejects malformed workspace override keys', () => {
-    withManager((manager) => {
+    withManager(makePorts, (manager) => {
       expect(() => manager.setWorkspaceDefault('../other', 'pi', 'builtin-pi')).toThrow(
         'Invalid workspace id'
       )
@@ -163,7 +171,9 @@ it('echo detection is a non-throwing predicate and resolution does not clone pre
     expect(isEchoLaunchProfile('dev-echo-adapter')).toBe(false)
     expect(isEchoLaunchProfile('builtin-claude')).toBe(false)
     expect(isEchoLaunchProfile(null)).toBe(false)
-    withManager((manager) => expect(manager.resolve('claude').id).toBe('builtin-claude'))
+    withManager(electronTestPorts, (manager) =>
+      expect(manager.resolve('claude').id).toBe('builtin-claude')
+    )
     expect(clone).not.toHaveBeenCalled()
   } finally {
     clone.mockRestore()
@@ -175,7 +185,7 @@ it('lists event profiles only with registered adapters and hides Claude chat on 
   const lookup = vi.spyOn(sessionManager, 'getAdapter').mockReturnValue(undefined)
   try {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
-    withManager((manager) => {
+    withManager(electronTestPorts, (manager) => {
       expect(manager.getPreferences().customProfiles).toEqual([])
       lookup.mockReturnValue(new EchoAdapter())
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
@@ -203,7 +213,7 @@ it('keeps the development echo profile exclusive to the Claude family', async ()
     process.argv.push('--dev-echo-adapter')
     vi.resetModules()
     const { LaunchProfileManager: DevManager } = await import('./launch-profile-manager')
-    const manager = new DevManager(path.join(dir, 'profiles.json'))
+    const manager = new DevManager(electronTestPorts(dir))
     expect(() => manager.setGlobalDefault('codex', 'dev-echo-adapter')).toThrow(/Claude-family/)
     expect(manager.setGlobalDefault('claude', 'dev-echo-adapter').globalDefaults.claude).toBe(
       'dev-echo-adapter'
@@ -271,7 +281,7 @@ it('refuses a stored default whose plugin is switched off, instead of starting a
   try {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     syncPluginAdapters({ list: () => [adapterPlugin(true)] })
-    withManager((manager) => {
+    withManager(electronTestPorts, (manager) => {
       manager.setGlobalDefault('claude', 'acme-agent')
       expect(manager.resolve('claude').id).toBe('acme-agent')
       // Switched off, the stored default still points at it. The shared resolver
@@ -295,7 +305,7 @@ it('refuses a stored default whose plugin is switched off, instead of starting a
 })
 
 it('leaves an ordinary deleted profile to the built-in fallback', () => {
-  withManager((manager) => {
+  withManager(electronTestPorts, (manager) => {
     manager.upsert({
       id: 'gone-custom',
       name: 'Gone',
@@ -321,7 +331,7 @@ it('derives a launch profile from an enabled adapter plugin and hides it once di
   try {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     syncPluginAdapters({ list: () => [adapterPlugin(true)] })
-    withManager((manager) => {
+    withManager(electronTestPorts, (manager) => {
       const profiles = manager.getPreferences().customProfiles
       expect(profiles.map((profile) => profile.id)).toEqual([
         'claude-chat',
@@ -346,7 +356,7 @@ it('derives a launch profile from an enabled adapter plugin and hides it once di
       ).toThrow('Reserved events profile')
     })
     syncPluginAdapters({ list: () => [adapterPlugin(false)] })
-    withManager((manager) => {
+    withManager(electronTestPorts, (manager) => {
       expect(manager.getPreferences().customProfiles.map((profile) => profile.id)).toEqual([
         'claude-chat',
         'codex-chat'
@@ -392,7 +402,7 @@ describe('the profile that starts the Claude CLI for a one-shot', () => {
 
   it("a Claude session's own profile, terminal or chat, carrying its command", () => {
     onDarwinWithChat(() =>
-      withManager((manager) => {
+      withManager(electronTestPorts, (manager) => {
         manager.upsert(work)
         expect(manager.resolveClaudeCli(null, 'work').command).toEqual(work.command)
         expect(manager.resolveClaudeCli(null, 'chat:claude:work').command).toEqual(work.command)
@@ -404,7 +414,7 @@ describe('the profile that starts the Claude CLI for a one-shot', () => {
 
   it("another family's chat is named by the workspace's default Claude", () => {
     onDarwinWithChat(() =>
-      withManager((manager) => {
+      withManager(electronTestPorts, (manager) => {
         manager.upsert(work)
         manager.setGlobalDefault('claude', 'work')
         expect(manager.resolveClaudeCli(null, 'codex-chat').id).toBe('work')
@@ -416,7 +426,7 @@ describe('the profile that starts the Claude CLI for a one-shot', () => {
 
   it("a plugin's agent as the default, on or off, yields the built-in claude", () => {
     onDarwinWithChat(() =>
-      withManager((manager) => {
+      withManager(electronTestPorts, (manager) => {
         syncPluginAdapters({ list: () => [adapterPlugin(true)] })
         manager.setGlobalDefault('claude', 'acme-agent')
         expect(manager.resolve('claude').id).toBe('acme-agent')
@@ -433,7 +443,7 @@ describe('the profile that starts the Claude CLI for a one-shot', () => {
 
   it('a deleted profile falls through to the default', () => {
     onDarwinWithChat(() =>
-      withManager((manager) => {
+      withManager(electronTestPorts, (manager) => {
         manager.upsert(work)
         manager.setGlobalDefault('claude', 'work')
         expect(manager.resolveClaudeCli(null, 'chat:claude:gone').id).toBe('work')

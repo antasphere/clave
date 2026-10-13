@@ -1,5 +1,3 @@
-import { linkedDocuments } from '../linked-documents/runtime'
-import { callRenderer } from '../mcp/mcp-bridge'
 import { ipcMain, BrowserWindow } from 'electron'
 import {
   ptyManager,
@@ -7,136 +5,74 @@ import {
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
-import { getPreference } from './clave-file-handlers'
-import { workspaceManager } from '../workspace-manager'
+import { installTerminalPorts } from '../ports/terminals'
+import {
+  getMcpRuntime,
+  writeSessionMcpConfig,
+  deleteSessionMcpConfig,
+  waitForMcpRuntime
+} from '../mcp/mcp-runtime'
+import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
-import * as titleGenerator from '../title-generator'
+import { startWatching as startAgentStateWatching } from '../agent-state-manager'
+import { hasServerEventPublisher } from '../server/session-events'
 import {
-  startWatching as startAgentStateWatching,
-  clearState as clearAgentState
-} from '../agent-state-manager'
-
-type SessionInfoResult = {
-  id: string
-  cwd: string
-  folderName: string
-  alive: boolean
-  claudeSessionId: string | null
-  piSessionId: string | null
-  launchProfileId?: string
-  model?: string
-  piProvider?: string
-  piThinking?: PtySpawnOptions['piThinking']
-}
+  type SessionInfoResult,
+  restartSession,
+  setTmuxPreferenceReader,
+  spawnSession,
+  stopSession,
+  trackInput
+} from '../sessions/lifecycle'
+import { getPreference } from './clave-file-handlers'
+import { installSessionWindows } from '../sessions/windows'
+import { electronSessionWindows } from '../sessions/electron-windows'
+import { getSessionHost } from '../sessions/host'
+import { type AdoptionScope, selectAdoptableRecords } from '../../shared/adoption-scope'
 
 export function registerPtyHandlers(): void {
-  // Buffer PTY input per session to detect /clear command
-  const inputBuffers = new Map<string, string>()
-
+  // The shell wires the terminal layer's MCP config port to its own MCP
+  // server: a Claude session's `--mcp-config` file is the MCP runtime's
+  // (`mcp-runtime.ts`), written when the server is up and omitted before.
+  // The storage and the terminal process keep the layer's defaults here (the
+  // app's data folder, node-pty in this process).
+  installTerminalPorts({
+    mcpConfig: {
+      ready: waitForMcpRuntime,
+      write: (sessionId) => (getMcpRuntime() ? writeSessionMcpConfig(sessionId) : null),
+      remove: deleteSessionMcpConfig
+    }
+  })
+  // What the session host still needs from the windows, by key: the shell's
+  // registry and IPC sends (sessions/windows.ts, PRDCT-3293).
+  installSessionWindows(electronSessionWindows)
+  // The tmux switch comes from the app's own preferences file.
+  setTmuxPreferenceReader(() => getPreference('tmuxMode'))
+  // The session stream's IPC, registered once with the terminal handlers (the
+  // agent state manager used to do it from the watch below and owns no IPC).
+  registerSessionIpc()
   // Deterministic Claude session state (from CC lifecycle hooks) → renderer.
+  // With the server running the same state travels as `session.state_changed`
+  // on the push channel (the manager publishes it, server/clave-server.ts):
+  // the per-window send is for an app without one, never beside it (the
+  // verifier's round 1 saw a terminal's state arrive twice).
   startAgentStateWatching((claveSessionId, state) => {
+    if (hasServerEventPublisher()) return
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(`agent:state:${claveSessionId}`, state)
     }
   })
 
-  /** The spawn, for the window that asked: the session, its listeners and
-   *  its window binding. `pty:spawn` and `pty:restart` share it so a restart
-   *  on another account (ADR 0002) is the same spawn with the account
-   *  changed, never a second copy of this wiring. */
-  async function spawnForWindow(
+  /** Starting a session is `sessions/lifecycle.ts`'s: the server's
+   *  `StartSession` and these handlers share one wiring, and the window is
+   *  its key. */
+  const spawnForWindow = (
     win: BrowserWindow | null,
     cwd: string,
     options?: PtySpawnOptions
-  ): Promise<SessionInfoResult> {
-    // tmux mode is a global app setting, ON by default. Honour it unless a
-    // caller overrides per-spawn or the user explicitly turned it off. (When
-    // tmux isn't installed the spawn transparently falls back to a plain shell.)
-    const tmuxMode = options?.tmuxMode ?? getPreference('tmuxMode') !== false
-    // Central workspace stamp: every spawn defaults to the workspace of the
-    // WINDOW that asked (the registry's truth, never the state file — another
-    // window may have switched or written last). Explicit values win (pin
-    // launches into a hidden workspace, MCP caller inheritance, adoption); the
-    // persisted last-active workspace survives only for a windowless caller.
-    const workspaceId =
-      options?.workspaceId ??
-      (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ??
-      workspaceManager.getLastActiveWorkspaceId() ??
-      undefined
-    // The asking window is the session's HOME: its persisted key goes on the
-    // record, so the next boot brings the tab back in that window (an
-    // adoption or a move re-stamps through this same path).
-    const windowKey = (win ? windowRegistry.getKeyForWindow(win.id) : null) ?? undefined
-    const session = await ptyManager.spawn(cwd, { ...options, tmuxMode, workspaceId, windowKey })
-    // The sender hosts the session from now on: its renderer holds the xterm
-    // and receives pty:data. Adoption and re-homing rebind through this same
-    // path (the adopting window is the sender).
-    if (win) windowRegistry.bindSession(session.id, win.id)
-    const isClaudeMode =
-      options?.claudeMode !== false &&
-      !options?.antigravityMode &&
-      !options?.codexMode &&
-      !options?.piMode &&
-      !options?.claudeAgentsMode
-    const isResumed = !!options?.resumeSessionId
-
-    // A fresh Claude session is named by its first message, by the agent it
-    // runs: its resolved profile, on its account.
-    if (isClaudeMode && !isResumed && session.claudeSessionId && win) {
-      titleGenerator.scheduleTitleGeneration(
-        session.id,
-        session.cwd,
-        session.claudeSessionId,
-        win,
-        {
-          workspaceId,
-          launchProfileId: session.launchProfileId,
-          claudeProfileId: options?.claudeProfileId,
-          configDir: options?.configDir
-        }
-      )
-    }
-
-    // Attach listeners now so the channels are ready before the renderer
-    // triggers the actual pty.spawn() via pty:start (or first pty:resize).
-    ptyManager.attachListeners(
-      session.id,
-      (data) => {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(`pty:data:${session.id}`, data)
-        }
-      },
-      (exitCode) => {
-        titleGenerator.cleanup(session.id)
-        inputBuffers.delete(session.id)
-        clearAgentState(session.id)
-        windowRegistry.unbindSession(session.id)
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(`pty:exit:${session.id}`, exitCode)
-        }
-      }
-    )
-
-    if (session.claudeSessionId) {
-      console.log(
-        `[claude-session] PTY ${session.id} → claude session ${session.claudeSessionId}${options?.resumeSessionId ? ' (resumed)' : ' (new)'}`
-      )
-    }
-
-    return {
-      id: session.id,
-      cwd: session.cwd,
-      folderName: session.folderName,
-      alive: session.alive,
-      claudeSessionId: session.claudeSessionId ?? null,
-      piSessionId: session.piSessionId ?? null,
-      launchProfileId: session.launchProfileId,
-      model: session.model,
-      piProvider: session.piProvider,
-      piThinking: session.piThinking
-    }
-  }
+  ): Promise<SessionInfoResult> =>
+    spawnSession(win ? windowRegistry.getKeyForWindow(win.id) : null, cwd, options)
 
   // The CLI's own word on its account's limit reaches the window holding the
   // tab (ADR 0002): the policy there proposes or makes the move.
@@ -176,25 +112,26 @@ export function registerPtyHandlers(): void {
     ): Promise<(SessionInfoResult & { resumed: boolean }) | { error: string }> => {
       if (typeof id !== 'string') return { error: 'No session' }
       const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-      const plan = ptyManager.restartSpawn(id, {
-        claudeProfileId: str(overrides?.claudeProfileId),
-        claudeProfileLabel: str(overrides?.claudeProfileLabel),
-        codexAccountId: str(overrides?.codexAccountId),
-        codexAccountLabel: str(overrides?.codexAccountLabel),
-        resendRejected: overrides?.resendRejected === true
-      })
-      if (!plan) return { error: 'This session cannot be restarted from here.' }
-      const record = ptyManager.getSessionRecord(id)
       const win = BrowserWindow.fromWebContents(_event.sender)
-      await ptyManager.killAndWait(id)
-      windowRegistry.unbindSession(id)
-      const info = await spawnForWindow(win, plan.cwd, plan.options)
-      // The kill took the record's name and view with it; put them back.
-      if (record?.displayName) {
-        ptyManager.setSessionDisplayName(id, record.displayName, record.userRenamed === true)
+      // The restart itself is the lifecycle's (wave 4): the server's
+      // `RestartSession` and this handler make the same one.
+      try {
+        return await restartSession(
+          id,
+          {
+            claudeProfileId: str(overrides?.claudeProfileId),
+            claudeProfileLabel: str(overrides?.claudeProfileLabel),
+            codexAccountId: str(overrides?.codexAccountId),
+            codexAccountLabel: str(overrides?.codexAccountLabel),
+            resendRejected: overrides?.resendRejected === true
+          },
+          win ? windowRegistry.getKeyForWindow(win.id) : null
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message === 'This session cannot be restarted from here.') return { error: message }
+        throw error
       }
-      if (record?.view) ptyManager.setSessionViewRecord(id, record.view)
-      return { ...info, resumed: plan.resumed }
     }
   )
 
@@ -205,26 +142,7 @@ export function registerPtyHandlers(): void {
   })
 
   ipcMain.on('pty:write', (_event, id: string, data: string) => {
-    // Track input to detect /clear command
-    let buf = inputBuffers.get(id) ?? ''
-    for (const ch of data) {
-      if (ch === '\r' || ch === '\n') {
-        // Enter pressed — check if the buffered line is /clear
-        if (/^\/clear\s*$/.test(buf.trim())) {
-          titleGenerator.notifyClear(id)
-        }
-        buf = ''
-      } else if (ch === '\x7f' || ch === '\b') {
-        buf = buf.slice(0, -1)
-      } else if (ch === '\x03' || ch === '\x15') {
-        // Ctrl+C or Ctrl+U — clear buffer
-        buf = ''
-      } else if (ch >= ' ') {
-        buf += ch
-      }
-    }
-    inputBuffers.set(id, buf)
-
+    trackInput(id, data)
     ptyManager.write(id, data)
   })
 
@@ -232,20 +150,7 @@ export function registerPtyHandlers(): void {
     ptyManager.resize(id, cols, rows)
   })
 
-  ipcMain.handle('pty:kill', async (_event, id: string) => {
-    const owner = windowRegistry.getWindowForSession(id)
-    if (
-      owner &&
-      linkedDocuments()
-        .list()
-        .some((d) => d.sessionId === id)
-    ) {
-      await callRenderer('flushLinkedDocument', { sessionId: id, allowConflict: true }, owner)
-    }
-    await ptyManager.kill(id)
-    // A session that never started has no exit event to unbind it.
-    windowRegistry.unbindSession(id)
-  })
+  ipcMain.handle('pty:kill', (_event, id: string) => stopSession(id))
 
   ipcMain.handle('pty:list', () => {
     return ptyManager.getAllSessions()
@@ -330,22 +235,36 @@ export function registerPtyHandlers(): void {
   // plus, for the primary, the orphans (no stamp, or a window that no longer
   // exists). `ids` overrides the filter: the re-home path hands a window the
   // ids of sessions another window just released, whatever their stamp.
+  // The listing is the host's (`sessions/records.ts`, the same the server
+  // answers for an attached window); which records THIS window takes is the
+  // shell's rule (`shared/adoption-scope.ts`), applied here over main's
+  // listing and in the preload over the server's, from the scope below.
   ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
-    const all = ptyManager.listAdoptableSessions()
+    const host = getSessionHost()
     if (filter && Array.isArray(filter.ids)) {
-      const wanted = new Set(filter.ids.filter((x): x is string => typeof x === 'string'))
-      return all.filter((r) => wanted.has(r.id))
+      return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))
     }
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const key = win ? windowRegistry.getKeyForWindow(win.id) : null
-    if (!win || !key) return []
-    if (!windowRegistry.isPrimary(win.id)) return all.filter((r) => r.windowKey === key)
-    const known = new Set([...windowState.keys(), ...windowRegistry.liveKeys()])
-    return all.filter((r) => r.windowKey === key || !r.windowKey || !known.has(r.windowKey))
+    const scope = adoptionScopeOf(event.sender)
+    return scope ? selectAdoptableRecords(host.listAdoptableRecords(), scope) : []
   })
+  // What the asking window is, for the selection rule: its key, whether it is
+  // the primary, and every window that exists (live or persisted). Null for
+  // a sender that is not a Clave window.
+  ipcMain.handle('records:adoption-scope', (event) => adoptionScopeOf(event.sender))
 
   // User declined to bring a survivor back → destroy it (record + tmux session).
   ipcMain.handle('records:discard', (_event, key: string) => {
-    ptyManager.discardSessionRecord(key)
+    if (typeof key === 'string' && key.length > 0) getSessionHost().discardRecord(key)
   })
+}
+
+function adoptionScopeOf(sender: Electron.WebContents): AdoptionScope | null {
+  const win = BrowserWindow.fromWebContents(sender)
+  const key = win ? windowRegistry.getKeyForWindow(win.id) : null
+  if (!win || !key) return null
+  return {
+    windowKey: key,
+    primary: windowRegistry.isPrimary(win.id),
+    knownWindowKeys: [...new Set([...windowState.keys(), ...windowRegistry.liveKeys()])]
+  }
 }

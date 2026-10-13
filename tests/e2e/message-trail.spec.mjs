@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * The message trail, end to end: the floating box over a tab's terminal that
  * shows where the conversation is.
@@ -61,7 +66,10 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR, { env: { CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS } })
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    env: { CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS }
+  })
   try {
     // A PLAIN tab (tmux off): the xterm scroll path is the renderer's own.
     await win.evaluate(() => window.electronAPI.preferencesSet('tmuxMode', false))

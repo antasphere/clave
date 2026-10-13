@@ -306,6 +306,18 @@ ZIP_BLOCKMAP=$(ls dist/Clave-"${NEW_VERSION}"-universal-mac.zip.blockmap 2>/dev/
 [[ -n "$ZIP" ]] || error "ZIP not found in dist/"
 [[ -n "$YML" ]] || error "latest-mac.yml not found in dist/"
 
+# ── The packaged app loads what its bundles require (PRDCT-3418) ──
+# electron-builder packs production dependencies, never the peers npm
+# installs on its own, so a module the bundles require can be present in
+# node_modules (dev, the unit tests and the e2e suite all pass) and absent
+# from the asar. 2.1.0 and 2.2.0 shipped that way and their in-process
+# server never started. Checked here, on the app that was just built, before
+# anything is tagged, pushed or published.
+# `--dist` takes dist/mac-universal first: a dist/ still holding an arm64
+# `--dir` package from an earlier run is not what this release publishes.
+node scripts/check-packaged-requires.mjs --dist dist || \
+  error "The packaged app cannot load a module its bundles require (see above) — refusing to publish"
+
 info "Build artifacts:"
 ls -lh "$DMG" "$ZIP" "$YML" ${BLOCKMAP:+"$BLOCKMAP"} ${ZIP_BLOCKMAP:+"$ZIP_BLOCKMAP"}
 

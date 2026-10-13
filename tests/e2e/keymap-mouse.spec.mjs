@@ -1,3 +1,4 @@
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * Mouse buttons are keymap bindings, and a session action bound to one acts on
  * the sidebar tab under the pointer.
@@ -14,7 +15,15 @@
  *     itself, ignores a plain terminal, and the tab's own close ("mine") works.
  */
 import { mkdirSync, rmSync } from 'node:fs'
-import { launchApp, seedWorkspaces, userDataDir, fixturePath, until, callMcp } from './harness.mjs'
+import {
+  launchApp,
+  seedWorkspaces,
+  userDataDir,
+  fixturePath,
+  until,
+  callMcp,
+  writeJournal
+} from './harness.mjs'
 import { openChat } from './chat-view.spec.mjs'
 
 const DIR = userDataDir('keymap-mouse')
@@ -32,23 +41,6 @@ const liveIds = (win) =>
 const rowOf = (id) => `[data-sidebar-item-id="${id}"] button.sidebar-item`
 const dialogOpen = (win) => win.evaluate(() => document.querySelector('.modal-card') !== null)
 
-/** Every byte the renderer writes into any PTY, recorded in main. */
-async function recordPtyWrites(app) {
-  await app.evaluate(({ ipcMain }) => {
-    globalThis.__ptyWrites = []
-    ipcMain.on('pty:write', (_event, id, data) => globalThis.__ptyWrites.push({ id, data }))
-  })
-  return (id) =>
-    app.evaluate(
-      (_electron, id) =>
-        globalThis.__ptyWrites
-          .filter((w) => w.id === id)
-          .map((w) => w.data)
-          .join(''),
-      id
-    )
-}
-
 async function newTerminal(win) {
   const before = new Set(await liveIds(win))
   await win.click('.launcher-row button')
@@ -64,7 +56,8 @@ async function terminals(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   const { app, win } = await launchApp(DIR)
   try {
-    const writesTo = await recordPtyWrites(app)
+    // Every byte the renderer writes into any PTY, read from the terminal journal.
+    const writesTo = writeJournal(DIR)
     const first = await newTerminal(win)
     const second = await newTerminal(win)
     await win.click(rowOf(second))
@@ -158,6 +151,16 @@ async function terminals(t) {
       'with the binding removed, a middle click kills nothing',
       (await liveIds(win)).includes(second)
     )
+
+    // --- Control: a line typed through the app is in the write journal ---
+    // Without this, "types nothing into it" below would also pass on a
+    // journal that records nothing.
+    await win.evaluate(
+      ([s, line]) => window.electronAPI.writeSession(s, line),
+      [second, 'echo KEYMAP-CONTROL\r']
+    )
+    const control = await until(async () => (await writesTo(second)).includes('KEYMAP-CONTROL'))
+    t.check('control: a line typed through the app reaches the write journal', !!control)
 
     // --- Archive on a plain terminal: nothing typed, nothing killed ---
     await win.keyboard.down('Alt')

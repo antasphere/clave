@@ -35,6 +35,15 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # The unit tests of the server's own process (scripts/server-process.test.mjs)
+      # start it under Bun: the repository's own, from the `bun` dev dependency
+      # (1.4.1, the version the framework's gRPC package needs; ADR 0003, wave
+      # 3), which scripts/server-process.mjs prefers to any Bun on the PATH.
+      # This action pins the same version for anything else that calls `bun`.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+
       - name: Install dependencies
         run: npm ci
 
@@ -44,5 +53,99 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The generated protobuf code of the terminal service is checked in
+      # (packages/server/src/terminals/proto); a .proto edited without its
+      # generated file would fail only at runtime.
+      - name: Generated code is current
+        run: npm run proto:gen && git diff --exit-code -- packages/server/src/terminals/proto
+
       - name: Unit tests
         run: npx vitest run
+
+  # The end-to-end suite drives the REAL app (tests/e2e/harness.mjs): a built
+  # Electron on an isolated user-data directory, hidden (--test-no-activate),
+  # one tmux socket of its own. That needs macOS: the app is a macOS app, and
+  # the specs spawn tmux sessions and the login shell. Bun runs the server's
+  # own process for the attached mode (ADR 0003).
+  #
+  # Two kinds of step. The GATE: the server spec, in-process and attached,
+  # fails the job (it is deterministic, and proven to go red under mutation).
+  # The REPORT: the whole suite in-process, with continue-on-error, its
+  # result line in the job summary. On 2 October 2026 the suite on dev fails
+  # 25 checks on a laptop and 28 on this runner with 15 in common, and the
+  # unstable specs are named in tests/e2e/known-failures.json; a full-suite
+  # gate would be red on a healthy branch, which is a gate nobody reads.
+  # The report step turns into a gate (drop continue-on-error) once the
+  # unstable specs are fixed (PRDCT-1762, PRDCT-2542; PRDCT-1711 carries the
+  # thread). Nothing here touches the release rail.
+  e2e:
+    name: End-to-end (the real app, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+
+      - name: tmux
+        run: brew install tmux
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        id: build
+        run: npx electron-vite build
+
+      # The packaged app, not the checkout: electron-builder leaves out the
+      # peers npm installs on its own, so a module the bundles require can
+      # resolve here from node_modules and be missing from the asar. 2.1.0
+      # and 2.2.0 shipped that way (PRDCT-3418). An unsigned arm64 --dir
+      # package is the same asar the release builds, without the signing.
+      - name: Gate, the packaged app loads what its bundles require
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --dir --mac --arm64 \
+            -c.mac.notarize=false -c.mac.identity=null
+          node scripts/check-packaged-requires.mjs dist/mac-arm64/Clave.app
+
+      # The terminal process beside the standalone server, from the bundle
+      # the build wrote (the tests that need it skip without one, so they run
+      # here and not in the Linux job): a terminal spawned through it streams
+      # its bytes, a killed process is reported by the server.
+      - name: Gate, the terminal process from the built bundle
+        run: npx vitest run scripts/server-process.test.mjs src/main/terminal-process
+
+      - name: Gate, the server spec with the server in-process
+        run: node tests/e2e/run.mjs server-boot
+
+      - name: Gate, the server spec with the server attached
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs server-boot
+        env:
+          CLAVE_E2E_SERVER: attached
+
+      - name: Report, the whole suite with the server in-process
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set +e
+          node tests/e2e/run.mjs | tee e2e-in-process.log
+          status=${PIPESTATUS[0]}
+          line=$(grep -E '^[0-9]+ passed, ' e2e-in-process.log | tail -1)
+          {
+            echo "## End-to-end, whole suite, server in-process"
+            echo
+            echo "\`${line:-no result line: the runner did not finish}\` (exit ${status})"
+            echo
+            echo "A report, not a gate: see the comment on this job in checks.yml."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status

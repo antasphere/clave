@@ -72,6 +72,14 @@ export class EchoAdapter implements SessionAdapter {
     })
   }
 
+  /** A frame as if the session had produced it, on the stream every
+   *  listener of the session hears (the window's over whichever transport
+   *  it is on). For the end-to-end suite, which used to send the frame to
+   *  the window over IPC and now injects it where the session lives. */
+  inject(sessionId: string, stream: SessionAdapterEvents['stream']): void {
+    this.emitter({ id: sessionId }).emit('stream', stream)
+  }
+
   async commands(): Promise<CommandOption[]> {
     return ECHO_COMMANDS
   }

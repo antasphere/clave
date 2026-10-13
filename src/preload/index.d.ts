@@ -7,7 +7,9 @@ import type {
   CommandOption,
   HistoryPage
 } from '../shared/session-model'
+import type { DayActivity } from '../shared/activity-fold'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
   GithubResult,
   MergeMethod,
@@ -18,6 +20,13 @@ import type {
 } from '../shared/github-pull'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface ActivityAnswer {
+  days: DayActivity[]
+  now: number
+  skipped: number
+  file: string
+}
+
 export interface SessionIPC {
   'sessions:list': { args: []; result: Session[] }
   'sessions:subscribe': { args: [sessionId: string]; result: Session }
@@ -133,6 +142,24 @@ export interface RehomePayload {
   focus: boolean
 }
 
+/** A window's sidebar as the server holds it (`@clave/contract/sidebar`'s
+ *  LayoutSnapshot); the groups are the renderer's `SessionGroup` objects. */
+export interface SidebarLayoutSnapshot {
+  windowKey: string
+  revision: number
+  groups: unknown[]
+  displayOrder: string[]
+}
+export type SidebarSaveResult =
+  | { ok: true; layout: SidebarLayoutSnapshot }
+  | { ok: false; reason: 'no-window' }
+  | { ok: false; reason: 'conflict'; current: SidebarLayoutSnapshot }
+export interface SidebarLayoutChanged {
+  _tag: 'sidebar.layout_changed'
+  layout: SidebarLayoutSnapshot
+  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+}
+
 /** The outcome of moving sessions to another window. */
 export interface MoveResult {
   moved: string[]
@@ -195,8 +222,10 @@ export interface ClaveFileGroupData {
   category?: string
   logo?: string
   /** Group-level default prompt: what sessions launched from the live group's
-   *  `+` start on. Mirrors `ClaveGroupData.prompt` in the main process. */
+   *  `+` start on. Mirrors `ClaveGroup.prompt` in `@clave/contract/workspace-files`. */
   prompt?: string
+  /** The group's web view when no terminal serves it: an http(s) URL or a page on disk. */
+  view?: string
   sessions: {
     cwd: string
     name: string
@@ -220,6 +249,8 @@ export interface ClaveFileGroupData {
     autoLaunchLocalhost?: boolean
     persistent?: boolean
     serverUrl?: string
+    /** Bind this terminal's `serverUrl` as the group's web view at launch. */
+    groupView?: boolean
   }[]
 }
 
@@ -231,7 +262,11 @@ export interface ClaveFileWriteData {
   name?: string
   cwd?: string | null
   color?: string | null
+  toolbar?: boolean
+  category?: string
+  logo?: string
   prompt?: string
+  view?: string
   sessions?: {
     cwd: string
     name: string
@@ -254,6 +289,7 @@ export interface ClaveFileWriteData {
     autoLaunchLocalhost?: boolean
     persistent?: boolean
     serverUrl?: string
+    groupView?: boolean
   }[]
   groups?: Array<{
     name: string
@@ -312,6 +348,10 @@ export type SessionLink =
   | { kind: 'toolbar'; key: string }
 
 export interface SessionRecord {
+  /** The session is one this process already runs (wave 3): a window asking
+   *  for it by id takes it in from the record alone, with no spawn. Absent on
+   *  an adoptable record, whose process the window reattaches itself. */
+  running?: boolean
   /** Backing tmux session when there is one; absent = plain record (relaunch-only). */
   tmuxName?: string
   id: string
@@ -557,6 +597,12 @@ export interface PluginSecretPrompt {
   description?: string
 }
 export interface ElectronAPI {
+  /** What the server said it cannot do (a declared CapabilityUnavailable on a
+   *  routed call), or null once a routed call succeeds again. The page shows
+   *  it where the sessions would be (ServerNotice). */
+  onServerRefusal: (
+    callback: (refusal: { capability: string; message: string } | null) => void
+  ) => () => void
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>
@@ -677,11 +723,40 @@ export interface ElectronAPI {
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
+  /** The attached server's surviving records for this window (restore top-up);
+   *  empty in-process. */
+  listServerRestoreRecords: () => Promise<SessionRecord[]>
   discardSessionRecord: (key: string) => Promise<void>
   onSessionRehome: (callback: (payload: RehomePayload) => void) => () => void
   onSessionRemovedForRehome: (callback: (sessionId: string) => void) => () => void
   onGroupRemovedForMove: (callback: (groupId: string) => void) => () => void
   ackRehomed: (sessionIds: string[]) => void
+  // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
+  onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  onSessionPageChanged: (
+    callback: (payload: {
+      id: string
+      page: { url: string; title?: string; command?: string; cwd?: string } | null
+      servingSessionId: string | null
+    }) => void
+  ) => () => void
+  onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
+  onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  onSessionRestarted: (
+    callback: (payload: {
+      id: string
+      resumed: boolean
+      account: {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+      }
+    }) => void
+  ) => () => void
+  onPinnedGroupLaunched: (
+    callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
+  ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
   onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
@@ -729,6 +804,13 @@ export interface ElectronAPI {
     by: 'user' | 'agent' | 'app'
     closer: ExchangeEndpoint | null
   }) => void
+  /** The activity record (PRDCT-3384, PRDCT-3385): one `DayActivity` per
+   *  local day of the range, inclusive, and the push when a row lands. */
+  activityQuery: (from: string, to: string, detail?: boolean) => Promise<ActivityAnswer>
+  onActivityChanged: (callback: () => void) => () => void
+  /** A run state the renderer alone sees (a Codex terminal's title), reported
+   *  so main holds one state per session. */
+  sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') => Promise<void>
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void
@@ -850,8 +932,15 @@ export interface ElectronAPI {
   watchDir: (cwd: string, dirs?: string[]) => Promise<void>
   unwatchDir: () => Promise<void>
   onFsChanged: (callback: (cwd: string, changedDirs: string[]) => void) => () => void
-  sidebarLayoutLoad: () => Promise<{ groups: unknown[]; displayOrder: string[] }>
-  sidebarLayoutSave: (data: { groups: unknown[]; displayOrder: string[] }) => Promise<WriteResult>
+  // The sidebar on the server (PRDCT-3241): this window's layout with the
+  // revision a write must name; a stale write is refused with the current
+  // snapshot; every change, whoever made it, arrives on the listener.
+  sidebarLayoutLoad: () => Promise<SidebarLayoutSnapshot>
+  sidebarLayoutSave: (
+    data: { groups: unknown[]; displayOrder: string[] },
+    baseRevision?: number
+  ) => Promise<SidebarSaveResult>
+  onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
   workspaceLoad: () => Promise<WorkspaceStateFile>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
@@ -905,6 +994,13 @@ export interface ElectronAPI {
   accountLoginCancel: (jobId: string) => Promise<void>
   accountLoginList: () => Promise<AccountLoginJob[]>
   onAccountLoginProgress: (callback: (job: AccountLoginJob) => void) => () => void
+  /** The Antasphere account (PRDCT-3259): a status in every direction, never a credential. */
+  antasphereAccountGet: () => Promise<AntasphereAccountStatus>
+  antasphereAccountSignIn: () => Promise<AntasphereAccountStatus>
+  antasphereAccountCancel: () => Promise<AntasphereAccountStatus>
+  antasphereAccountSignOut: () => Promise<AntasphereAccountStatus>
+  antasphereAccountDismiss: () => Promise<AntasphereAccountStatus>
+  onAntasphereAccountChanged: (callback: (status: AntasphereAccountStatus) => void) => () => void
   getCodexUsageLimits: (
     accountId?: string,
     options?: { force?: boolean }
@@ -1108,6 +1204,10 @@ export interface ElectronAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+
+  // ── Lane C: settings behind ports ──
+
+  // ── Lane F: the shell ──
 }
 
 declare global {

@@ -32,7 +32,13 @@ import { registerLaunchProfileHandlers } from './launch-profile-handlers'
 import { registerClaudeAccountHandlers } from './claude-accounts-handlers'
 import { registerCodexAccountHandlers } from './codex-accounts-handlers'
 import { registerAccountLoginHandlers } from './account-login-handlers'
+import { registerAntasphereAccountHandlers } from './antasphere-account-handlers'
 import { registerGithubHandlers } from './github-handlers'
+// ── Lane A: the server ──
+import { registerServerHandlers } from './server-handlers'
+import { registerActivityHandlers } from './activity-handlers'
+// ── Lane C: settings behind ports ──
+// ── Lane F: the shell ──
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -41,6 +47,7 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerClaudeAccountHandlers()
   registerCodexAccountHandlers()
   registerAccountLoginHandlers()
+  registerAntasphereAccountHandlers()
   registerUsageHandlers()
   registerGitHandlers()
   registerUpdaterHandlers()
@@ -67,7 +74,12 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerExchangeHandlers()
   registerPreviewHandlers()
   registerHistoryHandlers()
+  registerActivityHandlers()
   registerKeymapHandlers(deps)
   registerLaunchProfileHandlers()
   registerGithubHandlers()
+  // ── Lane A: the server ──
+  registerServerHandlers()
+  // ── Lane C: settings behind ports ──
+  // ── Lane F: the shell ──
 }

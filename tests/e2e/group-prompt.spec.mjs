@@ -1,3 +1,4 @@
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * The group's default prompt actually reaching the agent (PRDCT-1665).
  *
@@ -18,7 +19,7 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn,
+  spawnJournal,
   selectBuiltIn,
   fixturePath
 } from './harness.mjs'
@@ -113,7 +114,7 @@ export async function run(t) {
       /starts on the group's prompt/.test(addBtn ?? ''),
       addBtn
     )
-    const readSpawns = await spyPtySpawn(app)
+    const readSpawns = spawnJournal(DIR)
     const before = await win.evaluate(
       () => document.querySelectorAll('[class*="sidebar-item"]').length
     )

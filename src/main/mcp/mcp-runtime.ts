@@ -7,6 +7,7 @@ import { app } from 'electron'
 // sessionRecordsDir() is what guarantees the legacy-dir rename has run before
 // the sweep decides which configs are stale.
 import { sessionRecordsDir } from '../pty-manager'
+import { mcpConfigReadiness } from '../ports/mcp-config'
 
 /** Runtime info about the in-app MCP server, set once it is listening. */
 export interface McpRuntimeInfo {
@@ -15,9 +16,12 @@ export interface McpRuntimeInfo {
 }
 
 let runtime: McpRuntimeInfo | null = null
+const readiness = mcpConfigReadiness()
+export const waitForMcpRuntime = readiness.ready
 
 export function setMcpRuntime(info: McpRuntimeInfo | null): void {
   runtime = info
+  readiness.announce(info !== null)
 }
 
 export function getMcpRuntime(): McpRuntimeInfo | null {

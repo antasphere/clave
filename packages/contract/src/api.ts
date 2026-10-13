@@ -1,0 +1,101 @@
+/**
+ * The HTTP API, one group per domain, declared once and shared: the server
+ * implements it with `HttpApiBuilder`, the client derives its calls from the
+ * type, and a drift between the two is a type error, not a runtime surprise.
+ * Commands are POST endpoints and queries GET endpoints through the
+ * framework's CQRS bridge, so the bus validates, authorizes and traces every
+ * call the same way whatever transport brought it.
+ *
+ * The pattern, per domain: one `<domain>Group` built from that domain's
+ * module and nothing else, added to `ClaveApi` as one line. A lane adds its
+ * group and its line; nobody edits another lane's group.
+ */
+import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
+import { ListClients, RegisterClient, UnregisterClient } from './clients'
+import {
+  GetSession,
+  GetSessionCapabilities,
+  GetSessionCommands,
+  GetSessionHistory,
+  GetSessionModels,
+  ListSessions,
+  SetSessionView,
+  StartSession,
+  StopSession,
+  WriteSession,
+  ResizeSession,
+  // ── Wave 4, lane C: the session records and a session's release ──
+  DiscardSessionRecord,
+  ListAdoptableRecords,
+  ReleaseSessions,
+  // ── Wave 4, lane D: the last agent tools ──
+  ReadSessionScreen,
+  RenameSession,
+  RestartSession,
+  SetSessionPage,
+  TypeIntoSession
+} from './sessions'
+import { agentToolsGroup } from './agent-tools'
+import { settingsGroup } from './settings/api'
+import { sidebarGroup } from './sidebar/api'
+import { workspaceFilesGroup } from './workspace-files/api'
+import { viewsGroup } from './views'
+
+// ── Sessions (lane A) ──
+export const sessionsGroup = ApiGroup.make('sessions')
+  .add(HttpCqrs.queryEndpoint('list', '/sessions', ListSessions))
+  .add(HttpCqrs.queryEndpoint('get', '/sessions/by-id', GetSession))
+  .add(HttpCqrs.commandEndpoint('start', '/sessions/start', StartSession))
+  .add(HttpCqrs.commandEndpoint('stop', '/sessions/stop', StopSession))
+  .add(HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession))
+  .add(HttpCqrs.commandEndpoint('resize', '/sessions/resize', ResizeSession))
+  .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
+  .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
+  .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
+  .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
+  .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
+  // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
+  .add(HttpCqrs.queryEndpoint('listAdoptable', '/sessions/records', ListAdoptableRecords))
+  .add(HttpCqrs.commandEndpoint('discardRecord', '/sessions/records/discard', DiscardSessionRecord))
+  .add(HttpCqrs.commandEndpoint('release', '/sessions/release', ReleaseSessions))
+  // ── Wave 4, lane D: the last agent tools ──
+  .add(HttpCqrs.commandEndpoint('rename', '/sessions/rename', RenameSession))
+  .add(HttpCqrs.commandEndpoint('setPage', '/sessions/page', SetSessionPage))
+  .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
+  .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
+  .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
+
+// ── Clients (lane A, for the shell) ──
+export const clientsGroup = ApiGroup.make('clients')
+  .add(HttpCqrs.commandEndpoint('register', '/clients', RegisterClient))
+  .add(HttpCqrs.queryEndpoint('list', '/clients', ListClients))
+  .add(HttpCqrs.commandEndpoint('unregister', '/clients/unregister', UnregisterClient))
+
+// ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
+export { settingsGroup }
+
+// ── Lane C: the sidebar (`sidebar/api.ts`) ──
+export { sidebarGroup }
+
+// ── Wave 3, lane A: the workspace files (`workspace-files/api.ts`) ──
+export { workspaceFilesGroup }
+// ── Lane D (wave 3): the view requests ──
+export { viewsGroup }
+// ── Wave 4, lane C: the agent tools' address and tokens (`agent-tools.ts`) ──
+export { agentToolsGroup }
+
+// ── Lane B: terminals ──
+
+export const ClaveApi = Api.make('clave')
+  .add(sessionsGroup)
+  .add(clientsGroup)
+  .add(settingsGroup)
+  .add(sidebarGroup)
+  .add(workspaceFilesGroup)
+  // ── Lane D (wave 3): the view requests ──
+  .add(viewsGroup)
+  // ── Wave 4, lane C: the agent tools ──
+  .add(agentToolsGroup)
+  .add(Health.group)
+  .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
+export type ClaveApi = typeof ClaveApi

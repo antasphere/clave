@@ -1,0 +1,121 @@
+// The wire contract between Clave's server and its terminal process (ADR
+// 0003, wave 3): the Terminals port of `packages/server/src/terminals/port.ts`
+// as gRPC, served by the Node process that owns node-pty
+// (`src/main/terminal-process/`) and called by the Bun server's adapter
+// (`../grpc.ts`). Field numbers are stable: add, never renumber; reserve a
+// deleted number and its name.
+//
+// A terminal's life is apart from any one call. Spawn, Write, Resize, Kill
+// and Ping are unary; Attach is one server stream per terminal carrying the
+// output and the exit with a sequence number, re-opened by the caller with
+// the last sequence it saw when the stream's deadline ends (the framework
+// caps every call at 24 hours and a terminal may live longer). The process
+// keeps the recent output of every terminal so a re-attach loses nothing,
+// and kills a terminal that nobody has attached to for a grace period, so
+// a server that is gone leaves nothing running.
+syntax = "proto3";
+
+package clave.terminals.v1;
+
+service Terminals {
+  // Says the process answers, and how many terminals it holds.
+  rpc Ping(PingRequest) returns (PingResponse);
+  // Starts a process on a pseudo-terminal. Fails with SpawnRefused when the
+  // spawn itself fails (a directory that does not exist, a file that cannot
+  // run), with the reason.
+  rpc Spawn(SpawnRequest) returns (SpawnResponse);
+  // Writes to the terminal's input. Fails with UnknownTerminal.
+  rpc Write(WriteRequest) returns (WriteResponse);
+  // Resizes the terminal. Fails with UnknownTerminal.
+  rpc Resize(ResizeRequest) returns (ResizeResponse);
+  // Sends a signal to the process (SIGHUP when none is named). Fails with
+  // UnknownTerminal.
+  rpc Kill(KillRequest) returns (KillResponse);
+  // Streams the terminal's events from the sequence after `after` (0 for all
+  // the process still holds), then as they happen, ending after Exited.
+  // Fails with UnknownTerminal.
+  rpc Attach(AttachRequest) returns (stream TerminalEvent);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  uint32 terminals = 1;
+}
+
+message SpawnRequest {
+  string file = 1;
+  repeated string args = 2;
+  string cwd = 3;
+  map<string, string> env = 4;
+  uint32 cols = 5;
+  uint32 rows = 6;
+  // The terminal name advertised to the process (`xterm-256color`); the
+  // library's default when empty.
+  string name = 7;
+}
+
+message SpawnResponse {
+  string id = 1;
+  uint32 pid = 2;
+}
+
+message WriteRequest {
+  string id = 1;
+  string data = 2;
+}
+
+message WriteResponse {}
+
+message ResizeRequest {
+  string id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+
+message ResizeResponse {}
+
+message KillRequest {
+  string id = 1;
+  string signal = 2;
+}
+
+message KillResponse {}
+
+message AttachRequest {
+  string id = 1;
+  uint64 after = 2;
+}
+
+message TerminalEvent {
+  uint64 seq = 1;
+  oneof event {
+    Output output = 2;
+    Exited exited = 3;
+    Gap gap = 4;
+  }
+}
+
+message Output {
+  string data = 1;
+}
+
+message Exited {
+  int32 exit_code = 1;
+  optional int32 signal = 2;
+}
+
+// Output the process no longer holds: the caller asked for a sequence older
+// than what is kept. `lost` events are missing before the next Output.
+message Gap {
+  uint64 lost = 1;
+}
+
+// The declared failures, carried as the framework's business failures.
+message SpawnRefused {
+  string reason = 1;
+}
+
+message UnknownTerminal {
+  string id = 1;
+}

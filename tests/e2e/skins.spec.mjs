@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +39,7 @@ export async function run(t) {
   let app
   let terminalId
   try {
-    const launched = await launchApp(dir)
+    const launched = await launchApp(dir, { server: 'in-process' })
     app = launched.app
     const win = launched.win
     assert.equal((await win.evaluate(() => window.electronAPI.skinsList())).activeId, null)

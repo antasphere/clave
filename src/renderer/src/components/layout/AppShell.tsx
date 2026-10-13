@@ -7,13 +7,18 @@ import {
   isFileTabId,
   getVisibleFlatOrder,
   inActiveWorkspace,
-  enableSidebarPersistence
+  enableSidebarPersistence,
+  setSidebarBase,
+  applyServerLayout,
+  isSidebarPersistenceEnabled,
+  type SidebarLayoutSnapshot
 } from '../../store/session-store'
 import type { SessionGroup, SettingsSection } from '../../store/session-store'
 import { treeRuleMultiplier, textSizeOffset } from '../../store/session-types'
 import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
+import { ServerNotice } from './ServerNotice'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
@@ -49,9 +54,11 @@ import {
 import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
+import { initServedToolsEvents } from '../../lib/served-events'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
+import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
@@ -149,6 +156,9 @@ export function AppShell(): React.JSX.Element {
     if (mcpDispatcherStarted) return
     mcpDispatcherStarted = true
     initMcpDispatcher()
+    // What the server did to a tab through an agent tool (wave 4): the
+    // window follows the push channel's facts.
+    initServedToolsEvents()
     initSecretStore()
     initCopyOfferStore()
     initPluginUI()
@@ -170,6 +180,16 @@ export function AppShell(): React.JSX.Element {
     window.electronAPI?.onGroupRemovedForMove?.((groupId) => {
       useSessionStore.getState().removeGroupForMove(groupId)
     })
+    // The server's word on this window's sidebar whenever somebody else
+    // changed it (an agent's command, a move, a closing window's hand-over):
+    // applied over the working copy once the boot restore is done, so a
+    // push that lands mid-restore cannot write over what is being rebuilt.
+    window.electronAPI?.onSidebarLayoutChanged?.((event) => {
+      if (!isSidebarPersistenceEnabled()) return
+      const mine = useWorkspaceStore.getState().windowKey
+      if (mine && event.layout.windowKey !== mine) return
+      applyServerLayout(event.layout as SidebarLayoutSnapshot, event.cause)
+    })
     // What the agent button relaunches, per workspace. Deliberately NOT in the
     // session-adoption effect below: that one awaits the "restore sessions?"
     // prompt, so anything after it waits on the user answering a dialog — and
@@ -183,6 +203,7 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
+    let hadSavedSessions = false
     void (async () => {
       try {
         // Workspace registry + pins hydrate FIRST: adoption stamps each
@@ -203,6 +224,19 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
+        // Did this window HAVE sessions to bring back? (its saved layout names
+        // at least one.) Read here where the saved layout is in scope; the
+        // attached restore top-up in the boot tail gates on it (PRDCT-3376).
+        hadSavedSessions = savedLayoutSessionIds(persisted).length > 0
+        // The revision the server handed this layout out at (every save
+        // names it, and a stale one is refused rather than merged) and the
+        // layout itself as the base the first merge reasons from.
+        setSidebarBase({
+          windowKey: savedLayout?.windowKey ?? '',
+          revision: savedLayout?.revision ?? 0,
+          groups: persisted.groups,
+          displayOrder: persisted.displayOrder
+        })
 
         // This window's own records (plus the orphans, for the primary):
         // live tmux survivors re-attach silently, whatever their workspace
@@ -224,6 +258,9 @@ export function AppShell(): React.JSX.Element {
           if (id) adoptedIds.push(id)
         }
         if (plan.deadTabs.length > 0) {
+          // The boot now waits on the person: the mark says so (below), so a
+          // driver waiting for the boot can answer the prompt.
+          document.documentElement.dataset.boot = 'restore-prompt'
           if (await promptRestore(plan.deadTabs)) {
             for (const s of plan.deadTabs) {
               const id = await adoptRecord(s, activeWorkspaceId)
@@ -289,6 +326,45 @@ export function AppShell(): React.JSX.Element {
         .applyWorkspaceSwitch(null, useWorkspaceStore.getState().activeWorkspaceId)
       initClaveFileWatchers()
       void refreshActiveWorkspacePins()
+      // The boot is complete: the saved layout is merged, the survivors are
+      // back, persistence is on. The end-to-end harness waits for this mark
+      // instead of a fixed delay (PRDCT-1762): a group created before the
+      // merge above was replaced by the saved layout and never drawn.
+      document.documentElement.dataset.boot = 'complete'
+
+      // Attached, the records are the SERVER's: the boot read above went over
+      // IPC (main's own, empty attached) so the boot stayed fast and an early
+      // action is never clobbered by a late restore (PRDCT-3376). Now that
+      // persistence is on, bring the window's surviving sessions back from the
+      // server, additively — never touching a tab opened meanwhile. A no-op
+      // in-process (the server read answers empty there).
+      //
+      // Gate on the window having HAD sessions (its saved layout names at
+      // least one): a window that reopens with nothing to bring back must not
+      // reach for the server here, because that first connect would fire every
+      // server-event listener's catch-up over the state the window just loaded
+      // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
+      // A window with sessions to restore connects anyway, and warrants it.
+      if (!hadSavedSessions) return
+      void (async () => {
+        const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
+        if (serverRecords.length === 0) return
+        const here = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+        const fresh = serverRecords.filter((r) => !here.has(r.id))
+        if (fresh.length === 0) return
+        const ws = useWorkspaceStore.getState().activeWorkspaceId
+        const serverPlan = planBootAdoption(fresh)
+        // Focus the first restored tab only when nothing is selected yet, so
+        // its pane mounts and the tmux session reattaches (the repaint and
+        // the keystroke road need a mounted pane) — but never steal focus
+        // from a tab the user opened during boot.
+        let takeFocus = useSessionStore.getState().selectedSessionIds.length === 0
+        for (const s of serverPlan.liveTabs) {
+          const id = await adoptRecord(s, ws, { focus: takeFocus })
+          if (id && takeFocus) takeFocus = false
+        }
+        for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
+      })().catch((err) => console.error('Attached restore top-up failed:', err))
     })()
   }, [addSession])
 
@@ -815,6 +891,7 @@ export function AppShell(): React.JSX.Element {
             has the whole story). Covered rather than collapsed, the grid keeps
             its box, so coming back also resizes no terminal and no PTY. */}
         <div className="relative flex-1 min-h-0 flex">
+          <ServerNotice />
           {/* Terminal grid — each terminal is its own floating card */}
           <div
             className="flex-1 flex min-h-0"

@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // Claude accounts (PRDCT-2296): a subscription pasted once as a token, its
 // usage read on its own, a session started on it from the launcher, from an
 // agent's clave_open_session, and named in the session's menu and the foot.
@@ -10,6 +15,14 @@
 // The machine's own login is never read: the Default account's channel is
 // stubbed, and the probe a token account reads with is a stubbed fetch in the
 // main process answering the unified rate-limit headers per token.
+//
+// Pinned to the in-process server (`server: 'in-process'`): the quota it shows
+// comes from a read stubbed on the shell's settings source
+// (`globalThis.__claveE2E.settings`), which only the in-process server consults;
+// an attached app answers its settings from the standalone server's own data
+// directory, where no fixture in this process reaches. The attached-mode
+// fixture seam is wave 3's, beside the Node terminal process (the wave's
+// ruling of 6 October 2026).
 import { mkdirSync, rmSync } from 'node:fs'
 import {
   launchApp,
@@ -34,19 +47,20 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
     await app.evaluate(
-      ({ ipcMain }, { WORK_TOKEN, PLAY_TOKEN }) => {
+      (_electron, { WORK_TOKEN, PLAY_TOKEN }) => {
+        const settings = globalThis.__claveE2E?.settings
+        if (!settings) throw new Error('no settings source: is --test-no-activate on?')
         const state = (globalThis.__accountsFixture = { probes: [], defaultReads: 0 })
         // The Default account is the machine login: never read here. Every
         // other account goes through the real manager and the stubbed probe.
-        const handlers = ipcMain._invokeHandlers
-        const original = handlers.get('usage:get-limits')
-        handlers.set('usage:get-limits', (event, accountId, options) => {
-          if (!accountId || accountId === 'default') {
+        const original = settings.usage.readClaude
+        settings.usage.readClaude = async (accountId, force) => {
+          if (accountId === undefined || accountId === 'default') {
             state.defaultReads++
             return {
               windows: [
@@ -63,17 +77,17 @@ export async function run(t) {
               fetchedAt: Date.now()
             }
           }
-          return original(event, accountId, options)
-        })
+          return original(accountId, force)
+        }
         // The first boot, before this fixture, read the machine login for
         // real; a window primes from main's snapshot, so that read must not
         // reach the renderer under test either.
-        const snapshot = handlers.get('usage:claude-snapshot')
-        handlers.set('usage:claude-snapshot', async (event) => {
-          const all = await snapshot(event)
+        const snapshot = settings.usage.claudeSnapshot
+        settings.usage.claudeSnapshot = async () => {
+          const all = await snapshot()
           delete all.default
           return all
-        })
+        }
         // The probe: a one-token message whose headers carry the quota. Which
         // account answered is decided by the bearer token, as the API does.
         const byToken = {
@@ -690,6 +704,29 @@ export async function run(t) {
     )
 
     t.equal('no renderer exceptions', errors.length, 0, errors)
+
+    // The shell's login manager and its Dock are wired behind the server: a
+    // cancel of a job that does not exist resolves (a source without a login
+    // manager would refuse it), and the icon write is taken, not refused.
+    // Neither runs a provider's login nor is asserted on screen.
+    t.check(
+      'cancelling an unknown login job is taken, so the login manager is wired',
+      await win.evaluate(() =>
+        window.electronAPI.accountLoginCancel('no-such-job').then(
+          () => true,
+          () => false
+        )
+      )
+    )
+    t.check(
+      'the app icon write is taken, so the Dock is wired',
+      await win.evaluate(() =>
+        window.electronAPI.setAppIcon('dark').then(
+          () => true,
+          () => false
+        )
+      )
+    )
   } finally {
     await app.close()
   }

@@ -1,3 +1,9 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * The session history (PRDCT-1738, reframed by PRDCT-1766), end to end.
  *
@@ -27,7 +33,7 @@ import {
   seedTrustedRoots,
   userDataDir,
   callMcp,
-  spyPtySpawn,
+  spawnJournal,
   until,
   killLeakedE2eTmux,
   fixturePath
@@ -385,6 +391,7 @@ export async function run(t) {
   )
 
   const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
     env: { CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS, CLAVE_CODEX_ROOT: CODEX }
   })
   try {
@@ -772,7 +779,7 @@ export async function run(t) {
     await win.waitForTimeout(350)
     await win.locator('.menu-surface .menu-item', { hasText: 'History' }).click()
     await win.waitForSelector('[data-history-row="cc-alpha-2"]', { timeout: 5000 })
-    const readSpawns = await spyPtySpawn(app)
+    const readSpawns = spawnJournal(DIR)
     await win.click('[data-history-row="cc-alpha-2"]')
     await win.waitForTimeout(800)
     const spawns = await readSpawns()

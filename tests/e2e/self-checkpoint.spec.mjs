@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * Self-addressed clave_send_to_session = a CHECKPOINT (PRDCT-1708): logged
  * into the exchange store, never delivered — no paste, no submit, nothing
@@ -118,7 +123,7 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     // ── spawn one agent tab: the caller whose token we borrow ──
     await win.click('.launcher-split .launcher-btn')

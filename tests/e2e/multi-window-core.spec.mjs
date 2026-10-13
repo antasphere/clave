@@ -1,3 +1,12 @@
+// Pinned to the in-process server. The attached moves and restore work since
+// wave 4 (PRDCT-3376: a move releases the session on the server first; see
+// attached-window-move, attached-agent-token and terminal-reattach, which run
+// attached). This spec stays pinned because it seeds session records by hand
+// into the APP's folder (attached they are the server's, which the harness does
+// not seed), reads an agent tab's config from the app's mcp-configs folder
+// (attached the server writes it), and/or relies on group membership surviving
+// an attached quit, which the attached boot flattens (pre-existing, on the
+// wave's owed list). Not a known failure.
 /**
  * Multi-window core (PRDCT-1703): a window is the whole app once more, on
  * whatever workspace it shows — the SAME workspace as another window
@@ -108,7 +117,7 @@ export async function run(t) {
   const opened = []
   try {
     // ── window 1: the primary, on the last-active workspace ──
-    const launched = await launchApp(DIR)
+    const launched = await launchApp(DIR, { server: 'in-process' })
     app = launched.app
     const win1 = launched.win
     const id1 = await identityOf(win1)
@@ -254,7 +263,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const relaunched = await launchApp(DIR, { settleMs: 7000 })
+    const relaunched = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = relaunched.app
     const back = await windows(app)
     t.equal('after a restart both windows come back', back.length, 2)
@@ -344,7 +353,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const again = await launchApp(DIR, { settleMs: 7000 })
+    const again = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = again.app
     t.equal('one window comes back', (await windows(app)).length, 1)
     const idF = await identityOf(again.win)

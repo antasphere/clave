@@ -15,10 +15,16 @@ vi.mock('electron', () => ({
 }))
 import '../../preload/index'
 const api = mocks.exposed.get('electronAPI') as ElectronAPI
+/** The IPC calls made, the router's own endpoint lookups left out. */
+const ipcCalls = (): unknown[][] =>
+  mocks.invoke.mock.calls.filter(([channel]) => channel !== 'server:endpoint')
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.invoke.mockResolvedValue({ id: 'session' })
+  // Main names no server here: every method goes over IPC, as before the split.
+  mocks.invoke.mockImplementation(async (channel: string) =>
+    channel === 'server:endpoint' ? null : { id: 'session' }
+  )
 })
 
 describe('session preload bridge', () => {
@@ -27,17 +33,23 @@ describe('session preload bridge', () => {
     await api.sessionsSubscribe('shared')
     mocks.invoke.mockClear()
     await api.sessionsUnsubscribe('shared')
-    expect(mocks.invoke).not.toHaveBeenCalled()
+    expect(ipcCalls()).toEqual([])
     await api.sessionsUnsubscribe('shared')
-    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('sessions:unsubscribe', 'shared')
+    expect(ipcCalls()).toEqual([['sessions:unsubscribe', 'shared']])
   })
   it('rolls back a rejected subscription before another attempt', async () => {
-    mocks.invoke.mockRejectedValueOnce(new Error('Unknown session'))
+    mocks.invoke.mockImplementationOnce(async (channel: string) => {
+      if (channel === 'server:endpoint') return null
+      throw new Error('Unknown session')
+    })
+    mocks.invoke.mockImplementationOnce(async () => {
+      throw new Error('Unknown session')
+    })
     await expect(api.sessionsSubscribe('retry')).rejects.toThrow('Unknown session')
     await api.sessionsSubscribe('retry')
     mocks.invoke.mockClear()
     await api.sessionsUnsubscribe('retry')
-    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('sessions:unsubscribe', 'retry')
+    expect(ipcCalls()).toEqual([['sessions:unsubscribe', 'retry']])
   })
   it('keeps the legacy PTY exit listener and adapter exit listener on their own channels', () => {
     const legacy = api.onSessionExit('id', () => {})
@@ -57,7 +69,7 @@ describe('session preload bridge', () => {
     const bytes = new Uint8Array([0xc3, 0xa9])
     await api.sessionsWrite('id', bytes)
     await api.sessionsWrite('id', { type: 'user_message', text: 'hello' })
-    expect(mocks.invoke.mock.calls).toEqual([
+    expect(ipcCalls()).toEqual([
       ['sessions:write', 'id', bytes],
       ['sessions:write', 'id', { type: 'user_message', text: 'hello' }]
     ])

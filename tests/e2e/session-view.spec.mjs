@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 /**
  * A session's attached web view actually REPLACES its terminal.
  *
@@ -66,7 +71,7 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR, { server: 'in-process' })
   try {
     const opened = await callMcp(app, 'openSession', {
       mode: 'terminal',
@@ -100,14 +105,14 @@ export async function run(t) {
     const icon = await win.evaluate(
       () =>
         [
-          ...document.querySelectorAll('[data-sidebar-item-type="session"] span[role="button"]')
+          ...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')
         ].filter((s) => s.getAttribute('title') === 'Dash').length
     )
-    t.equal('and puts a dashboard icon on the row', icon, 1)
+    t.equal("and makes the row's logo open it", icon, 1)
 
     // Open it.
     await win.evaluate(() =>
-      [...document.querySelectorAll('[data-sidebar-item-type="session"] span[role="button"]')]
+      [...document.querySelectorAll('[data-sidebar-item-type="session"] .tab-status[data-view]')]
         .find((s) => s.getAttribute('title') === 'Dash')
         ?.click()
     )

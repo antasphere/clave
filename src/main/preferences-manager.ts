@@ -1,10 +1,9 @@
-import * as fs from 'fs'
-import * as path from 'path'
-import { app } from 'electron'
+import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
+import { readJson, writeJson } from './ports/storage'
 
 export type AppIcon = 'dark' | 'light' | 'claude'
 
-interface Preferences {
+export interface Preferences {
   activeSkinId: string | null
   appIcon: AppIcon
   telemetryEnabled: boolean
@@ -43,6 +42,8 @@ interface Preferences {
   chatView: string | null
 }
 
+const PREFERENCES_FILE = 'preferences.json'
+
 const DEFAULTS: Preferences = {
   activeSkinId: null,
   appIcon: 'dark',
@@ -59,34 +60,31 @@ const DEFAULTS: Preferences = {
   chatView: null
 }
 
-class PreferencesManager {
-  private filePath: string
-  private cache: Preferences
+export class PreferencesManager {
+  private cache: Preferences | null = null
 
-  constructor() {
-    this.filePath = path.join(app.getPath('userData'), 'preferences.json')
-    this.cache = this.load()
-  }
+  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
   private load(): Preferences {
-    try {
-      const raw = fs.readFileSync(this.filePath, 'utf-8')
-      return { ...DEFAULTS, ...JSON.parse(raw) }
-    } catch {
-      return { ...DEFAULTS }
-    }
+    if (this.cache) return this.cache
+    const raw = readJson(this.ports.storage, PREFERENCES_FILE)
+    this.cache =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? { ...DEFAULTS, ...(raw as Partial<Preferences>) }
+        : { ...DEFAULTS }
+    return this.cache
   }
 
   private save(): void {
-    fs.writeFileSync(this.filePath, JSON.stringify(this.cache, null, 2), 'utf-8')
+    writeJson(this.ports.storage, PREFERENCES_FILE, this.cache)
   }
 
   get<K extends keyof Preferences>(key: K): Preferences[K] {
-    return this.cache[key]
+    return this.load()[key]
   }
 
   set<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
-    this.cache[key] = value
+    this.load()[key] = value
     this.save()
   }
 }

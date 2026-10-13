@@ -50,12 +50,12 @@ describe('SessionManager', () => {
     const { manager } = fixture()
     await manager.create(session('a'))
     expect(manager.get('a')?.viewId).toBeUndefined()
-    expect(manager.setView('a', 'clave.chat-view/compact').viewId).toBe('clave.chat-view/compact')
-    expect(manager.get('a')?.viewId).toBe('clave.chat-view/compact')
+    expect(manager.setView('a', 'clave.chat-view/terminal').viewId).toBe('clave.chat-view/terminal')
+    expect(manager.get('a')?.viewId).toBe('clave.chat-view/terminal')
     // Cleared, the session goes back to whatever the host resolves for it.
     expect(manager.setView('a', null).viewId).toBeUndefined()
     expect('viewId' in manager.get('a')!).toBe(false)
-    for (const invalid of ['chat', 'a/b/c', '/compact', 'clave.chat-view/', ''])
+    for (const invalid of ['chat', 'a/b/c', '/terminal', 'clave.chat-view/', ''])
       expect(() => manager.setView('a', invalid)).toThrow('Invalid view id')
     // A refused id leaves the record as it was, never half-set.
     manager.setView('a', 'clave.chat-view/chat')
@@ -67,10 +67,10 @@ describe('SessionManager', () => {
   it('keeps the chosen view across the record updates a session lives through', async () => {
     const { manager } = fixture()
     await manager.create(session('a'))
-    manager.setView('a', 'clave.chat-view/compact')
+    manager.setView('a', 'clave.chat-view/terminal')
     manager.update('a', { windowKey: 'second', title: 'Moved' })
     manager.setState('a', 'working')
-    expect(manager.get('a')?.viewId).toBe('clave.chat-view/compact')
+    expect(manager.get('a')?.viewId).toBe('clave.chat-view/terminal')
   })
 
   it('rejects unknown adapters, mismatched transports and duplicate concurrent ids', async () => {

@@ -318,7 +318,7 @@ function windowShapeOf(name: string): { kind: string; scope: string | null; labe
  * which read produced them. Self-describing like the endpoint's `limits`: every
  * `<name>-utilization` header is a window, its `<name>-reset` (epoch seconds)
  * and `<name>-status` beside it. Utilization arrives as a fraction of the cap
- * (0.21 = 21%); a value above 1 is taken as a percentage already.
+ * (0.21 = 21%), and past the cap it goes above 1 (1.01), clamped to full.
  */
 export function parseUnifiedRateLimitHeaders(get: (name: string) => string | null): UsageWindow[] {
   return parseUnifiedRateLimitEntries(collectUnifiedHeaders(get))
@@ -344,7 +344,9 @@ export function parseUnifiedRateLimitEntries(entries: [string, string][]): Usage
     if (fields.utilization === undefined) continue
     const utilization = Number(fields.utilization)
     if (!Number.isFinite(utilization)) continue
-    const percent = utilization <= 1 ? utilization * 100 : utilization
+    // Always a fraction: a window past its cap reports above 1 (1.01), and
+    // reading that as a percentage already showed an exhausted cap as 1%.
+    const percent = utilization * 100
     const reset = fields.reset !== undefined ? Number(fields.reset) : NaN
     const shape = windowShapeOf(name)
     ranked.push({

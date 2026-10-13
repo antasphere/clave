@@ -5,9 +5,8 @@ import { until } from './harness.mjs'
    holds in the real app:
    - a pinned question is plain sticky: whole, never clipped, on a backdrop,
      moved by the scroll in the same frame and pushed out by the next one;
-   - a message taller than the pane is capped and scrolls inside, the cap moved
-     by the grip on its bottom edge down to a single line, kept, and reset by
-     a double-click;
+   - a message is never capped nor scrolled inside: a long one stands whole
+     and, too tall to pin, scrolls away with its exchange;
    - the "Other" answer wraps as it is typed, and its record in the transcript
      wraps too and says Answered, even when the agent's state moved on before
      the answer's write came back. */
@@ -25,21 +24,20 @@ const filler = (n) =>
   }))
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-questions',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   try {
-    await win.evaluate(() => localStorage.removeItem('clave-terminal-question-height'))
     // Pinning is the default; make sure of it.
     const pin = view.getByRole('button', { name: 'Pin the question while its answer scrolls' })
     if ((await pin.getAttribute('aria-pressed')) !== 'true') await pin.click()
 
     /* 1. A bare one-line question, scrolled past: pinned, never folded. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'one line question' },
       ...filler(40),
       { type: 'assistant_text', delta: 'Done.', final: true },
@@ -51,7 +49,8 @@ export async function run(t) {
        from the top until it mounts. */
     const Q0 = 'one line question'
     const Q1 = 'OK well archive the sessions'
-    const Q2 = 'line 1 of a very long message'
+    const QL = 'line 1 of a very long message'
+    const Q2 = 'line 1 of a three-line message'
     const Q3 = 'and after that'
     await win.evaluate(() => {
       const root = () => document.querySelector('[data-testid="terminal-view"] .chat-scroll')
@@ -135,7 +134,7 @@ export async function run(t) {
     )
 
     /* 2. An interrupted one-line question: the note folds away, the box stays whole. */
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'OK well archive the sessions and close their tabs' },
       { type: 'turn_interrupted' },
       ...filler(40),
@@ -155,106 +154,49 @@ export async function run(t) {
       { interrupted, note }
     )
 
-    /* 3. A message taller than the pane: capped, scrolling inside, resizable. */
+    /* 3. A message taller than the pane: whole, no inner scroll, not pinned. */
     const long = Array.from({ length: 120 }, (_, i) => `line ${i + 1} of a very long message`).join(
       '\n'
     )
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: long },
       ...filler(60),
       { type: 'assistant_text', delta: 'Done.', final: true },
+      // A short message pinned and pushed by the one after it (3b).
+      { type: 'user_message', text: `${Q2}\nline 2\nline 3` },
+      ...filler(60),
+      { type: 'assistant_text', delta: 'Done.', final: true },
       // Another exchange after it, so the transcript's end never stops the
-      // long one from scrolling to the top.
-      { type: 'user_message', text: 'and after that' },
+      // short one from scrolling to the top.
+      { type: 'user_message', text: Q3 },
       ...filler(40),
       { type: 'assistant_text', delta: 'Done.', final: true },
       { type: 'state_change', state: 'idle' }
     ])
     await reveal(Q3)
-    await scrollInto(Q2, -20)
-    const tall = await until(async () => {
-      const s = await rowState(Q2)
-      return s.tall && s.pinnedAt > 0 && s.pinnedAt < 60 ? s : null
+    await scrollInto(QL, 40)
+    const whole = await until(async () => {
+      const s = await rowState(QL)
+      return s.tall ? s : null
     })
     t.check(
-      'a message taller than the pane is capped at under a third of it and scrolls inside',
-      tall &&
-        tall.messageClient <= tall.pane * 0.3 + 1 &&
-        tall.messageScroll > tall.messageClient + 100,
-      tall
+      'a message taller than the pane stands whole, never scrolling inside',
+      whole && whole.messageScroll <= whole.messageClient + 1 && whole.messageHeight > whole.pane,
+      whole
     )
-    const grip = rowOf(Q2).locator('.term-question-grip')
-    await rowOf(Q2).locator('.chat-turn[data-role="user"]').hover()
-    // The turns arrive with a short slide; drag once the grip has settled.
-    let last = null
-    const box = await until(async () => {
-      const now = await grip.boundingBox()
-      const still = now && last && now.y === last.y
-      last = now
-      if (!still) await win.waitForTimeout(100)
-      return still ? now : null
-    })
     t.check(
-      'a long message shows its grip on hover',
-      !!box && (await grip.isVisible()),
-      await grip.evaluate((el) => ({
-        display: getComputedStyle(el).display,
-        row: { ...el.closest('.chat-turn-wrap').dataset },
-        rect: el.getBoundingClientRect().toJSON()
-      }))
+      'a message too tall to pin scrolls away with its exchange',
+      whole && whole.pinnedAt < -20,
+      whole
     )
-    const before = tall.messageClient
-    await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await win.mouse.down()
-    await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 60, { steps: 6 })
-    await win.mouse.up()
-    const grown = await rowState(Q2)
-    const stored = await win.evaluate(() => localStorage.getItem('clave-terminal-question-height'))
-    t.check(
-      'dragging the grip down raises the cap, and the cap is kept',
-      Math.abs(grown.messageClient - (before + 60)) <= 2 && stored !== null,
-      { before, after: grown.messageClient, stored }
-    )
-    const gripNow = await grip.boundingBox()
-    await win.mouse.move(gripNow.x + gripNow.width / 2, gripNow.y + gripNow.height / 2)
-    await win.mouse.down()
-    await win.mouse.move(gripNow.x + gripNow.width / 2, gripNow.y + 4000, { steps: 4 })
-    await win.mouse.up()
-    const maxed = await rowState(Q2)
-    t.check(
-      'the cap never goes past three quarters of the pane',
-      maxed.messageClient <= maxed.pane * 0.75 + 1 && maxed.messageClient > before + 60,
-      maxed
-    )
-    // Up as far as it goes: one line of the message, never less.
-    const gripDown = await grip.boundingBox()
-    await win.mouse.move(gripDown.x + gripDown.width / 2, gripDown.y + gripDown.height / 2)
-    await win.mouse.down()
-    await win.mouse.move(gripDown.x + gripDown.width / 2, gripDown.y - 4000, { steps: 6 })
-    await win.mouse.up()
-    const line = await rowState(Q2)
-    t.check(
-      'dragging the grip up shrinks a message down to a single line',
-      Math.abs(line.messageHeight - single.messageHeight) <= 1,
-      { shrunk: line.messageHeight, oneLine: single.messageHeight }
-    )
-    await rowOf(Q2).locator('.chat-turn[data-role="user"]').hover()
-    const gripAgain = await grip.boundingBox()
-    await win.mouse.dblclick(gripAgain.x + gripAgain.width / 2, gripAgain.y + gripAgain.height / 2)
-    const reset = await rowState(Q2)
-    t.check(
-      'a double-click on the grip resets the cap',
-      Math.abs(reset.messageClient - before) <= 1 &&
-        (await win.evaluate(() => localStorage.getItem('clave-terminal-question-height'))) === null,
-      { before, after: reset.messageClient }
-    )
+    t.check('a short message is not marked too tall to pin', single && single.tall === null, single)
 
     /* 3b. Pinned on its backdrop, pushed by the scroll, gone over the top edge. */
     const scrollNextTo = (prefix, offset) => scrollInto(prefix, -offset)
     const pair = () =>
       win.evaluate(() => {
         const root = window.__tq.root()
-        const row = window.__tq.row('line 1 of a very long message')
+        const row = window.__tq.row('line 1 of a three-line message')
         const next = window.__tq.row('and after that')
         const r = row.getBoundingClientRect()
         const backdrop = getComputedStyle(row, '::before')
@@ -270,14 +212,14 @@ export async function run(t) {
           clip: getComputedStyle(row).clipPath
         }
       })
-    // The next question well below: the long one is pinned, whole, at its place.
+    // The next question well below: the short one is pinned, whole, at its place.
     await scrollNextTo(Q3, 400)
     const pinnedLong = await until(async () => {
       const s = await pair()
       return s.top > 0 && Math.abs(s.top - 8) <= 1 ? s : null
     })
     t.check(
-      'a pinned long message sits under the top edge, whole, on a backdrop',
+      'a pinned multi-line message sits under the top edge, whole, on a backdrop',
       pinnedLong && pinnedLong.backdrop !== null && pinnedLong.clip === 'none',
       pinnedLong
     )
@@ -293,7 +235,7 @@ export async function run(t) {
     // any script has run, the pushed question has moved by exactly as much.
     const drift = await win.evaluate(() => {
       const root = window.__tq.root()
-      const row = window.__tq.row('line 1 of a very long message')
+      const row = window.__tq.row('line 1 of a three-line message')
       const steps = []
       for (let i = 0; i < 5; i++) {
         const before = row.getBoundingClientRect().top
@@ -317,7 +259,7 @@ export async function run(t) {
       for (let i = 0; i < 40; i++) {
         root.scrollTop += 2
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-        const row = window.__tq.row('line 1 of a very long message')
+        const row = window.__tq.row('line 1 of a three-line message')
         if (!row) {
           gone.push(i)
           continue
@@ -335,19 +277,21 @@ export async function run(t) {
     t.check('a pushed question scrolls on over the top edge', leaving.top < 0, leaving)
 
     /* 4. "Other": the field wraps, the record wraps and says Answered. */
-    await app.evaluate(({ ipcMain, BrowserWindow }, id) => {
-      const original = ipcMain._invokeHandlers.get('sessions:write')
-      ipcMain._invokeHandlers.set('sessions:write', (event, sid, input) => {
-        if (input.type !== 'permission_response') return original(event, sid, input)
+    await fixture.evaluate((id) => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
+      host.write = (sid, input) => {
+        if (input.type !== 'permission_response') return write.call(host, sid, input)
         // The adapter leaves blocked the moment it has the reply: that state
         // reaches the pane before the write's own answer does.
-        BrowserWindow.getAllWindows()[0].webContents.send(`sessions:stream:${id}`, {
+        globalThis.__claveE2E.echo.inject(id, {
           kind: 'event',
           event: { type: 'state_change', state: 'working' }
         })
-      })
+        return Promise.resolve()
+      }
     }, record.id)
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'ask me something' },
       {
         type: 'permission_request',
@@ -417,6 +361,6 @@ export async function run(t) {
       record_
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

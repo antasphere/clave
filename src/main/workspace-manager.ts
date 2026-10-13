@@ -1,9 +1,13 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import { app } from 'electron'
 import type { Workspace, WorkspaceStateFile } from '../shared/workspace-types'
-import { getPreference, addTrustedRoot } from './ipc-handlers/clave-file-handlers'
+import { lazySettingsPorts, type SettingsPorts } from './ports/registry'
+import { readJson, writeJson, type StoragePort } from './ports/storage'
+
+const STATE_FILE = 'workspace-state.json'
+const LEGACY_PREFERENCES_FILE = 'clave-preferences.json'
+const TRUSTED_ROOTS_FILE = 'clave-trusted-roots.json'
 
 /** Resolve symlinks + normalize, mirroring the trust-root normalization so the
  *  same path always compares equal regardless of how it was spelled. */
@@ -52,14 +56,30 @@ function emptyState(): WorkspaceStateFile {
   return withLastActive({ version: 1, workspaces: [], pins: [], pinsMigrated: true }, null)
 }
 
+/** Trust a workspace root for `.clave` files. The trusted-roots file is owned
+ *  by the `.clave` trust boundary in `ipc-handlers/clave-file-handlers.ts`,
+ *  which caches it on first read; this one-time migration writes it before any
+ *  window exists, so that cache is still cold, and the file shape (a JSON
+ *  array of normalized absolute paths) is the one that module reads. */
+function grantTrustedRoot(storage: StoragePort, rootDir: string): void {
+  const raw = readJson(storage, TRUSTED_ROOTS_FILE)
+  const roots = Array.isArray(raw) ? raw.filter((r): r is string => typeof r === 'string') : []
+  const norm = normalizeDir(rootDir)
+  if (roots.includes(norm)) return
+  roots.push(norm)
+  writeJson(storage, TRUSTED_ROOTS_FILE, roots)
+}
+
 /** One-time Phase A migration: collapse the retired per-file registry into
  *  per-root workspaces. Runs only when workspace-state.json doesn't exist. */
-function migrateLegacyRegistry(): WorkspaceStateFile {
-  const rawEntries = getPreference('workspaces')
+function migrateLegacyRegistry(storage: StoragePort): WorkspaceStateFile {
+  const legacy = readJson(storage, LEGACY_PREFERENCES_FILE) as Record<string, unknown> | null
+  const rawEntries = legacy?.workspaces
   if (!Array.isArray(rawEntries) || rawEntries.length === 0) return emptyState()
-  const legacyActiveId = getPreference('activeWorkspaceId') as string | null
+  const legacyActiveId =
+    typeof legacy?.activeWorkspaceId === 'string' ? legacy.activeWorkspaceId : null
 
-  const userData = normalizeDir(app.getPath('userData'))
+  const userData = normalizeDir(storage.pathOf('.'))
   const byRoot = new Map<string, { entries: LegacyWorkspaceEntry[]; files: string[] }>()
   let activeFile: string | null = null
 
@@ -97,7 +117,7 @@ function migrateLegacyRegistry(): WorkspaceStateFile {
       createdAt: Date.now()
     }
     workspaces.push(ws)
-    addTrustedRoot(rootDir)
+    grantTrustedRoot(storage, rootDir)
     if (activeFile && group.files.includes(activeFile)) activeWorkspaceId = ws.id
   }
 
@@ -156,22 +176,18 @@ export function mergePinsPartition(
  *  are global, each window only ever rewrites the pins of workspaces it
  *  hosts, and the old global "active workspace" survives only as the
  *  last-active default for the first window of the next run. */
-class WorkspaceManager {
-  private filePath: string
+export class WorkspaceManager {
   private cache: WorkspaceStateFile | null = null
   /** realpath is a syscall per call; roots barely change, so cache them. */
   private normalizedRoots = new Map<string, string>()
 
-  constructor() {
-    this.filePath = path.join(app.getPath('userData'), 'workspace-state.json')
-  }
+  constructor(private readonly ports: SettingsPorts = lazySettingsPorts) {}
 
   load(): WorkspaceStateFile {
     if (this.cache) return this.cache
-    try {
-      const data = JSON.parse(
-        fs.readFileSync(this.filePath, 'utf-8')
-      ) as Partial<WorkspaceStateFile>
+    const raw = readJson(this.ports.storage, STATE_FILE)
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const data = raw as Partial<WorkspaceStateFile>
       // New key first, old key as the fallback for a file written by the
       // previous release.
       const lastActive =
@@ -192,9 +208,9 @@ class WorkspaceManager {
       // A file from the previous release carries only the old key: write it
       // back once with both, so the new key exists from the first boot on.
       if (typeof data.lastActiveWorkspaceId !== 'string' && lastActive !== null) this.persist()
-    } catch {
+    } else {
       // First boot of the workspace model — migrate the retired registry.
-      this.cache = migrateLegacyRegistry()
+      this.cache = migrateLegacyRegistry(this.ports.storage)
       this.persist()
     }
     return this.cache
@@ -203,11 +219,8 @@ class WorkspaceManager {
   private persist(): void {
     if (!this.cache) return
     try {
-      const payload = JSON.stringify(this.cache, null, 2)
-      // Write-then-rename so a kill mid-write can never leave a truncated file.
-      const tmp = `${this.filePath}.tmp`
-      fs.writeFileSync(tmp, payload, 'utf-8')
-      fs.renameSync(tmp, this.filePath)
+      // Write-then-rename (the port's) so a kill mid-write can never leave a truncated file.
+      writeJson(this.ports.storage, STATE_FILE, this.cache)
     } catch (err) {
       console.error('[workspace] Failed to persist workspace state:', err)
     }

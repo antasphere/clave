@@ -1,3 +1,11 @@
+// Pinned to the in-process server. The attached restore itself works since wave 4
+// (PRDCT-3376: the records are the server's, read off it after the boot; see
+// terminal-reattach, which runs in both modes). This spec stays pinned because
+// it seeds session records (and transcripts) by hand into the APP's data folder
+// before the launch, and attached the records live in the standalone server's
+// folder, which the harness does not seed with session-records (a harness
+// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
+// records it restores through the prompt are the in-process boot's too.
 /**
  * The one-time sidebar-layout migration (PRDCT-1703): on the first boot of
  * the multi-window build (no windows.json yet) the legacy single
@@ -153,7 +161,7 @@ export async function run(t) {
 
   let app = null
   try {
-    const launched = await launchApp(DIR, { settleMs: 7000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
     app = launched.app
     const id = await identityOf(launched.win)
     const key = id?.windowKey
@@ -233,7 +241,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1000)
-    const again = await launchApp(DIR, { settleMs: 6000 })
+    const again = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
     app = again.app
     t.check(
       'a second boot leaves the backups in place (idempotent)',

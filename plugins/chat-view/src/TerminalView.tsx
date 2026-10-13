@@ -29,6 +29,7 @@ import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
 import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
+import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
 import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
 import { TerminalTools } from './TerminalTools'
@@ -265,8 +266,8 @@ const EntryRow = memo(function EntryRow({
       >
         <Attachments files={entry.attachments ?? []} />
         {text.trim() !== '' && (
-          // The message is capped in height and scrolls inside past it; the
-          // grip on its bottom edge moves the cap (question-height.ts).
+          // The message stands whole; one too tall to pin scrolls away with
+          // its exchange instead (question-height.ts).
           <div className="term-question">
             <article
               className="chat-turn"
@@ -277,13 +278,6 @@ const EntryRow = memo(function EntryRow({
               {delivery && <SenderChip sender={delivery.sender} />}
               {text.replace(/\s+$/, '')}
             </article>
-            <div
-              className="term-question-grip"
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="Resize long messages"
-              title="Drag to show more or less of long messages · double-click to reset"
-            />
           </div>
         )}
         {entry.interrupted && <span className="chat-turn-note">Interrupted</span>}
@@ -1065,6 +1059,7 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
               claudeContextWindow(conversation.model)
             }
           />
+          <AccountChip sessionId={session.id} />
           {status.agents.length > 0 && (
             <span className="term-dim">
               · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}

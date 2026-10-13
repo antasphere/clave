@@ -1,3 +1,4 @@
+// It also reads the terminal journal the app writes in that mode (PRDCT-3240).
 /**
  * A group prompt edited in the `.clave` must reach the group (PRDCT-1665).
  *
@@ -25,7 +26,7 @@ import {
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
-  spyPtySpawn,
+  spawnJournal,
   fixturePath
 } from './harness.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -102,7 +103,7 @@ export async function run(t) {
     )
 
     // Stamp a fresh group from the reloaded pin — the picker is already open.
-    const readSpawns = await spyPtySpawn(app)
+    const readSpawns = spawnJournal(DIR)
     await win.click('.group-picker-card')
     await win.waitForTimeout(6000)
 

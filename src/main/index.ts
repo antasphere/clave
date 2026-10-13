@@ -4,7 +4,8 @@ import './user-data-override'
 // SECOND, before any manager: a pre-release's first run on a stable data
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
-import { app, BrowserWindow, shell, nativeImage, nativeTheme } from 'electron'
+import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
+import { flushRendererStorage } from './flush-storage'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -14,8 +15,7 @@ import { cleanupDroppedFiles } from './ipc-handlers/dropped-file-handlers'
 import {
   registerWindowHandlers,
   broadcastIdentities,
-  moveSessionsToWindow,
-  takeClosingLayout
+  rehomeSessions
 } from './ipc-handlers/window-handlers'
 import { ptyManager, preloadLoginShellEnv } from './pty-manager'
 import { initAutoUpdater, cleanupAutoUpdater } from './auto-updater'
@@ -31,6 +31,13 @@ import { workspaceManager } from './workspace-manager'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
+import {
+  sidebarLayouts,
+  setSidebarTransport,
+  isAttachedServer,
+  sessionIdsInWindow
+} from './sidebar-layouts'
+import { serverClient } from './mcp/server-client'
 import { sessionWorkspaceResolver } from './session-records-index'
 import type { PersistedWindow } from '../shared/workspace-types'
 import {
@@ -39,13 +46,35 @@ import {
   attachMissionControlWindow
 } from './mission-control-manager'
 import { cleanupClaveWatchers } from './ipc-handlers/clave-file-handlers'
-import { startMcpServer, stopMcpServer, registerMcpWindowOpener } from './mcp/mcp-server'
+import {
+  startMcpServer,
+  stopMcpServer,
+  registerMcpWindowOpener,
+  announceAgentToolsToServer
+} from './mcp/mcp-server'
 import { usageManager } from './usage-manager'
 import { codexUsageManager } from './codex-usage'
 import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
+import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
+import { startClaveServer, stopClaveServer } from './server/clave-server'
+import { quitActivityRecord } from './activity/service'
+import { markClaveServerBootSettled } from './server/endpoint'
+import { setClaveServerEndpoint } from './server/endpoint'
+import { getSessionHost } from './sessions/host'
+import { installE2eHooks } from './sessions/e2e-hooks'
+import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
+import { terminalPorts } from './ports/terminals'
+import { workspaceFiles } from './workspace-files'
+
+// The server to attach to, if any, read ONCE off the environment and taken
+// out of it here, before anything in this process spawns: the token belongs
+// to what is meant to call the server, and no session, helper or nested Clave
+// may inherit it (ADR 0003).
+const serverLaunch = takeServerLaunch(process.env)
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -75,7 +104,97 @@ if (TEST_NO_ACTIVATE && process.platform === 'darwin') {
  */
 let quitting = false
 
-function onWindowClosed(windowId: number, windowKey: string): void {
+/**
+ * The server the shell runs on (ADR 0003). In-process by default; attached to
+ * one started elsewhere under `CLAVE_SERVER_URL` + `CLAVE_SERVER_TOKEN`. In
+ * this wave nothing the window shows comes from it yet, so a failure is not
+ * fatal — but it is never silent: an attach that fails is logged, written to
+ * `clave-server.json` as `ok: false`, and shown as a notification, and the
+ * app does NOT start an in-process server in its place (server-boot.ts says
+ * why). The url and the token live in `clave-server.json` (owner-only) and in
+ * the handle, and NOWHERE in this process's environment: an export there
+ * would reach every helper main spawns off `process.env` (git, gh, the Codex
+ * app-server, the plugin runner) and none of the sessions, which get their
+ * environment from the cached login shell and from tmux's own list. What
+ * needs the server is handed the pair deliberately, when it moves (wave 2).
+ *
+ * `serverBoot` is the boot's promise: a quit waits on it before stopping, so
+ * a registration still in flight is deregistered rather than left as a
+ * ghost on an attached server.
+ */
+let serverHandle: ServerHandle | null = null
+let serverBoot: Promise<void> = Promise.resolve()
+
+async function bootServer(): Promise<void> {
+  // A test seam, under --test-no-activate only: the suite makes the server
+  // come up late (`CLAVE_E2E_SERVER_BOOT_DELAY_MS`) to prove a window that
+  // booted before it still hears the sidebar once it answers.
+  const bootDelay = TEST_NO_ACTIVATE ? Number(process.env.CLAVE_E2E_SERVER_BOOT_DELAY_MS ?? 0) : 0
+  if (bootDelay > 0) await new Promise((resolve) => setTimeout(resolve, bootDelay))
+  try {
+    serverHandle = await startServer({
+      launch: serverLaunch,
+      userData: app.getPath('userData'),
+      identity: { kind: 'shell', name: `clave-shell ${app.getVersion()}`, pid: process.pid },
+      // The in-process server: `@clave/server` over the session manager
+      // (server/clave-server.ts), which publishes its address to the windows.
+      startInProcess: async () => {
+        const endpoint = await startClaveServer({
+          ports: {
+            // ── Lane A: sessions ──
+            sessions: getSessionHost(),
+            // ── Lane D: settings, the shell's managers (settings/shell-source.ts) ──
+            settings: shellSettingsSource,
+            // ── Lane B: terminals (node-pty in this process, src/main/ports/terminal.ts) ──
+            terminals: terminalPorts().terminals,
+            // ── Lane C: the sidebar, the shell's own instance (sidebar-layouts.ts) ──
+            sidebar: sidebarLayouts(),
+            // ── Wave 3, lane A: the workspace files, the shell's own instance (workspace-files.ts) ──
+            workspaceFiles: workspaceFiles()
+          },
+          // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
+          testFixtures: TEST_NO_ACTIVATE
+        })
+        return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
+      }
+    })
+    console.log(`[server] ${serverHandle.mode} at ${serverHandle.url}`)
+    // The sidebar's transport follows the boot: through the server's client
+    // when the server runs in this process (the same instance main holds),
+    // over IPC when the app is attached to a server that cannot host windows.
+    setSidebarTransport(serverHandle.mode === 'in-process' ? 'server' : 'shell')
+    // An attached server is published to the windows too (wave 2): the
+    // sessions domain lives on the server now, so a window on an attached
+    // app asks that server, which says what it cannot do (a standalone
+    // server runs no sessions until its terminal process, wave 3). The
+    // in-process start publishes its own address in server/clave-server.ts.
+    if (serverHandle.mode === 'attached') {
+      setClaveServerEndpoint({ url: serverHandle.url, token: serverHandle.token, mode: 'attached' })
+      // Tell the server where this shell's agent tools answer, so a Claude
+      // session it starts reaches them (wave 4, lane C). It waits for the MCP
+      // server inside its own call, so the order of the two boots is safe.
+      void announceAgentToolsToServer()
+    }
+  } catch (err) {
+    const message = err instanceof ServerBootError ? err.message : String(err)
+    console.error(`[server] not available: ${message}`)
+    setSidebarTransport('shell')
+    if (
+      err instanceof ServerBootError &&
+      err.mode === 'attached' &&
+      !TEST_NO_ACTIVATE &&
+      Notification.isSupported()
+    ) {
+      new Notification({
+        title: 'Clave could not reach its server',
+        body: `${message}. The app runs without it.`,
+        silent: false
+      }).show()
+    }
+  }
+}
+
+async function onWindowClosed(windowId: number, windowKey: string): Promise<void> {
   // Only CLAVE windows count (the registry's), never a stray BrowserWindow a
   // dialog or a picker might own — or the final close would skip the app's
   // shutdown.
@@ -92,12 +211,49 @@ function onWindowClosed(windowId: number, windowKey: string): void {
     return
   }
   const hosted = windowRegistry.getSessionsForWindow(windowId)
+  // Attached, the sessions are the server's and main keeps no process
+  // binding for them: the closing window's sessions come from the SERVER's
+  // own list for this window (its hidden sessions — a toolbar server, a
+  // view's serving process — are not in the layout), with the layout as a
+  // fallback when the server cannot be reached.
+  const attached = isAttachedServer()
+  let attachedIds: string[] = []
+  if (attached) {
+    const fromServer = await serverClient
+      .api()
+      .then((api) => api.sessions.list(windowKey))
+      .then((sessions) => sessions.map((session) => session.id))
+      .catch(() => [] as string[])
+    attachedIds = [...new Set([...fromServer, ...sessionIdsInWindow(windowKey)])]
+  }
   windowRegistry.unregisterWindow(windowId)
   windowState.remove(windowKey)
   const primary = windowRegistry.getPrimaryWindow()
   if (!primary) return
   const primaryKey = windowRegistry.getKeyForWindow(primary.id)
-  const layout = takeClosingLayout(windowKey)
+  // The closing window's groups go to the primary through the sidebar
+  // domain (its layout absorbed, its file removed), and its live sessions
+  // follow them in the same hand-over.
+  const layout = sidebarLayouts().windowClosed(windowKey, primaryKey)
+  if (attached) {
+    // Release the closing window's sessions on the server, each re-stamped
+    // to the primary (the plain ones the way an in-process close re-stamps
+    // and drops them), then hand the primary the layout to take them into.
+    if (primaryKey && attachedIds.length > 0) {
+      const outcome = await serverClient
+        .api()
+        .then((api) => api.sessions.release(attachedIds, primaryKey))
+        .catch(() => ({ released: [] as string[], refused: [] }))
+      if (!primary.isDestroyed())
+        primary.webContents.send('session:rehome', {
+          sessionIds: outcome.released,
+          layout,
+          focus: false
+        })
+    }
+    broadcastIdentities()
+    return
+  }
   // Plain-pty sessions die with their renderer (as on close before); their
   // records follow the primary so the next boot offers them there.
   const tmuxBacked: string[] = []
@@ -108,7 +264,7 @@ function onWindowClosed(windowId: number, windowKey: string): void {
       ptyManager.kill(id, false)
     }
   }
-  moveSessionsToWindow(tmuxBacked, primary.id, layout, false)
+  if (primaryKey) rehomeSessions(tmuxBacked, primaryKey, { layout, focus: false })
   broadcastIdentities()
 }
 
@@ -211,7 +367,7 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
   win.on('leave-full-screen', sendFullScreen(false))
 
   const windowId = win.id
-  win.on('closed', () => onWindowClosed(windowId, entry.key))
+  win.on('closed', () => void onWindowClosed(windowId, entry.key))
 
   win.webContents.on('will-navigate', (event, url) => {
     if (url.startsWith('clave://')) {
@@ -312,6 +468,15 @@ app.whenReady().then(() => {
   installViewGuestPolicy()
   // MCP failure must not break the app — spawns just omit the --mcp-config flag.
   void startMcpServer().catch((err) => console.error('[mcp] failed to start', err))
+  // The endpoint reaches the renderer over IPC and nowhere else (ADR 0003):
+  // the preload asks `ipc-handlers/server-handlers.ts`, registered above.
+  // The end-to-end seam into the sessions, under --test-no-activate only
+  // (sessions/e2e-hooks.ts): installed at boot, before the server, so an
+  // app attached to a standalone server has it too.
+  installE2eHooks({ sessionHost: getSessionHost() })
+  // The agent tools wait for the boot to decide (server/endpoint.ts): a
+  // tool call before the decision waits, one after a failed boot fails at once.
+  serverBoot = bootServer().finally(() => markClaveServerBootSettled())
   sweepSessionMcpConfigs()
   cleanupDroppedFiles()
   initNotificationManager()
@@ -366,25 +531,50 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (quitCleanup) return
   quitting = true
+  // The unsent composer drafts live in localStorage: commit them to disk
+  // before anything else of the quit runs.
+  flushRendererStorage()
   cleanupClaveWatchers()
   cleanupAutoUpdater()
   agentUpdateManager.stop()
   cleanupTelemetry()
   cleanupMissionControl()
+  // The activity record's quit row, before the shutdown forgets the sessions:
+  // written now, nothing that follows reads as a close (activity/service.ts).
+  quitActivityRecord()
   usageManager.stopPolling()
   codexUsageManager.stopPolling()
   accountLoginManager.cancelAll()
+  // The Antasphere login, while this process is its server: nothing stays
+  // listening, nothing fires later (attached, the server elsewhere owns it).
+  shellAntasphereAccount?.shutdown()
   stopMcpServer()
   // Keep the event loop alive until owned event children finish their escalation.
-  quitCleanup = ptyManager
-    .killAll()
-    .catch((error) => {
-      console.error('Session shutdown failed:', error)
-    })
-    .finally(() => {
-      quitReady = true
-      app.quit()
-    })
+  // The server goes with them: the boot awaited first (a registration still
+  // in flight must land before it is undone), then deregistered, and stopped
+  // when it is ours. Both waits are bounded (quit-cleanup.ts, PRDCT-3375,
+  // PRDCT-3290): past the ceiling the log names the wait still pending and
+  // the quit goes on; a quit that then still does not end is exited by the
+  // hammer. A quit with nothing wrong takes well under a second.
+  quitCleanup = runQuitCleanup(
+    [
+      // `quit: true`: the title door shuts too (a window's close runs the
+      // same shutdown and is not a quit; pty-manager.ts says why).
+      { name: "the sessions' shutdown", promise: ptyManager.killAll({ quit: true }) },
+      { name: "the server's stop", promise: serverBoot.then(() => serverHandle?.stop()) }
+    ],
+    {
+      ceilingMs: QUIT_CEILING_MS,
+      hammerMs: QUIT_HAMMER_MS,
+      quit: () => {
+        quitReady = true
+        app.quit()
+      },
+      exit: (code) => app.exit(code),
+      log: (line) => console.error(line),
+      info: (line) => console.log(line)
+    }
+  ).then(() => undefined)
 })
 
 app.on('window-all-closed', () => {

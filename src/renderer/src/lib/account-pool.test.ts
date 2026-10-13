@@ -62,8 +62,11 @@ describe('isExhausted', () => {
   })
   it('never on a guess: no reading, or a failed one, is not exhaustion', () => {
     expect(isExhausted(undefined)).toBe(false)
-    expect(isExhausted({ status: 'error', error: 'x', tightest: null })).toBe(false)
-    expect(isExhausted({ status: 'loading', error: null, tightest: null })).toBe(false)
+    // The renderer's summary, as the store builds it, fits the pool's type.
+    const failed: AccountUsageSummary = { status: 'error', error: 'x', tightest: null }
+    const loading: AccountUsageSummary = { status: 'loading', error: null, tightest: null }
+    expect(isExhausted(failed)).toBe(false)
+    expect(isExhausted(loading)).toBe(false)
   })
 })
 

@@ -13,13 +13,13 @@ async function reloadChat(win, input) {
 }
 
 export async function run(t) {
-  const fixture = await openChat('chat-input-history')
-  const { app, win, record } = fixture
+  const chat = await openChat('chat-input-history')
+  const { win, record, fixture } = chat
   try {
     const input = win.locator('[data-testid="chat-view"] textarea')
     await input.press('ArrowUp')
     assert.equal(await input.inputValue(), '')
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'First message\nwith another line' },
       { type: 'assistant_text', delta: 'Do not recall this reply', final: true },
       { type: 'user_message', text: 'Latest message' },
@@ -57,7 +57,7 @@ export async function run(t) {
     t.check('drafts, modified arrows, IME and editing are safe; recalled text can be resent', true)
 
     await input.fill('')
-    await inject(app, record.id, [{ type: 'user_message', text: '/help' }])
+    await inject(fixture, record.id, [{ type: 'user_message', text: '/help' }])
     await win
       .locator('[data-testid="chat-view"] .chat-turn[data-role="user"]')
       .filter({ hasText: '/help' })
@@ -88,28 +88,28 @@ export async function run(t) {
     assert.equal(await fresh.inputValue(), '', 'another session has its own history')
     t.check('history stays within its session', true)
   } finally {
-    await fixture.close()
+    await chat.close()
   }
-  const compact = await openChat(
-    'compact-input-history',
-    ['--dev-echo-view=clave.chat-view/compact'],
-    '[data-view="compact"] input:not(:disabled)'
+  const terminal = await openChat(
+    'terminal-input-history',
+    ['--dev-echo-view=clave.chat-view/terminal'],
+    '.terminal-view textarea:not(:disabled)'
   )
   try {
-    const input = compact.win.locator('[data-view="compact"] input')
-    await input.fill('Sent from compact')
+    const input = terminal.win.locator('.terminal-view textarea')
+    await input.fill('Sent from terminal')
     await input.press('Enter')
     assert.ok(await until(async () => (await input.inputValue()) === ''))
     await input.press('ArrowUp')
-    assert.equal(await input.inputValue(), 'Sent from compact')
+    assert.equal(await input.inputValue(), 'Sent from terminal')
     await input.press('ArrowDown')
     assert.equal(await input.inputValue(), '')
-    t.check('compact chat also recalls sent messages', true)
+    t.check('the terminal view also recalls sent messages', true)
     await input.press('ArrowUp')
-    await reloadChat(compact.win, input)
-    assert.equal(await input.inputValue(), 'Sent from compact', 'compact recall survives reload')
-    t.check('a recalled compact draft survives its plugin restarting', true)
+    await reloadChat(terminal.win, input)
+    assert.equal(await input.inputValue(), 'Sent from terminal', 'terminal recall survives reload')
+    t.check('a recalled terminal draft survives its plugin restarting', true)
   } finally {
-    await compact.close()
+    await terminal.close()
   }
 }

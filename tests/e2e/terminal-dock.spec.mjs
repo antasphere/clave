@@ -10,28 +10,29 @@ import { until } from './harness.mjs'
      choice with a note waits for Enter instead of sending on the click. */
 
 export async function run(t) {
-  const fixture = await openChat(
+  const chat = await openChat(
     'terminal-dock',
     ['--dev-echo-view=clave.chat-view/terminal'],
     '[data-testid="terminal-view"] textarea:not(:disabled)'
   )
-  const { app, win, record } = fixture
+  const { win, record, fixture } = chat
   const view = win.locator('[data-testid="terminal-view"]')
   try {
-    await app.evaluate(({ ipcMain }) => {
+    await fixture.evaluate(() => {
       globalThis.__dock = []
-      const original = ipcMain._invokeHandlers.get('sessions:write')
-      ipcMain._invokeHandlers.set('sessions:write', (event, id, input) => {
+      const host = globalThis.__claveE2E.sessionHost
+      const write = host.write
+      host.write = (id, input) => {
         globalThis.__dock.push(input)
-        if (input.type === 'permission_response') return
-        return original(event, id, input)
-      })
+        if (input.type === 'permission_response') return Promise.resolve()
+        return write.call(host, id, input)
+      }
     })
     const answers = () =>
-      app.evaluate(() =>
+      fixture.evaluate(() =>
         globalThis.__dock.filter((w) => w.type === 'permission_response').map((w) => w.answers)
       )
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       { type: 'user_message', text: 'check it' },
       {
         type: 'permission_request',
@@ -94,7 +95,7 @@ export async function run(t) {
       multi
     )
 
-    await inject(app, record.id, [
+    await inject(fixture, record.id, [
       {
         type: 'permission_request',
         id: 'single',
@@ -129,6 +130,6 @@ export async function run(t) {
       { waited, stillUp, single }
     )
   } finally {
-    await fixture.close()
+    await chat.close()
   }
 }

@@ -129,8 +129,8 @@ export function LinkedDocumentPanel({
           )}
           <span className="truncate min-w-0 text-sm font-medium">{doc.title}</span>
         </div>
-        {/* An email carries its save state in the composer's foot, beside the
-            delivery state it belongs with; every other kind keeps it here. */}
+        {/* An email carries its save state in the composer's foot, under its
+            attachments; every other kind keeps it here. */}
         {doc.kind !== 'email' && (
           <span role="status" className="text-xs text-text-tertiary" title={status}>
             {status}

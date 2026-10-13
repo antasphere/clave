@@ -215,25 +215,32 @@ function UsageChart({
   )
 }
 
-/** A headline number: the question it answers, the answer, whose it is. */
-function StatTile({
+/** A headline number: the question it answers, the answer, whose it is.
+ *  Shared with the Activity page's headlines. */
+export function StatTile({
   label,
   value,
   detail,
-  level
+  level,
+  full = false,
+  hint
 }: {
   label: string
   value: string
   detail: string
   level?: 'normal' | 'warning' | 'critical'
+  /** At its limit already: the value says so, the warning icon would repeat it. */
+  full?: boolean
+  /** The tile's plain definition, as a native tooltip. */
+  hint?: string
 }): ReactElement {
   return (
-    <div className="settings-card" data-level={level}>
+    <div className="settings-card" data-level={level} title={hint}>
       {/* One child, so the card's row seams never cut the tile. */}
       <div className="usage-tile">
         <span className="usage-tile-label">{label}</span>
         <span className="usage-tile-value">
-          {level === 'critical' && <ExclamationTriangleIcon aria-hidden />}
+          {level === 'critical' && !full && <ExclamationTriangleIcon aria-hidden />}
           {value}
         </span>
         <span className="usage-tile-detail">{detail}</span>
@@ -273,6 +280,7 @@ function QuotaHeadlines({ accounts, now }: { accounts: AccountRead[]; now: numbe
         label="Closest to its limit"
         value={closest ? `${Math.round(closest.w.usedPercentage)}% used` : '—'}
         level={closest ? capLevel(closest.w) : undefined}
+        full={!!closest && closest.w.usedPercentage >= 100}
         detail={
           closest
             ? `${closest.account.label} · ${closest.w.label}${
