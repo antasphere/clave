@@ -107,7 +107,8 @@ export interface LaunchInput {
 
 /** The `--server` flag's value, or undefined when the flag is absent:
  *  `--server=x` and `--server x`; a bare `--server` with nothing after it
- *  answers the empty string, which is not a mode and is refused. */
+ *  answers the empty string, which is not a mode and is refused. Given
+ *  twice, the first occurrence wins. */
 export function serverFlag(argv: readonly string[]): string | undefined {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -214,6 +215,27 @@ export function readDiscovery(userData: string): ServerDiscovery | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The server this file names is gone (the separate child exited while the
+ * app runs, wave 5): the file says so, `ok: false` with the reason, the
+ * token taken out, the url and the dead pid kept for the record, so a
+ * reader never finds a live-looking server that is not there. Answers what
+ * it wrote, or null when there was no file to mark.
+ */
+export function markServerGone(userData: string, reason: string): ServerDiscovery | null {
+  const current = readDiscovery(userData)
+  if (!current) return null
+  const gone: ServerDiscovery = {
+    ...current,
+    token: null,
+    ok: false,
+    error: reason,
+    clientId: null
+  }
+  writeDiscovery(userData, gone)
+  return gone
 }
 
 async function call(

@@ -167,7 +167,15 @@ export async function supervisedTerminals(
     generation,
     givenUp
   })
-  const changed = (): void => options.onChange?.(state())
+  // A change is told, never trusted: a listener that throws (a discovery
+  // write that meets a full disk) must not end the restart it is told of.
+  const changed = (): void => {
+    try {
+      options.onChange?.(state())
+    } catch (err) {
+      log(`a change listener failed: ${(err as Error).message}`)
+    }
+  }
 
   /** Start one process and put its port in place. Throws when it cannot. */
   const boot = async (): Promise<void> => {

@@ -12,6 +12,7 @@
  * `server-boot` spec in separate mode.
  */
 import { describe, expect, it } from 'vitest'
+import { createServer } from 'node:net'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import type { GrpcTerminals, TerminalProcess } from '@clave/server'
 import {
@@ -35,13 +36,13 @@ interface FakeConnection {
   port: GrpcTerminals
 }
 
-const makeProcess = (n: number): FakeProcess => {
+const makeProcess = (n: number, address = `127.0.0.1:${1000 + n}`): FakeProcess => {
   let end: (code: number | string | null) => void = () => {}
   const exited = new Promise<number | string | null>((resolve) => {
     end = resolve
   })
   const fake: FakeProcess = {
-    address: `127.0.0.1:${1000 + n}`,
+    address,
     token: `token-${n}`,
     pid: 100 + n,
     exited,
@@ -300,6 +301,75 @@ describe('the terminal process supervisor', () => {
     expect(h.supervisor.state().pid).toBeNull()
     expect(() => h.supervisor.spawn(spawnSpec)).toThrow(/stopping/)
   })
+
+  it('a change listener that throws does not end the restart it is told of', async () => {
+    let calls = 0
+    const h = await (async () => {
+      const processes: FakeProcess[] = []
+      const supervisor = await supervisedTerminals({
+        start: async () => {
+          const p = makeProcess(processes.length + 1)
+          processes.push(p)
+          return p
+        },
+        connect: ({ address }) => ({
+          address,
+          spawn: () => handle(),
+          ready: async () => true,
+          down: () => false,
+          close: async () => {}
+        }),
+        onChange: () => {
+          calls += 1
+          throw new Error('ENOSPC: no space left on device')
+        }
+      })
+      return { processes, supervisor }
+    })()
+    h.processes[0].die(1)
+    await tick()
+    await h.supervisor.settled()
+    expect(h.processes).toHaveLength(2)
+    expect(h.supervisor.state()).toMatchObject({ pid: 102, generation: 2 })
+    expect(calls).toBeGreaterThanOrEqual(3)
+  })
+
+  it('through the real port, a process found gone (an address nobody serves) ends the handle lost and starts the next process', async () => {
+    // The port's own cue, not the process's exit: the fake process never
+    // exits, so only the port's onDown can start the next one. The address
+    // is a port bound and released, so the first call answers UNAVAILABLE.
+    const port = await new Promise<number>((resolve) => {
+      const s = createServer()
+      s.listen(0, '127.0.0.1', () => {
+        const { port } = s.address() as { port: number }
+        s.close(() => resolve(port))
+      })
+    })
+    const started: FakeProcess[] = []
+    const log: string[] = []
+    const supervisor = await supervisedTerminals({
+      start: async () => {
+        // The fake itself, not a copy: its `stop` marks the object it closes over.
+        const p = makeProcess(started.length + 1, `127.0.0.1:${port}`)
+        started.push(p)
+        return p
+      },
+      log: (line) => log.push(line),
+      maxRestarts: 1
+    })
+    try {
+      const terminal = supervisor.spawn(spawnSpec)
+      const exit = await new Promise((resolve) => terminal.onExit(resolve))
+      expect(exit).toEqual({ exitCode: 1 })
+      await supervisor.settled()
+      expect(started).toHaveLength(2)
+      expect(started[0].stopped).toBe(true)
+      expect(supervisor.state()).toMatchObject({ pid: 102, generation: 2, givenUp: null })
+      expect(log.some((l) => /lost: the port found it gone/.test(l))).toBe(true)
+    } finally {
+      await supervisor.close()
+    }
+  }, 15_000)
 
   it('a close during a restart waits for it and stops the newcomer', async () => {
     let release: () => void = () => {}

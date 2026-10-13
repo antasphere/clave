@@ -8,6 +8,7 @@ import {
   takeServerLaunch,
   startServer,
   readDiscovery,
+  markServerGone,
   serverFlag,
   ServerBootError,
   DISCOVERY_FILE,
@@ -59,6 +60,9 @@ describe('resolveServerLaunch, the --server flag (wave 5)', () => {
     expect(serverFlag(['a', '--server', 'in-process', 'b'])).toBe('in-process')
     expect(serverFlag(['a', '--server-x=1'])).toBeUndefined()
     expect(serverFlag([])).toBeUndefined()
+  })
+  it('given twice, the first occurrence wins', () => {
+    expect(serverFlag(['--server=separate', '--server=in-process'])).toBe('separate')
   })
   it('picks the flag’s mode, packaged or not', () => {
     expect(resolveServerLaunch({}, { argv: ['--server=separate'] })).toEqual({ mode: 'separate' })
@@ -257,6 +261,45 @@ describe('startServer', () => {
     await expect(fetch(`${own.url}/health/live`)).rejects.toThrow()
     await handle.stop()
     expect(stopped).toBe(1)
+  })
+
+  it('separate: a child gone while the app runs is marked in the file, the token out, the url and the pid kept', async () => {
+    const own = await aServer()
+    owned.push(own)
+    const handle = await startServer({
+      launch: { mode: 'separate' },
+      userData,
+      identity,
+      startInProcess: inProcess().start,
+      startSeparate: async (): Promise<OwnServer> => ({
+        url: own.url,
+        token: own.token,
+        pid: 4242,
+        stop: async () => {}
+      })
+    })
+    const marked = markServerGone(
+      userData,
+      'the separate server exited (SIGKILL) while the app was running'
+    )
+    expect(marked).toMatchObject({
+      url: own.url,
+      mode: 'separate',
+      ok: false,
+      error: 'the separate server exited (SIGKILL) while the app was running',
+      token: null,
+      serverPid: 4242,
+      clientId: null,
+      pid: 777
+    })
+    expect(readDiscovery(userData)).toEqual(marked)
+    expect(statSync(path.join(userData, DISCOVERY_FILE)).mode & 0o777).toBe(0o600)
+    await handle.stop()
+  })
+
+  it('marking a folder with no discovery file writes nothing and answers null', () => {
+    expect(markServerGone(userData, 'gone')).toBeNull()
+    expect(readDiscovery(userData)).toBeNull()
   })
 
   it('separate: a child that does not start writes ok:false with the reason and rejects, nothing in its place', async () => {

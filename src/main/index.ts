@@ -58,7 +58,14 @@ import { accountLoginManager } from './account-login'
 import { sweepSessionMcpConfigs } from './mcp/mcp-runtime'
 import { registerPreviewScheme, installPreviewProtocol } from './preview-protocol'
 import { hardenViewHost, installViewGuestPolicy } from './view-guests'
-import { startServer, takeServerLaunch, ServerBootError, type ServerHandle } from './server-boot'
+import {
+  startServer,
+  takeServerLaunch,
+  markServerGone,
+  ServerBootError,
+  type ServerHandle,
+  type ServerLaunch
+} from './server-boot'
 import { flagsForServerChild, startSeparateServer } from './server-child'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
@@ -79,10 +86,19 @@ import { shellPlugins } from './plugins/shell-plugins'
 // may inherit it (ADR 0003). The command line's `--server` flag picks the
 // shell's own server otherwise (in-process, or a separate child of the
 // app, wave 5), and a packaged app has its own default (server-boot.ts).
-const serverLaunch = takeServerLaunch(process.env, {
-  argv: process.argv,
-  packaged: app.isPackaged
-})
+// A `--server` value that is not a mode ends the launch here, with the
+// sentence on stderr and exit code 2: a typo must not pick a mode, and an
+// error box the person cannot read past is no answer either (the round-1
+// verifier watched the throw land in Electron's dialog, the process alive
+// until dismissed).
+const serverLaunch: ServerLaunch = (() => {
+  try {
+    return takeServerLaunch(process.env, { argv: process.argv, packaged: app.isPackaged })
+  } catch (err) {
+    process.stderr.write(`[server] ${(err as Error).message}\n`)
+    return process.exit(2)
+  }
+})()
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -182,8 +198,14 @@ async function bootServer(): Promise<void> {
           log: (line) => console.error(`[server] ${line}`),
           onExit: (code) => {
             // Nothing runs in its place and the windows keep its address:
-            // their calls say the server is gone, which is the truth.
+            // their calls say the server is gone, which is the truth; the
+            // discovery file says it too, so no reader finds a live-looking
+            // server that is not there.
             console.error(`[server] the separate server is gone (${code}); the app runs without it`)
+            markServerGone(
+              app.getPath('userData'),
+              `the separate server exited (${code}) while the app was running`
+            )
             if (!TEST_NO_ACTIVATE && Notification.isSupported())
               new Notification({
                 title: "Clave's server stopped",
