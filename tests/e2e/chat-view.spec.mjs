@@ -28,7 +28,11 @@ export async function openChat(
   env = {},
   /** Runs on the fresh user-data directory before the launch: a spec that
    *  needs a file the app reads at boot (a record, a ledger) writes it here. */
-  beforeLaunch = null
+  beforeLaunch = null,
+  /** Extra launch options, laid over the harness's: a spec whose feature is
+   *  not served attached yet pins itself with `{ server: 'in-process' }` and
+   *  says why in its header; the chat itself runs in both modes. */
+  launch = {}
 ) {
   const dir = fixturePath(`${suffix}`)
   const root = `${dir}-root`
@@ -42,7 +46,8 @@ export async function openChat(
   if (beforeLaunch) await beforeLaunch(dir)
   const { app, win, server, fixture } = await launchApp(dir, {
     args: ['--dev-echo-adapter', ...extraArgs],
-    env
+    env,
+    ...launch
   })
   // The session calls cross the server, not IPC (PRDCT-3239): what a spec
   // wraps is the session host the server exposes under --test-no-activate, the
