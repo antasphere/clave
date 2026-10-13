@@ -212,7 +212,7 @@ describe("a view's events are the lease's session's own stream", () => {
 })
 
 describe('the plugin change and the relay of the server’s plugin events', () => {
-  it('is heard over IPC before the server, re-listed once at the welcome, then on the push channel', async () => {
+  it('is heard over IPC before the server, then on the push channel, with nothing at the welcome', async () => {
     answer({ 'server:endpoint': null })
     let changes = 0
     const stop = api.onPluginsChanged(() => {
@@ -223,14 +223,16 @@ describe('the plugin change and the relay of the server’s plugin events', () =
     await serverComes()
     mocks.push!.open()
     await settle()
-    // The welcome's catch-up: the stores re-list once.
-    expect(changes).toBe(2)
+    // No catch-up at the welcome: the stores listed at their mount and
+    // re-list on a change; a welcome's re-list to every subscriber at once
+    // was a full-tree re-render at a chat's first rows.
+    expect(changes).toBe(1)
     expect(ipcListenersOn('plugins:changed')).toBe(0)
     mocks.emitEvent({ _tag: 'plugins.changed' })
-    expect(changes).toBe(3)
+    expect(changes).toBe(2)
     stop()
     mocks.emitEvent({ _tag: 'plugins.changed' })
-    expect(changes).toBe(3)
+    expect(changes).toBe(2)
   })
   it('relays a notification and a change to the shell, with the event’s id, on the binding onMcpCommand holds', async () => {
     answer({ 'server:endpoint': null })

@@ -1030,15 +1030,16 @@ const electronAPI = {
   // service while the push socket is not open, the push channel while it is.
   // The event carries nothing, so the pick answers null, never undefined: the
   // dual listener drops an event whose pick answers undefined, and a window
-  // attached to a server apart heard no plugin change at all. The catch-up
-  // at a welcome is one more null: the stores re-list on hearing it, which is
-  // the read of the family's model a welcome owes.
+  // attached to a server apart heard no plugin change at all. No catch-up at
+  // the welcome: every store re-lists on hearing a change and listed at its
+  // mount, and a welcome's re-list went to five subscribers at once, a
+  // full-tree re-render that landed on a chat's first rows while the
+  // transcript's virtualiser still hid them unmeasured (plugin-views.spec).
   onPluginsChanged: (callback: () => void) =>
     viaServerEvent<'plugins.changed', null>(
       'plugins:changed',
       'plugins.changed',
-      () => null,
-      async () => [null]
+      () => null
     )(callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.

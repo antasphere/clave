@@ -204,7 +204,7 @@ export async function run(t) {
 
     // Disabling the plugin takes the view off the pane AND the authority with
     // it: the guest's frame goes, and the lease it held answers nothing.
-    const held = await app.evaluate(() => globalThis.__viewLeases.at(-1))
+    const held = await fixture.evaluate(() => globalThis.__viewLeases.at(-1))
     await win.evaluate(() => window.electronAPI.pluginsDisable('fixture.surface-view'))
     assert.ok(
       await until(async () => (await win.locator(`[data-view-id="${VIEW}"]`).count()) === 0)
@@ -236,7 +236,7 @@ export async function run(t) {
     // reloads cannot revoke what it no longer remembers, so main drops the
     // lease itself. Reload, then try the lease that was minted: it answers
     // nothing, although the plugin is still running and still granted.
-    const minted = await app.evaluate(() => globalThis.__viewLeases ?? [])
+    const minted = await fixture.evaluate(() => globalThis.__viewLeases ?? [])
     assert.ok(minted.length >= 1)
     await win.reload()
     await win.waitForLoadState('domcontentloaded')
