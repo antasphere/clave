@@ -1,12 +1,8 @@
-// Pinned to the in-process server (wave 5, lane B, PRDCT-3428 checked it in
-// both modes). The window opens and focuses its tab attached, but the plugin
-// host resolves the focused tab against the app's own session service
-// (`plugin-host.ts`, `services.sessions.focused()`), which attached knows none
-// of the server's sessions, so every plugin is told "no focused session". That
-// is the plugin host serving the server's sessions, lane C of wave 5
-// (PRDCT-3433); the pin goes with it. Measured 13 October 2026: the same two
-// checks red attached on bare dev e5ac888 and on this lane. Wave 3's reason
-// (the tools asking main) is stale since PRDCT-3377.
+// Pinned to the in-process server (wave 3 of the server/client split,
+// PRDCT-3293): this spec opens a session through the agent tools, which main
+// still answers from its own session host; attached, that host is not the
+// server's, so the pin goes when the tools answer from the server (lane D,
+// PRDCT-3294). Not a known failure.
 // The focused session a plugin is told about, across two windows.
 //
 // Focus is a renderer fact, so each window reports its own and the most recent report wins.
