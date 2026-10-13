@@ -10,5 +10,8 @@ describe('shortenPath', () => {
   it('answers an empty label for a root that is not a string, so a malformed registry entry never takes the window down', () => {
     expect(shortenPath(undefined as unknown as string)).toBe('')
     expect(shortenPath(null as unknown as string)).toBe('')
+    // A truthy non-string too: the guard is on the type, not on truthiness.
+    expect(shortenPath(5 as unknown as string)).toBe('')
+    expect(shortenPath({} as unknown as string)).toBe('')
   })
 })

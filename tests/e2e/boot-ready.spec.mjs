@@ -20,12 +20,12 @@ import {
 
 const DIR = userDataDir('clave-e2e-boot-ready')
 const ROOT = fixturePath('boot-ready-root')
-// A workspace as the app writes one (`rootDir`, not `rootPath`): the server's
-// schema dropped a malformed entry and the app ran in no-workspace mode, while
-// a launch whose server is named late reads the registry over IPC, raw, and the
-// window never rendered (the toolbar's workspace popover on a root of
-// undefined, wave 5 lane B, 13 October 2026); separate mode walks that road on
-// every launch.
+// A workspace as the app writes one (`rootDir`, not `rootPath`): read from the
+// server, the schema refused the whole state for the malformed entry and the
+// window's catch left it in no-workspace mode, while a launch whose server is
+// named late reads the registry over IPC, raw, and the window never rendered
+// (the toolbar's workspace popover on a root of undefined, wave 5 lane B,
+// 13 October 2026); separate mode walks that road on every launch.
 const WS = {
   id: 'ws-boot-ready',
   name: 'Boot ready',
