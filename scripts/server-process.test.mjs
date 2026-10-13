@@ -102,6 +102,47 @@ describe('the server as its own process', () => {
     }
   }, 30_000)
 
+  it('takes ELECTRON_RUN_AS_NODE out of its own environment at boot, so nothing it spawns inherits it', async () => {
+    // The packaged app starts the entry under its own binary with the
+    // variable set (server-child.ts); the entry deletes it before anything
+    // spawns, or a login shell, a chat's CLI and a Clave started from a tab
+    // would carry it. Under Bun the variable is harmless, so the deletion is
+    // read back through the test-only evaluate route rather than inferred.
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-asnode-'))
+    const server = await startServerProcess({
+      repo: REPO,
+      dataDir,
+      terminals: 'none',
+      args: ['--test-no-activate'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLAVE_E2E_CONTROL: 'kept' }
+    })
+    try {
+      const evaluate = async (source) =>
+        (
+          await fetch(`${server.url}/e2e/evaluate`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${server.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({ source })
+          })
+        ).json()
+      expect(await evaluate('() => process.env.ELECTRON_RUN_AS_NODE ?? null')).toEqual({
+        ok: true,
+        value: null
+      })
+      // The rest of the environment is kept: the deletion is one name, not a wipe.
+      expect(await evaluate('() => process.env.CLAVE_E2E_CONTROL ?? null')).toEqual({
+        ok: true,
+        value: 'kept'
+      })
+    } finally {
+      await server.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('publishes a session’s state on its push channel and stops the session with the server', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-process-states-'))
     const server = await startServerProcess({
