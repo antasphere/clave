@@ -1,11 +1,10 @@
-// Pinned to the in-process server. The attached restore itself works since wave 4
-// (PRDCT-3376: the records are the server's, read off it after the boot; see
-// terminal-reattach, which runs in both modes). This spec stays pinned because
-// it seeds session records (and transcripts) by hand into the APP's data folder
-// before the launch, and attached the records live in the standalone server's
-// folder, which the harness does not seed with session-records (a harness
-// addition, lane A's file; PRDCT-3376 follow-up). The relaunch-only dead
-// records it restores through the prompt are the in-process boot's too.
+// Pinned to the in-process server. The attached restore brings a hand-seeded
+// record back since wave 5 (PRDCT-3432: `seedSessionRecord` writes it where the
+// next launch reads it, and the attached top-up offers a dead record through
+// the prompt), so that is no longer the reason. This spec stays pinned because
+// it restores a CHAT tab (an events session with a view), and a chat the
+// separate server starts has no view until the plugin host serves the server's
+// sessions (lane C of wave 5, PRDCT-3433); the pin goes with that lane.
 /**
  * A Codex chat tab survives an app restart, in whichever workspace it lives.
  *

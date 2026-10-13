@@ -1,12 +1,11 @@
-// Pinned to the in-process server. The attached moves and restore work since
-// wave 4 (PRDCT-3376: a move releases the session on the server first; see
-// attached-window-move, attached-agent-token and terminal-reattach, which run
-// attached). This spec stays pinned because it seeds session records by hand
-// into the APP's folder (attached they are the server's, which the harness does
-// not seed), reads an agent tab's config from the app's mcp-configs folder
-// (attached the server writes it), and/or relies on group membership surviving
-// an attached quit, which the attached boot flattens (pre-existing, on the
-// wave's owed list). Not a known failure.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3432). The agent
+// tab's config is read where the process that spawns the tab writes it
+// (`recordsRootOf`: the server's folder attached), which was wave 4's reason
+// for the pin; what still fails attached is the served cross-window move
+// through the agent tools' HTTP road, answered "No session with id" for a
+// session the server runs (eight checks, identical on bare dev e5ac888 and on
+// this lane, 13 October 2026, green in-process). That is PRDCT-3454; the pin
+// goes with it.
 /**
  * MCP routing across windows (PRDCT-1703). With several windows the sidebar
  * state is per window, so mcp-server resolves WHICH window's renderer runs
@@ -41,7 +40,8 @@ import {
   toolPayload,
   toolErrored,
   until,
-  fixturePath
+  fixturePath,
+  recordsRootOf
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
@@ -96,9 +96,9 @@ export async function run(t) {
     t.equal('two windows are open', (await windows(app)).length, 2)
 
     // Agent tabs (they mint per-session tokens) — one per window.
-    const P = await spawnAgentTabIn(app, winA, DIR)
+    const P = await spawnAgentTabIn(app, winA, recordsRootOf(DIR))
     t.check('an agent tab P minted a token in window A', !!P?.token, P?.sessionId)
-    const Q = await spawnAgentTabIn(app, b.page, DIR)
+    const Q = await spawnAgentTabIn(app, b.page, recordsRootOf(DIR))
     t.check('an agent tab Q minted a token in window B', !!Q?.token, Q?.sessionId)
     if (!P?.token || !Q?.token) return
     opened.push(P.sessionId, Q.sessionId)

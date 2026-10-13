@@ -38,6 +38,7 @@ import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
 import {
   mergeLayoutForKeys,
+  pruneUnknownSessions,
   absorbLayout,
   placeAdopted,
   moveLayoutItems,
@@ -244,6 +245,12 @@ interface SessionState {
     persisted: { groups: SessionGroup[]; displayOrder: string[] },
     survivingSessionIds: string[]
   ) => void
+  /** Settle the session ids the boot merge kept provisionally while the
+   *  records listing was not complete (`bootSurvivors`, PRDCT-3432): every
+   *  candidate that is no session, group or file tab of this store now is
+   *  dropped from the groups and the order, its terminal link cleared. Run
+   *  once the attached top-up has brought back what exists. */
+  pruneRestoredShells: (candidates: string[]) => void
   /** Take in groups handed over by another window (a closing window's
    *  sidebar, a group moved here): unknown groups and order entries are
    *  appended, known ones left alone. The members arrive through adoption. */
@@ -576,7 +583,8 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   // (plugin-context-windows, 12 October). An agent's command, a save or a
   // refused save's current layout may name a tab this window never saw.
   const rehoming = cause === 'move' || cause === 'window-closed'
-  // Only an agent's own placement selects the tab, as the window's launch would.
+  // Only an agent's own placement selects the tab, or the terminal, as the
+  // window's launch would (PRDCT-3428 closed the terminal's road).
   const focusTakenIn = cause === 'command'
   useSessionStore.setState((state) => {
     const server = {
@@ -667,7 +675,8 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
         state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
     }
   })
-  if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
+  if (unknownTerminals.length > 0)
+    void adoptServerStartedTerminals(unknownTerminals, { focus: focusTakenIn })
   if (unknownSessions.length > 0)
     void adoptServerStartedSessions([...new Set(unknownSessions)], { focus: focusTakenIn })
   if (dropped.length > 0) {
@@ -1070,6 +1079,18 @@ export const useSessionStore = create<SessionState>((set) => ({
       const merged = mergeLayoutForKeys(state, keys, persisted, survivingSessionIds)
       groupCounter = Math.max(groupCounter, merged.groups.length)
       return { ...state, groups: merged.groups, displayOrder: merged.displayOrder }
+    }),
+
+  pruneRestoredShells: (candidates) =>
+    set((state) => {
+      const known = [
+        ...state.sessions.map((s) => s.id),
+        ...state.groups.map((g) => g.id),
+        ...state.fileTabs.map((f) => f.id)
+      ]
+      const out = pruneUnknownSessions(state, candidates, known)
+      if (out.pruned.length === 0) return state
+      return { groups: out.groups, displayOrder: out.displayOrder }
     }),
 
   absorbLayout: (incoming) =>

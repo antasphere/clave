@@ -1063,3 +1063,33 @@ export async function selectBuiltIn(win, label, profileName, family) {
 export async function mcpRoads(app) {
   return app.evaluate(() => globalThis.__claveE2E?.mcpRoads ?? [])
 }
+
+// ── Session records seeded by hand (wave 5, lane B, PRDCT-3432) ──────────────
+// A spec that writes a session record itself (a survivor to adopt, a dead
+// record for the restore prompt) must write it where the next launch on that
+// data folder reads it: the app's folder in-process, the standalone server's
+// attached. Ten specs pinned themselves to the in-process server for this
+// (PRDCT-3376's follow-up); these two helpers are what unpins them.
+
+/** Where the session records of `dir`'s LAST launch live, which is where its
+ *  next launch on the same folder reads them: the server's data folder when
+ *  that launch was attached (the restart keeps it), the app's own in-process
+ *  and before any launch. */
+export function recordsRootOf(dir) {
+  const mode = launchedModes.get(path.resolve(dir)) ?? 'in-process'
+  return mode === 'attached' ? fixturePath(`${path.basename(dir)}-server`) : dir
+}
+
+/** Write a session record as the app writes one, under `recordsRootOf(dir)`,
+ *  keyed by its tmux name or its id, and register it among the seeded
+ *  documents so a server started FRESH for that folder gets a copy
+ *  (`seedServerDataDir`). Returns the file written. */
+export function seedSessionRecord(dir, record) {
+  const key = record.tmuxName ?? record.id
+  const rel = path.join('session-records', `${key}.json`)
+  const root = recordsRootOf(dir)
+  mkdirSync(path.join(root, 'session-records'), { recursive: true })
+  writeFileSync(path.join(root, rel), JSON.stringify(record))
+  registerSeededDocuments(rel)
+  return path.join(root, rel)
+}

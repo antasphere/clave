@@ -157,7 +157,9 @@ export type SidebarSaveResult =
 export interface SidebarLayoutChanged {
   _tag: 'sidebar.layout_changed'
   layout: SidebarLayoutSnapshot
-  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+  /** Absent on the preload's catch-up read: a change whose cause nobody
+   *  heard is taken in and selects nothing (PRDCT-3428). */
+  cause?: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
 }
 
 /** The outcome of moving sessions to another window. */
@@ -726,6 +728,12 @@ export interface ElectronAPI {
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the boot's `listSessionRecords()` read is every adoptable record
+   *  (inside the app) or the server's come after it through the top-up
+   *  (attached, or while main has named no server yet). The boot's layout
+   *  merge keeps the saved layout's session ids as survivors when it is not
+   *  (PRDCT-3432). */
+  bootRecordsComplete: () => Promise<boolean>
   discardSessionRecord: (key: string) => Promise<void>
   onSessionRehome: (callback: (payload: RehomePayload) => void) => () => void
   onSessionRemovedForRehome: (callback: (sessionId: string) => void) => () => void

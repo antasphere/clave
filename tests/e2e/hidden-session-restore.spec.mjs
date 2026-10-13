@@ -1,12 +1,13 @@
-// Pinned to the in-process server. The attached moves and restore work since
-// wave 4 (PRDCT-3376: a move releases the session on the server first; see
-// attached-window-move, attached-agent-token and terminal-reattach, which run
-// attached). This spec stays pinned because it seeds session records by hand
-// into the APP's folder (attached they are the server's, which the harness does
-// not seed), reads an agent tab's config from the app's mcp-configs folder
-// (attached the server writes it), and/or relies on group membership surviving
-// an attached quit, which the attached boot flattens (pre-existing, on the
-// wave's owed list). Not a known failure.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3432). The group's
+// terminal and the toolbar survivor come back attached since this lane (the
+// restore spec restore-groups-and-dead-records pins both in both modes, and
+// this spec's records are read where the launch keeps them, `recordsRootOf`),
+// but the VIEW half still cannot: the window writes a tab's page to the record
+// over IPC, to the app, which attached runs no such session, so the server's
+// record never carries the view and the restore discards the page's serving
+// session for having no owner with a view. That is PRDCT-3453; the pin goes
+// with it. Measured 13 October 2026 on bare dev e5ac888 attached (four red,
+// the toolbar pair included) and on this lane (the view pair alone).
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).
@@ -39,7 +40,8 @@ import {
   until,
   killLeakedE2eTmux,
   fixturePath,
-  freePorts
+  freePorts,
+  recordsRootOf
 } from './harness.mjs'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -60,9 +62,10 @@ const WS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Every session record on disk, so a spec can read a record's `link`. */
+/** Every session record on disk, so a spec can read a record's `link`: under
+ *  the folder of the launch that wrote them (the server's, attached). */
 function sessionRecords() {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.json'))

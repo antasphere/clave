@@ -311,7 +311,9 @@ type SidebarLayoutSnapshot = {
 type SidebarLayoutChanged = {
   _tag: 'sidebar.layout_changed'
   layout: SidebarLayoutSnapshot
-  cause: string
+  /** Who made the change, as the server says it; absent on the catch-up read
+   *  below, which recovers a change whose cause nobody heard (PRDCT-3428). */
+  cause?: string
 }
 type SidebarSaveResult =
   | { ok: true; layout: SidebarLayoutSnapshot }
@@ -342,16 +344,17 @@ const listenToSidebarPush = (backing: Backing): void => {
   // would leave a write between the two unheard) and handed to the
   // listeners as a change; one at or below the revision the window knows
   // is dropped by the store, so the read costs nothing when nothing moved.
+  // It carries NO cause: what went by unheard may have been a move or a
+  // closing window's hand-over, and a cause invented here ('command', the
+  // one that selects) made the window take a running record in and select
+  // it, the one thing the rule forbids for those changes (PRDCT-3428, lane
+  // D's round-5 F9). Without a cause the store takes in and selects nowhere.
   void Promise.all([windowKey(), backing.push.whenOpen()]).then(
     async ([key]) => {
       if (!key) return
       try {
         const layout = await backing.api.sidebar.getLayout(key)
-        const event: SidebarLayoutChanged = {
-          _tag: 'sidebar.layout_changed',
-          layout,
-          cause: 'command'
-        }
+        const event: SidebarLayoutChanged = { _tag: 'sidebar.layout_changed', layout }
         for (const listener of [...sidebarListeners]) listener(event)
       } catch {
         // The next change arrives on the push channel; the next call tells the caller.
@@ -520,6 +523,19 @@ async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
   const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
   const all = [...(await backing.api.sessions.listAdoptable())]
   return scope ? selectAdoptableRecords(all, scope) : []
+}
+
+/** Whether the boot's records read (`listSessionRecords` with no ids, over
+ *  IPC) is EVERY adoptable record, or the server's come after it. Inside the
+ *  app it is: main's listing is the whole folder. Attached it is not: main's
+ *  folder is empty and the window's sessions come back through the top-up
+ *  above; and while main has named no server yet the answer is not known, so
+ *  the boot is told "not complete" and the top-up's bounded wait settles it.
+ *  The boot's layout merge reads this to keep the saved layout's own session
+ *  ids as survivors until the top-up has said which exist (PRDCT-3432: an
+ *  attached quit flattened every group whose members the server runs). */
+async function bootRecordsComplete(): Promise<boolean> {
+  return (await serverMode()) === 'in-process'
 }
 
 async function discardSessionRecord(key: string): Promise<void> {
@@ -1044,6 +1060,7 @@ const electronAPI = {
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).
   listServerRestoreRecords: () => listServerRestoreRecords(),
+  bootRecordsComplete: () => bootRecordsComplete(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),
 

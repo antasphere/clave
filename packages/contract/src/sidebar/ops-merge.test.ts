@@ -3,6 +3,7 @@ import {
   mergeLayoutForKeys,
   absorbLayout,
   placeAdopted,
+  pruneUnknownSessions,
   type LayoutGroupLike,
   type LayoutSessionLike
 } from './ops-merge'
@@ -289,5 +290,49 @@ describe('mergeLayoutForKeys keeps a group born during the boot', () => {
     const out = mergeLayoutForKeys(state, ['ws'], persisted, ['a'])
     expect(out.groups).toEqual([{ id: 'g', sessionIds: ['a'], terminals: [], workspaceId: 'ws' }])
     expect(out.displayOrder).toEqual(['g'])
+  })
+})
+
+describe('pruneUnknownSessions — the shells a restore kept are settled (PRDCT-3432)', () => {
+  const state = {
+    groups: [
+      g('g1', ['back', 'gone-member'], A, [{ sessionId: 'term-back' }, { sessionId: 'term-gone' }])
+    ],
+    displayOrder: ['g1', 'back-top', 'gone-top', 'file-1']
+  }
+  const known = ['g1', 'back', 'back-top', 'term-back', 'file-1', 'spawning']
+
+  it('drops the candidates nothing holds from the members and the order, and unlinks their terminals', () => {
+    const out = pruneUnknownSessions(
+      state,
+      ['back', 'gone-member', 'term-back', 'term-gone', 'back-top', 'gone-top'],
+      known
+    )
+    expect(out.groups[0].sessionIds).toEqual(['back'])
+    expect(out.groups[0].terminals).toEqual([{ sessionId: 'term-back' }, { sessionId: null }])
+    expect(out.displayOrder).toEqual(['g1', 'back-top', 'file-1'])
+    expect(out.pruned.sort()).toEqual(['gone-member', 'gone-top', 'term-gone'])
+  })
+
+  it('judges only the candidates: an unknown id the restore did not keep stays where the layout put it', () => {
+    const placing = { groups: [g('g1', ['spawning-elsewhere'], A)], displayOrder: ['g1', 'pushed'] }
+    const out = pruneUnknownSessions(placing, ['nothing-of-these'], ['g1'])
+    expect(out.groups).toBe(placing.groups)
+    expect(out.displayOrder).toBe(placing.displayOrder)
+    expect(out.pruned).toEqual([])
+  })
+
+  it('answers the same references when every candidate is known, so no save follows', () => {
+    const out = pruneUnknownSessions(state, ['back', 'back-top', 'term-back'], known)
+    expect(out.groups).toBe(state.groups)
+    expect(out.displayOrder).toBe(state.displayOrder)
+    expect(out.pruned).toEqual([])
+  })
+
+  it('leaves a group untouched (same reference) when none of its ids were pruned', () => {
+    const two = { groups: [g('g1', ['back'], A), g('g2', ['gone'], B)], displayOrder: ['g1', 'g2'] }
+    const out = pruneUnknownSessions(two, ['back', 'gone'], ['g1', 'g2', 'back'])
+    expect(out.groups[0]).toBe(two.groups[0])
+    expect(out.groups[1].sessionIds).toEqual([])
   })
 })

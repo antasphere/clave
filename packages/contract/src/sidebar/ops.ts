@@ -17,6 +17,7 @@ export {
   mergeLayoutForKeys,
   mergeLayouts,
   placeAdopted,
+  pruneUnknownSessions,
   type LayoutGroupLike,
   type MergeGroupLike,
   type MergeResult,
