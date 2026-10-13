@@ -16,8 +16,10 @@
 // comes back with no members, its tabs at the top level; drop the dead tabs
 // from the top-up's plan and no prompt is offered attached; drop the toolbar
 // from it and the button starts a second server; skip the prune after the
-// top-up and the layout keeps the member no record backs (a ghost id written
-// into the saved group between the two launches, round-1 verifier G2).
+// top-up and, attached, the layout keeps the member no record backs (a ghost
+// id written into the saved group between the two launches, round-1 verifier
+// G2; in-process the merge prunes it before the top-up, so the same check
+// pins the merge there).
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
