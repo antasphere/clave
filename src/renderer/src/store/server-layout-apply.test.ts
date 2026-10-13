@@ -661,15 +661,17 @@ describe('the shells a restore kept are settled by the store (PRDCT-3432)', () =
     useSessionStore.setState({
       sessions: [session('back'), session('top-back')],
       groups: [g],
-      displayOrder: ['g', 'top-back', 'top-gone']
+      fileTabs: [{ id: 'file-1', path: '/w/README.md', name: 'README.md' } as never],
+      displayOrder: ['g', 'top-back', 'top-gone', 'file-1']
     })
     useSessionStore
       .getState()
-      .pruneRestoredShells(['back', 'gone', 'term-gone', 'top-back', 'top-gone'])
+      .pruneRestoredShells(['back', 'gone', 'term-gone', 'top-back', 'top-gone', 'file-1'])
     const state = useSessionStore.getState()
     expect(state.groups[0].sessionIds).toEqual(['back'])
     expect(state.groups[0].terminals[0].sessionId).toBeNull()
-    expect(state.displayOrder).toEqual(['g', 'top-back'])
+    // A file tab is held by the store too: a candidate naming one is kept (round-1 verifier G1).
+    expect(state.displayOrder).toEqual(['g', 'top-back', 'file-1'])
   })
 
   it('changes nothing, not even the references, when every candidate is held', () => {

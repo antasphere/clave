@@ -16,7 +16,8 @@
 // comes back with no members, its tabs at the top level; drop the dead tabs
 // from the top-up's plan and no prompt is offered attached; drop the toolbar
 // from it and the button starts a second server; skip the prune after the
-// top-up and the layout keeps a member that never came back.
+// top-up and the layout keeps the member no record backs (a ghost id written
+// into the saved group between the two launches, round-1 verifier G2).
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -103,6 +104,9 @@ export async function run(t) {
   let key = null
   let toolbarId = null
   const deadId = randomUUID()
+  // A member the saved layout names but no record backs: gone for good, and
+  // the relaunch must say so instead of keeping it as a shell.
+  const ghostId = randomUUID()
   try {
     // ── Before the quit: a group with two terminals, a tab beside it ──
     const first = await launchApp(DIR)
@@ -148,9 +152,19 @@ export async function run(t) {
     )
     toolbarId = toolbar?.[0]?.id ?? null
 
-    // ── The quit, and a dead record left for the next launch ──
+    // ── The quit, a dead record left for the next launch, a ghost in the saved group ──
     await app.close()
     app = null
+    const layoutFile = path.join(DIR, 'sidebar-layouts', 'windows', `${key}.json`)
+    const savedLayout = JSON.parse(readFileSync(layoutFile, 'utf-8'))
+    savedLayout.groups.find((g) => g.id === group.groupId).sessionIds.push(ghostId)
+    writeFileSync(layoutFile, JSON.stringify(savedLayout))
+    t.check(
+      'the saved layout now also names a member no record backs',
+      windowLayout(DIR, key)
+        ?.groups.find((g) => g.id === group.groupId)
+        ?.sessionIds.includes(ghostId) === true
+    )
     // A plain record (no tmux session behind it) in the folder the next launch
     // reads: the restore prompt's case, in-process and attached alike.
     seedSessionRecord(DIR, {
@@ -210,6 +224,14 @@ export async function run(t) {
       'the saved layout still names both members in their group, never flattened',
       !!layoutAfter,
       windowLayout(DIR, key)?.groups
+    )
+    t.check(
+      'and the member no record backed is gone from the group and the order',
+      !!layoutAfter &&
+        !layoutAfter.groups.some((g) => g.sessionIds.includes(ghostId)) &&
+        !layoutAfter.displayOrder.includes(ghostId) &&
+        !listed.sessions.some((s) => s.id === ghostId),
+      layoutAfter?.groups
     )
     t.check(
       'and no member sits at the top level',
