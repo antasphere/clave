@@ -105,8 +105,16 @@ export async function run(t) {
   const chat = await openChat()
   const { app, win, record, fixture } = chat
   try {
+    // The badge in the pane header lists the plugin's views once the view
+    // registry has read the plugin records, a beat after the composer is
+    // enabled (red on bare dev in both modes when read the instant the
+    // composer is ready, 13 October 2026): wait for it, then read the pane.
+    const badge = win.getByLabel('Chat view', { exact: true })
+    assert.ok(
+      await until(async () => ((await badge.count()) === 1 ? true : null)),
+      'the pane header names the Chat view within ten seconds'
+    )
     assert.equal(await win.locator('.xterm').count(), 0)
-    assert.equal(await win.getByLabel('Chat view', { exact: true }).count(), 1)
     assert.ok(await win.getByLabel('Show terminal', { exact: true }).isDisabled())
     t.check('events session mounts chat, badge and explained disabled terminal toggle', true)
     // The tab was just opened from the launcher and nothing has been clicked
