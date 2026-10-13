@@ -133,3 +133,69 @@ it('retains only the last 4 KiB of stderr for abnormal-exit diagnostics', () => 
   expect(stderr).not.toContain('discarded prefix')
   expect(stderr).toMatch(/Error: invalid Codex configuration$/)
 })
+
+it('pins tab identity and MCP auth after login startup without credentials in argv', async () => {
+  const { mkdtempSync, writeFileSync, rmSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { spawnCodexAppServer } = await import('./codex-app-server')
+  const root = mkdtempSync(join(tmpdir(), 'clave-codex-shell-'))
+  const token = 'fixture-private-auth-value'
+  writeFileSync(
+    join(root, 'env'),
+    `#!/bin/sh\ntouch '${root}/external-env-used'\nexec /usr/bin/env "$@"\n`,
+    { mode: 0o755 }
+  )
+  writeFileSync(
+    join(root, 'sh'),
+    `#!/bin/sh\nexport PATH='${root}':"$PATH"\nexport CODEX_HOME=/wrong CLAVE_SESSION_ID=wrong CLAVE_CODEX_MCP_TOKEN=wrong\n[ "$1" = -l ] && shift\nexec /bin/sh "$@"\n`,
+    { mode: 0o755 }
+  )
+  writeFileSync(
+    join(root, 'provider.cjs'),
+    `
+    const readline = require('node:readline');
+    readline.createInterface({input:process.stdin}).on('line', line => {
+      const frame = JSON.parse(line);
+      const valid = process.env.CODEX_HOME === '/fixture-account' && process.env.CLAVE_SESSION_ID === 'fixture-tab' && process.env.CLAVE_CODEX_MCP_TOKEN === '${token}';
+      process.stdout.write(JSON.stringify({id:frame.id,result:{valid,argvSafe:!process.argv.join(' ').includes('${token}')}})+'\\n');
+      process.stderr.write('diagnostic auth: ' + process.env.CLAVE_CODEX_MCP_TOKEN);
+    });
+  `
+  )
+  vi.stubEnv('SHELL', join(root, 'sh'))
+  let stderr = ''
+  const connection = spawnCodexAppServer(
+    root,
+    {
+      notification: () => {},
+      request: () => {},
+      error: () => {},
+      exit: (_code, diagnostic) => {
+        stderr = diagnostic ?? ''
+      }
+    },
+    {
+      id: 'fixture',
+      name: 'Fixture',
+      family: 'codex',
+      command: [process.execPath, join(root, 'provider.cjs')],
+      additionalArgs: []
+    },
+    {
+      ...process.env,
+      CODEX_HOME: '/fixture-account',
+      CLAVE_SESSION_ID: 'fixture-tab',
+      CLAVE_CODEX_MCP_TOKEN: token
+    } as Record<string, string>
+  )
+  try {
+    expect(await connection.request('initialize')).toEqual({ valid: true, argvSafe: true })
+    expect(existsSync(join(root, 'external-env-used'))).toBe(false)
+  } finally {
+    await connection.close()
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  }
+  expect(stderr).not.toContain(token)
+})

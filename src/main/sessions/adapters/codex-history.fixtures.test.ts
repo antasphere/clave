@@ -6,6 +6,8 @@ import { Command, CommandHandler, HandlerRegistry, layer as busesLayer } from '@
 import { defineFixture, defineScenario, run } from '@structure-ai/fixtures'
 import { expect, it } from 'vitest'
 import { CodexAdapter } from './codex-adapter'
+import { createAgentTokenStore } from '../agent-tokens'
+import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { SessionManager } from '../session-manager'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
 
@@ -107,6 +109,9 @@ it('loads and verifies the codex/resumed-chat fixture scenario', async () => {
         root = join(tmpdir(), `clave-codex-fixture-${payload.runId}`)
         threadId = payload.threadId
         mkdirSync(join(root, 'sessions'), { recursive: true })
+        const tokens = createAgentTokenStore(join(root, 'mcp-configs'))
+        tokens.announce('http://127.0.0.1:12345/mcp')
+        installTerminalPorts({ mcpConfig: tokens.mcpConfig })
         await create(payload.sessionId)
         let off = (): void => {}
         const done = new Promise<void>((resolve) => {
@@ -177,5 +182,6 @@ it('loads and verifies the codex/resumed-chat fixture scenario', async () => {
     )
   } finally {
     for (const session of manager.list()) await manager.kill(session.id)
+    resetTerminalPorts()
   }
 }, 10_000)

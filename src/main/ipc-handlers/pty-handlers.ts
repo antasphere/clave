@@ -6,7 +6,12 @@ import {
   type PtySpawnOptions
 } from '../pty-manager'
 import { installTerminalPorts } from '../ports/terminals'
-import { getMcpRuntime, writeSessionMcpConfig, deleteSessionMcpConfig } from '../mcp/mcp-runtime'
+import {
+  getMcpRuntime,
+  writeSessionMcpConfig,
+  deleteSessionMcpConfig,
+  waitForMcpRuntime
+} from '../mcp/mcp-runtime'
 import { registerSessionIpc } from '../sessions/ipc'
 import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
@@ -34,6 +39,7 @@ export function registerPtyHandlers(): void {
   // app's data folder, node-pty in this process).
   installTerminalPorts({
     mcpConfig: {
+      ready: waitForMcpRuntime,
       write: (sessionId) => (getMcpRuntime() ? writeSessionMcpConfig(sessionId) : null),
       remove: deleteSessionMcpConfig
     }

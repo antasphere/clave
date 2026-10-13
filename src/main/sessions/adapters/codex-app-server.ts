@@ -54,7 +54,8 @@ export class CodexAppServer implements CodexConnection {
   constructor(
     private child: ChildProcessWithoutNullStreams,
     private callbacks: CodexCallbacks,
-    private timeoutMs = 30_000
+    private timeoutMs = 30_000,
+    private secrets: readonly string[] = []
   ) {
     this.ended = new Promise((resolve) => {
       this.resolveEnded = resolve
@@ -78,7 +79,7 @@ export class CodexAppServer implements CodexConnection {
       this.rejectPending(new Error('Codex app-server disconnected'))
       this.incoming.clear()
       this.resolveEnded()
-      this.callbacks.exit(code ?? 1, this.stderrTail.toString('utf8'))
+      this.callbacks.exit(code ?? 1, this.redact(this.stderrTail.toString('utf8')))
     })
   }
 
@@ -129,6 +130,10 @@ export class CodexAppServer implements CodexConnection {
     if (this.closed || this.stopping) throw new Error('Codex app-server is closed')
     this.child.stdin.write(`${JSON.stringify(frame)}\n`)
   }
+  private redact(value: string): string {
+    for (const secret of this.secrets) if (secret) value = value.split(secret).join('[redacted]')
+    return value
+  }
   private rejectPending(error: Error): void {
     for (const p of this.pending.values()) {
       clearTimeout(p.timer)
@@ -155,7 +160,7 @@ export class CodexAppServer implements CodexConnection {
       }
       let frame: Record<string, unknown>
       try {
-        frame = object(JSON.parse(line))
+        frame = object(JSON.parse(this.redact(line)))
       } catch {
         this.fail(new Error('Invalid Codex JSON-RPC JSON'))
         return
@@ -206,22 +211,36 @@ export function spawnCodexAppServer(
   const windowsDefault = process.platform === 'win32' && argv[0] === 'codex'
   // The account's home rides in the command, after the login profile has
   // run, so a `CODEX_HOME` the user's profile exports cannot override it.
-  const assignment = env?.CODEX_HOME ? `env CODEX_HOME=${quote(env.CODEX_HOME)} ` : ''
+  const bindings = [
+    ...(env?.CODEX_HOME ? [`CODEX_HOME=${quote(env.CODEX_HOME)}`] : []),
+    ...(env?.CLAVE_SESSION_ID ? [`CLAVE_SESSION_ID=${quote(env.CLAVE_SESSION_ID)}`] : []),
+    ...(env?.CLAVE_CODEX_MCP_TOKEN
+      ? ['CLAVE_CODEX_MCP_TOKEN="$_CLAVE_CODEX_MCP_TOKEN_LAUNCH"']
+      : [])
+  ]
+  const assignment = bindings.length ? `${bindings.join(' ')} ` : ''
+  // Login profiles can replace the public binding names. Restore them at
+  // invocation from a private inherited variable; argv contains no credential.
+  const childEnv = env?.CLAVE_CODEX_MCP_TOKEN
+    ? { ...env, _CLAVE_CODEX_MCP_TOKEN_LAUNCH: env.CLAVE_CODEX_MCP_TOKEN }
+    : env
   const launch =
     process.platform === 'win32'
       ? { file: windowsDefault ? 'codex.cmd' : argv[0], args: argv.slice(1) }
       : resolvePosixShellLaunch(
           process.env.SHELL || '/bin/zsh',
-          `exec ${assignment}${argv.map(quote).join(' ')}`
+          `${assignment}exec ${argv.map(quote).join(' ')}`
         )
   return new CodexAppServer(
     spawn(launch.file, launch.args, {
       cwd,
-      ...(env ? { env } : {}),
+      ...(childEnv ? { env: childEnv } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: windowsDefault
     }),
-    callbacks
+    callbacks,
+    30_000,
+    env?.CLAVE_CODEX_MCP_TOKEN ? [env.CLAVE_CODEX_MCP_TOKEN] : []
   )
 }

@@ -1,10 +1,25 @@
-import { readFileSync } from 'node:fs'
-import { describe, it, expect, vi } from 'vitest'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createAgentTokenStore } from '../agent-tokens'
+import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { CodexAdapter, CodexTranslator } from './codex-adapter'
 import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
 import type { SpawnSpec } from '../adapter'
 import type { LaunchProfile } from '../../../shared/agent-launch'
 import type { CodexCallbacks, CodexConnection } from './codex-app-server'
+let mcpRoot: string
+beforeEach(() => {
+  mcpRoot = mkdtempSync(join(tmpdir(), 'clave-codex-adapter-'))
+  const tokens = createAgentTokenStore(mcpRoot)
+  tokens.announce('http://127.0.0.1:12345/mcp')
+  installTerminalPorts({ mcpConfig: tokens.mcpConfig })
+})
+afterEach(() => {
+  resetTerminalPorts()
+  rmSync(mcpRoot, { recursive: true, force: true })
+})
 const rows = readFileSync(
   new URL('../fixtures/codex-app-server/live.ndjson', import.meta.url),
   'utf8'
@@ -266,13 +281,18 @@ describe('Codex adapter lifecycle', () => {
         command: ['wrapper', 'codex'],
         additionalArgs: ['--profile', 'work']
       }),
-      undefined
+      expect.objectContaining({ CLAVE_SESSION_ID: spec.id })
     )
     await adapter.kill(handle)
     const next = await adapter.spawn(spec)
     adapter.write(next, { type: 'user_message', text: 'hello' })
     await tick()
-    expect(connect).toHaveBeenLastCalledWith(spec.cwd, expect.any(Object), undefined, undefined)
+    expect(connect).toHaveBeenLastCalledWith(
+      spec.cwd,
+      expect.any(Object),
+      undefined,
+      expect.objectContaining({ CLAVE_SESSION_ID: spec.id })
+    )
     await adapter.kill(next)
   })
 
@@ -295,7 +315,8 @@ describe('Codex adapter lifecycle', () => {
       cwd: '/tmp',
       model: 'model; no shell',
       approvalPolicy: 'on-request',
-      approvalsReviewer: 'user'
+      approvalsReviewer: 'user',
+      config: expect.any(Object)
     })
     expect(connection.request).toHaveBeenCalledWith('turn/start', {
       threadId: 'thread',
@@ -589,6 +610,7 @@ it('intentional close during initialization does not publish a fatal error or ac
     if (stream.kind === 'event') events.push(stream.event)
   })
   adapter.write(handle, { type: 'user_message', text: 'hello' })
+  await tick()
   const closing = adapter.kill(handle)
   await tick()
   expect(() => adapter.write(handle, { type: 'user_message', text: 'too late' })).toThrow('ended')
@@ -777,7 +799,8 @@ describe('Codex chat permissions', () => {
     expect(await threadParams({}, profile('--yolo'))).toMatchObject({
       sandbox: 'danger-full-access',
       approvalPolicy: 'never',
-      approvalsReviewer: 'user'
+      approvalsReviewer: 'user',
+      config: expect.any(Object)
     })
   })
   it('resumes a thread under the profile it was launched on', async () => {
