@@ -54,7 +54,7 @@ const guestFor = async (win, sessionId) =>
 
 export async function run(t) {
   const chat = await openChat('surface-view')
-  const { app, win, record, fixture } = chat
+  const { win, record, fixture } = chat
   try {
     // The leases are the server's (PRDCT-3433): the wrap goes where the
     // plugin service lives, in whichever process hosts the sessions.
