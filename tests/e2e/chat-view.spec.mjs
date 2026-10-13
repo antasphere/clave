@@ -121,7 +121,10 @@ export async function run(t) {
     assert.equal(await win.locator('.xterm').count(), 0)
     assert.equal(await win.locator('[data-testid="chat-view"]').count(), 1)
     assert.ok(await win.getByLabel('Show terminal', { exact: true }).isDisabled())
-    t.check('events session mounts chat, the picker names the view, and the terminal toggle is disabled and explained', true)
+    t.check(
+      'events session mounts chat, the picker names the view, and the terminal toggle is disabled and explained',
+      true
+    )
     // The tab was just opened from the launcher and nothing has been clicked
     // since: the caret must already be in the composer. `openChat` waited for
     // the field to be enabled, which is what the focus itself waits on.
