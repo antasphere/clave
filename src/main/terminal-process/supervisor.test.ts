@@ -267,6 +267,40 @@ describe('the terminal process supervisor', () => {
     expect(h.starts).toBe(1)
   })
 
+  it('a newcomer that dies at once hands the restart over: settled waits for the next start, and the state names it', async () => {
+    // Process 1 dies, process 2 starts and dies at once, process 3 is gated:
+    // the handle of the first restart must not be wiped by its own end
+    // while the second is in flight (the round-1 verifier's finding).
+    const h = await harness({ gated: 3 })
+    await dieAndSettle(h.processes[0], h.supervisor)
+    expect(h.supervisor.state().pid).toBe(102)
+    h.processes[1].die(1)
+    await tick()
+    expect(h.starts).toBe(3)
+    const settled = h.supervisor.settled().then(() => 'settled')
+    const first = await Promise.race([settled, tick().then(() => 'pending')])
+    expect(first).toBe('pending')
+    expect(h.supervisor.state().pid).toBeNull()
+    h.release()
+    expect(await settled).toBe('settled')
+    expect(h.supervisor.state()).toMatchObject({ pid: 103, generation: 3, givenUp: null })
+    expect(await h.supervisor.ready()).toBe(true)
+  })
+
+  it('a close while a handed-over restart is in flight waits for it and stops the newcomer', async () => {
+    const h = await harness({ gated: 3 })
+    await dieAndSettle(h.processes[0], h.supervisor)
+    h.processes[1].die(1)
+    await tick()
+    const closing = h.supervisor.close()
+    h.release()
+    await closing
+    expect(h.starts).toBe(3)
+    expect(h.processes[2].stopped).toBe(true)
+    expect(h.supervisor.state().pid).toBeNull()
+    expect(() => h.supervisor.spawn(spawnSpec)).toThrow(/stopping/)
+  })
+
   it('a close during a restart waits for it and stops the newcomer', async () => {
     let release: () => void = () => {}
     const gate = new Promise<void>((r) => {

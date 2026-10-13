@@ -144,6 +144,9 @@ async function main(): Promise<void> {
       process.exit(2)
     }
     const exec = arg('node') ?? process.execPath
+    // The first start is this entry's to fail on: a server told to run a
+    // terminal process that cannot start exits 2, the code of a command
+    // line it cannot honour, rather than coming up on no terminals.
     const supervisor = await supervisedTerminals({
       start: () =>
         spawnTerminalProcess({
@@ -157,6 +160,11 @@ async function main(): Promise<void> {
         terminalState = state
         writeDiscovery()
       }
+    }).catch((err: Error) => {
+      process.stderr.write(
+        `clave-server: the terminal process did not start: ${err.message.split('\n')[0]}\n`
+      )
+      return process.exit(2)
     })
     terminalState = supervisor.state()
     terminals = supervisor

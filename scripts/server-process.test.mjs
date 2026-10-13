@@ -498,6 +498,38 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
     if (second) expect(await untilDead(second)).toBe(true)
   }, 20_000)
 
+  it('a terminal process bundle that cannot start makes the server exit 2 before announcing, not come up on no terminals', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-tp-broken-'))
+    // A bundle that is there and exits at once: the entry's first start
+    // fails, and the server must not announce itself.
+    const broken = path.join(dataDir, 'terminal-process.js')
+    writeFileSync(
+      broken,
+      "process.stderr.write('clave-terminals: broken on purpose\\n'); process.exit(3)\n"
+    )
+    const { cmd, args } = serverCommand({ repo: REPO, dataDir, terminalProcess: broken })
+    const child = spawn(cmd, args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => {
+      stdout += d
+    })
+    child.stderr.on('data', (d) => {
+      stderr += d
+    })
+    try {
+      const code = await new Promise((resolve) => child.once('exit', (c) => resolve(c)))
+      expect(code).toBe(2)
+      expect(stdout).toBe('')
+      expect(stderr).toMatch(
+        /the terminal process did not start: the terminal process exited \(3\)/
+      )
+    } finally {
+      if (alive(child.pid)) child.kill('SIGKILL')
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it('the server ends on its own when the parent it was given is gone, and its terminal process with it', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-parent-gone-'))
     // A parent that lives 500 ms: the server, told its pid, must stop once

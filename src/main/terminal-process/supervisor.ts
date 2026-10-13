@@ -201,8 +201,14 @@ export async function supervisedTerminals(
     void old.port.close().catch(() => {})
     void old.process.stop().catch(() => {})
     changed()
-    restarting = restart(why).finally(() => {
-      restarting = null
+    // A newcomer that dies at once calls `lost` from inside this restart's
+    // own `boot`, which hands `restarting` to the next restart; this one's
+    // end must not wipe that handle, or `settled` and `close` return while
+    // a start is still in flight (the round-1 verifier's scratch test).
+    const run = restart(why)
+    restarting = run
+    void run.finally(() => {
+      if (restarting === run) restarting = null
     })
   }
 
@@ -247,9 +253,11 @@ export async function supervisedTerminals(
     },
     close: async () => {
       closing = true
+      // Every restart in flight, the one a dying newcomer handed over
+      // included: `boot` stops a process that arrives after this flag.
+      while (restarting) await restarting.catch(() => {})
       const live = current
       current = null
-      if (restarting) await restarting.catch(() => {})
       if (live) {
         await live.port.close().catch(() => {})
         await live.process.stop()
