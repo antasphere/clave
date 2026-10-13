@@ -883,17 +883,25 @@ export async function spyPtySpawn(app) {
  *  attached one of the same spec (the verifier's round 1, Major 2). */
 const launchedModes = new Map()
 
-export function terminalJournalPath(dir) {
-  // Attached, the terminal manager runs in the standalone server, which
-  // keeps the journal under its own data folder (the folder `startE2eServer`
-  // names for the app's `dir`); separate, under the app's `server/` folder;
-  // in-process it is the app's.
+/** Where the server that serves an app data folder keeps ITS OWN files (the
+ *  session records, the settings documents, the terminal journal): the
+ *  folder itself in-process, the folder `startE2eServer` names for it
+ *  attached, `<dir>/server` separate, by the mode `launchApp` last launched
+ *  the folder with. A spec that reads one of those files reads it here
+ *  rather than at `launched.server?.dataDir ?? dir`, which names the attached
+ *  server's folder and nobody else's. */
+export function serverDataDirOf(dir) {
   const mode = launchedModes.get(path.resolve(dir)) ?? 'in-process'
   return mode === 'attached'
-    ? path.join(fixturePath(`${path.basename(dir)}-server`), 'terminal-journal.jsonl')
+    ? fixturePath(`${path.basename(dir)}-server`)
     : mode === 'separate'
-      ? path.join(separateServerDataDir(dir), 'terminal-journal.jsonl')
-      : path.join(dir, 'terminal-journal.jsonl')
+      ? separateServerDataDir(dir)
+      : dir
+}
+
+export function terminalJournalPath(dir) {
+  // The terminal manager runs where the server runs, and journals there.
+  return path.join(serverDataDirOf(dir), 'terminal-journal.jsonl')
 }
 
 function readTerminalJournal(dir) {
