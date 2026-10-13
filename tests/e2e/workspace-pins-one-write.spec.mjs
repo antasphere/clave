@@ -55,7 +55,7 @@ async function pickerNames(win) {
   )
   await win.keyboard.press('Escape')
   await win.waitForTimeout(200)
-  return names.sort()
+  return names.sort().join(' | ')
 }
 
 export async function run(t) {
@@ -128,7 +128,7 @@ export async function run(t) {
     t.check('the one write is window A’s', landed[0]?.origin === keyA, landed)
     t.equal('window B heard the change once', await b.evaluate(() => window.__foldSeen), 1)
     t.equal('window A heard nothing of its own write', await a.evaluate(() => window.__foldSeen), 0)
-    t.equal('window B shows the folded pin', await pickerNames(b), ['Folded pin'])
+    t.equal('window B shows the folded pin', await pickerNames(b), 'Folded pin')
 
     await a.evaluate(() => window.__foldOff())
     await b.evaluate(() => window.__foldOff())

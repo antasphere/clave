@@ -94,7 +94,7 @@ async function pickerNames(win) {
   )
   await win.keyboard.press('Escape')
   await win.waitForTimeout(200)
-  return names.sort()
+  return names.sort().join(' | ')
 }
 
 export async function run(t) {
@@ -109,35 +109,35 @@ export async function run(t) {
   })
   try {
     // Where the settings live: the server's process attached (reachable from
-    // the start, the harness started it), main's own in-process (reached
-    // through the app, since the discovery file is not written until main
-    // names the server, which is what this spec delays).
-    const inSettingsProcess = (fn, arg) =>
-      server
-        ? fixture.evaluate(fn, arg)
-        : app.evaluate((_electron, { source, arg }) => new Function(`return (${source})`)()(arg), {
-            source: fn.toString(),
-            arg
-          })
+    // the start, the harness started it), main's own in-process. In-process
+    // the fixture route is reachable only once main names the server, which
+    // is what this spec delays, so the probe is installed through the app
+    // itself; it is read through the fixture in both modes, since by the
+    // time there is anything to read the server is named.
+    const installed = server
+      ? await fixture.evaluate(installLateRead, READ_DELAY_MS)
+      : await app.evaluate(
+          (_electron, { source, arg }) => new Function(`return (${source})`)()(arg),
+          { source: installLateRead.toString(), arg: READ_DELAY_MS }
+        )
+    const probe = () => fixture.evaluate(readLateRead).catch(() => null)
 
     t.check(
       'the window booted before main named the server',
       serverEndpoint(DIR) === null,
       serverEndpoint(DIR)
     )
-    t.equal('the boot refresh loaded the two groups of the profile file', await pickerNames(win), [
-      'Alpha lane',
-      'Bravo lane'
-    ])
-    t.check(
-      'the late read is installed',
-      (await inSettingsProcess(installLateRead, READ_DELAY_MS)) === true
+    t.equal(
+      'the boot refresh loaded the two groups of the profile file',
+      await pickerNames(win),
+      'Alpha lane | Bravo lane'
     )
+    t.check('the late read is installed', installed === true, installed)
 
     // The server is named, the socket welcomed, the catch-up read goes out.
     const read = await until(
       async () => {
-        const p = await inSettingsProcess(readLateRead)
+        const p = await probe()
         return p?.readAt ? p : null
       },
       { tries: (BOOT_DELAY_MS + 12_000) / 250, gapMs: 250 }
@@ -151,18 +151,18 @@ export async function run(t) {
     const written = await until(
       async () => {
         const names = await pickerNames(win)
-        return names.length === 3 && names.includes('Alpha renamed') ? names : null
+        return names === 'Alpha renamed | Bravo lane | Charlie lane' ? names : null
       },
       { tries: 12, gapMs: 250 }
     )
-    t.equal('the window took the edit in before the read answered', written, [
-      'Alpha renamed',
-      'Bravo lane',
-      'Charlie lane'
-    ])
+    t.equal(
+      'the window took the edit in before the read answered',
+      written,
+      'Alpha renamed | Bravo lane | Charlie lane'
+    )
     const answered = await until(
       async () => {
-        const p = await inSettingsProcess(readLateRead)
+        const p = await probe()
         return p?.answeredAt ? p : null
       },
       { tries: (READ_DELAY_MS + 4000) / 250, gapMs: 250 }
@@ -174,13 +174,16 @@ export async function run(t) {
     t.equal(
       'the window keeps the three groups: the late copy did not fold over them',
       await pickerNames(win),
-      ['Alpha renamed', 'Bravo lane', 'Charlie lane']
+      'Alpha renamed | Bravo lane | Charlie lane'
     )
     const persisted = await win.evaluate(() => window.electronAPI.workspaceLoad())
     t.equal(
       'and the state the window writes to holds the three',
-      persisted.pins.map((p) => p.name).sort(),
-      ['Alpha renamed', 'Bravo lane', 'Charlie lane']
+      persisted.pins
+        .map((p) => p.name)
+        .sort()
+        .join(' | '),
+      'Alpha renamed | Bravo lane | Charlie lane'
     )
     t.check(
       'the state carries its stamp',
