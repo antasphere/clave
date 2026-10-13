@@ -7,12 +7,19 @@
  */
 import { Schema } from 'effect'
 import {
+  type AccountOverride,
   type CommandOption,
+  type DraftHandling,
   type HistoryPage,
   type ModelOption,
+  type ReleaseOutcome,
+  type RestartedSession,
   type Session,
   type SessionCapabilities,
   type SessionInfo,
+  type SessionPage,
+  type SessionRecord,
+  type SessionScreen,
   SessionWrite,
   type SpawnOptions
 } from '@clave/contract/sessions'
@@ -37,6 +44,40 @@ export interface SessionsClient {
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
   readonly capabilities: (id: string) => Promise<SessionCapabilities>
   readonly history: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
+  // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+  /** The records a window may bring back: every adoptable one, or those of
+   *  `ids` (the sessions the server runs among them marked `running`). */
+  readonly listAdoptable: (ids?: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionRecord>>
+  /** Destroy a surviving session nobody brings back, by its record key. */
+  readonly discardRecord: (key: string) => Promise<void>
+  /** Let go of live sessions for another window to take in. */
+  readonly release: (
+    ids: ReadonlyArray<string>,
+    fallbackWindowKey?: string
+  ) => Promise<ReleaseOutcome>
+  // ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
+  /** The tab's name, protected from the auto-title. */
+  readonly rename: (id: string, name: string) => Promise<Session>
+  /** The page on the tab's row, with the session serving it; null takes it off. */
+  readonly setPage: (
+    id: string,
+    page: SessionPage | null,
+    servingSessionId: string | null
+  ) => Promise<void>
+  /** The last rendered lines of a terminal session, 100 by default. */
+  readonly screen: (id: string, lines?: number) => Promise<SessionScreen>
+  /** A message typed into the session as one turn; `from` names the sender's tab. */
+  readonly type: (
+    id: string,
+    text: string,
+    from?: string
+  ) => Promise<{ submitted: boolean; draftHandling: DraftHandling }>
+  /** The same tab restarted on another account under the same id. */
+  readonly restart: (
+    id: string,
+    account: AccountOverride,
+    resendRejected?: boolean
+  ) => Promise<RestartedSession>
 }
 
 /** A write goes over the wire in its encoded form: bytes as base64. */
@@ -77,6 +118,48 @@ export const sessionsClient = (call: Call): SessionsClient => ({
           id,
           ...(before !== undefined && { before: asParam(before) }),
           ...(limit !== undefined && { limit: asParam(limit) })
+        }
+      })
+    ),
+  // ── Wave 4, lane C: the records travel comma-joined on a GET (the contract says why) ──
+  listAdoptable: (ids) =>
+    call((c) =>
+      c.sessions.listAdoptable({
+        payload: ids === undefined ? {} : { ids: ids.join(',') }
+      })
+    ),
+  discardRecord: (key) =>
+    call((c) => c.sessions.discardRecord({ payload: { key } })).then(() => undefined),
+  release: (ids, fallbackWindowKey) =>
+    call((c) =>
+      c.sessions.release({
+        payload: {
+          ids,
+          ...(fallbackWindowKey !== undefined && { fallbackWindowKey })
+        }
+      })
+    ),
+  // ── Wave 4, lane D ──
+  rename: (id, name) => call((c) => c.sessions.rename({ payload: { id, name } })),
+  setPage: (id, page, servingSessionId) =>
+    call((c) => c.sessions.setPage({ payload: { id, page, servingSessionId } })).then(
+      () => undefined
+    ),
+  screen: (id, lines) =>
+    call((c) =>
+      c.sessions.screen({
+        payload: { id, ...(lines !== undefined && { lines: asParam(lines) }) }
+      })
+    ),
+  type: (id, text, from) =>
+    call((c) => c.sessions.type({ payload: { id, text, ...(from !== undefined && { from }) } })),
+  restart: (id, account, resendRejected) =>
+    call((c) =>
+      c.sessions.restart({
+        payload: {
+          id,
+          account,
+          ...(resendRejected !== undefined && { resendRejected })
         }
       })
     )

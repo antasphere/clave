@@ -13,12 +13,19 @@
 import { Context, Layer } from 'effect'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import type {
+  AccountOverride,
   CommandOption,
+  DraftHandling,
   HistoryPage,
   ModelOption,
+  ReleaseOutcome,
+  RestartedSession,
   Session,
   SessionCapabilities,
   SessionInfo,
+  SessionRecord,
+  SessionPage,
+  SessionScreen,
   SessionStream,
   SessionWrite,
   SpawnOptions
@@ -64,6 +71,46 @@ export interface SessionHostService extends SessionStreamSource {
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
   readonly capabilities: (id: string) => SessionCapabilities
   readonly history: (id: string, before?: number, limit?: number) => HistoryPage
+  // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
+  /** The records a window may bring back (`ListAdoptableRecords`): every
+   *  adoptable one, or those of `ids` plus the records of the sessions this
+   *  host runs by those ids, marked `running`. Throws `CapabilityUnavailable`
+   *  on a host that keeps no records. */
+  readonly listAdoptableRecords: (ids?: ReadonlyArray<string>) => ReadonlyArray<SessionRecord>
+  /** Destroy a surviving session nobody brings back: its tmux session when
+   *  it has one, then its record. Nothing happens for an unknown key. */
+  readonly discardRecord: (key: string) => void
+  /** Let go of live sessions for another window to take in: each tmux-backed
+   *  one detached and unbound, the record kept; a plain one refused, and with
+   *  `fallbackWindowKey` re-stamped there and detached all the same. */
+  readonly release: (ids: ReadonlyArray<string>, fallbackWindowKey?: string) => ReleaseOutcome
+  // ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
+  /** The tab's name, on the record, protected from the auto-title; throws
+   *  when the session is unknown. */
+  readonly rename: (id: string, name: string) => Session
+  /** The page on the tab's row, on the record; null takes it off. Throws
+   *  when the session is unknown. */
+  readonly setPage: (id: string, page: SessionPage | null) => void
+  /** The last `lines` rendered lines of a terminal session. Throws when the
+   *  session is unknown; rejects with `SessionScreenUnavailable` when it has
+   *  no screen this host kept (a chat tab). */
+  readonly screen: (id: string, lines: number) => Promise<SessionScreen>
+  /** Type a message into the session as one turn and submit it (a terminal's
+   *  draft set aside and put back, a chat's user message), answering whether
+   *  the submit landed and what happened to the draft. Throws when the
+   *  session is unknown, rejects when the write was refused. */
+  readonly type: (
+    id: string,
+    text: string
+  ) => Promise<{ submitted: boolean; draftHandling: DraftHandling }>
+  /** The same tab restarted on another account under the same id; rejects
+   *  with `CapabilityUnavailable` on a host that runs no sessions, with any
+   *  other error when the restart could not be made. */
+  readonly restart: (
+    id: string,
+    account: AccountOverride,
+    resendRejected: boolean
+  ) => Promise<RestartedSession>
 }
 
 const NO_SESSIONS = new CapabilityUnavailable({
@@ -110,6 +157,26 @@ export class SessionHost extends Context.Tag('@clave/server/SessionHost')<
     },
     history: (id) => {
       throw new Error(`Unknown session: ${id}`)
-    }
+    },
+    // ── Wave 4, lane C: a host with no sessions keeps no records either ──
+    listAdoptableRecords: () => {
+      throw NO_SESSIONS
+    },
+    discardRecord: () => {
+      throw NO_SESSIONS
+    },
+    release: () => {
+      throw NO_SESSIONS
+    },
+    // ── Wave 4, lane D ──
+    rename: (id) => {
+      throw new Error(`Unknown session: ${id}`)
+    },
+    setPage: (id) => {
+      throw new Error(`Unknown session: ${id}`)
+    },
+    screen: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
+    type: (id) => Promise.reject(new Error(`Unknown session: ${id}`)),
+    restart: () => Promise.reject(NO_SESSIONS)
   }
 }

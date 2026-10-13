@@ -1,5 +1,5 @@
 import { linkedEditorBlocksClose } from './linked-document-store'
-import { adoptServerStartedTerminals } from '../lib/adopt-record'
+import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { clearSessionDraft } from '../views/draft-store'
 import { finishesTurn } from '../lib/tab-status'
@@ -38,6 +38,7 @@ import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
 import {
   mergeLayoutForKeys,
+  pruneUnknownSessions,
   absorbLayout,
   placeAdopted,
   moveLayoutItems,
@@ -244,6 +245,12 @@ interface SessionState {
     persisted: { groups: SessionGroup[]; displayOrder: string[] },
     survivingSessionIds: string[]
   ) => void
+  /** Settle the session ids the boot merge kept provisionally while the
+   *  records listing was not complete (`bootSurvivors`, PRDCT-3432): every
+   *  candidate that is no session, group or file tab of this store now is
+   *  dropped from the groups and the order, its terminal link cleared. Run
+   *  once the attached top-up has brought back what exists. */
+  pruneRestoredShells: (candidates: string[]) => void
   /** Take in groups handed over by another window (a closing window's
    *  sidebar, a group moved here): unknown groups and order entries are
    *  appended, known ones left alone. The members arrive through adoption. */
@@ -343,6 +350,14 @@ interface SessionState {
   setSessionServerCommand: (id: string, command: string | null) => void
   setSessionUnseenActivity: (id: string, unseen: boolean) => void
   setSessionInjectedFrom: (id: string, from: string | null) => void
+  // ── Wave 4, lane D: what the server did to a tab through an agent tool ──
+  /** The server renamed the tab (a served clave_rename): the name as the
+   *  record keeps it, protected from the auto-title, written back nowhere. */
+  applyServedRename: (id: string, name: string) => void
+  /** The server put a page on the tab's row, or took it off (a served
+   *  clave_set_session_view): the record already holds it, nothing is
+   *  written back; the serving session the view had before leaves the store. */
+  applyServedPage: (id: string, view: SessionViewConfig | null) => void
   renameSession: (id: string, name: string) => void
   autoRenameSession: (id: string, name: string) => void
   resetSessionName: (id: string) => void
@@ -522,10 +537,21 @@ function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: str
   savePipeline.save()
 }
 
+/** Who made the change a push carries (`sidebar.layout_changed`'s cause):
+ *  an agent's command, a window's save, a move between windows, a closing
+ *  window's hand-over, the primary taking orphans. A snapshot with no cause
+ *  (a refused save's current layout) is read as nobody's in particular. */
+export type SidebarChangeCause = 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+type PushedSnapshot = SidebarLayoutSnapshot & { cause?: SidebarChangeCause }
+
 /** What the server pushed for this window: applied through the pipeline,
- *  which holds it while a save is out and drops what is already known. */
-export function applyServerLayout(snapshot: SidebarLayoutSnapshot): void {
-  savePipeline.incoming(snapshot)
+ *  which holds it while a save is out and drops what is already known. The
+ *  cause rides on the snapshot so the apply knows whose change it is. */
+export function applyServerLayout(
+  snapshot: SidebarLayoutSnapshot,
+  cause?: SidebarChangeCause
+): void {
+  savePipeline.incoming(cause ? ({ ...snapshot, cause } as PushedSnapshot) : snapshot)
 }
 
 /**
@@ -547,6 +573,19 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   let dropped: { id: string; name: string }[] = []
   const closed = new Set<string>()
   const unknownTerminals: string[] = []
+  const unknownSessions: string[] = []
+  const cause = (snapshot as PushedSnapshot).cause
+  // A session that arrives with a move or a closing window's hand-over is
+  // the RE-HOME's to take in: main hands the layouts over first and detaches
+  // the processes after, so at this push their records still read as running
+  // and a take-in from the record here would adopt the tab before the
+  // re-home reattaches it, and take the focus a close must not take
+  // (plugin-context-windows, 12 October). An agent's command, a save or a
+  // refused save's current layout may name a tab this window never saw.
+  const rehoming = cause === 'move' || cause === 'window-closed'
+  // Only an agent's own placement selects the tab, or the terminal, as the
+  // window's launch would (PRDCT-3428 closed the terminal's road).
+  const focusTakenIn = cause === 'command'
   useSessionStore.setState((state) => {
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
@@ -597,8 +636,23 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     // seen: it is taken in from its record once the state is set, below.
     for (const g of groups)
       for (const t of g.terminals)
-        if (t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
+        if (!rehoming && t.sessionId && !state.sessions.some((s) => s.id === t.sessionId))
           unknownTerminals.push(t.sessionId)
+    // A TAB the server opened (clave_open_session or clave_launch_group
+    // served by the server, wave 4) is placed by the layout before this
+    // window ever saw it: a member or a top-level row naming no session, no
+    // group and no file tab here is taken in from its record the same way,
+    // visible, and the first one takes the selection as a launch does.
+    const knownIds = new Set<string>([
+      ...state.sessions.map((s) => s.id),
+      ...state.fileTabs.map((f) => f.id),
+      ...groups.map((g) => g.id)
+    ])
+    if (!rehoming) {
+      for (const g of groups)
+        for (const sid of g.sessionIds) if (!knownIds.has(sid)) unknownSessions.push(sid)
+      for (const id of displayOrder) if (!knownIds.has(id)) unknownSessions.push(id)
+    }
     groupCounter = Math.max(groupCounter, groups.length)
     const serverJson = JSON.stringify(server)
     const mergedJson = JSON.stringify({ groups, displayOrder })
@@ -621,7 +675,10 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
         state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
     }
   })
-  if (unknownTerminals.length > 0) void adoptServerStartedTerminals(unknownTerminals)
+  if (unknownTerminals.length > 0)
+    void adoptServerStartedTerminals(unknownTerminals, { focus: focusTakenIn })
+  if (unknownSessions.length > 0)
+    void adoptServerStartedSessions([...new Set(unknownSessions)], { focus: focusTakenIn })
   if (dropped.length > 0) {
     const names = dropped.map((d) => `"${d.name}"`).join(', ')
     void window.electronAPI
@@ -1022,6 +1079,18 @@ export const useSessionStore = create<SessionState>((set) => ({
       const merged = mergeLayoutForKeys(state, keys, persisted, survivingSessionIds)
       groupCounter = Math.max(groupCounter, merged.groups.length)
       return { ...state, groups: merged.groups, displayOrder: merged.displayOrder }
+    }),
+
+  pruneRestoredShells: (candidates) =>
+    set((state) => {
+      const known = [
+        ...state.sessions.map((s) => s.id),
+        ...state.groups.map((g) => g.id),
+        ...state.fileTabs.map((f) => f.id)
+      ]
+      const out = pruneUnknownSessions(state, candidates, known)
+      if (out.pruned.length === 0) return state
+      return { groups: out.groups, displayOrder: out.displayOrder }
     }),
 
   absorbLayout: (incoming) =>
@@ -1711,6 +1780,27 @@ export const useSessionStore = create<SessionState>((set) => ({
       if (!session || (session.injectedFrom ?? null) === from) return state
       return {
         sessions: state.sessions.map((s) => (s.id === id ? { ...s, injectedFrom: from } : s))
+      }
+    }),
+
+  applyServedRename: (id, name) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === id ? { ...s, name: name.trim() || s.folderName, userRenamed: true } : s
+      )
+    })),
+
+  applyServedPage: (id, view) =>
+    set((state) => {
+      const session = state.sessions.find((s) => s.id === id)
+      if (!session) return state
+      const previous = session.view?.serverSessionId
+      const gone = previous && previous !== view?.serverSessionId ? previous : null
+      return {
+        sessions: state.sessions
+          .filter((s) => s.id !== gone)
+          .map((s) => (s.id === id ? { ...s, view } : s)),
+        ...(view === null && state.activeSessionViewId === id ? { activeSessionViewId: null } : {})
       }
     }),
 

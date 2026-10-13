@@ -37,6 +37,8 @@ import {
   workspaceFilesHandlers
 } from './workspace-files'
 import { ViewRequests, viewHandlers } from './views'
+// ── Wave 4, lane C: the agent tools' tokens ──
+import { AgentTokens, agentToolsHandlers } from './agent-tools'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -70,6 +72,8 @@ export type ServerServices =
   | ReviewDesk
   // ── Lane D (wave 3): the view requests ──
   | ViewRequests
+  // ── Wave 4, lane C: the agent tools' tokens ──
+  | AgentTokens
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -135,7 +139,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Wave 3, lane A: the workspace files ──
       ...workspaceFilesHandlers,
       // ── Lane D (wave 3): the view requests ──
-      ...viewHandlers
+      ...viewHandlers,
+      // ── Wave 4, lane C: the agent tools' tokens ──
+      ...agentToolsHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

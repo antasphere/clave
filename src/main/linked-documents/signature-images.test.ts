@@ -4,8 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { Resvg } from '@resvg/resvg-js'
 import { rasterizeSvgData, mapCssImages } from './signature-images'
-import { importSignature, prepareMime } from './email'
-import { emailSchema, type LinkedDocument } from '../../shared/linked-documents'
+import { importSignature } from './email'
 const svg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><rect width="32" height="24" fill="#345678"/><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.4" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="32" height="24" filter="url(#grain)" opacity="0.2"/></svg>'
 const data = (value: string): string => 'data:image/svg+xml,' + encodeURIComponent(value)
@@ -34,7 +33,7 @@ it.each([
 ])('rejects unsupported, external or oversized SVG before rendering', (value) => {
   expect(() => rasterizeSvgData(data(value))).toThrow()
 })
-it('stages every CSS background layer and embeds repeated PNG bytes once with CID fidelity', async () => {
+it('stages every CSS background layer as PNG and keeps the layout', async () => {
   const root = mkdtempSync(join(tmpdir(), 'clave-svg-signature-'))
   try {
     const a = data(svg),
@@ -53,34 +52,8 @@ it('stages every CSS background layer and embeds repeated PNG bytes once with CI
     expect((html.match(/data:image\/png;base64/g) || []).length).toBe(4)
     expect(html).toContain('background-size:32px 24px,cover')
     expect(html).toContain('background-repeat:repeat,no-repeat')
-    const doc: LinkedDocument = {
-      id: 'doc',
-      sessionId: 'session',
-      kind: 'email',
-      title: 'Test',
-      revision: 1,
-      content: '',
-      hidden: false,
-      split: 0.5,
-      scroll: 0,
-      attachments: [],
-      email: emailSchema.parse({
-        from: 'a@example.test',
-        to: 'b@example.test',
-        bodyHtml: '<p>Synthetic body</p>',
-        signatureHtml: html
-      })
-    }
-    const pkg = await prepareMime(doc, [])
-    const raw = Buffer.from(pkg.raw, 'base64url').toString()
-    expect((raw.match(/Content-ID:/g) || []).length).toBe(2)
-    expect((raw.match(/cid:/g) || []).length).toBe(4)
-    expect(raw.includes('data:image')).toBe(false)
-    expect(raw.includes('image/svg+xml')).toBe(false)
     for (const value of [a, b])
-      expect(raw.replace(/\r\n/g, '').includes(rasterizeSvgData(value).toString('base64'))).toBe(
-        true
-      )
+      expect(html.includes(rasterizeSvgData(value).toString('base64'))).toBe(true)
     const refs: string[] = []
     mapCssImages(style, (source) => {
       refs.push(source)

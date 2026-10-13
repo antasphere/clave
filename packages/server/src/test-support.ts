@@ -4,14 +4,22 @@
  * tests import it, nothing else does.
  */
 import { WebSocket } from 'ws'
-import type {
-  CommandOption,
-  HistoryPage,
-  ModelOption,
-  Session,
-  SessionInfo,
-  SessionStream,
-  SessionWrite
+import {
+  type AccountOverride,
+  type CommandOption,
+  type DraftHandling,
+  type HistoryPage,
+  type ModelOption,
+  type ReleaseOutcome,
+  type RestartedSession,
+  type Session,
+  type SessionInfo,
+  type SessionPage,
+  type SessionRecord,
+  type SessionScreen,
+  SessionScreenUnavailable,
+  type SessionStream,
+  type SessionWrite
 } from '@clave/contract/sessions'
 import {
   type ServerFrame,
@@ -32,6 +40,20 @@ export const aSession = (id: string, windowKey = 'w1'): Session => ({
   createdAt: 1,
   adapterId: 'echo',
   title: id
+})
+
+/** A plain record of a session, for the tests of the records' road. */
+export const aRecord = (id: string, windowKey?: string): SessionRecord => ({
+  id,
+  cwd: '/work',
+  folderName: 'work',
+  claudeMode: false,
+  antigravityMode: false,
+  codexMode: false,
+  piMode: false,
+  claudeAgentsMode: false,
+  dangerousMode: false,
+  ...(windowKey !== undefined && windowKey !== '' && { windowKey })
 })
 
 /** A host whose sessions the test emits into and exits by hand. Every
@@ -131,6 +153,111 @@ export class FakeSource implements SessionHostService {
     return this.historyOf
   }
   readonly historyAsked: Array<{ id: string; before?: number; limit?: number }> = []
+  // ── Wave 4, lane C: the records, kept by hand ──
+  /** The adoptable records this host would list; a test seeds them. */
+  readonly records: SessionRecord[] = []
+  readonly discards: string[] = []
+  readonly releases: Array<{ ids: ReadonlyArray<string>; fallbackWindowKey?: string }> = []
+  /** Which of the live sessions are tmux-backed (released on a move). */
+  readonly tmuxBacked = new Set<string>()
+  listAdoptableRecords = (ids?: ReadonlyArray<string>): SessionRecord[] => {
+    if (ids === undefined) return [...this.records]
+    const wanted = new Set(ids)
+    const found = this.records.filter((r) => wanted.has(r.id))
+    for (const id of wanted) {
+      if (found.some((r) => r.id === id)) continue
+      const session = this.sessions.get(id)
+      if (session) found.push({ ...aRecord(id, session.windowKey), live: true, running: true })
+    }
+    return found
+  }
+  discardRecord = (key: string): void => {
+    this.discards.push(key)
+    const at = this.records.findIndex((r) => (r.tmuxName ?? r.id) === key)
+    if (at >= 0) this.records.splice(at, 1)
+  }
+  release = (ids: ReadonlyArray<string>, fallbackWindowKey?: string): ReleaseOutcome => {
+    this.releases.push(fallbackWindowKey === undefined ? { ids } : { ids, fallbackWindowKey })
+    const released: string[] = []
+    const refused: ReleaseOutcome['refused'][number][] = []
+    for (const id of ids) {
+      const session = this.sessions.get(id)
+      if (!session) refused.push({ sessionId: id, reason: 'not-live' })
+      else if (!this.tmuxBacked.has(id)) refused.push({ sessionId: id, reason: 'not-tmux' })
+      else {
+        this.sessions.delete(id)
+        this.records.push({
+          ...aRecord(id, session.windowKey),
+          tmuxName: `clave-${id}`,
+          live: true
+        })
+        released.push(id)
+      }
+    }
+    return { released, refused }
+  }
+  // ── Wave 4, lane D: the last agent tools ──
+  readonly renames: Array<{ id: string; name: string }> = []
+  readonly pages: Array<{ id: string; page: SessionPage | null }> = []
+  readonly typed: Array<{ id: string; text: string }> = []
+  readonly restarts: Array<{ id: string; account: AccountOverride; resendRejected: boolean }> = []
+  /** What `screen` answers; null makes it refuse as a chat tab does. */
+  screenOf: SessionScreen | null = { lines: ['$ ls', 'a  b'], cols: 80, rows: 24 }
+  /** What `type` answers. */
+  typeOutcome: { submitted: boolean; draftHandling: DraftHandling } = {
+    submitted: true,
+    draftHandling: 'none'
+  }
+  rename = (id: string, name: string): Session => {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown session: ${id}`)
+    this.renames.push({ id, name })
+    const next = { ...session, title: name.trim() || session.title }
+    this.sessions.set(id, next)
+    return next
+  }
+  setPage = (id: string, page: SessionPage | null): void => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    this.pages.push({ id, page })
+  }
+  screen = async (id: string): Promise<SessionScreen> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (!this.screenOf)
+      throw new SessionScreenUnavailable({ id, message: 'This session has no terminal screen' })
+    return this.screenOf
+  }
+  type = async (
+    id: string,
+    text: string
+  ): Promise<{ submitted: boolean; draftHandling: DraftHandling }> => {
+    if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
+    this.typed.push({ id, text })
+    return this.typeOutcome
+  }
+  /** Runs inside `restart`, before it answers: a test reads what the server
+   *  had already published by then. */
+  onRestart: (() => Promise<void>) | null = null
+  restart = async (
+    id: string,
+    account: AccountOverride,
+    resendRejected: boolean
+  ): Promise<RestartedSession> => {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown session: ${id}`)
+    if (this.refuse) throw this.refuse
+    await this.onRestart?.()
+    this.restarts.push({ id, account, resendRejected })
+    return {
+      id,
+      cwd: session.cwd,
+      folderName: session.title,
+      alive: true,
+      claudeSessionId: null,
+      piSessionId: null,
+      resumed: true
+    }
+  }
   /** What the test does to a session. */
   emit(id: string, stream: SessionStream): void {
     for (const listener of [...(this.streams.get(id) ?? [])]) listener(stream)

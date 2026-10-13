@@ -37,6 +37,8 @@ import {
 import { LocationsTab } from './LocationsTab'
 import { UpdatesTab } from './UpdatesTab'
 import { UsagePanel, UsageRefresh } from '../usage/UsagePanel'
+import { ActivityPanel, ActivityRangeChips } from '../activity/ActivityPanel'
+import type { ActivityRange } from '../activity/activity-shape'
 import { AccountsSettings } from './AccountsSettings'
 import {
   SettingsPage,
@@ -201,6 +203,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'updates' && <UpdatesTab />}
         {settingsSection === 'plugins' && <PluginsTab />}
         {settingsSection === 'usage' && <UsageSettings />}
+        {settingsSection === 'activity' && <ActivitySettings />}
         {settingsSection === 'accounts' && <AccountsSettings />}
       </div>
     </div>
@@ -494,6 +497,19 @@ function UsageSettings(): React.JSX.Element {
       actions={<UsageRefresh />}
     >
       <UsagePanel />
+    </SettingsPage>
+  )
+}
+
+function ActivitySettings(): React.JSX.Element {
+  const [range, setRange] = useState<ActivityRange>('7d')
+  return (
+    <SettingsPage
+      title="Activity"
+      description="When your sessions ran, how many at once, and how much of the day they covered. Recorded on this Mac only."
+      actions={<ActivityRangeChips range={range} onChange={setRange} />}
+    >
+      <ActivityPanel range={range} />
     </SettingsPage>
   )
 }

@@ -1,12 +1,13 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
-// or without it (measured on 9 October 2026, the same checks red on both):
-// the session records are the server's while the window reads main's folder,
-// a tab's move between windows detaches and re-adopts through main's own
-// terminals, and an agent tab's token file is written by the process that
-// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
-// a failure of the agent tools, and the pin goes with them (wave 4). Not a
-// known failure.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3432). The group's
+// terminal and the toolbar survivor come back attached since this lane (the
+// restore spec restore-groups-and-dead-records pins both in both modes, and
+// this spec's records are read where the launch keeps them, `recordsRootOf`),
+// but the VIEW half still cannot: the window writes a tab's page to the record
+// over IPC, to the app, which attached runs no such session, so the server's
+// record never carries the view and the restore discards the page's serving
+// session for having no owner with a view. That is PRDCT-3453; the pin goes
+// with it. Measured 13 October 2026 on bare dev e5ac888 attached (four red,
+// the toolbar pair included) and on this lane (the view pair alone).
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).
@@ -39,7 +40,8 @@ import {
   until,
   killLeakedE2eTmux,
   fixturePath,
-  freePorts
+  freePorts,
+  recordsRootOf
 } from './harness.mjs'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -60,9 +62,10 @@ const WS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Every session record on disk, so a spec can read a record's `link`. */
+/** Every session record on disk, so a spec can read a record's `link`: under
+ *  the folder of the launch that wrote them (the server's, attached). */
 function sessionRecords() {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.json'))

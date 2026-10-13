@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { PANEL_ROOTS, panelRootLadder, type PanelScope } from '../../store/session-types'
 import { useAgentStore } from '../../store/agent-store'
@@ -127,6 +127,8 @@ function SidePanelBody(): React.JSX.Element {
   const pluginPanelSelection = usePluginUIStore((s) => s.sidePanel)
   const openPluginPanel = usePluginUIStore((s) => s.openSidePanel)
   const sidePlugins = pluginPanels(usePluginRecords(), 'side')
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const tabLayoutKey = JSON.stringify(sidePlugins.map((panel) => [panel.panelId, panel.title]))
   const activePluginPanel =
     sidePlugins.find(
       (panel) =>
@@ -143,6 +145,30 @@ function SidePanelBody(): React.JSX.Element {
     focusedSession?.sessionType === 'remote-claude' ||
     focusedSession?.sessionType === 'agent'
   const remoteLocationId = isRemoteSession ? focusedSession?.locationId : undefined
+
+  useLayoutEffect(() => {
+    const tabs = tabsRef.current
+    if (!tabs) return
+    let active = true
+    const update = (): void => {
+      if (!active) return
+      // Measure with labels restored so compact tabs cannot make themselves
+      // appear to fit and alternate between the two layouts on each resize.
+      delete tabs.dataset.iconOnly
+      tabs.dataset.iconOnly = String(tabs.scrollWidth > tabs.clientWidth)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(tabs)
+    if (tabs.parentElement) observer.observe(tabs.parentElement)
+    void document.fonts.ready.then(update)
+    document.fonts.addEventListener('loadingdone', update)
+    return () => {
+      active = false
+      observer.disconnect()
+      document.fonts.removeEventListener('loadingdone', update)
+    }
+  }, [isRemoteSession, tabLayoutKey])
 
   // For agent sessions, resolve cwd from agent store if session cwd is empty
   const agentCwd = useMemo(() => {
@@ -424,10 +450,9 @@ function SidePanelBody(): React.JSX.Element {
             one control tall, centred — not a full-width box with two buttons
             adrift in it, and not a bar-height frame around a word. */}
         <div
-          // A contributed tab makes this bar as wide as the panel: the app's own two
-          // tabs left room for one, and a second plugin would have wrapped it onto a
-          // second row — the one thing the row below it is written never to do. It
-          // scrolls instead, and only when it has to.
+          ref={tabsRef}
+          // Labels collapse before scrolling; overflow remains available when
+          // even the contributed icons cannot all fit.
           className="panel-tabs max-w-full overflow-x-auto"
           data-panel-bar="tabs"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -438,6 +463,8 @@ function SidePanelBody(): React.JSX.Element {
               setSidePanelTab('files')
             }}
             className="panel-tab"
+            aria-label="Files"
+            title="Files"
             data-selected={!pluginTab && effectiveTab === 'files' ? 'true' : undefined}
           >
             <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />
@@ -450,6 +477,8 @@ function SidePanelBody(): React.JSX.Element {
                 setSidePanelTab('git')
               }}
               className="panel-tab"
+              aria-label="Git"
+              title="Git"
               data-selected={!pluginTab && effectiveTab === 'git' ? 'true' : undefined}
             >
               {/* Heroicons has no branch glyph — the one hand-rolled icon the
@@ -473,6 +502,7 @@ function SidePanelBody(): React.JSX.Element {
                   openPluginPanel({ pluginId: panel.pluginId, panelId: panel.panelId })
                 }
                 className="panel-tab"
+                aria-label={panel.title}
                 data-plugin-tab={panel.panelId}
                 data-selected={
                   pluginTab?.pluginId === panel.pluginId && pluginTab?.panelId === panel.panelId

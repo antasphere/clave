@@ -478,6 +478,7 @@ export type SettingsSection =
   | 'keymaps'
   | 'updates'
   | 'usage'
+  | 'activity'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 

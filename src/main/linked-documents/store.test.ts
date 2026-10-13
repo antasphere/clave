@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { LinkedDocumentStore } from './store'
 import { emailSchema } from '../../shared/linked-documents'
-import { importSignature, sendGmail, validateEmailHtml, plainText } from './email'
+import { importSignature, validateEmailHtml } from './email'
 const dirs: string[] = []
 function fixture(): { root: string; store: LinkedDocumentStore } {
   const root = mkdtempSync(join(tmpdir(), 'clave-linked-'))
@@ -21,73 +21,6 @@ const email = (): ReturnType<typeof emailSchema.parse> =>
     signatureHtml: '<table cellpadding="0"><tr><td>Example team</td></tr></table>'
   })
 describe('linked documents boundaries', () => {
-  // Independent verifier repros: an old in-flight completion and an altered package revision.
-  it.each(['sent', 'failed', 'unknown'] as const)(
-    'keeps the newer revision guarded when an older %s result arrives last',
-    async (oldStatus) => {
-      const { root, store } = fixture()
-      const doc = await store.open('one', { email: email() })
-      const oldPackage = await store.prepare(doc.id, 1, 'one')
-      let finish!: () => void
-      const barrier = new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      const oldSend = store.send(oldPackage.id, 'one', async () => {
-        await barrier
-        return { status: oldStatus }
-      })
-      await store.update(doc.id, 1, { email: { ...email(), subject: 'New reviewed subject' } })
-      const newPackage = await store.prepare(doc.id, 2, 'one')
-      let calls = 0
-      await store.send(newPackage.id, 'one', async () => {
-        calls++
-        return { status: 'sent', messageId: 'new-message' }
-      })
-      finish()
-      await oldSend
-      const restarted = new LinkedDocumentStore(join(root, 'store'))
-      const current = restarted.get(doc.id)
-      expect(current.email?.subject).toBe('New reviewed subject')
-      expect(current.delivery).toMatchObject({
-        revision: 2,
-        status: 'sent',
-        messageId: 'new-message'
-      })
-      expect(current.deliveries?.['1'].status).toBe(oldStatus)
-      expect(current.deliveries?.['2'].status).toBe('sent')
-      await expect(
-        restarted.send(newPackage.id, 'one', async () => {
-          calls++
-          return { status: 'sent' }
-        })
-      ).rejects.toThrow('already attempted')
-      expect(calls).toBe(1)
-    }
-  )
-
-  it.each(['revision', 'threadId', 'messageId', 'sessionId', 'id'] as const)(
-    'refuses altered frozen package %s metadata before transport',
-    async (field) => {
-      const { root, store } = fixture()
-      const doc = await store.open('one', { email: email() })
-      const pkg = await store.prepare(doc.id, 1, 'one')
-      if (field === 'revision')
-        await store.update(doc.id, 1, { email: { ...email(), subject: 'New reviewed subject' } })
-      writeFileSync(
-        join(root, 'store', pkg.id + '.package.json'),
-        JSON.stringify({ ...pkg, [field]: field === 'revision' ? 2 : 'altered' })
-      )
-      let calls = 0
-      await expect(
-        store.send(pkg.id, 'one', async () => {
-          calls++
-          return { status: 'sent' }
-        })
-      ).rejects.toThrow('integrity')
-      expect(calls).toBe(0)
-    }
-  )
-
   it('stages a generic HTTP response only when its bytes identify a supported raster image', async () => {
     const { root } = fixture()
     const path = join(root, 'signature.html')
@@ -114,9 +47,6 @@ describe('linked documents boundaries', () => {
     }
   })
 
-  it('plain text decodes HTML entities and retains paragraph breaks', () => {
-    expect(plainText('<p>Caf&eacute; &amp; tea</p><p>&#x1F44B;</p>')).toBe('Café & tea\n👋')
-  })
   it('retains external conflict edits on disk, rejects stale agent revisions, reloads explicitly', async () => {
     const { root, store } = fixture(),
       path = join(root, 'a.md')
@@ -136,82 +66,68 @@ describe('linked documents boundaries', () => {
     expect(reloaded.content).toBe('# Agent change')
     expect(reloaded.conflict).toBeUndefined()
   })
-  it('copies attachment bytes, preserves names, packages exact MIME and blocks repeated/uncertain sends across restarts', async () => {
+  it('copies attachment bytes, preserves names, and names the retained copy by its absolute path for the agent', async () => {
     const { root, store } = fixture(),
       path = join(root, 'original.pdf')
     const bytes = Buffer.from([0, 1, 255, 40])
     writeFileSync(path, bytes)
     const doc = await store.open('one', { email: email(), attachments: [path] })
     rmSync(path)
-    expect(store.attachmentPath(doc.id, doc.attachments[0].id)).toMatch(/original\.pdf$/)
-    const pkg = await store.prepare(doc.id, 1, 'one')
-    const raw = Buffer.from(pkg.raw, 'base64url').toString()
-    expect(raw).toContain(bytes.toString('base64'))
-    expect(raw).toContain('multipart/mixed')
-    expect(raw).toContain('Example team')
-    let calls = 0
-    const sent = await store.send(pkg.id, 'one', async (received) => {
-      calls++
-      expect(received.raw).toBe(pkg.raw)
-      return { status: 'unknown' }
+    const read = store.forAgent(store.current('one'))
+    expect(read.attachments).toHaveLength(1)
+    expect(read.attachments[0].path).toBe(store.attachmentPath(doc.id, doc.attachments[0].id))
+    expect(read.attachments[0].path).toMatch(/^\/.*\/original\.pdf$/)
+    expect(readFileSync(read.attachments[0].path)).toEqual(bytes)
+    expect(read.attachments[0]).toMatchObject({
+      name: 'original.pdf',
+      size: 4,
+      sha256: doc.attachments[0].sha256
     })
-    expect(sent.delivery?.status).toBe('unknown')
-    await expect(
-      new LinkedDocumentStore(join(root, 'store')).send(pkg.id, 'one', async () => {
-        calls++
-        return { status: 'sent' }
-      })
-    ).rejects.toThrow('already attempted')
-    expect(calls).toBe(1)
+    // The path is derived at read time, never written with the document.
+    const persisted = JSON.parse(readFileSync(join(root, 'store', doc.id + '.json'), 'utf8'))
+    expect(persisted.attachments[0]).not.toHaveProperty('path')
+    const updated = store.forAgent(
+      await store.update(doc.id, 1, { email: { ...email(), subject: 'Reviewed' } }, 'one')
+    )
+    expect(updated.attachments[0].path).toBe(read.attachments[0].path)
   })
-  it('permits an explicit retry after definite failure, preserves edits during flight and rejects stale packages', async () => {
+  it("refuses another session's edit of the linked email", async () => {
     const { store } = fixture()
     const doc = await store.open('one', { email: email() })
-    const pkg = await store.prepare(doc.id, 1, 'one')
-    expect(
-      (await store.send(pkg.id, 'one', async () => ({ status: 'failed' }))).delivery?.status
-    ).toBe('failed')
-    await store.send(pkg.id, 'one', async () => {
-      await store.update(doc.id, 1, { email: { ...email(), subject: 'New edits' } })
-      return { status: 'sent', messageId: '123' }
-    })
-    const latest = store.get(doc.id)
-    expect(latest.revision).toBe(2)
-    expect(latest.delivery?.revision).toBe(1)
-    await expect(store.send(pkg.id, 'one')).rejects.toThrow('Revision conflict')
+    await expect(
+      store.update(doc.id, 1, { email: { ...email(), subject: 'Other' } }, 'two')
+    ).rejects.toThrow('another session')
+    expect(store.get(doc.id).email?.subject).toBe('Synthetic subject')
   })
-  it('enforces package owner and attachment integrity', async () => {
-    const { root, store } = fixture(),
-      path = join(root, 'a.txt')
-    writeFileSync(path, 'intact')
-    const doc = await store.open('one', { email: email(), attachments: [path] })
-    await expect(store.prepare(doc.id, 1, 'two')).rejects.toThrow('another session')
-    writeFileSync(store.attachmentPath(doc.id, doc.attachments[0].id), 'changed')
-    await expect(store.prepare(doc.id, 1, 'one')).rejects.toThrow('integrity')
-  })
-  it('rejects modified frozen MIME and packages from a replaced linked email', async () => {
+  it('loads a document written with the removed delivery fields and drops them', async () => {
     const { root, store } = fixture()
     const doc = await store.open('one', { email: email() })
-    const pkg = await store.prepare(doc.id, 1, 'one')
-    const path = join(root, 'store', pkg.id + '.package.json')
+    const file = join(root, 'store', doc.id + '.json')
     writeFileSync(
-      path,
-      JSON.stringify({ ...pkg, raw: Buffer.from('changed MIME').toString('base64url') })
-    )
-    let called = false
-    await expect(
-      store.send(pkg.id, 'one', async () => {
-        called = true
-        return { status: 'sent' }
+      file,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(file, 'utf8')),
+        delivery: { revision: 1, packageId: 'p', status: 'sent', messageId: 'm' },
+        deliveries: { '1': { revision: 1, packageId: 'p', status: 'sent' } },
+        preparedPackages: { p: 'seal' }
       })
-    ).rejects.toThrow('integrity')
-    expect(called).toBe(false)
-    writeFileSync(path, JSON.stringify(pkg))
-    await store.open('one', { email: { ...email(), subject: 'A different email' } })
-    await expect(store.send(pkg.id, 'one')).rejects.toThrow('no longer the linked email')
+    )
+    const restarted = new LinkedDocumentStore(join(root, 'store'))
+    const loaded = restarted.current('one')
+    expect(loaded.email).toEqual(email())
+    expect(loaded.revision).toBe(1)
+    for (const field of ['delivery', 'deliveries', 'preparedPackages']) {
+      expect(loaded).not.toHaveProperty(field)
+      expect(restarted.forAgent(loaded)).not.toHaveProperty(field)
+    }
+    const saved = await restarted.update(doc.id, 1, {
+      email: { ...email(), subject: 'After upgrade' }
+    })
+    expect(saved.revision).toBe(2)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).not.toHaveProperty('delivery')
   })
 
-  it('stages local and HTTPS signature images and preserves CID assets in MIME after source removal', async () => {
+  it('stages local and HTTPS signature images and keeps them after the source is removed', async () => {
     const { root, store } = fixture()
     const image = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6pZsAAAAASUVORK5CYII=',
@@ -226,11 +142,11 @@ describe('linked documents boundaries', () => {
     const doc = await store.open('one', { email: email(), signaturePath: path })
     rmSync(join(root, 'logo.png'))
     expect(doc.email?.signatureHtml).toContain('data:image/png;base64,')
-    const pkg = await store.prepare(doc.id, 1, 'one')
-    const mime = Buffer.from(pkg.raw, 'base64url').toString()
-    expect(mime).toContain('Content-ID:')
-    expect(mime).toContain('cid:')
-    expect(mime).toContain(image.toString('base64').slice(0, 60))
+    expect(doc.email?.signatureHtml).toContain(image.toString('base64').slice(0, 60))
+    expect(doc.email?.signatureHtml).not.toContain('logo.png')
+    expect(
+      new LinkedDocumentStore(join(root, 'store')).forAgent(store.get(doc.id)).email?.signatureHtml
+    ).toBe(doc.email?.signatureHtml)
     writeFileSync(path, '<img src="https://example.test/logo.png" alt="Remote" />')
     let fetched = 0
     const staged = await importSignature(path, async () => {
@@ -249,33 +165,6 @@ describe('linked documents boundaries', () => {
       '<div style="background:url(https://x.test)">x</div>'
     ])
       expect(() => validateEmailHtml(html)).toThrow('Unsupported')
-  })
-  it('Gmail adapter submits the prepared raw package unchanged and classifies preflight/network failures', async () => {
-    const { store } = fixture()
-    const doc = await store.open('one', { email: email() })
-    const pkg = await store.prepare(doc.id, 1, 'one')
-    const env = {
-      GMAIL_CLIENT_ID: 'fake',
-      GMAIL_CLIENT_SECRET: 'fake',
-      GMAIL_REFRESH_TOKEN: 'fake'
-    }
-    let body = ''
-    const fake: typeof fetch = async (url, init) => {
-      if (String(url).includes('oauth2')) return Response.json({ access_token: 'fake' })
-      body = String(init?.body)
-      return Response.json({ id: 'sent-1' })
-    }
-    expect((await sendGmail(pkg, env, fake)).status).toBe('sent')
-    expect(JSON.parse(body).raw).toBe(pkg.raw)
-    expect((await sendGmail(pkg, {}, fake)).status).toBe('failed')
-    expect(
-      (
-        await sendGmail(pkg, env, async (url) => {
-          if (String(url).includes('oauth2')) return Response.json({ access_token: 'fake' })
-          throw Error('dropped')
-        })
-      ).status
-    ).toBe('unknown')
   })
 })
 
@@ -319,7 +208,7 @@ describe('default signature snapshots', () => {
     const restored = await reopened.update(custom.id, without.revision, { signatureMode: 'custom' })
     expect(restored.email!.signatureHtml).toBe(custom.email!.signatureHtml)
   })
-  it('keeps a missing default visible and blocks prepare until explicitly recovered', async () => {
+  it('keeps a missing default visible, to the user and to the agent, until explicitly recovered', async () => {
     const { root, store } = fixture()
     const path = join(root, 'signature.html')
     writeFileSync(path, '<p>Default</p>')
@@ -327,9 +216,7 @@ describe('default signature snapshots', () => {
     rmSync(path)
     const draft = await store.open('missing', { email: { ...email(), signatureHtml: '' } })
     expect(draft.signatureError).toContain('Default signature could not be loaded')
-    await expect(store.prepare(draft.id, draft.revision, 'missing')).rejects.toThrow(
-      'Default signature'
-    )
+    expect(store.forAgent(store.current('missing')).signatureError).toBe(draft.signatureError)
     await expect(
       store.update(draft.id, draft.revision, { signatureMode: 'default' })
     ).rejects.toThrow('Default signature')
@@ -337,9 +224,6 @@ describe('default signature snapshots', () => {
     const recovered = await store.update(draft.id, draft.revision, { signatureMode: 'none' })
     expect(recovered.signatureError).toBeUndefined()
     expect(recovered.email!.bodyHtml).toBe(draft.email!.bodyHtml)
-    await expect(
-      store.prepare(recovered.id, recovered.revision, 'missing')
-    ).resolves.toHaveProperty('raw')
     writeFileSync(path, '<script>unsafe</script>')
     await expect(store.setDefaultSignature(path)).rejects.toThrow()
     expect(store.getDefaultSignature()!.path).toBe(path)

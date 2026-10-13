@@ -29,6 +29,8 @@ import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
+import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
+import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -309,7 +311,9 @@ type SidebarLayoutSnapshot = {
 type SidebarLayoutChanged = {
   _tag: 'sidebar.layout_changed'
   layout: SidebarLayoutSnapshot
-  cause: string
+  /** Who made the change, as the server says it; absent on the catch-up read
+   *  below, which recovers a change whose cause nobody heard (PRDCT-3428). */
+  cause?: string
 }
 type SidebarSaveResult =
   | { ok: true; layout: SidebarLayoutSnapshot }
@@ -340,16 +344,17 @@ const listenToSidebarPush = (backing: Backing): void => {
   // would leave a write between the two unheard) and handed to the
   // listeners as a change; one at or below the revision the window knows
   // is dropped by the store, so the read costs nothing when nothing moved.
+  // It carries NO cause: what went by unheard may have been a move or a
+  // closing window's hand-over, and a cause invented here ('command', the
+  // one that selects) made the window take a running record in and select
+  // it, the one thing the rule forbids for those changes (PRDCT-3428, lane
+  // D's round-5 F9). Without a cause the store takes in and selects nowhere.
   void Promise.all([windowKey(), backing.push.whenOpen()]).then(
     async ([key]) => {
       if (!key) return
       try {
         const layout = await backing.api.sidebar.getLayout(key)
-        const event: SidebarLayoutChanged = {
-          _tag: 'sidebar.layout_changed',
-          layout,
-          cause: 'command'
-        }
+        const event: SidebarLayoutChanged = { _tag: 'sidebar.layout_changed', layout }
         for (const listener of [...sidebarListeners]) listener(event)
       } catch {
         // The next change arrives on the push channel; the next call tells the caller.
@@ -450,6 +455,100 @@ const viaAttachedServer =
       if (terminalChains.get(id) === next) terminalChains.delete(id)
     }
   }
+// ── The session records' road (wave 4, lane C) ──
+// Inside the app the records are main's, and IPC lands on the one instance
+// that applies the window's selection rule itself. Attached, the records are
+// the standalone server's: the preload reads the whole listing off it and
+// applies the rule here (`shared/adoption-scope.ts`), from the scope main
+// answers over IPC. A read by id skips the rule: the re-home path asks for
+// exactly those records whatever their window.
+// The records a window brings back. The BOOT read (no ids) goes over IPC
+// always, the fast road, so the restore never delays the rest of the boot;
+// attached, IPC answers main's own empty folder and the window's own sessions
+// come back through the deferred top-up (`listServerRestoreRecords`), after
+// persistence is on, so an app that opens a file or a tab in the first
+// seconds is never clobbered by a late restore (PRDCT-3376). A read BY IDS is
+// the re-home path (post-boot): attached it must reach the server, which owns
+// a moved session's record.
+async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSessionRecord[]> {
+  if (filter && Array.isArray(filter.ids) && (await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) return [...(await backing.api.sessions.listAdoptable(filter.ids))]
+  }
+  return ipcRenderer.invoke('records:list-adoptable', filter) as Promise<WireSessionRecord[]>
+}
+
+/** The server's adoptable records for the attached restore top-up, with this
+ *  window's selection rule applied (`shared/adoption-scope.ts`); empty
+ *  in-process, where the boot's IPC read already holds main's own. It runs
+ *  AFTER the boot (persistence already on), so it WAITS, boundedly, for the
+ *  server to be named and reachable: a window whose renderer finished booting
+ *  before main published the endpoint must still restore its sessions, not
+ *  silently show none (round-3 verifier R-F1). The wait is off the boot
+ *  critical path, so it cannot delay the boot or clobber an early action; a
+ *  server that never comes answers [] rather than hanging. */
+async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
+  const deadline = Date.now() + 15_000
+  let mode = await serverMode()
+  while (mode === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    mode = await serverMode()
+  }
+  if (mode !== 'attached') return []
+  // Ride the server's own arrival (`onServerAvailable`: at once when a backing
+  // is known, else when a routed call or the watch connects one), and never
+  // force the connect from here. A connect made at the boot mark fires every
+  // listener's catch-up over the state the window has just loaded (the pins
+  // the switcher reads), which is how this top-up once made switcher-collapse
+  // red attached while bare dev stayed green; the watch connects on its own
+  // tick for every window, this read simply waits for it, boundedly.
+  const backing = await new Promise<Backing | null>((resolve) => {
+    let settled = false
+    // `onServerAvailable` runs the wire SYNCHRONOUSLY when a backing is already
+    // known, i.e. before `withdraw` below is assigned: declared first, called
+    // optionally, so that path neither throws nor withdraws anything.
+    let withdraw: (() => void) | null = null
+    const finish = (value: Backing | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      withdraw?.()
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now()))
+    withdraw = onServerAvailable((found) => finish(found))
+    if (settled) withdraw()
+  })
+  if (!backing) return []
+  const scope = (await ipcRenderer.invoke('records:adoption-scope')) as AdoptionScope | null
+  const all = [...(await backing.api.sessions.listAdoptable())]
+  return scope ? selectAdoptableRecords(all, scope) : []
+}
+
+/** Whether the boot's records read (`listSessionRecords` with no ids, over
+ *  IPC) is EVERY adoptable record, or the server's come after it. Inside the
+ *  app it is: main's listing is the whole folder. Attached it is not: main's
+ *  folder is empty and the window's sessions come back through the top-up
+ *  above; and while main has named no server yet the answer is not known, so
+ *  the boot is told "not complete" and the top-up's bounded wait settles it.
+ *  The boot's layout merge reads this to keep the saved layout's own session
+ *  ids as survivors until the top-up has said which exist (PRDCT-3432: an
+ *  attached quit flattened every group whose members the server runs). */
+async function bootRecordsComplete(): Promise<boolean> {
+  return (await serverMode()) === 'in-process'
+}
+
+async function discardSessionRecord(key: string): Promise<void> {
+  if ((await serverMode()) === 'attached') {
+    const backing = await serverRouter.backing()
+    if (backing) {
+      await backing.api.sessions.discardRecord(key)
+      return
+    }
+  }
+  await ipcRenderer.invoke('records:discard', key)
+}
+
 /** The IPC listener always; the push binding only once the server is there
  *  AND the app is attached to it. */
 function onAttachedPush(
@@ -469,6 +568,23 @@ function onAttachedPush(
     withdraw()
     ipcOff()
     pushOff?.()
+  }
+}
+/** A server event of one tag, whatever it is about, bound once the server is
+ *  there (wave 4, lane D: the facts the served agent tools publish). */
+function onServerEventOf<E extends ServerEvent['_tag']>(
+  tag: E,
+  callback: (event: Extract<ServerEvent, { _tag: E }>) => void
+): () => void {
+  let off: (() => void) | null = null
+  const withdraw = onServerAvailable((backing) => {
+    off = backing.push.onEvent((envelope) => {
+      if (envelope.event._tag === tag) callback(envelope.event as Extract<ServerEvent, { _tag: E }>)
+    })
+  })
+  return () => {
+    withdraw()
+    off?.()
   }
 }
 /** A server event about one session, on the push channel. */
@@ -932,11 +1048,21 @@ const electronAPI = {
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
   // This window's own records (plus the orphans, for the primary); `ids`
-  // fetches specific records whatever their window (the re-home path).
-  listSessionRecords: (filter?: { ids?: string[] }) =>
-    ipcRenderer.invoke('records:list-adoptable', filter),
+  // fetches specific records whatever their window (the re-home path). The
+  // road is the mode's: inside the app (or before a server is named) IPC
+  // lands on main's own listing, which applies the selection rule itself;
+  // attached, the records are the SERVER's, so the preload reads the whole
+  // listing off the server and applies the same rule here, from the scope
+  // main answers over IPC (`records:adoption-scope`, `shared/adoption-scope.ts`).
+  // By id the rule does not apply: the re-home path wants exactly those.
+  listSessionRecords: (filter?: { ids?: string[] }) => listSessionRecords(filter),
 
-  discardSessionRecord: (key: string) => ipcRenderer.invoke('records:discard', key),
+  // The attached restore top-up: the server's surviving records for this
+  // window, empty in-process (PRDCT-3376).
+  listServerRestoreRecords: () => listServerRestoreRecords(),
+  bootRecordsComplete: () => bootRecordsComplete(),
+
+  discardSessionRecord: (key: string) => discardSessionRecord(key),
 
   // Sessions handed to this window to take in — a closing window's (with its
   // groups), or tabs moved here — as ids; the records carry the rest.
@@ -958,6 +1084,65 @@ const electronAPI = {
   // Acknowledge a `session:rehome` once adopted (a cross-window MCP move
   // waits on it before placing the tab in a group here).
   ackRehomed: (sessionIds: string[]) => ipcRenderer.send('window:rehomed', sessionIds),
+
+  // ── Wave 4, lane D: what the served agent tools did to a session, on the push channel ──
+  // Each is a fact the server published after a tool's command (a tab
+  // renamed, a page put on its row, a message typed into it, its account
+  // switched, a pinned group launched); the window follows without writing
+  // anything back. Push only: these facts exist only when a server runs.
+  onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) =>
+    onServerEventOf('session.renamed', (event) => callback({ id: event.id, name: event.name })),
+  onSessionPageChanged: (
+    callback: (payload: {
+      id: string
+      page: { url: string; title?: string; command?: string; cwd?: string } | null
+      servingSessionId: string | null
+    }) => void
+  ) =>
+    onServerEventOf('session.page_changed', (event) =>
+      callback({ id: event.id, page: event.page, servingSessionId: event.servingSessionId })
+    ),
+  onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) =>
+    onServerEventOf('session.typed', (event) => callback({ id: event.id, from: event.from })),
+  onSessionRestarting: (callback: (payload: { id: string }) => void) =>
+    onServerEventOf('session.restarting', (event) => callback({ id: event.id })),
+  onSessionRestarted: (
+    callback: (payload: {
+      id: string
+      resumed: boolean
+      account: {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+      }
+    }) => void
+  ) =>
+    onServerEventOf('session.restarted', (event) =>
+      callback({ id: event.id, resumed: event.resumed, account: event.account })
+    ),
+  // The pin's link is published on the server in-process and sent to the
+  // window over IPC when the app is attached (main publishes nothing there):
+  // one or the other, main's choice, never both.
+  onPinnedGroupLaunched: (
+    callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
+  ) =>
+    onBothTransports(
+      createIpcListener<[{ pinnedId: string; groupId: string; windowKey: string }]>(
+        'pinned-group:launched',
+        callback
+      ),
+      (push) =>
+        push.onEvent((envelope) => {
+          const event = envelope.event
+          if (event._tag === 'pinned_group.launched')
+            callback({
+              pinnedId: event.pinnedId,
+              groupId: event.groupId,
+              windowKey: event.windowKey
+            })
+        })
+    ),
 
   onSessionData: (id: string, callback: (data: string) => void) =>
     onAttachedPush(createIpcListener<[string]>(`pty:data:${id}`, callback), (push) => {
@@ -1099,6 +1284,15 @@ const electronAPI = {
 
   captureTabClosed: (payload: { ts: string; session: unknown; by: string; closer: unknown }) =>
     ipcRenderer.send('exchange:capture-tab-closed', payload),
+
+  // The activity record (PRDCT-3384, PRDCT-3385): the fold over a local day
+  // range, and the push when a row lands. A Codex terminal's run state, read
+  // off its title by the renderer, is reported to main here.
+  activityQuery: (from: string, to: string, detail = true) =>
+    ipcRenderer.invoke('activity:query', { from, to, detail }),
+  onActivityChanged: (callback: () => void) => createIpcListener<[]>('activity:changed', callback),
+  sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') =>
+    ipcRenderer.invoke('sessions:report-state', id, state),
 
   // Session history (PRDCT-1738): the ledger row is fire-and-forget like the
   // capture above; the list is the dialog's one read.

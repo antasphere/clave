@@ -16,6 +16,8 @@
  * (`standalone-host.ts`).
  */
 import type { SessionHostService, StartInput } from '@clave/server'
+import { readScreen, restartSession, typeIntoSession } from './lifecycle'
+import { ptyManager } from '../pty-manager'
 import type {
   HistoryPage,
   Session,
@@ -38,6 +40,7 @@ import {
   stopSession,
   writeTerminal
 } from './lifecycle'
+import { type SessionRecordsSource, sessionRecords } from './records'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -68,6 +71,19 @@ export interface SessionLifecycle {
 export interface SessionHostDeps {
   readonly manager: SessionManager
   readonly lifecycle: SessionLifecycle
+  /** Wave 4, lane C: the records a window brings back, their discard and a
+   *  session's release (`records.ts`). A host built without one, the tests',
+   *  keeps no records and says so. */
+  readonly records?: SessionRecordsSource
+}
+
+const NO_RECORDS = (): never => {
+  throw new Error('This host keeps no session records')
+}
+const noRecords: SessionRecordsSource = {
+  listAdoptableRecords: NO_RECORDS,
+  discardRecord: NO_RECORDS,
+  release: NO_RECORDS
 }
 
 const asInfo = (result: SessionInfoResult): SessionInfo => ({
@@ -87,10 +103,11 @@ const bytesDecoder = new TextDecoder()
 
 export function createSessionHost(deps: SessionHostDeps): SessionHostService {
   const { manager } = deps
+  const records = deps.records ?? noRecords
   /** The key of the window the session's record names, for the per-window
    *  arm of its news when no server publishes them. */
   const windowOf = (id: string): string | null => manager.get(id)?.windowKey ?? null
-  return {
+  const host: SessionHostService = {
     list: (windowKey) => manager.list(windowKey),
     get: (id) => manager.get(id),
     subscribe: (id, listener) => {
@@ -159,8 +176,42 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     models: (id) => manager.models(id),
     commands: (id) => manager.commands(id),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
-    history: (id, before, limit): HistoryPage => manager.history(id, before, limit)
+    history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
+    // ── Wave 4, lane C: the session records (PRDCT-3376) ──
+    listAdoptableRecords: (ids) => records.listAdoptableRecords(ids),
+    discardRecord: (key) => records.discardRecord(key),
+    release: (ids, fallbackWindowKey) => records.release(ids, fallbackWindowKey),
+    // ── Wave 4, lane D: the last agent tools (PRDCT-3377) ──
+    rename: (id, name) => {
+      const session = manager.get(id)
+      if (!session) throw new Error(`Unknown session: ${id}`)
+      const folderName = ptyManager.getSession(id)?.folderName ?? ''
+      const next = name.trim() || folderName
+      // The name on the record, as the sidebar's rename keeps it: equal to
+      // the folder name means "no name", and a rename protects it from the
+      // auto-title (`userRenamed`).
+      ptyManager.setSessionDisplayName(id, next === folderName ? null : next, true)
+      return manager.get(id) ?? session
+    },
+    setPage: (id, page) => {
+      if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
+      ptyManager.setSessionViewRecord(id, page)
+    },
+    screen: (id, lines) => readScreen(id, lines),
+    type: async (id, text) => {
+      const session = manager.get(id)
+      if (!session) throw new Error(`Unknown session: ${id}`)
+      if (session.transport === 'events') {
+        // A chat tab takes the message as a user message, as the composer's
+        // own road does; its draft is the view's and is never in the way.
+        await host.write(id, { type: 'user_message', text })
+        return { submitted: true, draftHandling: 'none' }
+      }
+      return typeIntoSession(id, text)
+    },
+    restart: (id, account, resendRejected) => restartSession(id, { ...account, resendRejected })
   }
+  return host
 }
 
 let host: SessionHostService | null = null
@@ -176,7 +227,8 @@ export function getSessionHost(): SessionHostService {
         stop: stopSession,
         resize: resizeSession,
         writeTerminal
-      }
+      },
+      records: sessionRecords
     })
   }
   return host

@@ -7,6 +7,7 @@ import type {
   CommandOption,
   HistoryPage
 } from '../shared/session-model'
+import type { DayActivity } from '../shared/activity-fold'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
 import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
@@ -19,6 +20,13 @@ import type {
 } from '../shared/github-pull'
 
 /** Additive wire contract for adapter stream consumers. Existing PTY IPC is unchanged. */
+export interface ActivityAnswer {
+  days: DayActivity[]
+  now: number
+  skipped: number
+  file: string
+}
+
 export interface SessionIPC {
   'sessions:list': { args: []; result: Session[] }
   'sessions:subscribe': { args: [sessionId: string]; result: Session }
@@ -149,7 +157,9 @@ export type SidebarSaveResult =
 export interface SidebarLayoutChanged {
   _tag: 'sidebar.layout_changed'
   layout: SidebarLayoutSnapshot
-  cause: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
+  /** Absent on the preload's catch-up read: a change whose cause nobody
+   *  heard is taken in and selects nothing (PRDCT-3428). */
+  cause?: 'save' | 'command' | 'move' | 'window-closed' | 'orphans'
 }
 
 /** The outcome of moving sessions to another window. */
@@ -715,11 +725,46 @@ export interface ElectronAPI {
   setSessionWorkspace: (id: string, workspaceId: string | null) => Promise<void>
   tmuxAvailable: () => Promise<boolean>
   listSessionRecords: (filter?: { ids?: string[] }) => Promise<SessionRecord[]>
+  /** The attached server's surviving records for this window (restore top-up);
+   *  empty in-process. */
+  listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the boot's `listSessionRecords()` read is every adoptable record
+   *  (inside the app) or the server's come after it through the top-up
+   *  (attached, or while main has named no server yet). The boot's layout
+   *  merge keeps the saved layout's session ids as survivors when it is not
+   *  (PRDCT-3432). */
+  bootRecordsComplete: () => Promise<boolean>
   discardSessionRecord: (key: string) => Promise<void>
   onSessionRehome: (callback: (payload: RehomePayload) => void) => () => void
   onSessionRemovedForRehome: (callback: (sessionId: string) => void) => () => void
   onGroupRemovedForMove: (callback: (groupId: string) => void) => () => void
   ackRehomed: (sessionIds: string[]) => void
+  // ── Wave 4, lane D: what the served agent tools did to a session (push only) ──
+  onSessionRenamed: (callback: (payload: { id: string; name: string }) => void) => () => void
+  onSessionPageChanged: (
+    callback: (payload: {
+      id: string
+      page: { url: string; title?: string; command?: string; cwd?: string } | null
+      servingSessionId: string | null
+    }) => void
+  ) => () => void
+  onSessionTyped: (callback: (payload: { id: string; from: string | null }) => void) => () => void
+  onSessionRestarting: (callback: (payload: { id: string }) => void) => () => void
+  onSessionRestarted: (
+    callback: (payload: {
+      id: string
+      resumed: boolean
+      account: {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+      }
+    }) => void
+  ) => () => void
+  onPinnedGroupLaunched: (
+    callback: (payload: { pinnedId: string; groupId: string; windowKey: string }) => void
+  ) => () => void
   onSessionData: (id: string, callback: (data: string) => void) => () => void
   onSessionExit: (id: string, callback: (exitCode: number) => void) => () => void
   onSessionLimitReported: (callback: (sessionId: string) => void) => () => void
@@ -767,6 +812,13 @@ export interface ElectronAPI {
     by: 'user' | 'agent' | 'app'
     closer: ExchangeEndpoint | null
   }) => void
+  /** The activity record (PRDCT-3384, PRDCT-3385): one `DayActivity` per
+   *  local day of the range, inclusive, and the push when a row lands. */
+  activityQuery: (from: string, to: string, detail?: boolean) => Promise<ActivityAnswer>
+  onActivityChanged: (callback: () => void) => () => void
+  /** A run state the renderer alone sees (a Codex terminal's title), reported
+   *  so main holds one state per session. */
+  sessionsReportState: (id: string, state: 'idle' | 'working' | 'blocked') => Promise<void>
   /** Session history (PRDCT-1738). A ledger row per placement change,
    *  fire-and-forget; the folded list for the dialog. */
   historyStamp: (row: HistoryLedgerRow) => void

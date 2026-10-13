@@ -202,7 +202,12 @@ export function useTerminal(sessionId: string): {
       const current = useSessionStore.getState()
       const session = current.sessions.find((s) => s.id === sessionId)
       if (!session?.codexMode || session.sessionType !== 'local' || !session.alive) return
-      setAgentState(sessionId, codexStateFromTitle(title))
+      const codexState = codexStateFromTitle(title)
+      setAgentState(sessionId, codexState)
+      // Main holds one state per session for the activity record; a title
+      // is the only place a Codex terminal's state exists, so it is reported.
+      if (session.agentState !== codexState)
+        window.electronAPI.sessionsReportState?.(sessionId, codexState).catch(() => {})
     })
 
     // Deterministic lifecycle state from Claude hooks or Clave's bundled Pi extension.

@@ -22,6 +22,7 @@ export interface OidcProviderState {
   issueRefresh: boolean
   idTokenTtlSec: number
   accessTokenTtlSec: number
+  registrationStatus: number
   log: Array<{ method: string; path: string; body: string }>
   registrations: Array<{ sent: Record<string, unknown>; registered: Record<string, unknown> }>
   codes: Map<
@@ -66,4 +67,5 @@ export function startOidcProvider(options?: {
   issueRefresh?: boolean
   idTokenTtlSec?: number
   accessTokenTtlSec?: number
+  registrationStatus?: number
 }): Promise<OidcProvider>

@@ -7,6 +7,7 @@ import {
   AntasphereAccountManager,
   ANTASPHERE_SCOPE,
   CALLBACK_PATH,
+  registrationFetch,
   resolveAntasphereIssuer,
   type AntasphereAccountDeps
 } from './antasphere-account'
@@ -75,6 +76,7 @@ afterEach(async () => {
     p.state.bareRefresh = false
     p.state.userinfoFail = false
     p.state.refuseRegistrationOnce = null
+    p.state.registrationStatus = 201
     p.state.issueRefresh = true
     p.state.idTokenTtlSec = p === brief ? BRIEF_TTL_SEC : 3600
     p.state.accessTokenTtlSec = p === brief ? BRIEF_TTL_SEC : 3600
@@ -357,6 +359,78 @@ describe.each(eachTestPorts())('on %s', (_name, makePorts) => {
 })
 
 describe('the registration is the install’s', () => {
+  it.each([200, 201])(
+    'signs in and reuses the client after an HTTP %i registration',
+    async (status) => {
+      provider.state.registrationStatus = status
+      const ports = electronTestPorts()
+      const h = harness(ports)
+      const registrations = provider.state.counts.register
+      const result = await h.manager.start()
+      expect(result.status.phase).toBe('signing-in')
+      expect(result.status.lastFailure).toBeNull()
+      expect(result.handoff).not.toBeNull()
+      expect(h.manager.confirmHandoff(result.handoff!)).toBe(true)
+      const url = new URL(result.handoff!.url)
+      expect(url.origin).toBe(provider.issuer)
+      expect(url.searchParams.get('scope')).toBe(ANTASPHERE_SCOPE)
+      expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+      await provider.browse(url)
+      expect((await settled(h)).phase).toBe('signed-in')
+      expect(h.manager.status().account?.email).toBe('ada@example.test')
+      expect(exists(ports.dir, SESSION)).toBe(true)
+      h.manager.signOut()
+      const second = await h.manager.start()
+      expect(second.handoff).not.toBeNull()
+      expect(new URL(second.handoff!.url).searchParams.get('client_id')).toBe(
+        url.searchParams.get('client_id')
+      )
+      expect(provider.state.counts.register - registrations).toBe(1)
+    }
+  )
+
+  it.each([202, 204, 400, 403, 500])('does not accept an HTTP %i registration', async (status) => {
+    provider.state.registrationStatus = status
+    const ports = electronTestPorts()
+    const h = harness(ports)
+    const result = await h.manager.start()
+    expect(result.status.phase).toBe('signed-out')
+    expect(result.status.lastFailure).not.toBeNull()
+    expect(result.handoff).toBeNull()
+    expect(exists(ports.dir, CLIENT)).toBe(false)
+    expect(exists(ports.dir, SESSION)).toBe(false)
+  })
+
+  it.each(['error', 'missing-id', 'confidential', 'missing-code-grant'])(
+    'refuses a malformed HTTP 200 registration: %s',
+    async (kind) => {
+      provider.state.registrationStatus = 200
+      const ports = electronTestPorts()
+      const h = harness(ports, {
+        fetch: async (input, init) => {
+          const response = await globalThis.fetch(input, init)
+          if (new URL(String(input)).pathname !== '/register') return response
+          const body = await response.json()
+          if (kind === 'error') return Response.json({ error: 'invalid_client_metadata' })
+          if (kind === 'missing-id') delete body.client_id
+          if (kind === 'confidential') {
+            body.client_secret = 'must-not-be-accepted'
+            body.client_secret_expires_at = 0
+            body.token_endpoint_auth_method = 'client_secret_post'
+          }
+          if (kind === 'missing-code-grant') body.grant_types = ['refresh_token']
+          return Response.json(body)
+        }
+      })
+      const result = await h.manager.start()
+      expect(result.status.phase).toBe('signed-out')
+      expect(result.status.lastFailure).not.toBeNull()
+      expect(result.handoff).toBeNull()
+      expect(exists(ports.dir, CLIENT)).toBe(false)
+      expect(exists(ports.dir, SESSION)).toBe(false)
+    }
+  )
+
   it('a second login reuses the client and its loopback port', async () => {
     const ports = electronTestPorts()
     const h = harness(ports)
@@ -494,6 +568,49 @@ describe('a token that does not validate is no login', () => {
 })
 
 describe('the issuer is pinned and every request bounded', () => {
+  it.each(['issuer', 'endpoint origin'])(
+    'does not adapt registration from discovery with a foreign %s',
+    async (foreign) => {
+      const issuer = new URL(provider.issuer)
+      const other = 'https://other.example.test'
+      const endpoint = `${foreign === 'endpoint origin' ? other : issuer.origin}/register`
+      const adapted = registrationFetch(async (url) => {
+        if (new URL(url).pathname === '/.well-known/openid-configuration') {
+          return Response.json({
+            issuer: foreign === 'issuer' ? other : issuer.origin,
+            registration_endpoint: endpoint
+          })
+        }
+        return Response.json({ client_id: 'example' })
+      }, issuer)
+      const options = { method: 'GET', body: undefined, headers: {}, redirect: 'manual' as const }
+      await adapted(`${issuer.origin}/.well-known/openid-configuration`, options)
+      const response = await adapted(endpoint, { ...options, method: 'POST' })
+      expect(response.status).toBe(200)
+    }
+  )
+
+  it('adapts only the first registration POST at the advertised endpoint', async () => {
+    const issuer = new URL(provider.issuer)
+    const endpoint = `${provider.issuer}/api/v1/auth/oauth2/register?client=native`
+    const adapted = registrationFetch(async (url) => {
+      if (new URL(url).pathname === '/.well-known/openid-configuration') {
+        return Response.json({ issuer: issuer.origin, registration_endpoint: endpoint })
+      }
+      return Response.json({ client_id: 'example' })
+    }, issuer)
+    const get = { method: 'GET', body: undefined, headers: {}, redirect: 'manual' as const }
+    const post = { ...get, method: 'POST' }
+    expect((await adapted(`${issuer.origin}/.well-known/openid-configuration`, get)).status).toBe(
+      200
+    )
+    expect((await adapted(endpoint, get)).status).toBe(200)
+    expect((await adapted(`${issuer.origin}/token`, post)).status).toBe(200)
+    expect((await adapted(endpoint.split('?')[0], post)).status).toBe(200)
+    expect((await adapted(endpoint, post)).status).toBe(201)
+    expect((await adapted(endpoint, post)).status).toBe(200)
+  })
+
   it('metadata that points off the issuer is refused before anything is sent there', async () => {
     const h = harness(electronTestPorts())
     provider.state.foreignTokenEndpoint = 'http://127.0.0.1:9/token'

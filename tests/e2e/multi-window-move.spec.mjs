@@ -1,12 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
-// or without it (measured on 9 October 2026, the same checks red on both):
-// the session records are the server's while the window reads main's folder,
-// a tab's move between windows detaches and re-adopts through main's own
-// terminals, and an agent tab's token file is written by the process that
-// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
-// a failure of the agent tools, and the pin goes with them (wave 4). Not a
-// known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The hand-seeded survivors
+// reach the folder the launch reads through `seedSessionRecord`, and the
+// records are read back where the launch keeps them (`recordsRootOf`: the
+// app's folder in-process, the server's attached). Wave 4 pinned it for records
+// seeded into the app's folder, the agent tab's config read from the app's
+// folder and the groups the attached boot flattened.
 /**
  * Moving between windows (PRDCT-1703). A live tmux session lives in exactly
  * one window; the user (or an agent) can MOVE it to another, and a whole
@@ -38,10 +35,12 @@ import {
   tmuxSessionAlive,
   windowLayout,
   fixturePath,
-  fixtureTmuxName
+  fixtureTmuxName,
+  recordsRootOf,
+  seedSessionRecord
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 const DIR = userDataDir('multi-window-move')
@@ -93,47 +92,37 @@ function seedLiveMarkerSession() {
   ).trim()
   execFileSync('tmux', ['-L', 'clave', 'send-keys', '-t', paneId, `echo ${MARKER}`, 'Enter'])
   SESS.paneId = paneId
-  const dir = path.join(DIR, 'session-records')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(
-    path.join(dir, `${SESS.tmux}.json`),
-    JSON.stringify({
-      tmuxName: SESS.tmux,
-      id: SESS.id,
-      cwd: SESS.cwd,
-      folderName: path.basename(SESS.cwd),
-      claudeMode: false,
-      antigravityMode: false,
-      codexMode: false,
-      claudeAgentsMode: false,
-      dangerousMode: false,
-      workspaceId: SESS.workspaceId
-    })
-  )
+  seedSessionRecord(DIR, {
+    tmuxName: SESS.tmux,
+    id: SESS.id,
+    cwd: SESS.cwd,
+    folderName: path.basename(SESS.cwd),
+    claudeMode: false,
+    antigravityMode: false,
+    codexMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    workspaceId: SESS.workspaceId
+  })
 }
 function seedDeadKeySession() {
   execFileSync('tmux', ['-L', 'clave', 'new-session', '-d', '-s', DEAD.tmux, '-c', DEAD.cwd])
-  const dir = path.join(DIR, 'session-records')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(
-    path.join(dir, `${DEAD.tmux}.json`),
-    JSON.stringify({
-      tmuxName: DEAD.tmux,
-      id: DEAD.id,
-      cwd: DEAD.cwd,
-      folderName: path.basename(DEAD.cwd),
-      claudeMode: false,
-      antigravityMode: false,
-      codexMode: false,
-      claudeAgentsMode: false,
-      dangerousMode: false,
-      workspaceId: DEAD.workspaceId,
-      windowKey: DEAD.windowKey
-    })
-  )
+  seedSessionRecord(DIR, {
+    tmuxName: DEAD.tmux,
+    id: DEAD.id,
+    cwd: DEAD.cwd,
+    folderName: path.basename(DEAD.cwd),
+    claudeMode: false,
+    antigravityMode: false,
+    codexMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    workspaceId: DEAD.workspaceId,
+    windowKey: DEAD.windowKey
+  })
 }
 function recordOf(id) {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   if (!existsSync(dir)) return null
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
     const r = JSON.parse(readFileSync(path.join(dir, f), 'utf-8'))
@@ -183,7 +172,7 @@ export async function run(t) {
   try {
     // Window 1 (primary, on A) adopts the unstamped record as an orphan —
     // hidden, since it belongs to workspace B.
-    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
+    const launched = await launchApp(DIR, { settleMs: 6000 })
     app = launched.app
     const win1 = launched.win
     const id1 = await identityOf(win1)

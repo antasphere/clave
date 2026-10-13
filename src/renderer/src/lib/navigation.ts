@@ -14,8 +14,8 @@ export function navigateTo(target: string): boolean {
 
   // Settings panes addressed by name. `usage` predates the settings move and
   // is kept working; `updates` is how the release note points at the new
-  // Software Update pane.
-  if (target === 'usage' || target === 'updates') {
+  // Software Update pane; `activity` is the Activity page.
+  if (target === 'usage' || target === 'updates' || target === 'activity') {
     store.openSettings(target)
     return true
   }

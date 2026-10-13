@@ -14,20 +14,37 @@ import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
-import { sidebarTransport } from '../sidebar-layouts'
+import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
-import { captureTabClosed } from '../exchange-capture/service'
+import { captureMessage, captureTabClosed, captureTabSpawn } from '../exchange-capture/service'
+import { launchProfileManager } from '../launch-profile-manager'
+import { BUILT_IN_LAUNCH_PROFILES } from '../../shared/agent-launch'
+import { getPreference } from '../ipc-handlers/clave-file-handlers'
+import { parentOf, setParent } from '../sessions/lineage'
+import { publishOrSend } from '../server/session-events'
+import { sessionWindows } from '../sessions/windows'
+import { shellSidebarClient } from './shell-sidebar'
+import { usageSummaryOf } from '../../shared/usage-summary'
+import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
+import type { AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
 import { codexUsageManager } from '../codex-usage'
 import { NOT_SERVED, type ServedShell, serveCommand } from './served-tools'
 import { serverClient } from './server-client'
-import { BOOT_DECISION_WAIT_MS, whenClaveServerBootSettled } from '../server/endpoint'
+import {
+  BOOT_DECISION_WAIT_MS,
+  getClaveServerEndpoint,
+  whenClaveServerBootSettled
+} from '../server/endpoint'
+import type { AgentTokenOwner } from '@clave/contract/agent-tools'
+import { shouldBindAttachedSession } from './attached-binding'
 import {
   loadOrCreateServerState,
   saveServerState,
   setMcpRuntime,
+  getMcpRuntime,
   resolveSessionByToken,
   rebuildSessionTokens,
   countStaleSessionConfigs
@@ -51,7 +68,7 @@ const MCP_PATH = '/mcp'
 const INSTRUCTIONS = `You are running inside Clave, a Mac app that runs agent sessions as tabs in sidebar groups. You are one of those tabs. Tabs and groups belong to a WORKSPACE (a root folder) and live in the WINDOW they were opened in; address any tab by session id or name and Clave routes the call. What you open lands in your own window unless you pass window or workspace. Pass "mine" as a sessionId or groupId to mean your own.
 
 Reach for a clave_* tool when:
-- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel then reads, updates, prepares and sends it. That is what "open it in the panel" means. clave_open_file is not.
+- the user will REVIEW, EDIT or MODIFY something you drafted (a document, a plan, an email) -> clave_open_side_panel opens it in an editor beside your tab, two panes; clave_side_panel reads it back when they are done; you send an email yourself, never from the panel. That is what "open it in the panel" means. clave_open_file is not.
 - they only need to READ a file -> clave_open_file (a tab; .html renders live).
 - a live page belongs to a group or a tab -> clave_set_group_view / clave_set_session_view (dashboard, preview, dev server).
 - work could run in parallel -> clave_open_session (a fresh agent tab: claude, codex, antigravity, pi or a plain terminal, any directory, optional prompt and model) or clave_add_group_terminal (a saved command such as a dev server). clave_launch_group starts a pinned .clave template.
@@ -72,11 +89,24 @@ let serverToken: string | null = null
  * shared discovery token authenticates but stays anonymous (no tab identity,
  * so the identity-gated tools refuse it).
  */
-function authenticate(authHeader: string | undefined): { ok: boolean; callerSessionId?: string } {
+async function authenticate(
+  authHeader: string | undefined
+): Promise<{ ok: boolean; callerSessionId?: string }> {
   if (!authHeader?.startsWith('Bearer ')) return { ok: false }
   const presented = authHeader.slice('Bearer '.length)
   const sessionId = resolveSessionByToken(presented)
   if (sessionId) return { ok: true, callerSessionId: sessionId }
+  // Attached, the token may be one the standalone server minted for a session
+  // it started: main minted nothing for it, so its own map misses. Ask the
+  // server whose session it is and in which window, bind that session to the
+  // window so the tools route to it, and let the request in as that tab
+  // (wave 4, lane C). Asked every time, cached nowhere: the server stays the
+  // authority on a session that ended.
+  const owner = await resolveAttachedToken(presented)
+  if (owner) {
+    bindAttachedSession(owner)
+    return { ok: true, callerSessionId: owner.sessionId }
+  }
   if (serverToken) {
     // Hash both sides so timingSafeEqual gets equal-length buffers.
     const a = createHash('sha256').update(presented).digest()
@@ -84,6 +114,61 @@ function authenticate(authHeader: string | undefined): { ok: boolean; callerSess
     if (timingSafeEqual(a, b)) return { ok: true }
   }
   return { ok: false }
+}
+
+/** The session a token belongs to, asked of an ATTACHED server only; null
+ *  in-process (main resolves its own) and on any failure (an unknown token
+ *  is `AgentTokenUnknown`, a server away is unreachable, both mean "not ours"). */
+async function resolveAttachedToken(token: string): Promise<AgentTokenOwner | null> {
+  if (getClaveServerEndpoint()?.mode !== 'attached') return null
+  try {
+    const api = await serverClient.api()
+    return await api.agentTools.resolveToken(token)
+  } catch {
+    return null
+  }
+}
+
+/** Reconcile main's binding of an attached server's session to the window the
+ *  SERVER says it lives in, so the tool routing (`resolveCommandWindow`)
+ *  finds it the way it finds an in-process session. Done on every
+ *  authenticated tool call: a move re-homes the session to another window on
+ *  the server, and main must follow or the tools keep routing to the window
+ *  the tab left (round-1 verifier F1). `bindSession` overwrites, so a re-bind
+ *  is cheap; a window main does not know is left as it is. */
+function bindAttachedSession(owner: AgentTokenOwner): void {
+  if (!owner.windowKey) return
+  const win = windowRegistry.getWindowByKey(owner.windowKey)
+  if (!win) return
+  const current = windowRegistry.getWindowForSession(owner.sessionId)
+  if (shouldBindAttachedSession(current ? current.id : null, win.id))
+    windowRegistry.bindSession(owner.sessionId, win.id)
+}
+
+/**
+ * Tell an ATTACHED server where Clave's agent tools answer: a Claude session
+ * the server starts is then given this shell's MCP address in its
+ * `--mcp-config` (wave 4, lane C, PRDCT-3376). A no-op in-process, where main
+ * writes its own configs. It waits for the MCP server to be listening, since
+ * the boot that names the attached endpoint and the MCP server's start run
+ * side by side; a server that never answers leaves the sessions without the
+ * flag rather than hanging the boot.
+ */
+export async function announceAgentToolsToServer(): Promise<void> {
+  if (getClaveServerEndpoint()?.mode !== 'attached') return
+  const deadline = Date.now() + 10_000
+  let runtime = getMcpRuntime()
+  while (!runtime && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    runtime = getMcpRuntime()
+  }
+  if (!runtime) return
+  try {
+    const api = await serverClient.api()
+    await api.agentTools.announce(runtime.url)
+  } catch (err) {
+    console.error('[mcp] could not announce the agent tools to the server', err)
+  }
 }
 
 function readBody(req: http.IncomingMessage): Promise<unknown> {
@@ -304,25 +389,22 @@ function windowsListing(callerWin: BrowserWindowLike): unknown[] {
   })
 }
 
+/** An account's last usage read as the pool reads it (`shared/usage-summary.ts`). */
+const summaryOf = (read: UsageLimits | UsageError | undefined): AccountUsageSummary | undefined =>
+  read && 'windows' in read ? usageSummaryOf(read) : undefined
+
 /** Whether an account's last usage read says it is about to stop: the
- *  tightest window critical, or about five percent left (the pool's rule in
- *  the renderer, `lib/account-pool.ts`); an unknown read is not exhaustion. */
+ *  tightest window critical, or about five percent left (the pool's rule);
+ *  an unknown read is not exhaustion. */
 function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
-  if (!read || !('windows' in read)) return false
-  const rank = { normal: 0, warning: 1, critical: 2 } as Record<string, number>
-  let best: { usedPercentage: number; severity?: string | null } | null = null
-  for (const w of read.windows) {
-    if (!best) best = w
-    else {
-      const a = rank[w.severity ?? 'normal'] ?? 0
-      const b = rank[best.severity ?? 'normal'] ?? 0
-      if (a > b || (a === b && w.usedPercentage > best.usedPercentage)) best = w
-    }
-  }
+  const best = summaryOf(read)?.tightest
   if (!best) return false
   if (best.severity === 'critical') return true
   return 100 - best.usedPercentage <= 5
 }
+
+const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
+  raw === 'propose' || raw === 'automatic' ? raw : null
 
 /**
  * The shell's facts the served tools read (`served-tools.ts`): which windows
@@ -384,7 +466,55 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
   captureTabClosed: (payload) => captureTabClosed(payload),
   windowsListing: (callerWin) => windowsListing(callerWin),
   mintTerminalId: () => `term-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // ── Wave 4, lane D: what the last seven tools read of the shell ──
+  accounts: (provider) =>
+    provider === 'codex'
+      ? codexAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.hasCredential,
+          ...(a.kind === 'apiKey' ? { fallback: true } : {}),
+          ...(summaryOf(codexUsageManager.snapshot()[a.id])
+            ? { usage: summaryOf(codexUsageManager.snapshot()[a.id]) }
+            : {})
+        }))
+      : claudeAccountsManager.list().map((a) => ({
+          id: a.id,
+          label: a.label,
+          usable: a.id === 'default' || (a.hasToken && !a.tokenInvalid),
+          ...(summaryOf(usageManager.snapshot()[a.id])
+            ? { usage: summaryOf(usageManager.snapshot()[a.id]) }
+            : {})
+        })),
+  selectedAccountId: (provider) => {
+    const raw = getPreference(
+      provider === 'codex' ? 'selectedCodexAccountId' : 'selectedClaudeProfileId'
+    )
+    return typeof raw === 'string' && raw ? raw : undefined
+  },
+  switchMode: (workspaceId) => {
+    const byWorkspace = getPreference('accountSwitchModeByWorkspace')
+    const own =
+      workspaceId && byWorkspace && typeof byWorkspace === 'object'
+        ? switchModeOf((byWorkspace as Record<string, unknown>)[workspaceId])
+        : null
+    return own ?? switchModeOf(getPreference('accountSwitchMode')) ?? 'propose'
+  },
+  launchProfiles: (family) =>
+    [...BUILT_IN_LAUNCH_PROFILES, ...launchProfileManager.getPreferences().customProfiles]
+      .filter((profile) => profile.family === family)
+      .map(({ id, name }) => ({ id, name })),
+  pins: () => workspaceManager.load().pins as PinnedBlueprint[],
+  parentOf: (sessionId) => parentOf(sessionId),
+  setParent: (childId, parentId) => setParent(childId, parentId),
+  captureMessage: (payload) => captureMessage(payload),
+  captureTabSpawn: (payload) => captureTabSpawn(payload),
+  publish: (event, windowKey) =>
+    publishOrSend(event, () => sessionWindows().send(windowKey, 'pinned-group:launched', event)),
+  notify: (title, body) => {
+    if (Notification.isSupported()) new Notification({ title, body }).show()
+  }
 }
 
 /** Main's "open a new window", injected by the entry (index.ts owns
@@ -449,15 +579,23 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       // change over the push channel. Only while the sidebar's road is the
       // server's: attached to a server that hosts no windows, the shell keeps
       // the sidebar and the tools keep the window, through the view request.
-      if (sidebarTransport() === 'server') {
+      // Attached to a server running apart (wave 4): the sessions are that
+      // server's and the sidebar the shell's, so the wave 4 tools are served
+      // over the client with the sidebar answered by main's own layouts
+      // (`shell-sidebar.ts`); `serveCommand` keeps the wave 3 tools on the
+      // window there.
+      const attached = getClaveServerEndpoint()?.mode === 'attached'
+      if (sidebarTransport() === 'server' || attached) {
+        const api = await serverClient.api()
         const served = await serveCommand(command, p, {
-          api: await serverClient.api(),
+          api: attached ? { ...api, sidebar: shellSidebarClient(sidebarLayouts()) } : api,
           shell: servedShell,
           win,
           callerSessionId,
           targetWindow:
             command === 'moveSession' ? resolveWindowArg(p.window, callerSessionId) : undefined,
-          requestView
+          requestView,
+          attached
         })
         if (served !== NOT_SERVED)
           return { content: [{ type: 'text', text: JSON.stringify(served ?? { ok: true }) }] }
@@ -476,7 +614,7 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
           // The waiter is registered BEFORE the move: the ack can only ever
           // answer this wait, never a stale one (rehome-ack.ts).
           const adopted = awaitRehomed([subjectId])
-          const outcome = moveSessionsToWindow([subjectId], target.id)
+          const outcome = await moveSessionsToWindow([subjectId], target.id)
           const refused = outcome.refused.find((r) => r.sessionId === subjectId)
           if (refused) {
             throw new Error(
@@ -922,7 +1060,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_open_side_panel',
     {
       description:
-        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. Reopening a path preserves edits. Then use clave_side_panel to read/update/prepare/send. Never send without an explicit user instruction.',
+        'THE tool for "open the panel", "open it beside this session", "let me review/edit/modify that draft": opens a Markdown/HTML file or a structured email in a SIDE PANEL beside YOUR calling session, two panes, focused immediately, and the user edits it there. Prefer it over clave_open_file whenever the user will change what you wrote — clave_open_file is a read-only-ish tab elsewhere in the window, not the panel. Pass exactly one of path or email; email takes to/cc/subject/bodyHtml/threadId and makes this a full composer. Files and attachments must use absolute paths. Signatures support text, links, tables and inline styling; local/data/HTTPS images are staged when signaturePath imports an HTML file. Reopening a path preserves edits. The panel is for the USER to review and edit, and it has no send: once they are done, clave_side_panel read gives you the reviewed email (fields, reply headers, signature, each attachment\'s file path) and you send it through your own channel (your mail tool or script), never from the panel.',
       inputSchema: linkedOpenSchema
     },
     async (args) => {
@@ -938,13 +1076,11 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_side_panel',
     {
       description:
-        'Companion to clave_open_side_panel: work on the document or email now open in YOUR side panel. Read it, update it with the expected revision, prepare an immutable email package, or send a prepared package via Gmail. Read returns exact current content. Revision conflicts require reading again, never overwriting user edits. Prepare is NOT send. Send ONLY after explicit user instruction, with the returned packageId and userConfirmed=true. Do not reconstruct MIME. Sent/failed/unknown results are persisted; never automatically retry an unknown result or create duplicate revisions to bypass delivery guards.',
+        'Companion to clave_open_side_panel: read or update the document or email now open in YOUR side panel. Read returns the exact current content with its revision, and for an email the recipients, subject, body HTML, signature HTML and text, the reply headers (replyTo, inReplyTo, references, threadId) and each attachment with its absolute file path: everything your own send needs. Update takes the expected revision; a conflict means the user edited since, so read again and never overwrite their edits. There is no send here, by design: the user reviews in the panel, and you send what read returns through your own channel (your mail tool or script) once they say so.',
       inputSchema: {
-        action: z.enum(['read', 'update', 'prepare', 'send']),
+        action: z.enum(['read', 'update']),
         revision: z.number().int().positive().optional(),
-        update: linkedUpdateSchema.optional(),
-        packageId: z.string().optional(),
-        userConfirmed: z.boolean().optional()
+        update: linkedUpdateSchema.optional()
       }
     },
     async (args) => {
@@ -955,25 +1091,17 @@ function buildServer(callerSessionId: string | undefined): McpServer {
         await callRenderer('flushLinkedDocument', { sessionId: callerSessionId }, owner)
         const store = linkedDocuments(),
           doc = store.current(callerSessionId)
+        // Both actions answer with the agent's read shape (attachment paths
+        // included): the panel is review-only, the agent sends through its
+        // own channel from what it reads here (PRDCT-3438).
         let result: unknown
-        if (args.action === 'read') result = doc
-        else if (args.action === 'update') {
+        if (args.action === 'read') result = store.forAgent(doc)
+        else {
           if (args.revision === undefined || !args.update)
             throw new Error('revision and update required')
-          result = await store.update(doc.id, args.revision, args.update, callerSessionId)
-        } else if (args.action === 'prepare') {
-          if (args.revision === undefined) throw new Error('revision required')
-          const pkg = await store.prepare(doc.id, args.revision, callerSessionId)
-          result = {
-            packageId: pkg.id,
-            revision: pkg.revision,
-            sha256: pkg.sha256,
-            messageId: pkg.messageId
-          }
-        } else {
-          if (!args.packageId || args.userConfirmed !== true)
-            throw new Error('Explicit user instruction required: packageId and userConfirmed=true')
-          result = await store.send(args.packageId, callerSessionId)
+          result = store.forAgent(
+            await store.update(doc.id, args.revision, args.update, callerSessionId)
+          )
         }
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
       } catch (error) {
@@ -1230,7 +1358,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     res.writeHead(404).end()
     return
   }
-  const auth = authenticate(req.headers.authorization)
+  const auth = await authenticate(req.headers.authorization)
   if (!auth.ok) {
     res.writeHead(401, { 'Content-Type': 'application/json' }).end(
       JSON.stringify({

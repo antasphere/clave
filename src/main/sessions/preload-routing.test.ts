@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
     createApiClient: vi.fn(),
     router: null as null | { reset: () => void },
     push: null as null | PushDouble,
+    blockConnect: false,
     pushes: [] as PushDouble[],
     makePush: (): PushDouble => {
       const push: PushDouble = {
@@ -102,6 +103,7 @@ vi.mock('@clave/client/router', async (importActual) => {
 // listeners and never opens a socket.
 vi.mock('@clave/client/node', () => ({
   connectThroughNode: async (endpoint: { url: string; token: string }) => {
+    if (mocks.blockConnect) await new Promise<void>(() => {})
     const push = mocks.makePush()
     mocks.push = push
     mocks.pushes.push(push)
@@ -151,6 +153,7 @@ beforeEach(async () => {
   delete process.env.CLAVE_SERVER_URL
   delete process.env.CLAVE_SERVER_TOKEN
   mocks.push = null
+  mocks.blockConnect = false
   mocks.pushes = []
   mocks.sessions = {
     list: mocks.apiList,
@@ -162,7 +165,12 @@ beforeEach(async () => {
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
     stop: vi.fn(async () => undefined),
-    resize: vi.fn(async () => undefined)
+    resize: vi.fn(async () => undefined),
+    listAdoptable: vi.fn(async () => [
+      { id: 'own', windowKey: 'w-7' },
+      { id: 'elsewhere', windowKey: 'other' }
+    ]),
+    discardRecord: vi.fn(async () => undefined)
   }
   mocks.createApiClient.mockImplementation(() => ({ sessions: mocks.sessions }))
   vi.resetModules()
@@ -567,5 +575,140 @@ describe('unbinding a session listener', () => {
     expect(mocks.push!.onEvent).not.toHaveBeenCalled()
     mocks.emitEvent({ _tag: 'session.title_changed', id: 's1', title: 'Too late' })
     expect(titles).not.toHaveBeenCalled()
+  })
+})
+
+describe('the preload routes the session records', () => {
+  const scope = { windowKey: 'w-7', primary: true, knownWindowKeys: ['w-7', 'other'] }
+  const connectAttached = async (): Promise<void> => {
+    await settle()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint })
+    mocks.apiList.mockResolvedValue([])
+    await api.sessionsList()
+    await settle()
+  }
+
+  it('reads records over IPC inside the app, the selection rule main’s', async () => {
+    answer(onServer)
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('reads the boot records over IPC attached too, keeping the boot fast', async () => {
+    // The boot read never waits on the server (PRDCT-3376): attached, IPC
+    // answers main's own, and the server's surviving records come back
+    // through listServerRestoreRecords (below), after the boot.
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint })
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('the restore top-up reads the server’s records attached, with the window’s selection rule', async () => {
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    const records = await api.listServerRestoreRecords()
+    // The orphan rule dropped the record of another live window.
+    expect(records.map((r) => r.id)).toEqual(['own'])
+    expect(mocks.sessions.listAdoptable.mock.calls[0]).toEqual([])
+  })
+
+  it('the restore top-up is empty in-process (the boot IPC read already has main’s own)', async () => {
+    answer(onServer)
+    expect(await api.listServerRestoreRecords()).toEqual([])
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('the restore top-up WAITS for a late endpoint, then reads the server (round-3 R-F1)', async () => {
+    // The renderer booted before main named the server: the top-up must not
+    // answer [] and give up — it waits (off the boot critical path) and then
+    // restores from the server.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+    // The endpoint arrives attached and a routed call connects the backing
+    // (the top-up never forces the connect itself: it rides the announce, as
+    // the watch would connect for it); the wait ends and the server answers.
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    await vi.advanceTimersByTimeAsync(200)
+    mocks.apiList.mockResolvedValue([])
+    await api.sessionsList()
+    await settle()
+    await vi.advanceTimersByTimeAsync(200)
+    const records = await pending
+    expect(mocks.sessions.listAdoptable).toHaveBeenCalled()
+    expect(records.map((r) => r.id)).toEqual(['own'])
+  })
+
+  it('the restore top-up gives up with [] when the server never becomes reachable (bounded, no hang)', async () => {
+    // The mode is attached, but the backing never connects (the connect hangs):
+    // the top-up's bounded wait resolves [] rather than hanging the restore.
+    mocks.blockConnect = true
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    await vi.advanceTimersByTimeAsync(16_000)
+    await settle()
+    const records = await pending
+    expect(records).toEqual([])
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('the restore top-up rides the watch already running for the window, never forcing a connect', async () => {
+    // In the app, the window's server listeners bind at window start and
+    // start the server watch (first ask: no endpoint yet). The top-up must
+    // queue on that watch's tick, not build the backing itself: a connect
+    // forced at the boot mark fires every listener's catch-up over the state
+    // the window just loaded (PRDCT-3405). A session listener starts the
+    // watch here through the same `onServerAvailable` the others use.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    const off = api.onSessionData('s1', () => {})
+    await settle()
+    expect(mocks.push).toBeNull()
+    // The endpoint is named attached; the top-up starts and must not connect.
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    mocks.apiList.mockResolvedValue([])
+    const pending = api.listServerRestoreRecords()
+    await settle()
+    expect(mocks.push).toBeNull()
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+    // The watch's own tick connects (as it does for every window); now it reads.
+    await vi.advanceTimersByTimeAsync(2000)
+    await settle()
+    const records = await pending
+    expect(mocks.push).not.toBeNull()
+    expect(records.map((r) => r.id)).toEqual(['own'])
+    off()
+  })
+
+  it('reads by id attached without the selection rule: the re-home wants exactly those', async () => {
+    await connectAttached()
+    answer({ ...onServer, 'server:endpoint': attachedEndpoint, 'records:adoption-scope': scope })
+    mocks.sessions.listAdoptable.mockResolvedValueOnce([{ id: 'x', windowKey: 'whatever' }])
+    const records = await api.listSessionRecords({ ids: ['x'] })
+    expect(records.map((r) => r.id)).toEqual(['x'])
+    expect(mocks.sessions.listAdoptable).toHaveBeenCalledWith(['x'])
+    expect(channels()).not.toContain('records:adoption-scope')
+  })
+
+  it('the boot read never waits on the mode: it goes IPC at once even before a server is named', async () => {
+    // The restore runs early; it must not block the boot waiting for the
+    // endpoint (PRDCT-3376). With no server named yet it reads IPC at once.
+    answer({ 'server:endpoint': null, 'window:identity': identity })
+    await api.listSessionRecords()
+    expect(channels()).toContain('records:list-adoptable')
+    expect(mocks.sessions.listAdoptable).not.toHaveBeenCalled()
+  })
+
+  it('discards over IPC inside the app and through the server attached', async () => {
+    answer(onServer)
+    await api.discardSessionRecord('clave-r1')
+    expect(channels()).toContain('records:discard')
+    await connectAttached()
+    await api.discardSessionRecord('clave-r2')
+    expect(mocks.sessions.discardRecord).toHaveBeenCalledWith('clave-r2')
   })
 })

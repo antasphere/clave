@@ -100,6 +100,27 @@ export function startWatching(onState: (claveSessionId: string, state: AgentStat
   }
 }
 
+/**
+ * The word a session's hooks last wrote, for a session this process takes
+ * BACK (a live tmux session reattached after an app relaunch or a move from
+ * another window, PRDCT-3289). The watch above forwards a change only, and a
+ * taken-back session is born `idle` on this side, so an agent still working
+ * would read idle until its next word. The word is read once, validated, and
+ * recorded as the last forwarded one, so the watch forwards the agent's next
+ * CHANGE and never a repeat. Null when there is no file, no known word, or
+ * the word is `ended` (a process that said goodbye is not taken back working).
+ */
+export function lastHookState(claveSessionId: string): Exclude<AgentState, 'ended'> | null {
+  try {
+    const raw = lazyTerminalPorts.storage.read(stateDocument(claveSessionId))?.trim()
+    if (!raw || !VALID.has(raw) || raw === 'ended') return null
+    lastForwarded.set(claveSessionId, raw as AgentState)
+    return raw as Exclude<AgentState, 'ended'>
+  } catch {
+    return null
+  }
+}
+
 /** Stop the watch (tests); the next `startWatching` installs a new one. */
 export function stopWatching(): void {
   watcher?.close()

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
+import { lastHookState } from './agent-state-manager'
 import {
   ptyBackend,
   buildSpawnEnv,
@@ -16,6 +17,7 @@ import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapte
 import { CodexAdapter } from './sessions/adapters/codex-adapter'
 import { EchoAdapter } from './sessions/adapters/echo-adapter'
 import { installE2eHooks } from './sessions/e2e-hooks'
+import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
@@ -177,6 +179,16 @@ class PtyManager {
           model: options?.model
         }
       : ptyAdapter.prepare(cwd, options)
+    // A live tmux session this process takes BACK (an app relaunch, a move
+    // from another window) is born with the word its hooks last wrote, not
+    // idle: the hook watch forwards a change only, so a tab adopted while its
+    // agent works read idle until the agent's next word (PRDCT-3289). A dead
+    // record relaunched fresh, and a chat, start idle as before.
+    const reattached =
+      !isEvents &&
+      options?.tmuxMode === true &&
+      !!options?.adoptTmuxName &&
+      !!options?.adoptSessionId
     const record: Session = {
       id: session.id,
       cwd,
@@ -196,7 +208,7 @@ class PtyManager {
       transport: isEvents ? 'events' : 'pty',
       adapterId: adapter.id,
       windowKey: options?.windowKey ?? '',
-      state: 'idle',
+      state: reattached ? (lastHookState(session.id) ?? 'idle') : 'idle',
       createdAt: Date.now(),
       title: session.folderName,
       groupId: options?.link?.kind === 'group-terminal' ? options.link.groupId : undefined,
@@ -262,7 +274,7 @@ class PtyManager {
         })
       : session
     try {
-      sessionManager.adopt(record, handle, adapter)
+      sessionManager.adopt(record, handle, adapter, { model: options?.model ?? null })
     } catch (error) {
       await adapter.kill(handle)
       throw error
@@ -377,10 +389,15 @@ class PtyManager {
   }
 
   start(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    // The size the pane gave is what a screen read renders at (wave 4).
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   resize(id: string, cols: number, rows: number): void {
-    if (sessionManager.get(id)) sessionManager.resize(id, cols, rows)
+    if (!sessionManager.get(id)) return
+    noteSize(id, cols, rows)
+    sessionManager.resize(id, cols, rows)
   }
   write(id: string, data: string): void {
     terminalJournal()?.write(id, data)

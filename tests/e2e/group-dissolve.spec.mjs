@@ -1,12 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3294): attached, this spec fails on dev itself, with lane D's change
-// or without it (measured on 9 October 2026, the same checks red on both):
-// the session records are the server's while the window reads main's folder,
-// a tab's move between windows detaches and re-adopts through main's own
-// terminals, and an agent tab's token file is written by the process that
-// spawns it. Those are the attached mode's named gaps (ADR 0003, wave 3), not
-// a failure of the agent tools, and the pin goes with them (wave 4). Not a
-// known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The records it reads and
+// writes are where the launch keeps them (`recordsRootOf`, `seedSessionRecord`:
+// the app's folder in-process, the server's attached), and an ownerless hidden
+// record is discarded by the attached top-up as by the in-process boot. Wave 4
+// pinned it for the records seeded into the app's folder and the groups
+// flattened attached.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).
@@ -28,7 +25,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -40,7 +37,9 @@ import {
   until,
   killLeakedE2eTmux,
   tmuxSessionAlive,
-  fixturePath
+  fixturePath,
+  recordsRootOf,
+  seedSessionRecord
 } from './harness.mjs'
 
 const DIR = userDataDir('group-dissolve')
@@ -54,7 +53,7 @@ const WS = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function sessionRecords() {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.json'))
@@ -65,7 +64,7 @@ function sessionRecords() {
 }
 
 function recordExists(tmuxName) {
-  return existsSync(path.join(DIR, 'session-records', `${tmuxName}.json`))
+  return existsSync(path.join(recordsRootOf(DIR), 'session-records', `${tmuxName}.json`))
 }
 
 /** A detached tmux session on the app's socket, the way a survivor looks. */
@@ -75,25 +74,21 @@ function spawnTmux(name) {
 
 /** A session record as the app writes one for a plain terminal. */
 function writeRecord(tmuxName, id, windowKey, link) {
-  mkdirSync(path.join(DIR, 'session-records'), { recursive: true })
-  writeFileSync(
-    path.join(DIR, 'session-records', `${tmuxName}.json`),
-    JSON.stringify({
-      id,
-      cwd: ROOT,
-      folderName: path.basename(ROOT),
-      claudeMode: false,
-      antigravityMode: false,
-      codexMode: false,
-      piMode: false,
-      claudeAgentsMode: false,
-      dangerousMode: false,
-      workspaceId: WS.id,
-      windowKey,
-      ...(link ? { link } : {}),
-      tmuxName
-    })
-  )
+  seedSessionRecord(DIR, {
+    id,
+    cwd: ROOT,
+    folderName: path.basename(ROOT),
+    claudeMode: false,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    workspaceId: WS.id,
+    windowKey,
+    ...(link ? { link } : {}),
+    tmuxName
+  })
 }
 
 const dialogText = (win) =>
@@ -132,7 +127,7 @@ export async function run(t) {
   const PFX = `clave-e2e-pfx-${rand}`
   const SIBLING = `${PFX}-2`
   try {
-    const first = await launchApp(DIR, { server: 'in-process' })
+    const first = await launchApp(DIR)
     app = first.app
     let win = first.win
 
@@ -323,7 +318,7 @@ export async function run(t) {
         recordExists(PFX)
     )
 
-    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
+    const second = await launchApp(DIR, { settleMs: 8000 })
     app = second.app
     win = second.win
     const booted = await until(async () => {

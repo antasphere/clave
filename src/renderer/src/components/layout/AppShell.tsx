@@ -54,9 +54,11 @@ import {
 import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
+import { initServedToolsEvents } from '../../lib/served-events'
 import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
-import { planBootAdoption, survivingIds } from '../../lib/boot-adoption'
+import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
+import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
 import { parkToolbarSurvivor } from '../../lib/toolbar-terminal-registry'
 import { initSecretStore } from '../../store/secret-store'
 import { initCopyOfferStore } from '../../store/copy-offer-store'
@@ -154,6 +156,9 @@ export function AppShell(): React.JSX.Element {
     if (mcpDispatcherStarted) return
     mcpDispatcherStarted = true
     initMcpDispatcher()
+    // What the server did to a tab through an agent tool (wave 4): the
+    // window follows the push channel's facts.
+    initServedToolsEvents()
     initSecretStore()
     initCopyOfferStore()
     initPluginUI()
@@ -183,7 +188,7 @@ export function AppShell(): React.JSX.Element {
       if (!isSidebarPersistenceEnabled()) return
       const mine = useWorkspaceStore.getState().windowKey
       if (mine && event.layout.windowKey !== mine) return
-      applyServerLayout(event.layout as SidebarLayoutSnapshot)
+      applyServerLayout(event.layout as SidebarLayoutSnapshot, event.cause)
     })
     // What the agent button relaunches, per workspace. Deliberately NOT in the
     // session-adoption effect below: that one awaits the "restore sessions?"
@@ -198,6 +203,10 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
+    let hadSavedSessions = false
+    // The session ids the saved layout names: the attached top-up's gate, and
+    // the shells the merge keeps for it until it has run (PRDCT-3432).
+    let savedIds: string[] = []
     void (async () => {
       try {
         // Workspace registry + pins hydrate FIRST: adoption stamps each
@@ -218,6 +227,11 @@ export function AppShell(): React.JSX.Element {
           groups: (savedLayout?.groups ?? []) as SessionGroup[],
           displayOrder: savedLayout?.displayOrder ?? []
         }
+        // Did this window HAVE sessions to bring back? (its saved layout names
+        // at least one.) Read here where the saved layout is in scope; the
+        // attached restore top-up in the boot tail gates on it (PRDCT-3376).
+        savedIds = savedLayoutSessionIds(persisted)
+        hadSavedSessions = savedIds.length > 0
         // The revision the server handed this layout out at (every save
         // names it, and a stale one is refused rather than merged) and the
         // layout itself as the base the first merge reasons from.
@@ -241,6 +255,12 @@ export function AppShell(): React.JSX.Element {
         // where they belong instead of as rows beside the groups.
         const survivors = (await window.electronAPI?.listSessionRecords?.()) ?? []
         const plan = planBootAdoption(survivors)
+        // Whether that read was EVERY adoptable record (inside the app) or
+        // the server's come after the boot (attached, or no server named
+        // yet): the merge below prunes a saved id with no record only when
+        // the listing is complete, else keeps it as a shell for the top-up.
+        const listingComplete =
+          (await window.electronAPI?.bootRecordsComplete?.().catch(() => true)) ?? true
 
         const adoptedIds: string[] = []
         for (const s of plan.liveTabs) {
@@ -282,14 +302,21 @@ export function AppShell(): React.JSX.Element {
         // just below: leaving them out is what detached a group terminal
         // from its row and then pruned the group for looking empty. Every
         // workspace's groups live in this one file, so every key is merged
-        // (null = the unscoped ones).
+        // (null = the unscoped ones). Attached, the saved layout's own ids
+        // survive too, as shells the top-up fills or prunes (PRDCT-3432): an
+        // attached quit used to flatten every group whose members the
+        // server runs, and persistence wrote that back before the tabs came.
         const keys: (string | null)[] = [
           null,
           ...useWorkspaceStore.getState().workspaces.map((w) => w.id)
         ]
         useSessionStore
           .getState()
-          .mergeLayoutForKeys(keys, persisted, survivingIds(plan, adoptedIds))
+          .mergeLayoutForKeys(
+            keys,
+            persisted,
+            bootSurvivors(plan, adoptedIds, persisted, listingComplete)
+          )
 
         // Owners are in place now (groups from the merge, owning tabs from
         // the adoption above), so the hidden halves can hang themselves back
@@ -321,6 +348,70 @@ export function AppShell(): React.JSX.Element {
       // instead of a fixed delay (PRDCT-1762): a group created before the
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
+
+      // Attached, the records are the SERVER's: the boot read above went over
+      // IPC (main's own, empty attached) so the boot stayed fast and an early
+      // action is never clobbered by a late restore (PRDCT-3376). Now that
+      // persistence is on, bring the window's surviving sessions back from the
+      // server, additively — never touching a tab opened meanwhile — with the
+      // whole plan the boot above runs on main's records: live tabs into the
+      // groups the merge kept for them, dead records offered once through the
+      // restore prompt, dead hidden halves discarded, toolbar survivors parked
+      // for their button, hidden halves hung back off their owners
+      // (PRDCT-3432). A no-op in-process (the server read answers empty there).
+      //
+      // Gate on the window having HAD sessions (its saved layout names at
+      // least one): a window that reopens with nothing to bring back must not
+      // reach for the server here, because that first connect would fire every
+      // server-event listener's catch-up over the state the window just loaded
+      // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
+      // A window with sessions to restore connects anyway, and warrants it.
+      if (!hadSavedSessions) return
+      void (async () => {
+        try {
+          const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
+          const here = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+          const fresh = serverRecords.filter((r) => !here.has(r.id))
+          if (fresh.length === 0) return
+          const ws = useWorkspaceStore.getState().activeWorkspaceId
+          const serverPlan = planBootAdoption(fresh)
+          // Focus the first restored tab only when nothing is selected yet, so
+          // its pane mounts and the tmux session reattaches (the repaint and
+          // the keystroke road need a mounted pane) — but never steal focus
+          // from a tab the user opened during boot.
+          let takeFocus = useSessionStore.getState().selectedSessionIds.length === 0
+          const adopt = async (s: (typeof fresh)[number]): Promise<void> => {
+            const id = await adoptRecord(s, ws, { focus: takeFocus })
+            if (id && takeFocus) takeFocus = false
+          }
+          for (const s of serverPlan.liveTabs) await adopt(s)
+          if (serverPlan.deadTabs.length > 0) {
+            // The boot waits on the person again, after its mark: a driver
+            // reads 'restore-prompt' while the dialog is up, 'complete' after.
+            document.documentElement.dataset.boot = 'restore-prompt'
+            try {
+              if (await promptRestore(serverPlan.deadTabs)) {
+                for (const s of serverPlan.deadTabs) await adopt(s)
+              } else {
+                for (const s of serverPlan.deadTabs)
+                  void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+              }
+            } finally {
+              document.documentElement.dataset.boot = 'complete'
+            }
+          }
+          for (const s of serverPlan.discard)
+            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+          for (const s of serverPlan.toolbar) {
+            if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
+          }
+          for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
+        } finally {
+          // The shells the merge kept for the server's records: whatever
+          // nothing holds now is gone for good, and the layout says so.
+          useSessionStore.getState().pruneRestoredShells(savedIds)
+        }
+      })().catch((err) => console.error('Attached restore top-up failed:', err))
     })()
   }, [addSession])
 

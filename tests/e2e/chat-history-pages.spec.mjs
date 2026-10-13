@@ -1,9 +1,10 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec restarts the app and expects its sessions back. On
-// an attached server the records are the server's, but the window's restore
-// still reads main's own list (`pty:list`) and main's folder, so nothing is
-// brought back: the restore of persisted sessions on the standalone server
-// is wave 3's named leftover (ADR 0003). Not a known failure.
+// Pinned to the in-process server. The attached restore brings a hand-seeded
+// record back since wave 5 (PRDCT-3432: `seedSessionRecord` writes it where the
+// next launch reads it, and the attached top-up offers a dead record through
+// the prompt), so that is no longer the reason. This spec stays pinned because
+// it restores a CHAT tab (an events session with a view), and a chat the
+// separate server starts has no view until the plugin host serves the server's
+// sessions (lane C of wave 5, PRDCT-3433); the pin goes with that lane.
 /**
  * A long conversation restored into a chat tab opens on its end at once, and
  * reads further back only as the reader scrolls there, without moving them.

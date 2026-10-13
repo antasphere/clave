@@ -1,9 +1,8 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec restarts the app and expects its sessions back. On
-// an attached server the records are the server's, but the window's restore
-// still reads main's own list (`pty:list`) and main's folder, so nothing is
-// brought back: the restore of persisted sessions on the standalone server
-// is wave 3's named leftover (ADR 0003). Not a known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The hand-seeded survivors
+// reach the folder the launch reads through `seedSessionRecord` (the app's
+// in-process, the server's attached), and the sidebar-layout migration itself
+// is the app's in both modes. Wave 4 pinned it for the records seeded into the
+// app's folder.
 /**
  * The one-time sidebar-layout migration (PRDCT-1703): on the first boot of
  * the multi-window build (no windows.json yet) the legacy single
@@ -35,7 +34,8 @@ import {
   persistedWindows,
   windowLayout,
   fixturePath,
-  fixtureTmuxName
+  fixtureTmuxName,
+  seedSessionRecord
 } from './harness.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -96,23 +96,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function seedLiveSession(s) {
   execFileSync('tmux', ['-L', 'clave', 'new-session', '-d', '-s', s.tmux, '-c', s.cwd])
-  const dir = path.join(DIR, 'session-records')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(
-    path.join(dir, `${s.tmux}.json`),
-    JSON.stringify({
-      tmuxName: s.tmux,
-      id: s.id,
-      cwd: s.cwd,
-      folderName: path.basename(s.cwd),
-      claudeMode: false,
-      antigravityMode: false,
-      codexMode: false,
-      claudeAgentsMode: false,
-      dangerousMode: false,
-      ...(s.workspaceId ? { workspaceId: s.workspaceId } : {})
-    })
-  )
+  seedSessionRecord(DIR, {
+    tmuxName: s.tmux,
+    id: s.id,
+    cwd: s.cwd,
+    folderName: path.basename(s.cwd),
+    claudeMode: false,
+    antigravityMode: false,
+    codexMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    ...(s.workspaceId ? { workspaceId: s.workspaceId } : {})
+  })
 }
 
 const group = (id, name, sessionIds, extra = {}) => ({
@@ -159,7 +154,7 @@ export async function run(t) {
 
   let app = null
   try {
-    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 7000 })
+    const launched = await launchApp(DIR, { settleMs: 7000 })
     app = launched.app
     const id = await identityOf(launched.win)
     const key = id?.windowKey
@@ -239,7 +234,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1000)
-    const again = await launchApp(DIR, { server: 'in-process', settleMs: 6000 })
+    const again = await launchApp(DIR, { settleMs: 6000 })
     app = again.app
     t.check(
       'a second boot leaves the backups in place (idempotent)',
