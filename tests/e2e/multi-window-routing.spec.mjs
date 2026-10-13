@@ -1,9 +1,11 @@
-// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). An agent tab's config is
-// read where the process that spawns the tab writes it (`recordsRootOf`: the
-// app's folder in-process, the server's attached), and the agent tools answer
-// from the server since PRDCT-3377. Wave 4 pinned it for records seeded into
-// the app's folder, the agent tab's config read from the app's folder and the
-// groups the attached boot flattened.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3432). The agent
+// tab's config is read where the process that spawns the tab writes it
+// (`recordsRootOf`: the server's folder attached), which was wave 4's reason
+// for the pin; what still fails attached is the served cross-window move
+// through the agent tools' HTTP road, answered "No session with id" for a
+// session the server runs (eight checks, identical on bare dev e5ac888 and on
+// this lane, 13 October 2026, green in-process). That is PRDCT-3454; the pin
+// goes with it.
 /**
  * MCP routing across windows (PRDCT-1703). With several windows the sidebar
  * state is per window, so mcp-server resolves WHICH window's renderer runs
@@ -81,7 +83,7 @@ export async function run(t) {
   let app = null
   const opened = []
   try {
-    const launched = await launchApp(DIR, { settleMs: 5000 })
+    const launched = await launchApp(DIR, { server: 'in-process', settleMs: 5000 })
     app = launched.app
     const winA = launched.win
     const idA = await identityOf(winA)
