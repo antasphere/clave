@@ -1,10 +1,13 @@
-// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The records it reads are
-// read where the launch's terminal manager keeps them (`recordsRootOf`: the
-// app's folder in-process, the server's attached), and the attached restore
-// now brings every record kind back the way the in-process boot does: the
-// group's terminal into its group, the view's server to its owner, the toolbar
-// survivor parked for its button. Wave 4 pinned it for the flattened groups
-// and the hidden halves the attached top-up left behind.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3432). The group's
+// terminal and the toolbar survivor come back attached since this lane (the
+// restore spec restore-groups-and-dead-records pins both in both modes, and
+// this spec's records are read where the launch keeps them, `recordsRootOf`),
+// but the VIEW half still cannot: the window writes a tab's page to the record
+// over IPC, to the app, which attached runs no such session, so the server's
+// record never carries the view and the restore discards the page's serving
+// session for having no owner with a view. That is PRDCT-3453; the pin goes
+// with it. Measured 13 October 2026 on bare dev e5ac888 attached (four red,
+// the toolbar pair included) and on this lane (the view pair alone).
 /**
  * A session that is the HIDDEN HALF of something else comes back as that
  * half, never as a tab (PRDCT-1756).
@@ -107,7 +110,7 @@ export async function run(t) {
   try {
     // ── Before the restart: a group whose last tab is closed while its
     //    quick-launch terminal keeps running, and a tab with a served view ──
-    const first = await launchApp(DIR)
+    const first = await launchApp(DIR, { server: 'in-process' })
     app = first.app
     let win = first.win
 
@@ -185,7 +188,7 @@ export async function run(t) {
     await app.close()
     app = null
     await sleep(1500)
-    const second = await launchApp(DIR, { settleMs: 8000 })
+    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
     app = second.app
     win = second.win
 

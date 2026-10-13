@@ -1,27 +1,31 @@
 // Runs in BOTH modes (wave 5, lane B, PRDCT-3432). An app quit and relaunched
 // comes back as it was left: the same groups with the same members, its dead
-// records offered for relaunch, attached to a separate server as inside the
-// app. Attached, the boot's records read is main's own folder, empty, and the
-// layout merge pruned every group member the server runs; persistence then
-// wrote the flattened layout back before the top-up brought the tabs, at the
-// top level. And the top-up brought live tabs and hidden halves only, so a
-// dead record was never offered. The session is created THROUGH the app, so
-// its record lives where the launch's terminal manager keeps it; the one
-// record seeded by hand goes through `seedSessionRecord`, which writes it
-// where the next launch reads it.
+// records offered for relaunch, its toolbar terminal reattached by its button,
+// attached to a separate server as inside the app. Attached, the boot's
+// records read is main's own folder, empty, and the layout merge pruned every
+// group member the server runs; persistence then wrote the flattened layout
+// back before the top-up brought the tabs, at the top level. And the top-up
+// brought live tabs and hidden halves only, so a dead record was never offered
+// and a toolbar survivor was never parked for its button. The sessions are
+// created THROUGH the app, so their records live where the launch's terminal
+// manager keeps them; the one record seeded by hand goes through
+// `seedSessionRecord`, which writes it where the next launch reads it.
 //
 // What makes it able to fail: prune the saved layout's ids at the attached
 // merge again (bootSurvivors with the listing read as complete) and the group
 // comes back with no members, its tabs at the top level; drop the dead tabs
-// from the top-up's plan and no prompt is offered attached; skip the prune
-// after the top-up and the layout keeps a member that never came back.
+// from the top-up's plan and no prompt is offered attached; drop the toolbar
+// from it and the button starts a second server; skip the prune after the
+// top-up and the layout keeps a member that never came back.
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import {
   launchApp,
   seedWorkspaces,
   seedTrustedRoots,
   seedSessionRecord,
+  recordsRootOf,
   userDataDir,
   fixturePath,
   callMcp,
@@ -33,19 +37,61 @@ import {
 
 const DIR = userDataDir('restore-groups-dead')
 const ROOT = fixturePath('root-restore-groups-dead')
+const CLAVE = `${ROOT}/toolbar.clave`
+const TOOLBAR_CMD = 'sleep 902'
 const WS = {
   id: 'aaaaaaaa-0000-4000-8000-0000000000c4',
   name: 'AsLeft',
   rootDir: ROOT,
-  profileFile: null,
+  profileFile: CLAVE,
   createdAt: 1
 }
 const sorted = (ids) => [...(ids ?? [])].sort()
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** The toolbar terminals' records, where the launch that wrote them keeps them. */
+function toolbarRecords() {
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => JSON.parse(readFileSync(path.join(dir, f), 'utf-8')))
+      .filter((r) => r.link?.kind === 'toolbar')
+  } catch {
+    return []
+  }
+}
 
 export async function run(t) {
   rmSync(DIR, { recursive: true, force: true })
   rmSync(ROOT, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
+  // A toolbar button with a persistent terminal: the one record kind that is
+  // no sidebar citizen, parked for its button at the next launch.
+  writeFileSync(
+    CLAVE,
+    JSON.stringify({
+      $schema: 'clave/1.0',
+      groups: [
+        {
+          name: 'Toolbar',
+          cwd: '.',
+          toolbar: true,
+          sessions: [],
+          terminals: [
+            {
+              command: TOOLBAR_CMD,
+              commandMode: 'auto',
+              color: 'teal',
+              icon: 'eye',
+              cwd: ROOT,
+              persistent: true
+            }
+          ]
+        }
+      ]
+    })
+  )
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   killLeakedE2eTmux()
@@ -55,6 +101,7 @@ export async function run(t) {
   let members = []
   let solo = null
   let key = null
+  let toolbarId = null
   const deadId = randomUUID()
   try {
     // ── Before the quit: a group with two terminals, a tab beside it ──
@@ -88,6 +135,18 @@ export async function run(t) {
       return g && sorted(g.sessionIds).join() === sorted(members).join() ? layout : null
     })
     t.check('the saved layout names both members in their group', !!saved, saved?.groups)
+
+    // ── The toolbar button: opened once, its terminal left running ──
+    await first.win.click(`button[title="${TOOLBAR_CMD}"]`)
+    await sleep(2500)
+    await first.win.keyboard.press('Escape')
+    const toolbar = await until(() => (toolbarRecords().length === 1 ? toolbarRecords() : null))
+    t.check(
+      'the toolbar terminal left exactly one record, for its button',
+      !!toolbar,
+      toolbarRecords()
+    )
+    toolbarId = toolbar?.[0]?.id ?? null
 
     // ── The quit, and a dead record left for the next launch ──
     await app.close()
@@ -164,6 +223,22 @@ export async function run(t) {
         layoutAfter.displayOrder.includes(deadId),
       layoutAfter?.displayOrder
     )
+
+    // ── The toolbar survivor: no row, no tab, and the button reattaches to it ──
+    t.check(
+      'the toolbar terminal is neither a row nor a tab after the relaunch',
+      !!toolbarId &&
+        !!layoutAfter &&
+        !layoutAfter.displayOrder.includes(toolbarId) &&
+        !listed.sessions.some((s) => s.id === toolbarId),
+      { toolbarId, displayOrder: layoutAfter?.displayOrder }
+    )
+    await win.click(`button[title="${TOOLBAR_CMD}"]`)
+    await sleep(2500)
+    const afterClick = toolbarRecords()
+    t.equal('clicking its button again starts no second terminal', afterClick.length, 1)
+    t.equal('it reattached the very terminal that survived', afterClick[0]?.id ?? null, toolbarId)
+    await win.keyboard.press('Escape')
   } finally {
     if (app) {
       for (const id of [...members, solo, deadId].filter(Boolean)) {

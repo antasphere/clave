@@ -1,8 +1,12 @@
-// Runs in BOTH modes (wave 5, lane B, PRDCT-3428): the agent tools this spec
-// opens its sessions through answer from the server since PRDCT-3377, and a
-// closing window's hand-over selects nothing in the window that takes it in,
-// whatever road the layout took (the push, the catch-up read, the refused
-// save's held push). Wave 3 pinned it while the tools still asked main.
+// Pinned to the in-process server (wave 5, lane B, PRDCT-3428 checked it in
+// both modes). The window opens and focuses its tab attached, but the plugin
+// host resolves the focused tab against the app's own session service
+// (`plugin-host.ts`, `services.sessions.focused()`), which attached knows none
+// of the server's sessions, so every plugin is told "no focused session". That
+// is the plugin host serving the server's sessions, lane C of wave 5
+// (PRDCT-3433); the pin goes with it. Measured 13 October 2026: the same two
+// checks red attached on bare dev e5ac888 and on this lane. Wave 3's reason
+// (the tools asking main) is stale since PRDCT-3377.
 // The focused session a plugin is told about, across two windows.
 //
 // Focus is a renderer fact, so each window reports its own and the most recent report wins.
@@ -26,7 +30,7 @@ export async function run(t) {
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
-  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
   let alphaSession
   let betaSession
   try {
