@@ -17,7 +17,7 @@ import * as path from 'path'
 import { randomBytes } from 'crypto'
 import type { AgentTokensService } from '@clave/server'
 import type { AgentTokenOwner } from '@clave/contract/agent-tools'
-import type { McpConfigPort } from '../ports/mcp-config'
+import { mcpConfigReadiness, type McpConfigPort } from '../ports/mcp-config'
 import { sessionWindows } from './windows'
 
 export interface AgentTokenStore extends AgentTokensService {
@@ -51,6 +51,7 @@ export function createAgentTokenStore(
   windowOf: (sessionId: string) => string | null = (id) => sessionWindows().windowOf(id)
 ): AgentTokenStore {
   let url: string | null = null
+  const readiness = mcpConfigReadiness()
   /** token -> sessionId, rebuilt from the configs on disk at construction so
    *  a CLI that survived a restart keeps authenticating on the token it read. */
   const bySession = new Map<string, string>()
@@ -80,12 +81,14 @@ export function createAgentTokenStore(
   return {
     announce: (next) => {
       url = next
+      readiness.announce(!!next)
     },
     resolve: (token): AgentTokenOwner | undefined => {
       const sessionId = idOfToken.get(token)
       return sessionId ? { sessionId, windowKey: windowOf(sessionId) } : undefined
     },
     mcpConfig: {
+      ready: readiness.ready,
       write: (sessionId) => {
         if (!url) return null
         try {
