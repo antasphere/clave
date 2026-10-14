@@ -40,6 +40,7 @@ import { settingsGroup } from './settings/api'
 import { sidebarGroup } from './sidebar/api'
 import { workspaceFilesGroup } from './workspace-files/api'
 import { viewsGroup } from './views'
+import { pluginsGroup } from './plugins'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -83,6 +84,8 @@ export { workspaceFilesGroup }
 export { viewsGroup }
 // ── Wave 4, lane C: the agent tools' address and tokens (`agent-tools.ts`) ──
 export { agentToolsGroup }
+// ── Wave 5, lane C: the plugins (`plugins.ts`) ──
+export { pluginsGroup }
 
 // ── Lane B: terminals ──
 
@@ -96,6 +99,8 @@ export const ClaveApi = Api.make('clave')
   .add(viewsGroup)
   // ── Wave 4, lane C: the agent tools ──
   .add(agentToolsGroup)
+  // ── Wave 5, lane C: the plugins (`plugins.ts`) ──
+  .add(pluginsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

@@ -1,8 +1,7 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Runs in both modes (wave 5, lane C, PRDCT-3433): the agent tools answer
+// from the server since PRDCT-3377, and the tab's config is read from the
+// folder of whichever server started the tab (the attached server's data
+// directory, the app's own in-process).
 /**
  * clave_open_session opens Claude and Codex in the chat view with chat: true.
  *
@@ -45,9 +44,9 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win, server } = await launchApp(DIR)
   try {
-    const agent = await spawnAgentTabIn(app, win, DIR)
+    const agent = await spawnAgentTabIn(app, win, server?.dataDir ?? DIR)
     t.check('an agent tab holds an MCP token', !!agent?.token, agent)
     const client = mcpHttpClient(mcpEndpoint(DIR), agent.token)
     await client.init()

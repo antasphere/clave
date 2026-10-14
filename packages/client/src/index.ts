@@ -27,6 +27,8 @@ export { workspaceFilesClient, type WorkspaceFilesClient } from './workspace-fil
 export { viewsClient, type ViewsClient, type ViewRequestInput } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export { agentToolsClient, type AgentToolsClient } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export { pluginsClient, type PluginsClient } from './plugins'
 // ── Lane B: terminals ──
 export {
   PushClient,

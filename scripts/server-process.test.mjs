@@ -325,6 +325,49 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
     expect(await untilDead(server.terminalProcess.pid)).toBe(true)
   }, 20_000)
 
+  // Wave 5, lane C (PRDCT-3433): the plugins are the server's. The entry
+  // builds its service over the checkout's plugins/ and forks each plugin's
+  // main under Node IPC; this is the one unit check of that wiring (the
+  // port handed to the server, the runner path, the runner's first message),
+  // which the suite otherwise only reached through the app.
+  it('answers its bundled plugins, the chat view and the GitHub panel active in forked runners', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-plugins-'))
+    let server
+    try {
+      // Test mode keeps the plugins under the data dir, never in ~/.clave.
+      server = await startServerProcess({ repo: REPO, dataDir, args: ['--test-no-activate'] })
+      const headers = { authorization: `Bearer ${server.token}` }
+      let records = []
+      const end = Date.now() + 15_000
+      while (Date.now() < end) {
+        const response = await fetch(`${server.url}/plugins`, { headers })
+        expect(response.status).toBe(200)
+        records = await response.json()
+        if (records.filter((r) => r.status === 'active').length >= 2) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      const byId = Object.fromEntries(records.map((r) => [r.id, r]))
+      expect(Object.keys(byId).sort()).toEqual([
+        'clave.chat-view',
+        'clave.echo-provider',
+        'clave.github',
+        'clave.hello'
+      ])
+      expect(byId['clave.chat-view']).toMatchObject({
+        enabled: true,
+        status: 'active',
+        source: 'bundled'
+      })
+      expect(byId['clave.github']).toMatchObject({ enabled: true, status: 'active' })
+      expect(byId['clave.hello']).toMatchObject({ enabled: false, status: 'disabled' })
+      expect(byId['clave.chat-view'].error).toBeUndefined()
+    } finally {
+      await server?.stop()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
+    expect(await untilDead(server.pid)).toBe(true)
+  }, 30_000)
+
   it('a terminal process killed under the server is reported by the server as not ready', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-terminals-killed-'))
     let server

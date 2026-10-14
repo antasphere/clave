@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+- **A chat on the separate server gets its views: the plugins are the server's** — the installed plugins, their processes, their adapters and the view leases live beside the sessions, in the app's own server or in the server running apart, so an app attached to a separate server opens a Claude or Codex chat with its views and its view switcher, offers a plugin's agent in its launcher, and lists, enables, disables, links and removes plugins on that server. The shell keeps what is Electron's: the folder dialog, the OS notification (relayed from the server's event when it cannot show one itself), the preview protocol that mints a plugin page's URL, and the focus report a window sends. Nothing changes on screen in the app as shipped.
+
 ## [2.4.0] — 2026-10-13
 
 - **The side-panel email composer no longer offers to send** — the panel an agent opens beside its tab is for you to review and edit the draft, and that is all it does now. Its built-in prepare and send actions, which could never work because Clave holds no Gmail credentials and which kept sending agents down a path that ended on a configuration error, are gone, with the delivery line in the composer's foot and the Nodemailer dependency. The agent reads the reviewed email back and sends it through its own channel (its mail tool or script); the read now names each attachment's file path so the agent can attach the retained copy. An email saved by an earlier version still opens; its old delivery fields are dropped (PRDCT-3438).

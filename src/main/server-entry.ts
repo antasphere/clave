@@ -45,12 +45,31 @@ import { publishSessionStates, setServerEventPublisher } from './server/session-
 import { sessionManager } from './sessions/session-manager'
 import { ptyManager } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
+// ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
+import { standalonePlugins } from './plugins/standalone-plugins'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
   if (i >= 0 && i + 1 < process.argv.length) return process.argv[i + 1]
   const inline = process.argv.find((a) => a.startsWith(`--${name}=`))
   return inline ? inline.slice(name.length + 3) : undefined
+}
+
+// ── Wave 5, lane C: the host's version a plugin's `engines.clave` is judged against ──
+/** The checkout's own version (`package.json` two levels up, from the sources
+ *  and from `out/main` alike); a packaged server passes `--app-version`. */
+function readAppVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf-8')
+    ) as { version?: string }
+    if (typeof pkg.version === 'string' && pkg.version) return pkg.version
+  } catch {
+    /* no package.json beside a packaged server: the flag names the version */
+  }
+  throw new Error(
+    'clave-server: --app-version <version> is required when no package.json is beside the entry'
+  )
 }
 
 async function main(): Promise<void> {
@@ -106,6 +125,21 @@ async function main(): Promise<void> {
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
   const { host: sessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
+  // The installed plugins, their host and the view leases are this server's:
+  // the store under `--data-dir/clave-plugins` in test mode (`~/.clave`
+  // otherwise, where the app keeps it), the bundled plugins from
+  // `--plugins-bundled <dir>` (the checkout's `plugins/` by default), the
+  // host's version from `--app-version` (the checkout's package.json by
+  // default), each plugin's `main` in a process forked under Node IPC. Built
+  // AFTER the session host: a plugin's adapters register with this process's
+  // session manager, so a session this server starts can run them.
+  const plugins = standalonePlugins({
+    dataDir,
+    bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
+    version: arg('app-version') ?? readAppVersion()
+  })
+  installE2eHooks({ plugins })
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -116,7 +150,9 @@ async function main(): Promise<void> {
       // is published to the clients and the read waits for the answer.
       workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
-      agentTools
+      agentTools,
+      // ── Wave 5, lane C: the plugins ──
+      plugins
     },
     port,
     ...(token !== undefined && { token }),
@@ -174,6 +210,8 @@ async function main(): Promise<void> {
     standalone.shutdown()
     stopStates()
     setServerEventPublisher(null)
+    // ── Wave 5, lane C: the plugin processes go with the server ──
+    plugins.close()
     // The sessions go with the server, as they go with the app at its quit
     // (`index.ts`): a chat's CLI is a detached child of this process and
     // would outlive it; a terminal's tmux session is left for the next

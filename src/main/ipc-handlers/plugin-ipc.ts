@@ -1,199 +1,214 @@
+/**
+ * The IPC arms of the plugins domain (PRDCT-3433), and what stays the shell's
+ * whichever process runs the plugins. The store, the host, the view leases and
+ * the secret requests live in the plugin service beside the server's sessions
+ * (`plugins/plugin-service.ts`): inside the app it is the shell's own instance
+ * (`plugins/shell-plugins.ts`, also the server's `ports.plugins`); attached to
+ * a server running apart, it is that server's, reached through the typed
+ * client. Every arm below answers from whichever the boot named
+ * (`pluginsFacade`), so a window that calls over IPC before the preload has
+ * routed to the server gets the same answer as one that calls the server.
+ *
+ * What is Electron's and nothing else's: the folder dialog of "Link
+ * folder…"; the preview protocol that mints a plugin page's URL (the service
+ * answers the file and its policy, the arm registers the page and holds it
+ * for the lease or the panel that shows it, and releases it when the lease
+ * is revoked, when the window holding it reloads or dies, and when the plugin
+ * is no longer active, so a revoked page stops answering); the OS
+ * notification a plugin raises on a server that cannot show one; the window
+ * a focus report comes from (its key, and the clearing of its report when it
+ * closes); and the drop of a lease when the window that holds it reloads or
+ * dies. The lease, the panel and the revoke therefore come through these arms
+ * in both modes; the other methods the preload sends to the server itself.
+ */
 import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { PluginStore, pluginFile } from '../plugins/plugin-store'
+import type { ClaveApiClient } from '@clave/client'
+import type {
+  PluginPage,
+  PluginPermission,
+  PluginRecord,
+  PluginSecretRequest,
+  PluginViewLease
+} from '@clave/contract/plugins'
 import { windowRegistry } from '../window-registry'
-import { SessionInputSchema } from '../../shared/session-model'
-import { PluginHost } from '../plugins/plugin-host'
-import { sessionManager } from '../sessions/session-manager'
-import { listPluginSessions, pluginSessionById } from '../sessions/plugin-sessions'
-import { syncPluginAdapters } from '../sessions/plugin-adapters'
 import { registerPreviewFile, unregisterPreviewFile } from '../preview-protocol'
-import { OWN_PROFILE, TEST_NO_ACTIVATE } from '../test-mode'
-import type { PluginPermission } from '@clave/plugin-sdk'
+import { TEST_NO_ACTIVATE } from '../test-mode'
+import { getClaveServerEndpoint, whenClaveServerBootSettled } from '../server/endpoint'
+import { serverClient } from '../mcp/server-client'
+import { shellPlugins } from '../plugins/shell-plugins'
+
+/** The plugins as the arms call them: every method a promise, whether the
+ *  service is in this process or across the loopback. */
+export interface PluginsFacade {
+  list(): Promise<ReadonlyArray<PluginRecord>>
+  enable(id: string, grants: ReadonlyArray<PluginPermission>): Promise<void>
+  disable(id: string): Promise<void>
+  link(folder: string): Promise<string>
+  remove(id: string): Promise<void>
+  command(id: string, command: string): Promise<void>
+  panel(pluginId: string, panelId: string): Promise<PluginPage>
+  context(windowKey: string, sessionId: string | null): Promise<void>
+  leaseView(pluginId: string, viewId: string, sessionId: string): Promise<PluginViewLease>
+  requestView(leaseId: string, method: string, params: unknown): Promise<unknown>
+  revokeView(leaseId: string): Promise<void>
+  secrets(): Promise<ReadonlyArray<PluginSecretRequest>>
+  replySecret(id: string, value: string | null): Promise<void>
+}
+
+const inProcessFacade = (): PluginsFacade => {
+  const service = shellPlugins()
+  return {
+    list: async () => service.list(),
+    enable: async (id, grants) => service.enable(id, grants),
+    disable: async (id) => service.disable(id),
+    link: async (folder) => service.link(folder),
+    remove: async (id) => service.remove(id),
+    command: (id, command) => service.command(id, command),
+    panel: async (pluginId, panelId) => service.panel(pluginId, panelId),
+    context: async (windowKey, sessionId) => service.context(windowKey, sessionId),
+    leaseView: async (pluginId, viewId, sessionId) =>
+      service.leaseView(pluginId, viewId, sessionId),
+    requestView: async (leaseId, method, params) => service.requestView(leaseId, method, params),
+    revokeView: async (leaseId) => service.revokeView(leaseId),
+    secrets: async () => service.secrets(),
+    replySecret: async (id, value) => service.replySecret(id, value)
+  }
+}
+
+const attachedFacade = (api: ClaveApiClient): PluginsFacade => ({
+  list: () => api.plugins.list(),
+  enable: (id, grants) => api.plugins.enable(id, grants),
+  disable: (id) => api.plugins.disable(id),
+  link: (folder) => api.plugins.link(folder),
+  remove: (id) => api.plugins.remove(id),
+  command: (id, command) => api.plugins.command(id, command),
+  panel: (pluginId, panelId) => api.plugins.panel(pluginId, panelId),
+  context: (windowKey, sessionId) => api.plugins.context(windowKey, sessionId),
+  leaseView: (pluginId, viewId, sessionId) => api.plugins.leaseView(pluginId, viewId, sessionId),
+  requestView: (leaseId, method, params) => api.plugins.requestView(leaseId, method, params),
+  revokeView: (leaseId) => api.plugins.revokeView(leaseId),
+  secrets: () => api.plugins.secrets(),
+  replySecret: (id, value) => api.plugins.replySecret(id, value)
+})
+
+/** The plugins the boot named: the shell's own service while the server runs
+ *  in this process or there is none, the attached server's otherwise. Waits,
+ *  boundedly, for the boot to decide, so an early window is answered rather
+ *  than refused. */
+export async function pluginsFacade(): Promise<PluginsFacade> {
+  await whenClaveServerBootSettled()
+  const endpoint = getClaveServerEndpoint()
+  if (endpoint?.mode === 'attached') return attachedFacade(await serverClient.api())
+  return inProcessFacade()
+}
 
 export function registerPluginHandlers(): void {
-  const root =
-    TEST_NO_ACTIVATE || OWN_PROFILE
-      ? join(app.getPath('userData'), 'clave-plugins')
-      : join(homedir(), '.clave')
-  const bundled = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'plugins')
-  let store: PluginStore
-  let initializationError: string | undefined
-  try {
-    store = new PluginStore(root, bundled, app.getVersion())
-    store.discover()
-    syncPluginAdapters(store)
-  } catch (error) {
-    initializationError = `Plugin registry could not be read: ${String(error)}`
-    console.error(initializationError)
-  }
-  const broadcast = (): void => {
-    for (const win of BrowserWindow.getAllWindows())
-      if (!win.isDestroyed()) win.webContents.send('plugins:changed')
-  }
-  const surfaces = new Map<string, string>()
-  /** Which session the user is looking at. Only a renderer knows this — focus is a
-   *  renderer-store fact — so each window reports its own, and the most recent report
-   *  wins: the host is one per application, and the last window to move focus is the
-   *  window the user is in.
-   *
-   *  A window that goes away has its report cleared HERE, on the window's own `closed`
-   *  event. The renderer's unmount does clear it on an ordinary teardown, but a renderer
-   *  destroyed with its window never runs that cleanup and could not reach us afterwards
-   *  anyway (`guard` throws for a destroyed window) — so every plugin holding
-   *  `sessions.read` would have gone on being told a closed window's session was the
-   *  focused one, and the id still resolves, because sessions outlive their window. */
-  let focused: { windowId: number; sessionId: string } | null = null
-  const watchedWindows = new Set<number>()
-  /** A plugin view's authority over ONE session, held by the pane that opened
-   *  it. The guest page never sees any of this: it talks to the app renderer
-   *  over postMessage, the renderer names the lease, and main answers from what
-   *  the lease says — so a guest can neither name another session nor outlive
-   *  the pane, whatever its page does. */
-  const viewLeases = new Map<
-    string,
-    {
-      pluginId: string
-      viewId: string
-      sessionId: string
-      windowId: number
-      file: string
-      stop: () => void
-    }
-  >()
-  const revokeLease = (leaseId: string): void => {
-    const lease = viewLeases.get(leaseId)
-    if (!lease) return
-    lease.stop()
-    viewLeases.delete(leaseId)
-    // The page stops being servable with the authority that opened it: a
-    // revoked lease must not leave its token answering. The token is per FILE
-    // and shared (`registerPreviewFile` is idempotent), so it goes only when
-    // nothing else is still showing that page — another lease of the same
-    // plugin, or its panel surface.
-    const stillShown =
-      [...viewLeases.values()].some((other) => other.file === lease.file) ||
-      surfaces.get(lease.pluginId) === lease.file
-    if (!stillShown) unregisterPreviewFile(lease.file)
-  }
-  const revokeLeasesOf = (pluginId: string): void => {
-    for (const [id, lease] of viewLeases) if (lease.pluginId === pluginId) revokeLease(id)
-  }
-  const secretRequests = new Map<
-    string,
-    {
-      pluginId: string
-      windowId: number
-      resolve: (value: string | null) => void
-      timer: NodeJS.Timeout
-      title: string
-      description?: string
-    }
-  >()
-  const clearSecrets = (id: string): void => {
-    for (const [key, request] of secretRequests)
-      if (request.pluginId === id) {
-        clearTimeout(request.timer)
-        secretRequests.delete(key)
-        request.resolve(null)
-      }
-  }
-  const host = !initializationError
-    ? new PluginHost(store!, {
-        sessions: {
-          // The whole service reads the session registry, not the PTY manager:
-          // one row per live session whatever its transport, `alive` from the
-          // record's own state, and focus resolved the same way — so `list` and
-          // `focused` can never disagree about a chat session.
-          list: listPluginSessions,
-          focused: () => (focused ? pluginSessionById(focused.sessionId) : null),
-          send: (id, text) => {
-            const session = sessionManager.get(id)
-            if (!session || session.state === 'ended') throw new Error('Session is not running')
-            // A granted sessions.write must reach a chat session too, not only a terminal.
-            sessionManager.write(
-              id,
-              session.transport === 'events'
-                ? { type: 'user_message', text }
-                : new TextEncoder().encode(text)
-            )
-          }
-        },
-        // A linked plugin edited on disk re-discovers through the host's own
-        // watcher, which never passes through the handlers below.
-        changed: () => {
-          syncPluginAdapters(store)
-          broadcast()
-        },
-        stopped: (id) => {
-          const file = surfaces.get(id)
-          if (file) unregisterPreviewFile(file)
-          surfaces.delete(id)
-          // A stopped plugin keeps no authority over a session: its panes go
-          // blank on the next render, and their leases answer nothing before.
-          revokeLeasesOf(id)
-          clearSecrets(id)
-        },
-        notify: (id, title, body) => {
-          if (!TEST_NO_ACTIVATE && Notification.isSupported())
-            new Notification({
-              title: `${store.get(id).manifest?.name}: ${title}`,
-              body: body ?? ''
-            }).show()
-        },
-        requestSecret: (pluginId, title, description) => {
-          if ([...secretRequests.values()].some((r) => r.pluginId === pluginId))
-            return Promise.reject(new Error('A secret request is already pending'))
-          const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-          if (!win) return Promise.resolve(null)
-          return new Promise((resolve) => {
-            const id = randomUUID()
-            const timer = setTimeout(() => {
-              secretRequests.delete(id)
-              resolve(null)
-              broadcast()
-            }, 120_000)
-            secretRequests.set(id, {
-              pluginId,
-              windowId: win.id,
-              resolve,
-              timer,
-              title,
-              description
-            })
-            broadcast()
-          })
-        }
-      })
-    : undefined
   // Only the app's top-level renderer may invoke management IPC, never a guest.
   const guard = (event: Electron.IpcMainInvokeEvent): BrowserWindow => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || event.senderFrame !== event.sender.mainFrame)
       throw new Error('Plugin management requires the app renderer')
-    if (initializationError) throw new Error(initializationError)
     return win
   }
-  ipcMain.handle('plugins:list', (event) => {
-    guard(event)
-    return store.list()
+  const keyOf = (win: BrowserWindow): string =>
+    windowRegistry.getKeyForWindow(win.id) ?? `window-${win.id}`
+  /** A closed window's focus report is cleared HERE, on the window's own
+   *  `closed` event: a renderer destroyed with its window never runs its
+   *  unmount, and every plugin holding `sessions.read` would go on being
+   *  told that window's session was the focused one. */
+  const watchedWindows = new Set<number>()
+  const watchClose = (win: BrowserWindow): void => {
+    if (watchedWindows.has(win.id)) return
+    const id = win.id
+    const key = keyOf(win)
+    watchedWindows.add(id)
+    win.once('closed', () => {
+      watchedWindows.delete(id)
+      void pluginsFacade()
+        .then((plugins) => plugins.context(key, null))
+        .catch(() => undefined)
+    })
+  }
+
+  /** The pages this shell serves to its windows: one holder per lease
+   *  (`lease:<id>`) and per panel (`panel:<plugin>/<panel>`), with the file
+   *  and the plugin behind it. The token is per FILE and shared
+   *  (`registerPreviewFile` is idempotent), so a page stops being served only
+   *  when nothing else still shows that file: another lease of the same
+   *  plugin, or its panel. A page released and asked for again gets a new
+   *  token, so the URL a revoked lease or a disabled plugin held answers 404. */
+  const pages = new Map<string, { file: string; pluginId: string }>()
+  const hold = (holder: string, pluginId: string, page: PluginPage): { url: string } => {
+    pages.set(holder, { file: page.file, pluginId })
+    return registerPreviewFile(page.file, page.csp)
+  }
+  const release = (holder: string): void => {
+    const page = pages.get(holder)
+    if (!page) return
+    pages.delete(holder)
+    for (const other of pages.values()) if (other.file === page.file) return
+    unregisterPreviewFile(page.file)
+  }
+  /** A plugin that is no longer active keeps no page: the service dropped its
+   *  leases already, and the window took its panel down. */
+  const releaseStale = (records: ReadonlyArray<PluginRecord>): void => {
+    const active = new Set(
+      records.filter((r) => r.enabled && r.status === 'active' && !r.error).map((r) => r.id)
+    )
+    for (const [holder, page] of [...pages]) if (!active.has(page.pluginId)) release(holder)
+  }
+  const refreshPages = (): Promise<void> =>
+    pages.size === 0
+      ? Promise.resolve()
+      : pluginsFacade()
+          .then((plugins) => plugins.list())
+          .then(releaseStale)
+          .catch(() => undefined)
+  // In this process the shell's own service says when the plugins changed;
+  // attached, the windows relay the server's event (`plugins:changed-heard`).
+  void whenClaveServerBootSettled().then(() => {
+    if (getClaveServerEndpoint()?.mode === 'attached') return
+    shellPlugins().subscribe((event) => {
+      if (event._tag === 'plugins.changed') void refreshPages()
+    })
   })
-  ipcMain.handle('plugins:enable', (event, id: string, grants: PluginPermission[]) => {
+
+  /** A renderer that reloads or dies cannot revoke what it no longer
+   *  remembers, so main drops the lease itself. `did-navigate` is the MAIN
+   *  frame's, never a guest iframe's, so a reload of the app drops the lease
+   *  while the plugin page loading inside it does not. */
+  const drops = new Map<string, () => void>()
+  const dropOnReload = (win: BrowserWindow, leaseId: string): void => {
+    const drop = (): void => {
+      drops.get(leaseId)?.()
+      release(`lease:${leaseId}`)
+      void pluginsFacade()
+        .then((plugins) => plugins.revokeView(leaseId))
+        .catch(() => undefined)
+    }
+    win.webContents.on('did-navigate', drop)
+    win.webContents.once('destroyed', drop)
+    drops.set(leaseId, () => {
+      drops.delete(leaseId)
+      if (!win.isDestroyed()) {
+        win.webContents.off('did-navigate', drop)
+        win.webContents.off('destroyed', drop)
+      }
+    })
+  }
+
+  ipcMain.handle('plugins:list', async (event) => {
+    guard(event)
+    return (await pluginsFacade()).list()
+  })
+  ipcMain.handle('plugins:enable', async (event, id: string, grants: PluginPermission[]) => {
     guard(event)
     if (!Array.isArray(grants)) throw new Error('Permission grants are required')
-    store.enable(id, grants)
-    syncPluginAdapters(store)
-    host!.start(id)
-    broadcast()
+    await (await pluginsFacade()).enable(id, grants)
   })
-  ipcMain.handle('plugins:disable', (event, id: string) => {
+  ipcMain.handle('plugins:disable', async (event, id: string) => {
     guard(event)
-    store.disable(id)
-    syncPluginAdapters(store)
-    host!.stop(id)
-    broadcast()
+    await (await pluginsFacade()).disable(id)
   })
   ipcMain.handle('plugins:link', async (event, folder?: string) => {
     const win = guard(event)
@@ -206,188 +221,87 @@ export function registerPluginHandlers(): void {
         })
       ).filePaths[0]
     if (!selected) return null
-    const id = store.link(selected)
-    host!.reload()
-    syncPluginAdapters(store)
-    return id
+    return (await pluginsFacade()).link(selected)
   })
-  ipcMain.handle('plugins:remove', (event, id: string) => {
+  ipcMain.handle('plugins:remove', async (event, id: string) => {
     guard(event)
-    if (store.get(id).source === 'bundled')
-      throw new Error('Bundled plugins can be disabled, not removed')
-    host!.stop(id)
-    store.remove(id)
-    syncPluginAdapters(store)
-    broadcast()
+    await (await pluginsFacade()).remove(id)
   })
-  ipcMain.handle('plugins:command', (event, id: string, command: string) => {
+  ipcMain.handle('plugins:command', async (event, id: string, command: string) => {
     guard(event)
-    return host!.execute(id, command)
+    await (await pluginsFacade()).command(id, command)
   })
-  ipcMain.handle('plugins:panel', (event, id: string, panel: string) => {
+  ipcMain.handle('plugins:panel', async (event, id: string, panel: string) => {
     guard(event)
-    const record = store.get(id)
-    if (
-      !record.enabled ||
-      record.status !== 'active' ||
-      !record.panels.includes(panel) ||
-      record.manifest?.ui !== 'surface' ||
-      !record.manifest.uiEntry
-    )
-      throw new Error('Panel is not active')
-    const file = pluginFile(record.directory, record.manifest.uiEntry)
-    surfaces.set(id, file)
-    const net = record.permissionsGranted.includes('net') ? 'https: http:' : ''
-    return registerPreviewFile(
-      file,
-      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${net}; connect-src 'self' ${net}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
-    )
+    const page = await (await pluginsFacade()).panel(id, panel)
+    return hold(`panel:${id}/${panel}`, id, page)
   })
-  // The renderer reports its focused session whenever it changes; the host turns that
-  // into the plugins' `context.changed`. Null clears this window's report.
-  ipcMain.handle('plugins:context', (event, sessionId: string | null) => {
+  // The renderer reports its focused session whenever it changes; the host
+  // turns that into the plugins' `context.changed`. Null clears this window's report.
+  ipcMain.handle('plugins:context', async (event, sessionId: string | null) => {
     const win = guard(event)
     if (sessionId !== null && (typeof sessionId !== 'string' || sessionId.length > 256))
       throw new Error('Invalid session id')
-    if (sessionId === null) {
-      if (focused?.windowId === win.id) focused = null
-    } else focused = { windowId: win.id, sessionId }
-    // One listener per reporting window, attached where we first hear from it: this file
-    // is registered once at startup and windows arrive later.
-    if (!watchedWindows.has(win.id)) {
-      const id = win.id
-      watchedWindows.add(id)
-      win.once('closed', () => {
-        watchedWindows.delete(id)
-        if (focused?.windowId === id) {
-          focused = null
-          host?.contextChanged()
-        }
-      })
-    }
-    host?.contextChanged()
+    watchClose(win)
+    await (await pluginsFacade()).context(keyOf(win), sessionId)
   })
-  /** Open a plugin's view on ONE session: check the plugin, the contribution
-   *  and the grant, then hand back a URL and a lease id. The session id is
-   *  fixed here and never travels again — every later call names the lease. */
   ipcMain.handle(
     'plugins:view-lease',
-    (event, pluginId: string, viewId: string, sessionId: string) => {
+    async (event, pluginId: string, viewId: string, sessionId: string) => {
       const win = guard(event)
-      const record = store.get(pluginId)
-      const manifest = record.manifest
-      if (
-        !record.enabled ||
-        record.status !== 'active' ||
-        record.error ||
-        manifest?.ui !== 'surface' ||
-        !manifest.uiEntry
-      )
-        throw new Error('View is not active')
-      const view = manifest.contributes.views.find((entry) => entry.id === viewId)
-      if (!view) throw new Error('Undeclared view')
-      if (!record.permissionsGranted.includes('sessions.read'))
-        throw new Error('Plugin may not read sessions')
-      const session = sessionManager.get(sessionId)
-      const windowKey = windowRegistry.getKeyForWindow(win.id)
-      if (!session || !windowKey || session.windowKey !== windowKey)
-        throw new Error('Session belongs to another window')
-      if (!view.renders.includes(session.transport))
-        throw new Error('View does not render this transport')
-      const file = pluginFile(record.directory, manifest.uiEntry)
-      const net = record.permissionsGranted.includes('net') ? 'https: http:' : ''
-      const { url } = registerPreviewFile(
-        file,
-        `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${net}; connect-src 'self' ${net}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`
-      )
-      const leaseId = randomUUID()
-      // The events reach the app renderer, which relays them into the frame:
-      // the guest has no channel of its own to main, by design.
-      const stop = sessionManager.subscribe(
-        sessionId,
-        (stream) => {
-          if (stream.kind !== 'event') return
-          if (!win.isDestroyed())
-            win.webContents.send(`plugins:view-event:${leaseId}`, stream.event)
-        },
-        windowKey
-      )
-      // A renderer that reloads or dies cannot revoke what it no longer
-      // remembers, so main drops the lease itself. Without this a reload leaves
-      // authority over a session behind, held by nobody and revoked by nothing.
-      const drop = (): void => revokeLease(leaseId)
-      // `did-navigate` is the MAIN frame's, never a guest iframe's (that is
-      // `did-frame-navigate`), so a reload of the app drops the lease while the
-      // plugin page loading inside it does not.
-      win.webContents.on('did-navigate', drop)
-      win.webContents.once('destroyed', drop)
-      viewLeases.set(leaseId, {
-        pluginId,
-        viewId,
-        sessionId,
-        windowId: win.id,
-        file,
-        stop: () => {
-          stop()
-          if (!win.isDestroyed()) {
-            win.webContents.off('did-navigate', drop)
-            win.webContents.off('destroyed', drop)
-          }
-        }
-      })
-      sessionManager.ready(sessionId)
-      return { leaseId, url, sessionId }
+      const lease = await (await pluginsFacade()).leaseView(pluginId, viewId, sessionId)
+      const { url } = hold(`lease:${lease.leaseId}`, pluginId, lease)
+      dropOnReload(win, lease.leaseId)
+      return { leaseId: lease.leaseId, url, sessionId: lease.sessionId }
     }
   )
-  /** One call from a plugin view, relayed by the pane that holds its lease. The
-   *  grants are read HERE, not at the lease's birth: a permission taken away
-   *  stops the next write, not only the next pane. */
-  ipcMain.handle('plugins:view-request', (event, leaseId: string, method: string, params) => {
-    const win = guard(event)
-    const lease = viewLeases.get(leaseId)
-    if (!lease || lease.windowId !== win.id) throw new Error('Unknown view lease')
-    const record = store.get(lease.pluginId)
-    if (!record.enabled || record.status !== 'active' || record.error)
-      throw new Error('View is not active')
-    const session = sessionManager.get(lease.sessionId)
-    if (!session) throw new Error('Unknown session')
-    if (method === 'session.get') {
-      if (!record.permissionsGranted.includes('sessions.read'))
-        throw new Error('Plugin may not read sessions')
-      return session
-    }
-    if (method === 'session.write') {
-      if (!record.permissionsGranted.includes('sessions.write'))
-        throw new Error('Plugin may not write sessions')
-      // The lease's session, never one the guest named: `params` carries the
-      // input and nothing else that could select a target.
-      sessionManager.write(lease.sessionId, SessionInputSchema.parse(params))
-      return null
-    }
-    throw new Error(`Unknown plugin view method: ${method}`)
+  ipcMain.handle('plugins:view-request', async (event, leaseId: string, method: string, params) => {
+    guard(event)
+    return (await pluginsFacade()).requestView(leaseId, method, params)
   })
-  ipcMain.handle('plugins:view-revoke', (event, leaseId: string) => {
-    const win = guard(event)
-    const lease = viewLeases.get(leaseId)
-    if (lease && lease.windowId === win.id) revokeLease(leaseId)
+  ipcMain.handle('plugins:view-revoke', async (event, leaseId: string) => {
+    guard(event)
+    drops.get(leaseId)?.()
+    release(`lease:${leaseId}`)
+    await (await pluginsFacade()).revokeView(leaseId)
   })
-  ipcMain.handle('plugins:secrets', (event) => {
-    const win = guard(event)
-    return [...secretRequests]
-      .filter(([, r]) => r.windowId === win.id)
-      .map(([id, { pluginId, title, description }]) => ({ id, pluginId, title, description }))
+  ipcMain.handle('plugins:secrets', async (event) => {
+    guard(event)
+    return (await pluginsFacade()).secrets()
   })
-  ipcMain.handle('plugins:secret-reply', (event, id: string, value: string | null) => {
-    const win = guard(event)
-    const request = secretRequests.get(id)
-    if (!request || request.windowId !== win.id) throw new Error('Unknown secret request')
+  ipcMain.handle('plugins:secret-reply', async (event, id: string, value: string | null) => {
+    guard(event)
     if (value !== null && (typeof value !== 'string' || value.length > 64_000))
       throw new Error('Invalid secret')
-    clearTimeout(request.timer)
-    secretRequests.delete(id)
-    request.resolve(value)
-    broadcast()
+    await (await pluginsFacade()).replySecret(id, value)
   })
-  host?.startAll()
-  app.once('before-quit', () => host?.close())
+  /** The server's plugin events a window relays here when the server runs
+   *  apart from the app, each acted on once whichever windows relayed it (the
+   *  first relay of an event's id counts): a notification the server could
+   *  not show itself, and a change of the plugins, on which the pages of a
+   *  plugin no longer active are released. */
+  const relayed = new Set<string>()
+  const once = (id: unknown): boolean => {
+    if (typeof id !== 'string' || relayed.has(id)) return false
+    relayed.add(id)
+    if (relayed.size > 200) relayed.delete(relayed.values().next().value as string)
+    return true
+  }
+  ipcMain.handle(
+    'plugins:show-notification',
+    (event, id: string, name: string, title: string, body?: string) => {
+      guard(event)
+      if (!once(id)) return
+      if (!TEST_NO_ACTIVATE && Notification.isSupported())
+        new Notification({ title: `${name}: ${title}`, body: body ?? '' }).show()
+    }
+  )
+  ipcMain.handle('plugins:changed-heard', async (event, id: string) => {
+    guard(event)
+    if (!once(id)) return
+    await refreshPages()
+  })
+  app.once('before-quit', () => {
+    for (const drop of [...drops.values()]) drop()
+  })
 }
