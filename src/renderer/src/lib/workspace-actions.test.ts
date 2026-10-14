@@ -617,6 +617,42 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A'])
   })
 
+  it('keeps the first failure’s base through a second failure (G4)', async () => {
+    loaded = { ...boot(1, [pin('a', 'A'), pin('x', 'X', 'ws2')], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('c', 'C'))
+    await writes.splice(0)[0].land({ ok: false })
+    // A copy applied re-sends ws1 (C is not on the source); that fails too.
+    fold!(fromServer(2, [pin('a', 'A'), pin('x', 'X', 'ws2')]))
+    expect(scopes()).toEqual(['ws1'])
+    await writes.splice(0)[0].land({ ok: false })
+    // Another window renames A, which this window never touched: it stands.
+    fold!(fromServer(3, [pin('a', 'A-other'), pin('x', 'X', 'ws2')]))
+    expect(names()).toEqual(['A-other', 'X', 'C'])
+    expect((writes.at(-1)!.pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A-other', 'C'])
+  })
+
+  it('keeps a pin it moved between partitions when one of the two writes fails (G4)', async () => {
+    loaded = { ...boot(1, [pin('p', 'P'), pin('x', 'X', 'ws2')], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().updatePinnedGroup('p', { workspaceId: 'ws2' })
+    expect(scopes().sort()).toEqual(['ws1', 'ws2'])
+    const ws1 = writes.find((w) => w.scope === 'ws1')!
+    const ws2 = writes.find((w) => w.scope === 'ws2')!
+    writes.length = 0
+    await ws1.land({ ok: false })
+    // The source moved P with the ws2 write (an id lives in one partition).
+    await ws2.land({
+      revision: 2,
+      instance: 'main',
+      pins: [pin('x', 'X', 'ws2'), pin('p', 'P', 'ws2')]
+    })
+    expect(names()).toEqual(['X', 'P'])
+    expect(usePinnedStore.getState().pinnedGroups.find((g) => g.id === 'p')?.workspaceId).toBe(
+      'ws2'
+    )
+  })
+
   it('forgets a failed partition another window’s copy already settled (G3b)', async () => {
     loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
     await actions.bootWorkspaces()
