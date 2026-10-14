@@ -202,10 +202,16 @@ async function bootServer(): Promise<void> {
             // discovery file says it too, so no reader finds a live-looking
             // server that is not there.
             console.error(`[server] the separate server is gone (${code}); the app runs without it`)
-            markServerGone(
-              app.getPath('userData'),
-              `the separate server exited (${code}) while the app was running`
-            )
+            // Guarded: a write that fails (a full disk) must not stop the
+            // notification below from saying what happened.
+            try {
+              markServerGone(
+                app.getPath('userData'),
+                `the separate server exited (${code}) while the app was running`
+              )
+            } catch (error) {
+              console.error(`[server] could not mark the discovery file: ${String(error)}`)
+            }
             if (!TEST_NO_ACTIVATE && Notification.isSupported())
               new Notification({
                 title: "Clave's server stopped",

@@ -632,12 +632,10 @@ export async function run(t) {
       )
 
       // The quit stops both, inside the harness's bound, and stops them
-      // ITSELF: the server is gone the instant the app's process is, and
-      // the terminal process within a moment of it. The two parent polls
-      // would end them too, 1.4 to 3.4 s later (measured), which a wait of
-      // ten seconds here could not tell from the stops (the round-1
-      // verifier skipped the child's stop and the handle's stop and this
-      // part stayed green).
+      // ITSELF: both are gone the instant the app's process is. The two
+      // parent polls would end them too, later, which a wait of seconds
+      // could not tell from the stops (the round-1 verifier skipped the
+      // child's stop and the handle's stop and this part stayed green).
       const started = Date.now()
       await app.close()
       closed = true
@@ -647,9 +645,13 @@ export async function run(t) {
         !alive(serverPid),
         serverPid
       )
+      // The server's stop waits for its terminal process to exit before the
+      // server exits, so the process is gone at the same instant; its own
+      // parent poll would end it up to 2 s after the server, which a window
+      // of half a second caught one time in three (round 2's verifier).
       t.check(
-        'and its terminal process within half a second of it',
-        (await untilDead(restarted?.terminalProcessPid, { tries: 5, gapMs: 100 })) === true,
+        'and so was its terminal process (stopped by the server, not polled)',
+        !alive(restarted?.terminalProcessPid),
         restarted?.terminalProcessPid
       )
       t.check(

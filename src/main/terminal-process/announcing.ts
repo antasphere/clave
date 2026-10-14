@@ -40,10 +40,12 @@ export interface AnnouncingOptions<F extends string> {
 /** How long a child that never announced itself is given to die after the
  *  SIGKILL before the rejection goes out anyway. */
 const KILL_GRACE_MS = 2_000
-/** How much of the child's stderr is kept for a message: the last of it,
- *  since a child the app keeps for its whole life would otherwise grow a
- *  copy of everything it ever logged (the round-1 verifier's note). */
-export const STDERR_KEEP_BYTES = 64 * 1024
+/** How much of the child's stderr is kept for a message, in characters:
+ *  the last of it, since a child the app keeps for its whole life would
+ *  otherwise grow a copy of everything it ever logged (round 1's note). A
+ *  line longer than this is handed on in pieces of this size, so a child
+ *  that writes without newlines grows nothing either (round 2's). */
+export const STDERR_KEEP_CHARS = 64 * 1024
 
 export function startAnnouncing<F extends string>(
   options: AnnouncingOptions<F>
@@ -58,7 +60,7 @@ export function startAnnouncing<F extends string>(
   child.stderr?.on('data', (chunk: Buffer | string) => {
     const text = String(chunk)
     stderr += text
-    if (stderr.length > STDERR_KEEP_BYTES) stderr = stderr.slice(-STDERR_KEEP_BYTES)
+    if (stderr.length > STDERR_KEEP_CHARS) stderr = stderr.slice(-STDERR_KEEP_CHARS)
     if (!options.onStderr) return
     pending += text
     let nl = pending.indexOf('\n')
@@ -66,6 +68,10 @@ export function startAnnouncing<F extends string>(
       options.onStderr(pending.slice(0, nl))
       pending = pending.slice(nl + 1)
       nl = pending.indexOf('\n')
+    }
+    while (pending.length > STDERR_KEEP_CHARS) {
+      options.onStderr(pending.slice(0, STDERR_KEEP_CHARS))
+      pending = pending.slice(STDERR_KEEP_CHARS)
     }
   })
   const announced = new Promise<Record<F, string>>((resolve, reject) => {
