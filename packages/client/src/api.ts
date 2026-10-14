@@ -21,6 +21,8 @@ import { type WorkspaceFilesClient, workspaceFilesClient } from './workspace-fil
 import { type ViewsClient, viewsClient } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 import { type AgentToolsClient, agentToolsClient } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+import { type PluginsClient, pluginsClient } from './plugins'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -60,6 +62,8 @@ export interface ClaveApiClient {
   readonly views: ViewsClient
   // ── Wave 4, lane C: the agent tools (`./agent-tools.ts`) ──
   readonly agentTools: AgentToolsClient
+  // ── Wave 5, lane C: the plugins (`./plugins.ts`) ──
+  readonly plugins: PluginsClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -124,6 +128,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     views: viewsClient(call),
     // ── Wave 4, lane C: the agent tools ──
     agentTools: agentToolsClient(call),
+    // ── Wave 5, lane C: the plugins ──
+    plugins: pluginsClient(call),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },

@@ -1,4 +1,5 @@
 import type { SessionRecord } from '../../../preload/index.d'
+import { savedLayoutSessionIds, type SavedLayoutLike } from '../../../shared/adoption-scope'
 
 /**
  * What the launch does with each surviving session record — the rule that
@@ -79,6 +80,30 @@ export function survivingIds<R extends BootRecordLike>(
   adoptedTabIds: Iterable<string>
 ): string[] {
   return [...adoptedTabIds, ...plan.hidden.map((r) => r.id)]
+}
+
+/**
+ * What the boot's layout merge treats as surviving (PRDCT-3432). Inside the
+ * app the boot's records read is EVERY adoptable record, so a saved id with
+ * no record is gone for good and its group member is pruned, as it always
+ * was. Attached, that read is main's own folder, empty: the server's records
+ * come after the boot, through the top-up, and pruning at the merge
+ * flattened every group whose members the server runs, with persistence
+ * writing the flattened layout back before the tabs came. So while the
+ * listing is not complete (attached, or a mode main has not named yet), the
+ * saved layout's own session ids survive the merge as shells, and the
+ * store's `pruneRestoredShells` settles them once the top-up has said which
+ * exist. Pure, pinned by its tests.
+ */
+export function bootSurvivors<R extends BootRecordLike>(
+  plan: BootPlan<R>,
+  adoptedTabIds: Iterable<string>,
+  saved: SavedLayoutLike,
+  listingComplete: boolean
+): string[] {
+  const ids = survivingIds(plan, adoptedTabIds)
+  if (listingComplete) return ids
+  return [...new Set([...savedLayoutSessionIds(saved), ...ids])]
 }
 
 /** The store shape the hidden-owner lookup reads. */

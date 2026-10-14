@@ -1100,6 +1100,10 @@ body,
   padding: var(--frame-inset);
 }
 
+.panel-tabs[data-icon-only='true'] > .panel-tab > span {
+  display: none;
+}
+
 /* Opting a bar out of wrapping, for the path bar: it is a line of text with a
    control at each end, and a path is a thing that truncates. The git bar used
    to take this too, on the theory that wrapping drops one orphan icon onto a
@@ -5095,6 +5099,18 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .term-agent[data-background] .term-agent-dot {
   background-color: var(--color-term-mode);
 }
+/* A background command's row: the terminal glyph where an agent's dot is,
+   breathing the same way. Twice the dot's size, so it gives back the
+   difference at each side and the text column stays where the dot puts it. */
+.term-agent-icon {
+  flex-shrink: 0;
+  align-self: center;
+  inline-size: calc(var(--spacing) * 3);
+  block-size: calc(var(--spacing) * 3);
+  margin-inline: calc(var(--spacing) * -0.75);
+  color: var(--color-term-mode);
+  animation: pulse-dot calc(var(--default-transition-duration) * 10) ease-in-out infinite;
+}
 /* Each new step: a ring leaves the dot once. The element is remounted per
    step, so the one-shot animation is the tick. */
 .term-agent-tick {
@@ -5200,7 +5216,8 @@ button.term-agent-model:focus-visible {
   }
   .chat-turn-copy[data-copied='true'] svg,
   .chat-send svg,
-  .term-agent-dot {
+  .term-agent-dot,
+  .term-agent-icon {
     animation: none;
     transition-property: opacity;
   }

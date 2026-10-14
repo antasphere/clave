@@ -1,3 +1,8 @@
+// Pinned to the in-process server (wave 5, lane C, PRDCT-3433, when the chat
+// helper stopped pinning): the activity page folds the record the shell
+// writes from the session events it sees, and attached the sessions live on
+// the server; measured on 13 October 2026 attached: no lane for the echo
+// session, no working burst. Not a known failure.
 // The Activity page (PRDCT-3386): Settings → Activity draws the record. An
 // echo session works for a second, and the page shows it as a lane with a
 // burst on today's tape; a day seeded two days back carries a known session
@@ -51,9 +56,16 @@ function seedRecord(dir) {
 
 export async function run(t) {
   let seededDay = ''
-  const chat = await openChat('activity-page', [], undefined, {}, (dir) => {
-    seededDay = seedRecord(dir)
-  })
+  const chat = await openChat(
+    'activity-page',
+    [],
+    undefined,
+    {},
+    (dir) => {
+      seededDay = seedRecord(dir)
+    },
+    { server: 'in-process' }
+  )
   const { app, win, record, fixture } = chat
   try {
     await inject(fixture, record.id, [{ type: 'state_change', state: 'working' }])

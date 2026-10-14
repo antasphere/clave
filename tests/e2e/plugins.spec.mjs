@@ -1,8 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): the store and the host are the server's now, but this spec
+// counts Electron's utility processes through app.getAppMetrics, checks a
+// surface's revocation on main's partition, and reads and rewrites the
+// plugin folder under the app's user data between launches, which attached
+// is the server's folder. Not a known failure.
 import {
   mkdtempSync,
   mkdirSync,

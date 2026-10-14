@@ -39,6 +39,8 @@ import {
 import { ViewRequests, viewHandlers } from './views'
 // ── Wave 4, lane C: the agent tools' tokens ──
 import { AgentTokens, agentToolsHandlers } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -74,6 +76,8 @@ export type ServerServices =
   | ViewRequests
   // ── Wave 4, lane C: the agent tools' tokens ──
   | AgentTokens
+  // ── Wave 5, lane C: the plugins ──
+  | Plugins
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -102,6 +106,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const workspaceFilesEvents = WorkspaceFilesEventsLive.pipe(Layer.provide(services))
   // ── Lane D (wave 3): the view requests, pushed through the hub ──
   const views = ViewRequests.layer.pipe(Layer.provide(hub))
+  // ── Wave 5, lane C: the plugins' news goes out as server events ──
+  const pluginsEvents = PluginsEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     hub,
@@ -109,7 +115,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     sidebarEvents,
     terminalsReady,
     workspaceFilesEvents,
-    views
+    views,
+    // ── Wave 5, lane C: the plugins ──
+    pluginsEvents
   )
 }
 
@@ -141,7 +149,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Lane D (wave 3): the view requests ──
       ...viewHandlers,
       // ── Wave 4, lane C: the agent tools' tokens ──
-      ...agentToolsHandlers
+      ...agentToolsHandlers,
+      // ── Wave 5, lane C: the plugins ──
+      ...pluginHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

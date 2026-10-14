@@ -1,12 +1,9 @@
-// Pinned to the in-process server. The attached moves and restore work since
-// wave 4 (PRDCT-3376: a move releases the session on the server first; see
-// attached-window-move, attached-agent-token and terminal-reattach, which run
-// attached). This spec stays pinned because it seeds session records by hand
-// into the APP's folder (attached they are the server's, which the harness does
-// not seed), reads an agent tab's config from the app's mcp-configs folder
-// (attached the server writes it), and/or relies on group membership surviving
-// an attached quit, which the attached boot flattens (pre-existing, on the
-// wave's owed list). Not a known failure.
+// Runs in BOTH modes (wave 5, lane B, PRDCT-3432). The records it reads and
+// writes are where the launch keeps them (`recordsRootOf`, `seedSessionRecord`:
+// the app's folder in-process, the server's attached), and an ownerless hidden
+// record is discarded by the attached top-up as by the in-process boot. Wave 4
+// pinned it for the records seeded into the app's folder and the groups
+// flattened attached.
 /**
  * A group's quick-launch terminals die with the group, and an ownerless one
  * never comes back as a tab (PRDCT-2038).
@@ -28,7 +25,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   launchApp,
@@ -40,7 +37,9 @@ import {
   until,
   killLeakedE2eTmux,
   tmuxSessionAlive,
-  fixturePath
+  fixturePath,
+  recordsRootOf,
+  seedSessionRecord
 } from './harness.mjs'
 
 const DIR = userDataDir('group-dissolve')
@@ -54,7 +53,7 @@ const WS = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function sessionRecords() {
-  const dir = path.join(DIR, 'session-records')
+  const dir = path.join(recordsRootOf(DIR), 'session-records')
   try {
     return readdirSync(dir)
       .filter((f) => f.endsWith('.json'))
@@ -65,7 +64,7 @@ function sessionRecords() {
 }
 
 function recordExists(tmuxName) {
-  return existsSync(path.join(DIR, 'session-records', `${tmuxName}.json`))
+  return existsSync(path.join(recordsRootOf(DIR), 'session-records', `${tmuxName}.json`))
 }
 
 /** A detached tmux session on the app's socket, the way a survivor looks. */
@@ -75,25 +74,21 @@ function spawnTmux(name) {
 
 /** A session record as the app writes one for a plain terminal. */
 function writeRecord(tmuxName, id, windowKey, link) {
-  mkdirSync(path.join(DIR, 'session-records'), { recursive: true })
-  writeFileSync(
-    path.join(DIR, 'session-records', `${tmuxName}.json`),
-    JSON.stringify({
-      id,
-      cwd: ROOT,
-      folderName: path.basename(ROOT),
-      claudeMode: false,
-      antigravityMode: false,
-      codexMode: false,
-      piMode: false,
-      claudeAgentsMode: false,
-      dangerousMode: false,
-      workspaceId: WS.id,
-      windowKey,
-      ...(link ? { link } : {}),
-      tmuxName
-    })
-  )
+  seedSessionRecord(DIR, {
+    id,
+    cwd: ROOT,
+    folderName: path.basename(ROOT),
+    claudeMode: false,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    workspaceId: WS.id,
+    windowKey,
+    ...(link ? { link } : {}),
+    tmuxName
+  })
 }
 
 const dialogText = (win) =>
@@ -132,7 +127,7 @@ export async function run(t) {
   const PFX = `clave-e2e-pfx-${rand}`
   const SIBLING = `${PFX}-2`
   try {
-    const first = await launchApp(DIR, { server: 'in-process' })
+    const first = await launchApp(DIR)
     app = first.app
     let win = first.win
 
@@ -323,7 +318,7 @@ export async function run(t) {
         recordExists(PFX)
     )
 
-    const second = await launchApp(DIR, { server: 'in-process', settleMs: 8000 })
+    const second = await launchApp(DIR, { settleMs: 8000 })
     app = second.app
     win = second.win
     const booted = await until(async () => {

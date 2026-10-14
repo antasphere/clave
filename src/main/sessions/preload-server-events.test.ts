@@ -157,7 +157,9 @@ beforeEach(async () => {
         lastActiveWorkspaceId: null,
         activeWorkspaceId: null,
         pins: [{ id: 'p-server' }],
-        pinsMigrated: true
+        pinsMigrated: true,
+        revision: 2,
+        instance: 'srv'
       }))
     }
   }
@@ -249,16 +251,27 @@ const families: Family[] = [
     name: 'the workspace state',
     bind: (cb) => api.onWorkspaceStateChanged(cb),
     channel: 'workspace:state-changed',
-    ipcArgs: [{ workspaces: [{ id: 'w-main' }], pins: [] }],
-    ipcValue: { workspaces: [{ id: 'w-main' }], pins: [] },
+    // The stamp rides on every road (PRDCT-3405): IPC, the push event and
+    // the catch-up read alike, so the renderer compares them as one.
+    ipcArgs: [{ workspaces: [{ id: 'w-main' }], pins: [], revision: 1, instance: 'main' }],
+    ipcValue: { workspaces: [{ id: 'w-main' }], pins: [], revision: 1, instance: 'main' },
     event: {
       _tag: 'workspaces.state_changed',
       workspaces: [{ id: 'w-pushed' }],
       pins: [{ id: 'p-pushed' }],
-      origin: 'another-window'
+      origin: 'another-window',
+      revision: 3,
+      instance: 'srv'
     },
-    pushValue: { workspaces: [{ id: 'w-pushed' }], pins: [{ id: 'p-pushed' }] },
-    catchUp: [{ workspaces: [{ id: 'w-server' }], pins: [{ id: 'p-server' }] }]
+    pushValue: {
+      workspaces: [{ id: 'w-pushed' }],
+      pins: [{ id: 'p-pushed' }],
+      revision: 3,
+      instance: 'srv'
+    },
+    catchUp: [
+      { workspaces: [{ id: 'w-server' }], pins: [{ id: 'p-server' }], revision: 2, instance: 'srv' }
+    ]
   },
   {
     name: 'the .clave file changes',
@@ -395,8 +408,17 @@ describe('the catch-up read', () => {
     await serverComes()
     mocks.push!.open()
     await settle()
-    expect(heard).toEqual([{ workspaces: [{ id: 'w-server' }], pins: [{ id: 'p-server' }] }])
-    mocks.emitEvent({ _tag: 'workspaces.state_changed', workspaces: [], pins: [], origin: 'me' })
+    expect(heard).toEqual([
+      { workspaces: [{ id: 'w-server' }], pins: [{ id: 'p-server' }], revision: 2, instance: 'srv' }
+    ])
+    mocks.emitEvent({
+      _tag: 'workspaces.state_changed',
+      workspaces: [],
+      pins: [],
+      origin: 'me',
+      revision: 3,
+      instance: 'srv'
+    })
     expect(heard).toHaveLength(1)
   })
 })

@@ -180,7 +180,8 @@ export const BackgroundTask = Schema.Struct({
   description: Schema.String,
   toolUseId: Schema.optional(Schema.String),
   startedAt: Schema.Number,
-  outputFile: Schema.optional(Schema.String)
+  outputFile: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String)
 })
 export type BackgroundTask = typeof BackgroundTask.Type
 

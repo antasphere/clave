@@ -68,6 +68,17 @@ export const ServerEvent = Schema.Union(
     pinnedId: Schema.String,
     groupId: Schema.String,
     windowKey: Schema.String
+  }),
+  // ── Wave 5, lane C: the plugins ──
+  /** The installed plugins or their running state changed; a client re-lists. */
+  Schema.TaggedStruct('plugins.changed', {}),
+  /** A plugin's notification, for the client that shows notifications when
+   *  the server cannot. */
+  Schema.TaggedStruct('plugins.notified', {
+    pluginId: Schema.String,
+    name: Schema.String,
+    title: Schema.String,
+    body: Schema.optional(Schema.String)
   })
   // ── Lane B: terminals ──
 )

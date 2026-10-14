@@ -13,7 +13,12 @@
  *      the work of somebody else and is applied; one at or below it is ours.
  *   3. A refused save applies the server's current snapshot and takes its
  *      revision; whatever this window still holds beyond it is saved again
- *      on that revision by the edit that follows, never merged here.
+ *      on that revision by the edit that follows, never merged here. When a
+ *      push held during that save is at or above the refusal's revision, the
+ *      held push is applied instead of the refusal's snapshot: same layout,
+ *      but it carries its cause (a move, a closing window), which the
+ *      refusal's snapshot does not, and the apply reads a cause-less
+ *      snapshot as nobody's change (PRDCT-3428, lane D's round-5 F10).
  */
 export type SaveOutcome<S> =
   | { ok: true; revision: number }
@@ -68,8 +73,14 @@ export function createSavePipeline<D, S extends { revision: number }>(
           deps.accepted?.(item, outcome.revision)
         } else if (outcome.reason === 'conflict') {
           const current = (outcome as { current: S }).current
-          revision = current.revision
-          deps.apply(current)
+          // The held push, when it is this state or a newer one, is the
+          // same layout WITH its cause: apply that, never the cause-less
+          // refusal (rule 3 above). An older held push is stale and left
+          // to the drop below.
+          const applied = held && held.revision >= current.revision ? held : current
+          if (applied === held) held = null
+          revision = applied.revision
+          deps.apply(applied)
         }
       })
       .catch(() => {

@@ -195,10 +195,24 @@ describe('the settings events on the push channel', () => {
 
     const pins = await post('/workspaces/pins', { scope: null, pins: [{ a: 1 }], origin: 'w1' })
     expect(pins.status).toBe(200)
-    expect(await pins.json()).toEqual({ ok: true })
+    // The write answers the state's stamp, and the event carries the same
+    // (PRDCT-3405): what a window compares a fold against.
+    expect(await pins.json()).toEqual({
+      ok: true,
+      workspaces: [],
+      pins: [{ a: 1 }],
+      revision: 1,
+      instance: 'fake-settings'
+    })
     expect(await peer.next()).toMatchObject({
       _tag: 'event',
-      event: { _tag: 'workspaces.state_changed', origin: 'w1', pins: [{ a: 1 }] }
+      event: {
+        _tag: 'workspaces.state_changed',
+        origin: 'w1',
+        pins: [{ a: 1 }],
+        revision: 1,
+        instance: 'fake-settings'
+      }
     })
 
     const refused = await post('/workspaces/pins', { scope: 'bad', pins: [] })

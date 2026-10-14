@@ -45,7 +45,12 @@ export default defineConfig({
           // The terminal process of the standalone server (ADR 0003, wave
           // 3), run under plain Node from `out/main/terminal-process.js` by
           // scripts/server-process.mjs: it cannot run from its sources.
-          'terminal-process': resolve('src/main/terminal-process/main.ts')
+          'terminal-process': resolve('src/main/terminal-process/main.ts'),
+          // The server as its own process (ADR 0003, wave 5): run from
+          // `out/main/server-entry.js` under the app's own Node
+          // (ELECTRON_RUN_AS_NODE) by the packaged app, and still from its
+          // sources under Bun by the dev script and the harness.
+          'server-entry': resolve('src/main/server-entry.ts')
         }
       }
     }

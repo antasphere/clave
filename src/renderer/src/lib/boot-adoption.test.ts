@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planBootAdoption, survivingIds, type BootRecordLike } from './boot-adoption'
+import { planBootAdoption, survivingIds, bootSurvivors, type BootRecordLike } from './boot-adoption'
 
 const tab = (id: string, live = true): BootRecordLike => ({ id, live })
 const term = (id: string, live = true, groupId = 'g1', terminalId = 't1'): BootRecordLike => ({
@@ -76,6 +76,31 @@ describe('survivingIds — what the layout merge must treat as alive', () => {
   it('leaves out what will not come back (dead halves, toolbar terminals)', () => {
     const plan = planBootAdoption([term('gone', false), toolbar('docs')])
     expect(survivingIds(plan, [])).toEqual([])
+  })
+})
+
+describe('bootSurvivors — what the boot merge keeps when the listing may be incomplete (PRDCT-3432)', () => {
+  const saved = {
+    displayOrder: ['dead-declined', 'g1'],
+    groups: [{ sessionIds: ['member-on-server'], terminals: [{ sessionId: 'term-on-server' }] }]
+  }
+
+  it('inside the app the listing is complete: exactly what survivingIds says, the saved ids add nothing', () => {
+    const plan = planBootAdoption([tab('agent'), term('devserver')])
+    expect(bootSurvivors(plan, ['agent'], saved, true)).toEqual(['agent', 'devserver'])
+  })
+
+  it('attached, or with no mode named yet, the saved layout’s own ids survive as shells beside the adopted', () => {
+    const plan = planBootAdoption([tab('agent'), term('devserver')])
+    expect(bootSurvivors(plan, ['agent'], saved, false).sort()).toEqual(
+      ['agent', 'dead-declined', 'devserver', 'g1', 'member-on-server', 'term-on-server'].sort()
+    )
+  })
+
+  it('names each id once', () => {
+    const plan = planBootAdoption([tab('member-on-server')])
+    const out = bootSurvivors(plan, ['member-on-server'], saved, false)
+    expect(out.filter((id) => id === 'member-on-server')).toHaveLength(1)
   })
 })
 

@@ -30,7 +30,31 @@ export async function adoptRecord(
   const spawned = await spawnFromRecord(s, activeWorkspaceId)
   if (!spawned) return null
   useSessionStore.getState().adoptSessionInPlace(spawned.session, { focus: options.focus === true })
+  void seedAgentStatesFromKernel([spawned.session.id])
   return spawned.session.id
+}
+
+/**
+ * Paint the state the kernel already holds for sessions this window just took
+ * in (PRDCT-3289). A tab built from a record carries no `agentState`, and the
+ * terminal hook hears `agent:state` from its binding on; main forwards a word
+ * once per change, so a tab adopted while its agent works showed nothing until
+ * the agent's next transition. One read of the listed sessions for the ids,
+ * and `agentState` seeded on each that still has no word; a word that reached
+ * the store live meanwhile is never written over. The chat view does the same
+ * for an events session (`views/kernel-state.ts`).
+ */
+export async function seedAgentStatesFromKernel(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const listed = (await window.electronAPI?.sessionsList?.().catch(() => [])) ?? []
+  const store = useSessionStore.getState()
+  for (const id of ids) {
+    const state = listed.find((k) => k.id === id)?.state
+    if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
+    const session = store.sessions.find((s) => s.id === id)
+    if (!session || session.agentState !== undefined) continue
+    store.setAgentState(id, state)
+  }
 }
 
 /**
@@ -226,11 +250,18 @@ export async function adoptRehomed(
  * them, since no spawn went through it. They join the store as the hidden
  * half of their group's terminal, from their record alone and WITHOUT a
  * spawn (the process is already bound to this window by main); the layout
- * that named them already links each to its terminal. A terminal whose
- * group's workspace is the one on screen is selected, as the window's own
- * launch of a terminal does. Records main no longer has are skipped.
+ * that named them already links each to its terminal. When the caller says
+ * so (an agent's own command, as for a tab), a terminal whose group's
+ * workspace is the one on screen is selected, as the window's own launch of
+ * a terminal does; a save, a refused save's current layout or a snapshot
+ * with no cause selects nothing (PRDCT-3428: a closing window's dev-server
+ * pane took the selection on that road). Records main no longer has are
+ * skipped.
  */
-export async function adoptServerStartedTerminals(ids: string[]): Promise<void> {
+export async function adoptServerStartedTerminals(
+  ids: string[],
+  options: { focus?: boolean } = {}
+): Promise<void> {
   if (ids.length === 0) return
   const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
@@ -244,6 +275,7 @@ export async function adoptServerStartedTerminals(ids: string[]): Promise<void> 
     if (store.sessions.some((s) => s.id === record.id)) continue
     const session = sessionOfRecord(record, record.workspaceId ?? activeWorkspaceId ?? undefined)
     store.addHiddenSession(session)
+    if (options.focus !== true) continue
     const group = store.groups.find((g) => g.terminals.some((t) => t.sessionId === record.id))
     if (group && inActiveWorkspace({ workspaceId: group.workspaceId }, activeWorkspaceId)) {
       useSessionStore.setState({ selectedSessionIds: [record.id], focusedSessionId: record.id })
@@ -310,6 +342,7 @@ export async function adoptServerStartedSessions(
   const records = (await window.electronAPI?.listSessionRecords?.({ ids }).catch(() => [])) ?? []
   const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId
   let first = options.focus === true
+  const taken: string[] = []
   for (const id of ids) {
     const record = records.find((r) => r.id === id)
     if (!record || record.running !== true) continue
@@ -317,6 +350,8 @@ export async function adoptServerStartedSessions(
     if (store.sessions.some((s) => s.id === record.id)) continue
     const session = sessionOfRecord(record, record.workspaceId ?? activeWorkspaceId ?? undefined)
     store.adoptSessionInPlace(session, { focus: first })
+    taken.push(record.id)
     first = false
   }
+  await seedAgentStatesFromKernel(taken)
 }
