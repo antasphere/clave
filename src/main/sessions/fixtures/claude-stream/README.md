@@ -71,6 +71,19 @@ whose result is an error before any list names it is cleared; once listed,
 the list alone ends it. If the CLI never sends `task_started`, a
 backgrounding call's card stays until the turn ends.
 
+The list names a task by the Bash call's `description` when the model gave
+one (this Haiku capture has none, so it reads as the command; Opus usually
+writes one). A command's card keeps the command text it opened with through
+its promotion; only a task with no card of its own reads as the list names
+it. The Electron replay (`claude-chat-bash-tasks.spec.mjs`) gives the
+background call a prose `description` explicitly, to hold that. A waited-on
+Bash call's foreground `task_started` names its `tool_use_id` too; the
+translator keeps that link, unlisted, so a list that later names the task
+(the command moved to the background) links it to its call, and forgets it
+at the task's end, at the turn's `result` and at the CLI's exit. No capture
+shows a command moved to the background mid-run; that path is covered by
+unit tests on the synthetic sequence.
+
 The `claude/bash-tasks` scenario uses `@structure-ai/fixtures`: a recording
 process stands in for the spawned CLI and answers the session's own message
 with this capture, up to the first `result`, and the rest on the scenario's

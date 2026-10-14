@@ -104,7 +104,14 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     fromAgentTool: known?.fromAgentTool ?? false,
     requestedBackground: false,
     type: known?.type ?? kind,
-    description: task.description || known?.description || '',
+    // A command keeps the text its card opened with (the command itself);
+    // the provider may name it otherwise (Claude's Bash `description`). A
+    // task with no card of its own, and an agent, read as the provider says.
+    description:
+      (known?.kind === 'shell' && known.description) ||
+      task.description ||
+      known?.description ||
+      '',
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,

@@ -1920,3 +1920,62 @@ describe('a background list that names a task before its call', () => {
     expect(snapshots().at(-1)).toEqual([])
   })
 })
+describe('a waited-on Bash task the CLI lists later', () => {
+  const startedFg = (id: string, call: string): unknown => ({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: id,
+    tool_use_id: call,
+    description: 'Long sleep',
+    is_backgrounded: false,
+    task_type: 'local_bash'
+  })
+  const list = (...ids: string[]): unknown => ({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: ids.map((id) => ({ task_id: id, task_type: 'local_bash', description: 'Long sleep' }))
+  })
+  const snapshots = (): { id: string; toolUseId?: string }[][] =>
+    events.flatMap((e) => (e.type === 'background_tasks' ? [e.tasks] : []))
+
+  it('lists it under the call its foreground start named, without listing that start', async () => {
+    feed(startedFg('bfg1', 'toolu_fg'))
+    expect(snapshots()).toEqual([])
+    feed(list('bfg1'))
+    await Promise.resolve()
+    expect(snapshots()).toEqual([[expect.objectContaining({ id: 'bfg1', toolUseId: 'toolu_fg' })]])
+    feed({
+      type: 'system',
+      subtype: 'task_updated',
+      task_id: 'bfg1',
+      patch: { status: 'completed' }
+    })
+    expect(snapshots().at(-1)).toEqual([])
+  })
+
+  it('keeps two same-named waited-on tasks apart by their own calls', async () => {
+    feed(startedFg('bfg1', 'toolu_a'))
+    feed(startedFg('bfg2', 'toolu_b'))
+    feed(list('bfg1', 'bfg2'))
+    await Promise.resolve()
+    expect(
+      snapshots()
+        .at(-1)
+        ?.map((t) => `${t.id}:${t.toolUseId}`)
+    ).toEqual(['bfg1:toolu_a', 'bfg2:toolu_b'])
+  })
+
+  it('forgets the link at the task end and at the turn end, so no later list reuses it', async () => {
+    feed(startedFg('bfg1', 'toolu_a'))
+    feed({ type: 'system', subtype: 'task_notification', task_id: 'bfg1', status: 'completed' })
+    feed(startedFg('bfg2', 'toolu_b'))
+    feed({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })
+    feed(list('bfg1', 'bfg2'))
+    await Promise.resolve()
+    expect(
+      snapshots()
+        .at(-1)
+        ?.map((t) => t.toolUseId ?? '-')
+    ).toEqual(['-', '-'])
+  })
+})

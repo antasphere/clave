@@ -596,3 +596,67 @@ it('settles to one card when the list named the task before its call id was know
   const status = at([bash('b1', 'sleep 10', true), unlinked, linked], 1000)
   expect(rowsOf(status)).toEqual(['shell:b1:bg:1000'])
 })
+
+it("keeps a Bash card's command text through its promotion, whatever the list calls it", () => {
+  const status = at(
+    [
+      bash('b1', 'sleep 8 && echo CLAVE_BG', true),
+      {
+        type: 'background_tasks',
+        tasks: [
+          {
+            id: 'task-1',
+            kind: 'shell',
+            description: 'Sleep 8 seconds then echo marker in background',
+            toolUseId: 'b1',
+            startedAt: 3000
+          }
+        ]
+      },
+      { type: 'state_change', state: 'done' }
+    ],
+    1000
+  )
+  expect(status.agents.map((a) => `${a.id}:${a.background}:${a.description}`)).toEqual([
+    'b1:true:sleep 8 && echo CLAVE_BG'
+  ])
+  // A task with no card of its own is named as the provider names it.
+  const discovered = at(
+    [
+      {
+        type: 'background_tasks',
+        tasks: [{ id: 'task-9', kind: 'shell', description: 'Watch the build', startedAt: 3000 }]
+      }
+    ],
+    1000
+  )
+  expect(discovered.agents.map((a) => a.description)).toEqual(['Watch the build'])
+})
+
+it('promotes a waited-on Bash card the provider later lists by its call, keeping one card and its text', () => {
+  const status = at(
+    [
+      bash('toolu_fg', 'sleep 200'),
+      {
+        type: 'background_tasks',
+        tasks: [
+          {
+            id: 'bfg1',
+            kind: 'shell',
+            description: 'Long sleep',
+            toolUseId: 'toolu_fg',
+            startedAt: 3000
+          }
+        ]
+      }
+    ],
+    1000
+  )
+  expect(
+    status.agents.map((a) => `${a.id}:${a.background ? 'bg' : 'run'}:${a.description}`)
+  ).toEqual(['toolu_fg:bg:sleep 200'])
+  // Its acknowledgement is not its end; the list is.
+  const acked = at([{ type: 'tool_result', id: 'toolu_fg', output: 'moved' }], 2000, status)
+  expect(acked.agents).toHaveLength(1)
+  expect(at([{ type: 'background_tasks', tasks: [] }], 3000, acked).agents).toEqual([])
+})

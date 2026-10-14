@@ -195,6 +195,11 @@ export class ClaudeStreamTranslator {
   private readonly outputFiles = new Map<string, string>()
   /** A list held back because it named a task its call is not known for. */
   private heldList = false
+  /** task_id → the call of a task the turn waits on (a foreground
+   *  task_started names both). Never listed; kept so that a list naming the
+   *  task later (the command moved to the background) links it to its call.
+   *  Forgotten at the task's end, at the turn's end and at the CLI's exit. */
+  private readonly foregroundCalls = new Map<string, string>()
   constructor(private readonly send: (event: SessionEvent) => void) {}
   /** Every event a view reads goes out after a held list, so holding one
    *  never changes what came first. The raw frame does not wait. */
@@ -225,6 +230,7 @@ export class ClaudeStreamTranslator {
   /** Nothing outlives the CLI: its exit empties the list, once. */
   clearBackground(): void {
     this.heldList = false
+    this.foregroundCalls.clear()
     if (!this.background.size) return
     this.background.clear()
     this.publishBackground()
@@ -249,7 +255,8 @@ export class ClaudeStreamTranslator {
             : 'other'
     const track = (id: string, type: unknown, description: unknown, toolUseId?: string): void => {
       const known = this.background.get(id)
-      const tool = toolUseId ?? known?.toolUseId
+      const tool = toolUseId ?? known?.toolUseId ?? this.foregroundCalls.get(id)
+      this.foregroundCalls.delete(id)
       const outputFile = known?.outputFile ?? (tool ? this.outputFiles.get(tool) : undefined)
       this.background.set(id, {
         id,
@@ -275,9 +282,14 @@ export class ClaudeStreamTranslator {
         return true
       }
     } else if (p.subtype === 'task_started') {
-      // A foreground task (a subagent the turn waits on) is the turn's own
-      // work, already on screen as its tool call.
-      if (p.is_backgrounded === false || typeof p.task_id !== 'string') return true
+      // A foreground task (a subagent or a command the turn waits on) is the
+      // turn's own work, already on screen as its tool call: not listed, its
+      // call remembered in case the CLI lists it later.
+      if (typeof p.task_id !== 'string') return true
+      if (p.is_backgrounded === false) {
+        if (typeof p.tool_use_id === 'string') this.foregroundCalls.set(p.task_id, p.tool_use_id)
+        return true
+      }
       track(
         p.task_id,
         p.task_type,
@@ -288,9 +300,12 @@ export class ClaudeStreamTranslator {
       const status = z.object({ status: z.string() }).safeParse(p.patch)
       if (!status.success || status.data.status === 'running' || typeof p.task_id !== 'string')
         return true
+      this.foregroundCalls.delete(p.task_id)
       if (!this.background.delete(p.task_id)) return true
     } else if (p.subtype === 'task_notification') {
-      if (typeof p.task_id !== 'string' || !this.background.delete(p.task_id)) return true
+      if (typeof p.task_id !== 'string') return true
+      this.foregroundCalls.delete(p.task_id)
+      if (!this.background.delete(p.task_id)) return true
     } else return false
     // A held list waits while a task it named is still unlinked; the read's
     // end publishes it either way.
@@ -733,6 +748,8 @@ export class ClaudeStreamTranslator {
       this.permissions.clear()
       this.questionRequests.clear()
       this.tools.clear()
+      // Nothing the turn waited on outlives it.
+      this.foregroundCalls.clear()
       if (p.is_error && this.interrupted) this.emit({ type: 'turn_interrupted' })
       else if (p.is_error)
         this.emit({

@@ -22,7 +22,15 @@ import {
    - the background list naming the call promotes the same card: still one
      card for it, now background work;
    - the waited-on card leaves with its result, the background one stays past
-     the turn, with no model and no relaunch, and leaves at its completion. */
+     the turn, with no model and no relaunch, and leaves at its completion;
+   - the background card reads as its command in every frame painted, though
+     the list names it by a prose description.
+   The capture's model (Haiku) gave its background call no Bash
+   `description`, so the list named the task by its command. A model that
+   writes one (Opus, in the coordinator's live capture) has the list name the
+   task by that prose. The replay input says so explicitly: the stub gives the
+   background call a `description` and the list and task_started that same
+   text, PROSE below. */
 
 const DIR = userDataDir('claude-chat-bash-tasks')
 const ROOT = fixturePath('claude-chat-bash-tasks-root')
@@ -31,6 +39,7 @@ const WORK = `${ROOT}/work`
 const GATES = `${ROOT}/gates`
 const gate = (name) => writeFileSync(`${GATES}/${name}`, '')
 const FIXTURE = path.join(REPO, 'src/main/sessions/fixtures/claude-stream/background-bash.ndjson')
+const PROSE = 'Sleep 10 seconds then echo a marker in the background'
 
 function writeFixtures() {
   rmSync(ROOT, { recursive: true, force: true })
@@ -61,6 +70,13 @@ if (!process.argv.includes('--session-id')) { process.stdin.resume(); process.st
 const argv = process.argv.slice(2); const providerId = argv[argv.indexOf('--session-id') + 1];
 const frames = fs.readFileSync(${JSON.stringify(FIXTURE)}, 'utf8').trim().split('\\n').map(JSON.parse);
 for (const frame of frames) if (frame.session_id) frame.session_id = providerId;
+// The background call carries a Bash description; the CLI names its task by it.
+for (const frame of frames) {
+  for (const block of (frame.type === 'assistant' && frame.message.content) || [])
+    if (block.type === 'tool_use' && block.input.run_in_background) block.input.description = ${JSON.stringify(PROSE)};
+  if (frame.type === 'system' && frame.subtype === 'task_started' && frame.is_backgrounded) frame.description = ${JSON.stringify(PROSE)};
+  if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') for (const task of frame.tasks) task.description = ${JSON.stringify(PROSE)};
+}
 const uses = (f, pick) => f.type === 'assistant' && (f.message.content || []).some((b) => b.type === 'tool_use' && pick(b.input));
 const stops = [
   ['background-call', (f) => uses(f, (input) => input.run_in_background === true)],
@@ -158,6 +174,19 @@ export async function run(t) {
       !!first && first[0].icon && first[0].model === null && !first[0].relaunch,
       { rows: describe(await readRows(view)) }
     )
+    // From here to its end, the text of the background command's card in
+    // every frame painted.
+    await view.evaluate((el) => {
+      window.__bgTexts = []
+      const sample = () => {
+        const text = el.querySelector(
+          '.term-agent:not([data-leaving]) .term-agent-description'
+        )?.textContent
+        if (text && window.__bgTexts.at(-1) !== text) window.__bgTexts.push(text)
+        window.__bgFrame = requestAnimationFrame(sample)
+      }
+      sample()
+    })
     gate('background-call')
 
     /* 2. The waited-on call joins it. */
@@ -218,6 +247,15 @@ export async function run(t) {
     t.check('the background card leaves at its completion', !!gone, {
       rows: describe(await readRows(view))
     })
+    const texts = await view.evaluate(() => {
+      cancelAnimationFrame(window.__bgFrame)
+      return window.__bgTexts
+    })
+    t.check(
+      'the background card reads as its command in every frame painted, never as the prose the list gives',
+      texts.length === 1 && texts[0] === 'sleep 10 && echo bgc',
+      { texts }
+    )
   } finally {
     if (app) await app.close()
     rmSync(ROOT, { recursive: true, force: true })
