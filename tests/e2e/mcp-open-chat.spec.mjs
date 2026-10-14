@@ -25,7 +25,8 @@ import {
   toolErrored,
   until,
   userDataDir,
-  fixturePath
+  fixturePath,
+  serverDataDirOf
 } from './harness.mjs'
 import { mkdirSync } from 'node:fs'
 
@@ -44,9 +45,9 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
-  const { app, win, server } = await launchApp(DIR)
+  const { app, win } = await launchApp(DIR)
   try {
-    const agent = await spawnAgentTabIn(app, win, server?.dataDir ?? DIR)
+    const agent = await spawnAgentTabIn(app, win, serverDataDirOf(DIR))
     t.check('an agent tab holds an MCP token', !!agent?.token, agent)
     const client = mcpHttpClient(mcpEndpoint(DIR), agent.token)
     await client.init()

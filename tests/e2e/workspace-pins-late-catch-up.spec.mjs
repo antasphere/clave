@@ -32,7 +32,8 @@ import {
   serverEndpoint,
   userDataDir,
   fixturePath,
-  until
+  until,
+  serverMode
 } from './harness.mjs'
 
 const DIR = userDataDir('workspace-pins-late-catch-up')
@@ -104,7 +105,14 @@ export async function run(t) {
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
 
+  // Separate mode runs this spec attached: its probe is installed in the
+  // process that holds the settings before main names the server, and a
+  // separate server is the app's own child, started only after the delay,
+  // so there is no such process to install it in yet. A server in another
+  // process is what attached mode already covers for this subject.
+  const mode = serverMode() === 'separate' ? 'attached' : serverMode()
   const { app, win, server, fixture } = await launchApp(DIR, {
+    server: mode,
     env: { CLAVE_E2E_SERVER_BOOT_DELAY_MS: String(BOOT_DELAY_MS) }
   })
   try {

@@ -1109,8 +1109,8 @@ export async function mcpRoads(app) {
  *  that launch was attached (the restart keeps it), the app's own in-process
  *  and before any launch. */
 export function recordsRootOf(dir) {
-  const mode = launchedModes.get(path.resolve(dir)) ?? 'in-process'
-  return mode === 'attached' ? fixturePath(`${path.basename(dir)}-server`) : dir
+  // The server's own folder in the three modes, separate included (wave 5).
+  return serverDataDirOf(dir)
 }
 
 /** Write a session record as the app writes one, under `recordsRootOf(dir)`,
