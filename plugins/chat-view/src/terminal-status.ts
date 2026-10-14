@@ -3,18 +3,24 @@ import { describeToolHead } from './tools'
 import { claudeModelName } from '../../../src/shared/claude-models'
 
 /** The Terminal view's status line, read off the same session stream the
- *  transcript is: how full the context is (`context_usage`), and the subagents
- *  running now, followed through the `parent` a subagent's own tool calls
- *  carry. A provider that sends neither leaves the line empty. The provider's
- *  raw frames never reach a window (sessions/ipc.ts), so nothing here reads
- *  them. */
+ *  transcript is: how full the context is (`context_usage`), and the work
+ *  running now — subagents, followed through the `parent` a subagent's own
+ *  tool calls carry, and background shells. A provider that sends none of it
+ *  leaves the line empty. The provider's raw frames never reach a window
+ *  (sessions/ipc.ts), so nothing here reads them. */
 export interface SubAgent {
-  /** The tool call that started it: a subagent's frames name it as their parent. */
+  /** The tool call that started it (a subagent's frames name it as their
+   *  parent), else the task's own id when no call is named. */
   id: string
   /** The background task it runs as, which is what stopping it names; null
    *  for an agent the turn waits on. */
   taskId: string | null
-  /** What the agent is (`general-purpose`, `Explore`, …), as the call asked. */
+  /** A subagent, or a shell command left running. */
+  kind: 'agent' | 'shell'
+  /** Started by Claude's Agent tool: the call a relaunch asks for again. */
+  fromAgentTool: boolean
+  /** What the agent is (`general-purpose`, `Explore`, …), as the call asked;
+   *  `shell` for a command. */
   type: string
   description: string
   /** Run in the background (the CLI's default) rather than waited on by the turn. */
@@ -71,10 +77,13 @@ function withActivity(agent: SubAgent, status: TerminalStatus): SubAgent {
 }
 
 function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubAgent {
+  const kind = task.kind === 'shell' ? 'shell' : 'agent'
   return {
     id: task.toolUseId ?? task.id,
     taskId: task.id,
-    type: known?.type ?? 'agent',
+    kind,
+    fromAgentTool: known?.fromAgentTool ?? false,
+    type: known?.type ?? kind,
     description: task.description || known?.description || '',
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
@@ -82,7 +91,7 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     lastActiveAt: known?.lastActiveAt ?? task.startedAt,
     toolCount: known?.toolCount ?? 0,
     contextUsed: known?.contextUsed ?? null,
-    model: known?.model ?? null
+    model: known?.model ?? task.model ?? null
   }
 }
 /** Note what a subagent did, on the agent when it is listed and in the
@@ -119,6 +128,8 @@ export function reduceStatus(
       const agent: SubAgent = {
         id: event.id,
         taskId: null,
+        kind: 'agent',
+        fromAgentTool: true,
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
         background: input.run_in_background === true,
@@ -139,7 +150,8 @@ export function reduceStatus(
       return { ...status, agents: status.agents.filter((a) => a.id !== event.id) }
     }
     case 'background_tasks': {
-      const running = event.tasks.filter((task) => task.kind === 'agent')
+      // Work of a kind the stack cannot name stays off it.
+      const running = event.tasks.filter((task) => task.kind !== 'other')
       const byId = new Map(status.agents.map((agent) => [agent.id, agent]))
       const background = running.map((task) =>
         withActivity(fromBackground(task, byId.get(task.toolUseId ?? task.id)), status)

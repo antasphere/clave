@@ -40,6 +40,8 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
     {
       id: 'agent-1',
       taskId: null,
+      kind: 'agent',
+      fromAgentTool: true,
       type: 'Explore',
       description: 'Find the reducer',
       background: false,
@@ -73,10 +75,138 @@ it('keeps a background agent until the background list drops it, not past the tu
     },
     { type: 'state_change', state: 'done' }
   ])
-  expect(launched.agents.map((a) => [a.id, a.background, a.startedAt])).toEqual([
-    ['bg-call', true, 1000]
+  expect(launched.agents.map((a) => [a.id, a.kind, a.background, a.startedAt])).toEqual([
+    ['bg-call', 'agent', true, 1000],
+    ['shell-1', 'shell', true, 600]
   ])
   expect(run([{ type: 'background_tasks', tasks: [] }], launched).agents).toEqual([])
+})
+
+it('stacks a background shell beside the agents, named by its command', () => {
+  const status = run([
+    call('bash-1', 'Bash', { command: 'npm run dev', run_in_background: true }),
+    { type: 'tool_result', id: 'bash-1', output: 'Command running in background with ID: b1' },
+    {
+      type: 'background_tasks',
+      tasks: [
+        { id: 'b1', kind: 'shell', description: 'npm run dev', toolUseId: 'bash-1', startedAt: 600 }
+      ]
+    }
+  ])
+  expect(status.agents).toEqual([
+    {
+      id: 'bash-1',
+      taskId: 'b1',
+      kind: 'shell',
+      fromAgentTool: false,
+      type: 'shell',
+      description: 'npm run dev',
+      background: true,
+      startedAt: 600,
+      lastAction: null,
+      lastActiveAt: 600,
+      toolCount: 0,
+      contextUsed: null,
+      model: null
+    }
+  ])
+  // Its own completion is the list dropping it, never the turn's end.
+  const after = run([{ type: 'state_change', state: 'done' }], status)
+  expect(after.agents).toHaveLength(1)
+  expect(run([{ type: 'background_tasks', tasks: [] }], after).agents).toEqual([])
+})
+
+it('never makes a row of a foreground command', () => {
+  const status = run([
+    call('c1', 'commandExecution', { command: 'echo fg' }),
+    { type: 'tool_result', id: 'c1', output: 'fg' },
+    call('b2', 'Bash', { command: 'ls' }),
+    { type: 'state_change', state: 'done' }
+  ])
+  expect(status.agents).toEqual([])
+})
+
+it('lists a Codex subagent from the list alone, on the model Codex resolved', () => {
+  const status = run([
+    {
+      type: 'background_tasks',
+      tasks: [
+        {
+          id: 'thread-child',
+          kind: 'agent',
+          description: 'sleep_test',
+          model: 'gpt-6.1-sol',
+          startedAt: 700
+        },
+        {
+          id: 'exec-1',
+          kind: 'shell',
+          description: 'sleep 30',
+          toolUseId: 'exec-1',
+          startedAt: 800
+        }
+      ]
+    },
+    { type: 'context_usage', used: 23_000, window: null, parent: 'thread-child' },
+    { type: 'state_change', state: 'done' }
+  ])
+  expect(status.agents).toEqual([
+    expect.objectContaining({
+      id: 'thread-child',
+      taskId: 'thread-child',
+      kind: 'agent',
+      fromAgentTool: false,
+      type: 'agent',
+      description: 'sleep_test',
+      model: 'gpt-6.1-sol',
+      contextUsed: 23_000,
+      startedAt: 700
+    }),
+    expect.objectContaining({ id: 'exec-1', kind: 'shell', model: null })
+  ])
+  // The meter is the parent's: a child's reading never lands on it.
+  expect(status.contextUsed).toBeNull()
+})
+
+it('reconciles a repeated or reconnected snapshot without doubling or keeping a gone row', () => {
+  const tasks = [
+    { id: 'thread-child', kind: 'agent' as const, description: 'a', startedAt: 700 },
+    {
+      id: 'exec-1',
+      kind: 'shell' as const,
+      description: 'sleep 30',
+      toolUseId: 'exec-1',
+      startedAt: 800
+    }
+  ]
+  const twice = run([
+    { type: 'background_tasks', tasks },
+    { type: 'background_tasks', tasks }
+  ])
+  expect(twice.agents.map((a) => a.id)).toEqual(['thread-child', 'exec-1'])
+  // A late view starts from nothing and reads the held snapshot whole.
+  const late = run([{ type: 'background_tasks', tasks }])
+  expect(late.agents).toEqual(twice.agents)
+  const shrunk = run([{ type: 'background_tasks', tasks: [tasks[1]] }], twice)
+  expect(shrunk.agents.map((a) => a.id)).toEqual(['exec-1'])
+})
+
+it('keeps a waited-on Claude agent beside the background work, then drops it at its result', () => {
+  const status = run([
+    call('fg-agent', 'Agent', { subagent_type: 'Explore', description: 'Wait on me' }),
+    {
+      type: 'background_tasks',
+      tasks: [
+        { id: 'b1', kind: 'shell', description: 'npm test', toolUseId: 'bash-1', startedAt: 600 }
+      ]
+    }
+  ])
+  expect(status.agents.map((a) => [a.id, a.kind])).toEqual([
+    ['fg-agent', 'agent'],
+    ['bash-1', 'shell']
+  ])
+  const done = run([{ type: 'tool_result', id: 'fg-agent', output: 'ok' }], status)
+  expect(done.agents.map((a) => a.id)).toEqual(['bash-1'])
 })
 
 it('clears what the turn waited on when the reader interrupts it', () => {
@@ -120,6 +250,7 @@ it('keeps the task a background agent runs as, which is what stopping it names',
     expect.objectContaining({
       id: 'call-1',
       taskId: 'task-9',
+      fromAgentTool: true,
       background: true,
       model: 'claude-opus-5-5'
     })

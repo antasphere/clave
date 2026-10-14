@@ -1096,6 +1096,10 @@ export function TerminalView({ session, onState }: ChatViewProps): React.JSX.Ele
         </div>
         <SubAgentStack
           agents={status.agents}
+          // A relaunch asks for Claude's Agent tool on a Claude model: only an
+          // agent that tool started (a pane remounted since never saw the call,
+          // hence the session's provider) can be launched again that way.
+          canRelaunch={(agent) => agent.fromAgentTool || session.provider === 'claude'}
           onRelaunch={(agent, alias) => {
             if (!agent.taskId) return
             // Stopped first, then asked for again: the conversation made the

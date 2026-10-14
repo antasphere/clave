@@ -83,3 +83,50 @@ appears without duplicating the saved one. It counts provider requests from
 the relaunch, including startup triggered by the view or model picker.
 Historical images are represented by `[Image]`; their binary content is not
 sent through the history endpoint.
+
+## Subagents and background commands (0.162.1)
+
+`agent-tasks.ndjson` and `agent-tasks-interrupt.ndjson` are selected, redacted
+captures from the installed CLI on 2026-10-14 (`codex-cli 0.162.1`), over the
+same `initialize` the adapter sends (no `experimentalApi`), with
+`thread/start` on `workspace-write` and `never`. Thread and turn IDs are
+renamed (`thread-parent`, `thread-child`, `turn-parent`, `turn-child`), the
+home and working directories replaced, and the hook, account, remote-control
+and MCP-startup frames dropped. Each row also carries `at`, the milliseconds
+since the connection opened. The protocol types were generated with
+`codex app-server generate-ts`.
+
+- `agent-tasks.ndjson`: one turn asked to spawn a subagent that runs
+  `sleep 20`, start `sleep 30 && echo bg2` without waiting, run `echo fg`, and
+  answer. The subagent is a `subAgentActivity` item (`kind: started`, with
+  `agentThreadId`, `agentPath` and the resolved `model`), sent as both
+  `item/started` and `item/completed`; the child thread's own frames carry its
+  `threadId`. Every command is `source: unifiedExecStartup`, the foreground
+  one included: nothing marks a command as left running mid-turn. The parent's
+  `turn/completed` arrives while the background command is still `inProgress`;
+  its `item/completed` comes 17 s later, and the subagent's
+  `subAgentActivity` `kind: completed` 21 s after the turn.
+- `agent-tasks-interrupt.ndjson`: a background `sleep 40` and a foreground
+  `sleep 30`, then `turn/interrupt` three seconds into the second. The turn
+  completes `interrupted` with both still running; the foreground command's
+  `item/completed` follows 27 s later (the capture ends before the other's).
+
+`thread/backgroundTerminals/list` answers `-32600` ("requires experimentalApi
+capability") on this connection, so the adapter does not use it. The v1
+`collabAgentToolCall` item and `thread/closed` are covered by schema-derived
+synthetic cases in `codex-agent-tasks.test.ts`, not by a capture.
+
+The `codex/agent-tasks` scenario uses `@structure-ai/fixtures`: a recording
+provider replays `agent-tasks.ndjson` into a real `CodexAdapter` through
+`SessionManager`, up to the turn's end on the message, and the rest on the
+scenario's second command. Its input is `{}` and its target is the test's
+isolated manager. Load and verify it with:
+
+```sh
+npx vitest run src/main/sessions/adapters/codex-agent-tasks.fixtures.test.ts
+```
+
+It prints its run ID and session ID and keeps only its temporary
+`clave-codex-agent-tasks-<run-id>` folder; remove that folder to clean up.
+After `npm run build`, the Electron check is
+`npm run test:e2e -- codex-chat-agent-tasks`.

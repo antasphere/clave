@@ -8,6 +8,7 @@ import {
   SessionInputSchema,
   userMessageEvent,
   providerPrompt,
+  type BackgroundTask,
   type PreparedPrompt,
   type SessionInput,
   type SessionEvent,
@@ -62,6 +63,33 @@ interface Approval {
   turnId: string
   responses: Map<string, unknown>
 }
+/** How full a thread's context is after its last call, off a tokenUsage frame:
+ *  what that call read and wrote, less the reasoning, which the next call does
+ *  not carry. Raw tokens, like the Claude meter: Codex's own status line also
+ *  drops a fixed baseline, so its percentage reads a few points apart by
+ *  design. Null when the frame names no usable count. */
+const contextOf = (p: Record<string, unknown>): { used: number; window: number | null } | null => {
+  const usage = object(p.tokenUsage)
+  const last = object(usage.last)
+  const reasoning = last.reasoningOutputTokens
+  const used =
+    typeof last.totalTokens === 'number'
+      ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
+      : NaN
+  if (!Number.isFinite(used) || used <= 0) return null
+  const window = usage.modelContextWindow
+  return { used, window: typeof window === 'number' && window > 0 ? window : null }
+}
+/** The states in which a v1 collaboration agent no longer runs. */
+const AGENT_ENDED = new Set(['completed', 'errored', 'shutdown', 'notFound', 'interrupted'])
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v !== '') : []
+/** A command as Codex parsed it ("sleep 30 && echo done"), else as it ran
+ *  (the login-shell wrapper included). */
+const commandOf = (item: Record<string, unknown>): string => {
+  const actions = Array.isArray(item.commandActions) ? item.commandActions.map(object) : []
+  return (actions.length === 1 && text(actions[0].command)) || text(item.command)
+}
 
 /** State belongs to this connection, never to terminal titles or body heuristics. */
 export class CodexTranslator {
@@ -74,7 +102,87 @@ export class CodexTranslator {
   readonly approvals = new Map<string, Approval>()
   private metadataEmitted = false
   private streamed = new Map<string, string>()
+  /** What runs past the turn, by id: a subagent by its own thread, a command
+   *  by its item. A subagent's thread is listed here, which is how its frames
+   *  are told from a stranger's; both kinds stay off the transcript. */
+  private readonly background = new Map<string, BackgroundTask>()
+  /** The main thread's commands running now, by item id. Codex says nothing
+   *  when a command is left running mid-turn; a turn that completes while one
+   *  is still in progress is its word that the command outlives the turn. */
+  private readonly running = new Map<string, BackgroundTask>()
   constructor(private emit: (event: SessionEvent) => void) {}
+
+  /** Publish the background list whole; a snapshot replaces the last. */
+  private publishBackground(): void {
+    this.emit({ type: 'background_tasks', tasks: [...this.background.values()] })
+  }
+  /** Nothing outlives the app-server: its exit empties the list, once. */
+  clearBackground(): void {
+    this.running.clear()
+    if (!this.background.size) return
+    this.background.clear()
+    this.publishBackground()
+  }
+  private listAgent(thread: string, description: string, model: string): boolean {
+    if (!thread || this.background.has(thread)) return false
+    this.background.set(thread, {
+      id: thread,
+      kind: 'agent',
+      description,
+      startedAt: Date.now(),
+      ...(model ? { model } : {})
+    })
+    return true
+  }
+  /** A frame of a subagent's own thread. Its usage reads under its row; its
+   *  text, tools and turns are its own and never the conversation's, so they
+   *  stay provider events. False for a thread no listed subagent runs on. */
+  private childFrame(frame: RpcNotification, thread: string): boolean {
+    const task = this.background.get(thread)
+    if (task?.kind !== 'agent') return false
+    const p = object(frame.params)
+    if (frame.method === 'thread/tokenUsage/updated') {
+      const context = contextOf(p)
+      if (!context) return false
+      this.emit({ type: 'context_usage', used: context.used, window: null, parent: thread })
+      return true
+    }
+    if (frame.method === 'thread/closed') {
+      this.background.delete(thread)
+      this.publishBackground()
+      return true
+    }
+    return false
+  }
+  /** The v2 multi-agent lifecycle: Codex's own record of a subagent starting
+   *  and ending, on the parent thread. False when it changes nothing. */
+  private subAgentActivity(item: Record<string, unknown>): boolean {
+    const thread = text(item.agentThreadId)
+    const kind = text(item.kind)
+    if (kind === 'started') {
+      const name = text(item.agentPath).split('/').filter(Boolean).at(-1) ?? ''
+      return this.listAgent(thread, name || thread, text(item.model))
+    }
+    if (kind === 'completed' || kind === 'interrupted') return this.background.delete(thread)
+    return false
+  }
+  /** The v1 collaboration tools: a completed spawn lists its agents, a
+   *  completed close ends them, and any call's last known states end those
+   *  no longer running. False when it changes nothing. */
+  private collabCall(item: Record<string, unknown>, completed: boolean): boolean {
+    let changed = false
+    const done = completed && text(item.status) === 'completed'
+    const receivers = strings(item.receiverThreadIds)
+    if (done && text(item.tool) === 'spawnAgent')
+      for (const thread of receivers)
+        changed = this.listAgent(thread, text(item.prompt) || thread, text(item.model)) || changed
+    if (done && text(item.tool) === 'closeAgent')
+      for (const thread of receivers) changed = this.background.delete(thread) || changed
+    for (const [thread, state] of Object.entries(object(item.agentsStates)))
+      if (AGENT_ENDED.has(text(object(state).status)))
+        changed = this.background.delete(thread) || changed
+    return changed
+  }
 
   metadata(result: unknown): void {
     const r = object(result)
@@ -98,7 +206,7 @@ export class CodexTranslator {
       this.emit({ type: 'provider_event', provider: 'codex', payload: frame })
     const threadId = text(p.threadId) || text(object(p.thread).id)
     if (this.threadId && threadId && threadId !== this.threadId) {
-      fallback()
+      if (!this.childFrame(frame, threadId)) fallback()
       return
     }
     switch (frame.method) {
@@ -139,6 +247,31 @@ export class CodexTranslator {
           this.streamed.delete(id)
           this.emit({ type: 'assistant_text', delta, final: true })
           return
+        }
+        if (item.type === 'subAgentActivity' || item.type === 'collabAgentToolCall') {
+          const changed =
+            item.type === 'subAgentActivity'
+              ? this.subAgentActivity(item)
+              : this.collabCall(item, completed)
+          if (changed) this.publishBackground()
+          else fallback()
+          return
+        }
+        if (item.type === 'commandExecution') {
+          // A poll of a running process is not a process of its own: the
+          // command that started it is the one listed.
+          if (!completed && item.source !== 'unifiedExecInteraction')
+            this.running.set(id, {
+              id,
+              kind: 'shell',
+              description: commandOf(item),
+              toolUseId: id,
+              startedAt: Date.now()
+            })
+          if (completed) {
+            this.running.delete(id)
+            if (this.background.delete(id)) this.publishBackground()
+          }
         }
         if (['commandExecution', 'fileChange', 'mcpToolCall'].includes(text(item.type))) {
           if (!completed)
@@ -181,6 +314,13 @@ export class CodexTranslator {
           })
         for (const [id, approval] of this.approvals)
           if (approval.turnId === text(turn.id)) this.approvals.delete(id)
+        // What the turn left running is listed before the turn says it is
+        // done, so the view never shows a moment with the work unlisted.
+        if (this.running.size) {
+          for (const task of this.running.values()) this.background.set(task.id, task)
+          this.running.clear()
+          this.publishBackground()
+        }
         this.completedTurnId = text(turn.id)
         this.turnId = ''
         this.streamed.clear()
@@ -189,27 +329,12 @@ export class CodexTranslator {
       }
       case 'thread/tokenUsage/updated': {
         // After every call: `last` is that call, `total` the thread's sum.
-        // Its context is what it read and wrote, less the reasoning, which
-        // the next call does not carry. Raw tokens, like the Claude meter:
-        // Codex's own status line also drops a fixed baseline, so its
-        // percentage reads a few points apart by design.
-        const usage = object(p.tokenUsage)
-        const last = object(usage.last)
-        const reasoning = last.reasoningOutputTokens
-        const used =
-          typeof last.totalTokens === 'number'
-            ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
-            : NaN
-        const window = usage.modelContextWindow
-        if (!Number.isFinite(used) || used <= 0) {
+        const context = contextOf(p)
+        if (!context) {
           fallback()
           return
         }
-        this.emit({
-          type: 'context_usage',
-          used,
-          window: typeof window === 'number' && window > 0 ? window : null
-        })
+        this.emit({ type: 'context_usage', used: context.used, window: context.window })
         return
       }
       case 'serverRequest/resolved': {
@@ -786,6 +911,7 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended) return
     state.ended = true
     state.translator.approvals.clear()
+    state.translator.clearBackground()
     state.mcpConfig?.remove(state.spec.id)
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)

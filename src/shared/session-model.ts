@@ -161,7 +161,11 @@ export const BackgroundTaskSchema = z.object({
   /** When this host first heard of it (epoch ms), for the elapsed timer. */
   startedAt: z.number(),
   /** Where the provider writes its output, when it says. */
-  outputFile: z.string().optional()
+  outputFile: z.string().optional(),
+  /** The model a background agent runs on, when the provider names it at the
+   *  start (Codex resolves it then); held on the task so a view that binds
+   *  late still reads it off the snapshot. */
+  model: z.string().optional()
 })
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>
 export const SessionEventSchema = z.discriminatedUnion('type', [
