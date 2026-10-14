@@ -337,3 +337,49 @@ it('asks the conversation to relaunch the agent it made, on the alias picked', (
   expect(text).toContain('Sonnet 5.5')
   expect(text).toContain('model "sonnet"')
 })
+
+it("never makes a second row of a poll of a running command, and the poll's end keeps the first", () => {
+  const polled = run([
+    call('exec-1', 'commandExecution', { command: 'sleep 30', source: 'unifiedExecStartup' }),
+    call('poll-1', 'commandExecution', { command: 'sleep 30', source: 'unifiedExecInteraction' })
+  ])
+  expect(polled.agents.map((a) => [a.id, a.kind, a.background])).toEqual([
+    ['exec-1', 'shell', false]
+  ])
+  const pollDone = run([{ type: 'tool_result', id: 'poll-1', output: '' }], polled)
+  expect(pollDone.agents.map((a) => a.id)).toEqual(['exec-1'])
+  expect(run([{ type: 'tool_result', id: 'exec-1', output: 'ok' }], pollDone).agents).toEqual([])
+})
+
+it("starts a reused agent's next run fresh, never quiet off the last run, keeping its context", () => {
+  const at = (events: SessionEvent[], time: number, start: TerminalStatus): TerminalStatus =>
+    events.reduce((status, event) => reduceStatus(status, event, time), start)
+  const task = (startedAt: number): SessionEvent => ({
+    type: 'background_tasks',
+    tasks: [
+      {
+        id: 'thread-child',
+        kind: 'agent' as const,
+        description: 'echoer',
+        model: 'gpt-6.1-sol',
+        startedAt
+      }
+    ]
+  })
+  const firstRun = at(
+    [task(500), { type: 'context_usage', used: 23_000, window: null, parent: 'thread-child' }],
+    1_000,
+    emptyStatus
+  )
+  const ended = at([{ type: 'background_tasks', tasks: [] }], 2_000, firstRun)
+  const [rerun] = at([task(100_000)], 100_000, ended).agents
+  expect(rerun).toEqual(
+    expect.objectContaining({
+      id: 'thread-child',
+      startedAt: 100_000,
+      lastActiveAt: 100_000,
+      contextUsed: 23_000,
+      model: 'gpt-6.1-sol'
+    })
+  )
+})

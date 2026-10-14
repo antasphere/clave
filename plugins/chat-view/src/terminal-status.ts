@@ -137,6 +137,9 @@ export function reduceStatus(
       if (status.agents.some((a) => a.id === event.id)) return status
       const input = record(event.input)
       if (event.name === CODEX_COMMAND) {
+        // A poll of a running process (write_stdin) is a call of its own but
+        // no task of its own: the command it polls already has its row.
+        if (input.source === 'unifiedExecInteraction') return status
         const command: SubAgent = {
           id: event.id,
           taskId: null,
@@ -183,9 +186,15 @@ export function reduceStatus(
       // Work of a kind the stack cannot name stays off it.
       const running = event.tasks.filter((task) => task.kind !== 'other')
       const byId = new Map(status.agents.map((agent) => [agent.id, agent]))
-      const background = running.map((task) =>
-        withActivity(fromBackground(task, byId.get(task.toolUseId ?? task.id)), status)
-      )
+      const background = running.map((task) => {
+        const agent = withActivity(
+          fromBackground(task, byId.get(task.toolUseId ?? task.id)),
+          status
+        )
+        // A sign of work from an earlier run (an agent given more work after
+        // it finished) never dates this one: a run is active from its start.
+        return { ...agent, lastActiveAt: Math.max(agent.lastActiveAt, agent.startedAt) }
+      })
       const ids = new Set(background.map((agent) => agent.id))
       return {
         ...status,
