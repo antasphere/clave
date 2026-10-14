@@ -225,6 +225,13 @@ async function bootServer(): Promise<void> {
           bundleDir: __dirname,
           dataDir,
           parent: process.pid,
+          // The plugins the app ships and its version, for the plugin host
+          // on the server (lane C of wave 5): where plugin-ipc.ts finds them.
+          pluginsBundled: join(
+            app.isPackaged ? process.resourcesPath : app.getAppPath(),
+            'plugins'
+          ),
+          appVersion: app.getVersion(),
           flags: flagsForServerChild(process.argv),
           log: (line) => console.error(`[server] ${line}`),
           onExit: (code) => {
