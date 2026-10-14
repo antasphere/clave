@@ -319,18 +319,31 @@ function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] })
   const { activeWorkspaceId: shown, workspaces: before } = useWorkspaceStore.getState()
   const hadShown = shown !== null && before.some((w) => w.id === shown)
   useWorkspaceStore.setState({ workspaces: state.workspaces })
-  // A partition whose last write failed: the copy's pins of it, plus this
-  // window's that the copy lacks, which are what failed to reach the source.
-  // Another window's pins in the copy are kept, and a partition the copy
-  // already covers counts as settled.
+  // A partition whose last write failed: this window's version of every pin
+  // it holds there wins over the copy's (an addition or an edit that failed
+  // to reach the source), and the copy's other pins of it are kept (another
+  // window's). A removal that failed cannot be told from another window's
+  // addition, so the copy's pin comes back (accepted, ADR). A partition whose
+  // pins the copy already holds as this window has them counts as settled;
+  // any other is sent again (round 2 of the lane's verifier, F7, F7b).
   const copied = blueprintsOf(state.pins)
-  const copiedIds = new Set(copied.map((bp) => bp.id))
-  const kept = serializePinnedGroups(usePinnedStore.getState().pinnedGroups).filter(
-    (bp) => failedPartitions.has(pinPartition(bp)) && !copiedIds.has(bp.id)
+  const ours = serializePinnedGroups(usePinnedStore.getState().pinnedGroups).filter((bp) =>
+    failedPartitions.has(pinPartition(bp))
   )
-  const resend = new Set(kept.map((bp) => pinPartition(bp)))
+  const copiedById = new Map(
+    serializePinnedGroups(copied as PinnedGroup[]).map((bp) => [bp.id, JSON.stringify(bp)])
+  )
+  const resend = new Set(
+    ours.filter((bp) => copiedById.get(bp.id) !== JSON.stringify(bp)).map((bp) => pinPartition(bp))
+  )
   for (const key of [...failedPartitions]) if (!resend.has(key)) failedPartitions.delete(key)
-  const blueprints = [...copied, ...kept]
+  const kept = new Map(
+    ours.filter((bp) => resend.has(pinPartition(bp))).map((bp) => [bp.id, bp] as const)
+  )
+  const blueprints = [
+    ...copied.map((bp) => kept.get(bp.id) ?? bp),
+    ...[...kept.values()].filter((bp) => !copiedById.has(bp.id))
+  ]
   const current = new Map(usePinnedStore.getState().pinnedGroups.map((pg) => [pg.id, pg]))
   const next: PinnedGroup[] = blueprints.map((bp) => {
     const prev = current.get(bp.id)

@@ -534,6 +534,48 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect(writes).toHaveLength(0)
   })
 
+  it('keeps its own edit of a pin whose partition’s write failed (F7b)', async () => {
+    loaded = { ...boot(1, [pin('a', 'A'), pin('c', 'C', 'ws2')], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().renamePinnedGroup('a', 'A2')
+    usePinnedStore.getState().addPinnedGroup(pin('d', 'D', 'ws2'))
+    // The second change re-sends ws1 too, its first write still out.
+    expect(scopes()).toEqual(['ws1', 'ws1', 'ws2'])
+    const [renamed, again, added] = writes.splice(0)
+    await renamed.land({ ok: false })
+    await again.land({ ok: false })
+    // The other write's answer holds the source's A, not this window's A2.
+    await added.land({
+      revision: 2,
+      instance: 'main',
+      pins: [pin('a', 'A'), pin('c', 'C', 'ws2'), pin('d', 'D', 'ws2')]
+    })
+    expect(names()).toEqual(['A2', 'C', 'D'])
+    expect(scopes()).toEqual(['ws1'])
+    expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A2'])
+  })
+
+  it('marks a rejected write as failed, and forgets a failed partition once a copy covers it (G3)', async () => {
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    usePinnedStore.getState().addPinnedGroup(pin('a', 'A'))
+    usePinnedStore.getState().addPinnedGroup(pin('c', 'C', 'ws2'))
+    const [first, second, rejected] = writes.splice(0)
+    await first.land({ revision: 2, instance: 'main', pins: [pin('a', 'A')] })
+    await second.land({ revision: 3, instance: 'main', pins: [pin('a', 'A')] })
+    await rejected.fail(new Error('gone'))
+    // Rejected, not refused: still marked, so C is kept and sent again.
+    expect(names()).toEqual(['A', 'C'])
+    expect(scopes()).toEqual(['ws2'])
+    await landAll({ revision: 4, instance: 'main', pins: [pin('a', 'A'), pin('c', 'C', 'ws2')] })
+    // Settled: another window deleting C later is taken, C does not come back.
+    fold!(fromServer(5, [pin('a', 'A')]))
+    expect(names()).toEqual(['A'])
+    expect(writes).toHaveLength(0)
+    error.mockRestore()
+  })
+
   it('lands elsewhere when it adopts a copy whose registry lacks the shown workspace (G2)', async () => {
     loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
     await actions.bootWorkspaces()
