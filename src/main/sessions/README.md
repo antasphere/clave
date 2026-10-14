@@ -184,7 +184,9 @@ typed. Codex reports a `turn/completed` whose status is `interrupted` alike.
 Codex's running work reaches `background_tasks` from the app-server's own
 lifecycle: a `subAgentActivity` (or v1 `collabAgentToolCall`) lists a subagent
 by its thread and its end drops it; a command still in progress when the turn
-completes is listed until its own `item/completed`. A listed subagent's thread
+completes is listed until its own `item/completed`. A known subagent whose
+thread starts another turn (work sent to it after it finished) is listed
+again, under the name and model it was first listed with. A listed subagent's thread
 contributes only its context usage, under its row; every other frame of it,
 and every frame of a thread no row names, stays a `provider_event`
 (`fixtures/codex-app-server/README.md`).

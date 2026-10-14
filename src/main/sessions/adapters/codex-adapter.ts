@@ -80,8 +80,10 @@ const contextOf = (p: Record<string, unknown>): { used: number; window: number |
   const window = usage.modelContextWindow
   return { used, window: typeof window === 'number' && window > 0 ? window : null }
 }
-/** The states in which a v1 collaboration agent no longer runs. */
+/** The states in which a v1 collaboration agent no longer runs, and those in
+ *  which it runs (again). */
 const AGENT_ENDED = new Set(['completed', 'errored', 'shutdown', 'notFound', 'interrupted'])
+const AGENT_RUNNING = new Set(['pendingInit', 'running'])
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v !== '') : []
 /** A command as Codex parsed it ("sleep 30 && echo done"), else as it ran
@@ -110,6 +112,10 @@ export class CodexTranslator {
    *  when a command is left running mid-turn; a turn that completes while one
    *  is still in progress is its word that the command outlives the turn. */
   private readonly running = new Map<string, BackgroundTask>()
+  /** Every subagent this connection has seen, by thread, listed or not: an
+   *  agent given more work after it finished runs again on the same thread,
+   *  and Codex's follow-up names neither its path nor its model. */
+  private readonly agents = new Map<string, Pick<BackgroundTask, 'description' | 'model'>>()
   constructor(private emit: (event: SessionEvent) => void) {}
 
   /** Publish the background list whole; a snapshot replaces the last. */
@@ -119,25 +125,33 @@ export class CodexTranslator {
   /** Nothing outlives the app-server: its exit empties the list, once. */
   clearBackground(): void {
     this.running.clear()
+    this.agents.clear()
     if (!this.background.size) return
     this.background.clear()
     this.publishBackground()
   }
   private listAgent(thread: string, description: string, model: string): boolean {
     if (!thread || this.background.has(thread)) return false
-    this.background.set(thread, {
-      id: thread,
-      kind: 'agent',
-      description,
-      startedAt: Date.now(),
-      ...(model ? { model } : {})
-    })
+    this.agents.set(thread, { description, ...(model ? { model } : {}) })
+    return this.relist(thread)
+  }
+  /** List a known subagent for a run of its own, as it was first named. */
+  private relist(thread: string): boolean {
+    const known = this.agents.get(thread)
+    if (!known || this.background.has(thread)) return false
+    this.background.set(thread, { id: thread, kind: 'agent', ...known, startedAt: Date.now() })
     return true
   }
   /** A frame of a subagent's own thread. Its usage reads under its row; its
    *  text, tools and turns are its own and never the conversation's, so they
    *  stay provider events. False for a thread no listed subagent runs on. */
   private childFrame(frame: RpcNotification, thread: string): boolean {
+    // A known agent's thread starting a turn is its next run: work sent to
+    // it after it finished (Codex 0.162.1 says `interacted`, then this).
+    if (frame.method === 'turn/started' && this.relist(thread)) {
+      this.publishBackground()
+      return true
+    }
     const task = this.background.get(thread)
     if (task?.kind !== 'agent') return false
     const p = object(frame.params)
@@ -168,7 +182,8 @@ export class CodexTranslator {
   }
   /** The v1 collaboration tools: a completed spawn lists its agents, a
    *  completed close ends them, and any call's last known states end those
-   *  no longer running. False when it changes nothing. */
+   *  no longer running and list again a known one running anew (a resumed
+   *  or re-tasked agent). False when it changes nothing. */
   private collabCall(item: Record<string, unknown>, completed: boolean): boolean {
     let changed = false
     const done = completed && text(item.status) === 'completed'
@@ -178,9 +193,11 @@ export class CodexTranslator {
         changed = this.listAgent(thread, text(item.prompt) || thread, text(item.model)) || changed
     if (done && text(item.tool) === 'closeAgent')
       for (const thread of receivers) changed = this.background.delete(thread) || changed
-    for (const [thread, state] of Object.entries(object(item.agentsStates)))
-      if (AGENT_ENDED.has(text(object(state).status)))
-        changed = this.background.delete(thread) || changed
+    for (const [thread, state] of Object.entries(object(item.agentsStates))) {
+      const status = text(object(state).status)
+      if (AGENT_ENDED.has(status)) changed = this.background.delete(thread) || changed
+      else if (AGENT_RUNNING.has(status)) changed = this.relist(thread) || changed
+    }
     return changed
   }
 
@@ -305,6 +322,13 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
+        // What the turn left running is listed before the turn says it ended,
+        // so the view never shows a moment with the work unlisted.
+        if (this.running.size) {
+          for (const task of this.running.values()) this.background.set(task.id, task)
+          this.running.clear()
+          this.publishBackground()
+        }
         if (turn.status === 'interrupted') this.emit({ type: 'turn_interrupted' })
         else if (turn.error)
           this.emit({
@@ -314,13 +338,6 @@ export class CodexTranslator {
           })
         for (const [id, approval] of this.approvals)
           if (approval.turnId === text(turn.id)) this.approvals.delete(id)
-        // What the turn left running is listed before the turn says it is
-        // done, so the view never shows a moment with the work unlisted.
-        if (this.running.size) {
-          for (const task of this.running.values()) this.background.set(task.id, task)
-          this.running.clear()
-          this.publishBackground()
-        }
         this.completedTurnId = text(turn.id)
         this.turnId = ''
         this.streamed.clear()

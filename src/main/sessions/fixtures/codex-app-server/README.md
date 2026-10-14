@@ -111,8 +111,23 @@ since the connection opened. The protocol types were generated with
   completes `interrupted` with both still running; the foreground command's
   `item/completed` follows 27 s later (the capture ends before the other's).
 
+- `agent-tasks-followup.ndjson`: a subagent spawned and waited on, then given
+  a follow-up (`sleep 6`, then a reply) that it runs past the parent's turn.
+  The follow-up is `subAgentActivity` `kind: interacted` with `model: null`,
+  then the child thread's own `turn/started`; its end is a second
+  `kind: completed`. This one was captured with `experimentalApi` on; its
+  `thread/backgroundTerminals/list` frames and the capability are removed,
+  and nothing it keeps depends on them.
+
 `thread/backgroundTerminals/list` answers `-32600` ("requires experimentalApi
-capability") on this connection, so the adapter does not use it. The v1
+capability") on the adapter's connection, and with the capability it lists
+every live process, commands the turn is still waiting on included (a probe
+on 2026-10-14 saw `sleep 4` and `sleep 15` there while their calls waited).
+It cannot tell a command left running from a waited-on one, so the adapter
+does not use it. The Terminal view instead shows every running Codex command
+from its `commandExecution` call to its result, as running work; the adapter
+lists one as background work only once the turn completes without it (the
+tab's background count reads that list alone). The v1
 `collabAgentToolCall` item and `thread/closed` are covered by schema-derived
 synthetic cases in `codex-agent-tasks.test.ts`, not by a capture.
 

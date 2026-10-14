@@ -160,6 +160,142 @@ describe('Codex agent tasks, an interrupted turn', () => {
   })
 })
 
+describe('Codex agent tasks, a subagent given more work', () => {
+  // agent-tasks-followup.ndjson: a subagent spawned and waited on, then sent
+  // a follow-up (`sleep 6`, then a reply) that it runs after the parent's turn.
+  const frames = readFileSync(
+    new URL('../fixtures/codex-app-server/agent-tasks-followup.ndjson', import.meta.url),
+    'utf8'
+  )
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((r) => r.direction === 'server' && r.frame.method && r.frame.id === undefined)
+    .map((r) => r.frame as RpcNotification)
+  const ids = (events: SessionEvent[]): string =>
+    (lastSnapshot(events) ?? []).map((t) => t.id).join(',')
+
+  it('lists it again for its next run, by its first name and model, and drops it at that run end', () => {
+    const { translator: t, events } = translator()
+    const seen: string[] = []
+    for (const frame of frames) {
+      const before = snapshots(events).length
+      t.notification(frame)
+      if (snapshots(events).length > before) seen.push(`${frame.method}:${ids(events)}`)
+    }
+    expect(seen).toEqual([
+      'item/started:thread-child',
+      'item/started:',
+      'turn/started:thread-child',
+      'item/started:'
+    ])
+    const rerun = snapshots(events)[2]
+    expect(rerun).toEqual([
+      {
+        id: 'thread-child',
+        kind: 'agent',
+        description: 'echoer',
+        model: 'gpt-6.1-sol',
+        startedAt: expect.any(Number)
+      }
+    ])
+    // The parent's turn ended while the follow-up ran: the row outlived it.
+    const parentDone = frames.findIndex(
+      (f) =>
+        f.method === 'turn/completed' &&
+        (f.params as { threadId: string }).threadId === 'thread-parent'
+    )
+    const rerunAt = frames.findIndex(
+      (f, i) =>
+        i > 0 &&
+        f.method === 'turn/started' &&
+        (f.params as { threadId: string }).threadId === 'thread-child' &&
+        frames.slice(0, i).some((g) => JSON.stringify(g).includes('"interacted"'))
+    )
+    expect(rerunAt).toBeLessThan(parentDone)
+  })
+
+  it('lists a known agent a status snapshot says runs again, and never a stranger', () => {
+    const { translator: t, events } = translator()
+    t.notification(started('echoer', 'child-a', { model: 'gpt-6.1-mini' }))
+    t.notification(
+      at({
+        item: { type: 'subAgentActivity', id: 'c', kind: 'completed', agentThreadId: 'child-a' }
+      })
+    )
+    const collab = (tool: string, states: Record<string, string>): RpcNotification =>
+      at(
+        {
+          item: {
+            type: 'collabAgentToolCall',
+            id: `${tool}-2`,
+            tool,
+            status: 'completed',
+            senderThreadId: 'thread-parent',
+            receiverThreadIds: Object.keys(states),
+            prompt: 'again',
+            model: null,
+            reasoningEffort: null,
+            agentsStates: Object.fromEntries(
+              Object.entries(states).map(([id, status]) => [id, { status, message: null }])
+            )
+          }
+        },
+        'item/completed'
+      )
+    t.notification(collab('resumeAgent', { 'child-a': 'running', stranger: 'running' }))
+    expect(lastSnapshot(events)).toEqual([
+      expect.objectContaining({ id: 'child-a', description: 'echoer', model: 'gpt-6.1-mini' })
+    ])
+    t.notification(collab('wait', { 'child-a': 'completed' }))
+    expect(lastSnapshot(events)).toEqual([])
+    t.notification(collab('sendInput', { 'child-a': 'pendingInit' }))
+    expect(lastSnapshot(events)?.map((task) => task.id)).toEqual(['child-a'])
+  })
+
+  it("keeps a stranger's turn, and a known agent's interaction, provider events", () => {
+    const { translator: t, events } = translator()
+    t.notification(started('echoer', 'child-a'))
+    const before = events.length
+    t.notification({ method: 'turn/started', params: { threadId: 'stranger', turn: { id: 's' } } })
+    t.notification(
+      at({
+        item: { type: 'subAgentActivity', id: 'i', kind: 'interacted', agentThreadId: 'child-a' }
+      })
+    )
+    expect(events.slice(before).map((e) => e.type)).toEqual(['provider_event', 'provider_event'])
+  })
+})
+
+describe('Codex agent tasks, the order at a turn end', () => {
+  it('lists what an interrupted turn left running before saying it was interrupted', () => {
+    const { translator: t, events } = translator()
+    t.notification({
+      method: 'turn/started',
+      params: { threadId: 'thread-parent', turn: { id: 'turn-parent' } }
+    })
+    t.notification(
+      at({
+        item: {
+          type: 'commandExecution',
+          id: 'run',
+          command: 'sleep 9',
+          commandActions: [],
+          source: 'unifiedExecStartup',
+          status: 'inProgress'
+        }
+      })
+    )
+    const before = events.length
+    t.notification(at({ turn: { id: 'turn-parent', status: 'interrupted' } }, 'turn/completed'))
+    expect(events.slice(before).map((e) => e.type)).toEqual([
+      'background_tasks',
+      'turn_interrupted',
+      'state_change'
+    ])
+  })
+})
+
 const at = (params: Record<string, unknown>, method = 'item/started'): RpcNotification => ({
   method,
   params: { threadId: 'thread-parent', turnId: 'turn-parent', ...params }

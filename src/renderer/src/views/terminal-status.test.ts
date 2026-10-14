@@ -116,11 +116,61 @@ it('stacks a background shell beside the agents, named by its command', () => {
   expect(run([{ type: 'background_tasks', tasks: [] }], after).agents).toEqual([])
 })
 
-it('never makes a row of a foreground command', () => {
+it('shows a Codex command while it runs, as running rather than background, until its result', () => {
+  const running = run([
+    call('c1', 'commandExecution', {
+      command: "/bin/zsh -lc 'echo fg'",
+      commandActions: [{ type: 'unknown', command: 'echo fg' }]
+    })
+  ])
+  expect(running.agents).toEqual([
+    {
+      id: 'c1',
+      taskId: null,
+      kind: 'shell',
+      fromAgentTool: false,
+      type: 'shell',
+      description: 'echo fg',
+      background: false,
+      startedAt: 1000,
+      lastAction: null,
+      lastActiveAt: 1000,
+      toolCount: 0,
+      contextUsed: null,
+      model: null
+    }
+  ])
+  expect(run([{ type: 'tool_result', id: 'c1', output: 'fg' }], running).agents).toEqual([])
+  // A Claude Bash call the turn waits on stays the transcript's alone.
+  expect(run([call('b2', 'Bash', { command: 'ls' })]).agents).toEqual([])
+})
+
+it('keeps one row when a running command outlives the turn and becomes background work', () => {
+  const running = run([call('c1', 'commandExecution', { command: 'sleep 30', commandActions: [] })])
+  const promoted = run(
+    [
+      {
+        type: 'background_tasks',
+        tasks: [
+          { id: 'c1', kind: 'shell', description: 'sleep 30', toolUseId: 'c1', startedAt: 5000 }
+        ]
+      },
+      { type: 'state_change', state: 'done' }
+    ],
+    running
+  )
+  expect(promoted.agents.map((a) => [a.id, a.background, a.startedAt])).toEqual([
+    ['c1', true, 1000]
+  ])
+  // Its completion's result leaves it to the list, which drops it.
+  const resulted = run([{ type: 'tool_result', id: 'c1', output: 'ok' }], promoted)
+  expect(resulted.agents).toHaveLength(1)
+  expect(run([{ type: 'background_tasks', tasks: [] }], resulted).agents).toEqual([])
+})
+
+it('drops a running command the turn ends without listing', () => {
   const status = run([
-    call('c1', 'commandExecution', { command: 'echo fg' }),
-    { type: 'tool_result', id: 'c1', output: 'fg' },
-    call('b2', 'Bash', { command: 'ls' }),
+    call('c1', 'commandExecution', { command: 'echo fg', commandActions: [] }),
     { type: 'state_change', state: 'done' }
   ])
   expect(status.agents).toEqual([])

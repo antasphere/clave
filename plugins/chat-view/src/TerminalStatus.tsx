@@ -148,9 +148,11 @@ function AgentModel({
 /** The work running now, stacked under the status line. A subagent's row
  *  says what it is, what it was asked, the model it runs on, how many steps it
  *  has taken, how full its own context is and how long it has run; a
- *  background command's row says the command and how long it has run, behind
- *  a terminal glyph. The dot (the glyph, for a command) is the loader: it
- *  breathes while the work runs; an agent's rings once at each new step and
+ *  command's row says the command and how long it has run, behind a terminal
+ *  glyph, from its start whether the turn waits on it or not (one that
+ *  outlives the turn keeps its row, as background work). The dot (the glyph,
+ *  for a command) is the loader: it breathes while the work runs; an agent's
+ *  rings once at each new step and
  *  goes still once the agent has been quiet a minute, which the row then
  *  says; its last step is in the row's tooltip, not on the line. A command
  *  takes no steps, so it is never called quiet. A row folds open as its work
@@ -235,7 +237,7 @@ export function SubAgentStack({
                 className="term-agent-row"
                 title={
                   shell
-                    ? `Running in the background: ${agent.description}`
+                    ? `${agent.background ? 'Running in the background' : 'Running'}: ${agent.description}`
                     : agent.lastAction
                       ? `Last step: ${agent.lastAction}`
                       : 'No step yet'

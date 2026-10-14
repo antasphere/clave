@@ -57,6 +57,11 @@ export const emptyStatus: TerminalStatus = {
 }
 
 const AGENT_TOOLS = new Set(['agent', 'task'])
+/** The Codex adapter's name for a command call. Every command it runs shows
+ *  while it runs, waited on or not: Codex does not say, mid-turn, which ones
+ *  were left running. One that outlives the turn comes back in the
+ *  background list under the same id and keeps its row. */
+const CODEX_COMMAND = 'commandExecution'
 const isAgentTool = (name: string): boolean => AGENT_TOOLS.has(name.toLowerCase())
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -64,6 +69,12 @@ function record(value: unknown): Record<string, unknown> {
     : {}
 }
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+/** A Codex command as Codex parsed it, else as it ran. */
+function commandOf(input: Record<string, unknown>): string {
+  const actions = Array.isArray(input.commandActions) ? input.commandActions.map(record) : []
+  return (actions.length === 1 && text(actions[0].command)) || text(input.command)
+}
 
 /** One call, the way a row of the transcript names it: "Read reducer.ts". */
 function actionOf(name: string, input: unknown): string {
@@ -123,8 +134,27 @@ export function reduceStatus(
           lastActiveAt: now,
           toolCount: (status.activity[event.parent]?.toolCount ?? 0) + 1
         })
-      if (!isAgentTool(event.name) || status.agents.some((a) => a.id === event.id)) return status
+      if (status.agents.some((a) => a.id === event.id)) return status
       const input = record(event.input)
+      if (event.name === CODEX_COMMAND) {
+        const command: SubAgent = {
+          id: event.id,
+          taskId: null,
+          kind: 'shell',
+          fromAgentTool: false,
+          type: 'shell',
+          description: commandOf(input),
+          background: false,
+          startedAt: now,
+          lastAction: null,
+          lastActiveAt: now,
+          toolCount: 0,
+          contextUsed: null,
+          model: null
+        }
+        return { ...status, agents: [...status.agents, command] }
+      }
+      if (!isAgentTool(event.name)) return status
       const agent: SubAgent = {
         id: event.id,
         taskId: null,
