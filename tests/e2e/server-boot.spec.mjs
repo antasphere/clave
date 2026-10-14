@@ -210,10 +210,46 @@ async function appPorts(pid) {
 
 /** A loopback proxy in front of `target` that holds `POST /clients` for
  *  `delayMs` and forwards everything else at once. */
-function delayingProxy(target, { delayMs }) {
+function delayingProxy(target, { delayMs = null } = {}) {
   const t = new URL(target)
+  // Held until `release()` (or 20 s, a ceiling for a spec that dies) when no
+  // delay is given: a fixed clock let the registration land before the quit
+  // whenever the app booted slower than it, on a loaded runner (CI on #175,
+  // and rounds 2 and 3 of the verifier).
+  const waiting = []
+  let released = false
+  // Each held registration's answer from the server, so a spec can wait for
+  // it to have LANDED before it asks who is registered: a read before that
+  // finds no client whatever the app did (the ghost check passed at its
+  // first read with the quit's wait on the boot removed).
+  const answered = []
+  const hold = (fn) => {
+    if (released) return fn()
+    waiting.push(fn)
+    setTimeout(() => {
+      const i = waiting.indexOf(fn)
+      if (i >= 0) waiting.splice(i, 1)[0]()
+    }, 20_000)
+  }
   const server = http.createServer((req, res) => {
+    // The body is read as it arrives and forwarded from this copy: a client
+    // that dies while its request is held has already sent it whole, and the
+    // server must still receive it (otherwise a quit that does not wait on
+    // its registration looks clean here, which is the defect this proxy is
+    // for).
+    const chunks = []
+    let ended = false
+    let pendingForward = null
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      ended = true
+      if (pendingForward) pendingForward()
+    })
     const forward = () => {
+      if (!ended) {
+        pendingForward = forward
+        return
+      }
       const up = http.request(
         {
           host: t.hostname,
@@ -223,23 +259,42 @@ function delayingProxy(target, { delayMs }) {
           headers: { ...req.headers, host: t.host }
         },
         (upRes) => {
+          // The server's answer is what "landed" means, whatever became of
+          // the client that asked.
+          upRes.once('end', () => req.landed?.())
+          if (res.destroyed) return upRes.resume()
           res.writeHead(upRes.statusCode ?? 502, upRes.headers)
           upRes.pipe(res)
         }
       )
       up.on('error', () => {
+        req.landed?.()
         if (!res.headersSent) res.writeHead(502)
         res.end()
       })
-      req.pipe(up)
+      up.end(Buffer.concat(chunks))
     }
-    if (req.method === 'POST' && req.url === '/clients') setTimeout(forward, delayMs)
-    else forward()
+    if (req.method === 'POST' && req.url === '/clients') {
+      let landed
+      answered.push(new Promise((resolve) => (landed = resolve)))
+      req.landed = () => landed()
+      if (delayMs !== null) setTimeout(forward, delayMs)
+      else hold(forward)
+    } else forward()
   })
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () =>
       resolve({
         url: `http://127.0.0.1:${server.address().port}`,
+        /** Let every held registration through, and any later one at once. */
+        release: () => {
+          released = true
+          for (const fn of waiting.splice(0)) fn()
+        },
+        /** How many registrations are being held now. */
+        held: () => waiting.length,
+        /** Resolves once every registration seen so far has had its answer. */
+        landed: () => Promise.all(answered),
         close: () =>
           new Promise((r) => {
             server.close(() => r())
@@ -468,23 +523,26 @@ export async function run(t) {
   // ── 4. A quit while the registration is still in flight ──
   {
     const own = await startE2eServer('server-boot-slow')
-    const proxy = await delayingProxy(own.url, { delayMs: 3000 })
+    const proxy = await delayingProxy(own.url)
     try {
       const DIR = userDataDir('server-boot-quit-race')
       seed(DIR)
       const client = serverClient(own.url, own.token)
-      // The launch must return BEFORE the registration lands (the proxy
-      // holds it 3 s): the harness is told not to wait for the server's
-      // discovery file, which is written by that very registration.
+      // The launch must return BEFORE the registration lands: the proxy
+      // holds it until the quit is asked for, and the harness is told not to
+      // wait for the server's discovery file, which that very registration
+      // writes.
       const { app } = await launchApp(DIR, {
         server: { url: proxy.url, token: own.token },
         settleMs: 300,
         waitForServer: false
       })
       const pid = app.process().pid
+      const held = await until(() => (proxy.held() > 0 ? true : null), { tries: 80, gapMs: 250 })
       t.check(
         'the registration had not landed when the quit came',
-        !(await client.clients()).body?.some?.((c) => c.pid === pid)
+        held === true && !(await client.clients()).body?.some?.((c) => c.pid === pid),
+        { held: proxy.held() }
       )
       // Quit the way the user does (Cmd+Q: `app.quit()`, the before-quit
       // ladder, the process ending on its own), and wait for the process to
@@ -492,7 +550,18 @@ export async function run(t) {
       // schedule, which can land before the quit cleanup finishes and would
       // make this pin measure the driver, not the app.
       const exited = new Promise((resolve) => app.process().once('exit', () => resolve(true)))
-      await app.evaluate(({ app: electronApp }) => electronApp.quit())
+      // The process may end before the call answers: that is the quit.
+      const quitting = app
+        .evaluate(({ app: electronApp }) => electronApp.quit())
+        .catch(() => undefined)
+      // The registration lands only now, while the quit waits on the boot
+      // (inside the quit's 8 s ceiling), which is the race this part pins.
+      await new Promise((r) => setTimeout(r, 300))
+      proxy.release()
+      await quitting
+      // The registration has reached the server (and, with the app gone,
+      // the server has registered it) before anything asks who is there.
+      await Promise.race([proxy.landed(), new Promise((r) => setTimeout(r, 10_000))])
       t.check(
         'the app quit on its own within 15 s',
         (await Promise.race([exited, new Promise((r) => setTimeout(() => r(false), 15_000))])) ===
