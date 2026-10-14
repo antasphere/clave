@@ -4,7 +4,15 @@ import './user-data-override'
 // SECOND, before any manager: a pre-release's first run on a stable data
 // directory snapshots the state files before anything can rewrite them.
 import { prereleaseSnapshotOutcome } from './prerelease-snapshot-boot'
-import { app, BrowserWindow, shell, nativeImage, nativeTheme, Notification } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  shell,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  safeStorage
+} from 'electron'
 import { flushRendererStorage } from './flush-storage'
 import { TEST_NO_ACTIVATE } from './test-mode'
 import { join } from 'path'
@@ -67,6 +75,10 @@ import {
   type ServerLaunch
 } from './server-boot'
 import { flagsForServerChild, startSeparateServer } from './server-child'
+import { migrateAppDataToServer } from './server-migration'
+import { safeStorageSecrets } from './ports/electron'
+import { keychainSecrets } from './ports/secrets'
+import { KEYCHAIN_SERVICE, keychainFileFromEnv } from './ports/standalone'
 import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
@@ -93,7 +105,11 @@ import { shellPlugins } from './plugins/shell-plugins'
 // until dismissed).
 const serverLaunch: ServerLaunch = (() => {
   try {
-    return takeServerLaunch(process.env, { argv: process.argv, packaged: app.isPackaged })
+    return takeServerLaunch(process.env, {
+      argv: process.argv,
+      packaged: app.isPackaged,
+      platform: process.platform
+    })
   } catch (err) {
     process.stderr.write(`[server] ${(err as Error).message}\n`)
     return process.exit(2)
@@ -187,13 +203,39 @@ async function bootServer(): Promise<void> {
       },
       // The separate server (wave 5): the standalone entry as a child of this
       // process, from the bundles beside this one, on a data directory of
-      // its own under the app's, told this shell's test flags and pid.
-      startSeparate: () =>
-        startSeparateServer({
+      // its own under the app's, told this shell's test flags and pid. The
+      // first time, the app's own documents are carried into that directory
+      // (server-migration.ts): the plain ones copied, the Claude tokens and
+      // the Antasphere session opened with this process's safeStorage and
+      // sealed again in the Keychain the server reads, in memory only.
+      startSeparate: () => {
+        const dataDir = join(app.getPath('userData'), 'server')
+        const migration = migrateAppDataToServer({
+          appDir: app.getPath('userData'),
+          serverDir: dataDir,
+          from: safeStorageSecrets(safeStorage),
+          to: keychainSecrets({
+            service: KEYCHAIN_SERVICE,
+            keychainFile: keychainFileFromEnv(process.env)
+          }),
+          log: (line) => console.log(`[server] migration: ${line}`)
+        })
+        if (migration.outcome === 'migrated')
+          console.log(
+            `[server] migrated the app's data into ${dataDir}: ${migration.copied.length} copied, ${migration.kept.length} kept, ${migration.unopened.length} secret(s) not opened`
+          )
+        return startSeparateServer({
           execPath: process.execPath,
           bundleDir: __dirname,
-          dataDir: join(app.getPath('userData'), 'server'),
+          dataDir,
           parent: process.pid,
+          // The plugins the app ships and its version, for the plugin host
+          // on the server (lane C of wave 5): where plugin-ipc.ts finds them.
+          pluginsBundled: join(
+            app.isPackaged ? process.resourcesPath : app.getAppPath(),
+            'plugins'
+          ),
+          appVersion: app.getVersion(),
           flags: flagsForServerChild(process.argv),
           log: (line) => console.error(`[server] ${line}`),
           onExit: (code) => {
@@ -220,6 +262,7 @@ async function bootServer(): Promise<void> {
               }).show()
           }
         })
+      }
     })
     console.log(
       `[server] ${serverHandle.mode} at ${serverHandle.url}` +

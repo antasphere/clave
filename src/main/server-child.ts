@@ -64,6 +64,14 @@ export interface ServerChildOptions {
   readonly parent: number
   /** The shell's test flags, passed on as they are. */
   readonly flags?: readonly string[]
+  /** The folder of the plugins the app ships (`Resources/plugins` packaged,
+   *  outside the asar, so the entry's default beside its bundle finds
+   *  nothing there), told to the entry as `--plugins-bundled` (wave 5,
+   *  lane C's plugin host on the server). */
+  readonly pluginsBundled?: string
+  /** The app's version, told as `--app-version`: a plugin's `engines.clave`
+   *  is judged against it. */
+  readonly appVersion?: string
   /** The environment to start from; the process's by default. */
   readonly env?: NodeJS.ProcessEnv
   readonly timeoutMs?: number
@@ -84,7 +92,14 @@ export interface ServerChildCommand {
 export function serverChildCommand(
   options: Pick<
     ServerChildOptions,
-    'execPath' | 'bundleDir' | 'dataDir' | 'parent' | 'flags' | 'env'
+    | 'execPath'
+    | 'bundleDir'
+    | 'dataDir'
+    | 'parent'
+    | 'flags'
+    | 'env'
+    | 'pluginsBundled'
+    | 'appVersion'
   >
 ): ServerChildCommand {
   const env: NodeJS.ProcessEnv = { ...(options.env ?? process.env), [RUN_AS_NODE_ENV]: '1' }
@@ -102,6 +117,8 @@ export function serverChildCommand(
       path.join(options.bundleDir, TERMINAL_PROCESS_BUNDLE),
       '--parent',
       String(options.parent),
+      ...(options.pluginsBundled ? ['--plugins-bundled', options.pluginsBundled] : []),
+      ...(options.appVersion ? ['--app-version', options.appVersion] : []),
       ...(options.flags ?? [])
     ],
     env

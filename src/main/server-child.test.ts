@@ -45,6 +45,25 @@ describe('the separate server command', () => {
     expect('CLAVE_SERVER_TOKEN' in env).toBe(false)
   })
 
+  it('tells the child where the shipped plugins are and the app version, before the test flags', () => {
+    const { args } = serverChildCommand({
+      execPath: '/A/Clave.app/Contents/MacOS/Clave',
+      bundleDir: '/A/Clave.app/Contents/Resources/app.asar/out/main',
+      dataDir: '/d/server',
+      parent: 1,
+      pluginsBundled: '/A/Clave.app/Contents/Resources/plugins',
+      appVersion: '2.4.0',
+      flags: ['--test-no-activate']
+    })
+    expect(args.slice(-5)).toEqual([
+      '--plugins-bundled',
+      '/A/Clave.app/Contents/Resources/plugins',
+      '--app-version',
+      '2.4.0',
+      '--test-no-activate'
+    ])
+  })
+
   it('passes on the shell’s test and development flags and nothing else of its argv', () => {
     expect(
       flagsForServerChild([
