@@ -1863,3 +1863,119 @@ describe('the reasoning effort of a Claude chat', () => {
     ).rejects.toThrow()
   })
 })
+describe('a background list that names a task before its call', () => {
+  const list = (...ids: string[]): unknown => ({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: ids.map((id) => ({ task_id: id, task_type: 'local_bash', description: 'sleep 10' }))
+  })
+  const started = (id: string, call: string): unknown => ({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: id,
+    tool_use_id: call,
+    description: 'sleep 10',
+    is_backgrounded: true,
+    task_type: 'local_bash'
+  })
+  const snapshots = (): { id: string; toolUseId?: string }[][] =>
+    events.flatMap((e) => (e.type === 'background_tasks' ? [e.tasks] : []))
+
+  it('publishes the task linked to its call when task_started follows in the same read, as the CLI sends it', () => {
+    feed(list('t1'))
+    feed(started('t1', 'toolu_1'))
+    expect(snapshots()).toEqual([[expect.objectContaining({ id: 't1', toolUseId: 'toolu_1' })]])
+  })
+
+  it('keeps two same-named tasks apart by their own call ids', () => {
+    feed(list('t1', 't2'))
+    feed(started('t1', 'toolu_1'))
+    feed(started('t2', 'toolu_2'))
+    expect(snapshots().every((tasks) => tasks.every((t) => t.toolUseId))).toBe(true)
+    expect(
+      snapshots()
+        .at(-1)
+        ?.map((t) => `${t.id}:${t.toolUseId}`)
+    ).toEqual(['t1:toolu_1', 't2:toolu_2'])
+  })
+
+  it('still publishes a task the CLI never links, at the end of the read', async () => {
+    feed(list('t1'))
+    expect(snapshots()).toEqual([])
+    await Promise.resolve()
+    expect(snapshots()).toEqual([[expect.objectContaining({ id: 't1' })]])
+  })
+
+  it('publishes the held list before any later event the view reads, so nothing changes order', () => {
+    feed(list('t1'))
+    feed({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })
+    const order = events.filter((e) => e.type !== 'provider_event').map((e) => e.type)
+    expect(order.indexOf('background_tasks')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('background_tasks')).toBeLessThan(order.indexOf('state_change'))
+  })
+
+  it('publishes an emptied list at once', () => {
+    feed(started('t1', 'toolu_1'))
+    feed(list())
+    expect(snapshots().at(-1)).toEqual([])
+  })
+})
+describe('a waited-on Bash task the CLI lists later', () => {
+  const startedFg = (id: string, call: string): unknown => ({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: id,
+    tool_use_id: call,
+    description: 'Long sleep',
+    is_backgrounded: false,
+    task_type: 'local_bash'
+  })
+  const list = (...ids: string[]): unknown => ({
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: ids.map((id) => ({ task_id: id, task_type: 'local_bash', description: 'Long sleep' }))
+  })
+  const snapshots = (): { id: string; toolUseId?: string }[][] =>
+    events.flatMap((e) => (e.type === 'background_tasks' ? [e.tasks] : []))
+
+  it('lists it under the call its foreground start named, without listing that start', async () => {
+    feed(startedFg('bfg1', 'toolu_fg'))
+    expect(snapshots()).toEqual([])
+    feed(list('bfg1'))
+    await Promise.resolve()
+    expect(snapshots()).toEqual([[expect.objectContaining({ id: 'bfg1', toolUseId: 'toolu_fg' })]])
+    feed({
+      type: 'system',
+      subtype: 'task_updated',
+      task_id: 'bfg1',
+      patch: { status: 'completed' }
+    })
+    expect(snapshots().at(-1)).toEqual([])
+  })
+
+  it('keeps two same-named waited-on tasks apart by their own calls', async () => {
+    feed(startedFg('bfg1', 'toolu_a'))
+    feed(startedFg('bfg2', 'toolu_b'))
+    feed(list('bfg1', 'bfg2'))
+    await Promise.resolve()
+    expect(
+      snapshots()
+        .at(-1)
+        ?.map((t) => `${t.id}:${t.toolUseId}`)
+    ).toEqual(['bfg1:toolu_a', 'bfg2:toolu_b'])
+  })
+
+  it('forgets the link at the task end and at the turn end, so no later list reuses it', async () => {
+    feed(startedFg('bfg1', 'toolu_a'))
+    feed({ type: 'system', subtype: 'task_notification', task_id: 'bfg1', status: 'completed' })
+    feed(startedFg('bfg2', 'toolu_b'))
+    feed({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })
+    feed(list('bfg1', 'bfg2'))
+    await Promise.resolve()
+    expect(
+      snapshots()
+        .at(-1)
+        ?.map((t) => t.toolUseId ?? '-')
+    ).toEqual(['-', '-'])
+  })
+})
