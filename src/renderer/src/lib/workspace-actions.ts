@@ -65,7 +65,7 @@ export type ExternalWorkspaceState = {
 } & Partial<WorkspaceStamp>
 
 /** Where a copy came from: a change heard, or this window's own write
- *  landing (the landing logic below is then the caller's, not the fold's). */
+ *  landing (which partition or the registry, for the adoption below). */
 type Provenance =
   | { own: false }
   | { own: true; landed: { partition: string | null } | { registry: true } }
@@ -81,6 +81,11 @@ let deferred: { state: ExternalWorkspaceState; from: Provenance } | null = null
  *  the registry: what it keeps as its own when it adopts another instance. */
 const writtenPartitions = new Set<string | null>()
 let registryWritten = false
+/** The pins partitions whose last write was refused or failed: a copy
+ *  applied before they land again gets back this window's pins of them that
+ *  it lacks, and the partition is sent again, since the copy does not hold
+ *  what failed to reach the source (round 2 of the lane's verifier, F7). */
+const failedPartitions = new Set<string | null>()
 
 function stampOf(value: Partial<WorkspaceStamp> | null | undefined): WorkspaceStamp | null {
   return value && typeof value.revision === 'number' && typeof value.instance === 'string'
@@ -149,13 +154,19 @@ function persistPins(): void {
     writeStarted()
     void write
       .then((res) => {
-        if (!res?.ok) return
+        if (!res?.ok) {
+          failedPartitions.add(key)
+          return
+        }
+        failedPartitions.delete(key)
         lastPersistedPins.set(key, json)
         foldWritten(res, { partition: key })
       })
       .catch((error: unknown) => {
         // The partition stays unrecorded and goes out again at the next
-        // change; the failure is said, since the window shows nothing of it.
+        // change, or at the next copy applied (`failedPartitions`); the
+        // failure is said, since the window shows nothing of it.
+        failedPartitions.add(key)
         console.error('[workspace] the pins write failed:', error)
       })
       .then(writeLanded)
@@ -258,7 +269,7 @@ function adoptSource(
     ...ours.filter((bp) => writtenPartitions.has(pinPartition(bp)))
   ]
   const workspaces = registryWritten ? useWorkspaceStore.getState().workspaces : copy.workspaces
-  applyExternalState({ workspaces, pins: merged }, { landing: !registryWritten })
+  applyExternalState({ workspaces, pins: merged })
   const landedPartition = landed && 'partition' in landed ? landed.partition : undefined
   for (const key of writtenPartitions) {
     if (landedPartition !== undefined && key === landedPartition) continue
@@ -289,21 +300,37 @@ export function foldExternalState(state: ExternalWorkspaceState, from: Provenanc
     }
     if (!isNewer(stamp)) return
   }
-  applyExternalState(state, { landing: !from.own })
+  applyExternalState(state)
   if (stamp) known = stamp
 }
 
 /** The registry is taken whole; the pin blueprints are replaced from the
  *  copy, keeping the runtime state (the launched group, visibility) of every
- *  pin already known here. Groups and sessions are never touched. `landing`
- *  is the fold's own move to another workspace when the one this window
- *  shows was removed; a window's own write leaves that to its caller. */
-function applyExternalState(
-  state: { workspaces: Workspace[]; pins: unknown[] },
-  options: { landing: boolean }
-): void {
+ *  pin already known here, and this window's own content for a partition
+ *  whose last write failed. Groups and sessions are never touched. */
+function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] }): void {
+  // Whether this window's own registry still had the workspace it shows: a
+  // copy that lacks it then means someone else removed it, and the window
+  // lands elsewhere. When this window removed it itself, its registry lacks
+  // it already and `removeWorkspace` lands it. The rule holds for a change
+  // heard and for the answer of a write of this window's own alike: an
+  // answer carries what another window did meanwhile (round 2 of the lane's
+  // verifier, F6, found the answers never landing the window).
+  const { activeWorkspaceId: shown, workspaces: before } = useWorkspaceStore.getState()
+  const hadShown = shown !== null && before.some((w) => w.id === shown)
   useWorkspaceStore.setState({ workspaces: state.workspaces })
-  const blueprints = blueprintsOf(state.pins)
+  // A partition whose last write failed: the copy's pins of it, plus this
+  // window's that the copy lacks, which are what failed to reach the source.
+  // Another window's pins in the copy are kept, and a partition the copy
+  // already covers counts as settled.
+  const copied = blueprintsOf(state.pins)
+  const copiedIds = new Set(copied.map((bp) => bp.id))
+  const kept = serializePinnedGroups(usePinnedStore.getState().pinnedGroups).filter(
+    (bp) => failedPartitions.has(pinPartition(bp)) && !copiedIds.has(bp.id)
+  )
+  const resend = new Set(kept.map((bp) => pinPartition(bp)))
+  for (const key of [...failedPartitions]) if (!resend.has(key)) failedPartitions.delete(key)
+  const blueprints = [...copied, ...kept]
   const current = new Map(usePinnedStore.getState().pinnedGroups.map((pg) => [pg.id, pg]))
   const next: PinnedGroup[] = blueprints.map((bp) => {
     const prev = current.get(bp.id)
@@ -325,8 +352,12 @@ function applyExternalState(
   // window answered in kind, so one change landed as three writes. What is
   // recorded is the store's own content, normalised, so the comparison holds.
   seedPersistedPins(serializePinnedGroups(next))
+  // A failed partition with pins of this window's own is not what the source
+  // holds: left out of the record, the persistence pass the set below runs
+  // sends it again.
+  for (const key of resend) lastPersistedPins.delete(key)
   usePinnedStore.setState({ pinnedGroups: next })
-  if (!options.landing) return
+  if (!hadShown) return
   // The workspace this window shows was removed from another window: land on
   // the first remaining one, else the unscoped state.
   const { activeWorkspaceId, workspaces } = useWorkspaceStore.getState()

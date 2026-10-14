@@ -45,6 +45,8 @@ type Write = {
   scope?: string | null
   pins?: unknown[]
   land: (answer: Answer | { ok: false }) => Promise<void>
+  /** The write's promise rejects (a transport failure, not a refusal). */
+  fail: (error: Error) => Promise<void>
 }
 
 const WS = { id: 'ws1', name: 'One', rootDir: '/w', profileFile: null, createdAt: 1 }
@@ -109,10 +111,14 @@ beforeAll(() => {
   }
   ;(globalThis as unknown as { window: unknown }).window = globalThis
   const pending = (kind: Write['kind'], extra: Partial<Write>): Promise<unknown> =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       writes.push({
         kind,
         ...extra,
+        fail: async (error) => {
+          reject(error)
+          await tick()
+        },
         land: async (answer) => {
           resolve(
             'ok' in answer
@@ -354,7 +360,9 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     await written
     expect(switches).toEqual([])
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 2, instance: 'main' })
-    // Another window's change that removes the shown workspace does land.
+    // removeWorkspace lands the window itself, after the write; then another
+    // window's change that removes the workspace it landed on does land it.
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws1' })
     fold!({ workspaces: [], pins: [], revision: 3, instance: 'main' })
     expect(switches).toEqual([null])
   })
@@ -461,7 +469,7 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'main' })
   })
 
-  it('says a rejected write in the console and goes on', async () => {
+  it('takes a refused write in silence, and another window’s pins of that partition with it', async () => {
     loaded = boot(1, [])
     await actions.bootWorkspaces()
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -474,6 +482,91 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     await write.land({ ok: false })
     expect(error).not.toHaveBeenCalled()
     expect(names()).toEqual(['A', 'B'])
+    // The copy already held A, so nothing is sent again.
+    expect(writes).toHaveLength(0)
     error.mockRestore()
+  })
+
+  it('says a rejected write in the console (round 2 of the verifier, G1)', async () => {
+    loaded = boot(1, [])
+    await actions.bootWorkspaces()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    usePinnedStore.getState().addPinnedGroup(pin('a', 'A'))
+    await writes.splice(0)[0].fail(new Error('the server went away'))
+    expect(error).toHaveBeenCalledWith('[workspace] the pins write failed:', expect.any(Error))
+    expect(names()).toEqual(['A'])
+    error.mockRestore()
+  })
+
+  it('lands elsewhere when its own write’s answer says another window removed the shown workspace (F6)', async () => {
+    // Round 2 of the verifier: the remover's change is held behind this
+    // window's write and then older than its answer; the answer carries the
+    // removal, and the window must land, as it did on the base.
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('b', 'B'))
+    fold!({ workspaces: [WS2], pins: [], revision: 2, instance: 'main' })
+    await landAll({ revision: 3, instance: 'main', workspaces: [WS2], pins: [pin('b', 'B')] })
+    expect(switches).toEqual(['ws2'])
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws2')
+  })
+
+  it('keeps and sends again a partition whose write was refused while another was in flight (F7)', async () => {
+    // Round 2 of the verifier: the other write's answer, applied after the
+    // last landing, does not hold the refused partition's content; on the
+    // fix commit the pin vanished and was never sent again.
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('a', 'A'))
+    usePinnedStore.getState().addPinnedGroup(pin('c', 'C', 'ws2'))
+    expect(scopes()).toEqual(['ws1', 'ws1', 'ws2'])
+    const [first, second, refused] = writes.splice(0)
+    await first.land({ revision: 2, instance: 'main', pins: [pin('a', 'A')] })
+    await second.land({ revision: 3, instance: 'main', pins: [pin('a', 'A')] })
+    expect(names()).toEqual(['A', 'C'])
+    await refused.land({ ok: false })
+    expect(names()).toEqual(['A', 'C'])
+    // Sent again at once, its content kept.
+    expect(scopes()).toEqual(['ws2'])
+    expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['C'])
+    await landAll({ revision: 4, instance: 'main', pins: [pin('a', 'A'), pin('c', 'C', 'ws2')] })
+    expect(names()).toEqual(['A', 'C'])
+    expect(writes).toHaveLength(0)
+  })
+
+  it('lands elsewhere when it adopts a copy whose registry lacks the shown workspace (G2)', async () => {
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    fold!({ workspaces: [WS2], pins: [], revision: 0, instance: 'server' })
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 0, instance: 'server' })
+    expect(switches).toEqual(['ws2'])
+  })
+
+  it('folds the answer of the one-time migration write (G2)', async () => {
+    loaded = { ...boot(1, [], 'main'), pinsMigrated: false } as unknown as typeof loaded
+    const booted = actions.bootWorkspaces()
+    await tick()
+    expect(scopes()).toEqual(['all'])
+    await writes
+      .splice(0)[0]
+      .land({ revision: 2, instance: 'main', workspaces: [WS, WS2], pins: [] })
+    await booted
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 2, instance: 'main' })
+    expect(registry()).toEqual(['ws1', 'ws2'])
+  })
+
+  it('writes the registry once when its own registry write reveals another instance (G2)', async () => {
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    const renamed = actions.renameWorkspace('ws2', 'Deux')
+    await writes.splice(0)[0].land({
+      revision: 1,
+      instance: 'server',
+      workspaces: [WS, { ...WS2, name: 'Deux' }],
+      pins: []
+    })
+    await renamed
+    expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'server' })
+    expect(writes).toHaveLength(0)
   })
 })
