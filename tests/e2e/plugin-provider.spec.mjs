@@ -229,7 +229,24 @@ export async function run(t) {
           ?.commands.includes('read')
       )
     )
-    await win.evaluate(() => window.electronAPI.pluginsCommand('test.session-reader', 'read'))
+    // The link starts a watcher on the plugin's folder, and the files written
+    // just before the link reach it a moment later: the host reloads the
+    // linked plugin once, and its command is refused while it restarts
+    // (measured 14 October 2026: the wait above saw `read` on the first start
+    // and the call landed on the restart, one run in three). Call it until the
+    // restart has settled.
+    assert.ok(
+      await until(() =>
+        win
+          .evaluate(() => window.electronAPI.pluginsCommand('test.session-reader', 'read'))
+          .then(() => true)
+          .catch((error) => {
+            if (!String(error).includes('Command is not active')) throw error
+            return null
+          })
+      ),
+      'the reader plugin runs its command once its restart has settled'
+    )
     const seen = await until(async () => {
       const reader = (await win.evaluate(() => window.electronAPI.pluginsList())).find(
         (p) => p.id === 'test.session-reader'
