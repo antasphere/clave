@@ -335,4 +335,59 @@ describe('the migration of the app data into the server directory', () => {
       clean()
     }
   })
+  it('the Antasphere session whose write fails discards the item it filed', () => {
+    const { app, srv, clean } = dirs()
+    try {
+      writeFileSync(
+        path.join(app, ANTASPHERE_SESSION_FILE),
+        JSON.stringify({
+          v: 1,
+          issuer: 'https://i',
+          clientId: 'c',
+          sealed: appSeal('{"s":1}'),
+          savedAt: 1
+        })
+      )
+      // The server's folder made read-only, so the write throws after the seal.
+      mkdirSync(srv, { recursive: true })
+      const filed = new Set<string>()
+      const to = {
+        available: () => true,
+        seal: (plain: string) => {
+          const h = `kc:${plain}`
+          filed.add(h)
+          return h
+        },
+        discard: (sealed: string) => {
+          filed.delete(sealed)
+        }
+      }
+      chmodSync(srv, 0o500)
+      const report = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to })
+      chmodSync(srv, 0o700)
+      expect(report.failed.some((f) => f.startsWith(`${ANTASPHERE_SESSION_FILE}:`))).toBe(true)
+      expect(filed.size).toBe(0)
+      expect(report.resealed.antasphere).toBe(false)
+    } finally {
+      chmodSync(srv, 0o700)
+      clean()
+    }
+  })
+
+  it('a stale partial Codex copy from a killed run is cleared before the next copy', () => {
+    const { app, srv, clean } = dirs()
+    try {
+      mkdirSync(path.join(app, CODEX_HOMES_DIR, 'a'), { recursive: true })
+      writeFileSync(path.join(app, CODEX_HOMES_DIR, 'a', 'auth.json'), '{"a":1}')
+      // What a run killed mid-copy leaves: a partial folder with a stray file.
+      mkdirSync(path.join(srv, `${CODEX_HOMES_DIR}.partial`, 'gone'), { recursive: true })
+      writeFileSync(path.join(srv, `${CODEX_HOMES_DIR}.partial`, 'gone', 'auth.json'), '{"gone":1}')
+      const report = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      expect(report.failed).toEqual([])
+      expect(existsSync(path.join(srv, CODEX_HOMES_DIR, 'gone'))).toBe(false)
+      expect(json(path.join(srv, CODEX_HOMES_DIR, 'a', 'auth.json'))).toEqual({ a: 1 })
+    } finally {
+      clean()
+    }
+  })
 })
