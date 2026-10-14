@@ -8,9 +8,13 @@ import {
   takeServerLaunch,
   startServer,
   readDiscovery,
+  markServerGone,
+  serverFlag,
   ServerBootError,
   DISCOVERY_FILE,
-  type InProcessServer
+  PACKAGED_DEFAULT,
+  type InProcessServer,
+  type OwnServer
 } from './server-boot'
 import { getClaveServerEndpoint, setClaveServerEndpoint } from './server/endpoint'
 
@@ -47,6 +51,52 @@ describe('resolveServerLaunch', () => {
       url: 'http://127.0.0.1:4790',
       token: null
     })
+  })
+})
+
+describe('resolveServerLaunch, the --server flag (wave 5)', () => {
+  it('reads --server=x and --server x', () => {
+    expect(serverFlag(['a', '--server=separate'])).toBe('separate')
+    expect(serverFlag(['a', '--server', 'in-process', 'b'])).toBe('in-process')
+    expect(serverFlag(['a', '--server-x=1'])).toBeUndefined()
+    expect(serverFlag([])).toBeUndefined()
+  })
+  it('given twice, the first occurrence wins', () => {
+    expect(serverFlag(['--server=separate', '--server=in-process'])).toBe('separate')
+  })
+  it('picks the flag’s mode, packaged or not', () => {
+    expect(resolveServerLaunch({}, { argv: ['--server=separate'] })).toEqual({ mode: 'separate' })
+    expect(resolveServerLaunch({}, { argv: ['--server=separate'], packaged: true })).toEqual({
+      mode: 'separate'
+    })
+    expect(resolveServerLaunch({}, { argv: ['--server=in-process'], packaged: true })).toEqual({
+      mode: 'in-process'
+    })
+  })
+  it('the environment’s url wins over the flag', () => {
+    expect(
+      resolveServerLaunch(
+        { CLAVE_SERVER_URL: 'http://127.0.0.1:4790', CLAVE_SERVER_TOKEN: 't' },
+        { argv: ['--server=separate'] }
+      )
+    ).toEqual({ mode: 'attached', url: 'http://127.0.0.1:4790', token: 't' })
+  })
+  it('a flag with a value that is not a mode throws, naming the values', () => {
+    expect(() => resolveServerLaunch({}, { argv: ['--server=standalone'] })).toThrow(
+      /--server must be in-process or separate, got "standalone"/
+    )
+    expect(() => resolveServerLaunch({}, { argv: ['--server'] })).toThrow(/got ""/)
+    expect(() => resolveServerLaunch({}, { argv: ['--server', '--test-no-activate'] })).toThrow(
+      /got "--test-no-activate"/
+    )
+  })
+  it('with no flag a development run is in-process and a packaged app runs the packaged default', () => {
+    expect(resolveServerLaunch({}, { argv: [], packaged: false })).toEqual({ mode: 'in-process' })
+    expect(resolveServerLaunch({}, { argv: [], packaged: true })).toEqual({
+      mode: PACKAGED_DEFAULT
+    })
+    // Until the second pull request of PRDCT-3434 flips it.
+    expect(PACKAGED_DEFAULT).toBe('in-process')
   })
 })
 
@@ -167,6 +217,144 @@ describe('startServer', () => {
     const disc = readDiscovery(userData)
     expect(disc).toMatchObject({ ok: false, mode: 'in-process', token: null, url: '' })
     expect(disc?.error).toMatch(/EADDRINUSE/)
+  })
+
+  it('separate: starts the child through its starter, attaches to it, writes its pid, stops it with the handle', async () => {
+    // The "child" is the real server started in this process: what the boot
+    // does with the starter's answer is the same whatever process it runs in.
+    const own = await aServer()
+    owned.push(own)
+    let stopped = 0
+    const starter = inProcess()
+    const handle = await startServer({
+      launch: { mode: 'separate' },
+      userData,
+      identity,
+      startInProcess: starter.start,
+      startSeparate: async (): Promise<OwnServer> => ({
+        url: own.url,
+        token: own.token,
+        pid: 31337,
+        stop: async () => {
+          stopped += 1
+          await own.stop()
+        }
+      })
+    })
+    expect(starter.calls).toBe(0)
+    expect(handle.mode).toBe('separate')
+    expect(handle.serverPid).toBe(31337)
+    expect(handle.url).toBe(own.url)
+    expect((await clientsOf(own)).map((c) => c.pid)).toEqual([777])
+    expect(readDiscovery(userData)).toMatchObject({
+      url: own.url,
+      mode: 'separate',
+      ok: true,
+      pid: 777,
+      serverPid: 31337,
+      clientId: handle.clientId
+    })
+    // The boot publishes nothing itself: index.ts does, as for attached.
+    expect(getClaveServerEndpoint()).toBeNull()
+    await handle.stop()
+    expect(stopped).toBe(1)
+    await expect(fetch(`${own.url}/health/live`)).rejects.toThrow()
+    await handle.stop()
+    expect(stopped).toBe(1)
+  })
+
+  it('separate: a child gone while the app runs is marked in the file, the token out, the url and the pid kept', async () => {
+    const own = await aServer()
+    owned.push(own)
+    const handle = await startServer({
+      launch: { mode: 'separate' },
+      userData,
+      identity,
+      startInProcess: inProcess().start,
+      startSeparate: async (): Promise<OwnServer> => ({
+        url: own.url,
+        token: own.token,
+        pid: 4242,
+        stop: async () => {}
+      })
+    })
+    const marked = markServerGone(
+      userData,
+      'the separate server exited (SIGKILL) while the app was running'
+    )
+    expect(marked).toMatchObject({
+      url: own.url,
+      mode: 'separate',
+      ok: false,
+      error: 'the separate server exited (SIGKILL) while the app was running',
+      token: null,
+      serverPid: 4242,
+      clientId: null,
+      pid: 777
+    })
+    expect(readDiscovery(userData)).toEqual(marked)
+    expect(statSync(path.join(userData, DISCOVERY_FILE)).mode & 0o777).toBe(0o600)
+    await handle.stop()
+  })
+
+  it('marking a folder with no discovery file writes nothing and answers null', () => {
+    expect(markServerGone(userData, 'gone')).toBeNull()
+    expect(readDiscovery(userData)).toBeNull()
+  })
+
+  it('separate: a child that does not start writes ok:false with the reason and rejects, nothing in its place', async () => {
+    const starter = inProcess()
+    await expect(
+      startServer({
+        launch: { mode: 'separate' },
+        userData,
+        identity,
+        startInProcess: starter.start,
+        startSeparate: async () => {
+          throw new Error('the separate server exited (2) before announcing itself')
+        }
+      })
+    ).rejects.toThrow(/the separate server did not start: .*exited \(2\)/)
+    expect(starter.calls).toBe(0)
+    expect(readDiscovery(userData)).toMatchObject({ ok: false, mode: 'separate', url: '' })
+    expect(readDiscovery(userData)?.error).toMatch(/exited \(2\)/)
+  })
+
+  it('separate: a boot with no starter for it refuses rather than running in-process', async () => {
+    const starter = inProcess()
+    await expect(
+      startServer({
+        launch: { mode: 'separate' },
+        userData,
+        identity,
+        startInProcess: starter.start
+      })
+    ).rejects.toThrow(/the separate server did not start: the shell has no starter/)
+    expect(starter.calls).toBe(0)
+  })
+
+  it('separate: a child that answers but refuses the registration is stopped and the boot rejects', async () => {
+    const own = await aServer('right-token')
+    owned.push(own)
+    let stopped = 0
+    await expect(
+      startServer({
+        launch: { mode: 'separate' },
+        userData,
+        identity,
+        startInProcess: inProcess().start,
+        startSeparate: async (): Promise<OwnServer> => ({
+          url: own.url,
+          token: 'wrong-token',
+          pid: 1,
+          stop: async () => {
+            stopped += 1
+          }
+        })
+      })
+    ).rejects.toThrow(/refused the token/)
+    expect(stopped).toBe(1)
+    expect(readDiscovery(userData)).toMatchObject({ ok: false, mode: 'separate', url: own.url })
   })
 
   it('attached: uses the server given, never starts one of its own, publishes nothing to the windows', async () => {

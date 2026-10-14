@@ -5,7 +5,7 @@
  * listens on, and what a spawned terminal sees in its environment; never
  * through a hook inside main.
  *
- * Four parts, and the first follows the suite's mode (CLAVE_E2E_SERVER):
+ * Six parts, and the first follows the suite's mode (CLAVE_E2E_SERVER):
  *
  *  1. The app launched the suite's way ends up on a server: the discovery
  *     file says so, the server answers, it lists THIS app by its pid, and it
@@ -29,6 +29,20 @@
  *  4. A quit that comes while the registration is still in flight (a proxy
  *     holds POST /clients for 3 s) still ends with the app deregistered: no
  *     ghost client stays on the server.
+ *  6. In separate mode, the server child SIGKILLed under the running app:
+ *     the discovery file turns `ok: false` with the exit named, its token
+ *     out and the dead pid kept, the terminal process follows its parent,
+ *     the window stays, and the quit stays inside the bound.
+ *  5. Whatever the suite's mode, an app launched with `--server=separate`
+ *     (wave 5, PRDCT-3434) starts its server as a child of its own and the
+ *     terminal process as a child of the server, from the bundles it
+ *     carries, under its own binary as Node; a terminal runs on it; the
+ *     terminal process killed under the running app is started again (a
+ *     new pid, generation 2, readiness true again), the terminal it held
+ *     ends, and a new terminal runs on the new process; the quit leaves
+ *     neither process behind. In separate mode part 1 adds: the harness
+ *     started no server, the discovery names the child by its pid, and a
+ *     spawned terminal sees no ELECTRON_RUN_AS_NODE either.
  *
  * What makes this spec able to fail, each proven by the round-1 verifier or
  * by the lane: drop the boot from main/index.ts and 1 goes red on every
@@ -48,7 +62,9 @@ import {
   fixturePath,
   serverEndpoint,
   serverClient,
+  serverFixture,
   serverMode,
+  separateServerDataDir,
   startE2eServer,
   freePorts,
   listeningPorts,
@@ -56,9 +72,12 @@ import {
   callMcp,
   callMcpIn,
   identityOf,
-  until
+  until,
+  CHILD_CALL_TIMEOUT_MS,
+  CLOSE_TIMEOUT_MS
 } from './harness.mjs'
-import { mkdirSync, existsSync } from 'node:fs'
+import { mkdirSync, existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
 
@@ -88,6 +107,73 @@ const mcpPort = (dir) =>
 const seed = (dir) => {
   seedWorkspaces(dir, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(dir, [ROOT])
+}
+
+/** Whether a pid is alive, by the OS. */
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The parent pid of `pid`, by the OS, or null when it is gone. */
+const ppidOf = (pid) => {
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: CHILD_CALL_TIMEOUT_MS
+    }).trim()
+    return out ? Number(out) : null
+  } catch {
+    return null
+  }
+}
+
+const untilDead = (pid, { tries = 40, gapMs = 250 } = {}) =>
+  until(() => (alive(pid) ? null : true), { tries, gapMs })
+
+/** What a separate server the app started says of itself and of its
+ *  terminal process, read off its own `clave-server.json`. */
+const separateServerDiscovery = (dir) => {
+  try {
+    return JSON.parse(
+      readFileSync(path.join(separateServerDataDir(dir), 'clave-server.json'), 'utf-8')
+    )
+  } catch {
+    return null
+  }
+}
+
+/** The server's readiness, through its own API. */
+const readiness = async (url) => (await fetch(`${url}/health/ready`)).json()
+
+/** Open a terminal through the agent tools that prints `marker` and waits,
+ *  and resolve once the marker is on its screen (null when it never is). */
+async function terminalPrinting(app, win, groupId, marker) {
+  const id = await identityOf(win)
+  const s = await callMcp(app, 'openSession', {
+    cwd: ROOT,
+    mode: 'terminal',
+    groupId,
+    command: `echo "${marker} $$ END"; sleep 300`,
+    autoRun: true
+  })
+  const seen = await until(
+    async () => {
+      const read = await callMcpIn(app, id.windowId, 'readSession', {
+        sessionId: s.sessionId,
+        lines: 80,
+        callerSessionId: s.sessionId
+      })
+      const text = typeof read === 'string' ? read : JSON.stringify(read)
+      return new RegExp(`${marker} \\d+ END`).test(text) ? true : null
+    },
+    { tries: 60, gapMs: 500 }
+  )
+  return { sessionId: s.sessionId, seen }
 }
 
 /** What the main process serves, told by what each listening port ANSWERS:
@@ -183,6 +269,14 @@ export async function run(t) {
       )
       if (MODE === 'attached') {
         t.equal('attached: it is the server the harness started', disc?.url, server?.url)
+      } else if (MODE === 'separate') {
+        t.check('separate: the harness started no server', server === null, server)
+        t.check(
+          'separate: the discovery names the child server by its pid',
+          Number.isInteger(disc?.serverPid) && disc.serverPid !== pid,
+          { serverPid: disc?.serverPid, pid }
+        )
+        t.equal('and that child is a child of the app', ppidOf(disc?.serverPid), pid)
       } else {
         t.check('in-process: the harness started no server', server === null, server)
       }
@@ -258,11 +352,14 @@ export async function run(t) {
         routed
       )
 
-      // A terminal the app spawns sees neither variable: the token is not
-      // inherited by sessions, nor by anything else main starts. The agent
-      // tools still start their session on main's own host in both modes
-      // (lane D of wave 3 moves them to the server), so the probe runs there
-      // attached as in-process, and the environment claim holds either way.
+      // A terminal the app spawns sees none of the three variables. What
+      // this proves, exactly: the environment of a tmux session on the
+      // shared `clave` socket, which tmux gives the SERVER's environment
+      // plus `update-environment`, so a variable the spawning process holds
+      // never reaches it this way (the round-1 verifier of wave 5 rebuilt
+      // the entry without its deletion and watched this line stay green).
+      // The claim about the process itself is proven below, in separate
+      // mode, through the server child's own evaluate route.
       const id = await identityOf(win)
       const g = await callMcp(app, 'createGroup', { name: 'probe' })
       {
@@ -270,7 +367,8 @@ export async function run(t) {
           cwd: ROOT,
           mode: 'terminal',
           groupId: g.groupId,
-          command: 'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] END"',
+          command:
+            'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] asnode=[$ELECTRON_RUN_AS_NODE] END"',
           autoRun: true
         })
         const probe = await until(
@@ -281,14 +379,19 @@ export async function run(t) {
               callerSessionId: s.sessionId
             })
             const text = typeof read === 'string' ? read : JSON.stringify(read)
-            const m = /PROBE url=\[([^\]]*)\] tokenlen=\[(\d*)\] END/.exec(text)
-            return m ? { url: m[1], tokenLen: Number(m[2]) } : null
+            const m = /PROBE url=\[([^\]]*)\] tokenlen=\[(\d*)\] asnode=\[([^\]]*)\] END/.exec(text)
+            return m ? { url: m[1], tokenLen: Number(m[2]), asNode: m[3] } : null
           },
           { tries: 60, gapMs: 500 }
         )
         t.check('a spawned terminal printed the probe line', !!probe, probe)
         t.equal('and saw no CLAVE_SERVER_URL', probe?.url, '')
         t.equal('and no CLAVE_SERVER_TOKEN', probe?.tokenLen, 0)
+        // The variable that runs the app's binary as Node for its children
+        // (wave 5) is taken out by each of them at boot: a session, whoever
+        // spawned it, never sees it, or a Clave started from a Clave tab
+        // would start as a bare Node process.
+        t.equal('and no ELECTRON_RUN_AS_NODE', probe?.asNode, '')
       }
     } finally {
       await app.close()
@@ -407,6 +510,208 @@ export async function run(t) {
     } finally {
       await proxy.close()
       await own.stop()
+    }
+  }
+
+  // ── 5. The app's own separate server, whatever the suite runs (wave 5) ──
+  {
+    const DIR = userDataDir('server-boot-separate')
+    seed(DIR)
+    const { app, win, server } = await launchApp(DIR, { server: 'separate' })
+    let closed = false
+    try {
+      const pid = app.process().pid
+      t.check('separate: the harness started no server', server === null, server)
+      const disc = await decided(DIR)
+      t.equal('the app runs on a separate server', disc?.mode, 'separate')
+      t.equal('and says it is usable', disc?.ok, true)
+      const serverPid = disc?.serverPid
+      t.check('the server is a child process of the app', ppidOf(serverPid) === pid, {
+        serverPid,
+        ppid: ppidOf(serverPid),
+        pid
+      })
+      const serverDisc = await until(() => {
+        const d = separateServerDiscovery(DIR)
+        return d && d.terminalProcessPid ? d : null
+      })
+      t.check("the server's own discovery names its terminal process", !!serverDisc, serverDisc)
+      t.equal('the server the app attached to is that child', disc?.url, serverDisc?.url)
+      const firstTp = serverDisc?.terminalProcessPid
+      t.equal('the terminal process is a child of the server', ppidOf(firstTp), serverPid)
+      t.equal('generation 1', serverDisc?.terminalProcessGeneration, 1)
+      t.check(
+        'readiness answers true with the terminals check',
+        (await readiness(disc.url)).ready === true,
+        await readiness(disc.url)
+      )
+      // The child's own environment, read in its process through the
+      // test-only route: the route exists only when the shell passed its
+      // test flag on (the child's flags, unseen by any other check), and
+      // the three variables are out of the environment the child's
+      // sessions and login shell inherit (its deletion of the run-as-Node
+      // variable, main's removal of the server pair).
+      const childEnv = await serverFixture(disc.url, disc.token)
+        .evaluate(() => ({
+          asNode: process.env.ELECTRON_RUN_AS_NODE ?? null,
+          url: process.env.CLAVE_SERVER_URL ?? null,
+          token: process.env.CLAVE_SERVER_TOKEN ?? null,
+          testFlag: process.argv.includes('--test-no-activate')
+        }))
+        .catch((error) => ({ error: String(error && error.message ? error.message : error) }))
+      t.check(
+        "the shell's test flag reached the child (its evaluate route answers)",
+        childEnv.testFlag === true,
+        childEnv
+      )
+      t.equal('the child took ELECTRON_RUN_AS_NODE out of its environment', childEnv.asNode, null)
+      t.equal('and holds no CLAVE_SERVER_URL', childEnv.url, null)
+      t.equal('nor CLAVE_SERVER_TOKEN', childEnv.token, null)
+
+      // A terminal on the pair as started, and the window listening for its
+      // exit the way the pane does (`onSessionExit`, off the push channel on
+      // a server in another process).
+      const g = await callMcp(app, 'createGroup', { name: 'separate' })
+      const first = await terminalPrinting(app, win, g.groupId, 'FIRST')
+      t.check('a terminal started on the separate server runs', first.seen === true, first)
+      await win.evaluate((sid) => {
+        window.__e2eExits = []
+        window.electronAPI.onSessionExit(sid, (code) => window.__e2eExits.push(code))
+      }, first.sessionId)
+
+      // The terminal process killed under the running app: started again.
+      process.kill(firstTp, 'SIGKILL')
+      const restarted = await until(
+        () => {
+          const d = separateServerDiscovery(DIR)
+          return d && d.terminalProcessPid && d.terminalProcessPid !== firstTp ? d : null
+        },
+        { tries: 80, gapMs: 250 }
+      )
+      t.check(
+        'a terminal process killed under the running app is started again, with a new pid',
+        !!restarted,
+        restarted ?? separateServerDiscovery(DIR)
+      )
+      t.equal('as generation 2', restarted?.terminalProcessGeneration, 2)
+      t.check('the old pid is gone', !alive(firstTp), firstTp)
+      t.equal(
+        'the new process is a child of the server too',
+        ppidOf(restarted?.terminalProcessPid),
+        serverPid
+      )
+      const readyAgain = await until(
+        async () => ((await readiness(disc.url)).ready ? true : null),
+        {
+          tries: 40,
+          gapMs: 250
+        }
+      )
+      t.check('readiness answers true again', readyAgain === true, await readiness(disc.url))
+      // The terminal the old process held ended with its exit, said to the
+      // window: the lost exit the port reports (code 1), heard by the
+      // listener bound before the kill.
+      const exits = await until(
+        async () => {
+          const seen = await win.evaluate(() => window.__e2eExits ?? [])
+          return seen.length > 0 ? seen : null
+        },
+        { tries: 40, gapMs: 250 }
+      )
+      t.check('the terminal the old process held ended, its exit told to the window', !!exits, {
+        sessionId: first.sessionId,
+        exits
+      })
+      t.equal('with the lost exit code', exits?.[0], 1)
+      // A new terminal runs on the new process.
+      const second = await terminalPrinting(app, win, g.groupId, 'SECOND')
+      t.check(
+        'a terminal started after the restart runs on the new process',
+        second.seen === true,
+        second
+      )
+
+      // The quit stops both, inside the harness's bound, and stops them
+      // ITSELF: both are gone the instant the app's process is. The two
+      // parent polls would end them too, later, which a wait of seconds
+      // could not tell from the stops (the round-1 verifier skipped the
+      // child's stop and the handle's stop and this part stayed green).
+      const started = Date.now()
+      await app.close()
+      closed = true
+      const closeMs = Date.now() - started
+      t.check(
+        'the server was gone when the app finished quitting (stopped, not polled)',
+        !alive(serverPid),
+        serverPid
+      )
+      // The server's stop waits for its terminal process to exit before the
+      // server exits, so the process is gone at the same instant; its own
+      // parent poll would end it up to 2 s after the server, which a window
+      // of half a second caught one time in three (round 2's verifier).
+      t.check(
+        'and so was its terminal process (stopped by the server, not polled)',
+        !alive(restarted?.terminalProcessPid),
+        restarted?.terminalProcessPid
+      )
+      t.check(
+        `the quit took less than the harness's ${CLOSE_TIMEOUT_MS} ms bound`,
+        closeMs < CLOSE_TIMEOUT_MS,
+        closeMs
+      )
+    } finally {
+      if (!closed) await app.close()
+    }
+  }
+
+  // ── 6. The server child dies while the app runs (separate) ──
+  {
+    const DIR = userDataDir('server-boot-child-dies')
+    seed(DIR)
+    const { app, win } = await launchApp(DIR, { server: 'separate' })
+    let closed = false
+    try {
+      const disc = await decided(DIR)
+      const serverPid = disc?.serverPid
+      const serverDisc = await until(() => {
+        const d = separateServerDiscovery(DIR)
+        return d && d.terminalProcessPid ? d : null
+      })
+      const tp = serverDisc?.terminalProcessPid
+      process.kill(serverPid, 'SIGKILL')
+      // The app says so where a reader looks: the discovery file, no longer
+      // a live-looking server, the dead pid kept for the record; the
+      // terminal process follows its parent; the app itself runs on.
+      const gone = await until(
+        () => {
+          const d = serverEndpoint(DIR)
+          return d && d.ok === false ? d : null
+        },
+        { tries: 40, gapMs: 250 }
+      )
+      t.check('the discovery file says the server is gone', !!gone, serverEndpoint(DIR))
+      t.check(
+        'with the exit named',
+        /exited \(SIGKILL\) while the app was running/.test(gone?.error ?? ''),
+        gone?.error
+      )
+      t.equal('the token taken out', gone?.token, null)
+      t.equal('the dead server pid kept for the record', gone?.serverPid, serverPid)
+      t.check('the terminal process followed its parent', (await untilDead(tp)) === true, tp)
+      t.check(
+        'the window is still there',
+        (await win.evaluate(() => document.readyState)) === 'complete'
+      )
+      const started = Date.now()
+      await app.close()
+      closed = true
+      t.check(
+        'a quit with the server already gone stays inside the bound',
+        Date.now() - started < CLOSE_TIMEOUT_MS,
+        Date.now() - started
+      )
+    } finally {
+      if (!closed) await app.close()
     }
   }
 }
