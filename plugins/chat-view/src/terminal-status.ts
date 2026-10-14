@@ -193,7 +193,11 @@ export function reduceStatus(
       // background"); it stays until the background list drops it. A command
       // whose answer comes before the list names it waits for the list, or
       // for the turn's end.
-      if (!agent || agent.background || agent.requestedBackground) return status
+      if (!agent || agent.background) return status
+      // Asked for the background but failed or was refused before any list
+      // confirmed it: nothing runs. The provider's word is the error flag,
+      // never the text.
+      if (agent.requestedBackground && event.error !== true) return status
       return { ...status, agents: status.agents.filter((a) => a.id !== event.id) }
     }
     case 'background_tasks': {

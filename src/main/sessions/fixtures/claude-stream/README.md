@@ -58,6 +58,19 @@ The order the chat's Bash cards rely on:
    and `background_tasks_changed` with an empty list, followed by the CLI's
    own turn about the finished command.
 
+The list in step 2 names the task before `task_started` gives its call id.
+Published as it stands, it would carry a task with no `toolUseId`, which the
+Terminal view would draw as a second card beside the call's own until the
+link arrives. The translator therefore holds a list that names an unlinked
+task until the end of the read it came in: the `task_started` that links
+it, any later event a view reads, or the read's end publishes it. A list
+whose `task_started` arrives in a later read still publishes unlinked at the
+end of its own read; that duplicate is transient (one snapshot) and the
+next snapshot settles to one card. A call asking for `run_in_background`
+whose result is an error before any list names it is cleared; once listed,
+the list alone ends it. If the CLI never sends `task_started`, a
+backgrounding call's card stays until the turn ends.
+
 The `claude/bash-tasks` scenario uses `@structure-ai/fixtures`: a recording
 process stands in for the spawned CLI and answers the session's own message
 with this capture, up to the first `result`, and the rest on the scenario's

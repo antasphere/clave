@@ -73,8 +73,13 @@ function play(rest, gates) {
   const [stop, ...later] = gates;
   const next = () => {
     if (!rest.length) return;
-    const f = rest.shift(); emit(f);
-    if (stop && stop[1](f)) {
+    const f = rest.shift();
+    // The CLI writes a new task's list and its task_started together (the
+    // capture has both at 3.33 s): one write, as it does.
+    const paired = f.type === 'system' && f.subtype === 'background_tasks_changed' && rest[0] && rest[0].subtype === 'task_started' ? rest.shift() : null;
+    if (paired) process.stdout.write(JSON.stringify(f) + '\\n' + JSON.stringify(paired) + '\\n');
+    else emit(f);
+    if (stop && (stop[1](f) || (paired && stop[1](paired)))) {
       const wait = setInterval(() => { if (fs.existsSync(path.join(${JSON.stringify(GATES)}, stop[0]))) { clearInterval(wait); play(rest, later) } }, 50);
       return;
     }
@@ -160,15 +165,30 @@ export async function run(t) {
     t.check('the waited-on Bash call shows beside it, both as running work', !!both, {
       rows: describe(await readRows(view))
     })
+    // Every render from here to the promotion: the background command's card
+    // must never be drawn twice, not even for a frame (a row folding out
+    // counts, it is on screen).
+    await view.evaluate((el) => {
+      window.__bashMostCards = 0
+      new MutationObserver(() => {
+        const cards = [...el.querySelectorAll('.term-agent-description')].filter(
+          (d) => d.textContent === 'sleep 10 && echo bgc'
+        ).length
+        window.__bashMostCards = Math.max(window.__bashMostCards, cards)
+      }).observe(el, { subtree: true, childList: true, attributes: true, characterData: true })
+    })
     gate('waited-call')
 
     /* 3. The background list names the call: the same card, promoted. */
     const promoted = await reach('shell:sleep 10 && echo bgc:bg|shell:echo fgc:run')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const mostCards = await view.evaluate(() => window.__bashMostCards)
     t.check(
-      'the background list promotes the same card, never adding a second one',
+      'the background list promotes the same card, never drawing a second one, even for a frame',
       !!promoted &&
-        promoted.filter((row) => row.description === 'sleep 10 && echo bgc').length === 1,
-      { rows: describe(await readRows(view)) }
+        promoted.filter((row) => row.description === 'sleep 10 && echo bgc').length === 1 &&
+        mostCards === 1,
+      { rows: describe(await readRows(view)), mostCards }
     )
     gate('listed')
 

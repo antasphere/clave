@@ -524,3 +524,75 @@ it('promotes a card where it stands, never moving it below a card that came afte
   )
   expect(rowsOf(status)).toEqual(['shell:b1:bg:1000', 'shell:b2:run:1000'])
 })
+
+it('clears a backgrounding Bash card whose call failed or was denied before any list confirmed it', () => {
+  const denied = at(
+    [
+      bash('b1', 'sleep 10', true),
+      { type: 'tool_result', id: 'b1', output: 'Permission denied', error: true }
+    ],
+    1000
+  )
+  expect(denied.agents).toEqual([])
+  // Once the provider listed it, its own list decides, whatever a result says.
+  const confirmed = at(
+    [
+      bash('b2', 'sleep 10', true),
+      listed({ id: 'task-2', call: 'b2', command: 'sleep 10' }),
+      { type: 'tool_result', id: 'b2', output: 'odd', error: true }
+    ],
+    1000
+  )
+  expect(rowsOf(confirmed)).toEqual(['shell:b2:bg:1000'])
+  expect(at([{ type: 'background_tasks', tasks: [] }], 2000, confirmed).agents).toEqual([])
+})
+
+it('keeps nothing when the command completes before its acknowledgement arrives', () => {
+  const status = at(
+    [
+      bash('b1', 'echo quick', true),
+      listed({ id: 'task-1', call: 'b1', command: 'echo quick' }),
+      { type: 'background_tasks', tasks: [] },
+      { type: 'tool_result', id: 'b1', output: 'Command running in background with ID: task-1' }
+    ],
+    1000
+  )
+  expect(status.agents).toEqual([])
+})
+
+it('keeps two same-named commands apart, each card promoted by its own call id', () => {
+  const status = at(
+    [
+      bash('b1', 'sleep 10', true),
+      bash('b2', 'sleep 10', true),
+      {
+        type: 'background_tasks',
+        tasks: [
+          {
+            id: 'task-2',
+            kind: 'shell',
+            description: 'sleep 10',
+            toolUseId: 'b2',
+            startedAt: 3000
+          },
+          { id: 'task-1', kind: 'shell', description: 'sleep 10', toolUseId: 'b1', startedAt: 3000 }
+        ]
+      }
+    ],
+    1000
+  )
+  expect(status.agents.map((a) => `${a.id}:${a.taskId}:${a.background}`)).toEqual([
+    'b1:task-1:true',
+    'b2:task-2:true'
+  ])
+})
+
+it('settles to one card when the list named the task before its call id was known', () => {
+  const unlinked: SessionEvent = {
+    type: 'background_tasks',
+    tasks: [{ id: 'task-1', kind: 'shell', description: 'sleep 10', startedAt: 3000 }]
+  }
+  const linked = listed({ id: 'task-1', call: 'b1', command: 'sleep 10' })
+  const status = at([bash('b1', 'sleep 10', true), unlinked, linked], 1000)
+  expect(rowsOf(status)).toEqual(['shell:b1:bg:1000'])
+})

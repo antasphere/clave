@@ -193,13 +193,38 @@ export class ClaudeStreamTranslator {
   private readonly background = new Map<string, BackgroundTask>()
   /** tool_use_id → the output file its "running in background" result named. */
   private readonly outputFiles = new Map<string, string>()
-  constructor(private readonly emit: (event: SessionEvent) => void) {}
+  /** A list held back because it named a task its call is not known for. */
+  private heldList = false
+  constructor(private readonly send: (event: SessionEvent) => void) {}
+  /** Every event a view reads goes out after a held list, so holding one
+   *  never changes what came first. The raw frame does not wait. */
+  private emit(event: SessionEvent): void {
+    if (this.heldList && event.type !== 'provider_event' && event.type !== 'background_tasks')
+      this.publishBackground()
+    this.send(event)
+  }
   /** Publish the background list whole; a snapshot replaces the last. */
   private publishBackground(): void {
-    this.emit({ type: 'background_tasks', tasks: [...this.background.values()] })
+    this.heldList = false
+    this.send({ type: 'background_tasks', tasks: [...this.background.values()] })
+  }
+  /** The CLI names a new background task in its list before the
+   *  task_started that names its call, in the same write (Claude Code,
+   *  claude-stream/background-bash.ndjson). Published at once, the task has
+   *  no call yet and a view shows it twice for a moment, beside the call's
+   *  own card. So such a list waits for the end of the read it came in: the
+   *  task_started that links it, any event a view reads, or the read's end
+   *  publishes it, linked or not. */
+  private holdList(): void {
+    if (this.heldList) return
+    this.heldList = true
+    queueMicrotask(() => {
+      if (this.heldList) this.publishBackground()
+    })
   }
   /** Nothing outlives the CLI: its exit empties the list, once. */
   clearBackground(): void {
+    this.heldList = false
     if (!this.background.size) return
     this.background.clear()
     this.publishBackground()
@@ -243,7 +268,12 @@ export class ClaudeStreamTranslator {
         .parse(p.tasks)
       const live = new Set(tasks.map((t) => t.task_id))
       for (const id of this.background.keys()) if (!live.has(id)) this.background.delete(id)
+      const unlinked = tasks.some((t) => !this.background.get(t.task_id)?.toolUseId)
       for (const t of tasks) track(t.task_id, t.task_type, t.description)
+      if (unlinked && [...this.background.values()].some((t) => !t.toolUseId)) {
+        this.holdList()
+        return true
+      }
     } else if (p.subtype === 'task_started') {
       // A foreground task (a subagent the turn waits on) is the turn's own
       // work, already on screen as its tool call.
@@ -262,6 +292,9 @@ export class ClaudeStreamTranslator {
     } else if (p.subtype === 'task_notification') {
       if (typeof p.task_id !== 'string' || !this.background.delete(p.task_id)) return true
     } else return false
+    // A held list waits while a task it named is still unlinked; the read's
+    // end publishes it either way.
+    if (this.heldList && [...this.background.values()].some((t) => !t.toolUseId)) return true
     this.publishBackground()
     return true
   }
