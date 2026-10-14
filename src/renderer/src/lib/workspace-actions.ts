@@ -81,11 +81,21 @@ let deferred: { state: ExternalWorkspaceState; from: Provenance } | null = null
  *  the registry: what it keeps as its own when it adopts another instance. */
 const writtenPartitions = new Set<string | null>()
 let registryWritten = false
-/** The pins partitions whose last write was refused or failed: a copy
- *  applied before they land again gets back this window's pins of them that
- *  it lacks, and the partition is sent again, since the copy does not hold
- *  what failed to reach the source (round 2 of the lane's verifier, F7). */
-const failedPartitions = new Set<string | null>()
+/** The pins partitions whose last write was refused or failed, each with
+ *  what this window held as persisted for it when the failed write went out
+ *  (pin id to its serialised blueprint): a copy applied before they land
+ *  again gets this window's changes to them against that base (pins it
+ *  added or edited win, pins it removed stay out), and the partition is sent
+ *  again, since the copy does not hold what failed to reach the source; a
+ *  pin this window did not touch is the copy's (round 2 of the lane's
+ *  verifier, F7, F7b and F8). */
+const failedPartitions = new Map<string | null, Map<string, string>>()
+
+function persistedBase(key: string | null): Map<string, string> {
+  const json = lastPersistedPins.get(key)
+  const list = json ? (JSON.parse(json) as Array<{ id: string }>) : []
+  return new Map(list.map((bp) => [bp.id, JSON.stringify(bp)]))
+}
 
 function stampOf(value: Partial<WorkspaceStamp> | null | undefined): WorkspaceStamp | null {
   return value && typeof value.revision === 'number' && typeof value.instance === 'string'
@@ -151,11 +161,15 @@ function persistPins(): void {
     const write = window.electronAPI?.workspaceUpdatePins?.(key, partition)
     if (!write) continue
     writtenPartitions.add(key)
+    // What this window held as persisted when the write went out: the base
+    // its change is read against if the write fails (the first failure's
+    // base is kept while the partition stays failed).
+    const base = failedPartitions.get(key) ?? persistedBase(key)
     writeStarted()
     void write
       .then((res) => {
         if (!res?.ok) {
-          failedPartitions.add(key)
+          failedPartitions.set(key, base)
           return
         }
         failedPartitions.delete(key)
@@ -166,7 +180,7 @@ function persistPins(): void {
         // The partition stays unrecorded and goes out again at the next
         // change, or at the next copy applied (`failedPartitions`); the
         // failure is said, since the window shows nothing of it.
-        failedPartitions.add(key)
+        failedPartitions.set(key, base)
         console.error('[workspace] the pins write failed:', error)
       })
       .then(writeLanded)
@@ -319,30 +333,41 @@ function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] })
   const { activeWorkspaceId: shown, workspaces: before } = useWorkspaceStore.getState()
   const hadShown = shown !== null && before.some((w) => w.id === shown)
   useWorkspaceStore.setState({ workspaces: state.workspaces })
-  // A partition whose last write failed: this window's version of every pin
-  // it holds there wins over the copy's (an addition or an edit that failed
-  // to reach the source), and the copy's other pins of it are kept (another
-  // window's). A removal that failed cannot be told from another window's
-  // addition, so the copy's pin comes back (accepted, ADR). A partition whose
-  // pins the copy already holds as this window has them counts as settled;
-  // any other is sent again (round 2 of the lane's verifier, F7, F7b).
+  // A partition whose last write failed: this window's change to it, read
+  // against what it held as persisted when the write went out, is laid over
+  // the copy (a pin it added or edited wins, a pin it removed stays out); a
+  // pin it did not touch is the copy's, so another window's edit of it
+  // stands. A partition the copy already holds as this window changed it is
+  // settled; any other is sent again (round 2 of the verifier, F7, F7b, F8).
   const copied = blueprintsOf(state.pins)
-  const ours = serializePinnedGroups(usePinnedStore.getState().pinnedGroups).filter((bp) =>
-    failedPartitions.has(pinPartition(bp))
-  )
   const copiedById = new Map(
     serializePinnedGroups(copied as PinnedGroup[]).map((bp) => [bp.id, JSON.stringify(bp)])
   )
-  const resend = new Set(
-    ours.filter((bp) => copiedById.get(bp.id) !== JSON.stringify(bp)).map((bp) => pinPartition(bp))
-  )
-  for (const key of [...failedPartitions]) if (!resend.has(key)) failedPartitions.delete(key)
-  const kept = new Map(
-    ours.filter((bp) => resend.has(pinPartition(bp))).map((bp) => [bp.id, bp] as const)
-  )
+  const held = serializePinnedGroups(usePinnedStore.getState().pinnedGroups)
+  const winning = new Map<string, PinnedGroupBlueprint>()
+  const removed = new Map<string, string | null>()
+  const resend = new Set<string | null>()
+  for (const [key, base] of failedPartitions) {
+    const mine = held.filter((bp) => pinPartition(bp) === key)
+    const mineIds = new Set(mine.map((bp) => bp.id))
+    for (const bp of mine) {
+      const json = JSON.stringify(bp)
+      if (base.get(bp.id) === json) continue
+      winning.set(bp.id, bp)
+      if (copiedById.get(bp.id) !== json) resend.add(key)
+    }
+    for (const id of base.keys()) {
+      if (mineIds.has(id)) continue
+      removed.set(id, key)
+      if (copiedById.has(id)) resend.add(key)
+    }
+  }
+  for (const key of [...failedPartitions.keys()]) if (!resend.has(key)) failedPartitions.delete(key)
   const blueprints = [
-    ...copied.map((bp) => kept.get(bp.id) ?? bp),
-    ...[...kept.values()].filter((bp) => !copiedById.has(bp.id))
+    ...copied
+      .filter((bp) => !(removed.has(bp.id) && removed.get(bp.id) === pinPartition(bp)))
+      .map((bp) => winning.get(bp.id) ?? bp),
+    ...[...winning.values()].filter((bp) => !copiedById.has(bp.id))
   ]
   const current = new Map(usePinnedStore.getState().pinnedGroups.map((pg) => [pg.id, pg]))
   const next: PinnedGroup[] = blueprints.map((bp) => {

@@ -576,6 +576,62 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     error.mockRestore()
   })
 
+  it('lets another window’s edit of a pin it did not touch stand in a failed partition (F8)', async () => {
+    loaded = { ...boot(1, [pin('a', 'A'), pin('x', 'X', 'ws2')], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('c', 'C'))
+    usePinnedStore.getState().addPinnedGroup(pin('d', 'D', 'ws2'))
+    expect(scopes()).toEqual(['ws1', 'ws1', 'ws2'])
+    const [refused, again, other] = writes.splice(0)
+    await refused.land({ ok: false })
+    await again.land({ ok: false })
+    // Another window renamed A meanwhile; the answer of the ws2 write says so.
+    await other.land({
+      revision: 3,
+      instance: 'main',
+      pins: [pin('a', 'A renamed'), pin('x', 'X', 'ws2'), pin('d', 'D', 'ws2')]
+    })
+    expect(names()).toEqual(['A renamed', 'X', 'D', 'C'])
+    expect(scopes()).toEqual(['ws1'])
+    expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A renamed', 'C'])
+  })
+
+  it('keeps a pin it removed out when its removal failed', async () => {
+    loaded = {
+      ...boot(1, [pin('a', 'A'), pin('r', 'R'), pin('x', 'X', 'ws2')], 'main'),
+      workspaces: [WS, WS2]
+    }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().removePinnedGroup('r')
+    usePinnedStore.getState().addPinnedGroup(pin('d', 'D', 'ws2'))
+    const [refused, again, other] = writes.splice(0)
+    await refused.land({ ok: false })
+    await again.land({ ok: false })
+    await other.land({
+      revision: 2,
+      instance: 'main',
+      pins: [pin('a', 'A'), pin('r', 'R'), pin('x', 'X', 'ws2'), pin('d', 'D', 'ws2')]
+    })
+    expect(names()).toEqual(['A', 'X', 'D'])
+    expect(scopes()).toEqual(['ws1'])
+    expect((writes[0].pins as PinnedGroup[]).map((p) => p.name)).toEqual(['A'])
+  })
+
+  it('forgets a failed partition another window’s copy already settled (G3b)', async () => {
+    loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
+    await actions.bootWorkspaces()
+    usePinnedStore.getState().addPinnedGroup(pin('c', 'C'))
+    await writes.splice(0)[0].land({ ok: false })
+    // Another window wrote C too: its change holds this window's pin as it is.
+    fold!(fromServer(2, [pin('c', 'C')]))
+    expect(names()).toEqual(['C'])
+    expect(writes).toHaveLength(0)
+    // Settled: a later deletion by another window is taken, C stays gone.
+    fold!(fromServer(3, []))
+    expect(names()).toEqual([])
+    expect(writes).toHaveLength(0)
+  })
+
   it('lands elsewhere when it adopts a copy whose registry lacks the shown workspace (G2)', async () => {
     loaded = { ...boot(1, [], 'main'), workspaces: [WS, WS2] }
     await actions.bootWorkspaces()
