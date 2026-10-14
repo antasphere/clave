@@ -551,15 +551,14 @@ export async function run(t) {
       // the three variables are out of the environment the child's
       // sessions and login shell inherit (its deletion of the run-as-Node
       // variable, main's removal of the server pair).
-      const childEnv = await serverFixture(
-        disc.url,
-        disc.token
-      )(() => ({
-        asNode: process.env.ELECTRON_RUN_AS_NODE ?? null,
-        url: process.env.CLAVE_SERVER_URL ?? null,
-        token: process.env.CLAVE_SERVER_TOKEN ?? null,
-        testFlag: process.argv.includes('--test-no-activate')
-      })).catch((error) => ({ error: String(error && error.message ? error.message : error) }))
+      const childEnv = await serverFixture(disc.url, disc.token)
+        .evaluate(() => ({
+          asNode: process.env.ELECTRON_RUN_AS_NODE ?? null,
+          url: process.env.CLAVE_SERVER_URL ?? null,
+          token: process.env.CLAVE_SERVER_TOKEN ?? null,
+          testFlag: process.argv.includes('--test-no-activate')
+        }))
+        .catch((error) => ({ error: String(error && error.message ? error.message : error) }))
       t.check(
         "the shell's test flag reached the child (its evaluate route answers)",
         childEnv.testFlag === true,
