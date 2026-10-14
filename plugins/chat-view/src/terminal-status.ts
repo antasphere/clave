@@ -19,6 +19,11 @@ export interface SubAgent {
   kind: 'agent' | 'shell'
   /** Started by Claude's Agent tool: the call a relaunch asks for again. */
   fromAgentTool: boolean
+  /** A command whose call asked to run in the background (Claude's Bash
+   *  `run_in_background`), not yet in the provider's background list: its
+   *  "running in background" result does not end it, the list or the turn's
+   *  end does. */
+  requestedBackground: boolean
   /** What the agent is (`general-purpose`, `Explore`, …), as the call asked;
    *  `shell` for a command. */
   type: string
@@ -62,6 +67,9 @@ const AGENT_TOOLS = new Set(['agent', 'task'])
  *  were left running. One that outlives the turn comes back in the
  *  background list under the same id and keeps its row. */
 const CODEX_COMMAND = 'commandExecution'
+/** Claude's command tool. A main-thread call shows from its tool_use, waited
+ *  on or not; the background list, naming the call, makes it background work. */
+const CLAUDE_BASH = 'Bash'
 const isAgentTool = (name: string): boolean => AGENT_TOOLS.has(name.toLowerCase())
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -94,6 +102,7 @@ function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubA
     taskId: task.id,
     kind,
     fromAgentTool: known?.fromAgentTool ?? false,
+    requestedBackground: false,
     type: known?.type ?? kind,
     description: task.description || known?.description || '',
     background: true,
@@ -136,17 +145,19 @@ export function reduceStatus(
         })
       if (status.agents.some((a) => a.id === event.id)) return status
       const input = record(event.input)
-      if (event.name === CODEX_COMMAND) {
+      if (event.name === CODEX_COMMAND || event.name === CLAUDE_BASH) {
         // A poll of a running process (write_stdin) is a call of its own but
         // no task of its own: the command it polls already has its row.
         if (input.source === 'unifiedExecInteraction') return status
+        const claude = event.name === CLAUDE_BASH
         const command: SubAgent = {
           id: event.id,
           taskId: null,
           kind: 'shell',
           fromAgentTool: false,
+          requestedBackground: claude && input.run_in_background === true,
           type: 'shell',
-          description: commandOf(input),
+          description: claude ? text(input.command) : commandOf(input),
           background: false,
           startedAt: now,
           lastAction: null,
@@ -163,6 +174,7 @@ export function reduceStatus(
         taskId: null,
         kind: 'agent',
         fromAgentTool: true,
+        requestedBackground: false,
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
         background: input.run_in_background === true,
@@ -177,9 +189,11 @@ export function reduceStatus(
     }
     case 'tool_result': {
       const agent = status.agents.find((a) => a.id === event.id)
-      // A background agent's call answers at once ("running in background");
-      // it stays until the background list drops it.
-      if (!agent || agent.background) return status
+      // A background agent's or command's call answers at once ("running in
+      // background"); it stays until the background list drops it. A command
+      // whose answer comes before the list names it waits for the list, or
+      // for the turn's end.
+      if (!agent || agent.background || agent.requestedBackground) return status
       return { ...status, agents: status.agents.filter((a) => a.id !== event.id) }
     }
     case 'background_tasks': {
@@ -195,12 +209,18 @@ export function reduceStatus(
         // it finished) never dates this one: a run is active from its start.
         return { ...agent, lastActiveAt: Math.max(agent.lastActiveAt, agent.startedAt) }
       })
-      const ids = new Set(background.map((agent) => agent.id))
+      // A card the list names is replaced where it stands (a running command
+      // promoted to background work keeps its place), a background card it no
+      // longer names goes, and a task new to the stack is added after.
+      const listed = new Map(background.map((agent) => [agent.id, agent]))
       return {
         ...status,
         agents: [
-          ...status.agents.filter((agent) => !agent.background && !ids.has(agent.id)),
-          ...background
+          ...status.agents.flatMap((agent) => {
+            const replaced = listed.get(agent.id)
+            return replaced ? [replaced] : agent.background ? [] : [agent]
+          }),
+          ...background.filter((agent) => !byId.has(agent.id))
         ]
       }
     }

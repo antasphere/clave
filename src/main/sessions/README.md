@@ -181,6 +181,14 @@ itself or the CLI wrote its own `[Request interrupted by user]` acknowledgement
 later failure still reads as one. A replayed transcript maps that
 acknowledgement the same way instead of showing it as something the reader
 typed. Codex reports a `turn/completed` whose status is `interrupted` alike.
+A main-thread command call (Claude's `Bash`, Codex's `commandExecution`)
+opens a terminal card in the Terminal view from its `tool_call`, as running
+work, and its result closes it; the background list naming the call
+(`toolUseId`) promotes the same card, in place, to background work, which
+then outlives the turn until the list drops it. A Claude call asking for
+`run_in_background` keeps its card past its "running in background" result
+until the list names it or the turn ends. A subagent's own calls stay its
+activity (`claude-stream/background-bash.ndjson`).
 Codex's running work reaches `background_tasks` from the app-server's own
 lifecycle: a `subAgentActivity` (or v1 `collabAgentToolCall`) lists a subagent
 by its thread and its end drops it; a command still in progress when the turn

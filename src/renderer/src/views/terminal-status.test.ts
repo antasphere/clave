@@ -42,6 +42,7 @@ it('stacks a subagent from its call, follows its own calls, and drops it on its 
       taskId: null,
       kind: 'agent',
       fromAgentTool: true,
+      requestedBackground: false,
       type: 'Explore',
       description: 'Find the reducer',
       background: false,
@@ -99,12 +100,14 @@ it('stacks a background shell beside the agents, named by its command', () => {
       taskId: 'b1',
       kind: 'shell',
       fromAgentTool: false,
+      requestedBackground: false,
       type: 'shell',
       description: 'npm run dev',
       background: true,
-      startedAt: 600,
+      // The card opened at the call, and the promotion keeps it.
+      startedAt: 1000,
       lastAction: null,
-      lastActiveAt: 600,
+      lastActiveAt: 1000,
       toolCount: 0,
       contextUsed: null,
       model: null
@@ -129,6 +132,7 @@ it('shows a Codex command while it runs, as running rather than background, unti
       taskId: null,
       kind: 'shell',
       fromAgentTool: false,
+      requestedBackground: false,
       type: 'shell',
       description: 'echo fg',
       background: false,
@@ -141,8 +145,6 @@ it('shows a Codex command while it runs, as running rather than background, unti
     }
   ])
   expect(run([{ type: 'tool_result', id: 'c1', output: 'fg' }], running).agents).toEqual([])
-  // A Claude Bash call the turn waits on stays the transcript's alone.
-  expect(run([call('b2', 'Bash', { command: 'ls' })]).agents).toEqual([])
 })
 
 it('keeps one row when a running command outlives the turn and becomes background work', () => {
@@ -382,4 +384,143 @@ it("starts a reused agent's next run fresh, never quiet off the last run, keepin
       model: 'gpt-6.1-sol'
     })
   )
+})
+
+/* Claude Bash, in the order the installed CLI sends it (claude-stream/
+   background-bash.ndjson): a backgrounded call's tool_use, then the
+   background list and task_started naming the call, then the "running in
+   background" result; a waited-on call's tool_use, then its result. */
+const bash = (id: string, command: string, background = false): SessionEvent =>
+  call(id, 'Bash', { command, ...(background ? { run_in_background: true } : {}) })
+const listed = (...tasks: { id: string; call: string; command: string }[]): SessionEvent => ({
+  type: 'background_tasks',
+  tasks: tasks.map((t) => ({
+    id: t.id,
+    kind: 'shell',
+    description: t.command,
+    toolUseId: t.call,
+    startedAt: 3000
+  }))
+})
+const at = (
+  events: SessionEvent[],
+  time: number,
+  start: TerminalStatus = emptyStatus
+): TerminalStatus => events.reduce((status, event) => reduceStatus(status, event, time), start)
+const rowsOf = (status: TerminalStatus): string[] =>
+  status.agents.map((a) => `${a.kind}:${a.id}:${a.background ? 'bg' : 'run'}:${a.startedAt}`)
+
+it('shows a Claude Bash call as a running card until its result, success or error', () => {
+  const running = at([bash('b1', 'npm test')], 1000)
+  expect(running.agents).toEqual([
+    expect.objectContaining({
+      id: 'b1',
+      taskId: null,
+      kind: 'shell',
+      type: 'shell',
+      description: 'npm test',
+      background: false,
+      model: null,
+      fromAgentTool: false
+    })
+  ])
+  expect(at([{ type: 'tool_result', id: 'b1', output: 'ok' }], 2000, running).agents).toEqual([])
+  expect(
+    at([{ type: 'tool_result', id: 'b1', output: 'exit 1', error: true }], 2000, running).agents
+  ).toEqual([])
+})
+
+it('runs a Claude agent and a Bash card side by side, each leaving at its own result', () => {
+  const both = at(
+    [call('a1', 'Agent', { subagent_type: 'Explore', description: 'Map' }), bash('b1', 'ls')],
+    1000
+  )
+  expect(both.agents.map((a) => `${a.kind}:${a.id}`)).toEqual(['agent:a1', 'shell:b1'])
+  const shellDone = at([{ type: 'tool_result', id: 'b1', output: '' }], 2000, both)
+  expect(shellDone.agents.map((a) => a.id)).toEqual(['a1'])
+  expect(at([{ type: 'tool_result', id: 'a1', output: '' }], 3000, shellDone).agents).toEqual([])
+})
+
+it('promotes a backgrounded Bash card in place, through its acknowledgement and the turn, to its completion', () => {
+  const call1 = at([bash('b1', 'sleep 10 && echo bgc', true)], 1000)
+  expect(rowsOf(call1)).toEqual(['shell:b1:run:1000'])
+  const promoted = at(
+    [
+      listed({ id: 'task-1', call: 'b1', command: 'sleep 10 && echo bgc' }),
+      { type: 'tool_result', id: 'b1', output: 'Command running in background with ID: task-1' },
+      { type: 'state_change', state: 'done' }
+    ],
+    3000,
+    call1
+  )
+  expect(rowsOf(promoted)).toEqual(['shell:b1:bg:1000'])
+  expect(promoted.agents[0].taskId).toBe('task-1')
+  expect(at([{ type: 'background_tasks', tasks: [] }], 13_000, promoted).agents).toEqual([])
+})
+
+it('keeps a backgrounded card whose acknowledgement arrives before the list, and promotes the same card', () => {
+  const acked = at(
+    [
+      bash('b1', 'sleep 10', true),
+      { type: 'tool_result', id: 'b1', output: 'Command running in background with ID: task-1' }
+    ],
+    1000
+  )
+  expect(rowsOf(acked)).toEqual(['shell:b1:run:1000'])
+  const promoted = at([listed({ id: 'task-1', call: 'b1', command: 'sleep 10' })], 3000, acked)
+  expect(rowsOf(promoted)).toEqual(['shell:b1:bg:1000'])
+  // Never listed: the turn's end takes it, so no card outlives it unconfirmed.
+  expect(at([{ type: 'state_change', state: 'done' }], 4000, acked).agents).toEqual([])
+})
+
+it('never doubles a Bash card through a repeated call, a repeated list, or a waited-on call beside it', () => {
+  const status = at(
+    [
+      bash('b1', 'sleep 10', true),
+      bash('b1', 'sleep 10', true),
+      bash('b2', 'echo fgc'),
+      listed({ id: 'task-1', call: 'b1', command: 'sleep 10' }),
+      listed({ id: 'task-1', call: 'b1', command: 'sleep 10' }),
+      { type: 'tool_result', id: 'b1', output: 'running in background' },
+      { type: 'tool_result', id: 'b2', output: 'fgc' }
+    ],
+    1000
+  )
+  expect(rowsOf(status)).toEqual(['shell:b1:bg:1000'])
+})
+
+it('clears a waited-on Bash card at an interruption, and keeps a backgrounded one', () => {
+  const status = at(
+    [
+      bash('b1', 'sleep 10', true),
+      listed({ id: 'task-1', call: 'b1', command: 'sleep 10' }),
+      bash('b2', 'sleep 60'),
+      { type: 'turn_interrupted' }
+    ],
+    1000
+  )
+  expect(rowsOf(status)).toEqual(['shell:b1:bg:1000'])
+})
+
+it("counts a subagent's own Bash call as its activity, never as a card of its own", () => {
+  const status = at(
+    [
+      call('a1', 'Agent', { subagent_type: 'Explore', description: 'Map' }),
+      call('s1', 'Bash', { command: 'ls' }, 'a1')
+    ],
+    1000
+  )
+  expect(status.agents.map((a) => `${a.kind}:${a.id}:${a.toolCount}`)).toEqual(['agent:a1:1'])
+})
+
+it('promotes a card where it stands, never moving it below a card that came after it', () => {
+  const status = at(
+    [
+      bash('b1', 'sleep 10 && echo bgc', true),
+      bash('b2', 'echo fgc'),
+      listed({ id: 'task-1', call: 'b1', command: 'sleep 10 && echo bgc' })
+    ],
+    1000
+  )
+  expect(rowsOf(status)).toEqual(['shell:b1:bg:1000', 'shell:b2:run:1000'])
 })
