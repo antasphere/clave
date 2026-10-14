@@ -189,13 +189,26 @@ describe('the settings source over the real managers', () => {
     source.subscribe((event) => events.push(event))
     const ws1 = { id: 'ws1', name: 'One', rootDir: '/tmp/x', profileFile: null, createdAt: 1 }
 
-    expect(await source.workspaces.updateRegistry([ws1], 'w1')).toEqual({ ok: true })
+    // Every write that lands answers the state's stamp, and the change event
+    // carries the same one (PRDCT-3405): a window compares a fold with it.
+    const first = await source.workspaces.updateRegistry([ws1], 'w1')
+    expect(first).toEqual({
+      ok: true,
+      workspaces: [ws1],
+      pins: [],
+      revision: 1,
+      instance: expect.any(String)
+    })
+    const instance = (first as { instance: string }).instance
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
       _tag: 'workspaces.state_changed',
       origin: 'w1',
-      workspaces: [ws1]
+      workspaces: [ws1],
+      revision: 1,
+      instance
     })
+    expect(await source.workspaces.load()).toMatchObject({ revision: 1, instance })
 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bad = { id: 'bad key', name: 'x', rootDir: '', profileFile: null, createdAt: 1 }
@@ -210,16 +223,28 @@ describe('the settings source over the real managers', () => {
     expect(events).toHaveLength(1)
     error.mockRestore()
 
-    expect(await source.workspaces.updatePins(null, [{ p: 1 }], undefined)).toEqual({ ok: true })
+    // A refused write bumps nothing: the next landed one is revision 2.
+    expect(await source.workspaces.updatePins(null, [{ p: 1 }], undefined)).toEqual({
+      ok: true,
+      workspaces: [ws1],
+      pins: [{ p: 1 }],
+      revision: 2,
+      instance
+    })
     expect(events).toHaveLength(2)
     expect(events[1]).toMatchObject({
       _tag: 'workspaces.state_changed',
       origin: null,
-      pins: expect.arrayContaining([{ p: 1 }])
+      pins: expect.arrayContaining([{ p: 1 }]),
+      revision: 2,
+      instance
     })
 
     await source.workspaces.setLastActive('ws1')
     expect((await source.workspaces.load()).lastActiveWorkspaceId).toBe('ws1')
+    // The last-active workspace is not part of what the change event carries,
+    // so setting it moves no revision.
+    expect((await source.workspaces.load()).revision).toBe(2)
     await source.workspaces.setLastActive('bad key')
     expect((await source.workspaces.load()).lastActiveWorkspaceId).toBeNull()
   })

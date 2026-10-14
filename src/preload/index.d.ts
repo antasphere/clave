@@ -45,7 +45,12 @@ export interface SessionIPCEvents {
 
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type {
+  WindowIdentity,
+  Workspace,
+  WorkspaceStamp,
+  WorkspaceState
+} from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
@@ -66,7 +71,15 @@ export type SetWorkspaceResult =
   | { ok: false; reason: 'unknown-workspace' | 'no-window' }
 
 /** Main's answer to a state write (layout, pins). */
-export type WriteResult = { ok: true } | { ok: false; reason: 'invalid-key' | 'no-window' }
+/** A registry or pins write that landed: the state as the write left it,
+ *  with its stamp; the writer folds it like a change (PRDCT-3405). */
+export type WorkspaceWritten = {
+  ok: true
+  workspaces: Workspace[]
+  pins: unknown[]
+} & WorkspaceStamp
+/** A pins write: landed, or refused. */
+export type WriteResult = WorkspaceWritten | { ok: false; reason: 'invalid-key' | 'no-window' }
 
 export interface HistoryLedgerRow {
   v: 1
@@ -949,14 +962,17 @@ export interface ElectronAPI {
     baseRevision?: number
   ) => Promise<SidebarSaveResult>
   onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
-  workspaceLoad: () => Promise<WorkspaceStateFile>
+  // The state and every write result carry the state's stamp (wave 5,
+  // lane A, PRDCT-3405): the window drops a fold that is not newer than the
+  // last stamp it loaded, wrote or took in.
+  workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
-  ) => Promise<{ ok: true } | { ok: false; reason: 'invalid' }>
+  ) => Promise<WorkspaceWritten | { ok: false; reason: 'invalid' }>
   workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) => Promise<WriteResult>
   workspaceSetLastActive: (workspaceId: string | null) => Promise<{ ok: true }>
   onWorkspaceStateChanged: (
-    callback: (state: { workspaces: Workspace[]; pins: unknown[] }) => void
+    callback: (state: { workspaces: Workspace[]; pins: unknown[] } & WorkspaceStamp) => void
   ) => () => void
   windowIdentity: () => Promise<WindowIdentity | null>
   onWindowIdentityChanged: (callback: (identity: WindowIdentity) => void) => () => void
