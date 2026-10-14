@@ -105,7 +105,11 @@ import { shellPlugins } from './plugins/shell-plugins'
 // until dismissed).
 const serverLaunch: ServerLaunch = (() => {
   try {
-    return takeServerLaunch(process.env, { argv: process.argv, packaged: app.isPackaged })
+    return takeServerLaunch(process.env, {
+      argv: process.argv,
+      packaged: app.isPackaged,
+      platform: process.platform
+    })
   } catch (err) {
     process.stderr.write(`[server] ${(err as Error).message}\n`)
     return process.exit(2)

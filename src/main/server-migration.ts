@@ -57,6 +57,34 @@ export interface OpensSecrets {
 export interface SealsSecrets {
   available(): boolean
   seal(plain: string): string
+  /** Forget an item this run filed, when the step it belongs to fails. */
+  discard?(sealed: string): void
+}
+
+/** Seal every value of a step or none: a seal that throws discards the
+ *  items the step filed before it and rethrows, so a step retried at the
+ *  next boot leaves no orphan Keychain item behind (round 4's finding). An
+ *  adapter that cannot seal at all fails the step rather than dropping the
+ *  secret: the marker is then not written and nothing is lost. */
+function sealAll(to: SealsSecrets): { seal: (plain: string) => string; rollback: () => void } {
+  if (!to.available()) throw new Error('the server cannot seal a secret on this machine')
+  const filed: string[] = []
+  return {
+    seal: (plain) => {
+      const sealed = to.seal(plain)
+      filed.push(sealed)
+      return sealed
+    },
+    rollback: () => {
+      for (const sealed of filed) {
+        try {
+          to.discard?.(sealed)
+        } catch {
+          /* an item that cannot be discarded is left; the next run files anew */
+        }
+      }
+    }
+  }
 }
 
 export interface MigrationOptions {
@@ -173,17 +201,27 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
     const parsed = readJson(source)
     if (!isRecord(parsed)) return
     const out: Record<string, unknown> = {}
-    for (const [id, credential] of Object.entries(parsed)) {
-      if (!isRecord(credential) || typeof credential.token !== 'string') continue
-      const plain = options.from.open(credential.token)
-      if (plain === undefined || !options.to.available()) {
-        report.unopened.push(`claude:${id}`)
-        continue
+    const sealer = sealAll(options.to)
+    const unopened: string[] = []
+    let resealed = 0
+    try {
+      for (const [id, credential] of Object.entries(parsed)) {
+        if (!isRecord(credential) || typeof credential.token !== 'string') continue
+        const plain = options.from.open(credential.token)
+        if (plain === undefined) {
+          unopened.push(`claude:${id}`)
+          continue
+        }
+        out[id] = { ...credential, token: sealer.seal(plain) }
+        resealed += 1
       }
-      out[id] = { ...credential, token: options.to.seal(plain) }
-      report.resealed.claude += 1
+      writeJson(target, out, 0o600)
+    } catch (err) {
+      sealer.rollback()
+      throw err
     }
-    writeJson(target, out, 0o600)
+    report.unopened.push(...unopened)
+    report.resealed.claude += resealed
     report.copied.push(CLAUDE_CREDENTIALS_FILE)
   })
 
@@ -205,11 +243,17 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
       return
     }
     const plain = options.from.open(parsed.sealed)
-    if (plain === undefined || !options.to.available()) {
+    if (plain === undefined) {
       report.unopened.push('antasphere')
       return
     }
-    writeJson(target, { ...parsed, sealed: options.to.seal(plain) }, 0o600)
+    const sealer = sealAll(options.to)
+    try {
+      writeJson(target, { ...parsed, sealed: sealer.seal(plain) }, 0o600)
+    } catch (err) {
+      sealer.rollback()
+      throw err
+    }
     report.resealed.antasphere = true
     report.copied.push(ANTASPHERE_SESSION_FILE)
   })
@@ -223,7 +267,13 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
       report.kept.push(CODEX_HOMES_DIR)
       return
     }
-    fs.cpSync(source, target, { recursive: true, verbatimSymlinks: true, errorOnExist: false })
+    // Copied beside the target and renamed into place only once whole: a
+    // copy that fails half way leaves no target, so the next boot copies
+    // again instead of keeping a partial folder (round 4's finding).
+    const partial = `${target}.partial`
+    fs.rmSync(partial, { recursive: true, force: true })
+    fs.cpSync(source, partial, { recursive: true, verbatimSymlinks: true, errorOnExist: false })
+    fs.renameSync(partial, target)
     report.codexHomes = fs
       .readdirSync(target, { withFileTypes: true })
       .filter((entry) => entry.isDirectory()).length

@@ -57,9 +57,23 @@ export function registerUsageHandlers(): void {
   // spend each account's quota a second time for nobody.
   if (!TEST_NO_ACTIVATE) {
     const anyWindow = (): boolean => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed())
-    const inProcessServer = (): boolean => getClaveServerEndpoint()?.mode === 'in-process'
-    const shouldRun = (): boolean => anyWindow() && inProcessServer()
+    const shouldRun = (): boolean =>
+      shouldPollUsage(getClaveServerEndpoint()?.mode ?? null, anyWindow())
     usageManager.startPolling(undefined, shouldRun)
     codexUsageManager.startPolling(undefined, shouldRun)
   }
+}
+
+/**
+ * Whether main's five-minute usage poll reads now: a window is open, and the
+ * server runs in this process or none is named yet (a boot that has not
+ * decided, or that failed, keeps the poll it always had). With the server in
+ * another process the windows read the usage through it and hear nothing of
+ * main's reads, which would spend each account's quota a second time. Pure.
+ */
+export function shouldPollUsage(
+  mode: 'in-process' | 'attached' | null,
+  anyWindow: boolean
+): boolean {
+  return anyWindow && mode !== 'attached'
 }

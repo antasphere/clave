@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -238,9 +239,10 @@ describe('the migration of the app data into the server directory', () => {
     }
   })
 
-  it('a server adapter that cannot seal leaves every secret out, named, and copies the rest', () => {
+  it('a server adapter that cannot seal fails the secret step: nothing dropped, no marker, the rest copied', () => {
     const { app, srv, clean } = dirs()
     try {
+      writeFileSync(path.join(app, 'preferences.json'), '{"p":1}')
       writeFileSync(
         path.join(app, CLAUDE_CREDENTIALS_FILE),
         JSON.stringify({ work: { token: appSeal('t'), setAt: 1 } })
@@ -255,12 +257,80 @@ describe('the migration of the app data into the server directory', () => {
         from,
         to: { available: () => false, seal: () => 'never' }
       })
-      expect(report.unopened).toEqual(['claude:work'])
-      expect(json(path.join(srv, CLAUDE_CREDENTIALS_FILE))).toEqual({})
+      // The token is not dropped as "not opened" and the marker not written,
+      // so a later boot on a machine that can seal still carries it.
+      expect(report.unopened).toEqual([])
+      expect(report.failed).toEqual([
+        `${CLAUDE_CREDENTIALS_FILE}: the server cannot seal a secret on this machine`
+      ])
+      expect(existsSync(path.join(srv, CLAUDE_CREDENTIALS_FILE))).toBe(false)
+      expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(false)
       // A revoked session has nothing to re-seal and is copied as it is.
       expect(json(path.join(srv, ANTASPHERE_SESSION_FILE))).toEqual({ v: 1, revoked: true })
-      expect(report.resealed).toEqual({ claude: 0, antasphere: false })
+      expect(json(path.join(srv, 'preferences.json'))).toEqual({ p: 1 })
+    } finally {
+      clean()
+    }
+  })
+
+  it('a seal that throws half way discards the items it filed before, so a retry leaves no orphan', () => {
+    const { app, srv, clean } = dirs()
+    try {
+      writeFileSync(
+        path.join(app, CLAUDE_CREDENTIALS_FILE),
+        JSON.stringify({
+          a: { token: appSeal('first'), setAt: 1 },
+          b: { token: appSeal('second'), setAt: 2 }
+        })
+      )
+      const filed = new Set<string>()
+      let calls = 0
+      const flaky = {
+        available: () => true,
+        seal: (plain: string) => {
+          calls += 1
+          if (calls === 2) throw new Error('the Keychain refused the item')
+          const handle = `kc:${plain}`
+          filed.add(handle)
+          return handle
+        },
+        discard: (sealed: string) => {
+          filed.delete(sealed)
+        }
+      }
+      const first = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
+      expect(first.failed).toEqual([`${CLAUDE_CREDENTIALS_FILE}: the Keychain refused the item`])
+      expect(filed.size).toBe(0)
+      expect(existsSync(path.join(srv, CLAUDE_CREDENTIALS_FILE))).toBe(false)
+      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: flaky })
+      expect(second.failed).toEqual([])
+      expect([...filed].sort()).toEqual(['kc:first', 'kc:second'])
       expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(true)
+    } finally {
+      clean()
+    }
+  })
+
+  it('a Codex homes copy that fails half way is copied again whole at the next run', () => {
+    const { app, srv, clean } = dirs()
+    try {
+      const a = path.join(app, CODEX_HOMES_DIR, 'a')
+      const b = path.join(app, CODEX_HOMES_DIR, 'b')
+      mkdirSync(a, { recursive: true })
+      mkdirSync(b, { recursive: true })
+      writeFileSync(path.join(a, 'auth.json'), '{"a":1}')
+      writeFileSync(path.join(b, 'auth.json'), '{"b":1}')
+      chmodSync(path.join(b, 'auth.json'), 0o000)
+      const first = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      expect(first.failed.some((f) => f.startsWith(`${CODEX_HOMES_DIR}:`))).toBe(true)
+      expect(existsSync(path.join(srv, CODEX_HOMES_DIR))).toBe(false)
+      expect(existsSync(path.join(srv, MIGRATION_MARKER))).toBe(false)
+      chmodSync(path.join(b, 'auth.json'), 0o600)
+      const second = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+      expect(second.failed).toEqual([])
+      expect(second.copied).toContain(CODEX_HOMES_DIR)
+      expect(json(path.join(srv, CODEX_HOMES_DIR, 'b', 'auth.json'))).toEqual({ b: 1 })
+      expect(existsSync(path.join(srv, `${CODEX_HOMES_DIR}.partial`))).toBe(false)
     } finally {
       clean()
     }

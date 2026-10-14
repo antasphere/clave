@@ -98,12 +98,20 @@ export const SERVER_FLAG = '--server'
  *  in-process whatever this says; `--server=in-process` is the way back for
  *  a packaged app (`open -a Clave --args --server=in-process`). */
 export const PACKAGED_DEFAULT: 'in-process' | 'separate' = 'separate'
+/** Where the packaged default applies: macOS only. The separate server's
+ *  secrets live in the macOS Keychain (`ports/secrets.ts`), unavailable
+ *  elsewhere, so a Windows or Linux install switched to it would lose its
+ *  Claude tokens at the migration and could not seal new ones (round 4 of
+ *  the verifier). Elsewhere the default stays in-process. */
+export const PACKAGED_DEFAULT_PLATFORMS: readonly NodeJS.Platform[] = ['darwin']
 
 export interface LaunchInput {
   /** The process's arguments, where `--server` is read. */
   argv?: readonly string[]
   /** Whether the app runs packaged (`app.isPackaged`): decides the default. */
   packaged?: boolean
+  /** The platform (`process.platform`): the packaged default is macOS's only. */
+  platform?: NodeJS.Platform
 }
 
 /** The `--server` flag's value, or undefined when the flag is absent:
@@ -137,7 +145,13 @@ export function resolveServerLaunch(env: NodeJS.ProcessEnv, input: LaunchInput =
       throw new Error(`${SERVER_FLAG} must be in-process or separate, got ${JSON.stringify(flag)}`)
     return { mode: flag }
   }
-  return { mode: input.packaged ? PACKAGED_DEFAULT : 'in-process' }
+  const platform = input.platform ?? process.platform
+  return {
+    mode:
+      input.packaged && PACKAGED_DEFAULT_PLATFORMS.includes(platform)
+        ? PACKAGED_DEFAULT
+        : 'in-process'
+  }
 }
 
 /**

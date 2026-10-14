@@ -92,9 +92,18 @@ describe('resolveServerLaunch, the --server flag (wave 5)', () => {
   })
   it('with no flag a development run is in-process and a packaged app runs the packaged default', () => {
     expect(resolveServerLaunch({}, { argv: [], packaged: false })).toEqual({ mode: 'in-process' })
-    expect(resolveServerLaunch({}, { argv: [], packaged: true })).toEqual({
+    expect(resolveServerLaunch({}, { argv: [], packaged: true, platform: 'darwin' })).toEqual({
       mode: PACKAGED_DEFAULT
     })
+    // Elsewhere the separate server has no Keychain to keep its secrets in.
+    for (const platform of ['win32', 'linux'] as const)
+      expect(resolveServerLaunch({}, { argv: [], packaged: true, platform })).toEqual({
+        mode: 'in-process'
+      })
+    // The flag still names the mode on any platform.
+    expect(
+      resolveServerLaunch({}, { argv: ['--server=separate'], packaged: true, platform: 'win32' })
+    ).toEqual({ mode: 'separate' })
     // Flipped by the second pull request of PRDCT-3434.
     expect(PACKAGED_DEFAULT).toBe('separate')
   })
