@@ -485,6 +485,11 @@ export class CodexAdapter implements SessionAdapter {
   readonly transports = ['events'] as const
   readonly images = true
   private handles = new Map<string, HandleState>()
+  /** The past of a session whose app-server ended, kept until its tab is
+   *  closed (`kill`): the tab stays open on an ended chat, and asking for its
+   *  past answered an unknown session, a 500 the pane read as no past at all
+   *  (PRDCT-3526). */
+  private pasts = new Map<string, HistoryItem[]>()
   private profiles = new Map<
     string,
     { profile: LaunchProfile; env?: Record<string, string>; initialPrompt?: string }
@@ -513,6 +518,7 @@ export class CodexAdapter implements SessionAdapter {
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
     if (this.handles.has(spec.id)) throw new Error(`Codex session already exists: ${spec.id}`)
+    this.pasts.delete(spec.id)
     const emitter = new EventEmitter()
     const context = this.profiles.get(spec.id)
     const launchEffort = text(object(spec.options).effort)
@@ -553,6 +559,8 @@ export class CodexAdapter implements SessionAdapter {
   }
 
   history(handle: SessionHandle): HistoryItem[] {
+    const past = this.handles.has(handle.id) ? undefined : this.pasts.get(handle.id)
+    if (past) return past
     const state = this.require(handle)
     if (state.historyError) {
       this.error(
@@ -899,11 +907,15 @@ export class CodexAdapter implements SessionAdapter {
   }
   async kill(handle: SessionHandle): Promise<void> {
     const state = this.handles.get(handle.id)
-    if (!state) return
+    if (!state) {
+      this.pasts.delete(handle.id)
+      return
+    }
     state.closing = true
     if (state.connection) await state.connection.close()
     else this.finish(state, 0)
     this.handles.delete(handle.id)
+    this.pasts.delete(handle.id)
     state.emitter.removeAllListeners()
   }
   on<K extends keyof SessionAdapterEvents>(
@@ -932,7 +944,12 @@ export class CodexAdapter implements SessionAdapter {
     state.mcpConfig?.remove(state.spec.id)
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)
-    if (this.handles.get(state.spec.id) === state) this.handles.delete(state.spec.id)
+    if (this.handles.get(state.spec.id) === state) {
+      this.handles.delete(state.spec.id)
+      // A kill in progress takes the past with the tab; an end on its own
+      // leaves the tab open on it.
+      if (!state.closing) this.pasts.set(state.spec.id, state.history)
+    }
     state.emitter.removeAllListeners()
   }
   private error(state: HandleState, error: unknown, fatal: boolean): void {

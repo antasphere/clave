@@ -1,7 +1,9 @@
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { createAgentTokenStore } from '../agent-tokens'
+import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import { CodexAdapter } from './codex-adapter'
 import { replayCodexHistory } from './codex-history'
 import { SessionManager } from '../session-manager'
@@ -262,3 +264,78 @@ describe('Codex resumed chat history', () => {
     await missing.manager.kill('tab')
   })
 })
+
+describe('an ended Codex chat keeps its past until its tab closes (PRDCT-3526)', () => {
+  it('answers its past after the app-server ended, and forgets it on the kill', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'clave-codex-ended-'))
+    roots.push(root)
+    const tokens = createAgentTokenStore(join(root, 'mcp'))
+    tokens.announce('http://127.0.0.1:12345/mcp')
+    installTerminalPorts({ mcpConfig: tokens.mcpConfig })
+    onTestFinished(() => resetTerminalPorts())
+    const sessions = join(root, 'sessions', '2026', '10', '12')
+    mkdirSync(sessions, { recursive: true })
+    writeFileSync(
+      join(sessions, 'rollout-2026-10-12T10-10-24-saved.jsonl'),
+      [
+        line('event_msg', { type: 'task_started', turn_id: 'turn' }),
+        message('UserMessage', 'u', 'Before the end'),
+        message('AgentMessage', 'a', 'Kept')
+      ].join('\n') + '\n'
+    )
+    let callbacks!: CodexCallbacksOf
+    const connect = vi.fn((_cwd: string, cb: CodexCallbacksOf) => {
+      callbacks = cb
+      return {
+        request: vi.fn(async () => ({ thread: { id: 'saved' }, model: 'model' })),
+        notify: vi.fn(),
+        respond: vi.fn(),
+        reject: vi.fn(),
+        close: vi.fn(async () => callbacks.exit(0))
+      }
+    })
+    const adapter = new CodexAdapter(connect as never)
+    adapter.configure(
+      'tab',
+      { id: 'codex', name: 'Codex', family: 'codex', command: ['codex'], additionalArgs: [] },
+      { CODEX_HOME: root }
+    )
+    const manager = new SessionManager()
+    manager.registerAdapter(adapter)
+    await manager.create({
+      id: 'tab',
+      provider: 'codex',
+      adapterId: adapter.id,
+      transport: 'events',
+      cwd: root,
+      title: 'Saved chat',
+      windowKey: 'window',
+      state: 'idle',
+      createdAt: 1,
+      options: { resume: 'saved' }
+    })
+    const texts = (): string[] =>
+      manager
+        .history('tab')
+        .items.flatMap(({ event }) =>
+          event.type === 'user_message'
+            ? [event.text]
+            : event.type === 'assistant_text'
+              ? [event.delta]
+              : []
+        )
+    expect(texts()).toEqual(['Before the end', 'Kept'])
+    // The app-server starts on the first message, then dies on its own.
+    adapter.write({ id: 'tab' }, { type: 'user_message', text: 'hello' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(connect).toHaveBeenCalled()
+    callbacks.exit(1)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(manager.get('tab')?.state).toBe('ended')
+    expect(texts()).toEqual(['Before the end', 'Kept'])
+    // The tab closed for real: the past goes with it.
+    await manager.kill('tab')
+    expect(() => adapter.history({ id: 'tab' })).toThrow()
+  })
+})
+type CodexCallbacksOf = import('./codex-app-server').CodexCallbacks

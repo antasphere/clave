@@ -19,12 +19,21 @@
  * - the Codex homes (`codex-homes/<id>`, a real `auth.json` beside symlinks
  *   to the machine home's entries), copied with the symlinks as they are.
  *
+ * - the session records (`session-records/`, version 2 of the migration,
+ *   PRDCT-3526): a record the server does not have is copied; a record it
+ *   has gets only the tab's name (`displayName`, `userRenamed`) when the
+ *   server's copy carries none, because 3.0.0-beta.1 carried no record over
+ *   and every tab it restored was written on the server without its name.
+ *
  * Nothing in the app's folder is removed or changed: the in-process server
  * (`--server=in-process`) still finds everything where it was. Nothing in
- * the server's folder is overwritten: a document already there is kept. The
- * marker `migrated-from-app.json` in the server's folder says it was done,
- * and no later boot does it again; a boot where a step failed writes no
- * marker and the next boot resumes, every step being idempotent.
+ * the server's folder is overwritten: a document already there is kept, a
+ * record already there gains a name it lacks and nothing else. The marker
+ * `migrated-from-app.json` in the server's folder says which version ran
+ * (`v`), and a later boot runs only the steps of a later version: an
+ * install migrated by beta.1 (`v: 1`) gets the records once at its next
+ * boot. A boot where a step failed writes no new marker and the next boot
+ * resumes, every step being idempotent.
  *
  * Pure apart from the file system: the two secret adapters come in as
  * arguments, so the unit test drives it with fakes.
@@ -33,6 +42,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 
 export const MIGRATION_MARKER = 'migrated-from-app.json'
+/** The marker's version: 1 carried the settings, the accounts and the Codex
+ *  homes (3.0.0-beta.1); 2 adds the session records. */
+export const MIGRATION_VERSION = 2
+export const SESSION_RECORDS_DIR = 'session-records'
 
 /** The documents copied as they are. */
 export const MIGRATED_DOCUMENTS: readonly string[] = [
@@ -111,6 +124,8 @@ export interface MigrationReport {
   readonly unopened: string[]
   /** The Codex homes copied. */
   codexHomes: number
+  /** The session records copied, and those that only got their tab's name back. */
+  readonly records: { copied: number; named: number }
   /** The steps that failed, with the reason; the marker is not written when any did. */
   readonly failed: string[]
 }
@@ -145,18 +160,28 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
     resealed: { claude: 0, antasphere: false },
     unopened: [],
     codexHomes: 0,
+    records: { copied: 0, named: 0 },
     failed: []
   }
   const marker = path.join(serverDir, MIGRATION_MARKER)
-  if (exists(marker)) return { ...report, outcome: 'already' }
+  const previous = exists(marker) ? readJson(marker) : null
+  // A marker that cannot be read is a done migration of an unknown version:
+  // version 1, the only one written before a version was compared.
+  const ran = !exists(marker)
+    ? 0
+    : isRecord(previous) && typeof previous.v === 'number'
+      ? previous.v
+      : 1
+  if (ran >= MIGRATION_VERSION) return { ...report, outcome: 'already' }
   fs.mkdirSync(serverDir, { recursive: true })
 
   const hasAnything =
     MIGRATED_DOCUMENTS.some((name) => exists(path.join(appDir, name))) ||
     exists(path.join(appDir, CLAUDE_CREDENTIALS_FILE)) ||
     exists(path.join(appDir, ANTASPHERE_SESSION_FILE)) ||
-    exists(path.join(appDir, CODEX_HOMES_DIR))
-  if (!hasAnything) {
+    exists(path.join(appDir, CODEX_HOMES_DIR)) ||
+    exists(path.join(appDir, SESSION_RECORDS_DIR))
+  if (ran === 0 && !hasAnything) {
     writeMarker(marker, appDir, { ...report, outcome: 'nothing' }, options.now)
     log('nothing to migrate: the app has no data of its own')
     return { ...report, outcome: 'nothing' }
@@ -172,6 +197,31 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
     }
   }
 
+  if (ran < 1) carryVersion1(options, report, step)
+  if (ran < 2) step(SESSION_RECORDS_DIR, () => carryRecords(appDir, serverDir, report))
+
+  if (report.failed.length === 0) writeMarker(marker, appDir, report, options.now, previous)
+  log(
+    `${report.copied.length} document(s) copied, ${report.kept.length} kept, ` +
+      `${report.resealed.claude} Claude token(s) re-sealed` +
+      (report.resealed.antasphere ? ', the Antasphere session re-sealed' : '') +
+      (report.unopened.length ? `, not opened here: ${report.unopened.join(', ')}` : '') +
+      (report.codexHomes ? `, ${report.codexHomes} Codex home(s)` : '') +
+      (report.records.copied || report.records.named
+        ? `, ${report.records.copied} session record(s) copied, ${report.records.named} named`
+        : '') +
+      (report.failed.length ? `; ${report.failed.length} step(s) failed` : '')
+  )
+  return report
+}
+
+/** Version 1: the settings documents, the sealed secrets, the Codex homes. */
+function carryVersion1(
+  options: MigrationOptions,
+  report: MigrationReport,
+  step: (name: string, run: () => void) => void
+): void {
+  const { appDir, serverDir } = options
   // The plain documents, as they are, with their mode.
   for (const name of MIGRATED_DOCUMENTS) {
     const source = path.join(appDir, name)
@@ -279,37 +329,77 @@ export function migrateAppDataToServer(options: MigrationOptions): MigrationRepo
       .filter((entry) => entry.isDirectory()).length
     report.copied.push(CODEX_HOMES_DIR)
   })
+}
 
-  if (report.failed.length === 0) writeMarker(marker, appDir, report, options.now)
-  log(
-    `${report.copied.length} document(s) copied, ${report.kept.length} kept, ` +
-      `${report.resealed.claude} Claude token(s) re-sealed` +
-      (report.resealed.antasphere ? ', the Antasphere session re-sealed' : '') +
-      (report.unopened.length ? `, not opened here: ${report.unopened.join(', ')}` : '') +
-      (report.codexHomes ? `, ${report.codexHomes} Codex home(s)` : '') +
-      (report.failed.length ? `; ${report.failed.length} step(s) failed` : '')
-  )
-  return report
+/** The name fields a record carries over onto the server's copy, and no other. */
+const NAME_FIELDS = ['displayName', 'userRenamed'] as const
+
+/**
+ * Version 2: the session records. One file per tab (`<id or tmux name>.json`).
+ * A record the server lacks is copied with its mode; a record it has is read
+ * and, when it carries no `displayName`, given the app's name fields (written
+ * to a temporary file and renamed, so a reader never sees half a record). A
+ * record either side cannot parse is left as it is.
+ */
+function carryRecords(appDir: string, serverDir: string, report: MigrationReport): void {
+  const source = path.join(appDir, SESSION_RECORDS_DIR)
+  if (!exists(source)) return
+  const target = path.join(serverDir, SESSION_RECORDS_DIR)
+  fs.mkdirSync(target, { recursive: true })
+  for (const name of fs.readdirSync(source)) {
+    if (!name.endsWith('.json')) continue
+    const from = path.join(source, name)
+    const to = path.join(target, name)
+    if (!fs.statSync(from).isFile()) continue
+    if (!exists(to)) {
+      const mode = fs.statSync(from).mode & 0o777
+      fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL)
+      fs.chmodSync(to, mode)
+      report.records.copied += 1
+      continue
+    }
+    const theirs = readJson(from)
+    const ours = readJson(to)
+    if (!isRecord(theirs) || !isRecord(ours)) continue
+    if (typeof ours.displayName === 'string' || typeof theirs.displayName !== 'string') continue
+    const named: Record<string, unknown> = { ...ours }
+    for (const field of NAME_FIELDS) if (theirs[field] !== undefined) named[field] = theirs[field]
+    const mode = fs.statSync(to).mode & 0o777
+    const tmp = `${to}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(named), { encoding: 'utf-8', mode })
+    fs.renameSync(tmp, to)
+    report.records.named += 1
+  }
 }
 
 function writeMarker(
   marker: string,
   appDir: string,
   report: MigrationReport,
-  now: (() => Date) | undefined
+  now: (() => Date) | undefined,
+  previous: unknown = null
 ): void {
+  // A later version keeps what the earlier one recorded, and adds its own.
+  const earlier = isRecord(previous) ? previous : {}
+  const merged = (key: 'copied' | 'kept' | 'unopened'): string[] => [
+    ...(Array.isArray(earlier[key]) ? (earlier[key] as string[]) : []),
+    ...report[key]
+  ]
   writeJson(
     marker,
     {
-      v: 1,
+      ...earlier,
+      v: MIGRATION_VERSION,
       at: (now ?? (() => new Date()))().toISOString(),
+      ...(earlier.at !== undefined && { firstAt: earlier.firstAt ?? earlier.at }),
       from: appDir,
       outcome: report.outcome,
-      copied: report.copied,
-      kept: report.kept,
-      resealed: report.resealed,
-      unopened: report.unopened,
-      codexHomes: report.codexHomes
+      copied: merged('copied'),
+      kept: merged('kept'),
+      resealed: isRecord(earlier.resealed) ? earlier.resealed : report.resealed,
+      unopened: merged('unopened'),
+      codexHomes: typeof earlier.codexHomes === 'number' ? earlier.codexHomes : report.codexHomes,
+      records: report.records
     },
     0o600
   )

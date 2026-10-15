@@ -31,6 +31,7 @@ import {
   // ── Wave 4, lane D: the last agent tools ──
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
   TypeIntoSession
@@ -61,6 +62,7 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('release', '/sessions/release', ReleaseSessions))
   // ── Wave 4, lane D: the last agent tools ──
   .add(HttpCqrs.commandEndpoint('rename', '/sessions/rename', RenameSession))
+  .add(HttpCqrs.commandEndpoint('keepOnRecord', '/sessions/keep-on-record', KeepOnSessionRecord))
   .add(HttpCqrs.commandEndpoint('setPage', '/sessions/page', SetSessionPage))
   .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
   .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))

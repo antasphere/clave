@@ -852,6 +852,27 @@ const electronAPI = {
       refusalListeners.delete(callback)
     }
   },
+  // ── Wave 6, lane A: the window's server connection, opened or back (PRDCT-3526) ──
+  // Heard when the server becomes available to this window and at every
+  // welcome of its push channel after that (a reconnection included): the
+  // moment a read that was lost while the server was busy or gone is worth
+  // asking again. A window on IPC for good never hears it.
+  onServerConnected: (callback: () => void): (() => void) => {
+    let off: () => void = noop
+    let gone = false
+    const withdraw = onServerAvailable((backing) => {
+      if (gone) return
+      off = backing.push.onStatus((status) => {
+        if (status === 'open') callback()
+      })
+      if (backing.push.status === 'open') callback()
+    })
+    return () => {
+      gone = true
+      withdraw()
+      off()
+    }
+  },
   // ── Sessions (lane A): every call goes to the server once main names it ──
   sessionsList: viaServer<[], Session[]>({
     ipc: () => ipcRenderer.invoke('sessions:list'),
@@ -1148,15 +1169,41 @@ const electronAPI = {
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
-  setSessionDisplayName: (id: string, displayName: string | null, userRenamed: boolean) =>
-    ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
-  setSessionViewRecord: (
-    id: string,
-    view: { url: string; title?: string; command?: string; cwd?: string } | null
-  ) => ipcRenderer.invoke('session:set-view', id, view),
+  // A tab's name and page, kept on the record the next launch restores it
+  // from: the server's, once main names it (wave 6, lane A, PRDCT-3526).
+  // Over IPC they reached main's copy of the records only, which the
+  // separate server never reads, and a renamed tab came back as its folder.
+  setSessionDisplayName: viaServer<[string, string | null, boolean], void>({
+    ipc: (id, displayName, userRenamed) =>
+      ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
+    server: ({ api }, id, displayName, userRenamed) =>
+      api.sessions.keepOnRecord(id, { name: { displayName, userRenamed: userRenamed === true } })
+  }),
+  setSessionViewRecord: viaServer<
+    [string, { url: string; title?: string; command?: string; cwd?: string } | null],
+    void
+  >({
+    ipc: (id, view) => ipcRenderer.invoke('session:set-view', id, view),
+    server: ({ api }, id, view) =>
+      api.sessions.keepOnRecord(id, {
+        page:
+          view && typeof view.url === 'string' && view.url.length > 0
+            ? {
+                url: view.url,
+                ...(typeof view.title === 'string' ? { title: view.title } : {}),
+                ...(typeof view.command === 'string' ? { command: view.command } : {}),
+                ...(typeof view.cwd === 'string' ? { cwd: view.cwd } : {})
+              }
+            : null
+      })
+  }),
 
-  setSessionWorkspace: (id: string, workspaceId: string | null) =>
-    ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+  // Kept on the server's record once main names it, like the name (round 1
+  // of wave 6 lane A's verifier): over IPC it reached main's copy only.
+  setSessionWorkspace: viaServer<[string, string | null], void>({
+    ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+    server: ({ api }, id, workspaceId) => api.sessions.keepOnRecord(id, { workspaceId })
+  }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
@@ -1428,8 +1475,18 @@ const electronAPI = {
   historySearchCancel: (requestId: string) => ipcRenderer.send('history:search-cancel', requestId),
   onHistorySearchHits: (callback: (progress: { requestId: string; hits: unknown[] }) => void) =>
     createIpcListener<[{ requestId: string; hits: unknown[] }]>('history:search-hits', callback),
-  setSessionClaudeSessionId: (id: string, claudeSessionId: string) =>
-    ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+  // A `/clear` rotated the conversation: the record that brings the tab back
+  // follows it, on the server's records once main names it (round 1 of wave 6
+  // lane A's verifier); over IPC it reached main's copy only, and the tab
+  // came back on its conversation from before the clear.
+  setSessionClaudeSessionId: viaServer<[string, string], void>({
+    ipc: (id, claudeSessionId) =>
+      ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+    server: ({ api }, id, claudeSessionId) =>
+      typeof id === 'string' && typeof claudeSessionId === 'string' && claudeSessionId
+        ? api.sessions.keepOnRecord(id, { claudeSessionId })
+        : Promise.resolve()
+  }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
 

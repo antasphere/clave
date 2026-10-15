@@ -618,6 +618,10 @@ export interface ElectronAPI {
   onServerRefusal: (
     callback: (refusal: { capability: string; message: string } | null) => void
   ) => () => void
+  /** The window's server connection opened, or came back after a loss: the
+   *  moment to ask again for a read that was lost (PRDCT-3526). Never heard
+   *  by a window on IPC for good. */
+  onServerConnected: (callback: () => void) => () => void
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>

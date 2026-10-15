@@ -28,6 +28,7 @@ import {
   // ── Wave 4, lane D: the last agent tools ──
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
   TypeIntoSession
@@ -94,6 +95,7 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('release', HttpCqrs.command(ReleaseSessions))
     // ── Wave 4, lane D: the last agent tools ──
     .handle('rename', HttpCqrs.command(RenameSession))
+    .handle('keepOnRecord', HttpCqrs.command(KeepOnSessionRecord))
     .handle('setPage', HttpCqrs.command(SetSessionPage))
     .handle('screen', HttpCqrs.query(ReadSessionScreen))
     .handle('type', HttpCqrs.command(TypeIntoSession))
