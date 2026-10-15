@@ -18,8 +18,7 @@ import {
   type SessionCapabilities,
   type SessionInfo,
   type SessionPage,
-  type SessionRecordName,
-  type SessionRecordView,
+  type SessionRecordFields,
   type SessionRecord,
   type SessionScreen,
   SessionWrite,
@@ -53,10 +52,7 @@ export interface SessionsClient {
   /** Destroy a surviving session nobody brings back, by its record key. */
   readonly discardRecord: (key: string) => Promise<void>
   /** Wave 6, lane A: the window's name and page for a tab, on its record. */
-  readonly keepOnRecord: (
-    id: string,
-    fields: { name?: SessionRecordName; page?: SessionRecordView | null }
-  ) => Promise<void>
+  readonly keepOnRecord: (id: string, fields: SessionRecordFields) => Promise<void>
   /** Let go of live sessions for another window to take in. */
   readonly release: (
     ids: ReadonlyArray<string>,
@@ -143,7 +139,9 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
         payload: {
           id,
           ...(fields.name !== undefined && { name: fields.name }),
-          ...(fields.page !== undefined && { page: fields.page })
+          ...(fields.page !== undefined && { page: fields.page }),
+          ...(fields.claudeSessionId !== undefined && { claudeSessionId: fields.claudeSessionId }),
+          ...(fields.workspaceId !== undefined && { workspaceId: fields.workspaceId })
         }
       })
     ).then(() => undefined),

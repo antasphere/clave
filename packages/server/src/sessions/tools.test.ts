@@ -210,11 +210,19 @@ describe('what the window keeps on a tab’s record (wave 6, lane A, PRDCT-3526)
     // An auto-title is a name the person did not give, and a cleared name is null.
     const auto = { displayName: null, userRenamed: false }
     expect((await post('/sessions/keep-on-record', { id: 's2', name: auto })).status).toBe(204)
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: 'c2' })).status
+    ).toBe(204)
+    expect((await post('/sessions/keep-on-record', { id: 's1', workspaceId: null })).status).toBe(
+      204
+    )
     expect(source.kept).toEqual([
-      { id: 's1', fields: { name, page: undefined } },
-      { id: 's1', fields: { name: undefined, page } },
-      { id: 's1', fields: { name: undefined, page: null } },
-      { id: 's2', fields: { name: auto, page: undefined } }
+      { id: 's1', fields: { name } },
+      { id: 's1', fields: { page } },
+      { id: 's1', fields: { page: null } },
+      { id: 's2', fields: { name: auto } },
+      { id: 's1', fields: { claudeSessionId: 'c2' } },
+      { id: 's1', fields: { workspaceId: null } }
     ])
     expect(await peer.silence()).toBe(true)
     peer.ws.close()
@@ -226,6 +234,9 @@ describe('what the window keeps on a tab’s record (wave 6, lane A, PRDCT-3526)
     expect(
       (await post('/sessions/keep-on-record', { id: 's1', page: { title: 'x' } })).status
     ).toBe(400)
+    expect((await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: '' })).status).toBe(
+      400
+    )
     expect(source.kept).toEqual([])
   })
 })

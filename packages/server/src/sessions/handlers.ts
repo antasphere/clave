@@ -208,7 +208,10 @@ export const sessionHandlers = [
   CommandHandler.make(KeepOnSessionRecord, (payload) =>
     Effect.flatMap(SessionHost, (host) =>
       Effect.try({
-        try: () => host.keepOnRecord(payload.id, { name: payload.name, page: payload.page }),
+        try: () => {
+          const { id, ...fields } = payload
+          host.keepOnRecord(id, fields)
+        },
         catch: (error) =>
           error instanceof CapabilityUnavailable
             ? error

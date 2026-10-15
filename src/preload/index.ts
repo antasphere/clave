@@ -1198,8 +1198,12 @@ const electronAPI = {
       })
   }),
 
-  setSessionWorkspace: (id: string, workspaceId: string | null) =>
-    ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+  // Kept on the server's record once main names it, like the name (round 1
+  // of wave 6 lane A's verifier): over IPC it reached main's copy only.
+  setSessionWorkspace: viaServer<[string, string | null], void>({
+    ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+    server: ({ api }, id, workspaceId) => api.sessions.keepOnRecord(id, { workspaceId })
+  }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
@@ -1471,8 +1475,18 @@ const electronAPI = {
   historySearchCancel: (requestId: string) => ipcRenderer.send('history:search-cancel', requestId),
   onHistorySearchHits: (callback: (progress: { requestId: string; hits: unknown[] }) => void) =>
     createIpcListener<[{ requestId: string; hits: unknown[] }]>('history:search-hits', callback),
-  setSessionClaudeSessionId: (id: string, claudeSessionId: string) =>
-    ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+  // A `/clear` rotated the conversation: the record that brings the tab back
+  // follows it, on the server's records once main names it (round 1 of wave 6
+  // lane A's verifier); over IPC it reached main's copy only, and the tab
+  // came back on its conversation from before the clear.
+  setSessionClaudeSessionId: viaServer<[string, string], void>({
+    ipc: (id, claudeSessionId) =>
+      ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+    server: ({ api }, id, claudeSessionId) =>
+      typeof id === 'string' && typeof claudeSessionId === 'string' && claudeSessionId
+        ? api.sessions.keepOnRecord(id, { claudeSessionId })
+        : Promise.resolve()
+  }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
 

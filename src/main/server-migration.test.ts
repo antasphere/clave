@@ -601,5 +601,82 @@ describe('the migration of the app data into the server directory', () => {
         clean()
       }
     })
+
+    it('the name fill changes nothing else of a record the server wrote, whatever the app had (F4)', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        beta1Marker(srv)
+        // A /clear on the server rotated the conversation; the app's copy is older.
+        put(
+          app,
+          'tab.json',
+          record('tab', {
+            claudeSessionId: 'old-before-clear',
+            cwd: '/old',
+            model: 'old-model',
+            displayName: 'Mine',
+            userRenamed: true
+          })
+        )
+        put(
+          srv,
+          'tab.json',
+          record('tab', { claudeSessionId: 'new-after-clear', cwd: '/new' }),
+          0o600
+        )
+        migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+        expect(read(srv, 'tab.json')).toEqual(
+          record('tab', {
+            claudeSessionId: 'new-after-clear',
+            cwd: '/new',
+            displayName: 'Mine',
+            userRenamed: true
+          })
+        )
+        // Its mode kept (F5).
+        expect(statSync(path.join(srv, SESSION_RECORDS_DIR, 'tab.json')).mode & 0o777).toBe(0o600)
+      } finally {
+        clean()
+      }
+    })
+
+    it('a marker without a version is version 1: the records are carried (F5)', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        mkdirSync(srv, { recursive: true })
+        writeFileSync(path.join(srv, MIGRATION_MARKER), JSON.stringify({ at: 'x' }))
+        writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
+        put(app, 'tab.json', record('tab'))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.records.copied).toBe(1)
+        expect(report.copied).toEqual([])
+      } finally {
+        clean()
+      }
+    })
+
+    it('a marker that cannot be parsed is version 1 too', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        mkdirSync(srv, { recursive: true })
+        writeFileSync(path.join(srv, MIGRATION_MARKER), '{ not json')
+        put(app, 'tab.json', record('tab'))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.records.copied).toBe(1)
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: MIGRATION_VERSION })
+      } finally {
+        clean()
+      }
+    })
   })
 })

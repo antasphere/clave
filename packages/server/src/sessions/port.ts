@@ -25,8 +25,7 @@ import type {
   SessionInfo,
   SessionRecord,
   SessionPage,
-  SessionRecordName,
-  SessionRecordView,
+  SessionRecordFields,
   SessionScreen,
   SessionStream,
   SessionWrite,
@@ -93,13 +92,10 @@ export interface SessionHostService extends SessionStreamSource {
   /** The page on the tab's row, on the record; null takes it off. Throws
    *  when the session is unknown. */
   readonly setPage: (id: string, page: SessionPage | null) => void
-  /** Wave 6, lane A: the window's name and page for the tab, written on its
-   *  record when it has one; a field left out is left as it is. Nothing is
+  /** Wave 6, lane A: what the window keeps on the tab's record, written
+   *  when it has one; a field left out is left as it is. Nothing is
    *  published. */
-  readonly keepOnRecord: (
-    id: string,
-    fields: { name?: SessionRecordName; page?: SessionRecordView | null }
-  ) => void
+  readonly keepOnRecord: (id: string, fields: SessionRecordFields) => void
   /** The last `lines` rendered lines of a terminal session. Throws when the
    *  session is unknown; rejects with `SessionScreenUnavailable` when it has
    *  no screen this host kept (a chat tab). */

@@ -3,6 +3,7 @@ import {
   PAST_RETRY_EVERY_MS,
   PAST_RETRY_FOR_MS,
   PAST_RETRY_MS,
+  pastHead,
   readPast,
   type PastClock
 } from '../../../../plugins/chat-view/src/past'
@@ -166,5 +167,50 @@ describe('readPast (PRDCT-3526)', () => {
     )
     await clock.advance(PAST_RETRY_MS[0])
     expect(got).toEqual([['ok']])
+  })
+
+  it('a new round after a give-up has its own two minutes (round 1 of the verifier, F2)', async () => {
+    const clock = fakeClock()
+    const source = flaky(Infinity, null)
+    const failures: unknown[] = []
+    const reader = readPast(source.read, { read: () => {}, failed: (e) => failures.push(e) }, clock)
+    await clock.advance(PAST_RETRY_FOR_MS + PAST_RETRY_EVERY_MS)
+    expect(failures).toHaveLength(1)
+    const before = source.calls()
+    reader.retry()
+    await clock.advance(30_000)
+    // Still asking, quick waits first, and not given up after one more read.
+    expect(failures).toHaveLength(1)
+    expect(source.calls() - before).toBeGreaterThan(3)
+    await clock.advance(PAST_RETRY_FOR_MS)
+    expect(failures).toHaveLength(2)
+  })
+
+  it('leaves no timer when stopped while a retry is waiting (F3)', async () => {
+    const clock = fakeClock()
+    const source = flaky(Infinity, null)
+    const reader = readPast(source.read, { read: () => {}, failed: () => {} }, clock)
+    await clock.advance(PAST_RETRY_MS[0] + PAST_RETRY_MS[1] + 10)
+    expect(clock.pending()).toBe(1)
+    const asked = source.calls()
+    reader.stop()
+    expect(clock.pending()).toBe(0)
+    await clock.advance(PAST_RETRY_FOR_MS)
+    expect(source.calls()).toBe(asked)
+  })
+})
+
+describe("the transcript's head (PRDCT-3526, round 1 of the verifier, F1)", () => {
+  it('invites to start only over a past actually read and empty', () => {
+    expect(pastHead('read', 0, false)).toBe('empty')
+    expect(pastHead('read', 3, false)).toBe(null)
+    expect(pastHead('read', 0, true)).toBe(null)
+  })
+  it('says nothing while asking, a Retry round included, even with no entry', () => {
+    expect(pastHead('reading', 0, false)).toBe(null)
+  })
+  it('says the failure, never the invitation, when the round found no answer', () => {
+    expect(pastHead('failed', 0, false)).toBe('failed')
+    expect(pastHead('failed', 4, false)).toBe('failed')
   })
 })

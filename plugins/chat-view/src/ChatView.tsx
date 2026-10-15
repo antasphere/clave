@@ -48,7 +48,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading, PastFailed } from './EarlierLoading'
-import { readPast, type PastReader } from './past'
+import { pastHead, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -380,10 +380,11 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // older; `pastRead` holds the empty state back until the first answer, so a
   // long conversation never flashes "Start a conversation" on its way in.
   const [before, setBefore] = useState<number | null>(null)
-  const [pastRead, setPastRead] = useState(false)
-  // The past could not be read after a round of asking (`readPast`): the pane
-  // says so instead of showing an empty conversation, and offers to ask again.
-  const [pastFailed, setPastFailed] = useState(false)
+  // `reading` until the first answer; `failed` when a round of asking found
+  // none (`readPast`): the pane says so instead of showing an empty
+  // conversation, and offers to ask again (`pastHead`).
+  const [past, setPast] = useState<PastState>('reading')
+  const pastRead = past !== 'reading'
   const pastReader = useRef<PastReader | null>(null)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
@@ -456,13 +457,11 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
             if (usage) dispatchStatus(usage.event)
-            setPastFailed(false)
-            setPastRead(true)
+            setPast('read')
           },
           failed: (error) => {
             console.error(`[chat-view] the past of ${session.id} could not be read`, error)
-            setPastFailed(true)
-            setPastRead(true)
+            setPast('failed')
           }
         })
         stopConnected = window.electronAPI.onServerConnected(() => pastReader.current?.retry())
@@ -732,6 +731,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
+  const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
   return (
     <div
@@ -775,15 +775,17 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
-            {pastFailed && (
+            {head === 'failed' && (
               <PastFailed
                 onRetry={() => {
-                  setPastFailed(false)
+                  // Back to reading: neither the failure nor the empty state
+                  // until the new round answers.
+                  setPast('reading')
                   pastReader.current?.retry()
                 }}
               />
             )}
-            {pastRead && !pastFailed && conversation.entries.length === 0 && state !== 'ended' && (
+            {head === 'empty' && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
                   <ChatBubbleLeftRightIcon />

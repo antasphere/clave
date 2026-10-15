@@ -10,6 +10,8 @@ import type { SessionManager } from './session-manager'
 const mocks = vi.hoisted(() => ({
   setSessionDisplayName: vi.fn(),
   setSessionViewRecord: vi.fn(),
+  setSessionClaudeSessionId: vi.fn(),
+  setSessionWorkspace: vi.fn(),
   folderName: 'app',
   typed: vi.fn(async () => ({ submitted: true, draftHandling: 'none' as const })),
   notifyChatMessage: vi.fn()
@@ -21,6 +23,8 @@ vi.mock('../pty-manager', () => ({
   ptyManager: {
     setSessionDisplayName: mocks.setSessionDisplayName,
     setSessionViewRecord: mocks.setSessionViewRecord,
+    setSessionClaudeSessionId: mocks.setSessionClaudeSessionId,
+    setSessionWorkspace: mocks.setSessionWorkspace,
     getSession: (id: string) => (id === 'gone' ? undefined : { id, folderName: mocks.folderName })
   }
 }))
@@ -122,5 +126,19 @@ describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () 
       ['c1', null]
     ])
     expect(mocks.setSessionDisplayName).toHaveBeenCalledTimes(2)
+    expect(mocks.setSessionClaudeSessionId).not.toHaveBeenCalled()
+    expect(mocks.setSessionWorkspace).not.toHaveBeenCalled()
+  })
+  it('follows a /clear and a workspace move, a cleared workspace included', () => {
+    host.keepOnRecord('c1', { claudeSessionId: 'after-clear' })
+    host.keepOnRecord('c1', { workspaceId: 'ws-2' })
+    host.keepOnRecord('c1', { workspaceId: null })
+    expect(mocks.setSessionClaudeSessionId.mock.calls).toEqual([['c1', 'after-clear']])
+    expect(mocks.setSessionWorkspace.mock.calls).toEqual([
+      ['c1', 'ws-2'],
+      ['c1', null]
+    ])
+    expect(mocks.setSessionDisplayName).not.toHaveBeenCalled()
+    expect(mocks.setSessionViewRecord).not.toHaveBeenCalled()
   })
 })

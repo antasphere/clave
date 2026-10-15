@@ -712,22 +712,29 @@ export const SessionRecordName = Schema.Struct({
   userRenamed: Schema.Boolean
 })
 export type SessionRecordName = typeof SessionRecordName.Type
+/** What the window keeps on a tab's record, each field only when sent: its
+ *  name, the page on its row (null takes it off), the conversation a
+ *  `/clear` rotated it to, and the workspace it was moved to (null for
+ *  none). */
+export const SessionRecordFields = Schema.Struct({
+  name: Schema.optional(SessionRecordName),
+  page: Schema.optional(Schema.NullOr(SessionRecordView)),
+  claudeSessionId: Schema.optional(Schema.NonEmptyString),
+  workspaceId: Schema.optional(Schema.NullOr(Schema.String))
+})
+export type SessionRecordFields = typeof SessionRecordFields.Type
 /**
  * Keep what the window decided about a tab on the record the next launch
- * restores it from: its name (a rename, or an auto-title), and the page on
- * its row (null takes it off). Quiet on purpose: the window that sends it
+ * restores it from (`SessionRecordFields`). Quiet on purpose: the window that sends it
  * already shows it, so nothing is published, unlike `RenameSession` and
  * `SetSessionPage`, which an agent sends for the windows to follow. A tab
  * with no record keeps nothing, as before. Under the separate server the
  * window's rename reached main's copy of the records only, and the name was
- * gone at the next launch.
+ * gone at the next launch; a `/clear` and a workspace move the same way
+ * (round 1 of the lane's verifier).
  */
 export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
-  payload: Schema.Struct({
-    id: Schema.String,
-    name: Schema.optional(SessionRecordName),
-    page: Schema.optional(Schema.NullOr(SessionRecordView))
-  }),
+  payload: Schema.Struct({ id: Schema.String, ...SessionRecordFields.fields }),
   success: Schema.Void,
   failure: CapabilityUnavailable
 })

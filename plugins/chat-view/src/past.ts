@@ -106,3 +106,22 @@ export function readPast<T>(
     }
   }
 }
+
+/** Where the pane stands with the past: asking, read (an empty past
+ *  included), or a round spent without an answer. */
+export type PastState = 'reading' | 'read' | 'failed'
+
+/** What the transcript's head says: the failure with its Retry, the
+ *  invitation of an empty conversation, or nothing. The invitation needs a
+ *  past actually read: while asking, a Retry's new round included, and after
+ *  a failure, the conversation is not known to be empty (round 1 of the
+ *  lane's verifier: a Retry showed "Start a conversation" for two minutes). */
+export function pastHead(
+  past: PastState,
+  entries: number,
+  ended: boolean
+): 'failed' | 'empty' | null {
+  if (past === 'failed') return 'failed'
+  if (past === 'read' && entries === 0 && !ended) return 'empty'
+  return null
+}
