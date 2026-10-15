@@ -8,6 +8,7 @@ vi.mock('electron', () => {
   throw new Error('the lifecycle imported electron')
 })
 const mocks = vi.hoisted(() => ({
+  loginShellEnvAsync: vi.fn(async () => ({}) as Record<string, string>),
   spawn: vi.fn(),
   kill: vi.fn<(id: string) => Promise<void>>(async () => {}),
   listeners: new Map<string, { onData: (d: string) => void; onExit: (c: number) => void }>(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   clearState: vi.fn()
 }))
 vi.mock('../pty-manager', () => ({
+  loginShellEnvAsync: mocks.loginShellEnvAsync,
   ptyManager: {
     spawn: mocks.spawn,
     kill: mocks.kill,
@@ -148,6 +150,21 @@ describe('a session is spawned for a window named by its key', () => {
       windowKey: 'w1'
     })
     expect(bound).toEqual([[id, 'w1']])
+  })
+  it('waits for the login shell’s environment, never reading it synchronously (PRDCT-3527)', async () => {
+    const id = `life-${++sequence}`
+    windows()
+    spawned(id)
+    let release: (env: Record<string, string>) => void = () => {}
+    mocks.loginShellEnvAsync.mockImplementationOnce(
+      () => new Promise<Record<string, string>>((resolve) => (release = resolve))
+    )
+    const pending = spawnSession('w1', '/work/app', { claudeMode: false })
+    await Promise.resolve()
+    expect(mocks.spawn).not.toHaveBeenCalled()
+    release({ PATH: '/opt/homebrew/bin' })
+    await pending
+    expect(mocks.spawn).toHaveBeenCalledTimes(1)
   })
   it('a windowless caller falls back to the last active workspace and binds nothing', async () => {
     const id = `life-${++sequence}`

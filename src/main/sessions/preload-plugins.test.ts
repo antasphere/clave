@@ -145,7 +145,7 @@ describe('the lease, the revoke, the panel and the focus report go through the a
     expect(await api.pluginsPanel('p', 'side')).toEqual({ url: 'u' })
     await api.pluginsContext('s1')
     await api.pluginsViewRevoke('l1')
-    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual([
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([
       'plugins:view-lease',
       'plugins:panel',
       'plugins:context',

@@ -54,10 +54,11 @@ describe('session preload bridge', () => {
   it('keeps the legacy PTY exit listener and adapter exit listener on their own channels', () => {
     const legacy = api.onSessionExit('id', () => {})
     const adapter = api.onSessionStreamExit('id', () => {})
-    expect(mocks.on.mock.calls.map(([channel]) => channel)).toEqual([
-      'pty:exit:id',
-      'sessions:exit:id'
-    ])
+    // The server watch's own listener (PRDCT-3527) is not a session channel.
+    const channels = mocks.on.mock.calls
+      .map(([channel]) => channel)
+      .filter((c) => c !== 'server:endpoint-named')
+    expect(channels).toEqual(['pty:exit:id', 'sessions:exit:id'])
     legacy()
     adapter()
     expect(mocks.removeListener.mock.calls.map(([channel]) => channel)).toEqual([

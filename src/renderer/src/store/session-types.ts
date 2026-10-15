@@ -339,6 +339,17 @@ export interface Session {
   /** Bumped by a restart on another account: the pane remounts on it, so
    *  the terminal reconnects to the new process under the same id. */
   restartEpoch?: number
+  /** Runtime: a chat brought back by the launch's restore whose agent has not
+   *  run since (PRDCT-3527). Its pane is not mounted until the tab is first
+   *  shown: a mounted chat view starts its agent, and a launch restoring a
+   *  hundred chats started a hundred agents and replayed a hundred
+   *  conversations before the last tab came back. Cleared the first time the
+   *  tab is selected, and the pane then stays mounted like any other. */
+  dormant?: boolean
+  /** Runtime: placed by the launch's restore from its record while its
+   *  process is still being reattached (PRDCT-3527). The row shows at once;
+   *  the pane mounts once the spawn has answered and this is cleared. */
+  restoring?: boolean
   /** Runtime: when this window first saw the tab's process (its add, its
    *  adoption, or its last restart), not when the process started: a tab
    *  moved between windows is stamped again, so it loses a restart hint it

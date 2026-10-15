@@ -393,7 +393,11 @@ export async function launchApp(
     bootTimeoutMs = BOOT_TIMEOUT_MS,
     // A spec that makes the server come up late (CLAVE_E2E_SERVER_BOOT_DELAY_MS)
     // wants the window before the server: it is not waited for then.
-    waitForServer = !(Number(env.CLAVE_E2E_SERVER_BOOT_DELAY_MS) > 0)
+    waitForServer = !(Number(env.CLAVE_E2E_SERVER_BOOT_DELAY_MS) > 0),
+    // Run on the first window as soon as its page has loaded, before the boot
+    // is waited for: a spec that times the boot from inside the page installs
+    // its watch here (restore-timing.spec.mjs, PRDCT-3527).
+    beforeBoot = null
   } = {}
 ) {
   const base = { ...process.env }
@@ -465,6 +469,7 @@ export async function launchApp(
   }
   const win = await app.firstWindow()
   await win.waitForLoadState('domcontentloaded')
+  if (beforeBoot) await beforeBoot(win)
   // The boot, not a clock (waitForBoot above); a settleMs a spec still
   // passes is waited after it.
   await waitForBoot(win, { timeoutMs: bootTimeoutMs, dir: waitForServer ? dir : null, pid })

@@ -363,6 +363,9 @@ export type SessionLink =
   | { kind: 'toolbar'; key: string }
 
 export interface SessionRecord {
+  /** How the session's process talks: a terminal (`pty`) or a chat's
+   *  structured events (`events`). Absent on a record older than the field. */
+  transport?: 'pty' | 'events'
   /** The session is one this process already runs (wave 3): a window asking
    *  for it by id takes it in from the record alone, with no spawn. Absent on
    *  an adoptable record, whose process the window reattaches itself. */
@@ -745,6 +748,9 @@ export interface ElectronAPI {
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the server holds a record this window would bring back, asked
+   *  through main so the window does not connect to find out (PRDCT-3527). */
+  serverHasRestoreRecords: () => Promise<boolean>
   /** Whether the boot's `listSessionRecords()` read is every adoptable record
    *  (inside the app) or the server's come after it through the top-up
    *  (attached, or while main has named no server yet). The boot's layout
