@@ -86,6 +86,18 @@ describe('SessionManager', () => {
     expect(manager.started('absent')).toBe(false)
   })
 
+  it('never starts an ended session again when a view opens it', async () => {
+    const { manager, adapter } = fixture()
+    const ready = vi.spyOn(adapter, 'ready')
+    await manager.create(session('a'))
+    manager.ready('a')
+    await manager.kill('a')
+    // Still held (not forgotten), ended: a restored tab's view opening it.
+    expect(manager.get('a')?.state).toBe('ended')
+    manager.ready('a')
+    expect(ready).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects unknown adapters, mismatched transports and duplicate concurrent ids', async () => {
     const { manager } = fixture()
     await expect(manager.create({ ...session('x'), adapterId: 'missing' })).rejects.toThrow(

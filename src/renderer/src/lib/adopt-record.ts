@@ -144,7 +144,10 @@ function settleRestored(spawned: Session): void {
  * the agent's next transition. One read of the listed sessions for the ids,
  * and `agentState` seeded on each that still has no word; a word that reached
  * the store live meanwhile is never written over. The chat view does the same
- * for an events session (`views/kernel-state.ts`).
+ * for an events session (`views/kernel-state.ts`). A session the kernel holds
+ * as `ended` (a chat whose provider exited, still held by the host) comes in
+ * ended, the record being the arbiter as in `views/session-end.ts`: taken in
+ * from its record it would otherwise read as a usable tab until opened.
  */
 export async function seedAgentStatesFromKernel(ids: string[]): Promise<void> {
   if (ids.length === 0) return
@@ -152,8 +155,12 @@ export async function seedAgentStatesFromKernel(ids: string[]): Promise<void> {
   const store = useSessionStore.getState()
   for (const id of ids) {
     const state = listed.find((k) => k.id === id)?.state
-    if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
     const session = store.sessions.find((s) => s.id === id)
+    if (state === 'ended') {
+      if (session?.alive) store.updateSessionAlive(id, false)
+      continue
+    }
+    if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
     if (!session || session.agentState !== undefined) continue
     store.setAgentState(id, state)
   }

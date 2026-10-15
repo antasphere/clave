@@ -28,6 +28,8 @@ const killed: string[] = []
 const spawned: string[] = []
 /** What the by-id records read answers. */
 let byIdRecords: SessionRecord[] = []
+/** What the kernel's session list answers: id and state. */
+let kernel: { id: string; state: string }[] = []
 
 beforeAll(async () => {
   const mem = new Map<string, string>()
@@ -44,7 +46,7 @@ beforeAll(async () => {
     captureTabClosed: () => {},
     sessionsList: async () => {
       listCalls++
-      return []
+      return kernel
     },
     listSessionRecords: async (filter?: { ids?: string[] }) =>
       byIdRecords.filter((r) => !filter?.ids || filter.ids.includes(r.id)),
@@ -91,6 +93,7 @@ beforeEach(() => {
   killed.length = 0
   spawned.length = 0
   byIdRecords = []
+  kernel = []
 })
 
 const record = (id: string): SessionRecord =>
@@ -329,6 +332,29 @@ describe('a record the host already runs', () => {
     expect(byId('term')).toMatchObject({ alive: true })
     expect(byId('term')?.dormant).toBeUndefined()
     expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['term'])
+  })
+
+  // A chat whose provider ended is still held by the host, unstarted to the
+  // records (`live` false, as an unopened one). The kernel's own word tells
+  // the two apart: an ended one comes back ended, never as a usable tab.
+  it('comes back ended when the kernel says its session ended', async () => {
+    kernel = [
+      { id: 'claude-dormant', state: 'idle' },
+      { id: 'codex-dormant', state: 'ended' }
+    ]
+    const { attached } = placeRecords([claudeDormant, codexDormant], null)
+    await attached
+    await flush()
+    expect(byId('claude-dormant')).toMatchObject({ alive: true, dormant: true })
+    expect(byId('codex-dormant')).toMatchObject({ alive: false, activityStatus: 'ended' })
+    expect(spawned).toEqual([])
+  })
+
+  it('the layout path brings an ended chat back ended too', async () => {
+    kernel = [{ id: 'claude-dormant', state: 'ended' }]
+    byIdRecords = [claudeDormant]
+    await adoptServerStartedSessions(['claude-dormant'])
+    expect(byId('claude-dormant')).toMatchObject({ alive: false, activityStatus: 'ended' })
   })
 
   it('a cold chat record still spawns, dormant, as before', async () => {

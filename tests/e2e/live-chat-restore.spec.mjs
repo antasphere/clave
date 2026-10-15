@@ -16,11 +16,13 @@
  * The check seeds three Claude and three Codex chat records (four in a saved
  * group, two at the top level) through the named fixture scenario
  * `sessions/live-chat-restore`, starts the app on its separate server, opens
- * one chat of each provider (their stub agents start), opens a real terminal
+ * one chat of each provider (their stub agents start), opens a third chat and
+ * ends its agent (the server still holds it, ended), opens a real terminal
  * in the group, then reloads the window twice and restarts the app. Each time:
  * every tab once, the group as saved, the server holding each chat once, no
- * adoption failure logged, the two opened agents never started again, and no
- * agent started for a chat that is neither shown nor opened.
+ * adoption failure logged, the opened agents never started again, the ended
+ * chat back as ended (not a usable tab), and no agent started for a chat that
+ * is neither shown nor opened.
  *
  * What makes it able to fail: on dev e8d4a9e the first reload logs a failed
  * adoption per chat and the chats leave the sidebar and the group. Mark the
@@ -298,6 +300,19 @@ export async function run(t) {
       starts()
     )
 
+    // A third chat is opened and its agent then ends: the server still holds
+    // it, ended. A reload must bring it back ended, and never start it again.
+    const ended = byName('Claude top')
+    await win.click(`[data-sidebar-item-id="${ended}"] button`)
+    await until(() => (startsOf(ended) > 0 ? true : null), { tries: 40 })
+    for (const s of starts().filter((x) => x.session === ended)) process.kill(s.pid, 'SIGKILL')
+    const endedHeld = await until(async () => {
+      const k = await win.evaluate(() => window.electronAPI.sessionsList())
+      return k.find((x) => x.id === ended)?.state === 'ended' ? true : null
+    })
+    t.check('the third chat ended and the server still holds it', !!endedHeld, ended)
+    const notAgain = [...opened, ended]
+
     // A real terminal in the group, through the server.
     const terminal = (await callMcp(app, 'openSession', { cwd: ROOT, mode: 'terminal', groupId }))
       .sessionId
@@ -318,15 +333,21 @@ export async function run(t) {
       t.check(`reload ${round}: the terminal is the same live session`, back?.alive === true, back)
       await new Promise((r) => setTimeout(r, 1500))
       t.check(
-        `reload ${round}: the opened agents were not started again`,
-        opened.every((id) => startsOf(id) === 1),
+        `reload ${round}: the opened agents, the ended one included, were not started again`,
+        notAgain.every((id) => startsOf(id) === 1),
         starts()
+      )
+      const endedTab = (await callMcp(app, 'list', {})).sessions.find((s) => s.id === ended)
+      t.check(
+        `reload ${round}: the ended chat is back, as ended`,
+        !!endedTab && endedTab.alive === false,
+        endedTab
       )
       const shown = await shownTiles(win)
       const added = starts().slice(before)
       t.check(
         `reload ${round}: no agent started for a chat neither shown nor opened`,
-        added.every((s) => shown.includes(s.session) && !opened.includes(s.session)),
+        added.every((s) => shown.includes(s.session) && !notAgain.includes(s.session)),
         { added, shown }
       )
     }
