@@ -65,7 +65,7 @@ export async function run(t) {
       }),
       'the existing chat gets its composer while state changes continue'
     )
-    t.check('native views return while another session stays busy', true)
+    t.check('native views return while the session stays busy', true)
 
     await win.locator('.launcher-split .launcher-btn').click()
     assert.ok(

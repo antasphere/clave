@@ -4,33 +4,44 @@ import { defineFixture, defineScenario, makeCatalog, run } from '@structure-ai/f
 
 // Only the isolated E2E harness enables this scenario. The echo adapter replaces
 // provider traffic; session activity travels through the app's real listener.
-export async function loadBusyChatRegistry(create) {
+export async function loadBusyChatRegistry(create, scenarioName = 'chat/busy-registry') {
+  let created = null
   const scenario = defineScenario({
-    name: 'chat/busy-registry',
-    description: 'A chat whose native view loads while another session keeps changing state.',
+    name: scenarioName,
+    description: 'An isolated event chat with controllable registry reads.',
     input: Schema.Struct({}),
     fixtures: () => ({
       chat: defineFixture({
-        key: 'chat/busy-registry/session',
-        create: ({ runId }) => Effect.promise(() => create(runId))
+        key: `${scenarioName}/session`,
+        create: ({ runId }) =>
+          Effect.promise(async () => {
+            created = await create(runId)
+            return created
+          })
       })
     })
   })
   const catalog = makeCatalog({ base: {}, scenarios: [scenario] })
-  return Effect.runPromise(
-    catalog.prepare(scenario.name, {}).pipe(
-      Effect.flatMap((fixtures) =>
-        run({
-          fixtures,
-          enabled: true,
-          ready: ({ values }) =>
-            Effect.promise(() =>
-              values.chat.win.locator('[data-testid="chat-view"] textarea').waitFor()
-            ),
-          timeoutMs: 60_000
-        })
-      ),
-      Effect.provide(busesLayer.pipe(Layer.provide(HandlerRegistry.layer())))
+  try {
+    return await Effect.runPromise(
+      catalog.prepare(scenario.name, {}).pipe(
+        Effect.flatMap((fixtures) =>
+          run({
+            fixtures,
+            enabled: true,
+            ready: ({ values }) =>
+              Effect.promise(() =>
+                values.chat.win.locator('[data-testid="chat-view"] textarea').waitFor()
+              ),
+            timeoutMs: 60_000
+          })
+        ),
+        Effect.provide(busesLayer.pipe(Layer.provide(HandlerRegistry.layer())))
+      )
     )
-  )
+  } catch (error) {
+    // If readiness fails after creation, close this fixture immediately.
+    await created?.close().catch(() => {})
+    throw error
+  }
 }
