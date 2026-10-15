@@ -13,18 +13,18 @@ npm ci
 npm run build
 node --test tests/performance/renderer-data.test.mjs tests/performance/renderer-cli.test.mjs
 mkdir -p /tmp/clave-renderer-measurements
-CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+node scripts/performance/renderer-benchmark.mjs \
   --build installed --source 4dd8e425e10b7fb13186fa45179aa1c87a84c2d6 \
   --out /tmp/clave-renderer-measurements/installed
-CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+node scripts/performance/renderer-benchmark.mjs \
   --build dev --out /tmp/clave-renderer-measurements/dev
 ```
 
 `--source` is the operator's release-tag attribution, not a commit extracted from the executable. Check the installed version and tag before supplying it. The runner records the executable's SHA-256 and the version reported by the launched app. A dev run records Git HEAD; use a clean product tree and record any tooling changes. The baseline's two source commits have identical trees.
 
-The output directory must not exist. Failed runs exit nonzero, retain their partial `measurements.json`, and do not produce a completed summary. Each launch has a unique directory under `/tmp/clave-perf-1015-a`; it is removed after the app closes. The runner requests `--server=separate`, removes inherited server endpoints, verifies its actual data path and server mode, and uses OS-assigned ports. It closes only the process it launched, with a bounded exact-PID fallback. It does not change trust or authentication settings.
+The output directory must not exist. Failed runs exit nonzero, retain their partial `measurements.json`, and do not produce a completed summary. Each launch has a unique directory under `/tmp/clave-perf-1015-a`; it is removed after the app closes. The frozen runner hardcodes this parent and its child namespace, ignoring an operator-supplied `CLAVE_E2E_NS`. Unique mkdtemp directories isolate runs, but the parent is not configurable. The runner requests `--server=separate`, removes inherited server endpoints, verifies its actual data path and server mode, and uses OS-assigned ports. It closes only the process it launched, with a bounded exact-PID fallback. It does not change trust or authentication settings.
 
-The options `--runs`, `--samples`, `--tabs`, `--turns`, and `--idle-ms` control the workload. Defaults are five fresh process launches, thirty retained observations per interaction and pass, twenty-four chats across four groups, two hundred alternating user/assistant turns per chat, and five-second idle windows. Five warmup observations precede each scenario. Tabs must divide evenly into four groups, with at least eight tabs. A small pilot is a setup check and is not comparable to the published baseline.
+The options `--runs`, `--samples`, `--tabs`, `--turns`, and `--idle-ms` control the workload. Defaults are five fresh process launches, thirty retained observations per interaction and pass, twenty-four chats across four groups, two hundred alternating user/assistant turns per chat, and five-second idle windows. Five warmup observations precede each scenario. The `--groups` option defaults to four. Tabs must divide evenly into the requested groups, with at least two tabs per group. A small pilot is a setup check and is not comparable to the published baseline.
 
 ## What each observation means
 
@@ -69,14 +69,14 @@ The normal Vitest suite invokes these same Node checks through `scripts/performa
 
 ## High-scale background stream comparison
 
-The amended workload uses 100 tabs in ten groups, with 200 turns in the first twenty tabs and two turns in the remaining eighty. The first group supplies the measured tab switches and composer. Four chats in other groups stay hidden and working in both phases. The off phase sends no text deltas; the on phase targets one 128-byte ASCII delta per chat every 50 ms, with a 30-second ceiling. Actual event counts, elapsed time and realized rate are recorded, rather than assuming the requested cadence was achieved. Renderer observers subscribe through the normal preload API in both phases and assert exact produced/delivered counts. This adds four instrumented subscriptions and counter callbacks to the workload.
+The amended workload uses 100 tabs in ten groups, with 200 turns in the first twenty tabs and two turns in the remaining eighty. The first group supplies the measured tab switches and composer. Four chats in other groups stay hidden and working in both phases. The off phase sends no text deltas; the on phase targets one 128-byte ASCII delta per chat every 50 ms, with a 30-second ceiling. Actual event counts, elapsed time and realized rate are recorded, rather than assuming the requested cadence was achieved. Renderer observers subscribe through the normal preload API in both phases and assert exact produced/delivered counts. This adds four observer callbacks through existing refcounted preload subscriptions to the workload. Totals do not prove ordering or exactly-once delivery: a drop and duplicate within one chat can cancel out because payloads are identical.
 
 ```sh
-CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+node scripts/performance/renderer-benchmark.mjs \
   --build installed --source 4dd8e425e10b7fb13186fa45179aa1c87a84c2d6 \
   --streaming --tabs 100 --groups 10 --history-tabs 20 --runs 3 \
   --out /tmp/clave-renderer-measurements/installed-100
-CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+node scripts/performance/renderer-benchmark.mjs \
   --build dev --streaming --tabs 100 --groups 10 --history-tabs 20 --runs 3 \
   --out /tmp/clave-renderer-measurements/dev-100
 ```
@@ -85,9 +85,9 @@ Both phases are profiled. Their idle/task counters and tab/composer samples comp
 
 ## Signed profile intervals and raw retention
 
-The first baseline runner strictly rejected negative intervals and did not retain the original rejected responses. Its excluded-attempt diagnostics cannot recover those stacks. The accepted 24-tab profiles have nonnegative intervals; their original weights remain unchanged.
+The first baseline runner strictly rejected negative intervals and did not retain the original rejected responses. Its excluded-attempt diagnostics cannot recover those stacks. The accepted 24-tab profiles have nonnegative intervals; their original weights remain unchanged. Those collections did not record runtime-file hashes or a profile-policy identifier. Their runner identity cannot be verified from the archive, and the current runner produces a different profile protocol. Treat the 24-tab data as a historical reference, not a byte-reproducible run of the amended tool.
 
-The amended runner saves every original CDP response privately before validation. A scrubbed `.raw.cpuprofile` retains the original sample IDs and signed intervals for publication. A separate derived `.cpuprofile` orders cumulative timestamps together with their sample IDs. It assigns each observed interval to its paired ending sample, preserving the exact observed span. Timestamps outside the profile bounds, or sorting that would change the observed span, are rejected. No final interval is extrapolated. An audit records reordered samples, negative intervals, duration before/after and the unsampled tail. This is a conservative declared weighting policy, rather than a claim of identical DevTools flame-chart durations.
+The amended runner saves every original CDP response privately before validation. These captures remain local evidence, with directory mode 0700 and file mode 0600, and persist after app-data cleanup. Retain them through independent verification and remove only the owning invocation's recorded raw directory when the wave owner no longer needs that evidence. A scrubbed `.raw.cpuprofile` retains the original sample IDs and signed intervals for publication. A separate derived `.cpuprofile` orders cumulative timestamps together with their sample IDs. It assigns each observed interval to its paired ending sample, preserving the exact observed span. Timestamps outside the profile bounds, or sorting that would change the observed span, are rejected. No final interval is extrapolated. An audit records reordered samples, negative intervals, duration before/after and the unsampled tail. This is a conservative declared weighting policy, rather than a claim of identical DevTools flame-chart durations.
 
 Chrome DevTools also forms cumulative timestamps and sorts the associated sample IDs with them, then performs its own timestamp normalization. That implementation informed the paired sorting; its estimated final interval is not used here. See the [primary DevTools implementation](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts), inspected on 15 October 2026.
 

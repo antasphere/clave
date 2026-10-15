@@ -24,7 +24,7 @@ test('archive preserves fixture observations and rejects incompatible collection
         {
           id: 1,
           callFrame: { functionName: '(root)', url: '', lineNumber: -1, columnNumber: -1 },
-          children: [2]
+          children: [2, 3]
         },
         {
           id: 2,
@@ -34,9 +34,18 @@ test('archive preserves fixture observations and rejects incompatible collection
             lineNumber: 0,
             columnNumber: 0
           }
+        },
+        {
+          id: 3,
+          callFrame: {
+            functionName: 'other',
+            url: 'assets/fixture.js',
+            lineNumber: 1,
+            columnNumber: 0
+          }
         }
       ],
-      samples: [2, 2],
+      samples: [2, 3],
       timeDeltas: [100, 200]
     }
     const n = normalizeProfile(raw)
@@ -129,6 +138,15 @@ test('archive preserves fixture observations and rejects incompatible collection
     assert.ok(existsSync(path.join(out, 'collection-1/fixture.raw.cpuprofile.gz')))
     for (const patch of [
       { source: 'other' },
+      { build: 'installed' },
+      { machine: { architecture: 'other' } },
+      { protocol: { input: 'other' } },
+      ...[
+        { ok: false },
+        { cleaned: false },
+        { close: { timedOut: true } },
+        { pageErrors: ['renderer exception'] }
+      ].map((patch) => ({ runs: [{ ...two.m.runs[0], ...patch }] })),
       { toolingSha256: { fixture: 'changed' } },
       { completedAt: null },
       { config: { ...two.m.config, samples: 99 } }
@@ -140,6 +158,15 @@ test('archive preserves fixture observations and rejects incompatible collection
       assert.equal(bad.status, 1, bad.stderr)
       assert.equal(existsSync(target), false)
     }
+    put(path.join(two.dir, 'measurements.json'), two.m)
+    const derivedPath = path.join(two.dir, 'fixture.cpuprofile')
+    const derived = JSON.parse(readFileSync(derivedPath, 'utf8'))
+    // Same sample count and total weight, but different sample associations.
+    put(derivedPath, { ...derived, samples: [3, 2] })
+    const mismatched = run(one.dir, two.dir, path.join(root, 'mismatched-profile'))
+    assert.equal(mismatched.error, undefined)
+    assert.equal(mismatched.status, 1, mismatched.stderr)
+    assert.match(mismatched.stderr, /raw\/derived sample association differs/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

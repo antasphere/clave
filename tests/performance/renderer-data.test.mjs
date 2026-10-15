@@ -57,10 +57,14 @@ test('profiles require observed samples, valid references and a consistent tree'
 test('publication strips private paths and fields and preserves sampled weights', () => {
   const p = profile()
   p.private = '/Users/private/secret'
+  p.nodes[1].positionTicks = [{ line: 42, ticks: 3 }]
+  p.nodes[1].deoptReason = '/Users/private/deopt'
+  p.nodes[1].futureField = '/Users/private/future'
   p.nodes[1].callFrame.functionName = '/Users/private/name'
   const safe = scrubProfile(p)
   assert.doesNotMatch(JSON.stringify(safe), /Users|private|secret=x/)
   assert.equal(safe.nodes[1].callFrame.url, 'assets/app.js')
+  assert.deepEqual(Object.keys(safe.nodes[1]).sort(), ['callFrame', 'id'])
   assert.equal(validateProfile(safe).totalUs, 300)
   const html = flamegraph(scrubProfile(profile()), '<script>')
   assert.ok(html.includes('&lt;script&gt;'))
@@ -112,6 +116,7 @@ test('signed intervals preserve timestamp/sample pairing and the exact observed 
   const bad = { ...p, timeDeltas: [100, -4, 1] }
   assert.throws(() => normalizeProfile(bad), /observed span/)
   assert.throws(() => normalizeProfile({ ...p, timeDeltas: [-1, 100, 200] }), /bounds/)
+  assert.throws(() => normalizeProfile({ ...p, timeDeltas: [100, -4, 205] }), /bounds/)
 })
 
 test('stream delivery evidence rejects missing, duplicated and absent workloads', () => {
@@ -123,6 +128,7 @@ test('stream delivery evidence rejects missing, duplicated and absent workloads'
   assert.throws(() => validateStreamCounts(p, { ...p.counts, a: 19 }, true))
   assert.throws(() => validateStreamCounts(p, { ...p.counts, a: 21 }, true))
   assert.throws(() => validateStreamCounts(p, { a: 20 }, true))
+  assert.throws(() => validateStreamCounts(p, { ...p.counts, extra: 20 }, true), /identity/)
   assert.throws(() => validateStreamCounts({ ...p, ceilingReached: true }, p.counts, true))
   assert.throws(() => validateStreamCounts({ ...p, elapsedMs: 30_001 }, p.counts, true))
   const zero = { ...p, counts: { a: 0, b: 0, c: 0, d: 0 } }
