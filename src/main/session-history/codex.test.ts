@@ -101,7 +101,10 @@ describe('findCodexRollout (PRDCT-3527)', () => {
     expect(findCodexRollout('b', tmp)).toBeUndefined()
     // Written within the window: the burst's walk does not see it.
     writeFileSync(join(day, 'rollout-2026-10-15T00-00-01-b.jsonl'), lines(META))
-    vi.setSystemTime(Date.now() + ROLLOUT_WALK_REUSE_MS - 1)
+    vi.setSystemTime(Date.now() + 1)
+    expect(ROLLOUT_WALK_REUSE_MS).toBeGreaterThan(1)
+    expect(findCodexRollout('b', tmp)).toBeUndefined()
+    vi.setSystemTime(Date.now() + ROLLOUT_WALK_REUSE_MS - 2)
     expect(findCodexRollout('b', tmp)).toBeUndefined()
     vi.setSystemTime(Date.now() + 2)
     expect(findCodexRollout('b', tmp)).toBe(join(day, 'rollout-2026-10-15T00-00-01-b.jsonl'))

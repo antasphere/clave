@@ -19,6 +19,7 @@ import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
 import { hasServerEventPublisher } from '../server/session-events'
 import { isServerExternal } from '../server/endpoint'
+import { adoptableRecordsFor, tmuxAvailableFor } from './boot-reads'
 import {
   type SessionInfoResult,
   restartSession,
@@ -226,10 +227,9 @@ export function registerPtyHandlers(): void {
   // Answered without the synchronous login-shell read: tmux is looked up on
   // that PATH, and the read froze main for two seconds at every launch,
   // every window's first calls with it (PRDCT-3527).
-  ipcMain.handle('tmux:available', async () => {
-    await whenTmuxResolvable()
-    return isTmuxAvailable()
-  })
+  ipcMain.handle('tmux:available', () =>
+    tmuxAvailableFor({ tmuxResolvable: whenTmuxResolvable, available: isTmuxAvailable })
+  )
 
   // On launch the renderer asks which sessions survived a previous run — live
   // tmux survivors to reattach silently, dead records (plain or post-reboot
@@ -245,24 +245,20 @@ export function registerPtyHandlers(): void {
   // answers for an attached window); which records THIS window takes is the
   // shell's rule (`shared/adoption-scope.ts`), applied here over main's
   // listing and in the preload over the server's, from the scope below.
-  ipcMain.handle('records:list-adoptable', async (event, filter?: { ids?: unknown }) => {
-    const byIds = !!filter && Array.isArray(filter.ids)
-    // A shell whose sessions live on a server of their own (attached, or its
-    // separate child) keeps no records of its own to bring back: what main's
-    // folder still holds is what an earlier in-process launch left, and
-    // offering it put closed tabs back and asked twice per launch (PRDCT-3527).
-    // The window's sessions come from the server, through its restore.
-    if (!byIds && isServerExternal()) return []
-    // The listing asks tmux which sessions still run: found on the login
-    // PATH, or as the last launch found it, never by the synchronous read.
-    await whenTmuxResolvable()
-    const host = getSessionHost()
-    if (filter && Array.isArray(filter.ids)) {
-      return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))
-    }
-    const scope = adoptionScopeOf(event.sender)
-    return scope ? selectAdoptableRecords(host.listAdoptableRecords(), scope) : []
-  })
+  // A shell whose sessions live on a server of their own answers its boot
+  // read with nothing, and the listing waits for tmux without the
+  // synchronous login-shell read (`boot-reads.ts`, PRDCT-3527).
+  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) =>
+    adoptableRecordsFor(filter, {
+      external: isServerExternal,
+      tmuxResolvable: whenTmuxResolvable,
+      list: (ids) => [...getSessionHost().listAdoptableRecords(ids)],
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
   // What the asking window is, for the selection rule: its key, whether it is
   // the primary, and every window that exists (live or persisted). Null for
   // a sender that is not a Clave window.

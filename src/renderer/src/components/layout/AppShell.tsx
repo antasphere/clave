@@ -312,13 +312,20 @@ export function AppShell(): React.JSX.Element {
           null,
           ...useWorkspaceStore.getState().workspaces.map((w) => w.id)
         ]
-        useSessionStore
-          .getState()
-          .mergeLayoutForKeys(
-            keys,
+        // A tab placed by the restore survives unless its spawn has already
+        // failed and taken it out (round 1 of the verifier, F3): a failure
+        // while the prompt was up must not leave its id in the saved group.
+        const inStore = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+        useSessionStore.getState().mergeLayoutForKeys(
+          keys,
+          persisted,
+          bootSurvivors(
+            plan,
+            adoptedIds.filter((id) => inStore.has(id)),
             persisted,
-            bootSurvivors(plan, adoptedIds, persisted, listingComplete)
+            listingComplete
           )
+        )
 
         // Owners are in place now (groups from the merge, owning tabs from
         // the adoption above), so the hidden halves can hang themselves back

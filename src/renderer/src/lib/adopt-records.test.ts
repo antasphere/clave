@@ -21,6 +21,7 @@ const pending = new Map<string, (ok: boolean) => void>()
 let inFlight = 0
 let maxInFlight = 0
 let listCalls = 0
+const killed: string[] = []
 
 beforeAll(async () => {
   const mem = new Map<string, string>()
@@ -31,7 +32,9 @@ beforeAll(async () => {
   }
   ;(globalThis as unknown as { window: unknown }).window = globalThis
   ;(globalThis as unknown as { electronAPI: unknown }).electronAPI = {
-    killSession: async () => undefined,
+    killSession: async (id: string) => {
+      killed.push(id)
+    },
     captureTabClosed: () => {},
     sessionsList: async () => {
       listCalls++
@@ -69,6 +72,7 @@ beforeEach(() => {
   inFlight = 0
   maxInFlight = 0
   listCalls = 0
+  killed.length = 0
 })
 
 const record = (id: string): SessionRecord =>
@@ -165,5 +169,18 @@ describe('placeRecords', () => {
     pending.get('x')!(true)
     await attached
     expect(useSessionStore.getState().selectedSessionIds).toEqual([])
+  })
+
+  it('ends the session of a tab closed while it was restoring, and adopts nothing for it', async () => {
+    const { attached } = placeRecords([record('closed'), record('kept')], null)
+    // The person closes the row before its spawn has answered.
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.filter((s) => s.id !== 'closed')
+    }))
+    await flush()
+    for (const answer of [...pending.values()]) answer(true)
+    expect(await attached).toEqual(['kept'])
+    expect(killed).toEqual(['closed'])
+    expect(ids()).toEqual(['kept'])
   })
 })

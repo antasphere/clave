@@ -77,6 +77,13 @@ export function placeRecords(
     while (next < pending.length) {
       const s = pending[next++]
       const spawned = await spawnFromRecord(s, activeWorkspaceId)
+      // Closed while it was restoring: the close's kill found no session yet,
+      // so the one that just landed is ended here, the way the close would
+      // have ended it, record and all (round 1 of the verifier, F2).
+      if (spawned && !useSessionStore.getState().sessions.some((t) => t.id === s.id)) {
+        void window.electronAPI.killSession(spawned.session.id).catch(() => {})
+        continue
+      }
       if (spawned && spawned.session.id === s.id) {
         settleRestored(spawned.session)
         attachedIds.push(s.id)

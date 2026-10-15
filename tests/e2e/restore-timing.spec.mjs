@@ -20,11 +20,14 @@
  * shown, every tab is in its group once, no agent started for a chat the
  * window does not show, and opening one starts exactly that one.
  *
- * What makes it able to fail: on dev fb0f09b the chats wait behind the prompt
- * and come back one at a time; adopt one at a time again, mount the hidden
- * chat views again, or put the prompt back in front of the chats, and it goes
- * red. The agents are stubs that only log their start: nothing reaches a
- * provider.
+ * What makes it able to fail: on dev fb0f09b the tabs take about 5 s, the
+ * chats wait behind the prompt, and every restored chat starts its agent; put
+ * the prompt back in front of the chats, mount the hidden chat views again, or
+ * let a chat opened once lose its pane when another is opened, and it goes
+ * red. What it does NOT see (the stubs answer at once, so the spawns are
+ * cheap here): adopting one at a time again, or a tab not marked restoring;
+ * the unit tests of `placeRecords` (adopt-records.test.ts) pin those. The
+ * agents are stubs that only log their start: nothing reaches a provider.
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -49,8 +52,12 @@ const KEY = 'restore-timing-window'
 const GROUPS = 5
 const PER_GROUP = 20
 const CODEX_SHARE = 0.6
-/** About one second after the window appears; the margin is the machine's. */
-const ROWS_WITHIN_MS = 1500
+/** About a second after the window appears: measured at 1.35 to 1.40 s on
+ *  this branch (from the page's navigation start, which comes before the
+ *  window shows), 5.1 s on dev fb0f09b. The bound leaves a loaded machine
+ *  its margin (round 1 of the verifier found 1500 ms too tight) and still
+ *  tells the two apart. */
+const ROWS_WITHIN_MS = 2000
 
 /** Every start of a stub, oldest first. */
 const allStarts = () =>
@@ -287,6 +294,17 @@ export async function run(t) {
       !!woke && added.length === 1 && added[0].session === opened,
       { added, opened }
     )
+
+    // A chat opened once keeps its pane when another is opened: it woke for
+    // good, it does not unmount and start over at every visit.
+    const second = all.find((id) => id !== opened && !shown.includes(id))
+    await win.click(`[data-sidebar-item-id="${second}"] button`)
+    await until(() => (starts().some((s) => s.session === second) ? true : null), { tries: 40 })
+    const kept = await win.evaluate(
+      (id) => (document.querySelector(`[data-terminal-tile="${id}"]`)?.childElementCount ?? 0) > 0,
+      opened
+    )
+    t.check('a chat opened once keeps its pane when another is opened', kept, { opened, second })
   } finally {
     for (const s of allStarts()) {
       try {

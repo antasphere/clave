@@ -91,4 +91,6 @@ export function resetClaveServerBootForTests(): void {
   settled = false
   settledWaiters = []
   endpoint = null
+  external = false
+  namedListeners.clear()
 }
