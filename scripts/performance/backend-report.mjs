@@ -54,11 +54,31 @@ const STARTUP_ROWS = [
   ['tabsInGroupsMs', 'every seeded tab in its group']
 ]
 
+/** A process's event loop cannot start before the process does. A loop mark
+ *  earlier than its process's start is Node's -1 "unavailable" sentinel
+ *  added to the origin (runs before the runner refused it), and is printed
+ *  as unavailable, never as a time. */
+const LOOP_OF = {
+  mainLoopStartMs: 'mainProcessStartMs',
+  serverLoopStartMs: 'serverProcessStartMs'
+}
+export const UNAVAILABLE_LOOP = 'unavailable (no loop start reported)'
+
+/** The values of startup mark `k` over `launches`, or UNAVAILABLE_LOOP when
+ *  any launch's loop mark precedes its own process start. */
+export function startupValues(launches, k) {
+  const proc = LOOP_OF[k]
+  if (proc && launches.some((l) => l.startup[k] != null && l.startup[k] < l.startup[proc]))
+    return UNAVAILABLE_LOOP
+  return launches.map((l) => l.startup[k]).filter((v) => v != null)
+}
+
 export function startupTable(runs) {
   const head = `| ms after launch | ${runs.map((r) => r.key).join(' | ')} |\n|---|${runs.map(() => '---').join('|')}|`
   const rows = STARTUP_ROWS.map(([k, label]) => {
     const cells = runs.map((r) => {
-      const values = r.run.plain.map((l) => l.startup[k]).filter((v) => v != null)
+      const values = startupValues(r.run.plain, k)
+      if (values === UNAVAILABLE_LOOP) return values
       return values.length === 0 ? '–' : cell(`${r.key} ${k}`, values)
     })
     return `| ${label} | ${cells.join(' | ')} |`
@@ -194,27 +214,6 @@ export function queryLoadTable(runs) {
   return lines.join('\n')
 }
 
-/** The profilers' cost: plain against profiled startup. */
-export function overheadTable(runs) {
-  const lines = [
-    '| configuration | boot complete, plain | boot complete, profiled |',
-    '|---|---|---|'
-  ]
-  for (const r of runs) {
-    if (!r.run.profiled?.length) continue
-    lines.push(
-      `| ${r.key} | ${cell(
-        'plain',
-        r.run.plain.map((l) => l.startup.bootCompleteMs)
-      )} | ${cell(
-        'profiled',
-        r.run.profiled.map((l) => l.startup.bootCompleteMs)
-      )} |`
-    )
-  }
-  return lines.join('\n')
-}
-
 /** Every profile: its busy share, the heaviest self-time frames, and the
  *  app's own frames by total time. Shares are of the BUSY time (everything
  *  but `(idle)`), so a mostly idle window still shows where its work went. */
@@ -310,6 +309,23 @@ export function publish(r, dest) {
   return { name, files: bodies.size }
 }
 
+/** Every table of the report, in order. There is deliberately no "profiler
+ *  overhead" table: the profiled launch's profilers start after its boot,
+ *  so its startup marks carry no profiling cost to compare (verifier round
+ *  1, V1-F2), and no other launch measures one. */
+export function renderTables(runs) {
+  const sections = [
+    ['Build, machine and co-running load', identityTable(runs)],
+    ['Startup', startupTable(runs)],
+    ['Right after the boot', postBootTable(runs)],
+    ['Idle', idleTable(runs)],
+    ['Query latency from the window', queryTable(runs)],
+    ['Main and server during the query pass', queryLoadTable(runs)],
+    ['Where the CPU goes', profileTables(runs)]
+  ]
+  return sections.map(([h, body]) => `### ${h}\n\n${body}`).join('\n\n') + '\n'
+}
+
 export function main(argv = process.argv.slice(2)) {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -318,17 +334,7 @@ export function main(argv = process.argv.slice(2)) {
   })
   if (positionals.length === 0) throw new Error('give one or more result folders')
   const runs = positionals.map((d) => readRun(path.resolve(d)))
-  const sections = [
-    ['Build, machine and co-running load', identityTable(runs)],
-    ['Startup', startupTable(runs)],
-    ['Right after the boot', postBootTable(runs)],
-    ['Idle', idleTable(runs)],
-    ['Query latency from the window', queryTable(runs)],
-    ['Main and server during the query pass', queryLoadTable(runs)],
-    ['Profiler overhead', overheadTable(runs)],
-    ['Where the CPU goes', profileTables(runs)]
-  ]
-  const md = sections.map(([h, body]) => `### ${h}\n\n${body}`).join('\n\n') + '\n'
+  const md = renderTables(runs)
   if (values.publish) {
     const dest = path.resolve(values.publish)
     for (const r of runs) publish(r, dest)

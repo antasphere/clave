@@ -65,6 +65,34 @@ export function summarize(name, values, { minN = 1 } = {}) {
   }
 }
 
+/** An absolute time from a process's `performance.timeOrigin` and one of
+ *  its `performance.nodeTiming` offsets, or null when the offset is
+ *  unavailable. Node reports -1 for a milestone that has not happened or
+ *  does not exist; Electron main has no libuv loop start of its own and
+ *  reports `loopStart` -1, which added to the origin would read as a mark
+ *  1 ms before the process began. */
+export function nodeTimingMark(timeOrigin, offset) {
+  if (!Number.isFinite(timeOrigin)) throw new SampleError(`timeOrigin is ${timeOrigin}`)
+  if (typeof offset !== 'number' || !Number.isFinite(offset) || offset < 0) return null
+  return timeOrigin + offset
+}
+
+/** Refuse a launch's startup marks (ms after launch) when an event loop is
+ *  recorded as running before its own process started: a sentinel read as
+ *  a time. An unavailable loop mark is null and passes. */
+export function requireStartupOrder(name, startup) {
+  for (const [loop, proc] of [
+    ['mainLoopStartMs', 'mainProcessStartMs'],
+    ['serverLoopStartMs', 'serverProcessStartMs']
+  ]) {
+    const l = startup[loop]
+    const p = startup[proc]
+    if (l != null && p != null && l < p)
+      throw new SampleError(`${name}: ${loop} (${l}) is before ${proc} (${p})`)
+  }
+  return startup
+}
+
 /** CPU used between two readings of a process's cumulative CPU time, as a
  *  percent of ONE core (100 = one core busy throughout, like `top`).
  *  Throws when the wall interval is not positive or the CPU time went

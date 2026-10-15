@@ -9,8 +9,9 @@
 //
 // One invocation is one CONFIGURATION (a variant on a scale), launched
 // `--launches` times on fresh data, plus `--profiled-launches` more with the
-// profilers on. Profiled launches are kept apart: their timings are reported
-// as the profilers' overhead, never mixed into the plain figures.
+// profilers on. Profiled launches are kept apart from the plain figures. Their
+// profilers start AFTER the boot (idle and query windows), so their startup
+// marks are not a measure of profiling overhead and are not reported as one.
 //
 // Variants:
 //   installed-separate  /Applications/Clave.app as installed, its separate
@@ -58,7 +59,9 @@ import {
   SampleError,
   cpuPercent,
   eventLoopDelayMs,
+  nodeTimingMark,
   parsePsRows,
+  requireStartupOrder,
   requireSamples,
   summarize
 } from '../../scripts/performance/backend-stats.mjs'
@@ -74,6 +77,7 @@ import {
   scrubText,
   validateCpuProfile
 } from '../../scripts/performance/backend-profile.mjs'
+import { requireAllGone, waitGone } from '../../scripts/performance/backend-process.mjs'
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -637,14 +641,17 @@ function installBootWatch(expected) {
 /** Time one electronAPI method inside the page, so the driver's own latency
  *  is not in the figure: the first call alone (cold), `warmup` untimed, then
  *  `n` timed one after the other. Each answer is checked by `check`
- *  (`nonEmpty`: an array or object with something in it; `any`: not
- *  undefined) and the first failure throws with the method's name. */
+ *  (`nonEmpty`: an array or object with something in it; `items`: a page
+ *  whose `items` are not empty; `any`: not undefined) and the first failure
+ *  throws with the method's name. */
 async function timeMethod({ method, args, warmup, n, check }) {
   const api = window.electronAPI
   if (typeof api?.[method] !== 'function')
     throw new Error(`electronAPI.${method} is not a function`)
   const ok = (v) => {
     if (check === 'any') return v !== undefined
+    // A history page: its events, not merely a cursor.
+    if (check === 'items') return Array.isArray(v?.items) && v.items.length > 0
     if (Array.isArray(v)) return v.length > 0
     if (v && typeof v === 'object')
       return Object.values(v).some((x) => (Array.isArray(x) ? x.length > 0 : x != null))
@@ -699,7 +706,7 @@ function queryPlan(seed) {
     plan.push({
       method: 'sessionsHistory',
       args: [seed.history[0]],
-      check: 'nonEmpty',
+      check: 'items',
       road: 'server',
       note: 'newest page of a synthetic transcript'
     })
@@ -707,24 +714,6 @@ function queryPlan(seed) {
 }
 
 // ── Processes ────────────────────────────────────────────────────────────────
-
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return err.code === 'EPERM'
-  }
-}
-
-async function waitGone(pids, ms) {
-  const deadline = Date.now() + ms
-  while (Date.now() < deadline) {
-    if (pids.every((p) => !alive(p))) return []
-    await new Promise((r) => setTimeout(r, 100))
-  }
-  return pids.filter(alive)
-}
 
 function readPs(pids) {
   const out = execFileSync('ps', ['-o', 'pid=,rss=,time=', '-p', pids.join(',')], {
@@ -850,6 +839,46 @@ function appArgs(v, seed) {
 }
 
 /**
+ * The end of every launch, plain, profiled or startup-profile: stop the stub
+ * agents the launch started (by the pids they logged), wait up to `waitMs`
+ * for each of the launch's own processes to be gone, kill any still alive
+ * by its exact pid so nothing outlives the run, and REFUSE the launch if
+ * there was one: a launch whose close needed a kill did not close cleanly.
+ * When the launch already failed (`bodyFailed`), its own error is the one
+ * that propagates and the leftovers are only recorded. Answers what goes
+ * into the launch's record.
+ */
+export async function endLaunch({
+  name,
+  pids,
+  starts = null,
+  when,
+  bodyFailed,
+  waitMs = EXIT_WAIT_MS
+}) {
+  let stubAgentsKilled = 0
+  if (starts && existsSync(starts))
+    for (const line of readFileSync(starts, 'utf-8').split('\n').filter(Boolean)) {
+      try {
+        process.kill(JSON.parse(line).pid, 'SIGTERM')
+        stubAgentsKilled++
+      } catch {
+        // Already gone.
+      }
+    }
+  const leftovers = await waitGone(pids, waitMs)
+  for (const pid of leftovers) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Gone between the check and the kill.
+    }
+  }
+  if (!bodyFailed) requireAllGone(name, leftovers, when)
+  return { leftovers, stubAgentsKilled }
+}
+
+/**
  * Launch-to-quit profiles of every Node process of the app: main, the
  * server, the terminal process. Playwright removes NODE_OPTIONS from the
  * environment it launches Electron with (main reads it as unset), so this
@@ -884,6 +913,7 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
   )
   const pids = { main: child.pid }
   const result = { name, settleSeconds, load: coRunningLoad(), profiles: {}, leftovers: [] }
+  let bodyFailed = true
   try {
     const deadline = Date.now() + BOOT_TIMEOUT_MS
     let ready = null
@@ -931,6 +961,7 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
       throw new Error(`${name}: main did not quit within ${CLOSE_TIMEOUT_MS} ms of SIGTERM`)
     }
     result.exit = end
+    bodyFailed = false
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       try {
@@ -939,25 +970,17 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
         // Gone.
       }
     }
-    result.leftovers = await waitGone(Object.values(pids), EXIT_WAIT_MS)
-    for (const pid of result.leftovers) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // Gone between the check and the kill.
-      }
-    }
-    if (existsSync(seed.starts))
-      for (const line of readFileSync(seed.starts, 'utf-8').split('\n').filter(Boolean)) {
-        try {
-          process.kill(JSON.parse(line).pid, 'SIGTERM')
-        } catch {
-          // Already gone.
-        }
-      }
+    Object.assign(
+      result,
+      await endLaunch({
+        name,
+        pids: Object.values(pids),
+        starts: seed.starts,
+        when: 'the quit',
+        bodyFailed
+      })
+    )
   }
-  if (result.leftovers.length > 0)
-    throw new Error(`${name}: processes still alive after the quit: ${result.leftovers.join(', ')}`)
   log(
     `${name}: server ready at ${result.serverReadyMs} ms, quit at ${result.quitAtMs} ms, pids ${JSON.stringify(pids)}`
   )
@@ -1035,6 +1058,7 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
   const pids = { main: mainPid }
   // Every Electron process seen, for the leftover check after the close.
   const electronPids = new Set()
+  let bodyFailed = true
   try {
     const launchedAt = Date.now()
     const win = await app.firstWindow({ timeout: BOOT_TIMEOUT_MS })
@@ -1089,9 +1113,10 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
     result.startup = {
       launchResolvedMs: rel(launchedAt),
       mainProcessStartMs: rel(main.timeOrigin),
-      mainLoopStartMs: rel(main.timeOrigin + main.loopStart),
+      mainLoopStartMs: rel(nodeTimingMark(main.timeOrigin, main.loopStart)),
       serverProcessStartMs: v.server === 'separate' ? rel(srv.timeOrigin) : null,
-      serverLoopStartMs: v.server === 'separate' ? rel(srv.timeOrigin + srv.loopStart) : null,
+      serverLoopStartMs:
+        v.server === 'separate' ? rel(nodeTimingMark(srv.timeOrigin, srv.loopStart)) : null,
       shellOnServerMs: rel(shellDiscoveryAt),
       rendererNavigationStartMs: rel(page.timeOrigin),
       domContentLoadedMs: page.dcl == null ? null : rel(page.timeOrigin + page.dcl),
@@ -1100,6 +1125,7 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
       bootState: watch.bootState,
       restorePromptSeen: watch.promptSeen
     }
+    requireStartupOrder(name, result.startup)
     for (const k of ['mainProcessStartMs', 'domContentLoadedMs', 'bootCompleteMs'])
       if (!Number.isFinite(result.startup[k]))
         throw new SampleError(`${name}: startup ${k} missing`)
@@ -1234,32 +1260,15 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
       }
     }
     result.queries = queries
+    bodyFailed = false
   } finally {
     const known = [...new Set([...Object.values(pids), ...electronPids])]
     await boundedClose(() => app.close(), mainPid, CLOSE_TIMEOUT_MS, { log })
-    result.leftovers = await waitGone(known, EXIT_WAIT_MS)
-    // The stub agents a shown tab started: ours, by exact pid.
-    if (existsSync(seed.starts))
-      for (const line of readFileSync(seed.starts, 'utf-8').split('\n').filter(Boolean)) {
-        try {
-          process.kill(JSON.parse(line).pid, 'SIGTERM')
-          result.stubAgentsKilled++
-        } catch {
-          // Already gone.
-        }
-      }
-    for (const pid of result.leftovers) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // Gone between the check and the kill.
-      }
-    }
-  }
-  if (result.leftovers.length > 0)
-    throw new Error(
-      `${name}: processes still alive after the close: ${result.leftovers.join(', ')}`
+    Object.assign(
+      result,
+      await endLaunch({ name, pids: known, starts: seed.starts, when: 'the close', bodyFailed })
     )
+  }
 
   rmSync(launchDir, { recursive: true, force: true })
   return result

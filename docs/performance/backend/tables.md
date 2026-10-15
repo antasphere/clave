@@ -12,7 +12,7 @@
 |---|---|---|---|
 | Playwright connected to main | 770 [737–772] (n=3) | 825 [764–1269] (n=3) | 749 [725–768] (n=3) |
 | main process started | 28.9 [27.2–35.3] (n=3) | 32.8 [31.6–63.6] (n=3) | 29.6 [28.8–38.0] (n=3) |
-| main event loop running | 27.9 [26.2–34.3] (n=3) | 31.8 [30.6–62.6] (n=3) | 28.6 [27.8–37.0] (n=3) |
+| main event loop running | unavailable (no loop start reported) | unavailable (no loop start reported) | unavailable (no loop start reported) |
 | server process started | 515 [496–546] (n=3) | 614 [578–986] (n=3) | 521 [499–526] (n=3) |
 | server event loop running | 1405 [1285–1415] (n=3) | 1496 [1377–1838] (n=3) | 1350 [1346–1394] (n=3) |
 | main registered on its server | 2248 [2225–2327] (n=3) | 2077 [1950–2568] (n=3) | 2272 [2272–2279] (n=3) |
@@ -99,14 +99,6 @@
 | dev-separate · S135 | server | 2.3 [2.3–2.4] (n=3) | 67.1% [66.1%–67.7%] (n=3) | 3.93 [2.33–5.06] (n=3) / 10.1 [6.05–12.3] (n=3) | 47.8% [45.4%–49.1%] (n=3) |
 | installed-separate · S0 | main | 1.8 [1.8–2.1] (n=3) | 8.1% [3.4%–8.2%] (n=3) | 9.60 [3.01–10.8] (n=3) / 15.9 [6.06–25.1] (n=3) | n/a (Electron loop) |
 | installed-separate · S0 | server | 1.8 [1.8–2.1] (n=3) | 68.4% [62.7%–69.1%] (n=3) | 5.65 [2.46–6.84] (n=3) / 16.1 [7.29–24.1] (n=3) | 53.1% [52.6%–59.1%] (n=3) |
-
-### Profiler overhead
-
-| configuration | boot complete, plain | boot complete, profiled |
-|---|---|---|
-| installed-separate · S135 | 2549 [2297–2561] (n=3) | 2241 [2241–2241] (n=1) |
-| dev-separate · S135 | 2339 [1941–2831] (n=3) | 2039 [2039–2039] (n=1) |
-| installed-separate · S0 | 2585 [2254–2589] (n=3) | 2625 [2625–2625] (n=1) |
 
 ### Where the CPU goes
 

@@ -93,10 +93,17 @@ the scrubbed profiles (`*.cpuprofile.gz`) and the flamegraphs (`*.flame.html`).
 | window boot complete          | 2549 [2297–2561] | 2339 [1941–2831] | 2585 [2254–2589] |
 | every tab in its group        | 2647 [2627–2716] | 2431 [2268–2914] | –                |
 
-Boot time is the same at 0 and 135 tabs, so the restore is not on the boot's
-critical path in this setup. The span from the server's process start to its
-event loop (about 0.9 s) and main's registration on its server (about 2.25 s)
-are.
+Boot time is the same at 0 and 135 tabs, so in this setup the restore does not
+delay the boot. Two things precede the boot: the server's start, about 0.9 s from
+its process to its event loop, and main's registration on the server, at about
+2.25 s. Whether the boot waits on them was not isolated.
+
+Electron main has no event-loop start mark. `performance.nodeTiming.loopStart`
+reads -1 there, and Node uses -1 for "unavailable". The full tables print it as
+unavailable. An earlier version of this tooling added that -1 to the process
+start and printed a "main event loop running" 1 ms before main began (verifier
+round 1, V1-F1). The raw records keep what was recorded; the derived tables no
+longer use it.
 
 ### CPU and memory
 
@@ -305,10 +312,29 @@ A run fails, and prints no figures, when any of these happens:
 - an event-loop histogram recorded nothing;
 - a profile is missing, malformed or too thin (fewer than 50 samples for a window, 100 for a whole run);
 - a private path survives the scrub;
-- any process of the app is still alive after the close.
+- any process of the app is still alive after the close;
+- an event loop is recorded as starting before its own process.
 
-`scripts/performance/backend-*.test.mjs` checks each of these rules on fixtures
-built to break them. They run under `npm test`.
+The unit tests in `scripts/performance/backend-*.test.mjs` run under `npm test`.
+They cover these rules:
+
+- **Sample sets:** empty, non-finite or short sets.
+- **Histograms:** one that recorded nothing.
+- **Profiles:** malformed or thin ones.
+- **Privacy:** a private path left in a published file.
+- **Startup order:** a loop mark earlier than its process start.
+- **Leftover processes:** the runner's own `endLaunch` is driven with real child
+  processes. A launch that leaves one behind is refused, and that process is
+  killed by its pid.
+
+Booting, tabs reaching their groups, query answers and `ps` continuity are checked
+by the runner itself during each run. Those checks are exercised by real runs,
+not by unit tests.
+
+There is no profiler-overhead figure. The profiled launch's profilers start
+after its boot, so its startup marks carry no profiling cost (verifier round 1,
+V1-F2). No launch measured startup under the profilers against startup without
+them.
 
 ### Statistics
 

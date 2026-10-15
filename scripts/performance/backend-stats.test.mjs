@@ -5,9 +5,11 @@ import {
   cpuPercent,
   eventLoopDelayMs,
   nearestRank,
+  nodeTimingMark,
   parsePsRows,
   parsePsTime,
   requireSamples,
+  requireStartupOrder,
   summarize
 } from './backend-stats.mjs'
 
@@ -150,5 +152,44 @@ describe('eventLoopDelayMs', () => {
 
   it('refuses a non-finite field', () => {
     expect(() => eventLoopDelayMs('main', { ...h, p99: Number.NaN })).toThrow(/p99/)
+  })
+})
+
+describe('nodeTimingMark', () => {
+  it('adds a real offset to the origin', () => {
+    expect(nodeTimingMark(1000, 25.5)).toBe(1025.5)
+    expect(nodeTimingMark(1000, 0)).toBe(1000)
+  })
+
+  it("answers null for Node's -1 sentinel, never a mark before the process began", () => {
+    // Electron main reports loopStart -1: origin + -1 would read 1 ms before the start.
+    expect(nodeTimingMark(1000, -1)).toBeNull()
+    expect(nodeTimingMark(1000, Number.NaN)).toBeNull()
+    expect(nodeTimingMark(1000, undefined)).toBeNull()
+  })
+
+  it('refuses an origin that is not a time', () => {
+    expect(() => nodeTimingMark(undefined, 5)).toThrow(SampleError)
+  })
+})
+
+describe('requireStartupOrder', () => {
+  it('passes ordered marks and an unavailable (null) loop mark', () => {
+    const ok = {
+      mainProcessStartMs: 29,
+      mainLoopStartMs: null,
+      serverProcessStartMs: 515,
+      serverLoopStartMs: 1405
+    }
+    expect(requireStartupOrder('plain-1', ok)).toBe(ok)
+  })
+
+  it('refuses a loop mark before its process start: the -1 sentinel as a time', () => {
+    expect(() =>
+      requireStartupOrder('plain-1', { mainProcessStartMs: 28.9, mainLoopStartMs: 27.9 })
+    ).toThrow(/plain-1: mainLoopStartMs \(27.9\) is before mainProcessStartMs/)
+    expect(() =>
+      requireStartupOrder('plain-1', { serverProcessStartMs: 515, serverLoopStartMs: 514 })
+    ).toThrow(SampleError)
   })
 })

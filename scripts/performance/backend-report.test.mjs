@@ -5,7 +5,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SampleError } from './backend-stats.mjs'
-import { cell, publish, readRun, startupTable } from './backend-report.mjs'
+import {
+  UNAVAILABLE_LOOP,
+  cell,
+  publish,
+  readRun,
+  renderTables,
+  startupTable,
+  startupValues
+} from './backend-report.mjs'
 
 const dirs = []
 const tmp = () => {
@@ -54,6 +62,62 @@ describe('readRun', () => {
     const table = startupTable([readRun(d)])
     expect(table).toContain('| window boot complete | 1000 [900–1100] (n=3) |')
     expect(table).toContain('| every seeded tab in its group | – |')
+  })
+})
+
+describe('startupValues', () => {
+  const at = (proc, loop) => ({ startup: { mainProcessStartMs: proc, mainLoopStartMs: loop } })
+
+  it('keeps a loop mark at or after its process start', () => {
+    expect(startupValues([at(30, 31), at(28, 40)], 'mainLoopStartMs')).toEqual([31, 40])
+  })
+
+  it("refuses a loop mark before its process start: Node's -1 added to the origin", () => {
+    // What every launch of the first formal pass recorded for Electron main.
+    expect(startupValues([at(28.9, 27.9), at(30, 31)], 'mainLoopStartMs')).toBe(UNAVAILABLE_LOOP)
+  })
+
+  it('leaves the other marks alone and skips an absent loop mark', () => {
+    expect(startupValues([at(28.9, null)], 'mainLoopStartMs')).toEqual([])
+    expect(startupValues([at(28.9, 27.9)], 'mainProcessStartMs')).toEqual([28.9])
+  })
+})
+
+describe('renderTables', () => {
+  /** One launch of each kind, as the runner records them. */
+  const launch = (boot, profiled) => ({
+    profiled,
+    load: { loadavg1m: 1, otherProcessesCpuPct: 10 },
+    startup: { mainProcessStartMs: 30, mainLoopStartMs: 29, bootCompleteMs: boot },
+    postBoot: null,
+    idle: {
+      ps: { main: { raw: { cpuPct: [1, 2], rssMiB: [300, 301] } } },
+      eventLoop: {}
+    },
+    queries: { methods: {}, eventLoop: {}, passMs: 1000 },
+    profiles: {}
+  })
+  const run = {
+    dir: 'x',
+    key: 'installed-separate · S0',
+    run: {
+      build: { kind: 'installed', version: '3.0.0-beta.2', electronFramework: '39.5.2' },
+      machine: { cpuModel: 'M', logicalCores: 1, memoryGiB: 1, macos: '26' },
+      plain: [launch(2500, false), launch(2600, false)],
+      profiled: [launch(1000, true)]
+    }
+  }
+
+  it('claims no profiler overhead from launches whose profilers start after the boot', () => {
+    const md = renderTables([run])
+    expect(md).not.toMatch(/overhead/i)
+    // The profiled launch's boot (1000 ms) is not reported against the plain ones.
+    expect(md).not.toContain('1000')
+    expect(md).toContain('2500 [2500–2600] (n=2)')
+  })
+
+  it("prints Electron main's -1 loop mark as unavailable, never as a time", () => {
+    expect(renderTables([run])).toContain(`| main event loop running | ${UNAVAILABLE_LOOP} |`)
   })
 })
 
