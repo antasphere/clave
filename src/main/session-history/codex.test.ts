@@ -7,8 +7,15 @@
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CodexCache, listCodexFiles, listCodexSessions, scanCodexHead } from './codex'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  CodexCache,
+  ROLLOUT_WALK_REUSE_MS,
+  findCodexRollout,
+  listCodexFiles,
+  listCodexSessions,
+  scanCodexHead
+} from './codex'
 
 let tmp: string
 beforeEach(() => {
@@ -77,6 +84,38 @@ describe('scanCodexHead', () => {
   })
   it('a head with only injected context has no title material', () => {
     expect(scanCodexHead(lines(META, ENV), 'fb')?.firstUserText).toBeNull()
+  })
+})
+
+describe('findCodexRollout (PRDCT-3527)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  it('one walk answers a burst of misses; a miss after the window walks again', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T00:00:00Z'))
+    const day = join(tmp, '2026', '10', '15')
+    mkdirSync(day, { recursive: true })
+    writeFileSync(join(day, 'rollout-2026-10-15T00-00-00-a.jsonl'), lines(META))
+    expect(findCodexRollout('a', tmp)).toBe(join(day, 'rollout-2026-10-15T00-00-00-a.jsonl'))
+    expect(findCodexRollout('b', tmp)).toBeUndefined()
+    // Written within the window: the burst's walk does not see it.
+    writeFileSync(join(day, 'rollout-2026-10-15T00-00-01-b.jsonl'), lines(META))
+    vi.setSystemTime(Date.now() + ROLLOUT_WALK_REUSE_MS - 1)
+    expect(findCodexRollout('b', tmp)).toBeUndefined()
+    vi.setSystemTime(Date.now() + 2)
+    expect(findCodexRollout('b', tmp)).toBe(join(day, 'rollout-2026-10-15T00-00-01-b.jsonl'))
+  })
+  it('a hit is checked: a rollout gone since the walk is looked for again', () => {
+    const day = join(tmp, '2026', '10', '15')
+    mkdirSync(day, { recursive: true })
+    const first = join(day, 'rollout-2026-10-15T00-00-00-c.jsonl')
+    writeFileSync(first, lines(META))
+    expect(findCodexRollout('c', tmp)).toBe(first)
+    rmSync(first)
+    const moved = join(tmp, '2026', '10', 'rollout-2026-10-15T00-00-00-c.jsonl')
+    writeFileSync(moved, lines(META))
+    expect(findCodexRollout('c', tmp)).toBe(moved)
   })
 })
 

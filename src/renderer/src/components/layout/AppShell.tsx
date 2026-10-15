@@ -55,7 +55,7 @@ import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { initServedToolsEvents } from '../../lib/served-events'
-import { adoptRecord, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
+import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { requestGroupDissolve, useDissolveStore } from '../../lib/group-dissolve'
 import { planBootAdoption, bootSurvivors } from '../../lib/boot-adoption'
 import { savedLayoutSessionIds } from '../../../../shared/adoption-scope'
@@ -262,20 +262,21 @@ export function AppShell(): React.JSX.Element {
         const listingComplete =
           (await window.electronAPI?.bootRecordsComplete?.().catch(() => true)) ?? true
 
-        const adoptedIds: string[] = []
-        for (const s of plan.liveTabs) {
-          const id = await adoptRecord(s, activeWorkspaceId)
-          if (id) adoptedIds.push(id)
-        }
+        // The rows first, from the records, then the processes a few at a
+        // time (PRDCT-3527): a launch bringing back a hundred tabs used to
+        // wait on a hundred round trips, one after the other, before the
+        // last row showed. The boot is complete once they have answered.
+        const live = placeRecords(plan.liveTabs, activeWorkspaceId)
+        const adoptedIds = [...live.placed]
+        const attaching = [live.attached]
         if (plan.deadTabs.length > 0) {
           // The boot now waits on the person: the mark says so (below), so a
           // driver waiting for the boot can answer the prompt.
           document.documentElement.dataset.boot = 'restore-prompt'
           if (await promptRestore(plan.deadTabs)) {
-            for (const s of plan.deadTabs) {
-              const id = await adoptRecord(s, activeWorkspaceId)
-              if (id) adoptedIds.push(id)
-            }
+            const dead = placeRecords(plan.deadTabs, activeWorkspaceId)
+            adoptedIds.push(...dead.placed)
+            attaching.push(dead.attached)
           } else {
             for (const s of plan.deadTabs) {
               void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
@@ -324,6 +325,7 @@ export function AppShell(): React.JSX.Element {
         for (const s of plan.hidden) {
           await adoptHiddenRecord(s, activeWorkspaceId)
         }
+        await Promise.all(attaching)
       } catch (err) {
         console.error('Failed to restore sessions/groups on launch:', err)
       } finally {
@@ -378,20 +380,19 @@ export function AppShell(): React.JSX.Element {
           // Focus the first restored tab only when nothing is selected yet, so
           // its pane mounts and the tmux session reattaches (the repaint and
           // the keystroke road need a mounted pane) — but never steal focus
-          // from a tab the user opened during boot.
-          let takeFocus = useSessionStore.getState().selectedSessionIds.length === 0
-          const adopt = async (s: (typeof fresh)[number]): Promise<void> => {
-            const id = await adoptRecord(s, ws, { focus: takeFocus })
-            if (id && takeFocus) takeFocus = false
+          // from a tab the user opened during boot. A few at a time, as above.
+          const adopt = async (records: typeof fresh): Promise<void> => {
+            const focusFirst = useSessionStore.getState().selectedSessionIds.length === 0
+            await placeRecords(records, ws, { focusFirst }).attached
           }
-          for (const s of serverPlan.liveTabs) await adopt(s)
+          await adopt(serverPlan.liveTabs)
           if (serverPlan.deadTabs.length > 0) {
             // The boot waits on the person again, after its mark: a driver
             // reads 'restore-prompt' while the dialog is up, 'complete' after.
             document.documentElement.dataset.boot = 'restore-prompt'
             try {
               if (await promptRestore(serverPlan.deadTabs)) {
-                for (const s of serverPlan.deadTabs) await adopt(s)
+                await adopt(serverPlan.deadTabs)
               } else {
                 for (const s of serverPlan.deadTabs)
                   void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)

@@ -25,7 +25,11 @@ import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { createViewRequestTracker } from './view-request-tracker'
-import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
+import {
+  IPC_SERVER_ENDPOINT,
+  IPC_SERVER_ENDPOINT_NAMED,
+  IPC_SERVER_EXTERNAL
+} from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
@@ -125,6 +129,12 @@ const announceServer = (backing: Backing): void => {
 const watchForServer = (): void => {
   if (serverBacking || serverWatching) return
   serverWatching = true
+  // Main says when it names the server: ask at once rather than at the next
+  // tick (PRDCT-3527). The tick stays, for a window that missed the word.
+  const named = (): void => {
+    if (!serverBacking) void serverRouter.backing().then((b) => b && announceServer(b), noop)
+  }
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
   const ask = (): void => {
     void serverRouter.backing().then(
       (backing) => {
@@ -423,6 +433,19 @@ const serverMode = async (): Promise<ServerMode | null> => {
   if (found?.mode) serverModeKnown = found.mode
   return found?.mode ?? null
 }
+// A window whose sessions are on a server of their own loads the client it
+// will reach it with while the server starts, rather than after: the import
+// is about 400 ms of synchronous requires, which the launch's restore paid
+// after the server had answered (PRDCT-3527). Inside the app it is not
+// loaded at all, as before.
+void Promise.resolve()
+  .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
+  .then(
+    (external) => {
+      if (external === true) setTimeout(() => void import('@clave/client/node').catch(noop), 0)
+    },
+    () => {}
+  )
 // The mode is asked for as the window starts and again whenever the server
 // is announced, so by the time a terminal pane exists it is known: inside
 // the app the pane's calls then stay SYNCHRONOUS sends, as they always were
@@ -490,9 +513,23 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
 async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
   const deadline = Date.now() + 15_000
   let mode = await serverMode()
-  while (mode === null && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    mode = await serverMode()
+  // Asked again every 150 ms, and at once when main names the server.
+  let wake: () => void = noop
+  const named = (): void => wake()
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
+  try {
+    while (mode === null && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150)
+        wake = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+      mode = await serverMode()
+    }
+  } finally {
+    ipcRenderer.removeListener(IPC_SERVER_ENDPOINT_NAMED, named)
   }
   if (mode !== 'attached') return []
   // Ride the server's own arrival (`onServerAvailable`: at once when a backing

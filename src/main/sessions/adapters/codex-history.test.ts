@@ -214,17 +214,42 @@ describe('Codex resumed chat history', () => {
     await manager.kill('tab')
   })
 
-  it('freezes history at spawn so later turns cannot appear both in history and the live stream', async () => {
+  it('freezes history at its first read so later turns cannot appear both in history and the live stream', async () => {
     const { manager, file } = await setup([
       message('UserMessage', 'u', 'Earlier'),
       message('AgentMessage', 'a', 'Earlier answer')
     ])
+    const first = manager.history('tab')
     appendFileSync(file, message('AgentMessage', 'new', 'New live answer') + '\n')
     expect(manager.history('tab').items.map(({ event }) => event)).toEqual([
       { type: 'user_message', text: 'Earlier' },
       { type: 'assistant_text', delta: 'Earlier answer', final: true }
     ])
-    expect(manager.history('tab')).toEqual(manager.history('tab'))
+    expect(manager.history('tab')).toEqual(first)
+    await manager.kill('tab')
+  })
+
+  it('reads nothing of the rollout at spawn: a restore of many chats replays none of them (PRDCT-3527)', async () => {
+    const { manager, file } = await setup([message('UserMessage', 'u', 'Earlier')])
+    // Written after the spawn and before any read: a spawn that replayed the
+    // file would not see it.
+    appendFileSync(file, message('AgentMessage', 'a', 'Written after the spawn') + '\n')
+    expect(manager.history('tab').items.map(({ event }) => event)).toEqual([
+      { type: 'user_message', text: 'Earlier' },
+      { type: 'assistant_text', delta: 'Written after the spawn', final: true }
+    ])
+    await manager.kill('tab')
+  })
+
+  it('snapshots the past before the process starts, even when nothing read it yet', async () => {
+    const { manager, adapter, file } = await setup([message('UserMessage', 'u', 'Earlier')])
+    // The view's readiness starts the process (the stub refuses to connect);
+    // the snapshot must already be taken by then.
+    adapter.ready({ id: 'tab' })
+    appendFileSync(file, message('AgentMessage', 'a', 'Written by the process') + '\n')
+    expect(manager.history('tab').items.map(({ event }) => event)).toEqual([
+      { type: 'user_message', text: 'Earlier' }
+    ])
     await manager.kill('tab')
   })
 

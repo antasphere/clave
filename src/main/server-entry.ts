@@ -55,7 +55,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
-import { ptyManager } from './pty-manager'
+import { ptyManager, loginShellEnvAsync } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -119,6 +119,15 @@ async function main(): Promise<void> {
   const log = (line: string): void => {
     process.stderr.write(`clave-server: ${line}\n`)
   }
+
+  // ── Wave 6, lane B: the login shell's environment, read while the rest starts (PRDCT-3527) ──
+  // tmux, Claude and Codex are found on its PATH, and a read made when first
+  // needed is synchronous: it froze this server for two seconds at the first
+  // chat a launch restored. Started here, in parallel with the terminal
+  // process and the listener; a spawn waits for it (`sessions/lifecycle.ts`)
+  // and the records listing uses the tmux the last launch found until it is
+  // there (`detectTmux`), so the announcement never waits on it.
+  void loginShellEnvAsync()
 
   // ── Lane B (wave 3): the terminals, over the wire to the terminal process ──
   // ── Wave 5: the process started and kept alive by this entry ──

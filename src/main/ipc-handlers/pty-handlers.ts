@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import {
   ptyManager,
   isTmuxAvailable,
+  whenTmuxResolvable,
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
@@ -17,6 +18,7 @@ import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
 import { hasServerEventPublisher } from '../server/session-events'
+import { isServerExternal } from '../server/endpoint'
 import {
   type SessionInfoResult,
   restartSession,
@@ -221,7 +223,11 @@ export function registerPtyHandlers(): void {
   })
 
   // Lets the settings UI enable/disable the "persistent sessions" toggle.
-  ipcMain.handle('tmux:available', () => {
+  // Answered without the synchronous login-shell read: tmux is looked up on
+  // that PATH, and the read froze main for two seconds at every launch,
+  // every window's first calls with it (PRDCT-3527).
+  ipcMain.handle('tmux:available', async () => {
+    await whenTmuxResolvable()
     return isTmuxAvailable()
   })
 
@@ -239,7 +245,17 @@ export function registerPtyHandlers(): void {
   // answers for an attached window); which records THIS window takes is the
   // shell's rule (`shared/adoption-scope.ts`), applied here over main's
   // listing and in the preload over the server's, from the scope below.
-  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
+  ipcMain.handle('records:list-adoptable', async (event, filter?: { ids?: unknown }) => {
+    const byIds = !!filter && Array.isArray(filter.ids)
+    // A shell whose sessions live on a server of their own (attached, or its
+    // separate child) keeps no records of its own to bring back: what main's
+    // folder still holds is what an earlier in-process launch left, and
+    // offering it put closed tabs back and asked twice per launch (PRDCT-3527).
+    // The window's sessions come from the server, through its restore.
+    if (!byIds && isServerExternal()) return []
+    // The listing asks tmux which sessions still run: found on the login
+    // PATH, or as the last launch found it, never by the synchronous read.
+    await whenTmuxResolvable()
     const host = getSessionHost()
     if (filter && Array.isArray(filter.ids)) {
       return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))

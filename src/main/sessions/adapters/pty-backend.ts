@@ -224,6 +224,15 @@ function detectTmux(): string | null {
     tmuxPathCache = null
     return null
   }
+  // Before the login shell has answered, the tmux the last launch found, so
+  // a launch's records listing (which asks tmux which sessions still run)
+  // does not wait two seconds on the person's profile or freeze on its
+  // synchronous read (PRDCT-3527). Not cached: the login PATH decides as soon
+  // as it is read.
+  if (loginShellEnv === null) {
+    const remembered = rememberedTmux()
+    if (remembered) return remembered
+  }
   const env = getLoginShellEnv()
   const pathDirs = (env.PATH || process.env.PATH || '').split(':')
   for (const dir of pathDirs) {
@@ -232,6 +241,7 @@ function detectTmux(): string | null {
     try {
       fs.accessSync(candidate, fs.constants.X_OK)
       tmuxPathCache = candidate
+      rememberTmux(candidate)
       return candidate
     } catch {
       // not here, keep looking
@@ -239,6 +249,41 @@ function detectTmux(): string | null {
   }
   tmuxPathCache = null
   return null
+}
+
+/** Where the last tmux found is remembered, as the storage port names it. */
+export const TMUX_PATH_DOCUMENT = 'tmux-path.json'
+
+function rememberedTmux(): string | null {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    const found = raw ? (JSON.parse(raw) as { path?: unknown }).path : null
+    if (typeof found !== 'string' || !path.isAbsolute(found)) return null
+    fs.accessSync(found, fs.constants.X_OK)
+    return found
+  } catch {
+    return null
+  }
+}
+
+function rememberTmux(found: string): void {
+  try {
+    const raw = lazyTerminalPorts.storage.read(TMUX_PATH_DOCUMENT)
+    if (raw && (JSON.parse(raw) as { path?: unknown }).path === found) return
+    lazyTerminalPorts.storage.write(TMUX_PATH_DOCUMENT, JSON.stringify({ path: found }))
+  } catch {
+    // Remembering is a shortcut for the next launch, never a failure of this one.
+  }
+}
+
+/** Resolves once `detectTmux` can answer without the synchronous login-shell
+ *  read: at once when tmux is already found, the login shell has answered, or
+ *  the last launch's tmux is remembered; else when the login shell answers
+ *  (PRDCT-3527). Main's handlers wait on this, never on the read itself. */
+export async function whenTmuxResolvable(): Promise<void> {
+  if (tmuxPathCache !== undefined || loginShellEnv !== null || isWindows) return
+  if (rememberedTmux()) return
+  await loginShellEnvAsync()
 }
 
 export function isTmuxAvailable(): boolean {

@@ -128,6 +128,9 @@ const answer = (table: Record<string, unknown>): void => {
   })
 }
 const channels = (): string[] => mocks.invoke.mock.calls.map(([c]) => c as string)
+/** The channels listened on over IPC, the server watch's own word aside. */
+const sessionChannels = (): string[] =>
+  mocks.on.mock.calls.map(([c]) => c as string).filter((c) => c !== 'server:endpoint-named')
 /** Lets the announce (a microtask queued by `connect`) and the dynamic import run. */
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
@@ -189,7 +192,9 @@ describe('the preload routes sessionsList', () => {
     expect(mocks.createApiClient).not.toHaveBeenCalled()
     // The preload asks for the endpoint once at its start too, for the
     // terminal pane's road (its mode), before any routed call.
-    expect(channels().filter((c) => c !== 'server:endpoint')).toEqual(['sessions:list'])
+    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'server:external')).toEqual([
+      'sessions:list'
+    ])
     expect(channels()[0]).toBe('server:endpoint')
   })
   it('goes to the server, scoped to this window, once main names an endpoint', async () => {
@@ -243,7 +248,9 @@ describe('the preload routes the other session calls', () => {
     await api.sessionsHistory('s1', 40, 20)
     await api.spawnSession('/repo', spawnOptions)
     await api.killSession('s1')
-    const ipc = mocks.invoke.mock.calls.filter(([c]) => c !== 'server:endpoint')
+    const ipc = mocks.invoke.mock.calls.filter(
+      ([c]) => c !== 'server:endpoint' && c !== 'server:external'
+    )
     expect(ipc).toEqual([
       ['sessions:write', 's1', bytes],
       ['sessions:write', 's1', typed],
@@ -285,7 +292,11 @@ describe('the preload routes the other session calls', () => {
       options: spawnOptions
     })
     expect(mocks.sessions.stop).toHaveBeenCalledExactlyOnceWith('s1')
-    expect(channels().filter((c) => c !== 'server:endpoint' && c !== 'window:identity')).toEqual([])
+    expect(
+      channels().filter(
+        (c) => c !== 'server:endpoint' && c !== 'server:external' && c !== 'window:identity'
+      )
+    ).toEqual([])
   })
 })
 
@@ -452,13 +463,30 @@ describe('a subscription is released on the transport it was taken on', () => {
 })
 
 describe('a session listener bound before the server arrives', () => {
+  it('connects at once when main names the server, not at the next tick (PRDCT-3527)', async () => {
+    answer({ 'server:endpoint': null })
+    const states = vi.fn()
+    api.onAgentState('s1', states)
+    await settle()
+    expect(mocks.push).toBeNull()
+    const named = mocks.on.mock.calls.find(([c]) => c === 'server:endpoint-named')?.[1] as
+      | (() => void)
+      | undefined
+    expect(named).toBeTypeOf('function')
+    answer({ 'server:endpoint': attachedEndpoint })
+    named!()
+    await settle()
+    // Well before the watch's two-second tick.
+    expect(mocks.push).not.toBeNull()
+    expect(mocks.push!.connect).toHaveBeenCalled()
+  })
   it('binds IPC at once and the push channel once a routed call connects', async () => {
     answer({ 'server:endpoint': null })
     const titles = vi.fn()
     const states = vi.fn()
     api.onSessionAutoTitle('s1', titles)
     api.onAgentState('s1', states)
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual(['session:auto-title:s1', 'agent:state:s1'])
+    expect(sessionChannels()).toEqual(['session:auto-title:s1', 'agent:state:s1'])
     await settle()
     expect(mocks.push).toBeNull()
 
@@ -506,7 +534,7 @@ describe('a stream listener follows its subscription’s transport', () => {
     api.onSessionStream('s1', late)
     await settle()
     expect(mocks.push!.subscribe).not.toHaveBeenCalled()
-    expect(mocks.on.mock.calls.map(([c]) => c)).toEqual([
+    expect(sessionChannels()).toEqual([
       'sessions:stream:s1',
       'sessions:exit:s1',
       'sessions:stream:s1'

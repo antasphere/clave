@@ -56,6 +56,22 @@ const defaultConnect = async (endpoint: ClaveServerEndpoint): Promise<ClaveApiCl
   })
 }
 
+/**
+ * Load the client's modules ahead of the first connect (PRDCT-3527): about
+ * half a second of synchronous requires, which the first connect paid right
+ * after the boot named a separate server, holding every window's first calls
+ * to that server behind it. The boot calls this while the server starts.
+ */
+export function preloadServerClientModules(): Promise<void> {
+  return Promise.all([
+    import('@clave/client'),
+    import('@effect/platform-node/NodeHttpClient')
+  ]).then(
+    () => undefined,
+    () => undefined
+  )
+}
+
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
