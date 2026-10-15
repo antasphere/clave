@@ -26,14 +26,21 @@ The window was hidden (`--test-no-activate`), so nothing here is foreground late
      and the server 0.4%.
    - Their event loops stay within 3.5 ms of the timer at p99.
    - Live, under active agents, the coordinator measured the server at 10–12% and the
-     renderer at 130–140%. Synthetic idle does not reproduce that. Streaming agent
-     output is the workload that does, and it is lane A's case.
+     renderer at 130–140% (`ps` over three 5 s windows, a natural workload, not a
+     controlled one). Synthetic idle does not reproduce those figures, and nothing on
+     this page explains them.
+   - Active-agent and streaming workloads were not measured here. Whether they account
+     for the live figures is open, not shown.
 2. **The separate server is slow to start.**
    - Its process starts about 0.5 s after launch, but its event loop only runs about
      0.9 s later.
-   - In the dev launch-to-quit profile, evaluating the server's gRPC chunk alone took
-     674 ms, 46% of all the server's CPU over the launch.
+   - In the one profiled dev launch to quit, evaluating the server's gRPC chunk took
+     674 ms, 46% of the server's sampled CPU over that launch. This is a single
+     attribution: it was not replicated, and the installed app has no
+     launch-to-quit profile.
    - Main reaches its server at 2.25 s, and the window finishes its boot at 2.3–2.6 s.
+     That order is measured; whether the boot waits on the server's start was not
+     isolated.
 3. **Restoring 135 tabs keeps the server busy after the window shows them.**
    - In the 5 s after boot, the server averages 13% of one core at S135, against 1.2%
      at S0.
@@ -105,8 +112,12 @@ are.
 
 How to read the CPU columns:
 
-- `ps` reports CPU time in 10 ms steps, so a 1-second interval reads in steps of 1%.
-  The mean is exact; the quantiles are coarse.
+- `ps` reports CPU time in 10 ms steps, so a 1-second interval reads in steps of
+  about 1%.
+- The mean, from cumulative deltas over the whole window, is more precise than any
+  one interval. It still carries that quantisation at each end of the window, and
+  the load of a shared machine.
+- The quantiles are coarse.
 - Main's event-loop utilisation is not given: Electron runs Chromium's loop, and
   `eventLoopUtilization` reads 0 there whatever main does.
 
@@ -149,11 +160,13 @@ ignores `NODE_OPTIONS`. See Limitations.
 ## Bottlenecks, ranked by measured impact
 
 1. **Server cold start.**
-   - About 0.9 s from the separate server's process start to its event loop, on the
-     critical path to main's registration (about 2.25 s) and so to the boot (about
-     2.5 s).
-   - Evidence: 674 ms of top-level evaluation of the gRPC chunk in the dev
-     launch-to-quit profile (`startup-profile-server.flame.html`).
+   - About 0.9 s from the separate server's process start to its event loop,
+     measured on every launch of all three configurations.
+   - It precedes main's registration (about 2.25 s) and the boot (about 2.5 s).
+     Whether the boot waits on it was not isolated.
+   - Attribution: in one profiled dev launch, 674 ms of top-level evaluation of the
+     gRPC chunk (`startup-profile-server.flame.html`). Not replicated, and not
+     available for the installed app.
 2. **Restore tail at scale.**
    - About 0.65 s of server CPU in the 5 s after boot at 135 tabs: 13% of one core
      for 5 s, against 1.2% with no tab.
@@ -216,10 +229,21 @@ The chats are restored records (60% Codex, 40% Claude) whose agents are stubs
 that log their start and sleep: nothing reaches a provider, nothing is
 inferred, the shared `clave` tmux socket is never used (chats are event
 sessions). Twenty Claude chats carry a synthetic 200-turn transcript, read by
-the history query; the others are dormant tabs. No real conversation, account
-or profile is read: every launch gets its own `--user-data-dir`, its own
-transcript roots (`CLAVE_TRANSCRIPTS_ROOT`, `CLAVE_CODEX_ROOT`), a stub login
-shell, and telemetry off.
+the history query; the others are dormant tabs.
+
+What is isolated per launch:
+
+- its own `--user-data-dir`;
+- its own transcript roots (`CLAVE_TRANSCRIPTS_ROOT`, `CLAVE_CODEX_ROOT`);
+- a stub login shell;
+- telemetry off.
+
+No real conversation or app data is read.
+
+One thing is NOT isolated. Each instance reads the machine's Claude login from the
+macOS Keychain and calls the usage-limits endpoint with it at boot (see the
+Summary). The credential is used, never recorded by the benchmark, and nothing is
+inferred.
 
 Per launch:
 
