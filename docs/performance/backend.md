@@ -323,9 +323,11 @@ They cover these rules:
 - **Profiles:** malformed or thin ones.
 - **Privacy:** a private path left in a published file.
 - **Startup order:** a loop mark earlier than its process start.
-- **Leftover processes:** the runner's own `endLaunch` is driven with real child
-  processes. A launch that leaves one behind is refused, and that process is
-  killed by its pid.
+- **Leftover processes:** every launch path runs through the runner's own
+  `guardedLaunch`, which alone decides whether a launch succeeded. The tests
+  drive it, and the `endLaunch` it calls, with real child processes. A
+  successful launch that leaves a process behind is refused, and that process
+  is killed by its pid. A failed launch keeps its own error.
 
 Booting, tabs reaching their groups, query answers and `ps` continuity are checked
 by the runner itself during each run. Those checks are exercised by real runs,

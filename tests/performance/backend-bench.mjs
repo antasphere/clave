@@ -879,6 +879,31 @@ export async function endLaunch({
 }
 
 /**
+ * Every launch runs through here, and here alone decides whether it ended
+ * cleanly: `body` does the launch's work; `close`, run afterwards whatever
+ * the body did, stops the app and answers the pids to wait for (and the
+ * stub agents' log); `endLaunch` then records the leftovers into `record`.
+ * A body that returned is a success, so a leftover REFUSES the launch; a
+ * body that threw keeps its own error. No caller passes a success flag of
+ * its own, so none can lose the refusal (verifier round 2, V1-F3), and the
+ * tests drive this same function with real processes.
+ */
+export async function guardedLaunch({ name, when, record, body, close, waitMs = EXIT_WAIT_MS }) {
+  let succeeded = false
+  try {
+    await body()
+    succeeded = true
+  } finally {
+    const { pids, starts = null } = await close()
+    Object.assign(
+      record,
+      await endLaunch({ name, pids, starts, when, bodyFailed: !succeeded, waitMs })
+    )
+  }
+  return record
+}
+
+/**
  * Launch-to-quit profiles of every Node process of the app: main, the
  * server, the terminal process. Playwright removes NODE_OPTIONS from the
  * environment it launches Electron with (main reads it as unset), so this
@@ -913,8 +938,7 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
   )
   const pids = { main: child.pid }
   const result = { name, settleSeconds, load: coRunningLoad(), profiles: {}, leftovers: [] }
-  let bodyFailed = true
-  try {
+  const body = async () => {
     const deadline = Date.now() + BOOT_TIMEOUT_MS
     let ready = null
     while (Date.now() < deadline && child.exitCode === null) {
@@ -961,8 +985,8 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
       throw new Error(`${name}: main did not quit within ${CLOSE_TIMEOUT_MS} ms of SIGTERM`)
     }
     result.exit = end
-    bodyFailed = false
-  } finally {
+  }
+  const close = async () => {
     if (child.exitCode === null && child.signalCode === null) {
       try {
         process.kill(child.pid, 'SIGKILL')
@@ -970,17 +994,9 @@ async function startupProfileLaunch(cfg, outDir, settleSeconds, log) {
         // Gone.
       }
     }
-    Object.assign(
-      result,
-      await endLaunch({
-        name,
-        pids: Object.values(pids),
-        starts: seed.starts,
-        when: 'the quit',
-        bodyFailed
-      })
-    )
+    return { pids: Object.values(pids), starts: seed.starts }
   }
+  await guardedLaunch({ name, when: 'the quit', record: result, body, close })
   log(
     `${name}: server ready at ${result.serverReadyMs} ms, quit at ${result.quitAtMs} ms, pids ${JSON.stringify(pids)}`
   )
@@ -1058,8 +1074,7 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
   const pids = { main: mainPid }
   // Every Electron process seen, for the leftover check after the close.
   const electronPids = new Set()
-  let bodyFailed = true
-  try {
+  const body = async () => {
     const launchedAt = Date.now()
     const win = await app.firstWindow({ timeout: BOOT_TIMEOUT_MS })
     await win.waitForLoadState('domcontentloaded')
@@ -1260,15 +1275,13 @@ async function oneLaunch(cfg, index, profiled, outDir, log) {
       }
     }
     result.queries = queries
-    bodyFailed = false
-  } finally {
+  }
+  const close = async () => {
     const known = [...new Set([...Object.values(pids), ...electronPids])]
     await boundedClose(() => app.close(), mainPid, CLOSE_TIMEOUT_MS, { log })
-    Object.assign(
-      result,
-      await endLaunch({ name, pids: known, starts: seed.starts, when: 'the close', bodyFailed })
-    )
+    return { pids: known, starts: seed.starts }
   }
+  await guardedLaunch({ name, when: 'the close', record: result, body, close })
 
   rmSync(launchDir, { recursive: true, force: true })
   return result
