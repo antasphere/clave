@@ -25,7 +25,11 @@ import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { createViewRequestTracker } from './view-request-tracker'
-import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
+import {
+  IPC_SERVER_ENDPOINT,
+  IPC_SERVER_ENDPOINT_NAMED,
+  IPC_SERVER_EXTERNAL
+} from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
@@ -125,6 +129,12 @@ const announceServer = (backing: Backing): void => {
 const watchForServer = (): void => {
   if (serverBacking || serverWatching) return
   serverWatching = true
+  // Main says when it names the server: ask at once rather than at the next
+  // tick (PRDCT-3527). The tick stays, for a window that missed the word.
+  const named = (): void => {
+    if (!serverBacking) void serverRouter.backing().then((b) => b && announceServer(b), noop)
+  }
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
   const ask = (): void => {
     void serverRouter.backing().then(
       (backing) => {
@@ -423,6 +433,19 @@ const serverMode = async (): Promise<ServerMode | null> => {
   if (found?.mode) serverModeKnown = found.mode
   return found?.mode ?? null
 }
+// A window whose sessions are on a server of their own loads the client it
+// will reach it with while the server starts, rather than after: the import
+// is about 400 ms of synchronous requires, which the launch's restore paid
+// after the server had answered (PRDCT-3527). Inside the app it is not
+// loaded at all, as before.
+void Promise.resolve()
+  .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
+  .then(
+    (external) => {
+      if (external === true) setTimeout(() => void import('@clave/client/node').catch(noop), 0)
+    },
+    () => {}
+  )
 // The mode is asked for as the window starts and again whenever the server
 // is announced, so by the time a terminal pane exists it is known: inside
 // the app the pane's calls then stay SYNCHRONOUS sends, as they always were
@@ -490,9 +513,23 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
 async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
   const deadline = Date.now() + 15_000
   let mode = await serverMode()
-  while (mode === null && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    mode = await serverMode()
+  // Asked again every 150 ms, and at once when main names the server.
+  let wake: () => void = noop
+  const named = (): void => wake()
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
+  try {
+    while (mode === null && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150)
+        wake = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+      mode = await serverMode()
+    }
+  } finally {
+    ipcRenderer.removeListener(IPC_SERVER_ENDPOINT_NAMED, named)
   }
   if (mode !== 'attached') return []
   // Ride the server's own arrival (`onServerAvailable`: at once when a backing
@@ -844,12 +881,48 @@ const watchWorkspaceFilesServer = (): void => {
   onServerAvailable(wireWorkspaceFiles)
 }
 
+/** The same record write on main's copy of the records, BEFORE the
+ *  server's: the window's boot lists the records to bring back from main's
+ *  folder (PRDCT-3530), so a field kept on the server's record alone came
+ *  back stale after a quit (wave 6, lane A), and a server that is down must
+ *  not cost main's copy the write IPC always made (round 4 of the lane's
+ *  verifier). Main writes only a record it has; its refusal is swallowed, the
+ *  server's write still runs and the caller hears the server's answer. */
+const alsoMain = async (channel: string, ...args: unknown[]): Promise<void> => {
+  try {
+    await ipcRenderer.invoke(channel, ...args)
+  } catch {
+    // Main's copy is the boot's fallback source; the server's record stands.
+  }
+}
+
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
   onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
     refusalListeners.add(callback)
     return () => {
       refusalListeners.delete(callback)
+    }
+  },
+  // ── Wave 6, lane A: the window's server connection, opened or back (PRDCT-3526) ──
+  // Heard when the server becomes available to this window and at every
+  // welcome of its push channel after that (a reconnection included): the
+  // moment a read that was lost while the server was busy or gone is worth
+  // asking again. A window on IPC for good never hears it.
+  onServerConnected: (callback: () => void): (() => void) => {
+    let off: () => void = noop
+    let gone = false
+    const withdraw = onServerAvailable((backing) => {
+      if (gone) return
+      off = backing.push.onStatus((status) => {
+        if (status === 'open') callback()
+      })
+      if (backing.push.status === 'open') callback()
+    })
+    return () => {
+      gone = true
+      withdraw()
+      off()
     }
   },
   // ── Sessions (lane A): every call goes to the server once main names it ──
@@ -1148,15 +1221,51 @@ const electronAPI = {
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
-  setSessionDisplayName: (id: string, displayName: string | null, userRenamed: boolean) =>
-    ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
-  setSessionViewRecord: (
-    id: string,
-    view: { url: string; title?: string; command?: string; cwd?: string } | null
-  ) => ipcRenderer.invoke('session:set-view', id, view),
+  // A tab's name and page, kept on the records the next launch restores it
+  // from (wave 6, lane A, PRDCT-3526): main's first (`alsoMain`) and the
+  // server's once main names it, because the window's boot still lists the
+  // records to bring back from main's folder (PRDCT-3530) and a tab renamed
+  // on the server's record alone came back under its old name.
+  setSessionDisplayName: viaServer<[string, string | null, boolean], void>({
+    ipc: (id, displayName, userRenamed) =>
+      ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
+    server: async ({ api }, id, displayName, userRenamed) => {
+      await alsoMain('session:set-display-name', id, displayName, userRenamed)
+      await api.sessions.keepOnRecord(id, {
+        name: { displayName, userRenamed: userRenamed === true }
+      })
+    }
+  }),
+  setSessionViewRecord: viaServer<
+    [string, { url: string; title?: string; command?: string; cwd?: string } | null],
+    void
+  >({
+    ipc: (id, view) => ipcRenderer.invoke('session:set-view', id, view),
+    server: async ({ api }, id, view) => {
+      await alsoMain('session:set-view', id, view)
+      await api.sessions.keepOnRecord(id, {
+        page:
+          view && typeof view.url === 'string' && view.url.length > 0
+            ? {
+                url: view.url,
+                ...(typeof view.title === 'string' ? { title: view.title } : {}),
+                ...(typeof view.command === 'string' ? { command: view.command } : {}),
+                ...(typeof view.cwd === 'string' ? { cwd: view.cwd } : {})
+              }
+            : null
+      })
+    }
+  }),
 
-  setSessionWorkspace: (id: string, workspaceId: string | null) =>
-    ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+  // Kept on the server's record once main names it, like the name (round 1
+  // of wave 6 lane A's verifier): over IPC it reached main's copy only.
+  setSessionWorkspace: viaServer<[string, string | null], void>({
+    ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+    server: async ({ api }, id, workspaceId) => {
+      await alsoMain('session:set-workspace', id, workspaceId)
+      await api.sessions.keepOnRecord(id, { workspaceId })
+    }
+  }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
@@ -1173,6 +1282,7 @@ const electronAPI = {
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).
   listServerRestoreRecords: () => listServerRestoreRecords(),
+  serverHasRestoreRecords: () => ipcRenderer.invoke('records:server-has-any') as Promise<boolean>,
   bootRecordsComplete: () => bootRecordsComplete(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),
@@ -1428,8 +1538,19 @@ const electronAPI = {
   historySearchCancel: (requestId: string) => ipcRenderer.send('history:search-cancel', requestId),
   onHistorySearchHits: (callback: (progress: { requestId: string; hits: unknown[] }) => void) =>
     createIpcListener<[{ requestId: string; hits: unknown[] }]>('history:search-hits', callback),
-  setSessionClaudeSessionId: (id: string, claudeSessionId: string) =>
-    ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+  // A `/clear` rotated the conversation: the record that brings the tab back
+  // follows it, on the server's records once main names it (round 1 of wave 6
+  // lane A's verifier); over IPC it reached main's copy only, and the tab
+  // came back on its conversation from before the clear.
+  setSessionClaudeSessionId: viaServer<[string, string], void>({
+    ipc: (id, claudeSessionId) =>
+      ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+    server: async ({ api }, id, claudeSessionId) => {
+      if (typeof id !== 'string' || typeof claudeSessionId !== 'string' || !claudeSessionId) return
+      await alsoMain('session:set-claude-session-id', id, claudeSessionId)
+      await api.sessions.keepOnRecord(id, { claudeSessionId })
+    }
+  }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
 

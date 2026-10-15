@@ -190,7 +190,11 @@ export function useTerminal(sessionId: string): {
         // and the record must never disagree on which conversation this is.
         if (newClaudeSessionId && /^[A-Za-z0-9_-]{1,128}$/.test(newClaudeSessionId)) {
           useSessionStore.getState().setClaudeSessionId(sessionId, newClaudeSessionId)
-          void window.electronAPI.setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+          // A server that is down rejects: the record keeps the old id until
+          // the next rotation, as before, without an unhandled rejection.
+          void window.electronAPI
+            .setSessionClaudeSessionId?.(sessionId, newClaudeSessionId)
+            ?.catch(() => {})
         }
       }
     )

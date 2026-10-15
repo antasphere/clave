@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import {
   ptyManager,
   isTmuxAvailable,
+  whenTmuxResolvable,
   scrollTmuxSessionToText,
   type PtySpawnOptions
 } from '../pty-manager'
@@ -17,6 +18,9 @@ import { windowRegistry } from '../window-registry'
 import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
 import { hasServerEventPublisher } from '../server/session-events'
+import { isServerExternal } from '../server/endpoint'
+import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
+import { serverClient } from '../mcp/server-client'
 import {
   type SessionInfoResult,
   restartSession,
@@ -221,9 +225,12 @@ export function registerPtyHandlers(): void {
   })
 
   // Lets the settings UI enable/disable the "persistent sessions" toggle.
-  ipcMain.handle('tmux:available', () => {
-    return isTmuxAvailable()
-  })
+  // Answered without the synchronous login-shell read: tmux is looked up on
+  // that PATH, and the read froze main for two seconds at every launch,
+  // every window's first calls with it (PRDCT-3527).
+  ipcMain.handle('tmux:available', () =>
+    tmuxAvailableFor({ tmuxResolvable: whenTmuxResolvable, available: isTmuxAvailable })
+  )
 
   // On launch the renderer asks which sessions survived a previous run — live
   // tmux survivors to reattach silently, dead records (plain or post-reboot
@@ -239,14 +246,32 @@ export function registerPtyHandlers(): void {
   // answers for an attached window); which records THIS window takes is the
   // shell's rule (`shared/adoption-scope.ts`), applied here over main's
   // listing and in the preload over the server's, from the scope below.
-  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) => {
-    const host = getSessionHost()
-    if (filter && Array.isArray(filter.ids)) {
-      return host.listAdoptableRecords(filter.ids.filter((x): x is string => typeof x === 'string'))
-    }
-    const scope = adoptionScopeOf(event.sender)
-    return scope ? selectAdoptableRecords(host.listAdoptableRecords(), scope) : []
-  })
+  // A shell whose sessions live on a server of their own answers its boot
+  // read with nothing, and the listing waits for tmux without the
+  // synchronous login-shell read (`boot-reads.ts`, PRDCT-3527).
+  ipcMain.handle('records:list-adoptable', (event, filter?: { ids?: unknown }) =>
+    adoptableRecordsFor(filter, {
+      external: isServerExternal,
+      tmuxResolvable: whenTmuxResolvable,
+      list: (ids) => [...getSessionHost().listAdoptableRecords(ids)],
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
+  // Whether the server holds a record this window would bring back, asked by
+  // main so a window with nothing to restore never connects for it
+  // (`serverHoldsRecordsFor`, PRDCT-3527).
+  ipcMain.handle('records:server-has-any', (event) =>
+    serverHoldsRecordsFor({
+      list: async () => (await serverClient.api()).sessions.listAdoptable(),
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
   // What the asking window is, for the selection rule: its key, whether it is
   // the primary, and every window that exists (live or persisted). Null for
   // a sender that is not a Clave window.

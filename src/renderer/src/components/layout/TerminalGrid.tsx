@@ -70,9 +70,13 @@ export function TerminalGrid(): React.JSX.Element {
   useEffect(() => initLinkedDocuments(), [])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
   const sessions = useSessionStore((s) => s.sessions)
+  // Asked again when a tab arrives, and when a restored tab's process is back
+  // (`Session.restoring` cleared, PRDCT-3527): the documents are listed for
+  // the sessions the host runs, and a restore places its tabs before that.
+  const settledSessions = sessions.reduce((n, s) => n + (s.restoring ? 0 : 1), 0)
   useEffect(() => {
     void useLinkedDocumentStore.getState().refresh().catch(console.error)
-  }, [sessions.length])
+  }, [sessions.length, settledSessions])
   const fileTabs = useSessionStore((s) => s.fileTabs)
   const groups = useSessionStore((s) => s.groups)
   const displayOrder = useSessionStore((s) => s.displayOrder)
@@ -144,6 +148,17 @@ export function TerminalGrid(): React.JSX.Element {
     sessions.filter((s) => s.sessionType === 'agent').map((s) => s.id)
   )
   const selectedFileTabIds = selectedSessionIds.filter((id) => isFileTabId(id))
+  // A dormant chat wakes the first time it is shown, and stays mounted after.
+  useEffect(() => {
+    const woken = sessions.filter(
+      (s) => s.dormant && !s.restoring && selectedSessionIds.includes(s.id)
+    )
+    if (woken.length === 0) return
+    const ids = new Set(woken.map((s) => s.id))
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((s) => (ids.has(s.id) ? { ...s, dormant: false } : s))
+    }))
+  }, [sessions, selectedSessionIds])
   const selectedTerminalIds = selectedSessionIds.filter(
     (id) => !isFileTabId(id) && !agentSessionIds.has(id)
   )
@@ -302,6 +317,11 @@ export function TerminalGrid(): React.JSX.Element {
           // Agent sessions use AgentChatPanel via activeView, skip entirely
           if (session.sessionType === 'agent') return null
           const isSelected = selectedTerminalIds.includes(session.id)
+          // A restored chat nobody has opened yet keeps its tile and no pane
+          // (`Session.dormant`, PRDCT-3527): mounting the view starts the agent.
+          // Nor does a tab whose process the restore is still reattaching
+          // (`Session.restoring`): its pane would reach a session not there yet.
+          const paneless = session.restoring === true || (session.dormant === true && !isSelected)
           // An unselected terminal is hidden WITHOUT `display: none`, and that
           // is what keeps the window from freezing. xterm's DOM renderer
           // measures each glyph once and caches the width, but only a width
@@ -339,10 +359,10 @@ export function TerminalGrid(): React.JSX.Element {
               aria-hidden={isSelected ? undefined : true}
             >
               <TerminalErrorBoundary sessionId={session.id}>
-                {(session.sessionType === 'remote-terminal' ||
-                  session.sessionType === 'remote-claude') &&
-                session.locationId &&
-                session.shellId ? (
+                {paneless ? null : (session.sessionType === 'remote-terminal' ||
+                    session.sessionType === 'remote-claude') &&
+                  session.locationId &&
+                  session.shellId ? (
                   <RemoteTerminalPanel
                     sessionId={session.id}
                     shellId={session.shellId}

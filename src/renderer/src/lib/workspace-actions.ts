@@ -648,7 +648,8 @@ function stampUnowned(workspaceId: string): void {
   })
   for (const s of sessionState.sessions) {
     if (s.workspaceId == null && s.sessionType === 'local') {
-      void window.electronAPI?.setSessionWorkspace(s.id, workspaceId)
+      // Non-fatal, like the name: the stamp applies for this run either way.
+      void window.electronAPI?.setSessionWorkspace(s.id, workspaceId).catch(() => {})
     }
   }
   usePinnedStore.setState((s) => ({
@@ -721,7 +722,7 @@ export async function removeWorkspace(id: string): Promise<void> {
   })
   for (const s of affectedSessions) {
     if (s.sessionType === 'local') {
-      void window.electronAPI?.setSessionWorkspace(s.id, targetId)
+      void window.electronAPI?.setSessionWorkspace(s.id, targetId).catch(() => {})
     }
   }
 

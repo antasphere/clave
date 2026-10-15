@@ -22,6 +22,17 @@ afterEach(async () => {
 })
 
 describe('the typed request client', () => {
+  it('reads a page of the past under its own deadline, not the ordinary one (PRDCT-3526)', async () => {
+    // One millisecond is no deadline at all for a request over loopback: an
+    // ordinary call misses it, the history call has a minute.
+    const hurried = createApiClient({ url: server.url, token: server.token, timeoutMs: 1 })
+    try {
+      await expect(hurried.sessions.get('s1')).rejects.toThrow()
+      expect(await hurried.sessions.history('s1')).toMatchObject({ items: expect.any(Array) })
+    } finally {
+      await hurried.dispose()
+    }
+  })
   it('round-trips a query and a command, typed end to end', async () => {
     expect((await api.sessions.list()).map((s) => s.id).sort()).toEqual(['s1', 's2'])
     expect((await api.sessions.list('w2')).map((s) => s.id)).toEqual(['s2'])

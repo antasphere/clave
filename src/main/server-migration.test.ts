@@ -27,6 +27,8 @@ import {
   CLAUDE_CREDENTIALS_FILE,
   CODEX_HOMES_DIR,
   MIGRATION_MARKER,
+  MIGRATION_VERSION,
+  SESSION_RECORDS_DIR,
   migrateAppDataToServer
 } from './server-migration'
 
@@ -149,7 +151,7 @@ describe('the migration of the app data into the server directory', () => {
       expect(report.codexHomes).toBe(1)
       // The marker, and the app's own files untouched.
       expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({
-        v: 1,
+        v: 2,
         at: '2026-10-13T00:00:00.000Z',
         outcome: 'migrated',
         resealed: { claude: 2, antasphere: true },
@@ -389,5 +391,292 @@ describe('the migration of the app data into the server directory', () => {
     } finally {
       clean()
     }
+  })
+
+  describe('version 2: the session records (PRDCT-3526)', () => {
+    const record = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+      adapterId: 'claude-chat',
+      transport: 'events',
+      id,
+      claudeSessionId: `conv-${id}`,
+      cwd: '/work',
+      folderName: 'work',
+      ...extra
+    })
+    const put = (dir: string, name: string, value: unknown, mode = 0o644): void => {
+      mkdirSync(path.join(dir, SESSION_RECORDS_DIR), { recursive: true })
+      writeFileSync(path.join(dir, SESSION_RECORDS_DIR, name), JSON.stringify(value), { mode })
+      chmodSync(path.join(dir, SESSION_RECORDS_DIR, name), mode)
+    }
+    const read = (dir: string, name: string): unknown =>
+      json(path.join(dir, SESSION_RECORDS_DIR, name))
+    /** The marker 3.0.0-beta.1 wrote, as it wrote it. */
+    const beta1Marker = (srv: string): void => {
+      mkdirSync(srv, { recursive: true })
+      writeFileSync(
+        path.join(srv, MIGRATION_MARKER),
+        JSON.stringify({
+          v: 1,
+          at: '2026-10-14T22:55:45.615Z',
+          from: '/app',
+          outcome: 'migrated',
+          copied: ['workspace-state.json', 'codex-homes'],
+          kept: [],
+          resealed: { claude: 4, antasphere: true },
+          unopened: [],
+          codexHomes: 1
+        })
+      )
+    }
+
+    it('an install migrated by beta.1 gets its records once: the missing ones copied, the names put back, nothing else changed', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
+        beta1Marker(srv)
+        // What beta.1 left: the app's records with their names...
+        put(app, 'named.json', record('named', { displayName: 'Lane B', userRenamed: true }), 0o600)
+        put(app, 'auto.json', record('auto', { displayName: 'fix the build', userRenamed: false }))
+        put(app, 'gone.json', record('gone', { displayName: 'Only in the app' }))
+        put(app, 'kept.json', record('kept', { displayName: 'Old name', userRenamed: true }))
+        // ...and the server's, rewritten by the restore without them.
+        put(srv, 'named.json', record('named', { model: 'server-model', windowKey: 'w1' }))
+        put(srv, 'auto.json', record('auto'))
+        put(srv, 'kept.json', record('kept', { displayName: 'Renamed since', userRenamed: true }))
+        put(srv, 'server-only.json', record('server-only', { displayName: 'New tab' }))
+
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to,
+          now: () => new Date('2026-10-15T08:00:00.000Z')
+        })
+
+        expect(report.outcome).toBe('migrated')
+        expect(report.records).toEqual({ copied: 1, named: 2 })
+        // Version 1 did not run again: the settings were beta.1's to carry.
+        expect(report.copied).toEqual([])
+        expect(existsSync(path.join(srv, 'preferences.json'))).toBe(false)
+        // The name back, and every field the server wrote as it was.
+        expect(read(srv, 'named.json')).toEqual(
+          record('named', {
+            model: 'server-model',
+            windowKey: 'w1',
+            displayName: 'Lane B',
+            userRenamed: true
+          })
+        )
+        expect(statSync(path.join(srv, SESSION_RECORDS_DIR, 'named.json')).mode & 0o777).toBe(0o644)
+        expect(read(srv, 'auto.json')).toEqual(
+          record('auto', { displayName: 'fix the build', userRenamed: false })
+        )
+        // A name the server already has is the server's.
+        expect(read(srv, 'kept.json')).toEqual(
+          record('kept', { displayName: 'Renamed since', userRenamed: true })
+        )
+        // A record only the app had is copied with its mode; one only the server has is left.
+        expect(read(srv, 'gone.json')).toEqual(record('gone', { displayName: 'Only in the app' }))
+        expect(read(srv, 'server-only.json')).toEqual(
+          record('server-only', { displayName: 'New tab' })
+        )
+        // The app's own records untouched.
+        expect(read(app, 'named.json')).toEqual(
+          record('named', { displayName: 'Lane B', userRenamed: true })
+        )
+        // The marker says version 2 ran, and keeps what beta.1 recorded.
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({
+          v: MIGRATION_VERSION,
+          at: '2026-10-15T08:00:00.000Z',
+          firstAt: '2026-10-14T22:55:45.615Z',
+          copied: ['workspace-state.json', 'codex-homes'],
+          resealed: { claude: 4, antasphere: true },
+          codexHomes: 1,
+          records: { copied: 1, named: 2 }
+        })
+        // Once: a second boot changes nothing, a name cleared since stays cleared.
+        put(srv, 'named.json', record('named', { model: 'server-model', windowKey: 'w1' }))
+        const again = migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+        expect(again.outcome).toBe('already')
+        expect(read(srv, 'named.json')).toEqual(
+          record('named', { model: 'server-model', windowKey: 'w1' })
+        )
+      } finally {
+        clean()
+      }
+    })
+
+    it('a first separate boot carries version 1 and the records in one run', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
+        put(app, 'tab.json', record('tab', { displayName: 'My tab', userRenamed: true }))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.copied).toEqual(['preferences.json'])
+        expect(report.records).toEqual({ copied: 1, named: 0 })
+        expect(read(srv, 'tab.json')).toEqual(
+          record('tab', { displayName: 'My tab', userRenamed: true })
+        )
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({
+          v: MIGRATION_VERSION,
+          copied: ['preferences.json']
+        })
+      } finally {
+        clean()
+      }
+    })
+
+    it('an app with records only is not "nothing"', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        put(app, 'tab.json', record('tab'))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.outcome).toBe('migrated')
+        expect(report.records.copied).toBe(1)
+      } finally {
+        clean()
+      }
+    })
+
+    it('a record either side cannot read is left as it is, and the step still completes', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        beta1Marker(srv)
+        put(app, 'broken.json', record('broken', { displayName: 'Name' }))
+        mkdirSync(path.join(srv, SESSION_RECORDS_DIR), { recursive: true })
+        writeFileSync(path.join(srv, SESSION_RECORDS_DIR, 'broken.json'), '{ not json')
+        put(app, 'notes.txt', 'not a record')
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.failed).toEqual([])
+        expect(readFileSync(path.join(srv, SESSION_RECORDS_DIR, 'broken.json'), 'utf-8')).toBe(
+          '{ not json'
+        )
+        expect(existsSync(path.join(srv, SESSION_RECORDS_DIR, 'notes.txt'))).toBe(false)
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: MIGRATION_VERSION })
+      } finally {
+        clean()
+      }
+    })
+
+    it('a records step that fails writes no new marker, and the next boot runs it', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        beta1Marker(srv)
+        put(app, 'tab.json', record('tab', { displayName: 'Mine' }))
+        // A file where the server's records folder should be: the copy fails.
+        writeFileSync(path.join(srv, SESSION_RECORDS_DIR), 'in the way')
+        const failed = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(failed.failed).toHaveLength(1)
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: 1 })
+        rmSync(path.join(srv, SESSION_RECORDS_DIR))
+        const healed = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(healed.records.copied).toBe(1)
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: MIGRATION_VERSION })
+      } finally {
+        clean()
+      }
+    })
+
+    it('the name fill changes nothing else of a record the server wrote, whatever the app had (F4)', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        beta1Marker(srv)
+        // A /clear on the server rotated the conversation; the app's copy is older.
+        put(
+          app,
+          'tab.json',
+          record('tab', {
+            claudeSessionId: 'old-before-clear',
+            cwd: '/old',
+            model: 'old-model',
+            displayName: 'Mine',
+            userRenamed: true
+          })
+        )
+        put(
+          srv,
+          'tab.json',
+          record('tab', { claudeSessionId: 'new-after-clear', cwd: '/new' }),
+          0o600
+        )
+        migrateAppDataToServer({ appDir: app, serverDir: srv, from, to: server().to })
+        expect(read(srv, 'tab.json')).toEqual(
+          record('tab', {
+            claudeSessionId: 'new-after-clear',
+            cwd: '/new',
+            displayName: 'Mine',
+            userRenamed: true
+          })
+        )
+        // Its mode kept (F5).
+        expect(statSync(path.join(srv, SESSION_RECORDS_DIR, 'tab.json')).mode & 0o777).toBe(0o600)
+      } finally {
+        clean()
+      }
+    })
+
+    it('a marker without a version is version 1: the records are carried (F5)', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        mkdirSync(srv, { recursive: true })
+        writeFileSync(path.join(srv, MIGRATION_MARKER), JSON.stringify({ at: 'x' }))
+        writeFileSync(path.join(app, 'preferences.json'), '{"theme":"dark"}')
+        put(app, 'tab.json', record('tab'))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.records.copied).toBe(1)
+        expect(report.copied).toEqual([])
+      } finally {
+        clean()
+      }
+    })
+
+    it('a marker that cannot be parsed is version 1 too', () => {
+      const { app, srv, clean } = dirs()
+      try {
+        mkdirSync(srv, { recursive: true })
+        writeFileSync(path.join(srv, MIGRATION_MARKER), '{ not json')
+        put(app, 'tab.json', record('tab'))
+        const report = migrateAppDataToServer({
+          appDir: app,
+          serverDir: srv,
+          from,
+          to: server().to
+        })
+        expect(report.records.copied).toBe(1)
+        expect(json(path.join(srv, MIGRATION_MARKER))).toMatchObject({ v: MIGRATION_VERSION })
+      } finally {
+        clean()
+      }
+    })
   })
 })

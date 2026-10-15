@@ -45,7 +45,7 @@ import {
   isAttachedServer,
   sessionIdsInWindow
 } from './sidebar-layouts'
-import { serverClient } from './mcp/server-client'
+import { serverClient, preloadServerClientModules } from './mcp/server-client'
 import { sessionWorkspaceResolver } from './session-records-index'
 import type { PersistedWindow } from '../shared/workspace-types'
 import {
@@ -83,7 +83,7 @@ import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
-import { setClaveServerEndpoint } from './server/endpoint'
+import { setClaveServerEndpoint, setServerExternal } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
@@ -115,6 +115,13 @@ const serverLaunch: ServerLaunch = (() => {
     return process.exit(2)
   }
 })()
+// ── Wave 6, lane B: a launch's restore waits on nothing it can start sooner (PRDCT-3527) ──
+// Where this shell's sessions live, for the boot's records listing, and the
+// login shell's environment read from here rather than from app ready: tmux
+// and the agents are found on its PATH, and the read takes as long as the
+// person's shell profile (two seconds on Valentin's machine).
+setServerExternal(serverLaunch.mode !== 'in-process')
+preloadLoginShellEnv()
 
 // Scheme privileges must be declared before app ready.
 registerPreviewScheme()
@@ -209,6 +216,20 @@ async function bootServer(): Promise<void> {
       // the Antasphere session opened with this process's safeStorage and
       // sealed again in the Keychain the server reads, in memory only.
       startSeparate: () => {
+        // The client main reaches that server with, loaded while it starts
+        // rather than once it has answered, when the first window has shown
+        // (PRDCT-3527): half a second of synchronous requires, which held the
+        // windows' first calls to the server behind it when paid after the
+        // announcement, and the window's first paint when paid before.
+        const preload = (): void => void preloadServerClientModules()
+        const [first] = BrowserWindow.getAllWindows()
+        const afterLoad = (win: BrowserWindow): void => {
+          win.webContents.once('did-finish-load', () => setTimeout(preload, 0))
+        }
+        if (first && first.webContents.getURL() && !first.webContents.isLoading())
+          setTimeout(preload, 0)
+        else if (first) afterLoad(first)
+        else app.once('browser-window-created', (_event, win) => afterLoad(win))
         const dataDir = join(app.getPath('userData'), 'server')
         const migration = migrateAppDataToServer({
           appDir: app.getPath('userData'),

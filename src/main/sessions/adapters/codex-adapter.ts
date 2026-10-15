@@ -449,6 +449,8 @@ export class CodexTranslator {
 interface HandleState {
   spec: SpawnSpec
   history: HistoryItem[]
+  /** The thread a resumed session replays, until `replayPast` has read it. */
+  pastOf?: { thread: string; root: string }
   historyError?: unknown
   profile?: LaunchProfile
   env?: Record<string, string>
@@ -485,6 +487,11 @@ export class CodexAdapter implements SessionAdapter {
   readonly transports = ['events'] as const
   readonly images = true
   private handles = new Map<string, HandleState>()
+  /** The past of a session whose app-server ended, kept until its tab is
+   *  closed (`kill`): the tab stays open on an ended chat, and asking for its
+   *  past answered an unknown session, a 500 the pane read as no past at all
+   *  (PRDCT-3526). */
+  private pasts = new Map<string, HistoryItem[]>()
   private profiles = new Map<
     string,
     { profile: LaunchProfile; env?: Record<string, string>; initialPrompt?: string }
@@ -513,6 +520,7 @@ export class CodexAdapter implements SessionAdapter {
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
     if (this.handles.has(spec.id)) throw new Error(`Codex session already exists: ${spec.id}`)
+    this.pasts.delete(spec.id)
     const emitter = new EventEmitter()
     const context = this.profiles.get(spec.id)
     const launchEffort = text(object(spec.options).effort)
@@ -532,17 +540,13 @@ export class CodexAdapter implements SessionAdapter {
       ended: false,
       closing: false
     }
-    // Snapshot before the process can append new turns. The views page this
-    // past separately from the live stream, including after switching views.
+    // The past is replayed at the first read of the history or before the
+    // process starts, whichever comes first: never inside the spawn, which a
+    // launch restoring a hundred chats runs a hundred times while most of
+    // them are never looked at (PRDCT-3527: a long thread cost up to 0.9 s of
+    // the server's time at every restore).
     const resume = text(object(spec.options).resume)
-    if (resume) {
-      try {
-        const path = findCodexRollout(resume, codexRoot(context?.env))
-        if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
-      } catch (error) {
-        state.historyError = error
-      }
-    }
+    if (resume) state.pastOf = { thread: resume, root: codexRoot(context?.env) }
     this.profiles.delete(spec.id)
     this.handles.set(spec.id, state)
     return { id: spec.id }
@@ -552,8 +556,26 @@ export class CodexAdapter implements SessionAdapter {
     return { id }
   }
 
+  /** Snapshot the conversation before the process can append new turns. The
+   *  views page this past separately from the live stream, including after
+   *  switching views, so it must hold only what was there at launch. */
+  private replayPast(state: HandleState): void {
+    const past = state.pastOf
+    if (!past) return
+    state.pastOf = undefined
+    try {
+      const path = findCodexRollout(past.thread, past.root)
+      if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
+    } catch (error) {
+      state.historyError = error
+    }
+  }
+
   history(handle: SessionHandle): HistoryItem[] {
+    const past = this.handles.has(handle.id) ? undefined : this.pasts.get(handle.id)
+    if (past) return past
     const state = this.require(handle)
+    this.replayPast(state)
     if (state.historyError) {
       this.error(
         state,
@@ -773,6 +795,7 @@ export class CodexAdapter implements SessionAdapter {
   }
   private start(state: HandleState): Promise<void> {
     if (state.ready) return state.ready
+    this.replayPast(state)
     state.ready = (async () => {
       const options = object(state.spec.options)
       // The launch's own choice (Clave's dangerous mode) first, then what the
@@ -899,11 +922,15 @@ export class CodexAdapter implements SessionAdapter {
   }
   async kill(handle: SessionHandle): Promise<void> {
     const state = this.handles.get(handle.id)
-    if (!state) return
+    if (!state) {
+      this.pasts.delete(handle.id)
+      return
+    }
     state.closing = true
     if (state.connection) await state.connection.close()
     else this.finish(state, 0)
     this.handles.delete(handle.id)
+    this.pasts.delete(handle.id)
     state.emitter.removeAllListeners()
   }
   on<K extends keyof SessionAdapterEvents>(
@@ -932,7 +959,12 @@ export class CodexAdapter implements SessionAdapter {
     state.mcpConfig?.remove(state.spec.id)
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)
-    if (this.handles.get(state.spec.id) === state) this.handles.delete(state.spec.id)
+    if (this.handles.get(state.spec.id) === state) {
+      this.handles.delete(state.spec.id)
+      // A kill in progress takes the past with the tab; an end on its own
+      // leaves the tab open on it.
+      if (!state.closing) this.pasts.set(state.spec.id, state.history)
+    }
     state.emitter.removeAllListeners()
   }
   private error(state: HandleState, error: unknown, fatal: boolean): void {

@@ -14,6 +14,26 @@ export interface ClaveServerEndpoint {
 }
 
 let endpoint: ClaveServerEndpoint | null = null
+let external = false
+
+/** Whether this launch's sessions live on a server process of their own
+ *  (attached, or the separate child): set once at boot from the launch
+ *  decision, before any window opens (PRDCT-3527). */
+export function setServerExternal(value: boolean): void {
+  external = value
+}
+
+export function isServerExternal(): boolean {
+  return external
+}
+const namedListeners = new Set<() => void>()
+
+/** Hear each time a server is named (PRDCT-3527): the IPC side tells the
+ *  windows, so none waits for its next poll. Returns the unsubscribe. */
+export function onClaveServerEndpointNamed(listener: () => void): () => void {
+  namedListeners.add(listener)
+  return () => namedListeners.delete(listener)
+}
 
 export function getClaveServerEndpoint(): ClaveServerEndpoint | null {
   return endpoint
@@ -21,6 +41,7 @@ export function getClaveServerEndpoint(): ClaveServerEndpoint | null {
 
 export function setClaveServerEndpoint(next: ClaveServerEndpoint | null): void {
   endpoint = next
+  if (next) for (const listener of [...namedListeners]) listener()
 }
 
 // ── Lane D (wave 3): whether the boot has decided ──
@@ -70,4 +91,6 @@ export function resetClaveServerBootForTests(): void {
   settled = false
   settledWaiters = []
   endpoint = null
+  external = false
+  namedListeners.clear()
 }

@@ -296,4 +296,25 @@ describe('the session records', () => {
     expect(fs.existsSync(legacy)).toBe(false)
     expect(fs.existsSync(recordFile(id))).toBe(true)
   })
+
+  it('lists a record older than a mode with that mode off, so the contract takes it (PRDCT-3527)', async () => {
+    const { SessionRecord } = await import('@clave/contract/sessions')
+    const { Schema } = await import('effect')
+    const id = '44444444-4444-4444-8444-444444444444'
+    fs.mkdirSync(path.join(dir, SESSION_RECORDS_FOLDER), { recursive: true })
+    // As a build before Pi and the agents mode wrote it: no piMode, no
+    // claudeAgentsMode, no dangerousMode, and claudeMode absent.
+    fs.writeFileSync(recordFile(id), JSON.stringify({ id, cwd, folderName: 'x', codexMode: false }))
+    const [listed] = new PtyBackend().listAdoptableSessions()
+    expect(listed).toMatchObject({
+      id,
+      claudeMode: true,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      antigravityMode: false
+    })
+    expect(() => Schema.decodeUnknownSync(SessionRecord)(listed)).not.toThrow()
+  })
 })

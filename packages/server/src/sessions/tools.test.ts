@@ -198,3 +198,45 @@ describe('a restart on another account', () => {
     peer.ws.close()
   })
 })
+
+describe('what the window keeps on a tab’s record (wave 6, lane A, PRDCT-3526)', () => {
+  it('writes the name and the page through the host, and tells nobody', async () => {
+    const peer = await welcomed()
+    const name = { displayName: 'Lane A', userRenamed: true }
+    expect((await post('/sessions/keep-on-record', { id: 's1', name })).status).toBe(204)
+    const page = { url: 'http://127.0.0.1:4826', title: 'Lane A' }
+    expect((await post('/sessions/keep-on-record', { id: 's1', page })).status).toBe(204)
+    expect((await post('/sessions/keep-on-record', { id: 's1', page: null })).status).toBe(204)
+    // An auto-title is a name the person did not give, and a cleared name is null.
+    const auto = { displayName: null, userRenamed: false }
+    expect((await post('/sessions/keep-on-record', { id: 's2', name: auto })).status).toBe(204)
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: 'c2' })).status
+    ).toBe(204)
+    expect((await post('/sessions/keep-on-record', { id: 's1', workspaceId: null })).status).toBe(
+      204
+    )
+    expect(source.kept).toEqual([
+      { id: 's1', fields: { name } },
+      { id: 's1', fields: { page } },
+      { id: 's1', fields: { page: null } },
+      { id: 's2', fields: { name: auto } },
+      { id: 's1', fields: { claudeSessionId: 'c2' } },
+      { id: 's1', fields: { workspaceId: null } }
+    ])
+    expect(await peer.silence()).toBe(true)
+    peer.ws.close()
+  })
+  it('refuses a name with no userRenamed and a page with no url', async () => {
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', name: { displayName: 'x' } })).status
+    ).toBe(400)
+    expect(
+      (await post('/sessions/keep-on-record', { id: 's1', page: { title: 'x' } })).status
+    ).toBe(400)
+    expect((await post('/sessions/keep-on-record', { id: 's1', claudeSessionId: '' })).status).toBe(
+      400
+    )
+    expect(source.kept).toEqual([])
+  })
+})
