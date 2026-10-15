@@ -175,7 +175,7 @@ describe('onServerConnected (PRDCT-3526)', () => {
 })
 
 describe("the record writes on the server's records and main's (wave 6, lane A)", () => {
-  it('each write reaches the server, then main, whose folder the boot still lists', async () => {
+  it('each write reaches main, whose folder the boot still lists, and the server', async () => {
     await serverComes()
     mocks.invoke.mockClear()
     await api.setSessionDisplayName('t', 'Mine', true)
@@ -207,5 +207,33 @@ describe("the record writes on the server's records and main's (wave 6, lane A)"
     })
     await expect(api.setSessionDisplayName('t', 'Mine', true)).resolves.toBeUndefined()
     expect(mocks.sessions.keepOnRecord).toHaveBeenCalledTimes(1)
+  })
+
+  it("main's copy is written first, so a server that refuses still leaves the boot's source current", async () => {
+    await serverComes()
+    const order: string[] = []
+    mocks.invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'server:endpoint') return endpoint
+      if (channel.startsWith('session:set-')) order.push(`main ${channel}`)
+      return undefined
+    })
+    mocks.sessions.keepOnRecord.mockImplementation(async () => {
+      order.push('server')
+      throw new Error('server restarting')
+    })
+    await expect(api.setSessionDisplayName('t', 'Mine', true)).rejects.toThrow()
+    await expect(api.setSessionViewRecord('t', null)).rejects.toThrow()
+    await expect(api.setSessionWorkspace('t', 'ws')).rejects.toThrow()
+    await expect(api.setSessionClaudeSessionId('t', 'c2')).rejects.toThrow()
+    expect(order).toEqual([
+      'main session:set-display-name',
+      'server',
+      'main session:set-view',
+      'server',
+      'main session:set-workspace',
+      'server',
+      'main session:set-claude-session-id',
+      'server'
+    ])
   })
 })
