@@ -83,18 +83,14 @@ export async function run(t) {
         })
       }, text)
   const choose = async (kind) => {
-    await win.evaluate(
-      ({ id, kind }) => window.electronAPI.sessionsSetView(id, `clave.chat-view/${kind}`),
-      { id: record.id, kind }
-    )
-    // A host metadata change refreshes the baseline registry. Test setup uses
-    // commands rather than relying on the picker's animation/focus handling.
-    await callMcp(app, 'rename', {
-      target: 'session',
-      id: record.id,
-      name: `Synthetic ${kind} ${Date.now()}`
-    })
+    const title = kind === 'terminal' ? 'Terminal' : 'Chat'
+    const picker = host.getByRole('button', { name: 'Change view', exact: true })
+    await picker.click()
+    const menu = win.locator('[role="menu"][aria-label="Views"]')
+    await menu.getByRole('menuitem', { name: title, exact: true }).click()
+    await menu.waitFor({ state: 'detached' })
     await view(kind).getByRole('textbox', { name: 'Message', exact: true }).waitFor()
+    assert.equal(await picker.getAttribute('title'), `View: ${title}`)
     await frames()
   }
   const observe = async (kind) =>
