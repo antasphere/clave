@@ -19,7 +19,8 @@ import { windowState } from '../window-state'
 import { startWatching as startAgentStateWatching } from '../agent-state-manager'
 import { hasServerEventPublisher } from '../server/session-events'
 import { isServerExternal } from '../server/endpoint'
-import { adoptableRecordsFor, tmuxAvailableFor } from './boot-reads'
+import { adoptableRecordsFor, serverHoldsRecordsFor, tmuxAvailableFor } from './boot-reads'
+import { serverClient } from '../mcp/server-client'
 import {
   type SessionInfoResult,
   restartSession,
@@ -253,6 +254,18 @@ export function registerPtyHandlers(): void {
       external: isServerExternal,
       tmuxResolvable: whenTmuxResolvable,
       list: (ids) => [...getSessionHost().listAdoptableRecords(ids)],
+      scoped: (all) => {
+        const scope = adoptionScopeOf(event.sender)
+        return scope ? selectAdoptableRecords(all, scope) : []
+      }
+    })
+  )
+  // Whether the server holds a record this window would bring back, asked by
+  // main so a window with nothing to restore never connects for it
+  // (`serverHoldsRecordsFor`, PRDCT-3527).
+  ipcMain.handle('records:server-has-any', (event) =>
+    serverHoldsRecordsFor({
+      list: async () => (await serverClient.api()).sessions.listAdoptable(),
       scoped: (all) => {
         const scope = adoptionScopeOf(event.sender)
         return scope ? selectAdoptableRecords(all, scope) : []

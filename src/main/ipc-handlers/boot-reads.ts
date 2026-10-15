@@ -43,3 +43,22 @@ export async function tmuxAvailableFor(deps: {
   await deps.tmuxResolvable()
   return deps.available()
 }
+
+/**
+ * Whether the server holds a record this window would bring back. A window
+ * whose saved layout names no session asks this before its restore: the
+ * restore connects the window to the server, and a connect made at the boot
+ * mark lays the server's copy of the state over the one the window has just
+ * loaded (PRDCT-3405), for nothing when there is nothing to restore. A read
+ * that fails answers yes, so the restore still tries.
+ */
+export async function serverHoldsRecordsFor<R>(deps: {
+  readonly list: () => Promise<readonly R[]>
+  readonly scoped: (all: R[]) => R[]
+}): Promise<boolean> {
+  try {
+    return deps.scoped([...(await deps.list())]).length > 0
+  } catch {
+    return true
+  }
+}

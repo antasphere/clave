@@ -204,6 +204,9 @@ export function AppShell(): React.JSX.Element {
     if (tmuxAdoptionStarted) return
     tmuxAdoptionStarted = true
     let hadSavedSessions = false
+    // Whether the boot's read held every record (inside the app) or the
+    // server's come through the top-up (attached, separate, or not known yet).
+    let bootListingComplete = true
     // The session ids the saved layout names: the attached top-up's gate, and
     // the shells the merge keeps for it until it has run (PRDCT-3432).
     let savedIds: string[] = []
@@ -261,6 +264,7 @@ export function AppShell(): React.JSX.Element {
         // the listing is complete, else keeps it as a shell for the top-up.
         const listingComplete =
           (await window.electronAPI?.bootRecordsComplete?.().catch(() => true)) ?? true
+        bootListingComplete = listingComplete
 
         // A dead hidden half has nothing worth restoring: relaunching it
         // gives a bare shell in the same cwd, not the dev server that died,
@@ -376,8 +380,19 @@ export function AppShell(): React.JSX.Element {
       // server-event listener's catch-up over the state the window just loaded
       // — the pins the switcher reads, the usage the footer shows (PRDCT-3405).
       // A window with sessions to restore connects anyway, and warrants it.
-      if (!hadSavedSessions) return
+      // A window whose sessions live on a server process of their own reads
+      // them nowhere else (main answers its boot read with nothing,
+      // PRDCT-3527): records its saved layout does not name (orphans the
+      // primary adopts, a fresh window's own) come only from here. Such a
+      // window asks main first whether the server holds any for it, so a
+      // window with nothing to restore still never connects for it.
+      if (!hadSavedSessions && bootListingComplete) return
       void (async () => {
+        if (
+          !hadSavedSessions &&
+          !(await window.electronAPI?.serverHasRestoreRecords?.().catch(() => true))
+        )
+          return
         try {
           const serverRecords = (await window.electronAPI?.listServerRestoreRecords?.()) ?? []
           const here = new Set(useSessionStore.getState().sessions.map((s) => s.id))

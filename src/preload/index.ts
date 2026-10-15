@@ -1282,6 +1282,7 @@ const electronAPI = {
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).
   listServerRestoreRecords: () => listServerRestoreRecords(),
+  serverHasRestoreRecords: () => ipcRenderer.invoke('records:server-has-any') as Promise<boolean>,
   bootRecordsComplete: () => bootRecordsComplete(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),

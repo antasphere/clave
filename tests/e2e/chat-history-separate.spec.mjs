@@ -136,11 +136,15 @@ export async function run(t) {
       }
     }, TAB)
 
-    const restore = win.getByRole('button', { name: 'Restore', exact: true })
-    const prompted = await until(() => restore.isVisible().catch(() => false))
-    t.check('the restore prompt offers the chat the app left', !!prompted)
-    if (!prompted) throw new Error('no restore prompt')
-    await restore.click()
+    // A chat comes back without the prompt, dormant until it is opened
+    // (PRDCT-3527), so the fault above is in place before its past is asked.
+    t.check(
+      'no restore prompt stands before the chat the app left',
+      !(await win
+        .getByRole('button', { name: 'Restore', exact: true })
+        .isVisible()
+        .catch(() => false))
+    )
     const back = await until(async () =>
       (await callMcp(app, 'list', {})).sessions.some((s) => s.id === TAB)
     )

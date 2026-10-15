@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { adoptableRecordsFor, tmuxAvailableFor, type BootReadDeps } from './boot-reads'
+import {
+  adoptableRecordsFor,
+  serverHoldsRecordsFor,
+  tmuxAvailableFor,
+  type BootReadDeps
+} from './boot-reads'
 
 /**
  * Main's boot reads (PRDCT-3527): the records an external launch's window
@@ -51,5 +56,20 @@ describe('tmuxAvailableFor', () => {
     expect(available).not.toHaveBeenCalled()
     release()
     expect(await pending).toBe(true)
+  })
+})
+
+describe('serverHoldsRecordsFor', () => {
+  const scoped = (all: Rec[]): Rec[] => all.filter((r) => r.id.startsWith('mine'))
+  it('says yes only when the window’s share of the server’s records is not empty', async () => {
+    expect(await serverHoldsRecordsFor({ list: async () => [{ id: 'mine-1' }], scoped })).toBe(true)
+    expect(await serverHoldsRecordsFor({ list: async () => [{ id: 'other' }], scoped })).toBe(false)
+    expect(await serverHoldsRecordsFor({ list: async () => [], scoped })).toBe(false)
+  })
+  it('says yes when the server cannot be read, so the restore still tries', async () => {
+    const list = async (): Promise<Rec[]> => {
+      throw new Error('no server')
+    }
+    expect(await serverHoldsRecordsFor({ list, scoped })).toBe(true)
   })
 })

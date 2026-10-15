@@ -1570,6 +1570,19 @@ export class PtyBackend {
         // retired Gemini CLI re-spawns as Antigravity (`agy`) on adoption.
         meta.antigravityMode = (meta as { geminiMode?: boolean }).geminiMode ?? false
       }
+      if (meta) {
+        // A record older than one of the modes says nothing of it, which
+        // means off. Spelled out here, where every listing passes, because a
+        // listing that crosses the wire (the server's, attached or separate)
+        // is refused whole by the contract for one record missing a mode:
+        // the restore then brought back nothing at all (PRDCT-3527, a
+        // pre-Pi record carried over by the migration).
+        meta.claudeMode ??= true // absent always meant Claude (`claudeMode !== false`)
+        meta.codexMode ??= false
+        meta.piMode ??= false
+        meta.claudeAgentsMode ??= false
+        meta.dangerousMode ??= false
+      }
       // Malformed record → prune the file. Valid shapes: tmux-backed (valid
       // tmux name) or plain (no tmuxName, uuid session id).
       const validShape =
