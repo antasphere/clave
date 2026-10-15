@@ -70,9 +70,13 @@ export function TerminalGrid(): React.JSX.Element {
   useEffect(() => initLinkedDocuments(), [])
   const selectedSessionIds = useSessionStore((s) => s.selectedSessionIds)
   const sessions = useSessionStore((s) => s.sessions)
+  // Asked again when a tab arrives, and when a restored tab's process is back
+  // (`Session.restoring` cleared, PRDCT-3527): the documents are listed for
+  // the sessions the host runs, and a restore places its tabs before that.
+  const settledSessions = sessions.reduce((n, s) => n + (s.restoring ? 0 : 1), 0)
   useEffect(() => {
     void useLinkedDocumentStore.getState().refresh().catch(console.error)
-  }, [sessions.length])
+  }, [sessions.length, settledSessions])
   const fileTabs = useSessionStore((s) => s.fileTabs)
   const groups = useSessionStore((s) => s.groups)
   const displayOrder = useSessionStore((s) => s.displayOrder)

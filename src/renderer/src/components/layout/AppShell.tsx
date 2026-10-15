@@ -262,6 +262,21 @@ export function AppShell(): React.JSX.Element {
         const listingComplete =
           (await window.electronAPI?.bootRecordsComplete?.().catch(() => true)) ?? true
 
+        // A dead hidden half has nothing worth restoring: relaunching it
+        // gives a bare shell in the same cwd, not the dev server that died,
+        // and its owner's start action is the way back. Drop the record so
+        // it can never surface as a tab.
+        for (const s of plan.discard) {
+          void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+        }
+        // Toolbar terminals are not sidebar citizens at all: park each live
+        // one for its button, which reattaches when next opened instead of
+        // starting a second server on the same port. Before the restore, so
+        // a click while it runs finds it (PRDCT-3527).
+        for (const s of plan.toolbar) {
+          if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
+        }
+
         // The rows first, from the records, then the processes a few at a
         // time (PRDCT-3527): a launch bringing back a hundred tabs used to
         // wait on a hundred round trips, one after the other, before the
@@ -283,20 +298,6 @@ export function AppShell(): React.JSX.Element {
             }
           }
         }
-        // A dead hidden half has nothing worth restoring: relaunching it
-        // gives a bare shell in the same cwd, not the dev server that died,
-        // and its owner's start action is the way back. Drop the record so
-        // it can never surface as a tab.
-        for (const s of plan.discard) {
-          void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
-        }
-        // Toolbar terminals are not sidebar citizens at all: park each live
-        // one for its button, which reattaches when next opened instead of
-        // starting a second server on the same port.
-        for (const s of plan.toolbar) {
-          if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
-        }
-
         // Rebuild the layout around what survives: a group is kept if a
         // member — or a running quick-launch terminal — came back. The
         // hidden halves count as surviving here even though they are adopted
@@ -377,22 +378,34 @@ export function AppShell(): React.JSX.Element {
           if (fresh.length === 0) return
           const ws = useWorkspaceStore.getState().activeWorkspaceId
           const serverPlan = planBootAdoption(fresh)
-          // Focus the first restored tab only when nothing is selected yet, so
-          // its pane mounts and the tmux session reattaches (the repaint and
-          // the keystroke road need a mounted pane) — but never steal focus
-          // from a tab the user opened during boot. A few at a time, as above.
-          const adopt = async (records: typeof fresh): Promise<void> => {
-            const focusFirst = useSessionStore.getState().selectedSessionIds.length === 0
-            await placeRecords(records, ws, { focusFirst }).attached
+          // What needs no process first, so nothing waits on a reattach: the
+          // dead hidden halves discarded, the toolbar survivors parked for
+          // their button (a click before the restore had settled started a
+          // second server, PRDCT-3527).
+          for (const s of serverPlan.discard)
+            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
+          for (const s of serverPlan.toolbar) {
+            if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
           }
-          await adopt(serverPlan.liveTabs)
+          // The rows from the records at once, the processes behind them, a
+          // few at a time (as above). Focus the first restored tab only when
+          // nothing is selected yet, so its pane mounts and the tmux session
+          // reattaches (the repaint and the keystroke road need a mounted
+          // pane) — but never steal focus from a tab the user opened during
+          // boot.
+          const attaching: Promise<string[]>[] = []
+          const adopt = (records: typeof fresh): void => {
+            const focusFirst = useSessionStore.getState().selectedSessionIds.length === 0
+            attaching.push(placeRecords(records, ws, { focusFirst }).attached)
+          }
+          adopt(serverPlan.liveTabs)
           if (serverPlan.deadTabs.length > 0) {
             // The boot waits on the person again, after its mark: a driver
             // reads 'restore-prompt' while the dialog is up, 'complete' after.
             document.documentElement.dataset.boot = 'restore-prompt'
             try {
               if (await promptRestore(serverPlan.deadTabs)) {
-                await adopt(serverPlan.deadTabs)
+                adopt(serverPlan.deadTabs)
               } else {
                 for (const s of serverPlan.deadTabs)
                   void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
@@ -401,12 +414,10 @@ export function AppShell(): React.JSX.Element {
               document.documentElement.dataset.boot = 'complete'
             }
           }
-          for (const s of serverPlan.discard)
-            void window.electronAPI?.discardSessionRecord?.(s.tmuxName ?? s.id)
-          for (const s of serverPlan.toolbar) {
-            if (s.link?.kind === 'toolbar') parkToolbarSurvivor(s.link.key, s)
-          }
+          // The owners are placed (the groups from the merge, the owning tabs
+          // above), so the hidden halves hang themselves back off them.
           for (const s of serverPlan.hidden) await adoptHiddenRecord(s, ws)
+          await Promise.all(attaching)
         } finally {
           // The shells the merge kept for the server's records: whatever
           // nothing holds now is gone for good, and the layout says so.
