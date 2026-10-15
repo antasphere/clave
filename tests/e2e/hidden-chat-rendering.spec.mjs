@@ -380,6 +380,17 @@ export async function run(t) {
     )
     await win.waitForTimeout(150)
     await frames()
+    // Chromium reports a zero scroll box while hidden. Exercise a scroll
+    // notification in that state before it restores the visible DOM offset;
+    // this makes the virtualizer's stale hidden position reproducible.
+    const hiddenScroll = view('terminal').locator('.chat-scroll')
+    assert.deepEqual(
+      await hiddenScroll.evaluate((el) => ({ height: el.clientHeight, top: el.scrollTop })),
+      { height: 0, top: 0 },
+      'the hidden scroll notification observes the real zero-sized browser box'
+    )
+    await hiddenScroll.dispatchEvent('scroll')
+    await frames()
     await observe('terminal')
     await delta('workspace-hidden ')
     await frames()
