@@ -18,6 +18,7 @@ import { DiffViewer } from '../files/DiffViewer'
 import { EmptyState } from '../ui/EmptyState'
 import { GroupViewPanel } from './GroupViewPanel'
 import { SessionViewPanel } from './SessionViewPanel'
+import { usePluginMainPanelOpen } from '../plugins/plugin-ui-store'
 
 /**
  * The ids this pane has shown at least once, in order of first appearance.
@@ -83,6 +84,9 @@ export function TerminalGrid(): React.JSX.Element {
   const activeGroupViewId = useSessionStore((s) => s.activeGroupViewId)
   const activeSessionViewId = useSessionStore((s) => s.activeSessionViewId)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const activeView = useSessionStore((s) => s.activeView)
+  const pluginMainPanelOpen = usePluginMainPanelOpen()
+  const gridVisible = activeView === 'terminals' && !pluginMainPanelOpen
 
   // Re-validate the active group view — the id may be stale (group deleted,
   // view detached, workspace switched); a stale id silently falls back to the grid.
@@ -381,6 +385,13 @@ export function TerminalGrid(): React.JSX.Element {
                   <RegisteredSessionView
                     key={`${session.id}:${session.restartEpoch ?? 0}`}
                     sessionId={session.id}
+                    visible={
+                      gridVisible &&
+                      isSelected &&
+                      !viewGroup &&
+                      !viewSession &&
+                      inActiveWorkspace(session, activeWorkspaceId)
+                    }
                   />
                 )}
               </TerminalErrorBoundary>

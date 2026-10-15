@@ -97,10 +97,12 @@ function ViewPicker({
 }
 export function RegisteredSessionView({
   sessionId,
-  terminalSessionId
+  terminalSessionId,
+  visible = true
 }: {
   sessionId: string
   terminalSessionId?: string
+  visible?: boolean
 }): React.JSX.Element {
   const registry = useRegistry()
   const session = registry.sessions.find((s) => s.id === sessionId)
@@ -294,7 +296,11 @@ export function RegisteredSessionView({
                 onState={reporters.get(view.id)!}
               />
             ) : Mounted ? (
-              <Mounted session={session} onState={reporters.get(view.id)!} />
+              <Mounted
+                session={session}
+                onState={reporters.get(view.id)!}
+                visible={visible && !hidden}
+              />
             ) : null}
           </div>
         )
