@@ -963,7 +963,12 @@ export class CodexAdapter implements SessionAdapter {
       this.handles.delete(state.spec.id)
       // A kill in progress takes the past with the tab; an end on its own
       // leaves the tab open on it.
-      if (!state.closing) this.pasts.set(state.spec.id, state.history)
+      if (!state.closing) {
+        // The past is replayed lazily (PRDCT-3527): read now if nothing read
+        // it yet, or the tab would be left open on an empty past.
+        this.replayPast(state)
+        this.pasts.set(state.spec.id, state.history)
+      }
     }
     state.emitter.removeAllListeners()
   }
