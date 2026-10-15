@@ -60,18 +60,24 @@ export function placeRecords(
   activeWorkspaceId: string | null,
   options: { focusFirst?: boolean; concurrency?: number } = {}
 ): { placed: string[]; attached: Promise<string[]> } {
-  const store = useSessionStore.getState()
   const placed: string[] = []
+  // A session the host already runs is placed as it is, settled: there is
+  // nothing to spawn, and asking for it again under its id fails as a
+  // duplicate, which took the tab out of its group (issue #183).
+  const attachedIds: string[] = []
   let focus = options.focusFirst === true
   for (const s of records) {
-    const placeholder = { ...sessionFromRecord(s, activeWorkspaceId, null), restoring: true }
-    if (store.sessions.some((existing) => existing.id === placeholder.id)) continue
-    useSessionStore.getState().adoptSessionInPlace(placeholder, { focus })
+    if (useSessionStore.getState().sessions.some((existing) => existing.id === s.id)) continue
+    const tab =
+      s.running === true
+        ? sessionOfRecord(s, s.workspaceId ?? activeWorkspaceId ?? undefined)
+        : { ...sessionFromRecord(s, activeWorkspaceId, null), restoring: true }
+    useSessionStore.getState().adoptSessionInPlace(tab, { focus })
     focus = false
-    placed.push(placeholder.id)
+    placed.push(tab.id)
+    if (s.running === true) attachedIds.push(s.id)
   }
-  const pending = records.filter((s) => placed.includes(s.id))
-  const attachedIds: string[] = []
+  const pending = records.filter((s) => s.running !== true && placed.includes(s.id))
   let next = 0
   const worker = async (): Promise<void> => {
     while (next < pending.length) {
@@ -195,7 +201,7 @@ function sessionFromRecord(
     view: s.view ? { ...s.view } : undefined,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
-    ...(s.transport === 'events' && !s.live && !s.running ? { dormant: true } : {}),
+    ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
     // The defaults normalizeSession would fill in anyway, spelled out so
     // this is a whole Session both adoption paths can hand around.
     detectedUrl: null,
@@ -215,8 +221,10 @@ async function spawnFromRecord(
   s: SessionRecord,
   activeWorkspaceId: string | null
 ): Promise<{ session: Session } | null> {
+  const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
+  // The host already runs it: there is nothing to reattach (issue #183).
+  if (s.running === true) return { session: sessionOfRecord(s, workspaceId) }
   try {
-    const workspaceId = s.workspaceId ?? activeWorkspaceId ?? undefined
     const info = await window.electronAPI.spawnSession(s.cwd, {
       claudeMode: s.claudeMode,
       antigravityMode: s.antigravityMode,
@@ -396,15 +404,20 @@ export async function adoptServerStartedTerminals(
 }
 
 /** The tab a record describes, as `spawnFromRecord` builds it after its
- *  spawn, from the record alone: for a process main already runs. */
+ *  spawn, from the record alone: for a process main already runs. A chat the
+ *  host holds is alive (registered) whether or not its provider was started;
+ *  one whose provider was not started (`live` false) stays dormant, so opening
+ *  it is still what starts its agent. */
 function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Session {
+  const chat = s.transport === 'events'
   return {
     id: s.id,
     cwd: s.cwd,
     folderName: s.folderName,
     name: s.displayName || s.folderName,
     userRenamed: s.userRenamed === true,
-    alive: s.live !== false,
+    alive: chat || s.live !== false,
+    ...(chat && !s.live ? { dormant: true } : {}),
     activityStatus: 'idle',
     promptWaiting: null,
     claudeMode: s.claudeMode,

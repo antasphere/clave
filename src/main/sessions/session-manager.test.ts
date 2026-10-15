@@ -73,6 +73,19 @@ describe('SessionManager', () => {
     expect(manager.get('a')?.viewId).toBe('clave.chat-view/terminal')
   })
 
+  it('says a session is started only once it was made ready, and not after it ended', async () => {
+    const { manager } = fixture()
+    await manager.create(session('a'))
+    // Registered is not started: a restored chat's provider waits for a view.
+    expect(manager.get('a')).toBeDefined()
+    expect(manager.started('a')).toBe(false)
+    manager.ready('a')
+    expect(manager.started('a')).toBe(true)
+    await manager.kill('a')
+    expect(manager.started('a')).toBe(false)
+    expect(manager.started('absent')).toBe(false)
+  })
+
   it('rejects unknown adapters, mismatched transports and duplicate concurrent ids', async () => {
     const { manager } = fixture()
     await expect(manager.create({ ...session('x'), adapterId: 'missing' })).rejects.toThrow(
