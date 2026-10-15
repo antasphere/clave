@@ -14,21 +14,63 @@ export const useRegistry = create<Registry>(() => ({
   terminal: new Set()
 }))
 export function useViewRegistry(): void {
-  const sessions = useViewSessionStore((s) => s.sessions)
+  // Activity updates replace the sidebar's sessions array. They must not
+  // cancel an in-flight registry read: a busy session could otherwise keep
+  // every chat on the blank terminal fallback indefinitely. Read again when
+  // tabs arrive or leave, a restore finishes, or a process is restarted.
+  const recordsKey = useViewSessionStore((s) =>
+    s.sessions
+      .map((session) => `${session.id}:${session.restoring === true}:${session.restartEpoch ?? 0}`)
+      .join('\n')
+  )
   useEffect(() => {
     let active = true
-    const refresh = async (): Promise<void> => {
-      const [records, plugins] = await Promise.all([
-        window.electronAPI.sessionsList(),
-        window.electronAPI.pluginsList()
-      ])
-      if (active) useRegistry.setState({ sessions: records, plugins })
+    let reading = false
+    let queued = false
+    let retry: ReturnType<typeof setTimeout> | null = null
+    let retryMs = 250
+    const refresh = (): void => {
+      if (!active) return
+      if (retry !== null) clearTimeout(retry)
+      retry = null
+      if (reading) {
+        queued = true
+        return
+      }
+      reading = true
+      void Promise.resolve()
+        .then(() =>
+          Promise.all([window.electronAPI.sessionsList(), window.electronAPI.pluginsList()])
+        )
+        .then(([records, plugins]) => {
+          if (!active) return
+          retryMs = 250
+          useRegistry.setState({ sessions: records, plugins })
+        })
+        .catch((error) => {
+          if (!active) return
+          console.error(error)
+          // A transient failure must not strand a tab until another user
+          // action. One read at a time, with capped backoff while unavailable.
+          retry = setTimeout(refresh, retryMs)
+          retryMs = Math.min(retryMs * 2, 8000)
+        })
+        .finally(() => {
+          reading = false
+          if (active && queued) {
+            queued = false
+            refresh()
+          }
+        })
     }
-    void refresh().catch(console.error)
-    const stop = window.electronAPI.onPluginsChanged(() => void refresh().catch(console.error))
+    refresh()
+    const stop = window.electronAPI.onPluginsChanged(refresh)
+    const stopConnected = window.electronAPI.onServerConnected(refresh)
     return () => {
       active = false
+      if (retry !== null) clearTimeout(retry)
       stop()
+      stopConnected()
     }
-  }, [sessions])
+  }, [recordsKey])
 }
