@@ -14,7 +14,15 @@ export const useRegistry = create<Registry>(() => ({
   terminal: new Set()
 }))
 export function useViewRegistry(): void {
-  const sessions = useViewSessionStore((s) => s.sessions)
+  // Activity updates replace the sidebar's sessions array. They must not
+  // cancel an in-flight registry read: a busy session could otherwise keep
+  // every chat on the blank terminal fallback indefinitely. Read again when
+  // tabs arrive or leave, a restore finishes, or a process is restarted.
+  const recordsKey = useViewSessionStore((s) =>
+    s.sessions
+      .map((session) => `${session.id}:${session.restoring === true}:${session.restartEpoch ?? 0}`)
+      .join('\n')
+  )
   useEffect(() => {
     let active = true
     const refresh = async (): Promise<void> => {
@@ -30,5 +38,5 @@ export function useViewRegistry(): void {
       active = false
       stop()
     }
-  }, [sessions])
+  }, [recordsKey])
 }
