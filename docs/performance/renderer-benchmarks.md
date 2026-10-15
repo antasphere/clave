@@ -50,7 +50,7 @@ All raw observations remain in `measurements.json`. Quantiles use nearest rank. 
 
 The runner writes actual CDP `.cpuprofile` files and self-contained `.html` flamegraphs for renderer reload, empty idle, loaded idle, and the sampled interaction pass. Open the HTML directly in a browser. Width is inclusive sample time; the root is at the top. Hover to inspect names, source locations, and weights. Idle, program, and garbage-collection samples are retained. These graphs aggregate stacks rather than drawing an interaction timeline. They cover the renderer's V8 thread, including its preload world, not Electron main, the separate server, the GPU, or every compositor thread.
 
-Profiles must contain samples, matching finite nonnegative durations, known node references, and a consistent tree. The reload phase can retry the entire reload up to three times when its profile is rejected. Every failed reload duration and diagnostic stays in `reloadAttempts`; sample intervals are never clamped, repaired, or silently discarded. An exhausted retry or a failure in another phase fails the run.
+Derived profiles must contain samples, matching finite nonnegative durations, known node references, and a consistent tree. The signed-input policy and raw retention are described below. The reload phase can retry the entire reload up to three times when its profile is rejected. Every failed reload duration and diagnostic stays in `reloadAttempts`; raw sample intervals are never clamped, overwritten, or silently discarded. An exhausted retry or a failure in another phase fails the run.
 
 The publication scrubber rebuilds profiles from known fields. It keeps asset basenames, safe Node runtime names, preload basenames, and line/column positions; it drops other source URLs and absolute paths. The baseline archives all accepted profiles as gzip, plus first-run openable HTML for each scenario. To inspect a compressed profile in Chromium DevTools, decompress it first:
 
@@ -66,3 +66,37 @@ node --test tests/performance/renderer-*.test.mjs
 ```
 
 The normal Vitest suite invokes these same Node checks through `scripts/performance/renderer.test.mjs`. The explicit command is useful for focused verification.
+
+## High-scale background stream comparison
+
+The amended workload uses 100 tabs in ten groups, with 200 turns in the first twenty tabs and two turns in the remaining eighty. The first group supplies the measured tab switches and composer. Four chats in other groups stay hidden and working in both phases. The off phase sends no text deltas; the on phase targets one 128-byte ASCII delta per chat every 50 ms, with a 30-second ceiling. Actual event counts, elapsed time and realized rate are recorded, rather than assuming the requested cadence was achieved. Renderer observers subscribe through the normal preload API in both phases and assert exact produced/delivered counts. This adds four instrumented subscriptions and counter callbacks to the workload.
+
+```sh
+CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+  --build installed --source 4dd8e425e10b7fb13186fa45179aa1c87a84c2d6 \
+  --streaming --tabs 100 --groups 10 --history-tabs 20 --runs 3 \
+  --out /tmp/clave-renderer-measurements/installed-100
+CLAVE_E2E_NS=clave-perf-1015-a node scripts/performance/renderer-benchmark.mjs \
+  --build dev --streaming --tabs 100 --groups 10 --history-tabs 20 --runs 3 \
+  --out /tmp/clave-renderer-measurements/dev-100
+```
+
+Both phases are profiled. Their idle/task counters and tab/composer samples compare streaming off/on under the same instrumentation, starting from the same tab/history data. Working-state animation is present in both. Fixed phase order and the growing hidden assistant text remain confounders. This controlled comparison is distinct from the 24-tab done-state baseline and does not include group-header or scroll timings.
+
+## Signed profile intervals and raw retention
+
+The first baseline runner strictly rejected negative intervals and did not retain the original rejected responses. Its excluded-attempt diagnostics cannot recover those stacks. The accepted 24-tab profiles have nonnegative intervals; their original weights remain unchanged.
+
+The amended runner saves every original CDP response privately before validation. A scrubbed `.raw.cpuprofile` retains the original sample IDs and signed intervals for publication. A separate derived `.cpuprofile` orders cumulative timestamps together with their sample IDs. It assigns each observed interval to its paired ending sample, preserving the exact observed span. Timestamps outside the profile bounds, or sorting that would change the observed span, are rejected. No final interval is extrapolated. An audit records reordered samples, negative intervals, duration before/after and the unsampled tail. This is a conservative declared weighting policy, rather than a claim of identical DevTools flame-chart durations.
+
+Chrome DevTools also forms cumulative timestamps and sorts the associated sample IDs with them, then performs its own timestamp normalization. That implementation informed the paired sorting; its estimated final interval is not used here. See the [primary DevTools implementation](https://github.com/ChromeDevTools/devtools-frontend/blob/main/front_end/models/cpu_profile/CPUProfileDataModel.ts), inspected on 15 October 2026.
+
+To archive a completed streaming collection, use a new destination:
+
+```sh
+node scripts/performance/renderer-archive.mjs \
+  --input /tmp/clave-renderer-measurements/installed-100 \
+  --out /tmp/clave-renderer-measurements/installed-100-archive
+```
+
+Repeat `--input` when a bounded scheduling slot required multiple compatible collections. The archiver refuses incomplete inputs or differing workload, protocol, source, machine, or runtime-tool hashes. It preserves each original measurement file and raw/derived profile pair in a `collection-N` directory, and writes a pooled summary with explicit provenance. It neither changes raw observations nor treats multiple actions as independent process launches.

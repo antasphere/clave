@@ -5,7 +5,9 @@ import {
   summarize,
   validateProfile,
   scrubProfile,
-  flamegraph
+  flamegraph,
+  normalizeProfile,
+  validateStreamCounts
 } from '../../scripts/performance/renderer-data.mjs'
 
 const profile = () => ({
@@ -85,4 +87,46 @@ test('path-like function names and forged runtime URLs do not bypass scrubbing',
   p.nodes[1].callFrame.url = 'node:/Users/Jane/secret.js'
   const text = JSON.stringify(scrubProfile(p))
   assert.doesNotMatch(text, /Jane|Doe|private|secret|Users/)
+})
+
+test('signed intervals preserve timestamp/sample pairing and the exact observed span', () => {
+  const p = profile()
+  p.nodes[0].children.push(3)
+  p.nodes.push({
+    id: 3,
+    callFrame: { functionName: 'other', url: '', lineNumber: -1, columnNumber: -1 }
+  })
+  p.samples = [2, 3, 2]
+  p.timeDeltas = [100, -4, 204]
+  const before = JSON.stringify(p)
+  const n = normalizeProfile(p)
+  assert.deepEqual(n.profile.samples, [3, 2, 2])
+  assert.deepEqual(n.profile.timeDeltas, [96, 4, 200])
+  assert.equal(n.audit.totalBeforeUs, 300)
+  assert.equal(n.audit.totalAfterUs, 300)
+  assert.equal(n.audit.reorderedSamples, 2)
+  assert.equal(n.audit.negativeIntervals, 1)
+  assert.equal(n.audit.originalSamples, 3)
+  assert.equal(JSON.stringify(p), before, 'the raw response remains unchanged')
+  assert.deepEqual(scrubProfile(p, { allowSigned: true }).timeDeltas, [100, -4, 204])
+  const bad = { ...p, timeDeltas: [100, -4, 1] }
+  assert.throws(() => normalizeProfile(bad), /observed span/)
+  assert.throws(() => normalizeProfile({ ...p, timeDeltas: [-1, 100, 200] }), /bounds/)
+})
+
+test('stream delivery evidence rejects missing, duplicated and absent workloads', () => {
+  const p = { elapsedMs: 1000, counts: { a: 20, b: 20, c: 20, d: 20 }, ceilingReached: false }
+  assert.deepEqual(validateStreamCounts(p, { ...p.counts }, true), {
+    totalEvents: 80,
+    actualEventsPerSecond: 80
+  })
+  assert.throws(() => validateStreamCounts(p, { ...p.counts, a: 19 }, true))
+  assert.throws(() => validateStreamCounts(p, { ...p.counts, a: 21 }, true))
+  assert.throws(() => validateStreamCounts(p, { a: 20 }, true))
+  assert.throws(() => validateStreamCounts({ ...p, ceilingReached: true }, p.counts, true))
+  assert.throws(() => validateStreamCounts({ ...p, elapsedMs: 30_001 }, p.counts, true))
+  const zero = { ...p, counts: { a: 0, b: 0, c: 0, d: 0 } }
+  assert.throws(() => validateStreamCounts(zero, zero.counts, true))
+  assert.equal(validateStreamCounts(zero, zero.counts, false).totalEvents, 0)
+  assert.throws(() => validateStreamCounts(p, p.counts, false))
 })

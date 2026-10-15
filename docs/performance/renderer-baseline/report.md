@@ -1,6 +1,60 @@
 # Clave renderer baseline, 15 October 2026
 
-The synthetic hidden-window baseline shows very little renderer main-thread activity. It does not explain the reported sustained process CPU use in the user's app, because whole-process renderer CPU was not measured here. In twenty-four idle chats with two hundred turns each, the measured renderer main thread spent less than 1.1 ms on tasks during every unsampled five-second loaded-idle window. Whole-process startup is the largest repeatable delay in this workload. A single dev tab-switch outlier reached 112.9 ms. These observations do not establish the cause of foreground sluggishness. No product optimization is included.
+Four hidden synthetic streams add a median **728.4 ms installed and 636.6 ms dev** of renderer main-thread task time per five-second idle window in the 100-tab workload. The sampled application stacks include Markdown scanning. The user selected a next-phase target of at least 75% less extra task time, while keeping the existing handler-to-frame typing p95 below 50 ms. A separate product lane owns that change; this PR includes measurement tooling and evidence only.
+
+These are controlled synthetic hidden-window results. They identify a repeatable cost but do not establish the cause of all sluggishness in the live app. The latency metric starts at event dispatch and excludes input queuing, Playwright actionability, hardware and presented pixels. A driver action-request wall timer was not added within the bounded collection slot; that coverage is still missing.
+
+Issue [#187](https://github.com/antasphere/clave/issues/187), wave [#186](https://github.com/antasphere/clave/issues/186). [Reproduction and metric definitions](../renderer-benchmarks.md).
+
+## 100 tabs, streaming off versus on
+
+Three fresh launches per build, ten groups, twenty 200-turn histories and eighty two-turn histories. Every tab displays its synthetic tail during setup. Four chats at indices 10, 20, 30 and 40 remain hidden and working in both phases. The visible tab/composer is in the first group. Both phases are profiled at 1 ms; only on sends 128-byte ASCII assistant deltas at a requested 20 Hz per chat. Four normal preload observer subscriptions exist in both phases. Off/on start with the same tab/history data; on adds text as it runs. Fixed phase order, warming and text growth remain confounders.
+
+Raw [installed series](installed-100/measurements.json) and [dev series](dev-100/measurements.json) preserve original collections in linked collection folders. Dev was split into one plus two launches to honor scheduling deadlines; pooling validates identical source, workload, protocol, machine and runtime-file hashes. The compiled product is still the same dev baseline and byte-identical renderer described below. The 100-tab runner executed at tooling HEAD 8d6fb84b with amendment files fingerprinted by toolingSha256; the final candidate preserves those runtime bytes.
+
+| Build / run | Off task ms / 5 s | On task ms / 5 s | Extra task ms | On delivered events | Actual rate / s | Stream duration s |
+| ----------- | ----------------: | ---------------: | ------------: | ------------------: | --------------: | ----------------: |
+| installed 1 |              45.6 |            835.8 |         790.3 |                 824 |           78.57 |            10.487 |
+| installed 2 |              53.4 |            781.8 |         728.4 |                 836 |           78.68 |            10.625 |
+| installed 3 |              46.6 |            602.5 |         556.0 |                 832 |           78.47 |            10.603 |
+| dev 1       |              61.4 |            781.3 |         719.9 |                 884 |           78.43 |            11.271 |
+| dev 2       |              47.7 |            684.3 |         636.6 |                 900 |           77.29 |            11.644 |
+| dev 3       |              50.7 |            672.0 |         621.3 |                 848 |           77.72 |            10.911 |
+
+The event totals cover the complete on phase, including its initial five-second idle window and subsequent input actions. Produced and renderer-observed counts match exactly for every hidden chat; off counts are zero. Task values above are from the idle window alone, before input actions, and represent renderer main-thread counters rather than OS whole-process CPU. The constant observers add instrumentation overhead.
+
+Each action has five warmups and thirty retained observations per launch, for ninety pooled observations per build/phase/kind. Values below are p50 / p95 / max in milliseconds, at event-handler-to-second-animation-frame boundaries.
+
+| Kind     |      Installed off |       Installed on |            Dev off |             Dev on |
+| -------- | -----------------: | -----------------: | -----------------: | -----------------: |
+| tab      | 34.9 / 45.1 / 47.0 | 33.2 / 35.8 / 45.5 | 37.8 / 43.3 / 47.0 | 33.3 / 39.1 / 50.1 |
+| composer | 21.7 / 25.1 / 33.8 | 24.5 / 28.1 / 29.5 | 20.8 / 24.2 / 29.5 | 22.1 / 35.2 / 41.6 |
+
+The lower on-phase tab p95 is not a speedup claim. Fixed order, warming and frame quantization prevent that inference. The 100-tab off phase also differs from the 24-tab reference in group size, history distribution, working state and instrumentation; their timing difference is not a pure tab-count scaling coefficient. Both builds already meet the selected 50 ms handler-only typing p95 guardrail. This does not prove low input-queue or foreground latency.
+
+## Attribution and selected next target
+
+The first installed on profile includes check at bundle line 53295, atBreak at 56530 and go2 at 56797. Inspecting the byte-identical renderer bundle maps these to Markdown Unicode/whitespace scanning, tokenizer break detection and tokenizer state transitions. Product ReactMarkdown rendering is in plugins/chat-view/src/ChatView.tsx, around lines 288-314. Those single-stack-node self weights are about 98.8, 98.0 and 77.4 ms over the full first on phase. They are concrete candidate attribution, not proof that every extra task millisecond is Markdown. Transport/preload, GC, observers and other rendering work also contribute. The full phase profiles contain input-driver work; do not attribute its query/focus stacks to product code.
+
+| 100-tab phase   | Installed first-run graph                                      | Dev first-run graph                                      |
+| --------------- | -------------------------------------------------------------- | -------------------------------------------------------- |
+| Renderer reload | [graph](installed-100/collection-1/run-1-renderer-reload.html) | [graph](dev-100/collection-1/run-1-renderer-reload.html) |
+| Streaming off   | [graph](installed-100/collection-1/run-1-stream-off.html)      | [graph](dev-100/collection-1/run-1-stream-off.html)      |
+| Streaming on    | [graph](installed-100/collection-1/run-1-stream-on.html)       | [graph](dev-100/collection-1/run-1-stream-on.html)       |
+
+The accepted 75% target means a same-protocol median extra task cost at or below **182.1 ms installed** or **159.2 ms dev** per five seconds, calculated from each build's own baseline. A dev product change must use the dev baseline, rather than the larger installed denominator. Maintain comparable delivered event rates and identical payload/workload; reducing or discarding input is not an optimization. Keep typing p95 below 50 ms with the handler-only definition visible. No product improvement is claimed here.
+
+The benchmark checks delivery to its preload observers, not the native conversation view's final retained content after revealing each hidden chat. Product verification must prove every delta survives and becomes visible on focus. Otherwise dropping hidden content could satisfy a performance number while breaking the chat. This correctness check belongs to the product lane and is not implied by observer counts.
+
+## Profile provenance and collection quality
+
+There are sixteen accepted launches across the reference and high-scale matrices, 58 derived CPU profiles, 18 scrubbed raw high-scale profiles and fourteen openable first-run graphs. The original high-scale CDP responses are retained privately before validation; published raw copies remove private paths. Derived profiles pair sample IDs with cumulative timestamps, sort the pairs, and conserve the exact observed span without extending the unsampled tail. One dev on profile has a negative interval: two sample positions reorder, all 8,286 samples remain, and total time before/after is exactly 10,676,541 microseconds. Its raw, derived and audit records are all retained. See the [signed-interval policy and primary implementation reference](../renderer-benchmarks.md#signed-profile-intervals-and-raw-retention). The old 24-tab method's rejected raw-response limitation remains documented below.
+
+All accepted launches completed their assertions, reported no uncaught renderer exception, closed without a timeout fallback and removed their temporary app data. Raw private captures are deliberate retained evidence, separate from app data and publication. No real conversation or live-user profile is included. Collection was serialized through wave leases, with explicit original-collection provenance.
+
+## 24-tab done-chat reference
+
+The 24-tab done-chat reference shows very little renderer main-thread activity. It does not explain the reported sustained process CPU use in the user's app, because whole-process renderer CPU was not measured here. In twenty-four idle chats with two hundred turns each, the measured renderer main thread spent less than 1.1 ms on tasks during every unsampled five-second loaded-idle window. Whole-process startup is the largest repeatable delay in this workload. A single dev tab-switch outlier reached 112.9 ms. These observations do not establish the cause of foreground sluggishness. No product optimization is included.
 
 Issue [#187](https://github.com/antasphere/clave/issues/187), wave [#186](https://github.com/antasphere/clave/issues/186). See the [runner and exact metric definitions](../renderer-benchmarks.md).
 
@@ -103,6 +157,8 @@ Coverage ends at deterministic done-state chats, a fresh default plugin/settings
 
 Run `node --test tests/performance/renderer-*.test.mjs` for timing/profile validation, CLI refusal checks, and the published-artifact assertions. The repository Vitest suite invokes the same checks. Repository gate results and the independent opposite-provider report are recorded on issue #187 and its PR. This baseline does not imply that independent review or CI passed.
 
-Local validation at the baseline product tree: `npm run build`, `npm run typecheck`, and `npm run lint` passed. `npm test` passed 263 files and 2,961 tests, with one file/two tests skipped. The focused Node suite passed nine checks; the focused Vitest wrapper also passed after the final artifact assertion was added. An extra `chat-view` E2E exercise stopped at its existing unstable permission-state assertion, `nothing is waiting any more`, at line 260. It is incomplete coverage and is not counted as a fully passed chat-view spec. The benchmark's independent synthetic workloads completed all their own assertions.
+## Final local checks and test environment
 
-The additional server-boot integration command, run before the candidate commit with HEAD and origin/dev both at `e8d4a9e` and an empty product-source diff, exited 1 with 84 passed and six failed assertions. Its terminal probes never observed their output: the initial environment probe and the first/replacement terminal on the separate server. This is a baseline integration blocker outside the owned tooling files. The fail-fast command did not execute the subsequent attached/separate top-level mode invocations. This lane does not claim GATES GREEN or merge readiness from those results. The completed chat-scroll-end and test-no-activate specs passed; broad chat-view and server-boot coverage limitations remain explicit for independent review and CI.
+After the 100-tab amendments, the focused Node suite passed all 13 checks, including collection provenance, signed sample attribution/conservation, exact stream delivery, all published profiles and path scrubbing. Lint, build with typecheck, and the full unit suite passed again: 263 files and 2,961 tests passed, one file/two tests skipped.
+
+The inherited interactive shell was /opt/homebrew/bin/nu. The existing server-boot probes use POSIX shell syntax; rerunning the unchanged spec with child-only SHELL=/bin/zsh passed all 71 checks, with no known or unstable results. No global shell/configuration or product code changed. The original combined Nushell command recorded 84 passed and six failed checks: 19 passes from the focused chat-scroll/no-activate specs, plus 65 passes and six terminal-output failures in server-boot. The later single-spec POSIX run passed all 71 server-boot checks. Both outcomes are retained in the issue record and private logs. This was a test-environment failure, not a waived assertion. Use the same child-only POSIX shell setting when reproducing that spec. The earlier completed chat-scroll-end and test-no-activate specs passed. The extra broad chat-view exercise remains incomplete at its known unstable permission-state assertion; no full-chat-view pass is claimed. Independent opposite-provider verification and current-head CI remain separate gates and are not implied by these local results.

@@ -19,7 +19,7 @@ export function summarize(values) {
   }
 }
 
-export function validateProfile(p) {
+export function validateProfile(p, { allowSigned = false } = {}) {
   assert.ok(Array.isArray(p?.nodes) && p.nodes.length > 0, 'profile has no nodes')
   assert.ok(Array.isArray(p.samples) && p.samples.length > 0, 'profile has no samples')
   assert.ok(
@@ -57,12 +57,74 @@ export function validateProfile(p) {
     'unknown sampled node'
   )
   assert.ok(
-    p.timeDeltas.every((x) => Number.isFinite(x) && x >= 0),
+    p.timeDeltas.every((x) => Number.isFinite(x) && (allowSigned || x >= 0)),
     'invalid sample duration'
   )
   const totalUs = p.timeDeltas.reduce((a, b) => a + b, 0)
   assert.ok(totalUs > 0, 'zero sampled duration')
   return { nodes, parents, totalUs }
+}
+
+// Keep the sample ID paired with its observed cumulative timestamp. Unlike
+// DevTools, do not extrapolate a final interval beyond the observed span.
+export function normalizeProfile(p) {
+  const { totalUs } = validateProfile(p, { allowSigned: true })
+  let timestamp = p.startTime
+  const pairs = p.samples.map((id, index) => {
+    timestamp += p.timeDeltas[index]
+    assert.ok(
+      Number.isFinite(timestamp) && timestamp >= p.startTime && timestamp <= p.endTime,
+      'sample timestamp outside profile bounds'
+    )
+    return { id, timestamp, index }
+  })
+  const lastObservedTime = timestamp
+  pairs.sort((a, b) => a.timestamp - b.timestamp || a.index - b.index)
+  assert.equal(pairs.at(-1).timestamp, lastObservedTime, 'sorting would change observed span')
+  let previous = p.startTime
+  const normalized = {
+    ...p,
+    samples: pairs.map((x) => x.id),
+    timeDeltas: pairs.map((x) => {
+      const delta = x.timestamp - previous
+      previous = x.timestamp
+      return delta
+    })
+  }
+  const checked = validateProfile(normalized)
+  assert.equal(checked.totalUs, totalUs, 'sample normalization changed observed duration')
+  return {
+    profile: normalized,
+    audit: {
+      negativeIntervals: p.timeDeltas.filter((x) => x < 0).length,
+      reorderedSamples: pairs.filter((x, index) => x.index !== index).length,
+      originalSamples: p.samples.length,
+      totalBeforeUs: totalUs,
+      totalAfterUs: checked.totalUs,
+      lastObservedTime,
+      unsampledTailUs: p.endTime - lastObservedTime,
+      weighting: 'preceding observed interval; no tail extrapolation'
+    }
+  }
+}
+
+export function validateStreamCounts(produced, observed, enabled) {
+  assert.ok(
+    Number.isFinite(produced.elapsedMs) && produced.elapsedMs > 0 && produced.elapsedMs < 30_000,
+    'stream duration outside its bound'
+  )
+  assert.equal(produced.ceilingReached, false, 'stream workload hit its ceiling')
+  const ids = Object.keys(produced.counts)
+  assert.equal(ids.length, 4, 'four hidden streams are required')
+  assert.deepEqual(Object.keys(observed).sort(), [...ids].sort(), 'stream identity mismatch')
+  for (const id of ids) {
+    const count = produced.counts[id]
+    assert.ok(Number.isInteger(count) && count >= 0, 'invalid stream count')
+    assert.equal(observed[id], count, 'renderer stream delivery differs')
+    assert.ok(enabled ? count >= 20 : count === 0, 'stream phase did not exercise its workload')
+  }
+  const totalEvents = Object.values(observed).reduce((a, b) => a + b, 0)
+  return { totalEvents, actualEventsPerSecond: totalEvents / (produced.elapsedMs / 1000) }
 }
 
 const safeName = (s) =>
@@ -80,8 +142,8 @@ const safeUrl = (url) => {
   const asset = /(?:^|\/)assets\/([^/?#]+)(?:[?#].*)?$/.exec(url)
   return asset ? `assets/${asset[1]}` : '[source]'
 }
-export function scrubProfile(p) {
-  validateProfile(p)
+export function scrubProfile(p, { allowSigned = false } = {}) {
+  validateProfile(p, { allowSigned })
   return {
     nodes: p.nodes.map((n) => ({
       id: n.id,

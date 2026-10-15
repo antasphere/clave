@@ -23,7 +23,9 @@ import {
   scrubProfile,
   validateProfile,
   flamegraph,
-  profileHotspots
+  profileHotspots,
+  normalizeProfile,
+  validateStreamCounts
 } from './renderer-data.mjs'
 
 const { values } = parseArgs({
@@ -35,23 +37,39 @@ const { values } = parseArgs({
     tabs: { type: 'string', default: '24' },
     turns: { type: 'string', default: '200' },
     'idle-ms': { type: 'string', default: '5000' },
-    source: { type: 'string' }
+    source: { type: 'string' },
+    groups: { type: 'string', default: '4' },
+    'history-tabs': { type: 'string' },
+    streaming: { type: 'boolean', default: false }
   }
 })
 assert.ok(['dev', 'installed'].includes(values.build), '--build must be dev or installed')
 assert.ok(values.out, '--out is required, use a new artifact directory')
 const cfg = Object.fromEntries(
-  ['runs', 'samples', 'tabs', 'turns', 'idle-ms'].map((k) => {
+  ['runs', 'samples', 'tabs', 'turns', 'idle-ms', 'groups'].map((k) => {
     const n = Number(values[k])
     assert.ok(Number.isInteger(n) && n > 0, `invalid --${k}`)
     return [k, n]
   })
 )
-assert.ok(cfg.tabs >= 8 && cfg.tabs % 4 === 0, '--tabs must be a multiple of four >=8')
+assert.ok(
+  cfg.tabs >= 2 * cfg.groups && cfg.tabs % cfg.groups === 0,
+  '--tabs must divide into groups with >=2 each'
+)
+cfg.historyTabs = values['history-tabs'] == null ? cfg.tabs : Number(values['history-tabs'])
+assert.ok(
+  Number.isInteger(cfg.historyTabs) && cfg.historyTabs > 0 && cfg.historyTabs <= cfg.tabs,
+  'invalid --history-tabs'
+)
+cfg.streaming = values.streaming
+if (cfg.streaming)
+  assert.ok(cfg.groups >= 5, 'streaming needs >=5 groups so its four streams stay hidden')
 const out = path.resolve(values.out)
 mkdirSync(out, { recursive: false }) // Refuse overwriting a previous measurement.
 const base = '/tmp/clave-perf-1015-a'
 mkdirSync(base, { recursive: true })
+const privateRawDir = mkdtempSync(path.join(base, 'raw-'))
+console.log(JSON.stringify({ phase: 'private-raw-capture', directory: privateRawDir }))
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 const json = (name, value) =>
   writeFileSync(path.join(out, name), JSON.stringify(value, null, 2) + '\n')
@@ -65,6 +83,14 @@ const result = {
     ? 'operator-supplied installed release tag; executable hash below'
     : 'git HEAD, tooling-only working changes',
   startedAt: new Date().toISOString(),
+  toolingSha256: Object.fromEntries(
+    ['renderer-benchmark.mjs', 'renderer-data.mjs'].map((name) => [
+      name,
+      createHash('sha256')
+        .update(readFileSync(path.join(REPO, 'scripts/performance', name)))
+        .digest('hex')
+    ])
+  ),
   config: cfg,
   machine: {
     platform: os.platform(),
@@ -81,7 +107,9 @@ const result = {
     noActivate: true,
     warmups: 5,
     profilerIntervalUs: 1000,
-    synthetic: true
+    synthetic: true,
+    profilePolicy: 'paired-timestamp sorting, conserved observed span, no tail extrapolation',
+    emptyIdleIncluded: !cfg.streaming
   },
   runs: []
 }
@@ -108,16 +136,26 @@ async function idle(cdp) {
 }
 async function saveProfile(cdp, label, run) {
   const { profile } = await cdp.send('Profiler.stop')
-  let p
+  // Retain the original response before any validation or publication scrub.
+  writeFileSync(
+    path.join(privateRawDir, `${run}-${label}-${Date.now()}.cpuprofile`),
+    JSON.stringify(profile),
+    { mode: 0o600 }
+  )
+  let p, audit
+  const stem = `run-${run}-${label}`
   try {
-    p = scrubProfile(profile)
+    const raw = scrubProfile(profile, { allowSigned: true })
+    json(`${stem}.raw.cpuprofile`, raw)
+    const normalized = normalizeProfile(raw)
+    p = normalized.profile
+    audit = normalized.audit
   } catch (error) {
     throw new Error(
       `Profiler rejected ${label}, samples=${profile.samples?.length}, minDeltaUs=${Math.min(...(profile.timeDeltas ?? []))}, negativeDeltas=${profile.timeDeltas?.filter((x) => x < 0).length}: ${error}`
     )
   }
   const checked = validateProfile(p)
-  const stem = `run-${run}-${label}`
   json(`${stem}.cpuprofile`, p)
   writeFileSync(
     path.join(out, `${stem}.html`),
@@ -125,6 +163,8 @@ async function saveProfile(cdp, label, run) {
   )
   return {
     file: `${stem}.cpuprofile`,
+    rawFile: `${stem}.raw.cpuprofile`,
+    normalization: audit,
     samples: p.samples.length,
     sampledMs: checked.totalUs / 1000,
     hotspots: profileHotspots(p)
@@ -159,13 +199,13 @@ async function observed(page) {
 }
 const view = '[data-testid="chat-view"]'
 const composer = `${view} textarea:not(:disabled)`
-async function interactions(page, workload) {
+async function interactions(page, workload, kinds = ['tab', 'group', 'composer', 'scroll']) {
   const { records, groups } = workload
-  const samples = { tab: [], group: [], composer: [], scroll: [] }
+  const samples = Object.fromEntries(kinds.map((k) => [k, []]))
   let active = records.at(-1)
   const selectedView = () => `.chat-host[data-session-id="${active}"] ${view}`
   const selectedComposer = () => `${selectedView()} textarea:not(:disabled)`
-  const perGroup = cfg.tabs / 4
+  const perGroup = cfg.tabs / cfg.groups
   for (const kind of Object.keys(samples)) {
     if (kind === 'composer' || kind === 'scroll') {
       active = records[0]
@@ -174,9 +214,9 @@ async function interactions(page, workload) {
     }
     for (let i = 0; i < cfg.samples + 5; i++) {
       if (kind === 'tab' || kind === 'group') {
-        const index = kind === 'tab' ? i % perGroup : (i % 4) * perGroup
+        const index = kind === 'tab' ? i % perGroup : (i % cfg.groups) * perGroup
         const target = records[index]
-        const selector = `[data-sidebar-item-id="${kind === 'group' ? groups[i % 4] : target}"] > button`
+        const selector = `[data-sidebar-item-id="${kind === 'group' ? groups[i % cfg.groups] : target}"] > button`
         active = target
         await arm(page, selector, 'click')
         await page.locator(selector).click()
@@ -228,14 +268,14 @@ async function interactions(page, workload) {
 async function seed(app, page, fixture, root) {
   const records = []
   const groups = []
-  for (let g = 0; g < 4; g++)
+  for (let g = 0; g < cfg.groups; g++)
     groups.push((await callMcp(app, 'createGroup', { name: `Synthetic group ${g}` })).groupId)
   for (let i = 0; i < cfg.tabs; i++) {
     const opened = await callMcp(app, 'openSession', {
       cwd: root,
       mode: 'claude',
       profile: 'dev-echo-adapter',
-      groupId: groups[Math.floor(i / (cfg.tabs / 4))],
+      groupId: groups[Math.floor(i / (cfg.tabs / cfg.groups))],
       name: `Synthetic tab ${i}`,
       account: 'default'
     })
@@ -265,11 +305,11 @@ async function seed(app, page, fixture, root) {
           event: { type: 'state_change', state: 'done' }
         })
       },
-      { id: opened.sessionId, index: i, turns: cfg.turns }
+      { id: opened.sessionId, index: i, turns: i < cfg.historyTabs ? cfg.turns : 2 }
     )
     await page
       .locator(`.chat-host[data-session-id="${opened.sessionId}"] ${view} .chat-turn`)
-      .filter({ hasText: `Tab ${i} turn ${cfg.turns - 1}.` })
+      .filter({ hasText: `Tab ${i} turn ${(i < cfg.historyTabs ? cfg.turns : 2) - 1}.` })
       .waitFor()
   }
   const sessions = await page.evaluate(() => window.electronAPI.sessionsList())
@@ -279,6 +319,150 @@ async function seed(app, page, fixture, root) {
     'a non-synthetic adapter was launched'
   )
   return { records, groups }
+}
+
+async function streamingComparison(page, fixture, cdp, workload, run, comparison) {
+  const perGroup = cfg.tabs / cfg.groups
+  const ids = [1, 2, 3, 4].map((g) => workload.records[g * perGroup])
+  comparison.backgroundIndices = [1, 2, 3, 4].map((g) => g * perGroup)
+  comparison.payloadBytes = 128
+  comparison.intervalMs = 50
+  comparison.ceilingMs = 30_000
+  await page.locator(`[data-sidebar-item-id="${workload.records[0]}"] > button`).click()
+  await page.evaluate(async (ids) => {
+    window.__rendererStreamSeen = Object.fromEntries(ids.map((id) => [id, 0]))
+    window.__rendererStreamOffs = []
+    for (const id of ids) {
+      window.__rendererStreamOffs.push(
+        window.electronAPI.onSessionStream(id, (stream) => {
+          if (
+            stream.kind === 'event' &&
+            stream.event.type === 'assistant_text' &&
+            stream.event.delta === 'a'.repeat(127) + ' '
+          ) {
+            window.__rendererStreamSeen[id]++
+          }
+        })
+      )
+      await window.electronAPI.sessionsSubscribe(id)
+    }
+  }, ids)
+  await fixture.evaluate((ids) => {
+    for (const id of ids) {
+      globalThis.__claveE2E.echo.inject(id, {
+        kind: 'event',
+        event: { type: 'state_change', state: 'working' }
+      })
+      globalThis.__claveE2E.echo.inject(id, {
+        kind: 'event',
+        event: { type: 'assistant_text', delta: 'Synthetic stream baseline. ', final: false }
+      })
+    }
+  }, ids)
+  try {
+    for (const phase of ['off', 'on']) {
+      await page.evaluate(() => {
+        for (const id of Object.keys(window.__rendererStreamSeen))
+          window.__rendererStreamSeen[id] = 0
+      })
+      const hidden = await page.evaluate(
+        (ids) =>
+          ids.every((id) => {
+            const host = document.querySelector(`.chat-host[data-session-id="${id}"]`)
+            return !host || !host.checkVisibility()
+          }),
+        ids
+      )
+      assert.ok(hidden, 'background stream chat became visible')
+      console.log(JSON.stringify({ run, phase: `stream-${phase}`, tabs: cfg.tabs }))
+      await cdp.send('Profiler.start')
+      const before = await metrics(cdp)
+      await fixture.evaluate(
+        ({ ids, enabled }) => {
+          const state = {
+            started: Date.now(),
+            stopped: null,
+            counts: Object.fromEntries(ids.map((id) => [id, 0])),
+            ceilingReached: false
+          }
+          globalThis.__rendererStream = state
+          const stop = () => {
+            clearInterval(state.timer)
+            if (state.stopped == null) state.stopped = Date.now()
+          }
+          state.stop = stop
+          if (enabled)
+            state.timer = setInterval(() => {
+              if (Date.now() - state.started >= 30_000) {
+                state.ceilingReached = true
+                stop()
+                return
+              }
+              for (const id of ids) {
+                globalThis.__claveE2E.echo.inject(id, {
+                  kind: 'event',
+                  event: { type: 'assistant_text', delta: 'a'.repeat(127) + ' ', final: false }
+                })
+                state.counts[id]++
+              }
+            }, 50)
+        },
+        { ids, enabled: phase === 'on' }
+      )
+      const idleWindow = await idle(cdp)
+      const timings = await interactions(page, workload, ['tab', 'composer'])
+      const produced = await fixture.evaluate(() => {
+        const s = globalThis.__rendererStream
+        s.stop()
+        return {
+          elapsedMs: s.stopped - s.started,
+          counts: s.counts,
+          ceilingReached: s.ceilingReached
+        }
+      })
+      assert.equal(produced.ceilingReached, false, 'stream workload exceeded its 30s bound')
+      await page.waitForFunction(
+        (counts) => Object.entries(counts).every(([id, n]) => window.__rendererStreamSeen[id] >= n),
+        produced.counts,
+        { timeout: 10_000 }
+      )
+      const seen = await page.evaluate(() => window.__rendererStreamSeen)
+      const observed = validateStreamCounts(produced, seen, phase === 'on')
+      assert.ok(
+        await page.evaluate(
+          (ids) =>
+            ids.every((id) => {
+              const host = document.querySelector(`.chat-host[data-session-id="${id}"]`)
+              return !host || !host.checkVisibility()
+            }),
+          ids
+        ),
+        'a measured background chat was visible'
+      )
+      const after = await metrics(cdp)
+      const profile = await saveProfile(cdp, `stream-${phase}`, run)
+      comparison[phase] = {
+        idle: idleWindow,
+        timings,
+        produced,
+        observedCounts: seen,
+        ...observed,
+        elapsedMs: 1000 * (after.Timestamp - before.Timestamp),
+        taskMs: 1000 * (after.TaskDuration - before.TaskDuration),
+        heapBytes: after.JSHeapUsedSize,
+        profile
+      }
+    }
+  } finally {
+    await fixture.evaluate(() => globalThis.__rendererStream?.stop()).catch(() => {})
+    await page
+      .evaluate(async (ids) => {
+        for (const off of window.__rendererStreamOffs ?? []) off()
+        for (const id of ids) await window.electronAPI.sessionsUnsubscribe(id)
+        delete window.__rendererStreamOffs
+      }, ids)
+      .catch(() => {})
+  }
 }
 
 for (let run = 1; run <= cfg.runs; run++) {
@@ -384,25 +568,32 @@ for (let run = 1; run <= cfg.runs; run++) {
       height: innerHeight,
       dpr: devicePixelRatio
     }))
-    await delay(1000)
-    r.emptyIdle = await idle(cdp)
-    await cdp.send('Profiler.start')
-    r.emptyIdleProfiled = await idle(cdp)
-    r.emptyProfile = await saveProfile(cdp, 'empty-idle', run)
+    if (!cfg.streaming) {
+      await delay(1000)
+      r.emptyIdle = await idle(cdp)
+      await cdp.send('Profiler.start')
+      r.emptyIdleProfiled = await idle(cdp)
+      r.emptyProfile = await saveProfile(cdp, 'empty-idle', run)
+    }
     const seedStart = performance.now()
     const records = await seed(app, page, appServerFixture(dir), root)
     r.setupMs = performance.now() - seedStart
     await delay(1000)
-    r.loadedIdle = await idle(cdp)
-    await cdp.send('Profiler.start')
-    r.loadedIdleProfiled = await idle(cdp)
-    r.loadedProfile = await saveProfile(cdp, 'many-idle', run)
-    console.log(JSON.stringify({ run, phase: 'unsampled', tabs: cfg.tabs, turns: cfg.turns }))
-    r.unsampled = await interactions(page, records)
-    await cdp.send('Profiler.start')
-    console.log(JSON.stringify({ run, phase: 'sampled' }))
-    r.sampled = await interactions(page, records)
-    r.interactionProfile = await saveProfile(cdp, 'interactions', run)
+    if (cfg.streaming) {
+      r.streaming = {}
+      await streamingComparison(page, appServerFixture(dir), cdp, records, run, r.streaming)
+    } else {
+      r.loadedIdle = await idle(cdp)
+      await cdp.send('Profiler.start')
+      r.loadedIdleProfiled = await idle(cdp)
+      r.loadedProfile = await saveProfile(cdp, 'many-idle', run)
+      console.log(JSON.stringify({ run, phase: 'unsampled', tabs: cfg.tabs, turns: cfg.turns }))
+      r.unsampled = await interactions(page, records)
+      await cdp.send('Profiler.start')
+      console.log(JSON.stringify({ run, phase: 'sampled' }))
+      r.sampled = await interactions(page, records)
+      r.interactionProfile = await saveProfile(cdp, 'interactions', run)
+    }
     r.afterLoad = os.loadavg()
     assert.deepEqual(r.pageErrors, [], 'renderer raised an uncaught exception')
     r.ok = true
@@ -430,18 +621,29 @@ assert.ok(
 )
 result.summary = {
   startup: summarize(result.runs.map((r) => r.startupMs)),
-  unsampled: Object.fromEntries(
-    ['tab', 'group', 'composer', 'scroll'].map((k) => [
-      k,
-      summarize(result.runs.flatMap((r) => r.unsampled[k].rawMs))
-    ])
-  ),
-  sampled: Object.fromEntries(
-    ['tab', 'group', 'composer', 'scroll'].map((k) => [
-      k,
-      summarize(result.runs.flatMap((r) => r.sampled[k].rawMs))
-    ])
-  )
+  ...(cfg.streaming
+    ? Object.fromEntries(
+        ['off', 'on'].map((phase) => [
+          phase,
+          Object.fromEntries(
+            ['tab', 'composer'].map((kind) => [
+              kind,
+              summarize(result.runs.flatMap((r) => r.streaming[phase].timings[kind].rawMs))
+            ])
+          )
+        ])
+      )
+    : Object.fromEntries(
+        ['unsampled', 'sampled'].map((phase) => [
+          phase,
+          Object.fromEntries(
+            ['tab', 'group', 'composer', 'scroll'].map((kind) => [
+              kind,
+              summarize(result.runs.flatMap((r) => r[phase][kind].rawMs))
+            ])
+          )
+        ])
+      ))
 }
 json('measurements.json', result)
 console.log(JSON.stringify(result.summary))

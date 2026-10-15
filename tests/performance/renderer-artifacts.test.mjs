@@ -4,7 +4,12 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { validateProfile, summarize } from '../../scripts/performance/renderer-data.mjs'
+import {
+  validateProfile,
+  summarize,
+  normalizeProfile,
+  validateStreamCounts
+} from '../../scripts/performance/renderer-data.mjs'
 
 const root = fileURLToPath(new URL('../../docs/performance/renderer-baseline/', import.meta.url))
 test('published baseline contains complete repeated workloads and actual scrubbed profiles', () => {
@@ -72,5 +77,51 @@ test('all published JSON, graphs and excluded attempts omit private paths', () =
     const bytes = readFileSync(path.join(root, name))
     const text = (name.endsWith('.gz') ? gunzipSync(bytes) : bytes).toString('utf8')
     assert.doesNotMatch(text, /\/Users\/|\/home\/|valentindosimont|file:\/\/\/|Bearer /, name)
+  }
+})
+
+test('100-tab off/on evidence conserves signed profiles and proves delivery', () => {
+  for (const build of ['installed', 'dev']) {
+    const dir = path.join(root, build + '-100')
+    const m = JSON.parse(readFileSync(path.join(dir, 'measurements.json'), 'utf8'))
+    assert.equal(m.config.tabs, 100)
+    assert.equal(m.config.groups, 10)
+    assert.equal(m.config.historyTabs, 20)
+    assert.equal(m.config.turns, 200)
+    assert.equal(m.config.streaming, true)
+    assert.equal(m.config.samples, 30)
+    assert.equal(m.runs.length, 3)
+    assert.ok(m.completedAt)
+    for (const r of m.runs) {
+      assert.ok(r.ok && r.cleaned && !r.close.timedOut)
+      assert.deepEqual(r.pageErrors, [])
+      assert.deepEqual(r.streaming.backgroundIndices, [10, 20, 30, 40])
+      assert.equal(r.streaming.payloadBytes, 128)
+      assert.equal(r.streaming.intervalMs, 50)
+      for (const phase of ['off', 'on']) {
+        const p = r.streaming[phase]
+        const checked = validateStreamCounts(p.produced, p.observedCounts, phase === 'on')
+        assert.equal(p.totalEvents, checked.totalEvents)
+        assert.equal(p.actualEventsPerSecond, checked.actualEventsPerSecond)
+        for (const kind of ['tab', 'composer']) {
+          assert.equal(p.timings[kind].rawMs.length, 30)
+          assert.deepEqual(p.timings[kind].summary, summarize(p.timings[kind].rawMs))
+        }
+        const raw = JSON.parse(gunzipSync(readFileSync(path.join(dir, p.profile.rawFile + '.gz'))))
+        const derived = JSON.parse(gunzipSync(readFileSync(path.join(dir, p.profile.file + '.gz'))))
+        const normalized = normalizeProfile(raw)
+        assert.deepEqual(derived, normalized.profile)
+        assert.deepEqual(p.profile.normalization, normalized.audit)
+        assert.equal(validateProfile(derived).totalUs / 1000, p.profile.sampledMs)
+      }
+    }
+    for (const phase of ['off', 'on']) {
+      for (const kind of ['tab', 'composer']) {
+        assert.deepEqual(
+          m.summary[phase][kind],
+          summarize(m.runs.flatMap((r) => r.streaming[phase].timings[kind].rawMs))
+        )
+      }
+    }
   }
 })

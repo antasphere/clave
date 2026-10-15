@@ -17,7 +17,10 @@ test('invalid workloads exit nonzero before launching Electron or making artifac
       ['--tabs', '7'],
       ['--runs', 'NaN'],
       ['--build', 'typo'],
-      ['--unknown']
+      ['--unknown'],
+      ['--groups', '0'],
+      ['--history-tabs', '-1'],
+      ['--streaming']
     ]) {
       const out = path.join(dir, 'output')
       const r = spawnSync(process.execPath, [script, '--out', out, ...args], {

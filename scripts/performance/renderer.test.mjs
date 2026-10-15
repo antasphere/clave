@@ -10,7 +10,8 @@ test('renderer benchmark checks and published evidence', () => {
       '--test',
       'tests/performance/renderer-data.test.mjs',
       'tests/performance/renderer-cli.test.mjs',
-      'tests/performance/renderer-artifacts.test.mjs'
+      'tests/performance/renderer-artifacts.test.mjs',
+      'tests/performance/renderer-archive.test.mjs'
     ],
     {
       cwd: fileURLToPath(new URL('../../', import.meta.url)),
