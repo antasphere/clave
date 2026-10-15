@@ -11,6 +11,7 @@ import { PushClient, type PushClientOptions } from './push-client'
 export {
   createApiClient,
   PATIENT_TIMEOUT_MS,
+  HISTORY_TIMEOUT_MS,
   type ApiClientOptions,
   type ClaveApiClient
 } from './api'

@@ -15,6 +15,8 @@ import {
   type Session,
   type SessionInfo,
   type SessionPage,
+  type SessionRecordName,
+  type SessionRecordView,
   type SessionRecord,
   type SessionScreen,
   SessionScreenUnavailable,
@@ -219,6 +221,17 @@ export class FakeSource implements SessionHostService {
   setPage = (id: string, page: SessionPage | null): void => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)
     this.pages.push({ id, page })
+  }
+  // ── Wave 6, lane A: what the window keeps on a record ──
+  readonly kept: Array<{
+    id: string
+    fields: { name?: SessionRecordName; page?: SessionRecordView | null }
+  }> = []
+  keepOnRecord = (
+    id: string,
+    fields: { name?: SessionRecordName; page?: SessionRecordView | null }
+  ): void => {
+    this.kept.push({ id, fields })
   }
   screen = async (id: string): Promise<SessionScreen> => {
     if (!this.sessions.has(id)) throw new Error(`Unknown session: ${id}`)

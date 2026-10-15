@@ -18,6 +18,8 @@ import {
   type SessionCapabilities,
   type SessionInfo,
   type SessionPage,
+  type SessionRecordName,
+  type SessionRecordView,
   type SessionRecord,
   type SessionScreen,
   SessionWrite,
@@ -50,6 +52,11 @@ export interface SessionsClient {
   readonly listAdoptable: (ids?: ReadonlyArray<string>) => Promise<ReadonlyArray<SessionRecord>>
   /** Destroy a surviving session nobody brings back, by its record key. */
   readonly discardRecord: (key: string) => Promise<void>
+  /** Wave 6, lane A: the window's name and page for a tab, on its record. */
+  readonly keepOnRecord: (
+    id: string,
+    fields: { name?: SessionRecordName; page?: SessionRecordView | null }
+  ) => Promise<void>
   /** Let go of live sessions for another window to take in. */
   readonly release: (
     ids: ReadonlyArray<string>,
@@ -86,7 +93,9 @@ const encodeWrite = Schema.encodeSync(SessionWrite)
 const asParam = (value: number | undefined): string | undefined =>
   value === undefined ? undefined : String(value)
 
-export const sessionsClient = (call: Call): SessionsClient => ({
+/** `historyCall` is the same call under the history deadline
+ *  (`HISTORY_TIMEOUT_MS`); the ordinary one serves when none is given. */
+export const sessionsClient = (call: Call, historyCall: Call = call): SessionsClient => ({
   list: (windowKey) =>
     call((c) => c.sessions.list({ payload: windowKey === undefined ? {} : { windowKey } })),
   get: (id) => call((c) => c.sessions.get({ payload: { id } })),
@@ -112,7 +121,7 @@ export const sessionsClient = (call: Call): SessionsClient => ({
   commands: (id) => call((c) => c.sessions.commands({ payload: { id } })),
   capabilities: (id) => call((c) => c.sessions.capabilities({ payload: { id } })),
   history: (id, before, limit) =>
-    call((c) =>
+    historyCall((c) =>
       c.sessions.history({
         payload: {
           id,
@@ -128,6 +137,16 @@ export const sessionsClient = (call: Call): SessionsClient => ({
         payload: ids === undefined ? {} : { ids: ids.join(',') }
       })
     ),
+  keepOnRecord: (id, fields) =>
+    call((c) =>
+      c.sessions.keepOnRecord({
+        payload: {
+          id,
+          ...(fields.name !== undefined && { name: fields.name }),
+          ...(fields.page !== undefined && { page: fields.page })
+        }
+      })
+    ).then(() => undefined),
   discardRecord: (key) =>
     call((c) => c.sessions.discardRecord({ payload: { key } })).then(() => undefined),
   release: (ids, fallbackWindowKey) =>

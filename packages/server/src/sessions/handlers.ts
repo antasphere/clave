@@ -11,6 +11,7 @@ import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SessionScreenUnavailable,
   SetSessionPage,
@@ -202,6 +203,18 @@ export const sessionHandlers = [
       yield* events.publish({ _tag: 'session.renamed', id: payload.id, name: session.title })
       return session
     })
+  ),
+  // ── Wave 6, lane A: the window's name and page, on the record only ──
+  CommandHandler.make(KeepOnSessionRecord, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => host.keepOnRecord(payload.id, { name: payload.name, page: payload.page }),
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
   ),
   CommandHandler.make(SetSessionPage, (payload) =>
     Effect.gen(function* () {

@@ -104,3 +104,23 @@ describe('the page on a tab, and a message typed in', () => {
     await expect(host.type('zz', 'x')).rejects.toThrow('Unknown session: zz')
   })
 })
+
+describe('what the window keeps on the record (wave 6, lane A, PRDCT-3526)', () => {
+  it('writes the name as given, an auto-title included, and the page, each only when sent', () => {
+    host.keepOnRecord('c1', { name: { displayName: 'Lane A', userRenamed: true } })
+    host.keepOnRecord('c1', { name: { displayName: null, userRenamed: false } })
+    expect(mocks.setSessionDisplayName.mock.calls).toEqual([
+      ['c1', 'Lane A', true],
+      ['c1', null, false]
+    ])
+    expect(mocks.setSessionViewRecord).not.toHaveBeenCalled()
+    const page = { url: 'http://127.0.0.1:4826', title: 'Lane A' }
+    host.keepOnRecord('c1', { page })
+    host.keepOnRecord('c1', { page: null })
+    expect(mocks.setSessionViewRecord.mock.calls).toEqual([
+      ['c1', page],
+      ['c1', null]
+    ])
+    expect(mocks.setSessionDisplayName).toHaveBeenCalledTimes(2)
+  })
+})

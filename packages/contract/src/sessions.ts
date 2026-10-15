@@ -702,3 +702,32 @@ export const RestartSession = Command.define('RestartSession', {
   success: RestartedSession,
   failure: Schema.Union(SessionNotFound, CapabilityUnavailable, SessionStartFailed)
 })
+
+// ── Wave 6, lane A: what the window keeps on a tab's record (PRDCT-3526) ──
+
+/** A tab's name as the record keeps it: null is "no name" (the folder's),
+ *  `userRenamed` protects it from the auto-title. */
+export const SessionRecordName = Schema.Struct({
+  displayName: Schema.NullOr(Schema.String),
+  userRenamed: Schema.Boolean
+})
+export type SessionRecordName = typeof SessionRecordName.Type
+/**
+ * Keep what the window decided about a tab on the record the next launch
+ * restores it from: its name (a rename, or an auto-title), and the page on
+ * its row (null takes it off). Quiet on purpose: the window that sends it
+ * already shows it, so nothing is published, unlike `RenameSession` and
+ * `SetSessionPage`, which an agent sends for the windows to follow. A tab
+ * with no record keeps nothing, as before. Under the separate server the
+ * window's rename reached main's copy of the records only, and the name was
+ * gone at the next launch.
+ */
+export const KeepOnSessionRecord = Command.define('KeepOnSessionRecord', {
+  payload: Schema.Struct({
+    id: Schema.String,
+    name: Schema.optional(SessionRecordName),
+    page: Schema.optional(Schema.NullOr(SessionRecordView))
+  }),
+  success: Schema.Void,
+  failure: CapabilityUnavailable
+})

@@ -193,6 +193,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       ptyManager.setSessionDisplayName(id, next === folderName ? null : next, true)
       return manager.get(id) ?? session
     },
+    // ── Wave 6, lane A: the window's name and page, on the record only ──
+    keepOnRecord: (id, { name, page }) => {
+      if (name) ptyManager.setSessionDisplayName(id, name.displayName, name.userRenamed)
+      if (page !== undefined) ptyManager.setSessionViewRecord(id, page)
+    },
     setPage: (id, page) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)
       ptyManager.setSessionViewRecord(id, page)
