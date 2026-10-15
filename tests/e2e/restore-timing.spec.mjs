@@ -305,6 +305,27 @@ export async function run(t) {
       opened
     )
     t.check('a chat opened once keeps its pane when another is opened', kept, { opened, second })
+
+    // ── A window whose saved layout names no session still gets them back ──
+    // On the separate server the restore is the only road for the records
+    // (main reads none of its own): with no layout to name them it must still
+    // ask (round 3 of the verifier, H1). The app quits, the layout file goes,
+    // and every tab comes back, at the top level.
+    await app.close()
+    app = null
+    rmSync(path.join(DIR, 'sidebar-layouts', 'windows', `${KEY}.json`), { force: true })
+    const again = await launchApp(DIR, { server: 'separate', env })
+    app = again.app
+    const back = await until(
+      async () => {
+        const list = await callMcp(app, 'list', {})
+        return all.every((id) => list.sessions.some((s) => s.id === id)) ? list : null
+      },
+      { tries: 60, gapMs: 250 }
+    )
+    t.check('with no saved layout, every tab still comes back from the server', !!back, {
+      back: (await callMcp(app, 'list', {})).sessions.filter((s) => all.includes(s.id)).length
+    })
   } finally {
     for (const s of allStarts()) {
       try {
