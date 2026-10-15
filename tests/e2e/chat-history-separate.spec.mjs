@@ -215,6 +215,36 @@ export async function run(t) {
       paged?.view?.title === PAGE.title,
       serverRecord()
     )
+    // The workspace put back, so the tab comes back where it can be seen.
+    await win.evaluate(({ id }) => window.electronAPI.setSessionWorkspace(id, 'history-ws'), {
+      id: TAB
+    })
+    await until(() => (serverRecord()?.workspaceId === 'history-ws' ? true : null))
+
+    // What the person sees after a quit: the window's boot restores the tab
+    // from main's records (PRDCT-3530), so a field kept on the server's
+    // record alone came back stale: the old name, the conversation from
+    // before the /clear.
+    await app.close()
+    app = null
+    const again = await launchApp(DIR, { env })
+    app = again.app
+    const restoreAgain = again.win.getByRole('button', { name: 'Restore', exact: true })
+    if (await until(() => restoreAgain.isVisible().catch(() => false), { tries: 10 }))
+      await restoreAgain.click()
+    const relaunched = await until(async () =>
+      (await callMcp(app, 'list', {})).sessions.find((s) => s.id === TAB)
+    )
+    t.check('after a quit and a relaunch the tab is back', !!relaunched)
+    t.equal('under the name it was given after the update', relaunched?.name, RENAMED)
+    const resumed = await until(() =>
+      serverRecord()?.claudeSessionId === CLEARED ? serverRecord() : null
+    )
+    t.check(
+      'on the conversation the /clear moved it to, not the one from before',
+      !!resumed,
+      serverRecord()
+    )
   } finally {
     if (app) await app.close()
     rmSync(DIR, { recursive: true, force: true })

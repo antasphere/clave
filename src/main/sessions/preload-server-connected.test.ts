@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     on: vi.fn(),
     removeListener: vi.fn(),
     settings: {} as Record<string, Record<string, ReturnType<typeof vi.fn>>>,
+    sessions: {} as Record<string, ReturnType<typeof vi.fn>>,
     push: null as null | PushDouble,
     pushReads: 0,
     makePush: (): PushDouble => {
@@ -81,7 +82,7 @@ vi.mock('@clave/client/node', () => ({
     // (the preload hands each waiting listener `backing.push`), counted so a
     // wait that should have been withdrawn shows.
     return {
-      api: { settings: mocks.settings },
+      api: { settings: mocks.settings, sessions: mocks.sessions },
       get push() {
         mocks.pushReads += 1
         return push
@@ -111,6 +112,7 @@ beforeEach(async () => {
   mocks.push = null
   mocks.pushReads = 0
   mocks.settings = { claudeAccounts: { list: vi.fn(async () => []) } }
+  mocks.sessions = { keepOnRecord: vi.fn(async () => undefined) }
   vi.resetModules()
   await import('../../preload/index')
   api = mocks.exposed.get('electronAPI') as ElectronAPI
@@ -169,5 +171,69 @@ describe('onServerConnected (PRDCT-3526)', () => {
     await settle()
     expect(mocks.push).toBeNull()
     expect(heard).not.toHaveBeenCalled()
+  })
+})
+
+describe("the record writes on the server's records and main's (wave 6, lane A)", () => {
+  it('each write reaches main, whose folder the boot still lists, and the server', async () => {
+    await serverComes()
+    mocks.invoke.mockClear()
+    await api.setSessionDisplayName('t', 'Mine', true)
+    await api.setSessionViewRecord('t', { url: 'http://127.0.0.1:1', title: 'Page' })
+    await api.setSessionWorkspace('t', 'ws-2')
+    await api.setSessionClaudeSessionId('t', 'after-clear')
+    expect(mocks.sessions.keepOnRecord.mock.calls).toEqual([
+      ['t', { name: { displayName: 'Mine', userRenamed: true } }],
+      ['t', { page: { url: 'http://127.0.0.1:1', title: 'Page' } }],
+      ['t', { workspaceId: 'ws-2' }],
+      ['t', { claudeSessionId: 'after-clear' }]
+    ])
+    const toMain = mocks.invoke.mock.calls.filter(([channel]) =>
+      String(channel).startsWith('session:set-')
+    )
+    expect(toMain).toEqual([
+      ['session:set-display-name', 't', 'Mine', true],
+      ['session:set-view', 't', { url: 'http://127.0.0.1:1', title: 'Page' }],
+      ['session:set-workspace', 't', 'ws-2'],
+      ['session:set-claude-session-id', 't', 'after-clear']
+    ])
+  })
+  it("a refusal from main never undoes the server's write", async () => {
+    await serverComes()
+    mocks.invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'server:endpoint') return endpoint
+      if (channel.startsWith('session:set-')) throw new Error('main refused')
+      return undefined
+    })
+    await expect(api.setSessionDisplayName('t', 'Mine', true)).resolves.toBeUndefined()
+    expect(mocks.sessions.keepOnRecord).toHaveBeenCalledTimes(1)
+  })
+
+  it("main's copy is written first, so a server that refuses still leaves the boot's source current", async () => {
+    await serverComes()
+    const order: string[] = []
+    mocks.invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'server:endpoint') return endpoint
+      if (channel.startsWith('session:set-')) order.push(`main ${channel}`)
+      return undefined
+    })
+    mocks.sessions.keepOnRecord.mockImplementation(async () => {
+      order.push('server')
+      throw new Error('server restarting')
+    })
+    await expect(api.setSessionDisplayName('t', 'Mine', true)).rejects.toThrow()
+    await expect(api.setSessionViewRecord('t', null)).rejects.toThrow()
+    await expect(api.setSessionWorkspace('t', 'ws')).rejects.toThrow()
+    await expect(api.setSessionClaudeSessionId('t', 'c2')).rejects.toThrow()
+    expect(order).toEqual([
+      'main session:set-display-name',
+      'server',
+      'main session:set-view',
+      'server',
+      'main session:set-workspace',
+      'server',
+      'main session:set-claude-session-id',
+      'server'
+    ])
   })
 })
