@@ -17,8 +17,8 @@
  * starts the app on its separate server, and times the rows from the page's
  * own start (`performance.timeOrigin`, the window's navigation), polled inside
  * the page so the driver's latency is not in the figure. Then: no prompt was
- * shown, every tab is in its group once, no agent started for a chat nobody
- * opened, and opening one starts exactly that one.
+ * shown, every tab is in its group once, no agent started for a chat the
+ * window does not show, and opening one starts exactly that one.
  *
  * What makes it able to fail: on dev fb0f09b the chats wait behind the prompt
  * and come back one at a time; adopt one at a time again, mount the hidden
@@ -33,7 +33,7 @@ import {
   launchApp,
   seedWorkspaces,
   seedTrustedRoots,
-  seedSessionRecord,
+  separateServerDataDir,
   userDataDir,
   fixturePath,
   callMcp,
@@ -52,11 +52,15 @@ const CODEX_SHARE = 0.6
 /** About one second after the window appears; the margin is the machine's. */
 const ROWS_WITHIN_MS = 1500
 
-/** Every agent start the stubs logged, oldest first. */
-const starts = () =>
+/** Every start of a stub, oldest first. */
+const allStarts = () =>
   existsSync(STARTS)
     ? readFileSync(STARTS, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
     : []
+/** The chats' agents: started for a session, which names itself in
+ *  CLAVE_SESSION_ID. The app also runs the Codex CLI for itself (its usage,
+ *  its model list), which is not a restored chat starting. */
+const starts = () => allStarts().filter((s) => s.session)
 
 function writeFixtures(records, groups) {
   rmSync(ROOT, { recursive: true, force: true })
@@ -76,7 +80,7 @@ function writeFixtures(records, groups) {
   for (const name of ['claude', 'codex'])
     writeFileSync(
       `${BIN}/${name}`,
-      `#!/bin/sh\necho '{"agent":"${name}","pid":'$$'}' >> ${JSON.stringify(STARTS)}\nexec sleep 600\n`,
+      `#!/bin/sh\nargs=$(printf '%s' "$*" | tr -d '"\\\\' | cut -c1-80)\necho '{"agent":"${name}","pid":'$$',"session":"'"$CLAVE_SESSION_ID"'","args":"'"$args"'"}' >> ${JSON.stringify(STARTS)}\nexec sleep 600\n`,
       { mode: 0o755 }
     )
   writeFileSync(
@@ -123,7 +127,11 @@ function writeFixtures(records, groups) {
       displayOrder: groups.map((g) => g.id)
     })
   )
-  for (const r of records) seedSessionRecord(DIR, r)
+  // The records live where the separate server keeps them, as on an install
+  // that has run on it before.
+  const recordsDir = path.join(separateServerDataDir(DIR), 'session-records')
+  mkdirSync(recordsDir, { recursive: true })
+  for (const r of records) writeFileSync(path.join(recordsDir, `${r.id}.json`), JSON.stringify(r))
 }
 
 function chatRecord(id, codex) {
@@ -155,8 +163,15 @@ function installWatch(expected) {
   w.__restoreTiming = { inGroupsAt: null, promptSeen: false }
   const tick = () => {
     const state = w.__restoreTiming
-    if ([...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Restore'))
+    // A prompt is a failure of its own (below), and answered at once, so the
+    // figure still says how long the tabs took after it.
+    const restore = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Restore'
+    )
+    if (restore) {
       state.promptSeen = true
+      restore.click()
+    }
     if (state.inGroupsAt !== null) return
     const all = expected.every(({ group, ids }) => {
       const foot = document.querySelector(
@@ -243,22 +258,37 @@ export async function run(t) {
       layoutGroups.map((g) => ({ id: g.id, n: g.sessionIds.length }))
     )
 
-    // No agent started for a chat nobody opened.
+    // No agent started for a chat nobody looked at: the one tab the window
+    // shows (the restore focuses the first when nothing was selected) may
+    // start, every other stays dormant.
     await new Promise((r) => setTimeout(r, 2000))
-    t.check('no agent started for the 100 unopened chats', starts().length === 0, starts())
+    const shown = await win.evaluate(() =>
+      [...document.querySelectorAll('[data-terminal-tile]')]
+        .filter((tile) => !tile.hasAttribute('inert'))
+        .map((tile) => tile.getAttribute('data-terminal-tile'))
+    )
+    const atRest = starts()
+    t.check(
+      `no agent started for the ${all.length - shown.length} restored chats not shown`,
+      atRest.every((s) => shown.includes(s.session)),
+      { started: atRest, shown }
+    )
 
     // Opening one starts that one, and only that one.
-    const opened = groups[0].ids[0]
+    const opened = all.find((id) => !shown.includes(id))
     await win.click(`[data-sidebar-item-id="${opened}"] button`)
-    const one = await until(() => (starts().length >= 1 ? starts() : null), { tries: 40 })
+    const woke = await until(() => (starts().some((s) => s.session === opened) ? starts() : null), {
+      tries: 40
+    })
     await new Promise((r) => setTimeout(r, 1000))
+    const added = starts().slice(atRest.length)
     t.check(
       'opening a restored chat starts exactly its agent',
-      !!one && starts().length === 1,
-      starts()
+      !!woke && added.length === 1 && added[0].session === opened,
+      { added, opened }
     )
   } finally {
-    for (const s of starts()) {
+    for (const s of allStarts()) {
       try {
         process.kill(s.pid, 'SIGKILL')
       } catch {
