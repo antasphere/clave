@@ -63,15 +63,25 @@ export async function run(t) {
     win.evaluate(
       () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
     )
-  const readEnd = async (kind) => {
+  const reveal = async (kind) => {
     await view(kind).getByRole('textbox', { name: 'Message', exact: true }).waitFor()
-    await view(kind)
-      .locator('.chat-scroll')
-      .evaluate((el) => {
-        el.scrollTop = el.scrollHeight
-      })
     await frames()
   }
+  const painted = (kind, text = '') =>
+    view(kind)
+      .locator('.chat-scroll')
+      .evaluate((el, text) => {
+        const box = el.getBoundingClientRect()
+        return Array.from(el.querySelectorAll('.chat-turn')).some((row) => {
+          const rect = row.getBoundingClientRect()
+          return (
+            rect.height > 0 &&
+            rect.bottom > box.top + 1 &&
+            rect.top < box.bottom - 1 &&
+            row.textContent.includes(text)
+          )
+        })
+      }, text)
   const choose = async (kind) => {
     await win.evaluate(
       ({ id, kind }) => window.electronAPI.sessionsSetView(id, `clave.chat-view/${kind}`),
@@ -92,9 +102,19 @@ export async function run(t) {
       .locator('.chat-column')
       .evaluate((el) => {
         globalThis.__hiddenMutations = 0
+        globalThis.__hiddenMutationDetails = []
         globalThis.__hiddenObserver?.disconnect()
         globalThis.__hiddenObserver = new MutationObserver((changes) => {
           globalThis.__hiddenMutations += changes.length
+          globalThis.__hiddenMutationDetails.push(
+            ...changes.map((change) => ({
+              type: change.type,
+              target: change.target.parentElement?.className,
+              text: change.target.textContent?.slice(0, 200),
+              added: Array.from(change.addedNodes, (node) => node.textContent?.slice(0, 80)),
+              removed: Array.from(change.removedNodes, (node) => node.textContent?.slice(0, 80))
+            }))
+          )
         })
         globalThis.__hiddenObserver.observe(el, {
           subtree: true,
@@ -154,6 +174,7 @@ export async function run(t) {
     await view('terminal').getByText('START', { exact: true }).waitFor()
     await choose('chat')
     await win.waitForTimeout(150)
+    await frames()
     await observe('terminal')
     await delta('selected-slot ')
     await view('chat').getByText('START selected-slot', { exact: true }).waitFor()
@@ -165,6 +186,39 @@ export async function run(t) {
     )
     t.check('the inactive native view defers presentation while the visible view streams', true)
 
+    // Keep the streaming row in the virtualised range: a scrolled-up reader
+    // alone cannot expose wasted background rendering of the offscreen tail.
+    await win.locator('.launcher-split .launcher-btn').click()
+    assert.ok(
+      await until(
+        async () => (await win.evaluate(() => window.electronAPI.sessionsList())).length === 2
+      )
+    )
+    const other = (await win.evaluate(() => window.electronAPI.sessionsList())).find(
+      (s) => s.id !== record.id
+    )
+    assert.ok(other)
+    assert.ok(await until(async () => !(await view('chat').isVisible())))
+    await win.waitForTimeout(150)
+    await observe('chat')
+    const following = Array.from({ length: 10 }, (_, n) => `following-${n} `)
+    for (const chunk of following) {
+      await delta(chunk)
+      await frames()
+    }
+    assert.equal(
+      await win.evaluate(() => globalThis.__hiddenMutations),
+      0,
+      'a background tab following the end must defer transcript presentation'
+    )
+    await win.locator(`[data-sidebar-item-id="${record.id}"] > button`).click()
+    await reveal('chat')
+    assert.ok(
+      await until(() => painted('chat', 'following-9')),
+      'background reveal paints the latest text without a test scroll'
+    )
+    t.check('a background tab following the end defers rendering and catches up on reveal', true)
+
     const input = view('chat').getByRole('textbox', { name: 'Message', exact: true })
     await input.fill('draft retained while hidden')
     const scroll = view('chat').locator('.chat-scroll')
@@ -175,12 +229,7 @@ export async function run(t) {
     await frames()
     const savedTop = await scroll.evaluate((el) => el.scrollTop)
     assert.ok(savedTop > 0, 'the reader has a nonzero offset to preserve')
-    await win.locator('.launcher-split .launcher-btn').click()
-    assert.ok(
-      await until(
-        async () => (await win.evaluate(() => window.electronAPI.sessionsList())).length === 2
-      )
-    )
+    await win.locator(`[data-sidebar-item-id="${other.id}"] > button`).click()
     await win.waitForTimeout(150)
     await observe('chat')
     await win.evaluate((id) => {
@@ -258,8 +307,9 @@ export async function run(t) {
       ),
       `returning preserves the reader's offset ${savedTop}, got ${await scroll.evaluate((el) => el.scrollTop)}`
     )
+    assert.ok(await until(() => painted('chat')), 'returning paints rows at the retained offset')
     await view('chat').getByRole('button', { name: 'Scroll to end', exact: true }).click()
-    const expected = 'START selected-slot ' + chunks.join('')
+    const expected = 'START selected-slot ' + following.join('') + chunks.join('')
     assert.ok(
       await until(async () =>
         (
@@ -278,10 +328,6 @@ export async function run(t) {
       'terminal reveals the same complete accumulated answer'
     )
     await view('terminal').locator('.chat-prompt[data-kind="permission"]').waitFor()
-    const other = (await win.evaluate(() => window.electronAPI.sessionsList())).find(
-      (s) => s.id !== record.id
-    )
-    assert.ok(other)
     await win.locator(`[data-sidebar-item-id="${other.id}"] > button`).click()
     await inject(fixture, record.id, [
       { type: 'state_change', state: 'working' },
@@ -333,17 +379,22 @@ export async function run(t) {
       'the alternate workspace hides the pane'
     )
     await win.waitForTimeout(150)
+    await frames()
     await observe('terminal')
     await delta('workspace-hidden ')
     await frames()
     assert.equal(
       await win.evaluate(() => globalThis.__hiddenMutations),
       0,
-      'a pane in another workspace defers presentation'
+      `a pane in another workspace defers presentation: ${JSON.stringify(await win.evaluate(() => globalThis.__hiddenMutationDetails))}`
     )
     await callMcp(app, 'switchWorkspace', { workspace: 'chat' })
     await win.locator(`[data-sidebar-item-id="${record.id}"] > button`).click()
-    await readEnd('terminal')
+    await reveal('terminal')
+    assert.ok(
+      await until(() => painted('terminal', 'workspace-hidden')),
+      'workspace reveal paints the latest text without a test scroll'
+    )
     assert.equal(
       await view('terminal').getAttribute('data-fixture-identity'),
       'before-workspace',
@@ -358,6 +409,7 @@ export async function run(t) {
     await win.locator('.sidebar-footer-btn[aria-label="Settings"]').click()
     assert.ok(await until(async () => !(await view('terminal').isVisible())))
     await win.waitForTimeout(150)
+    await frames()
     await observe('terminal')
     await delta('settings-hidden ')
     await frames()
@@ -367,7 +419,11 @@ export async function run(t) {
       'Settings covering the grid defers presentation'
     )
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
-    await readEnd('terminal')
+    await reveal('terminal')
+    assert.ok(
+      await until(() => painted('terminal', 'settings-hidden')),
+      'Settings reveal paints the latest text without a test scroll'
+    )
     await view('terminal')
       .locator('.chat-turn[data-role="assistant"]')
       .filter({ hasText: 'settings-hidden' })

@@ -1,6 +1,6 @@
 # Hidden streaming transcript rendering
 
-Issue [#191](https://github.com/antasphere/clave/issues/191), performance wave [#186](https://github.com/antasphere/clave/issues/186). Measured targets pass on the review candidate. Full repository checks and focused Electron checks pass. Independent verification is pending. No release or merge.
+Issue [#191](https://github.com/antasphere/clave/issues/191), performance wave [#186](https://github.com/antasphere/clave/issues/186). Measured targets pass on the review candidate. Full repository checks and focused Electron checks pass. Independent round 1 returned PASS-WITH-FINDINGS; regression coverage repairs and re-review are in progress. No release or merge.
 
 ## Reproduction and cause
 
@@ -42,7 +42,7 @@ Runner SHA-256 `2f41ec01d783f5f42209fa5a08b57579b1637ba5dc5b34a5c0f72603bba6c6bd
 
 Presentation visibility combines the selected panes, workspace, grid overlays and active native slot. It preserves every selected pane in a multi-pane grid regardless of keyboard focus. Both views keep subscriptions, reducers, control requests, status/model reports and mounted local state. Only transcript grouping and presentation use the last visible snapshot. Reveal uses the latest reduced entries immediately. Hidden pagination/focus work is gated.
 
-The shared transcript hook preserves reading intent and offset across hiding. A hidden element's zero-sized box must not turn a reader at a nonzero offset into one following the end. A second reveal failure was a stale virtualizer range: the native DOM identity survived and the real scroll container was at its end, but rendered rows remained at the beginning. Notifying scroll listeners on the first reveal frame synchronizes the cached range with the restored DOM offset. The completed fixture proves both offset retention and complete workspace/Settings reveal. Removing this synchronization must be covered by independent mutation verification.
+The shared transcript hook preserves reading intent and offset across hiding. A hidden element's zero-sized box must not turn a reader at a nonzero offset into one following the end. During implementation a reveal diagnostic showed a stale virtualizer range: the native DOM identity survived and the real scroll container was at its end, but rendered rows remained at the beginning. A scroll notification on the first reveal frame preceded the next successful run. Independent round 1 removed that notification and still passed both the original checks and an additional reveal probe in both server modes (finding F1). The revised candidate fixture checks painted rows and latest text on reveal before any test scroll, as well as the retained nonzero offset. It passes on the unchanged product and fails its workspace painted-text assertion when the notification is removed. Independent confirmation of that new catch remains pending; the original uncaught results are preserved.
 
 `tests/e2e/hidden-chat-rendering-fixture.mjs` exports the reusable `chat/hidden-streaming` scenario with `@structure-ai/fixtures`. It composes the existing `openChat` echo adapter and recording route; app commands create the session and write the first message. Synthetic adapter output crosses the normal session transport. Each invocation has a fresh fixture run UUID and harness namespace, with isolated user data and workspace. Cleanup closes only its own Electron app and removes its own fixture directories. Test mode enables the fixture route; there is no inference or production target.
 
@@ -94,7 +94,13 @@ SHELL=/bin/zsh CLAVE_E2E_NS=<fresh-namespace> CLAVE_E2E_SERVER=<in-process-or-se
   chat-input-history chat-prompt-dock chat-history-pages
 ```
 
-The final report/archive commit changes no build inputs. Independent opposite-provider review, including a semantic mutation that removes reveal synchronization and a byte-identical restoration check, is pending. This report does not claim merge readiness or release.
+The report/archive commit changes no build inputs. [The complete independent Opus 5.5 round-1 report](https://github.com/antasphere/clave/pull/193#issuecomment-6197769494) covers exact candidate `3040de8c80eee8517eb9a3d88c97aec649b121ae`. The verifier repeated all local gates, both 40-check focused suites, artifact validation and raw metric recomputation. Every mutation restored byte-identical; no product defect was found. This report does not claim merge readiness or release.
+
+Round 1 found a material regression-test gap (F2): removing background-tab selection gating passed the original fixture, whose reader was scrolled away from the streaming row. A verifier probe with the reader following the end observed ten hidden DOM mutations instead of zero. The revised candidate fixture adds that case: it passes all eight checks on the unchanged product and fails with ten mutations when selection gating is removed. Independent re-review of this repair is pending. The original uncaught result remains in the peer report.
+
+Author repair checks caught resync removal at the workspace painted-text assertion in two in-process runs. A separate-mode attempt failed at a different assertion (one hidden row-container mutation); a restored in-process run also produced that mutation, so the separate attempt is ambiguous and does not count as a semantic catch. The corrected fixture awaits two animation frames after hiding before observing the settled transcript; the zero-mutation criterion is unchanged. Both original failures are retained for re-review.
+
+Other findings remain explicit. F3 records defensive guards without uniquely dependent tests; no necessity is claimed for each guard. F4 and F5 concern the input metric boundary and measurement variation disclosed above. The verifier's single informal 100-tab pilot had 196.070ms extra task time and 28.0ms streaming composer p95; it is not a replacement for the accepted three-launch median. F6 notes that raw and normalized profiles are byte-identical (18 unique profiles), and the frozen runner does not itself record a per-launch renderer hash. F7 describes a plausible, unexercised earlier-page-in-flight plus hidden-append scroll edge case; it is not a reproduced defect. No speculative product change was made for it.
 
 ## Limits
 
