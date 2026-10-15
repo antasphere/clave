@@ -44,6 +44,7 @@ import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
+import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
@@ -64,6 +65,7 @@ import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/compone
 export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
+  visible?: boolean
 }
 /** A file on its way into the composer: named at once, a chip once main has
  *  prepared it, an error in its place when main refused it. */
@@ -364,11 +366,12 @@ function TranscriptRow({
     </div>
   )
 }
-export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
+export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
   })
+  const presentation = usePresentation(conversation, visible)
   // The footer's context meter reads the same stream the terminal's status line does.
   const [status, dispatchStatus] = useReducer(
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
@@ -494,9 +497,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
      blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
   const closed = !ready || state === 'ended'
-  useComposerFocus(session.id, !closed, textarea)
+  useComposerFocus(session.id, visible && !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
-  const transcript = useTranscriptEnd(conversation.entries, stickSlack)
+  const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
     const page = await window.electronAPI.sessionsHistory(session.id, before)
@@ -505,7 +508,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       setBefore(page.before)
     }
   }, [session.id, before])
-  const earlier = useEarlier(transcript, before !== null, fetchEarlier, conversation.entries)
+  const earlier = useEarlier(
+    transcript,
+    visible && before !== null,
+    fetchEarlier,
+    presentation.entries
+  )
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
   }
@@ -722,12 +730,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
   const blocks = useMemo(() => {
     const ordinal = new Map<Entry, number>()
-    conversation.entries.forEach((entry, i) => ordinal.set(entry, conversation.first + i))
-    return groupEntries(visibleEntries(conversation.entries)).map((block) => ({
+    presentation.entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(presentation.entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [conversation.entries, conversation.first])
+  }, [presentation.entries, presentation.first])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
