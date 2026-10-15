@@ -4,6 +4,7 @@ import {
   PAST_RETRY_FOR_MS,
   PAST_RETRY_MS,
   pastHead,
+  pastStep,
   readPast,
   type PastClock
 } from '../../../../plugins/chat-view/src/past'
@@ -212,5 +213,22 @@ describe("the transcript's head (PRDCT-3526, round 1 of the verifier, F1)", () =
   it('says the failure, never the invitation, when the round found no answer', () => {
     expect(pastHead('failed', 0, false)).toBe('failed')
     expect(pastHead('failed', 4, false)).toBe('failed')
+  })
+})
+
+describe("the pane's past state (round 2 of the verifier, G2)", () => {
+  it('a Retry after a failure goes back to reading, so neither head shows', () => {
+    const after = pastStep('failed', 'retry')
+    expect(after).toBe('reading')
+    expect(pastHead(after, 0, false)).toBe(null)
+  })
+  it('an answer reads it, a spent round fails it', () => {
+    expect(pastStep('reading', 'read')).toBe('read')
+    expect(pastStep('reading', 'failed')).toBe('failed')
+    expect(pastStep('failed', 'read')).toBe('read')
+  })
+  it('once read, nothing moves it', () => {
+    expect(pastStep('read', 'failed')).toBe('read')
+    expect(pastStep('read', 'retry')).toBe('read')
   })
 })

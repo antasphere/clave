@@ -182,6 +182,39 @@ export async function run(t) {
       serverRecord()?.displayName === RENAMED ? serverRecord() : null
     )
     t.check("a rename from the window reaches the server's record", !!renamed, serverRecord())
+
+    // So do a /clear's new conversation, a workspace move and the page on the
+    // tab's row (round 2 of the lane's verifier): they took the same road to
+    // main's copy only.
+    const CLEARED = '7a1c9e44-2b3d-4f6a-8e5c-0d9b1f2a3c4e'
+    await win.evaluate(
+      ({ id, conversation }) => window.electronAPI.setSessionClaudeSessionId(id, conversation),
+      { id: TAB, conversation: CLEARED }
+    )
+    const cleared = await until(() =>
+      serverRecord()?.claudeSessionId === CLEARED ? serverRecord() : null
+    )
+    t.check("a /clear's new conversation reaches the server's record", !!cleared, serverRecord())
+    await win.evaluate(({ id }) => window.electronAPI.setSessionWorkspace(id, 'moved-ws'), {
+      id: TAB
+    })
+    const moved = await until(() =>
+      serverRecord()?.workspaceId === 'moved-ws' ? serverRecord() : null
+    )
+    t.check("a workspace move reaches the server's record", !!moved, serverRecord())
+    const PAGE = { url: 'http://127.0.0.1:4826', title: 'The lane page' }
+    await win.evaluate(({ id, page }) => window.electronAPI.setSessionViewRecord(id, page), {
+      id: TAB,
+      page: PAGE
+    })
+    const paged = await until(() =>
+      serverRecord()?.view?.url === PAGE.url ? serverRecord() : null
+    )
+    t.check(
+      "the page on the tab's row reaches the server's record",
+      paged?.view?.title === PAGE.title,
+      serverRecord()
+    )
   } finally {
     if (app) await app.close()
     rmSync(DIR, { recursive: true, force: true })

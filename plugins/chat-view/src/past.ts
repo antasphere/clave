@@ -125,3 +125,14 @@ export function pastHead(
   if (past === 'read' && entries === 0 && !ended) return 'empty'
   return null
 }
+
+/** How the pane's past state moves: an answer reads it, a spent round fails
+ *  it, and a Retry goes back to reading whatever it was, so the head says
+ *  nothing until the new round answers (round 2 of the lane's verifier: the
+ *  transition lived in the component and nothing pinned it). An answer or a
+ *  failure arriving after the past was read changes nothing. */
+export function pastStep(past: PastState, event: 'read' | 'failed' | 'retry'): PastState {
+  if (event === 'retry') return past === 'read' ? 'read' : 'reading'
+  if (past === 'read') return 'read'
+  return event
+}

@@ -39,3 +39,39 @@ describe('the history deadline (PRDCT-3526)', () => {
     expect(HISTORY_TIMEOUT_MS).toBeLessThan(PATIENT_TIMEOUT_MS)
   })
 })
+
+describe('what the window keeps on a record (PRDCT-3526, round 2 of the verifier, G1)', () => {
+  /** A call that hands the request client a double and keeps the payload. */
+  function capturing(): { call: Call; payloads: unknown[] } {
+    const payloads: unknown[] = []
+    const client = {
+      sessions: {
+        keepOnRecord: ({ payload }: { payload: unknown }) => {
+          payloads.push(payload)
+          return undefined
+        }
+      }
+    }
+    const call = (async (run: (c: unknown) => unknown) => run(client)) as unknown as Call
+    return { call, payloads }
+  }
+
+  it('sends each field the window gave, and none it did not', async () => {
+    const { call, payloads } = capturing()
+    const client = sessionsClient(call)
+    await client.keepOnRecord('t', { name: { displayName: 'A', userRenamed: true } })
+    await client.keepOnRecord('t', { page: { url: 'http://127.0.0.1:1' } })
+    await client.keepOnRecord('t', { page: null })
+    await client.keepOnRecord('t', { claudeSessionId: 'after-clear' })
+    await client.keepOnRecord('t', { workspaceId: 'ws-2' })
+    await client.keepOnRecord('t', { workspaceId: null })
+    expect(payloads).toEqual([
+      { id: 't', name: { displayName: 'A', userRenamed: true } },
+      { id: 't', page: { url: 'http://127.0.0.1:1' } },
+      { id: 't', page: null },
+      { id: 't', claudeSessionId: 'after-clear' },
+      { id: 't', workspaceId: 'ws-2' },
+      { id: 't', workspaceId: null }
+    ])
+  })
+})

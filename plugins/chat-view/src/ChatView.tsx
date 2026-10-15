@@ -48,7 +48,7 @@ import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading, PastFailed } from './EarlierLoading'
-import { pastHead, readPast, type PastReader, type PastState } from './past'
+import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -457,11 +457,11 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
             if (usage) dispatchStatus(usage.event)
-            setPast('read')
+            setPast((now) => pastStep(now, 'read'))
           },
           failed: (error) => {
             console.error(`[chat-view] the past of ${session.id} could not be read`, error)
-            setPast('failed')
+            setPast((now) => pastStep(now, 'failed'))
           }
         })
         stopConnected = window.electronAPI.onServerConnected(() => pastReader.current?.retry())
@@ -780,7 +780,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
                 onRetry={() => {
                   // Back to reading: neither the failure nor the empty state
                   // until the new round answers.
-                  setPast('reading')
+                  setPast((now) => pastStep(now, 'retry'))
                   pastReader.current?.retry()
                 }}
               />
