@@ -844,6 +844,19 @@ const watchWorkspaceFilesServer = (): void => {
   onServerAvailable(wireWorkspaceFiles)
 }
 
+/** The same record write on main's copy of the records, after the server's:
+ *  the window's boot lists the records to bring back from main's folder
+ *  (PRDCT-3530), so a field kept on the server's record alone came back
+ *  stale after a quit (wave 6, lane A). Main writes only a record it has, and
+ *  a failure there never undoes the server's write. */
+const alsoMain = async (channel: string, ...args: unknown[]): Promise<void> => {
+  try {
+    await ipcRenderer.invoke(channel, ...args)
+  } catch {
+    // Main's copy is the boot's fallback source; the server's record stands.
+  }
+}
+
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
   onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
@@ -1169,23 +1182,28 @@ const electronAPI = {
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
-  // A tab's name and page, kept on the record the next launch restores it
-  // from: the server's, once main names it (wave 6, lane A, PRDCT-3526).
-  // Over IPC they reached main's copy of the records only, which the
-  // separate server never reads, and a renamed tab came back as its folder.
+  // A tab's name and page, kept on the records the next launch restores it
+  // from (wave 6, lane A, PRDCT-3526): the server's once main names it, and
+  // main's too (`alsoMain`), because the window's boot still lists the
+  // records to bring back from main's folder (PRDCT-3530) and a tab renamed
+  // on the server's record alone came back under its old name.
   setSessionDisplayName: viaServer<[string, string | null, boolean], void>({
     ipc: (id, displayName, userRenamed) =>
       ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
-    server: ({ api }, id, displayName, userRenamed) =>
-      api.sessions.keepOnRecord(id, { name: { displayName, userRenamed: userRenamed === true } })
+    server: async ({ api }, id, displayName, userRenamed) => {
+      await api.sessions.keepOnRecord(id, {
+        name: { displayName, userRenamed: userRenamed === true }
+      })
+      await alsoMain('session:set-display-name', id, displayName, userRenamed)
+    }
   }),
   setSessionViewRecord: viaServer<
     [string, { url: string; title?: string; command?: string; cwd?: string } | null],
     void
   >({
     ipc: (id, view) => ipcRenderer.invoke('session:set-view', id, view),
-    server: ({ api }, id, view) =>
-      api.sessions.keepOnRecord(id, {
+    server: async ({ api }, id, view) => {
+      await api.sessions.keepOnRecord(id, {
         page:
           view && typeof view.url === 'string' && view.url.length > 0
             ? {
@@ -1196,13 +1214,18 @@ const electronAPI = {
               }
             : null
       })
+      await alsoMain('session:set-view', id, view)
+    }
   }),
 
   // Kept on the server's record once main names it, like the name (round 1
   // of wave 6 lane A's verifier): over IPC it reached main's copy only.
   setSessionWorkspace: viaServer<[string, string | null], void>({
     ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
-    server: ({ api }, id, workspaceId) => api.sessions.keepOnRecord(id, { workspaceId })
+    server: async ({ api }, id, workspaceId) => {
+      await api.sessions.keepOnRecord(id, { workspaceId })
+      await alsoMain('session:set-workspace', id, workspaceId)
+    }
   }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
@@ -1482,10 +1505,11 @@ const electronAPI = {
   setSessionClaudeSessionId: viaServer<[string, string], void>({
     ipc: (id, claudeSessionId) =>
       ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
-    server: ({ api }, id, claudeSessionId) =>
-      typeof id === 'string' && typeof claudeSessionId === 'string' && claudeSessionId
-        ? api.sessions.keepOnRecord(id, { claudeSessionId })
-        : Promise.resolve()
+    server: async ({ api }, id, claudeSessionId) => {
+      if (typeof id !== 'string' || typeof claudeSessionId !== 'string' || !claudeSessionId) return
+      await api.sessions.keepOnRecord(id, { claudeSessionId })
+      await alsoMain('session:set-claude-session-id', id, claudeSessionId)
+    }
   }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
