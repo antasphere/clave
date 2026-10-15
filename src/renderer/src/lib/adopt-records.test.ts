@@ -30,6 +30,14 @@ const spawned: string[] = []
 let byIdRecords: SessionRecord[] = []
 /** What the kernel's session list answers: id and state. */
 let kernel: { id: string; state: string }[] = []
+/** When set, the kernel's answer waits for the test to release it: the
+ *  snapshot is taken when asked and arrives after whatever the test does. */
+let listGate: { release: () => void; promise: Promise<void> } | null = null
+const holdList = (): void => {
+  let release = (): void => {}
+  const promise = new Promise<void>((resolve) => (release = resolve))
+  listGate = { release, promise }
+}
 
 beforeAll(async () => {
   const mem = new Map<string, string>()
@@ -46,7 +54,9 @@ beforeAll(async () => {
     captureTabClosed: () => {},
     sessionsList: async () => {
       listCalls++
-      return kernel
+      const answer = kernel
+      if (listGate) await listGate.promise
+      return answer
     },
     listSessionRecords: async (filter?: { ids?: string[] }) =>
       byIdRecords.filter((r) => !filter?.ids || filter.ids.includes(r.id)),
@@ -94,6 +104,7 @@ beforeEach(() => {
   spawned.length = 0
   byIdRecords = []
   kernel = []
+  listGate = null
 })
 
 const record = (id: string): SessionRecord =>
@@ -355,6 +366,99 @@ describe('a record the host already runs', () => {
     byIdRecords = [claudeDormant]
     await adoptServerStartedSessions(['claude-dormant'])
     expect(byId('claude-dormant')).toMatchObject({ alive: false, activityStatus: 'ended' })
+  })
+
+  // V1-F3: the kernel's answer is a snapshot taken when asked. A word, or a
+  // restart onto another account, that reaches the tab while it is on its way
+  // is newer: an `ended` in the old snapshot must not end the tab under it.
+  describe('an ended snapshot that arrives after a newer word', () => {
+    const asked = async (): Promise<void> => {
+      for (let i = 0; i < 20 && listCalls === 0; i++) await flush()
+      expect(listCalls).toBe(1)
+    }
+    const working = (id: string): void => {
+      useSessionStore.getState().setAgentState(id, 'working')
+      useSessionStore.getState().setSessionActivity(id, 'working')
+    }
+
+    it('keeps a working word that came in meanwhile (layout path)', async () => {
+      kernel = [{ id: 'claude-started', state: 'ended' }]
+      byIdRecords = [claudeStarted]
+      holdList()
+      const adoption = adoptServerStartedSessions(['claude-started'])
+      await asked()
+      expect(byId('claude-started')?.alive).toBe(true)
+      working('claude-started')
+      listGate!.release()
+      await adoption
+      expect(byId('claude-started')).toMatchObject({
+        alive: true,
+        agentState: 'working',
+        activityStatus: 'working'
+      })
+      expect(spawned).toEqual([])
+    })
+
+    it('keeps a restart onto another account, and its working word', async () => {
+      kernel = [{ id: 'claude-started', state: 'ended' }]
+      byIdRecords = [claudeStarted]
+      holdList()
+      const adoption = adoptServerStartedSessions(['claude-started'])
+      await asked()
+      useSessionStore.getState().applySessionRestart('claude-started', {
+        claudeSessionId: null,
+        claudeProfileId: 'new-test-profile'
+      })
+      working('claude-started')
+      listGate!.release()
+      await adoption
+      expect(byId('claude-started')).toMatchObject({
+        alive: true,
+        agentState: 'working',
+        activityStatus: 'working',
+        restartEpoch: 1,
+        claudeProfileId: 'new-test-profile'
+      })
+    })
+
+    it('keeps a restart that came in meanwhile even before any word', async () => {
+      kernel = [{ id: 'claude-started', state: 'ended' }]
+      byIdRecords = [claudeStarted]
+      holdList()
+      const adoption = adoptServerStartedSessions(['claude-started'])
+      await asked()
+      useSessionStore.getState().applySessionRestart('claude-started', { claudeSessionId: null })
+      listGate!.release()
+      await adoption
+      expect(byId('claude-started')).toMatchObject({ alive: true, restartEpoch: 1 })
+    })
+
+    it('keeps a working word that came in meanwhile (restore path)', async () => {
+      kernel = [{ id: 'codex-dormant', state: 'ended' }]
+      holdList()
+      const { attached } = placeRecords([codexDormant], null)
+      await attached
+      await asked()
+      working('codex-dormant')
+      listGate!.release()
+      for (let i = 0; i < 5; i++) await flush()
+      expect(byId('codex-dormant')).toMatchObject({
+        alive: true,
+        agentState: 'working',
+        activityStatus: 'working'
+      })
+    })
+
+    it('still ends a tab nothing touched while the answer was on its way', async () => {
+      kernel = [{ id: 'claude-started', state: 'ended' }]
+      byIdRecords = [claudeStarted]
+      holdList()
+      const adoption = adoptServerStartedSessions(['claude-started'])
+      await asked()
+      listGate!.release()
+      await adoption
+      expect(byId('claude-started')).toMatchObject({ alive: false, activityStatus: 'ended' })
+    })
   })
 
   it('a cold chat record still spawns, dormant, as before', async () => {

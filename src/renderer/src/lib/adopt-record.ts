@@ -147,17 +147,26 @@ function settleRestored(spawned: Session): void {
  * for an events session (`views/kernel-state.ts`). A session the kernel holds
  * as `ended` (a chat whose provider exited, still held by the host) comes in
  * ended, the record being the arbiter as in `views/session-end.ts`: taken in
- * from its record it would otherwise read as a usable tab until opened.
+ * from its record it would otherwise read as a usable tab until opened. The
+ * answer is a snapshot taken when asked, so the end is applied only to a tab
+ * nothing has touched since (the same object): a word or a restart that
+ * reached it while the read was on its way is newer, and stands (V1-F3).
  */
 export async function seedAgentStatesFromKernel(ids: string[]): Promise<void> {
   if (ids.length === 0) return
+  const asked = new Map(
+    useSessionStore
+      .getState()
+      .sessions.filter((s) => ids.includes(s.id))
+      .map((s) => [s.id, s])
+  )
   const listed = (await window.electronAPI?.sessionsList?.().catch(() => [])) ?? []
   const store = useSessionStore.getState()
   for (const id of ids) {
     const state = listed.find((k) => k.id === id)?.state
     const session = store.sessions.find((s) => s.id === id)
     if (state === 'ended') {
-      if (session?.alive) store.updateSessionAlive(id, false)
+      if (session?.alive && session === asked.get(id)) store.updateSessionAlive(id, false)
       continue
     }
     if (state !== 'idle' && state !== 'working' && state !== 'blocked' && state !== 'done') continue
