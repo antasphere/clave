@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { normalizeListenHost } from '../../../packages/server/src/listen-host'
-import { unlinkSync } from 'node:fs'
+import { readFileSync, readdirSync, renameSync, unlinkSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { privateDirectory, createPrivateFile, readPrivateFile } from '../ports/private-files'
 
 export interface DaemonConfig {
@@ -69,63 +70,120 @@ export function daemonIdentity(dataDir: string, tokenFile?: string): DaemonIdent
   return { serverId: identity.serverId, token: identity.token }
 }
 
-/** The short lease transaction must never reclaim its own guard automatically:
- *  an interrupted transaction requires operator inspection rather than split ownership. */
-function withLeaseGuard(directory: string, operation: () => void): void {
-  const guard = join(directory, 'process.guard')
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const CLAIM_NAME = new RegExp(`^(${UUID})_([1-9][0-9]*)_(${UUID})\\.claim$`)
+let bootId: string | undefined
+
+/** Kernel boot identity must be stable even when the wall clock changes. */
+function daemonBootId(): string {
+  if (bootId) return bootId
+  const value = (
+    process.platform === 'linux'
+      ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8')
+      : process.platform === 'darwin'
+        ? execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], {
+            encoding: 'utf8',
+            timeout: 5000
+          })
+        : ''
+  )
+    .trim()
+    .toLowerCase()
+  if (!new RegExp(`^${UUID}$`).test(value))
+    throw new Error('A kernel boot identifier is required for daemon ownership')
+  bootId = value
+  return value
+}
+
+function alive(pid: number): boolean {
   try {
-    createPrivateFile(guard, JSON.stringify({ pid: process.pid }))
+    process.kill(pid, 0)
+    return true
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error(
-        'Daemon lease transaction already in progress; inspect process.guard if startup crashed'
-      )
-    }
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
     throw error
-  }
-  try {
-    operation()
-  } finally {
-    unlinkSync(guard)
   }
 }
 
-/** One writer for one data directory. A stale lease after a crash is reclaimed. */
+function removeMissingOk(file: string): void {
+  try {
+    unlinkSync(file)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+/** Publish before scanning and retain the immutable claim until release completes.
+ *  If two transactions overlap, at least the later publisher sees the earlier
+ *  live claim and aborts. Dead claims have unique names and can never be reused. */
 export function acquireDaemonLease(dataDir: string): () => void {
   const directory = join(resolve(dataDir), 'daemon')
   privateDirectory(directory)
-  const file = join(directory, 'process.json')
+  const claims = join(directory, 'process-claims')
+  privateDirectory(claims)
+  const boot = daemonBootId()
   const claimId = randomUUID()
-  const claim = (): void => createPrivateFile(file, JSON.stringify({ pid: process.pid, claimId }))
-  withLeaseGuard(directory, () => {
-    try {
-      claim()
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const previous = JSON.parse(readPrivateFile(file).toString('utf8')) as { pid?: number }
-      if (!previous.pid || !Number.isSafeInteger(previous.pid) || previous.pid < 1)
-        throw new Error('Invalid daemon process lease')
-      try {
-        process.kill(previous.pid, 0)
-        throw new Error('Another daemon already owns this data directory')
-      } catch (reason) {
-        if ((reason as NodeJS.ErrnoException).code !== 'ESRCH') throw reason
-      }
-      unlinkSync(file)
-      claim()
+  const claim = join(claims, `${boot}_${process.pid}_${claimId}.claim`)
+  const pending = join(directory, `${claimId}.pending`)
+  const file = join(directory, 'process.json')
+  // The filename contains all liveness information, even if killed before close/write.
+  createPrivateFile(claim, '')
+  try {
+    for (const name of readdirSync(claims)) {
+      const other = join(claims, name)
+      if (other === claim) continue
+      const match = CLAIM_NAME.exec(name)
+      if (!match || !Number.isSafeInteger(Number(match[2])))
+        throw new Error('Invalid daemon ownership claim')
+      if (match[1] === boot && alive(Number(match[2])))
+        throw new Error('Another daemon already owns or is claiming this data directory')
+      // Never unlink a shared guard pathname: this exact attempt can never be revived.
+      removeMissingOk(other)
+      removeMissingOk(join(directory, `${match[3]}.pending`))
     }
-  })
-  return () => {
+    let previous: { pid?: number; bootId?: string } | undefined
     try {
-      withLeaseGuard(directory, () => {
-        const current = JSON.parse(readPrivateFile(file).toString('utf8')) as {
-          pid?: number
-          claimId?: string
-        }
-        if (current.pid === process.pid && current.claimId === claimId) unlinkSync(file)
-      })
+      previous = JSON.parse(readPrivateFile(file).toString('utf8'))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (previous !== undefined) {
+      if (
+        !previous ||
+        !previous.pid ||
+        !Number.isSafeInteger(previous.pid) ||
+        previous.pid < 1 ||
+        (previous.bootId !== undefined && !new RegExp(`^${UUID}$`).test(previous.bootId))
+      )
+        throw new Error('Invalid daemon process lease')
+      // Legacy PID-only leases stay conservative when a PID was reused.
+      if ((previous.bootId === undefined || previous.bootId === boot) && alive(previous.pid))
+        throw new Error('Another daemon already owns this data directory')
+    }
+    createPrivateFile(pending, JSON.stringify({ pid: process.pid, claimId, bootId: boot }))
+    // A killed writer can leave a partial pending file, never partial published JSON.
+    renameSync(pending, file)
+  } catch (error) {
+    removeMissingOk(claim)
+    removeMissingOk(pending)
+    throw error
+  }
+  let released = false
+  return () => {
+    if (released) return
+    try {
+      let current: { pid?: number; claimId?: string } | undefined
+      try {
+        current = JSON.parse(readPrivateFile(file).toString('utf8'))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      if (current?.pid === process.pid && current.claimId === claimId) removeMissingOk(file)
+      // Keep the live claim throughout all shared state changes, including release.
+      removeMissingOk(claim)
+      released = true
     } catch {
-      /* Busy transactions or an already released lease remain safe to reclaim after exit. */
+      /* Retain the claim on cleanup failure. It becomes reclaimable on process exit. */
     }
   }
 }

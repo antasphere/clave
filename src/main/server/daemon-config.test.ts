@@ -175,13 +175,110 @@ it('does not let a previous release delete a newer claim from the same PID', () 
   }
 })
 
-it('fails closed on an interrupted lease transaction without deleting its guard', () => {
+it('recovers a dead acquisition claim without requiring shared guard removal', () => {
   const dir = directory()
-  const daemon = join(dir, 'daemon')
-  fs.mkdirSync(daemon, { mode: 0o700 })
-  const guard = join(daemon, 'process.guard')
-  fs.writeFileSync(guard, 'interrupted transaction', { mode: 0o600 })
-  expect(() => acquireDaemonLease(dir)).toThrow('inspect process.guard')
-  expect(fs.readFileSync(guard, 'utf8')).toBe('interrupted transaction')
-  expect(fs.existsSync(join(daemon, 'process.json'))).toBe(false)
+  const release = acquireDaemonLease(dir)
+  const lease = JSON.parse(fs.readFileSync(join(dir, 'daemon/process.json'), 'utf8'))
+  release()
+  const stale = join(
+    dir,
+    'daemon/process-claims',
+    `${lease.bootId}_2147483647_11111111-1111-4111-8111-111111111111.claim`
+  )
+  fs.writeFileSync(stale, '', { mode: 0o600 })
+  const guard = join(dir, 'daemon/process.guard')
+  fs.writeFileSync(guard, JSON.stringify({ pid: 2147483647 }), { mode: 0o600 })
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+    if (pid === 2147483647) throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+    return true
+  })
+  try {
+    const recovered = acquireDaemonLease(dir)
+    expect(fs.existsSync(stale)).toBe(false)
+    recovered()
+  } finally {
+    kill.mockRestore()
+  }
+})
+
+it('rejects an active claim before a shared process lease has been published', () => {
+  const dir = directory()
+  const release = acquireDaemonLease(dir)
+  fs.unlinkSync(join(dir, 'daemon/process.json'))
+  try {
+    expect(() => acquireDaemonLease(dir)).toThrow('already owns')
+  } finally {
+    release()
+  }
+})
+
+it('does not confuse a claim from a previous boot with a reused live PID', () => {
+  const dir = directory()
+  const release = acquireDaemonLease(dir)
+  release()
+  const oldBoot = '00000000-0000-0000-0000-000000000000'
+  const stale = join(
+    dir,
+    'daemon/process-claims',
+    `${oldBoot}_${process.pid}_11111111-1111-4111-8111-111111111111.claim`
+  )
+  fs.writeFileSync(stale, '', { mode: 0o600 })
+  fs.writeFileSync(
+    join(dir, 'daemon/process.json'),
+    JSON.stringify({ pid: process.pid, bootId: oldBoot }),
+    { mode: 0o600 }
+  )
+  const recovered = acquireDaemonLease(dir)
+  expect(fs.existsSync(stale)).toBe(false)
+  recovered()
+})
+
+it('keeps live same-boot PID reuse conservative, regardless of claim UUID', () => {
+  const dir = directory()
+  const release = acquireDaemonLease(dir)
+  const lease = JSON.parse(fs.readFileSync(join(dir, 'daemon/process.json'), 'utf8'))
+  release()
+  const stale = join(
+    dir,
+    'daemon/process-claims',
+    `${lease.bootId}_${process.pid}_11111111-1111-4111-8111-111111111111.claim`
+  )
+  fs.writeFileSync(stale, '', { mode: 0o600 })
+  expect(() => acquireDaemonLease(dir)).toThrow('already owns')
+  expect(fs.existsSync(stale)).toBe(true)
+})
+
+it.each(['null', 'false', '{"pid":0}', '{"pid":1,"bootId":"invalid"}'])(
+  'refuses corrupt process metadata %s without publishing a claim',
+  (metadata) => {
+    const dir = directory()
+    const release = acquireDaemonLease(dir)
+    release()
+    fs.writeFileSync(join(dir, 'daemon/process.json'), metadata, { mode: 0o600 })
+    expect(() => acquireDaemonLease(dir)).toThrow()
+    expect(fs.readFileSync(join(dir, 'daemon/process.json'), 'utf8')).toBe(metadata)
+    expect(fs.readdirSync(join(dir, 'daemon/process-claims'))).toHaveLength(0)
+  }
+)
+
+it('refuses an uncertain live owner rather than treating EPERM as a dead process', () => {
+  const dir = directory()
+  const release = acquireDaemonLease(dir)
+  const lease = JSON.parse(fs.readFileSync(join(dir, 'daemon/process.json'), 'utf8'))
+  release()
+  const claimed = join(
+    dir,
+    'daemon/process-claims',
+    `${lease.bootId}_2147483647_11111111-1111-4111-8111-111111111111.claim`
+  )
+  fs.writeFileSync(claimed, '', { mode: 0o600 })
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('not permitted'), { code: 'EPERM' })
+  })
+  try {
+    expect(() => acquireDaemonLease(dir)).toThrow('not permitted')
+    expect(fs.existsSync(claimed)).toBe(true)
+  } finally {
+    kill.mockRestore()
+  }
 })
