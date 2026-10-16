@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { isQuestionAnswerKey } from '../../../../packages/server/src/requests/question-key'
 import { codexRoot, findCodexRollout } from '../../session-history/codex'
 import { replayCodexHistory } from './codex-history'
 import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
@@ -430,6 +431,7 @@ export class CodexTranslator {
       const decoded = nativeQuestions.safeParse(frame.params)
       if (!decoded.success) return false
       questions = decoded.data.questions
+      if (questions.some((q) => !isQuestionAnswerKey(q.id))) return false
       if (new Set(questions.map((q) => q.id)).size !== questions.length) return false
       responses.set('answer', undefined)
       responses.set('deny', { answers: {} })
