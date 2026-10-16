@@ -4,6 +4,9 @@ import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { createApiClient, type ClaveApiClient } from '../../../client/src/api'
 import { PushClient, type PushSocketConstructor } from '../../../client/src/push-client'
 import { PendingRequests } from './service'
+import { SessionHost } from '../sessions/port'
+import type { Session, SessionStream } from '../../../contract/src/sessions'
+import { requestAwareSessionHost } from '../../../../src/main/sessions/request-aware-host'
 
 const closes: Array<() => Promise<unknown> | void> = []
 afterEach(async () => {
@@ -32,6 +35,100 @@ function push(server: EmbeddedServer): PushClient {
 }
 
 describe('shared requests over authenticated HTTP and push', () => {
+  it.each(['/sessions/write', '/requests/resolve'])(
+    'rejects malformed private answers on %s without disclosing values or question keys',
+    async (route) => {
+      const requests = new PendingRequests()
+      const write = vi.fn(async () => {})
+      const session: Session = {
+        id: 'private-session',
+        cwd: '/tmp',
+        windowKey: 'server',
+        createdAt: 1,
+        provider: 'codex',
+        adapterId: 'codex-chat',
+        transport: 'events',
+        state: 'blocked',
+        title: 'Private question'
+      }
+      let emit!: (id: string, stream: SessionStream) => void
+      const wrapped = requestAwareSessionHost({
+        host: { ...SessionHost.none, get: () => session, write },
+        requests,
+        subscribeAll: (listener) => {
+          emit = listener
+          return () => {}
+        }
+      })
+      closes.push(() => {
+        wrapped.close()
+        requests.close()
+      })
+      const key = 'PRIVATE-QUESTION-KEY-SENTINEL'
+      const value = 'PRIVATE-ANSWER-VALUE-SENTINEL'
+      emit(session.id, {
+        kind: 'event',
+        event: {
+          type: 'permission_request',
+          id: 'native-private',
+          description: 'Private input',
+          toolName: 'item/tool/requestUserInput',
+          input: { questions: [{ question: key, isSecret: true }] },
+          options: [{ id: 'answer', label: 'Submit' }],
+          questions: [{ question: key, options: [] }]
+        }
+      })
+      const pending = requests.snapshot().pending[0]
+      const server = await startEmbedded({ ports: { requests, sessions: wrapped.host } })
+      closes.push(() => server.stop())
+      const api = createApiClient({ url: server.url, token: server.token })
+      closes.push(() => api.dispose())
+      const malformed =
+        route === '/sessions/write'
+          ? {
+              id: session.id,
+              input: {
+                type: 'permission_response',
+                id: 'native-private',
+                optionId: 'answer',
+                answers: { [key]: { value } }
+              }
+            }
+          : {
+              requestId: pending.id,
+              response: { type: 'permission', optionId: 'answer', answers: { [key]: { value } } }
+            }
+      const response = await fetch(server.url + route, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(malformed)
+      })
+      expect(response.status).toBe(400)
+      const text = await response.text()
+      expect(JSON.parse(text)).toMatchObject({ error: 'ValidationFailed' })
+      expect(text).not.toContain(value)
+      expect(text).not.toContain(key)
+      expect((await api.requests.list()).pending).toHaveLength(1)
+      expect(write).not.toHaveBeenCalled()
+      if (route === '/sessions/write')
+        await api.sessions.write(session.id, {
+          type: 'permission_response',
+          id: 'native-private',
+          optionId: 'answer',
+          answers: { [key]: value }
+        })
+      else
+        expect(
+          await api.requests.resolve({
+            requestId: pending.id,
+            response: { type: 'permission', optionId: 'answer', answers: { [key]: value } }
+          })
+        ).toEqual({ accepted: true })
+      expect(write).toHaveBeenCalledOnce()
+      expect((await api.requests.list()).pending).toEqual([])
+      expect(JSON.stringify(requests.result(pending.id, session.id))).not.toContain(value)
+    }
+  )
   it('lets an accepted secret action outlive the ordinary client deadline', async () => {
     const { requests, server } = await owner()
     const patient = createApiClient({

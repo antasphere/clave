@@ -31,7 +31,7 @@ export const PendingRequest = Schema.Struct({
   providerRequestId: Schema.optional(Id),
   options: Schema.optional(Schema.Array(Schema.Struct({ id: Text, label: Text }))),
   questions: Schema.optional(Schema.Array(AgentQuestion)),
-  /** Native provider question labels whose inputs must be masked by clients. */
+  /** Canonical question keys (id, or legacy text) whose inputs must be masked. */
   secretQuestions: Schema.optional(Schema.Array(Text)),
   toolName: Schema.optional(Text),
   detail: Schema.optional(Text),
@@ -79,4 +79,11 @@ export const ResolvePendingRequest = Command.define('ResolvePendingRequest', {
 })
 export const requestsGroup = ApiGroup.make('requests')
   .add(HttpCqrs.queryEndpoint('list', '/requests/pending', ListPendingRequests))
-  .add(HttpCqrs.commandEndpoint('resolve', '/requests/resolve', ResolvePendingRequest))
+  .add(
+    HttpCqrs.commandEndpoint('resolve', '/requests/resolve', ResolvePendingRequest).setPayload(
+      // Reapply after encodedSchema, which rebuilds refined fields and parents.
+      Schema.encodedSchema(ResolvePendingRequest.payload).annotations({
+        message: () => ({ message: 'Invalid request response.', override: true })
+      })
+    )
+  )

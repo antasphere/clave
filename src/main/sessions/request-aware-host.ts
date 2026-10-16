@@ -44,13 +44,20 @@ export function requestAwareSessionHost(options: {
     }
     if (event.type !== 'permission_request' || requests.native(id, event.id)) return
     const input = event.input as {
-      questions?: Array<{ question?: unknown; isSecret?: unknown }>
+      questions?: Array<{ id?: unknown; question?: unknown; isSecret?: unknown }>
     } | null
+    const rawQuestions = Array.isArray(input?.questions) ? input.questions : []
     const secretQuestions =
-      event.toolName === 'item/tool/requestUserInput' && Array.isArray(input?.questions)
-        ? input.questions
-            .filter((q) => q.isSecret === true && typeof q.question === 'string')
-            .map((q) => String(q.question))
+      event.toolName === 'item/tool/requestUserInput'
+        ? (event.questions ?? [])
+            .filter((q) =>
+              rawQuestions.some(
+                (raw) =>
+                  raw.isSecret === true &&
+                  (q.id !== undefined ? raw.id === q.id : raw.question === q.question)
+              )
+            )
+            .map((q) => q.id ?? q.question)
         : []
     requests.create(
       {

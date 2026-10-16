@@ -164,8 +164,13 @@ export function FilePreview(): React.JSX.Element | null {
           </FileInfoTooltip>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-          {isMarkdown && <ViewModeToggle mode={viewMode} onChange={setViewMode} />}
-          {isHtml && !previewLocationId && (
+          {isRemoteKey(cwd) && (isMarkdown || isHtml) && (
+            <span className="text-xs text-text-tertiary">Source</span>
+          )}
+          {!isRemoteKey(cwd) && isMarkdown && (
+            <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+          )}
+          {!isRemoteKey(cwd) && isHtml && !previewLocationId && (
             <ViewModeToggle mode={viewMode} onChange={setViewMode} modes={HTML_MODES} />
           )}
           {canEdit && (

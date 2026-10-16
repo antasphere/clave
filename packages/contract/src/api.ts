@@ -11,6 +11,7 @@
  * group and its line; nobody edits another lane's group.
  */
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
+import { Schema } from 'effect'
 import { ListClients, RegisterClient, UnregisterClient } from './clients'
 import {
   GetSession,
@@ -51,7 +52,15 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('get', '/sessions/by-id', GetSession))
   .add(HttpCqrs.commandEndpoint('start', '/sessions/start', StartSession))
   .add(HttpCqrs.commandEndpoint('stop', '/sessions/stop', StopSession))
-  .add(HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession))
+  .add(
+    HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession).setPayload(
+      // encodedSchema drops annotations while rebuilding nested transforms.
+      // Apply privacy at the final HTTP boundary, before any host is invoked.
+      Schema.encodedSchema(WriteSession.payload).annotations({
+        message: () => ({ message: 'Invalid session input.', override: true })
+      })
+    )
+  )
   .add(HttpCqrs.commandEndpoint('resize', '/sessions/resize', ResizeSession))
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))

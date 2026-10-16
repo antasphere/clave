@@ -1,3 +1,4 @@
+import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
 import { bindFleetCatchup } from './fleet-sync'
 import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
 import { parseResourceKey } from '@clave/contract/fleet'
@@ -598,7 +599,14 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     setPending((current) => [...current, id])
     try {
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      dispatch({ answer: id, optionId, answers })
+      const permission = conversation.entries.find(
+        (entry) => entry.kind === 'permission' && entry.request.id === id
+      )
+      const shown =
+        permission?.kind === 'permission'
+          ? publicQuestionAnswers(permission.request.questions, permission.request.input, answers)
+          : undefined
+      dispatch({ answer: id, optionId, answers: shown })
       textarea.current?.focus()
     } catch (error) {
       report(error)

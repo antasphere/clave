@@ -59,6 +59,7 @@ export interface FleetPendingRequest {
   providerRequestId?: string
   options?: readonly { id: string; label: string }[]
   questions?: readonly {
+    id?: string
     question: string
     header?: string
     options: readonly { label: string; description?: string }[]

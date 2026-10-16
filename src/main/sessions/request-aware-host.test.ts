@@ -68,6 +68,39 @@ function fixture(): {
 }
 
 describe('server native requests without clients', () => {
+  it('keeps masking keys aligned with legacy questions that have no normalized ID', () => {
+    const f = fixture()
+    f.emit({
+      ...permission,
+      toolName: 'item/tool/requestUserInput',
+      input: { questions: [{ id: 'raw-provider-id', question: 'Legacy?', isSecret: true }] },
+      questions: [{ question: 'Legacy?', options: [] }]
+    })
+    expect(f.requests.snapshot().pending[0].secretQuestions).toEqual(['Legacy?'])
+  })
+  it('cancels native requests on a done provider turn while retaining independent MCP work', async () => {
+    const f = fixture()
+    f.emit(permission)
+    const native = f.requests.snapshot().pending[0]
+    const mcp = f.requests.create({
+      sessionId: session.id,
+      kind: 'permission',
+      description: 'Explicit MCP approval',
+      options: [{ id: 'approve', label: 'Approve' }]
+    })
+    f.emit({ type: 'state_change', state: 'done' })
+    expect(f.requests.snapshot().pending.map((r) => r.id)).toEqual([mcp.id])
+    expect(f.requests.result(native.id, session.id).status).toBe('cancelled')
+    const late = vi.fn()
+    f.host.subscribe(session.id, late)
+    expect(late).not.toHaveBeenCalled()
+    await f.host.write(session.id, {
+      type: 'permission_response',
+      id: permission.id,
+      optionId: 'allow-once'
+    })
+    expect(f.write).not.toHaveBeenCalled()
+  })
   it('preserves structured provider decisions larger than a short identifier', async () => {
     const f = fixture()
     const optionId = JSON.stringify({

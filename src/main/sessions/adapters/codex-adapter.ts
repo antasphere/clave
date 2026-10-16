@@ -66,7 +66,7 @@ interface Approval {
   questions?: Array<{ id: string; question: string }>
 }
 // Installed Codex 0.163.0 ToolRequestUserInputParams. The provider's question
-// IDs remain in the connection, while the shared question form keys by text.
+// IDs identify answers across the connection, shared form and replay boundary.
 const nativeQuestions = z.object({
   isBlocking: z.boolean(),
   itemId: z.string(),
@@ -430,11 +430,7 @@ export class CodexTranslator {
       const decoded = nativeQuestions.safeParse(frame.params)
       if (!decoded.success) return false
       questions = decoded.data.questions
-      if (
-        new Set(questions.map((q) => q.id)).size !== questions.length ||
-        new Set(questions.map((q) => q.question)).size !== questions.length
-      )
-        return false
+      if (new Set(questions.map((q) => q.id)).size !== questions.length) return false
       responses.set('answer', undefined)
       responses.set('deny', { answers: {} })
     } else if (frame.method === 'mcpServer/elicitation/request') {
@@ -482,6 +478,7 @@ export class CodexTranslator {
       input: frame.params,
       ...(questions && {
         questions: questions.map((q) => ({
+          id: q.id,
           question: q.question,
           header: q.header,
           options: q.options ?? []
@@ -506,13 +503,16 @@ export class CodexTranslator {
         !answers ||
         Object.keys(answers).length !== approval.questions.length ||
         approval.questions.some(
-          (q) => typeof answers[q.question] !== 'string' || !answers[q.question].trim()
+          (q) =>
+            !Object.hasOwn(answers, q.id) ||
+            typeof answers[q.id] !== 'string' ||
+            !answers[q.id].trim()
         )
       )
         throw new Error('An answer is required for each Codex question')
       response = {
         answers: Object.fromEntries(
-          approval.questions.map((q) => [q.id, { answers: [answers[q.question]] }])
+          approval.questions.map((q) => [q.id, { answers: [answers[q.id]] }])
         )
       }
     }

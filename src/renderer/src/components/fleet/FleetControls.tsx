@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { questionKey } from '../../lib/question-identity'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ServerIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { ModalScrim, ModalPositioner } from '@clave/ui/components'
@@ -442,6 +443,9 @@ function FleetRequestForm({
   const name = useFleetStore(
     (s) => s.connections.find((c) => c.id === ownerOf(request.id))?.name ?? 'Server'
   )
+  const sessionName = useSessionStore(
+    (s) => s.sessions.find((session) => session.id === request.sessionId)?.name ?? 'Session'
+  )
   const resolve = async (response: RequestResponse): Promise<void> => {
     setBusy(true)
     setValue('')
@@ -456,7 +460,7 @@ function FleetRequestForm({
     }
   }
   return (
-    <FleetDialog title={`${name}: ${request.kind}`} close={close}>
+    <FleetDialog title={`${name} · ${sessionName}: ${request.kind}`} close={close}>
       <p>{request.description}</p>
       {request.detail && (
         <pre className="text-xs whitespace-pre-wrap max-h-40 overflow-auto">{request.detail}</pre>
@@ -475,8 +479,9 @@ function FleetRequestForm({
         />
       )}
       {request.questions?.map((q) => (
-        <label key={q.question} className="field-label">
+        <label key={questionKey(q)} className="field-label">
           {q.question}
+          {q.header && <span className="text-xs text-text-secondary">{q.header}</span>}
           {q.options.length > 0 && (
             <p className="text-xs text-text-secondary">
               {q.options.map((o) => o.label).join(', ')}
@@ -484,11 +489,11 @@ function FleetRequestForm({
           )}
           <input
             className="input-field w-full"
-            type={request.secretQuestions?.includes(q.question) ? 'password' : 'text'}
+            type={request.secretQuestions?.includes(questionKey(q)) ? 'password' : 'text'}
             autoComplete="off"
-            aria-label={q.question}
-            value={answers[q.question] ?? ''}
-            onChange={(e) => setAnswers({ ...answers, [q.question]: e.target.value })}
+            aria-label={q.header ?? q.question}
+            value={Object.hasOwn(answers, questionKey(q)) ? answers[questionKey(q)] : ''}
+            onChange={(e) => setAnswers({ ...answers, [questionKey(q)]: e.target.value })}
           />
         </label>
       ))}
