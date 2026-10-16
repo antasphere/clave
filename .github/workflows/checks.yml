@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build secure filesystem helper
+        run: npm run native:build
+
       - name: Lint
         run: npm run lint
 
@@ -100,6 +103,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build native helpers
+        run: npm run native:build
 
       - name: Build the app
         id: build
