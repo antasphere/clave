@@ -91,18 +91,22 @@ try {
   let packageRoot;
   if (fs.existsSync(manifest)) {
     const layout = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    if (layout.layoutVersion !== 1 || layout.entrypoint !== 'bin/codex')
-      throw new Error('Unsupported Codex standalone package layout');
     packageRoot = path.dirname(bin);
-    for (const key of ['resourcesDir', 'pathDir']) {
-      const value = layout[key];
-      if (typeof value !== 'string' || !value || path.isAbsolute(value) ||
-          path.relative(packageRoot, path.resolve(packageRoot, value)).startsWith('..'))
-        throw new Error('Invalid Codex standalone resource path');
-      if (!fs.statSync(path.join(packageRoot, value)).isDirectory())
-        throw new Error('Missing Codex standalone resources');
+    // The copy preserves the whole package and its relative executable path.
+    // Its CLI interprets future metadata itself; unfamiliar layouts need not
+    // stop working just because Clave's current validation doesn't know them.
+    if (layout?.layoutVersion === 1 && layout.entrypoint === 'bin/codex' &&
+        typeof layout.resourcesDir === 'string' && typeof layout.pathDir === 'string') {
+      for (const key of ['resourcesDir', 'pathDir']) {
+        const value = layout[key];
+        if (!value || path.isAbsolute(value) ||
+            path.relative(packageRoot, path.resolve(packageRoot, value)).startsWith('..'))
+          throw new Error('Invalid Codex standalone resource path');
+        if (!fs.statSync(path.join(packageRoot, value)).isDirectory())
+          throw new Error('Missing Codex standalone resources');
+      }
+      fs.accessSync(helper, fs.constants.X_OK);
     }
-    fs.accessSync(helper, fs.constants.X_OK);
   } else if (!fs.existsSync(helper)) {
     // Older single-file and npm launchers without this standalone layout
     // retain their existing launch path. Do not copy an entire npm prefix.

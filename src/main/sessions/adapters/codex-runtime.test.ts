@@ -124,6 +124,37 @@ it('starts a new runtime when an installer replaces the same canonical package p
   expect(await fresh.request('helper')).toEqual({ output: 'helper-new:new' })
 })
 
+it('retains an unfamiliar self-contained package without rejecting its metadata or entrypoint', async () => {
+  const { root, install } = fixture()
+  const manifest = { layoutVersion: 2, entrypoint: 'launch/codex', assets: { format: 'future' } }
+  writeFileSync(join(install, 'codex-package.json'), JSON.stringify(manifest))
+  renameSync(join(install, 'bin'), join(install, 'launch'))
+  const connection = spawnCodexAppServer(
+    root,
+    {
+      notification: () => {},
+      request: () => {},
+      error: () => {},
+      exit: () => {}
+    },
+    {
+      id: 'future-package',
+      name: 'Fixture',
+      family: 'codex',
+      command: [join(install, 'launch', 'codex')],
+      additionalArgs: []
+    }
+  )
+  connections.push(connection)
+  const runtime = (await connection.request('runtime')) as { file: string }
+  const retainedManifest = join(dirname(runtime.file), '..', 'codex-package.json')
+  expect(JSON.parse(readFileSync(retainedManifest, 'utf8'))).toEqual(manifest)
+  expect(runtime.file).not.toContain(install)
+  rmSync(install, { recursive: true })
+  expect(await connection.request('helper')).toEqual({ output: 'helper-old:old' })
+  expect(await connection.request('child')).toEqual({ output: 'helper-old:old' })
+})
+
 it('preserves profile wrappers, arguments and tab/account bindings without leaking preparation mode', async () => {
   const { root, install } = fixture()
   const connection = connect(root, install, {

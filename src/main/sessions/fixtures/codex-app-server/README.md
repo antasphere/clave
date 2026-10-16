@@ -168,7 +168,10 @@ packages. These are synthetic installer fixtures, not live Codex recordings.
 POSIX direct Codex and `env`-wrapped commands retain a standalone package or a
 legacy native executable/helper pair before starting the app-server. Copies run
 outside Electron main and share a private directory until the last app-server
-exits. Filesystem clones are used where available. Windows, arbitrary wrapper
+exits. A standalone package's metadata and relative executable path are retained
+intact, so an unfamiliar self-contained layout can keep using its own metadata.
+The current known layout is checked for incomplete resources before startup.
+Filesystem clones are used where available. Windows, arbitrary wrapper
 executables and npm launchers without this standalone layout keep their existing
 launch behavior. A process crash can leave its private temporary directory until
 the operating system cleans temporary storage. Existing processes started before
