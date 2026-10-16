@@ -45,6 +45,7 @@ const file = fs.realpathSync(process.argv[1]);
 const helper = path.join(path.dirname(file), 'codex-code-mode-host');
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
   const frame = JSON.parse(line);
+  if (frame.method === 'fixtureExit') process.exit(0);
   let result = {};
   if (frame.method === 'thread/start' || frame.method === 'thread/resume') result = { thread: { id: frame.params.threadId || 'fresh-thread' }, model: 'fixture-model' };
   if (frame.method === 'model/list') result = { data: [{ id: 'fixture-model', model: 'fixture-model' }] };

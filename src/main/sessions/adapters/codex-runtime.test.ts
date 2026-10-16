@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { afterEach, expect, it, vi } from 'vitest'
 import { fixtureConnection, fixtureShell, installFixtureCodex } from './codex-runtime-fixture'
 import { spawnCodexAppServer, type CodexConnection } from './codex-app-server'
+import { shellSingleQuote } from '../../shell-launch'
 
 // These cases launch real Node children. Allow the full suite to share a busy
 // host, while keeping each process scenario bounded.
@@ -70,6 +71,16 @@ it('shares a complete retained package until the last app-server exits', async (
   expect(await second.request('helper')).toEqual({ output: 'helper-old:old' })
   await second.close()
   expect(existsSync(b.file)).toBe(false)
+})
+
+it('releases the runtime when the provider exits without a caller closing it', async () => {
+  const { root, install } = fixture()
+  const exit = vi.fn()
+  const connection = connect(root, install, { callbacks: { exit } })
+  const runtime = (await connection.request('runtime')) as { file: string }
+  connection.notify('fixtureExit')
+  await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0, ''), { timeout: 3000 })
+  await vi.waitFor(() => expect(existsSync(runtime.file)).toBe(false), { timeout: 3000 })
 })
 
 it('retains coherent versions across installer replacements and symlink changes', async () => {
@@ -176,27 +187,45 @@ done
 `,
     { mode: 0o755 }
   )
-  const connection = spawnCodexAppServer(
-    root,
-    {
-      notification: () => {},
-      request: () => {},
-      error: () => {},
-      exit: () => {}
-    },
-    {
-      id: 'isolated-env',
-      name: 'Fixture',
-      family: 'codex',
-      command: [
-        '/usr/bin/env',
-        '-i',
-        'NODE_OPTIONS=--require=/missing-fixture-preload',
-        executable
-      ],
-      additionalArgs: []
-    }
+  // A safe stand-in for Electron rejects preparation without Node mode.
+  // This pins the production requirement even when Vitest runs on plain Node.
+  const guardedNode = join(root, 'guarded-node')
+  writeFileSync(
+    guardedNode,
+    `#!/bin/sh
+[ "$ELECTRON_RUN_AS_NODE" = 1 ] || exit 77
+exec ${shellSingleQuote(process.execPath)} "$@"
+`,
+    { mode: 0o755 }
   )
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!
+  let connection: CodexConnection
+  try {
+    Object.defineProperty(process, 'execPath', { ...descriptor, value: guardedNode })
+    connection = spawnCodexAppServer(
+      root,
+      {
+        notification: () => {},
+        request: () => {},
+        error: () => {},
+        exit: () => {}
+      },
+      {
+        id: 'isolated-env',
+        name: 'Fixture',
+        family: 'codex',
+        command: [
+          '/usr/bin/env',
+          '-i',
+          'NODE_OPTIONS=--require=/missing-fixture-preload',
+          executable
+        ],
+        additionalArgs: []
+      }
+    )
+  } finally {
+    Object.defineProperty(process, 'execPath', descriptor)
+  }
   connections.push(connection)
   expect(await connection.request('initialize')).toEqual({
     mode: 'unset',
