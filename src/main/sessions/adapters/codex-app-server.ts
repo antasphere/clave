@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { resolvePosixShellLaunch } from '../../shell-launch'
 import type { LaunchProfile } from '../../../shared/agent-launch'
+import { retainedCodexLaunch } from './codex-runtime'
 
 export type RpcId = number | string
 export interface RpcNotification {
@@ -224,21 +225,27 @@ export function spawnCodexAppServer(
   const childEnv = env?.CLAVE_CODEX_MCP_TOKEN
     ? { ...env, _CLAVE_CODEX_MCP_TOKEN_LAUNCH: env.CLAVE_CODEX_MCP_TOKEN }
     : env
+  const runtime = process.platform === 'win32' ? undefined : retainedCodexLaunch(argv, assignment)
   const launch =
     process.platform === 'win32'
       ? { file: windowsDefault ? 'codex.cmd' : argv[0], args: argv.slice(1) }
-      : resolvePosixShellLaunch(
-          process.env.SHELL || '/bin/zsh',
-          `${assignment}exec ${argv.map(quote).join(' ')}`
-        )
-  return new CodexAppServer(
-    spawn(launch.file, launch.args, {
+      : resolvePosixShellLaunch(process.env.SHELL || '/bin/zsh', runtime!.command)
+  let child: ChildProcessWithoutNullStreams
+  try {
+    child = spawn(launch.file, launch.args, {
       cwd,
       ...(childEnv ? { env: childEnv } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: windowsDefault
-    }),
+    })
+  } catch (error) {
+    runtime?.release()
+    throw error
+  }
+  child.once('close', () => runtime?.release())
+  return new CodexAppServer(
+    child,
     callbacks,
     30_000,
     env?.CLAVE_CODEX_MCP_TOKEN ? [env.CLAVE_CODEX_MCP_TOKEN] : []
