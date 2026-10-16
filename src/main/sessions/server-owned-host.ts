@@ -190,9 +190,18 @@ export function serverOwnedSessionHost(options: ServerOwnedHostOptions): {
     },
     history: (id, before, limit) => {
       if (!get(id)) throw new Error(`Unknown session: ${id}`)
-      return base.get(id)
-        ? base.history(id, before, limit)
-        : pageHistory(history.read(id).items, before, limit)
+      if (base.get(id)) {
+        const page = base.history(id, before, limit)
+        if (page.items.length || page.before !== null) return page
+        // An empty older page can mean the adapter cursor reached its start,
+        // rather than that the adapter has no transcript. Never mix those offsets.
+        if (before !== undefined) {
+          const latest = base.history(id)
+          if (latest.items.length || latest.before !== null) return page
+        }
+      }
+      // Adapters without available history still have the daemon's captured stream.
+      return pageHistory(history.read(id).items, before, limit)
     },
     write: async (id, input) => {
       requireLive(id)
