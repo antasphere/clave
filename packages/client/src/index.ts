@@ -82,3 +82,6 @@ export function createClaveClient(options: ClaveClientOptions): ClaveClient {
     }
   }
 }
+
+export { filesClient, type FilesClient } from './files'
+export { requestsClient, type RequestsClient } from './requests'

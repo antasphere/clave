@@ -9,7 +9,10 @@
  * its handlers are one spread in `BusesLive`, its services one line in
  * `ServicesLive`. A lane adds its lines in its section and edits no other.
  */
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Option } from 'effect'
+import * as HttpIncomingMessage from '@effect/platform/HttpIncomingMessage'
+import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
+import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import type * as HttpApi from '@effect/platform/HttpApi'
 import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import type * as HttpApp from '@effect/platform/HttpApp'
@@ -37,6 +40,9 @@ import {
   workspaceFilesHandlers
 } from './workspace-files'
 import { ViewRequests, viewHandlers } from './views'
+import { FilesPort, fileHandlers } from './files'
+import { RequestsPort } from './requests/port'
+import { RequestEventsLive, requestHandlers } from './requests/handlers'
 // ── Wave 4, lane C: the agent tools' tokens ──
 import { AgentTokens, agentToolsHandlers } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
@@ -61,6 +67,8 @@ export interface ServerOptions {
 }
 
 export type ServerServices =
+  | RequestsPort
+  | FilesPort
   | ServerEvents
   | ClientRegistry
   | Readiness
@@ -108,8 +116,10 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const views = ViewRequests.layer.pipe(Layer.provide(hub))
   // ── Wave 5, lane C: the plugins' news goes out as server events ──
   const pluginsEvents = PluginsEventsLive.pipe(Layer.provide(services))
+  const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
+    requestEvents,
     hub,
     settingsEvents,
     sidebarEvents,
@@ -139,6 +149,8 @@ export const BusesLive = busesLayer.pipe(
   Layer.provide(
     HandlerRegistry.layer(
       ...sessionHandlers,
+      ...requestHandlers,
+      ...fileHandlers,
       ...clientHandlers,
       // ── Lane D: settings ──
       ...settingsHandlers,
@@ -165,7 +177,11 @@ const outer =
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
     Effect.flatMap(PushHubService, (hub) =>
       corsForLoopback(
-        pushRoute(hub)(bearerAuth(options.token)(fixtureRoute(options.testFixtures === true)(app)))
+        pushRoute(hub)(
+          bearerAuth(options.token)(
+            fixtureRoute(options.testFixtures === true)(boundedFileRequest(app))
+          )
+        )
       )
     )
 
@@ -191,3 +207,19 @@ export const ServerLive = (
     Layer.provideMerge(services)
   )
 }
+
+/** Bound transfer and sensitive resolution bodies before JSON decoding.
+ * Authentication runs first; oversized secret inputs are never echoed. */
+const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+    const limit = request.url.startsWith('/requests/')
+      ? 64 * 1024
+      : request.url.startsWith('/files/')
+        ? 7 * 1024 * 1024
+        : undefined
+    if (limit === undefined) return app
+    const length = Number(request.headers['content-length'])
+    if (Number.isFinite(length) && length > limit)
+      return Effect.succeed(HttpServerResponse.empty({ status: 413 }))
+    return HttpIncomingMessage.withMaxBodySize(app, Option.some(limit))
+  })

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { z } from 'zod'
 import { codexRoot, findCodexRollout } from '../../session-history/codex'
 import { replayCodexHistory } from './codex-history'
 import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
@@ -62,7 +63,29 @@ interface Approval {
   rpcId: RpcId
   turnId: string
   responses: Map<string, unknown>
+  questions?: Array<{ id: string; question: string }>
 }
+// Installed Codex 0.163.0 ToolRequestUserInputParams. The provider's question
+// IDs remain in the connection, while the shared question form keys by text.
+const nativeQuestions = z.object({
+  isBlocking: z.boolean(),
+  itemId: z.string(),
+  threadId: z.string(),
+  turnId: z.string(),
+  questions: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        question: z.string().min(1),
+        header: z.string(),
+        isOther: z.boolean().default(false),
+        isSecret: z.boolean().default(false),
+        options: z.array(z.object({ label: z.string(), description: z.string() })).nullish()
+      })
+    )
+    .min(1)
+    .max(20)
+})
 /** How full a thread's context is after its last call, off a tokenUsage frame:
  *  what that call read and wrote, less the reasoning, which the next call does
  *  not carry. Raw tokens, like the Claude meter: Codex's own status line also
@@ -376,6 +399,7 @@ export class CodexTranslator {
   request(frame: RpcRequest): boolean {
     const p = object(frame.params)
     const responses = new Map<string, unknown>()
+    let questions: z.infer<typeof nativeQuestions>['questions'] | undefined
     if (
       frame.method === 'item/commandExecution/requestApproval' ||
       frame.method === 'item/fileChange/requestApproval'
@@ -402,6 +426,17 @@ export class CodexTranslator {
         }
       ])
         responses.set(JSON.stringify(response), response)
+    } else if (frame.method === 'item/tool/requestUserInput') {
+      const decoded = nativeQuestions.safeParse(frame.params)
+      if (!decoded.success) return false
+      questions = decoded.data.questions
+      if (
+        new Set(questions.map((q) => q.id)).size !== questions.length ||
+        new Set(questions.map((q) => q.question)).size !== questions.length
+      )
+        return false
+      responses.set('answer', undefined)
+      responses.set('deny', { answers: {} })
     } else if (frame.method === 'mcpServer/elicitation/request') {
       // v1 has choices, not a form editor: decline/cancel are always valid.
       for (const action of ['decline', 'cancel'])
@@ -416,31 +451,72 @@ export class CodexTranslator {
       return false
     }
     const id = JSON.stringify(frame.id)
-    this.approvals.set(id, { rpcId: frame.id, turnId: text(p.turnId) || this.turnId, responses })
+    this.approvals.set(id, {
+      rpcId: frame.id,
+      turnId: text(p.turnId) || this.turnId,
+      responses,
+      ...(questions && { questions })
+    })
     this.emit({
       type: 'permission_request',
       id,
-      description: text(p.reason) || text(p.message) || text(p.command) || frame.method,
+      description:
+        questions?.length === 1
+          ? questions[0].question
+          : questions
+            ? `Codex asks ${questions.length} questions`
+            : text(p.reason) || text(p.message) || text(p.command) || frame.method,
       options: [...responses.keys()].map((id, index) => ({
         id,
-        label:
-          frame.method === 'item/permissions/requestApproval'
+        label: questions
+          ? id === 'answer'
+            ? 'Submit'
+            : 'Skip'
+          : frame.method === 'item/permissions/requestApproval'
             ? index === 0
               ? 'Deny extra permissions'
               : 'Allow for this turn'
             : id
       })),
       toolName: frame.method,
-      input: frame.params
+      input: frame.params,
+      ...(questions && {
+        questions: questions.map((q) => ({
+          question: q.question,
+          header: q.header,
+          options: q.options ?? []
+        }))
+      })
     })
     this.emit({ type: 'state_change', state: 'blocked' })
     return true
   }
-  answer(id: string, optionId: string, connection: CodexConnection): void {
+  answer(
+    id: string,
+    optionId: string,
+    connection: CodexConnection,
+    answers?: Record<string, string>
+  ): void {
     const approval = this.approvals.get(id)
     if (!approval || !approval.responses.has(optionId))
       throw new Error('Unknown or expired Codex approval option')
-    connection.respond(approval.rpcId, approval.responses.get(optionId))
+    let response = approval.responses.get(optionId)
+    if (approval.questions && optionId === 'answer') {
+      if (
+        !answers ||
+        Object.keys(answers).length !== approval.questions.length ||
+        approval.questions.some(
+          (q) => typeof answers[q.question] !== 'string' || !answers[q.question].trim()
+        )
+      )
+        throw new Error('An answer is required for each Codex question')
+      response = {
+        answers: Object.fromEntries(
+          approval.questions.map((q) => [q.id, { answers: [answers[q.question]] }])
+        )
+      }
+    }
+    connection.respond(approval.rpcId, response)
     this.approvals.delete(id)
     if (!this.approvals.size && this.turnId) this.emit({ type: 'state_change', state: 'working' })
   }
@@ -595,7 +671,7 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     if (value.type === 'permission_response') {
       if (!state.connection) throw new Error('Codex has no pending approval')
-      state.translator.answer(value.id, value.optionId, state.connection)
+      state.translator.answer(value.id, value.optionId, state.connection, value.answers)
       return
     }
     if (value.type === 'interrupt') {

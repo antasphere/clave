@@ -21,7 +21,8 @@
     "./views": "./src/views.ts",
     "./view-deadlines": "./src/view-deadlines.ts",
     "./agent-tools": "./src/agent-tools.ts",
-    "./plugins": "./src/plugins.ts"
+    "./plugins": "./src/plugins.ts",
+    "./files": "./src/files.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

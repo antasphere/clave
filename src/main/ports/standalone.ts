@@ -1,5 +1,6 @@
 import type { SettingsPorts } from './registry'
-import { keychainSecrets } from './secrets'
+import { fileSecrets, keychainSecrets } from './secrets'
+import { join } from 'node:path'
 import { fileStorage } from './storage'
 
 /** The environment variable that names the standalone server's data directory. */
@@ -26,18 +27,22 @@ export function keychainFileFromEnv(env: NodeJS.ProcessEnv = process.env): strin
   return value ? value : undefined
 }
 
-/** The standalone server's ports: JSON documents under a configured data
- *  directory, secrets in the macOS Keychain through the `security` CLI. */
+/** Standalone documents and secrets: macOS Keychain or authenticated
+ *  encrypted files on Linux, both scoped to this server's configuration. */
 export function standalonePorts(options: {
   dataDir: string
   keychainService?: string
   keychainFile?: string
+  platform?: NodeJS.Platform
 }): SettingsPorts {
   return {
     storage: fileStorage(options.dataDir),
-    secrets: keychainSecrets({
-      service: options.keychainService ?? KEYCHAIN_SERVICE,
-      ...(options.keychainFile && { keychainFile: options.keychainFile })
-    })
+    secrets:
+      (options.platform ?? process.platform) === 'linux'
+        ? fileSecrets({ directory: join(options.dataDir, 'secrets') })
+        : keychainSecrets({
+            service: options.keychainService ?? KEYCHAIN_SERVICE,
+            ...(options.keychainFile && { keychainFile: options.keychainFile })
+          })
   }
 }
