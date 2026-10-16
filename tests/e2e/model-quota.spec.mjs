@@ -27,10 +27,21 @@ export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
-  const { app, win } = await launchApp(DIR, { server: 'in-process' })
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
+    const bootUsage = await win.evaluate(() =>
+      window.electronAPI.getUsageLimits('default', { force: true })
+    )
+    t.equal(
+      'machine credentials are disabled before fixture setup',
+      bootUsage.error,
+      'No token for this account yet. Log in from Settings → Accounts.'
+    )
     await app.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler('pty:spawn')
       let id = 0
@@ -42,7 +53,7 @@ export async function run(t) {
         model: options?.model
       }))
       const state = (globalThis.__modelQuota = { shared: 25, session: 10 })
-      globalThis.__claveE2E.settings.usage.readClaude = async () => ({
+      const read = () => ({
         fetchedAt: Date.now(),
         windows: [
           {
@@ -74,6 +85,10 @@ export async function run(t) {
           }
         ]
       })
+      // The welcome catch-up and direct reads must see the same fixture,
+      // including after shared caps change. Never reuse the machine cache.
+      globalThis.__claveE2E.settings.usage.readClaude = async () => read()
+      globalThis.__claveE2E.settings.usage.claudeSnapshot = () => ({ default: read() })
     })
     await win.reload()
     if (

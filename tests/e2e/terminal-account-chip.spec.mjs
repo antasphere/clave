@@ -90,7 +90,11 @@ export async function run(t) {
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    env,
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
