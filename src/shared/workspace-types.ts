@@ -66,3 +66,20 @@ export interface WorkspaceStateFile {
    *  renderer imports localStorage pins (Phase B) and flips it true. */
   pinsMigrated: boolean
 }
+
+/** Where a copy of the registry and the pins stands (PRDCT-3405). `revision`
+ *  is bumped by the process holding the state at every registry or pins
+ *  write; `instance` names that process, minted when it starts and never
+ *  written to disk. Two copies compare by revision only within one
+ *  instance: an attached window that booted on main's copy and reached the
+ *  server later meets a second instance, whose stamp it adopts. The window
+ *  keeps the last stamp it loaded, wrote or took in and drops any fold that
+ *  is not newer, which is what keeps a catch-up read older than the
+ *  window's own write from resetting the pins that write just loaded. */
+export interface WorkspaceStamp {
+  revision: number
+  instance: string
+}
+
+/** The state as `workspace:load` answers it: the file, stamped. */
+export interface WorkspaceState extends WorkspaceStateFile, WorkspaceStamp {}

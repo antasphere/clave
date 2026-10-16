@@ -169,6 +169,15 @@ export class SessionManager {
     }
   }
 
+  /** Whether the session was made ready and has not ended: for an adapter
+   *  that starts its provider at ready (Claude, Codex), whether that provider
+   *  was started at all. Registered is not started: a restored chat sits here
+   *  unready until a view opens it (issue #183). */
+  started(id: string): boolean {
+    const entry = this.entries.get(id)
+    return entry !== undefined && entry.ready && !entry.exited
+  }
+
   write(id: string, input: Uint8Array | SessionInput): void {
     const entry = this.require(id)
     entry.adapter.write(entry.handle, input)

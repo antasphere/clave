@@ -190,9 +190,23 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     m.antasphere ?? refuse('antasphereAccount', 'This server holds no Antasphere account.')
   m.antasphere?.onChange((status) => emit({ _tag: 'accounts.antasphere_changed', status }))
 
-  const workspaceChanged = (origin: string | undefined): void => {
-    const { workspaces, pins } = m.workspaces.load()
-    emit({ _tag: 'workspaces.state_changed', workspaces, pins, origin: origin ?? null })
+  // The change event and the write's answer carry the state after the write
+  // with its stamp (PRDCT-3405): a window compares the stamp with the last
+  // one it loaded, wrote or took in, and the writer folds the answer so it
+  // knows the whole state at that revision, not only the partition it wrote.
+  const workspaceChanged = (
+    origin: string | undefined
+  ): { workspaces: Workspace[]; pins: unknown[]; revision: number; instance: string } => {
+    const { workspaces, pins, revision, instance } = m.workspaces.load()
+    emit({
+      _tag: 'workspaces.state_changed',
+      workspaces,
+      pins,
+      origin: origin ?? null,
+      revision,
+      instance
+    })
+    return { workspaces, pins, revision, instance }
   }
 
   return {
@@ -294,8 +308,7 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
           return { ok: false as const, reason: 'invalid' as const }
         }
         m.workspaces.updateRegistry(mutable<Workspace[]>(workspaces))
-        workspaceChanged(origin)
-        return { ok: true as const }
+        return { ok: true as const, ...workspaceChanged(origin) }
       },
       // Pins are per workspace and global to the app: any window writes the
       // partition it changed, and every other window folds the change in.
@@ -309,8 +322,7 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
           return { ok: false as const, reason: 'invalid-key' as const }
         }
         m.workspaces.updatePins(key, [...pins])
-        workspaceChanged(origin)
-        return { ok: true as const }
+        return { ok: true as const, ...workspaceChanged(origin) }
       },
       setLastActive: (workspaceId) =>
         m.workspaces.setLastActive(isLayoutKey(workspaceId) ? workspaceId : null)

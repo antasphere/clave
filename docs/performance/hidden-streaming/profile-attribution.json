@@ -1,0 +1,42 @@
+{
+  "before": [
+    {
+      "run": 1,
+      "markdownInclusiveSampleMs": 2415.591,
+      "observedProfileMs": 13966.107,
+      "percentObserved": 17.296094036799232
+    },
+    {
+      "run": 2,
+      "markdownInclusiveSampleMs": 2578.835,
+      "observedProfileMs": 14367.583,
+      "percentObserved": 17.9489827899376
+    },
+    {
+      "run": 3,
+      "markdownInclusiveSampleMs": 2315.453,
+      "observedProfileMs": 13771.87,
+      "percentObserved": 16.8129164739429
+    }
+  ],
+  "after": [
+    {
+      "run": 1,
+      "markdownInclusiveSampleMs": 0.0,
+      "observedProfileMs": 11112.017,
+      "percentObserved": 0.0
+    },
+    {
+      "run": 2,
+      "markdownInclusiveSampleMs": 0.0,
+      "observedProfileMs": 13092.95,
+      "percentObserved": 0.0
+    },
+    {
+      "run": 3,
+      "markdownInclusiveSampleMs": 0.0,
+      "observedProfileMs": 11645.59,
+      "percentObserved": 0.0
+    }
+  ]
+}

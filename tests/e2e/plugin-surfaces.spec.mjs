@@ -1,8 +1,6 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Runs in both modes (wave 5, lane C, PRDCT-3433): the plugin store and
+// host are the server's, the panel's page is named by the server and its URL
+// minted by the shell's preview protocol under the same policy in both modes.
 // A plugin configures the app's own chrome: a side-panel tab beside Files and Git, a
 // button and a popover in the toolbar, a panel in the main area, and the focused session
 // pushed to the plugin process. Every assertion here is about what the user can click,
@@ -22,7 +20,7 @@ export async function run(t) {
   seedWorkspaces(dir, { workspaces: [], activeWorkspaceId: null })
   const tmuxDir = path.join(root, 'tmux')
   mkdirSync(tmuxDir)
-  const { app, win } = await launchApp(dir, { server: 'in-process', env: { TMUX_TMPDIR: tmuxDir } })
+  const { app, win } = await launchApp(dir, { env: { TMUX_TMPDIR: tmuxDir } })
   let sessionId
   try {
     const record = async (id = 'clave.hello') =>

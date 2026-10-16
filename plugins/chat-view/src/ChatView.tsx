@@ -44,10 +44,12 @@ import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
+import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
-import { EarlierLoading } from './EarlierLoading'
+import { EarlierLoading, PastFailed } from './EarlierLoading'
+import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -59,10 +61,12 @@ import {
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
+  visible?: boolean
 }
 /** A file on its way into the composer: named at once, a chip once main has
  *  prepared it, an error in its place when main refused it. */
@@ -120,6 +124,9 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
  *  moment it stops. A finished answer stands on its own; a logo resting under
  *  every reply read as the transcript's own decoration rather than a sign. */
 function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
+  // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
+  // breathing logo. Same slot, same arrival and departure.
+  const pack = useMarkPack()
   const Logo =
     provider === 'claude'
       ? ClaudeLogo
@@ -133,10 +140,17 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
       className="chat-provider-mark"
       data-provider={provider}
       data-state="working"
+      data-mark={pack ? 'pack' : undefined}
       role="status"
       aria-label={`${provider} is working`}
     >
-      {Logo ? <Logo /> : <span className="chat-provider-mark-dot" />}
+      {pack ? (
+        <pack.Agent working status="working" slot="transcript" />
+      ) : Logo ? (
+        <Logo />
+      ) : (
+        <span className="chat-provider-mark-dot" />
+      )}
     </div>
   )
 }
@@ -363,11 +377,12 @@ function TranscriptRow({
     </div>
   )
 }
-export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
+export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
   })
+  const presentation = usePresentation(conversation, visible)
   // The footer's context meter reads the same stream the terminal's status line does.
   const [status, dispatchStatus] = useReducer(
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
@@ -379,7 +394,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // older; `pastRead` holds the empty state back until the first answer, so a
   // long conversation never flashes "Start a conversation" on its way in.
   const [before, setBefore] = useState<number | null>(null)
-  const [pastRead, setPastRead] = useState(false)
+  // `reading` until the first answer; `failed` when a round of asking found
+  // none (`readPast`): the pane says so instead of showing an empty
+  // conversation, and offers to ask again (`pastHead`).
+  const [past, setPast] = useState<PastState>('reading')
+  const pastRead = past !== 'reading'
+  const pastReader = useRef<PastReader | null>(null)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
@@ -431,27 +451,34 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
       confirmed(() => dispatch({ exit: code }))
     )
+    let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(session.id)
       .then(() => {
-        if (live) setReady(true)
+        if (!live) return
+        setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
-        // whatever streamed meanwhile is newer and stays after it. A host
-        // without the call rejects inside the chain and shows no past.
-        return Promise.resolve()
-          .then(() => window.electronAPI.sessionsHistory(session.id))
-          .then((page) => {
-            if (!live) return
+        // whatever streamed meanwhile is newer and stays after it. A read
+        // that is lost (a server busy restoring every tab after an update
+        // answered it too late) is asked again until it lands, and again
+        // whenever the server connection comes back (PRDCT-3526): asked once
+        // and dropped, it left a resumed chat empty for good while its live
+        // turns kept arriving.
+        pastReader.current = readPast(() => window.electronAPI.sessionsHistory(session.id), {
+          read: (page) => {
             dispatch({ prepend: page.items })
             setBefore(page.before)
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
             if (usage) dispatchStatus(usage.event)
-          })
-          .catch(() => {})
-          .finally(() => {
-            if (live) setPastRead(true)
-          })
+            setPast((now) => pastStep(now, 'read'))
+          },
+          failed: (error) => {
+            console.error(`[chat-view] the past of ${session.id} could not be read`, error)
+            setPast((now) => pastStep(now, 'failed'))
+          }
+        })
+        stopConnected = window.electronAPI.onServerConnected(() => pastReader.current?.retry())
       })
       .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
     // Whether an attached image can go as image content is the adapter's
@@ -465,6 +492,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       .catch(() => {})
     return () => {
       live = false
+      pastReader.current?.stop()
+      pastReader.current = null
+      stopConnected()
       stop()
       stopExit()
       void window.electronAPI.sessionsUnsubscribe(session.id)
@@ -478,9 +508,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
      blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
   const closed = !ready || state === 'ended'
-  useComposerFocus(session.id, !closed, textarea)
+  useComposerFocus(session.id, visible && !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
-  const transcript = useTranscriptEnd(conversation.entries, stickSlack)
+  const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
     const page = await window.electronAPI.sessionsHistory(session.id, before)
@@ -489,7 +519,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       setBefore(page.before)
     }
   }, [session.id, before])
-  const earlier = useEarlier(transcript, before !== null, fetchEarlier, conversation.entries)
+  const earlier = useEarlier(
+    transcript,
+    visible && before !== null,
+    fetchEarlier,
+    presentation.entries
+  )
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
   }
@@ -706,15 +741,16 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
   const blocks = useMemo(() => {
     const ordinal = new Map<Entry, number>()
-    conversation.entries.forEach((entry, i) => ordinal.set(entry, conversation.first + i))
-    return groupEntries(visibleEntries(conversation.entries)).map((block) => ({
+    presentation.entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(presentation.entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [conversation.entries, conversation.first])
+  }, [presentation.entries, presentation.first])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
+  const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
   return (
     <div
@@ -758,7 +794,17 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
-            {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
+            {head === 'failed' && (
+              <PastFailed
+                onRetry={() => {
+                  // Back to reading: neither the failure nor the empty state
+                  // until the new round answers.
+                  setPast((now) => pastStep(now, 'retry'))
+                  pastReader.current?.retry()
+                }}
+              />
+            )}
+            {head === 'empty' && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
                   <ChatBubbleLeftRightIcon />

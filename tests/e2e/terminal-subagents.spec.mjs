@@ -11,7 +11,9 @@ import { until } from './harness.mjs'
      it carries neither the word "background" nor its last command, which is
      in the row's tooltip;
    - picking another model on a row asks first, then stops that one task and
-     asks the conversation to launch it again on the model picked. */
+     asks the conversation to launch it again on the model picked;
+   - a background shell joins the same stack behind the terminal glyph, with
+     no model and no relaunch, and leaves with the list. */
 
 export async function run(t) {
   const chat = await openChat(
@@ -138,6 +140,66 @@ export async function run(t) {
       sent?.stop?.taskId === 'task-9' && /Map the views/.test(sent?.ask ?? ''),
       sent
     )
+
+    /* 5. A background shell beside the agent: the same stack, the terminal
+       glyph for its dot, no model and no relaunch; the agent keeps its menu. */
+    await inject(fixture, record.id, [
+      {
+        type: 'tool_call',
+        id: 'bash-1',
+        name: 'Bash',
+        input: { command: 'npm run dev', run_in_background: true }
+      },
+      { type: 'tool_result', id: 'bash-1', output: 'Command running in background with ID: b1' },
+      {
+        type: 'background_tasks',
+        tasks: [
+          {
+            id: 'task-9',
+            kind: 'agent',
+            description: 'Map the views',
+            toolUseId: 'call-1',
+            startedAt: Date.now()
+          },
+          {
+            id: 'b1',
+            kind: 'shell',
+            description: 'npm run dev',
+            toolUseId: 'bash-1',
+            startedAt: Date.now()
+          }
+        ]
+      },
+      { type: 'state_change', state: 'done' }
+    ])
+    const shellRow = view.locator('.term-agent[data-kind="shell"]')
+    await until(async () => (await shellRow.count()) === 1)
+    const stack = await view.locator('.term-agent:not([data-leaving])').evaluateAll((items) =>
+      items.map((el) => ({
+        kind: el.getAttribute('data-kind'),
+        description: el.querySelector('.term-agent-description')?.textContent,
+        icon: !!el.querySelector('svg.term-agent-icon'),
+        dot: !!el.querySelector('.term-agent-dot'),
+        model: el.querySelector('.term-agent-model')?.textContent ?? null,
+        relaunch: !!el.querySelector('button.term-agent-model')
+      }))
+    )
+    t.check(
+      'a background shell stacks after the agent with the terminal glyph and no model; the agent keeps its relaunch',
+      stack.length === 2 &&
+        stack[0].kind === 'agent' &&
+        stack[0].relaunch &&
+        stack[1].kind === 'shell' &&
+        stack[1].description === 'npm run dev' &&
+        stack[1].icon &&
+        !stack[1].dot &&
+        stack[1].model === null &&
+        !stack[1].relaunch,
+      stack
+    )
+    await inject(fixture, record.id, [{ type: 'background_tasks', tasks: [] }])
+    const cleared = await until(async () => (await view.locator('.term-agent').count()) === 0)
+    t.check('an empty list folds both rows away', !!cleared)
   } finally {
     await chat.close()
   }

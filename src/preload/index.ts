@@ -19,13 +19,17 @@ import type {
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { GitRangeDirection } from '../shared/git-range'
 import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
-import type { SessionInfo } from './index.d'
+import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
+import type { PluginSecretPrompt, SessionInfo } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
-import { dualListener, workspaceStatePick } from './dual-listener'
+import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
 import { createReviewRelay, createWatchLedger } from './workspace-files-relay'
 import { createViewRequestTracker } from './view-request-tracker'
-import { IPC_SERVER_ENDPOINT } from '@clave/contract/env'
+import {
+  IPC_SERVER_ENDPOINT,
+  IPC_SERVER_ENDPOINT_NAMED,
+  IPC_SERVER_EXTERNAL
+} from '@clave/contract/env'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
@@ -125,6 +129,12 @@ const announceServer = (backing: Backing): void => {
 const watchForServer = (): void => {
   if (serverBacking || serverWatching) return
   serverWatching = true
+  // Main says when it names the server: ask at once rather than at the next
+  // tick (PRDCT-3527). The tick stays, for a window that missed the word.
+  const named = (): void => {
+    if (!serverBacking) void serverRouter.backing().then((b) => b && announceServer(b), noop)
+  }
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
   const ask = (): void => {
     void serverRouter.backing().then(
       (backing) => {
@@ -423,6 +433,19 @@ const serverMode = async (): Promise<ServerMode | null> => {
   if (found?.mode) serverModeKnown = found.mode
   return found?.mode ?? null
 }
+// A window whose sessions are on a server of their own loads the client it
+// will reach it with while the server starts, rather than after: the import
+// is about 400 ms of synchronous requires, which the launch's restore paid
+// after the server had answered (PRDCT-3527). Inside the app it is not
+// loaded at all, as before.
+void Promise.resolve()
+  .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
+  .then(
+    (external) => {
+      if (external === true) setTimeout(() => void import('@clave/client/node').catch(noop), 0)
+    },
+    () => {}
+  )
 // The mode is asked for as the window starts and again whenever the server
 // is announced, so by the time a terminal pane exists it is known: inside
 // the app the pane's calls then stay SYNCHRONOUS sends, as they always were
@@ -490,9 +513,23 @@ async function listSessionRecords(filter?: { ids?: string[] }): Promise<WireSess
 async function listServerRestoreRecords(): Promise<WireSessionRecord[]> {
   const deadline = Date.now() + 15_000
   let mode = await serverMode()
-  while (mode === null && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    mode = await serverMode()
+  // Asked again every 150 ms, and at once when main names the server.
+  let wake: () => void = noop
+  const named = (): void => wake()
+  ipcRenderer.on(IPC_SERVER_ENDPOINT_NAMED, named)
+  try {
+    while (mode === null && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150)
+        wake = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+      mode = await serverMode()
+    }
+  } finally {
+    ipcRenderer.removeListener(IPC_SERVER_ENDPOINT_NAMED, named)
   }
   if (mode !== 'attached') return []
   // Ride the server's own arrival (`onServerAvailable`: at once when a backing
@@ -587,6 +624,32 @@ function onServerEventOf<E extends ServerEvent['_tag']>(
     off?.()
   }
 }
+// ── Wave 5, lane C: the plugins' roads (PRDCT-3433) ──
+/** Which session each view lease this window took is on: the lease answer
+ *  names it, and the view's event listener reads the session's own stream. */
+const leaseSessions = new Map<string, string>()
+/** The server's plugin events the shell cannot hear itself when the server
+ *  runs apart from the app: a plugin's notification, which the shell shows,
+ *  and a change of the plugins, on which the shell releases the pages of a
+ *  plugin no longer active. Every window relays them; the shell acts on each
+ *  once, by the event's id. Bound beside the view-request tracker in
+ *  `onMcpCommand`, which every window binds at load and releases with it,
+ *  rather than at module load: a waiter of its own would be one more push
+ *  binding than the window's own listeners account for. */
+const relayPluginEvents = (push: import('@clave/client').PushClient): (() => void) => {
+  // Never throws: a test's partial push client has no `onEvent`.
+  if (typeof push.onEvent !== 'function') return noop
+  return push.onEvent((envelope) => {
+    const event = envelope.event
+    if (event._tag === 'plugins.notified')
+      void ipcRenderer
+        .invoke('plugins:show-notification', envelope.id, event.name, event.title, event.body)
+        .catch(() => undefined)
+    else if (event._tag === 'plugins.changed')
+      void ipcRenderer.invoke('plugins:changed-heard', envelope.id).catch(() => undefined)
+  })
+}
+
 /** A server event about one session, on the push channel. */
 function onSessionEvent<E extends ServerEvent['_tag']>(
   push: import('@clave/client').PushClient,
@@ -818,12 +881,48 @@ const watchWorkspaceFilesServer = (): void => {
   onServerAvailable(wireWorkspaceFiles)
 }
 
+/** The same record write on main's copy of the records, BEFORE the
+ *  server's: the window's boot lists the records to bring back from main's
+ *  folder (PRDCT-3530), so a field kept on the server's record alone came
+ *  back stale after a quit (wave 6, lane A), and a server that is down must
+ *  not cost main's copy the write IPC always made (round 4 of the lane's
+ *  verifier). Main writes only a record it has; its refusal is swallowed, the
+ *  server's write still runs and the caller hears the server's answer. */
+const alsoMain = async (channel: string, ...args: unknown[]): Promise<void> => {
+  try {
+    await ipcRenderer.invoke(channel, ...args)
+  } catch {
+    // Main's copy is the boot's fallback source; the server's record stands.
+  }
+}
+
 const electronAPI = {
   // ── The server (lane A): what it refused, for the page's notice ──
   onServerRefusal: (callback: (refusal: ServerRefusal | null) => void): (() => void) => {
     refusalListeners.add(callback)
     return () => {
       refusalListeners.delete(callback)
+    }
+  },
+  // ── Wave 6, lane A: the window's server connection, opened or back (PRDCT-3526) ──
+  // Heard when the server becomes available to this window and at every
+  // welcome of its push channel after that (a reconnection included): the
+  // moment a read that was lost while the server was busy or gone is worth
+  // asking again. A window on IPC for good never hears it.
+  onServerConnected: (callback: () => void): (() => void) => {
+    let off: () => void = noop
+    let gone = false
+    const withdraw = onServerAvailable((backing) => {
+      if (gone) return
+      off = backing.push.onStatus((status) => {
+        if (status === 'open') callback()
+      })
+      if (backing.push.status === 'open') callback()
+    })
+    return () => {
+      gone = true
+      withdraw()
+      off()
     }
   },
   // ── Sessions (lane A): every call goes to the server once main names it ──
@@ -907,27 +1006,114 @@ const electronAPI = {
       () => subscribedVia.get(id) === 'ipc'
     ),
 
-  pluginsList: () => ipcRenderer.invoke('plugins:list'),
-  pluginsViewLease: (pluginId: string, viewId: string, sessionId: string) =>
-    ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId),
-  pluginsViewRequest: (leaseId: string, method: string, params?: unknown) =>
-    ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
-  pluginsViewRevoke: (leaseId: string) => ipcRenderer.invoke('plugins:view-revoke', leaseId),
-  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) =>
-    createIpcListener(`plugins:view-event:${leaseId}`, callback),
-  pluginsEnable: (id: string, grants: import('@clave/plugin-sdk').PluginPermission[]) =>
-    ipcRenderer.invoke('plugins:enable', id, grants),
-  pluginsDisable: (id: string) => ipcRenderer.invoke('plugins:disable', id),
+  // ── Wave 5, lane C: the plugins, served (PRDCT-3433) ──
+  // The store, the host and the view leases are the server's. A page's URL is
+  // the shell's, minted by the preview protocol from the file the server
+  // named and released by the shell when the page is gone, so the lease, the
+  // revoke, the panel and the focus report go through the IPC arms in both
+  // modes: the arms answer from the plugins the boot named. A view's events are the
+  // session's own stream, heard on the transport the session's subscription
+  // is on: the lease fixes the session and this file remembers which, so
+  // nothing per-lease crosses from main. "Link folder…" keeps its IPC road
+  // because the folder dialog is the shell's.
+  pluginsList: viaServer<[], import('../main/plugins/plugin-store').PluginRecord[]>({
+    ipc: () => ipcRenderer.invoke('plugins:list'),
+    server: async ({ api }) =>
+      [
+        ...(await api.plugins.list())
+      ] as unknown as import('../main/plugins/plugin-store').PluginRecord[]
+  }),
+  pluginsViewLease: async (
+    pluginId: string,
+    viewId: string,
+    sessionId: string
+  ): Promise<{ leaseId: string; url: string; sessionId: string }> => {
+    const lease = (await ipcRenderer.invoke('plugins:view-lease', pluginId, viewId, sessionId)) as {
+      leaseId: string
+      url: string
+      sessionId: string
+    }
+    leaseSessions.set(lease.leaseId, lease.sessionId)
+    return lease
+  },
+  pluginsViewRequest: viaServer<[string, string, unknown?], unknown>({
+    ipc: (leaseId, method, params) =>
+      ipcRenderer.invoke('plugins:view-request', leaseId, method, params),
+    server: ({ api }, leaseId, method, params) => api.plugins.requestView(leaseId, method, params)
+  }),
+  pluginsViewRevoke: async (leaseId: string): Promise<void> => {
+    leaseSessions.delete(leaseId)
+    await ipcRenderer.invoke('plugins:view-revoke', leaseId)
+  },
+  onPluginViewEvent: (leaseId: string, callback: (event: SessionEvent) => void) => {
+    const sessionId = leaseSessions.get(leaseId)
+    if (!sessionId) return noop
+    // The lease's session and no other: the guest never named it, the lease
+    // did. A session nobody in this window subscribed to yet (a surface view
+    // alone on it) is subscribed here and released with the listener.
+    const taken = !subscribedVia.has(sessionId)
+    if (taken) void subscribeRoute(sessionId).catch(() => undefined)
+    const onStream = (stream: SessionStream): void => {
+      if (stream.kind === 'event') callback(stream.event)
+    }
+    const off = onBothTransports(
+      createIpcListener(`sessions:stream:${sessionId}`, onStream),
+      (push) => push.subscribe(sessionId, onStream as (stream: unknown) => void),
+      () => subscribedVia.get(sessionId) === 'ipc'
+    )
+    return () => {
+      off()
+      if (taken) void unsubscribeRoute(sessionId).catch(() => undefined)
+    }
+  },
+  pluginsEnable: viaServer<[string, import('@clave/plugin-sdk').PluginPermission[]], void>({
+    ipc: (id, grants) => ipcRenderer.invoke('plugins:enable', id, grants),
+    server: ({ api }, id, grants) => api.plugins.enable(id, grants)
+  }),
+  pluginsDisable: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:disable', id),
+    server: ({ api }, id) => api.plugins.disable(id)
+  }),
   pluginsLink: (folder?: string) => ipcRenderer.invoke('plugins:link', folder),
-  pluginsRemove: (id: string) => ipcRenderer.invoke('plugins:remove', id),
-  pluginsCommand: (id: string, command: string) =>
-    ipcRenderer.invoke('plugins:command', id, command),
-  pluginsPanel: (id: string, panel: string) => ipcRenderer.invoke('plugins:panel', id, panel),
-  pluginsContext: (sessionId: string | null) => ipcRenderer.invoke('plugins:context', sessionId),
-  pluginsSecrets: () => ipcRenderer.invoke('plugins:secrets'),
-  pluginsSecretReply: (id: string, value: string | null) =>
-    ipcRenderer.invoke('plugins:secret-reply', id, value),
-  onPluginsChanged: (callback: () => void) => createIpcListener('plugins:changed', callback),
+  pluginsRemove: viaServer<[string], void>({
+    ipc: (id) => ipcRenderer.invoke('plugins:remove', id),
+    server: ({ api }, id) => api.plugins.remove(id)
+  }),
+  pluginsCommand: viaServer<[string, string], void>({
+    ipc: (id, command) => ipcRenderer.invoke('plugins:command', id, command),
+    server: ({ api }, id, command) => api.plugins.command(id, command)
+  }),
+  pluginsPanel: (id: string, panel: string) =>
+    ipcRenderer.invoke('plugins:panel', id, panel) as Promise<{ url: string }>,
+  // The focus report goes through the arm in both modes too: the shell keys
+  // the window and clears its report on the window's own `closed` event,
+  // which only the shell sees. A routed call takes the server arm in-process
+  // as well (the in-process server names an endpoint) and skipped that watch.
+  pluginsContext: (sessionId: string | null) =>
+    ipcRenderer.invoke('plugins:context', sessionId) as Promise<void>,
+  pluginsSecrets: viaServer<[], PluginSecretPrompt[]>({
+    ipc: () => ipcRenderer.invoke('plugins:secrets'),
+    server: async ({ api }) => [...(await api.plugins.secrets())] as PluginSecretPrompt[]
+  }),
+  pluginsSecretReply: viaServer<[string, string | null], void>({
+    ipc: (id, value) => ipcRenderer.invoke('plugins:secret-reply', id, value),
+    server: ({ api }, id, value) => api.plugins.replySecret(id, value)
+  }),
+  // The one `plugins.changed` the window hears: IPC from the shell's own
+  // service while the push socket is not open, the push channel while it is.
+  // The event carries nothing, so the pick answers null, never undefined: the
+  // dual listener drops an event whose pick answers undefined, and a window
+  // attached to a server apart heard no plugin change at all. No catch-up at
+  // the welcome: every store re-lists on hearing a change and listed at its
+  // mount, and a welcome's re-list went to five subscribers at once, a
+  // full-tree re-render that landed on a chat's first rows while the
+  // transcript's virtualiser still hid them unmeasured (plugin-views.spec).
+  onPluginsChanged: (callback: () => void) =>
+    viaServerEvent<'plugins.changed', null>(
+      'plugins:changed',
+      'plugins.changed',
+      () => null
+    )(callback),
   /** Which OS the window is on. The renderer needs it for exactly one class of
    *  decision: chrome that holds room for the platform's own window buttons.
    *  Only macOS puts them INSIDE our chrome (`titleBarStyle: 'hiddenInset'`,
@@ -1035,15 +1221,51 @@ const electronAPI = {
 
   listSessions: () => ipcRenderer.invoke('pty:list'),
 
-  setSessionDisplayName: (id: string, displayName: string | null, userRenamed: boolean) =>
-    ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
-  setSessionViewRecord: (
-    id: string,
-    view: { url: string; title?: string; command?: string; cwd?: string } | null
-  ) => ipcRenderer.invoke('session:set-view', id, view),
+  // A tab's name and page, kept on the records the next launch restores it
+  // from (wave 6, lane A, PRDCT-3526): main's first (`alsoMain`) and the
+  // server's once main names it, because the window's boot still lists the
+  // records to bring back from main's folder (PRDCT-3530) and a tab renamed
+  // on the server's record alone came back under its old name.
+  setSessionDisplayName: viaServer<[string, string | null, boolean], void>({
+    ipc: (id, displayName, userRenamed) =>
+      ipcRenderer.invoke('session:set-display-name', id, displayName, userRenamed),
+    server: async ({ api }, id, displayName, userRenamed) => {
+      await alsoMain('session:set-display-name', id, displayName, userRenamed)
+      await api.sessions.keepOnRecord(id, {
+        name: { displayName, userRenamed: userRenamed === true }
+      })
+    }
+  }),
+  setSessionViewRecord: viaServer<
+    [string, { url: string; title?: string; command?: string; cwd?: string } | null],
+    void
+  >({
+    ipc: (id, view) => ipcRenderer.invoke('session:set-view', id, view),
+    server: async ({ api }, id, view) => {
+      await alsoMain('session:set-view', id, view)
+      await api.sessions.keepOnRecord(id, {
+        page:
+          view && typeof view.url === 'string' && view.url.length > 0
+            ? {
+                url: view.url,
+                ...(typeof view.title === 'string' ? { title: view.title } : {}),
+                ...(typeof view.command === 'string' ? { command: view.command } : {}),
+                ...(typeof view.cwd === 'string' ? { cwd: view.cwd } : {})
+              }
+            : null
+      })
+    }
+  }),
 
-  setSessionWorkspace: (id: string, workspaceId: string | null) =>
-    ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+  // Kept on the server's record once main names it, like the name (round 1
+  // of wave 6 lane A's verifier): over IPC it reached main's copy only.
+  setSessionWorkspace: viaServer<[string, string | null], void>({
+    ipc: (id, workspaceId) => ipcRenderer.invoke('session:set-workspace', id, workspaceId),
+    server: async ({ api }, id, workspaceId) => {
+      await alsoMain('session:set-workspace', id, workspaceId)
+      await api.sessions.keepOnRecord(id, { workspaceId })
+    }
+  }),
 
   tmuxAvailable: () => ipcRenderer.invoke('tmux:available'),
 
@@ -1060,6 +1282,7 @@ const electronAPI = {
   // The attached restore top-up: the server's surviving records for this
   // window, empty in-process (PRDCT-3376).
   listServerRestoreRecords: () => listServerRestoreRecords(),
+  serverHasRestoreRecords: () => ipcRenderer.invoke('records:server-has-any') as Promise<boolean>,
   bootRecordsComplete: () => bootRecordsComplete(),
 
   discardSessionRecord: (key: string) => discardSessionRecord(key),
@@ -1213,6 +1436,8 @@ const electronAPI = {
       callback
     )
     let offPush: (() => void) | null = null
+    // ── Wave 5, lane C: the plugin events ride this window-long binding ──
+    let offPluginEvents: (() => void) | null = null
     const withdraw = onServerAvailable((backing) => {
       const mine = windowKey()
       offPush = backing.push.onRequest((request) => {
@@ -1226,11 +1451,13 @@ const electronAPI = {
           })
         })
       })
+      offPluginEvents = relayPluginEvents(backing.push)
     })
     return () => {
       offIpc()
       withdraw()
       offPush?.()
+      offPluginEvents?.()
     }
   },
 
@@ -1311,8 +1538,19 @@ const electronAPI = {
   historySearchCancel: (requestId: string) => ipcRenderer.send('history:search-cancel', requestId),
   onHistorySearchHits: (callback: (progress: { requestId: string; hits: unknown[] }) => void) =>
     createIpcListener<[{ requestId: string; hits: unknown[] }]>('history:search-hits', callback),
-  setSessionClaudeSessionId: (id: string, claudeSessionId: string) =>
-    ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+  // A `/clear` rotated the conversation: the record that brings the tab back
+  // follows it, on the server's records once main names it (round 1 of wave 6
+  // lane A's verifier); over IPC it reached main's copy only, and the tab
+  // came back on its conversation from before the clear.
+  setSessionClaudeSessionId: viaServer<[string, string], void>({
+    ipc: (id, claudeSessionId) =>
+      ipcRenderer.invoke('session:set-claude-session-id', id, claudeSessionId),
+    server: async ({ api }, id, claudeSessionId) => {
+      if (typeof id !== 'string' || typeof claudeSessionId !== 'string' || !claudeSessionId) return
+      await alsoMain('session:set-claude-session-id', id, claudeSessionId)
+      await api.sessions.keepOnRecord(id, { claudeSessionId })
+    }
+  }),
 
   secretList: () => ipcRenderer.invoke('secret:list'),
 
@@ -1546,9 +1784,9 @@ const electronAPI = {
   // carries this window's key as its origin, and the change event carries it
   // back so this window drops its own echo, the way the IPC handler skips
   // the sender. ──
-  workspaceLoad: viaServer<[], WorkspaceStateFile>({
+  workspaceLoad: viaServer<[], WorkspaceState>({
     ipc: () => ipcRenderer.invoke('workspace:load'),
-    server: async ({ api }) => loose<WorkspaceStateFile>(await api.settings.workspaces.load())
+    server: async ({ api }) => loose<WorkspaceState>(await api.settings.workspaces.load())
   }),
   workspaceUpdateRegistry: viaServer<[unknown[]], RegistryWriteResult>({
     ipc: (workspaces) => ipcRenderer.invoke('workspace:update-registry', workspaces),
@@ -1570,9 +1808,11 @@ const electronAPI = {
       return { ok: true as const }
     }
   }),
-  onWorkspaceStateChanged: (
-    callback: (state: { workspaces: unknown[]; pins: unknown[] }) => void
-  ): (() => void) => {
+  // The value carries the state's stamp (wave 5, lane A, PRDCT-3405): the
+  // renderer drops a fold that is not newer than what it holds, which is
+  // what keeps the catch-up read at a welcome from resetting pins the
+  // window wrote after the read went out.
+  onWorkspaceStateChanged: (callback: (state: WorkspaceStateFold) => void): (() => void) => {
     // This window's key, read once: the echo test needs it synchronously.
     let mine: string | null = null
     void windowKey().then((key) => {
@@ -1584,7 +1824,14 @@ const electronAPI = {
       workspaceStatePick(() => mine),
       async (api) => {
         const state = await api.settings.workspaces.load()
-        return [{ workspaces: [...state.workspaces], pins: [...state.pins] }]
+        return [
+          {
+            workspaces: [...state.workspaces],
+            pins: [...state.pins],
+            revision: state.revision,
+            instance: state.instance
+          }
+        ]
       }
     )(callback)
   },

@@ -45,7 +45,12 @@ export interface SessionIPCEvents {
 
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type {
+  WindowIdentity,
+  Workspace,
+  WorkspaceStamp,
+  WorkspaceState
+} from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
@@ -66,7 +71,15 @@ export type SetWorkspaceResult =
   | { ok: false; reason: 'unknown-workspace' | 'no-window' }
 
 /** Main's answer to a state write (layout, pins). */
-export type WriteResult = { ok: true } | { ok: false; reason: 'invalid-key' | 'no-window' }
+/** A registry or pins write that landed: the state as the write left it,
+ *  with its stamp; the writer folds it like a change (PRDCT-3405). */
+export type WorkspaceWritten = {
+  ok: true
+  workspaces: Workspace[]
+  pins: unknown[]
+} & WorkspaceStamp
+/** A pins write: landed, or refused. */
+export type WriteResult = WorkspaceWritten | { ok: false; reason: 'invalid-key' | 'no-window' }
 
 export interface HistoryLedgerRow {
   v: 1
@@ -350,6 +363,9 @@ export type SessionLink =
   | { kind: 'toolbar'; key: string }
 
 export interface SessionRecord {
+  /** How the session's process talks: a terminal (`pty`) or a chat's
+   *  structured events (`events`). Absent on a record older than the field. */
+  transport?: 'pty' | 'events'
   /** The session is one this process already runs (wave 3): a window asking
    *  for it by id takes it in from the record alone, with no spawn. Absent on
    *  an adoptable record, whose process the window reattaches itself. */
@@ -605,6 +621,10 @@ export interface ElectronAPI {
   onServerRefusal: (
     callback: (refusal: { capability: string; message: string } | null) => void
   ) => () => void
+  /** The window's server connection opened, or came back after a loss: the
+   *  moment to ask again for a read that was lost (PRDCT-3526). Never heard
+   *  by a window on IPC for good. */
+  onServerConnected: (callback: () => void) => () => void
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>
@@ -728,6 +748,9 @@ export interface ElectronAPI {
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the server holds a record this window would bring back, asked
+   *  through main so the window does not connect to find out (PRDCT-3527). */
+  serverHasRestoreRecords: () => Promise<boolean>
   /** Whether the boot's `listSessionRecords()` read is every adoptable record
    *  (inside the app) or the server's come after it through the top-up
    *  (attached, or while main has named no server yet). The boot's layout
@@ -949,14 +972,17 @@ export interface ElectronAPI {
     baseRevision?: number
   ) => Promise<SidebarSaveResult>
   onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
-  workspaceLoad: () => Promise<WorkspaceStateFile>
+  // The state and every write result carry the state's stamp (wave 5,
+  // lane A, PRDCT-3405): the window drops a fold that is not newer than the
+  // last stamp it loaded, wrote or took in.
+  workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
-  ) => Promise<{ ok: true } | { ok: false; reason: 'invalid' }>
+  ) => Promise<WorkspaceWritten | { ok: false; reason: 'invalid' }>
   workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) => Promise<WriteResult>
   workspaceSetLastActive: (workspaceId: string | null) => Promise<{ ok: true }>
   onWorkspaceStateChanged: (
-    callback: (state: { workspaces: Workspace[]; pins: unknown[] }) => void
+    callback: (state: { workspaces: Workspace[]; pins: unknown[] } & WorkspaceStamp) => void
   ) => () => void
   windowIdentity: () => Promise<WindowIdentity | null>
   onWindowIdentityChanged: (callback: (identity: WindowIdentity) => void) => () => void

@@ -3,18 +3,29 @@ import { describeToolHead } from './tools'
 import { claudeModelName } from '../../../src/shared/claude-models'
 
 /** The Terminal view's status line, read off the same session stream the
- *  transcript is: how full the context is (`context_usage`), and the subagents
- *  running now, followed through the `parent` a subagent's own tool calls
- *  carry. A provider that sends neither leaves the line empty. The provider's
- *  raw frames never reach a window (sessions/ipc.ts), so nothing here reads
- *  them. */
+ *  transcript is: how full the context is (`context_usage`), and the work
+ *  running now — subagents, followed through the `parent` a subagent's own
+ *  tool calls carry, and background shells. A provider that sends none of it
+ *  leaves the line empty. The provider's raw frames never reach a window
+ *  (sessions/ipc.ts), so nothing here reads them. */
 export interface SubAgent {
-  /** The tool call that started it: a subagent's frames name it as their parent. */
+  /** The tool call that started it (a subagent's frames name it as their
+   *  parent), else the task's own id when no call is named. */
   id: string
   /** The background task it runs as, which is what stopping it names; null
    *  for an agent the turn waits on. */
   taskId: string | null
-  /** What the agent is (`general-purpose`, `Explore`, …), as the call asked. */
+  /** A subagent, or a shell command left running. */
+  kind: 'agent' | 'shell'
+  /** Started by Claude's Agent tool: the call a relaunch asks for again. */
+  fromAgentTool: boolean
+  /** A command whose call asked to run in the background (Claude's Bash
+   *  `run_in_background`), not yet in the provider's background list: its
+   *  "running in background" result does not end it, the list or the turn's
+   *  end does. */
+  requestedBackground: boolean
+  /** What the agent is (`general-purpose`, `Explore`, …), as the call asked;
+   *  `shell` for a command. */
   type: string
   description: string
   /** Run in the background (the CLI's default) rather than waited on by the turn. */
@@ -51,6 +62,14 @@ export const emptyStatus: TerminalStatus = {
 }
 
 const AGENT_TOOLS = new Set(['agent', 'task'])
+/** The Codex adapter's name for a command call. Every command it runs shows
+ *  while it runs, waited on or not: Codex does not say, mid-turn, which ones
+ *  were left running. One that outlives the turn comes back in the
+ *  background list under the same id and keeps its row. */
+const CODEX_COMMAND = 'commandExecution'
+/** Claude's command tool. A main-thread call shows from its tool_use, waited
+ *  on or not; the background list, naming the call, makes it background work. */
+const CLAUDE_BASH = 'Bash'
 const isAgentTool = (name: string): boolean => AGENT_TOOLS.has(name.toLowerCase())
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -58,6 +77,12 @@ function record(value: unknown): Record<string, unknown> {
     : {}
 }
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+/** A Codex command as Codex parsed it, else as it ran. */
+function commandOf(input: Record<string, unknown>): string {
+  const actions = Array.isArray(input.commandActions) ? input.commandActions.map(record) : []
+  return (actions.length === 1 && text(actions[0].command)) || text(input.command)
+}
 
 /** One call, the way a row of the transcript names it: "Read reducer.ts". */
 function actionOf(name: string, input: unknown): string {
@@ -71,18 +96,29 @@ function withActivity(agent: SubAgent, status: TerminalStatus): SubAgent {
 }
 
 function fromBackground(task: BackgroundTask, known: SubAgent | undefined): SubAgent {
+  const kind = task.kind === 'shell' ? 'shell' : 'agent'
   return {
     id: task.toolUseId ?? task.id,
     taskId: task.id,
-    type: known?.type ?? 'agent',
-    description: task.description || known?.description || '',
+    kind,
+    fromAgentTool: known?.fromAgentTool ?? false,
+    requestedBackground: false,
+    type: known?.type ?? kind,
+    // A command keeps the text its card opened with (the command itself);
+    // the provider may name it otherwise (Claude's Bash `description`). A
+    // task with no card of its own, and an agent, read as the provider says.
+    description:
+      (known?.kind === 'shell' && known.description) ||
+      task.description ||
+      known?.description ||
+      '',
     background: true,
     startedAt: known?.startedAt ?? task.startedAt,
     lastAction: known?.lastAction ?? null,
     lastActiveAt: known?.lastActiveAt ?? task.startedAt,
     toolCount: known?.toolCount ?? 0,
     contextUsed: known?.contextUsed ?? null,
-    model: known?.model ?? null
+    model: known?.model ?? task.model ?? null
   }
 }
 /** Note what a subagent did, on the agent when it is listed and in the
@@ -114,11 +150,38 @@ export function reduceStatus(
           lastActiveAt: now,
           toolCount: (status.activity[event.parent]?.toolCount ?? 0) + 1
         })
-      if (!isAgentTool(event.name) || status.agents.some((a) => a.id === event.id)) return status
+      if (status.agents.some((a) => a.id === event.id)) return status
       const input = record(event.input)
+      if (event.name === CODEX_COMMAND || event.name === CLAUDE_BASH) {
+        // A poll of a running process (write_stdin) is a call of its own but
+        // no task of its own: the command it polls already has its row.
+        if (input.source === 'unifiedExecInteraction') return status
+        const claude = event.name === CLAUDE_BASH
+        const command: SubAgent = {
+          id: event.id,
+          taskId: null,
+          kind: 'shell',
+          fromAgentTool: false,
+          requestedBackground: claude && input.run_in_background === true,
+          type: 'shell',
+          description: claude ? text(input.command) : commandOf(input),
+          background: false,
+          startedAt: now,
+          lastAction: null,
+          lastActiveAt: now,
+          toolCount: 0,
+          contextUsed: null,
+          model: null
+        }
+        return { ...status, agents: [...status.agents, command] }
+      }
+      if (!isAgentTool(event.name)) return status
       const agent: SubAgent = {
         id: event.id,
         taskId: null,
+        kind: 'agent',
+        fromAgentTool: true,
+        requestedBackground: false,
         type: text(input.subagent_type) || 'agent',
         description: text(input.description),
         background: input.run_in_background === true,
@@ -133,23 +196,42 @@ export function reduceStatus(
     }
     case 'tool_result': {
       const agent = status.agents.find((a) => a.id === event.id)
-      // A background agent's call answers at once ("running in background");
-      // it stays until the background list drops it.
+      // A background agent's or command's call answers at once ("running in
+      // background"); it stays until the background list drops it. A command
+      // whose answer comes before the list names it waits for the list, or
+      // for the turn's end.
       if (!agent || agent.background) return status
+      // Asked for the background but failed or was refused before any list
+      // confirmed it: nothing runs. The provider's word is the error flag,
+      // never the text.
+      if (agent.requestedBackground && event.error !== true) return status
       return { ...status, agents: status.agents.filter((a) => a.id !== event.id) }
     }
     case 'background_tasks': {
-      const running = event.tasks.filter((task) => task.kind === 'agent')
+      // Work of a kind the stack cannot name stays off it.
+      const running = event.tasks.filter((task) => task.kind !== 'other')
       const byId = new Map(status.agents.map((agent) => [agent.id, agent]))
-      const background = running.map((task) =>
-        withActivity(fromBackground(task, byId.get(task.toolUseId ?? task.id)), status)
-      )
-      const ids = new Set(background.map((agent) => agent.id))
+      const background = running.map((task) => {
+        const agent = withActivity(
+          fromBackground(task, byId.get(task.toolUseId ?? task.id)),
+          status
+        )
+        // A sign of work from an earlier run (an agent given more work after
+        // it finished) never dates this one: a run is active from its start.
+        return { ...agent, lastActiveAt: Math.max(agent.lastActiveAt, agent.startedAt) }
+      })
+      // A card the list names is replaced where it stands (a running command
+      // promoted to background work keeps its place), a background card it no
+      // longer names goes, and a task new to the stack is added after.
+      const listed = new Map(background.map((agent) => [agent.id, agent]))
       return {
         ...status,
         agents: [
-          ...status.agents.filter((agent) => !agent.background && !ids.has(agent.id)),
-          ...background
+          ...status.agents.flatMap((agent) => {
+            const replaced = listed.get(agent.id)
+            return replaced ? [replaced] : agent.background ? [] : [agent]
+          }),
+          ...background.filter((agent) => !byId.has(agent.id))
         ]
       }
     }

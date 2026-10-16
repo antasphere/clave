@@ -1,8 +1,9 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server (re-examined by wave 5, lane C,
+// PRDCT-3433): the automatic switch and the Play button restart the tab
+// through `pty:restart`, which main answers from its own PTY manager and
+// cannot restart a session the attached server holds; the spec also reads
+// the session record from the app's folder, which attached is the
+// server's. One of its checks is a known failure of dev (known-failures.json).
 // A chat tab whose account runs out of credits comes back on the next
 // account (ADR 0002). The CLI in `-p` mode does not report that limit as a
 // rate-limit event: it writes a synthetic reply in the model's place ("You're
