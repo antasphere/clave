@@ -41,6 +41,8 @@ import {
 } from './workspace-files'
 import { ViewRequests, viewHandlers } from './views'
 import { FilesPort, fileHandlers } from './files'
+import { RequestsPort } from './requests/port'
+import { RequestEventsLive, requestHandlers } from './requests/handlers'
 // ── Wave 4, lane C: the agent tools' tokens ──
 import { AgentTokens, agentToolsHandlers } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
@@ -65,6 +67,7 @@ export interface ServerOptions {
 }
 
 export type ServerServices =
+  | RequestsPort
   | FilesPort
   | ServerEvents
   | ClientRegistry
@@ -113,8 +116,10 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const views = ViewRequests.layer.pipe(Layer.provide(hub))
   // ── Wave 5, lane C: the plugins' news goes out as server events ──
   const pluginsEvents = PluginsEventsLive.pipe(Layer.provide(services))
+  const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
+    requestEvents,
     hub,
     settingsEvents,
     sidebarEvents,
@@ -144,6 +149,7 @@ export const BusesLive = busesLayer.pipe(
   Layer.provide(
     HandlerRegistry.layer(
       ...sessionHandlers,
+      ...requestHandlers,
       ...fileHandlers,
       ...clientHandlers,
       // ── Lane D: settings ──
@@ -202,12 +208,16 @@ export const ServerLive = (
   )
 }
 
-/** Limit file bodies before JSON decoding, independently of schema bounds.
- * Other domains retain their existing budgets. Authentication runs first. */
+/** Bound transfer and sensitive resolution bodies before JSON decoding.
+ * Authentication runs first; oversized secret inputs are never echoed. */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-    if (!request.url.startsWith('/files/')) return app
-    const limit = 7 * 1024 * 1024
+    const limit = request.url.startsWith('/requests/')
+      ? 64 * 1024
+      : request.url.startsWith('/files/')
+        ? 7 * 1024 * 1024
+        : undefined
+    if (limit === undefined) return app
     const length = Number(request.headers['content-length'])
     if (Number.isFinite(length) && length > limit)
       return Effect.succeed(HttpServerResponse.empty({ status: 413 }))

@@ -50,20 +50,25 @@ import * as path from 'path'
 import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
 import { standaloneSidebar } from './server/standalone-sidebar'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
+import { requestAwareSessionHost } from './sessions/request-aware-host'
+import { startStandaloneMcp } from './mcp/standalone-mcp'
+import { executeSecretAction } from './secret-actions'
 import {
   startEmbedded,
   Terminals,
   grpcTerminals,
   type TerminalsService,
   WorkspaceFiles,
-  fileWorkspaceFilesStorage
+  fileWorkspaceFilesStorage,
+  createServerFiles,
+  PendingRequests
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
-import { ptyManager, loginShellEnvAsync } from './pty-manager'
+import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -236,7 +241,14 @@ async function main(): Promise<void> {
         ready: (id) => sessionManager.ready(id)
       })
     : undefined
-  const sessions = owned?.host ?? originalSessions
+  const requests = new PendingRequests()
+  const requestHost = requestAwareSessionHost({
+    host: owned?.host ?? originalSessions,
+    requests,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener)
+  })
+  const sessions = requestHost.host
   installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
   // The installed plugins, their host and the view leases are this server's:
@@ -256,6 +268,8 @@ async function main(): Promise<void> {
   const server = await startEmbedded({
     ports: {
       sessions,
+      requests,
+      files: createServerFiles({ attachmentsRoot: path.join(dataDir, 'session-attachments') }),
       terminals,
       ...(sidebar && { sidebar }),
       settings: standalone.settings,
@@ -264,7 +278,11 @@ async function main(): Promise<void> {
       // is published to the clients and the read waits for the answer.
       workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
-      agentTools,
+      // A desktop may still announce its own endpoint for old servers. This
+      // server owns its endpoint and never points local providers at a Mac.
+      agentTools: config.daemon
+        ? { announce: () => {}, resolve: (token) => agentTools.resolve(token) }
+        : agentTools,
       // ── Wave 5, lane C: the plugins ──
       plugins
     },
@@ -277,6 +295,23 @@ async function main(): Promise<void> {
     // the app's; off, the route does not exist.
     testFixtures: TEST_NO_ACTIVATE
   })
+
+  const mcp = config.daemon
+    ? await startStandaloneMcp({
+        sessions,
+        agentTools,
+        requests,
+        executeSecret: async (action, value) => {
+          const outcome = await executeSecretAction(
+            action,
+            value,
+            action.type === 'run' ? { shell: getUserShell(), env: getLoginShellEnv() } : undefined
+          )
+          if (!outcome.ok) throw new Error('Secret action failed.')
+        }
+      })
+    : undefined
+  if (mcp) agentTools.announce(mcp.url)
 
   // A session's title, plan, clear and state go out as server events to
   // every attached client (`server/session-events.ts`), as the in-process
@@ -297,6 +332,7 @@ async function main(): Promise<void> {
           url: server.url,
           token: server.token,
           serverId: server.serverId,
+          ...(mcp && { agentToolsUrl: mcp.url }),
           daemon: config.daemon,
           mode: 'standalone',
           ok: true,
@@ -352,6 +388,8 @@ async function main(): Promise<void> {
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
+    requestHost.close()
+    requests.close()
     owned?.close()
     stopStates()
     setServerEventPublisher(null)
@@ -371,6 +409,7 @@ async function main(): Promise<void> {
       /* nothing to remove */
     }
     stopping_sessions
+      .then(() => mcp?.close())
       .then(() => server.stop())
       .then(() => closeTerminals())
       .then(

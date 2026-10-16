@@ -24,6 +24,7 @@ import { type AgentToolsClient, agentToolsClient } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
 import { type PluginsClient, pluginsClient } from './plugins'
 import { filesClient, type FilesClient } from './files'
+import { requestsClient, type RequestsClient } from './requests'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -54,6 +55,7 @@ export interface ApiClientOptions {
 }
 
 export interface ClaveApiClient {
+  readonly requests: RequestsClient
   readonly files: FilesClient
   readonly url: string
   // ── Lane A ──
@@ -133,6 +135,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   return {
     url: options.url,
     files: filesClient(call),
+    requests: requestsClient(call, patientCall),
     sessions: sessionsClient(call, historyCall),
     clients: clientsClient(call),
     settings: settingsClient(call),
