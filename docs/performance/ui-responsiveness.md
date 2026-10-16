@@ -12,7 +12,7 @@ Inline link and table renderer functions previously changed their React componen
 
 ## Frozen comparison
 
-Three fresh launches before and three for each after collection ran on this Mac, exclusively from other lane builds/checks. Each used 100 echo chats in 10 groups, 20 histories of 200 alternating turns, 80 short histories, and a selected 34,380-byte response with 480 Markdown links/emphasis spans. Streaming appends uniquely numbered 128-byte chunks every 50ms. Thirty samples per action follow five warmups in each phase. Every produced chunk arrived once, in order.
+Three fresh launches before and three for each after collection ran on this Mac. Collections were serialized against this lane's own builds and checks; other Mac workloads were uncontrolled. Each used 100 echo chats in 10 groups, 20 histories of 200 alternating turns, 80 short histories, and a selected 34,380-byte response with 480 Markdown links/emphasis spans. Streaming appends uniquely numbered 128-byte chunks every 50ms. Thirty samples per action follow five warmups in each phase. Every produced chunk arrived once, in order.
 
 The task counter covers the initial five seconds of each quiet/streaming phase. CPU profiles cover the full phase, including later interactions. Full-phase duration depends on how long those interactions take, so baseline profiles contain more appended text. Their sampled totals must not be substituted for the fixed-window task comparison. Realized stream rates remain comparable, 19.34–19.60 events/s across the before and R2 collections.
 
@@ -35,6 +35,8 @@ Median extra task time falls from 3827.758ms to 1160.271ms, exceeding the accept
 | Composer handler to second rAF           |    110.0ms |  37.7ms |  ≤50ms | Pass     |
 
 R2 per-launch tab p95 is 52.5/52.3/49.8ms, group 70.9/72.0/71.2ms, composer 37.7/38.1/37.4ms, and native input 8.306/7.158/7.877ms. The raw samples, maxima and every sample over 100ms remain in [the comparison](ui-responsiveness/comparison.json) and measurements. The tab samples above 45ms reveal the long streaming answer. That correlation does not prove a specific reveal-hook cause.
+
+Both formal phases ran with a 1ms CPU profiler, as `config.profileIntervalUs` records. These are instrumented timings; a paired unprofiled cohort has not established their sensitivity to profiling.
 
 The native input clock starts before Playwright's `keyboard.insertText` and ends after observing the controlled textarea value. Focus and clearing precede that clock. Handler clocks start inside the DOM event and end at the second rAF. Tab/group request clocks additionally include Playwright actionability, IPC, frame waits and DOM verification; their tails exceed 100ms and remain disclosed, but they are not the accepted native-input metric. None measures physical input-to-pixel latency.
 
