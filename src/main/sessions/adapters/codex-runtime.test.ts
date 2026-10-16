@@ -426,7 +426,12 @@ it('retains a legacy native executable and its sibling helper without copying it
   expect(await connection.request('helper')).toEqual({ output: 'legacy-helper' })
 })
 
-it.each(['distant matching marker', 'escaping entrypoint', 'missing entrypoint at executable'])(
+it.each([
+  'distant matching marker',
+  'escaping entrypoint',
+  'absolute entrypoint',
+  'missing entrypoint at executable'
+])(
   'keeps legacy retention confined to its pair with %s',
   async (marker) => {
     const { root, install } = fixture()
@@ -447,6 +452,8 @@ it.each(['distant matching marker', 'escaping entrypoint', 'missing entrypoint a
       const alias = join(root, 'outside-alias')
       symlinkSync(join(install, 'bin', 'codex'), alias)
       entrypoint = relative(manifestDirectory, alias)
+    } else if (marker === 'absolute entrypoint') {
+      entrypoint = join(install, 'bin', 'codex')
     }
     writeFileSync(
       join(manifestDirectory, 'codex-package.json'),
