@@ -19,12 +19,23 @@ claimed; a failed action remains terminal and is not automatically executed agai
 Closing the session or stopping the daemon cancels pending work. A finished or
 cancelled provider turn also removes its native prompts.
 
+Questions may carry a stable `id`. Answer records, input state and masking use
+`question.id ?? question.question`. Older questions without IDs keep their text
+keys. Native Codex questions carry the original provider IDs, so identical prompt
+text can identify separate inputs. Display `question` and `header` unchanged;
+never use display text as an alias for an ID-bearing question. A form requires
+exactly one nonblank answer per canonical key. `secretQuestions` contains these
+same keys, so a private question remains distinct from a public one with the
+same text. Session event schemas and pending snapshots preserve the IDs.
+
 Secrets travel only in the authenticated resolution POST body and the approved
 action's function call. They never appear in request snapshots, events or polling
 results. Secret action output is also omitted, including redacted stdout/stderr.
 The native env-file action writes the value on the owning server; a run action
 injects it into a subprocess environment. Clients review the action before answering.
 Do not ask for sensitive values through ordinary clarification questions.
+Malformed resolution and legacy session-write payloads return generic validation
+errors without copying answers or question keys into HTTP problem details.
 
 The daemon starts an authenticated loopback MCP listener for its own agent
 processes. Existing per-session token configs establish the caller; a request
@@ -51,3 +62,7 @@ Run `npx vitest run packages/server/src/requests/requests.fixtures.test.ts` to l
 and verify the scenario against isolated HTTP/MCP listeners. Its receipt remains
 under `/tmp/clave-vps-d-impl/fixture-*/receipt.json`. The fleet acceptance lane
 composes the two-client Electron scenario with the same domain interfaces.
+The same test file also loads `shared-requests/answered-native-questions`,
+rejects a malformed private answer over HTTP, resolves distinct IDs with identical
+prompt text through the command bus and checks the exact provider response.
+Receipts omit submitted answers. Set `CLAVE_E2E_NS` to keep each run's data separate.

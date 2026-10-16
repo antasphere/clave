@@ -112,7 +112,10 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
         if (frame.method === 'thread/start') process.stdout.write(JSON.stringify({
           id:'native-input', method:'item/tool/requestUserInput', params:{
             threadId:'fixture-thread',turnId:'fixture-turn',itemId:'fixture-item',isBlocking:true,
-            questions:[{id:'private-question-id',header:'Private',question:'Native private input?',isSecret:true,options:null}]
+            questions:[
+              {id:'public-question-id',header:'Public',question:'Native input?',options:null},
+              {id:'private-question-id',header:'Private',question:'Native input?',isSecret:true,options:null}
+            ]
           }
         })+'\\n');
       });
@@ -150,7 +153,11 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
         )
         expect(pending).toMatchObject({
           kind: 'clarification',
-          secretQuestions: ['Native private input?']
+          secretQuestions: ['private-question-id'],
+          questions: [
+            { id: 'public-question-id', question: 'Native input?', header: 'Public' },
+            { id: 'private-question-id', question: 'Native input?', header: 'Private' }
+          ]
         })
         nativeId = pending!.id
       },
@@ -166,7 +173,10 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
             response: {
               type: 'permission',
               optionId: 'answer',
-              answers: { 'Native private input?': privateValue }
+              answers: {
+                'public-question-id': 'public answer',
+                'private-question-id': privateValue
+              }
             }
           })
         )
@@ -182,6 +192,7 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
             id: 'native-input',
             result: {
               answers: {
+                'public-question-id': { answers: ['public answer'] },
                 'private-question-id': { answers: [privateValue] }
               }
             }
