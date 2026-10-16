@@ -96,11 +96,11 @@ export {
  *  x.workspaceId null/undefined → unstamped safety net: nothing can ever
  *  disappear because it predates the workspace model. */
 export function inActiveWorkspace(
-  x: { workspaceId?: string | null },
+  x: { id?: string; workspaceId?: string | null },
   activeId: string | null
 ): boolean {
   if (activeId === null) return true
-  if (x.workspaceId == null || isRemoteKey(x.workspaceId)) return true
+  if (isRemoteKey(x.id) || x.workspaceId == null || isRemoteKey(x.workspaceId)) return true
   return x.workspaceId === activeId
 }
 
@@ -435,7 +435,10 @@ interface SessionState {
  *  falls back to this window's active workspace (mirrors pty:spawn). */
 function normalizeSession(session: Session): Session {
   const workspaceId =
-    session.workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId ?? undefined
+    session.workspaceId ??
+    (isRemoteKey(session.id)
+      ? undefined
+      : (useWorkspaceStore.getState().activeWorkspaceId ?? undefined))
   return {
     ...session,
     workspaceId,
@@ -1068,25 +1071,53 @@ export const useSessionStore = create<SessionState>((set) => ({
   resetSessions: async () => {
     const { sessions, groups } = useSessionStore.getState()
 
-    // The one app-initiated close: every tab goes, recorded as such. (An app
-    // QUIT is not a close — sessions survive in tmux and are re-adopted.)
+    const results = await Promise.allSettled(
+      sessions.map((s) => window.electronAPI?.killSession(s.id))
+    )
+    const refused = new Set<string>(
+      sessions
+        .filter((s, i) => isRemoteKey(s.id) && results[i].status === 'rejected')
+        .map((s) => s.id)
+    )
+    const attempted = new Set(sessions.map((s) => s.id))
+    // An offline server still owns its tabs. Only accepted remote closes
+    // remove drafts and placement; the existing local reset stays unchanged.
     for (const s of sessions) {
+      if (refused.has(s.id)) continue
       emitTabClosed(s, groups, 'app', null)
       clearSessionDraft(s.id)
     }
 
-    // Kill all PTYs
-    await Promise.allSettled(
-      sessions.map((s) => window.electronAPI?.killSession(s.id).catch(() => {}))
-    )
-
-    set({
-      sessions: [],
-      groups: [],
-      displayOrder: [],
-      focusedSessionId: null,
-      selectedSessionIds: [],
-      searchQuery: ''
+    set((state) => {
+      const survivingSessions = state.sessions.filter(
+        (s) => !attempted.has(s.id) || refused.has(s.id)
+      )
+      const surviving = new Set(survivingSessions.map((s) => s.id))
+      const owners = new Set(
+        survivingSessions.filter((s) => isRemoteKey(s.id)).map((s) => ownerOf(s.id))
+      )
+      const retained = state.groups
+        .filter((g) => owners.has(ownerOf(g.id)))
+        .map((g) => ({
+          ...g,
+          sessionIds: g.sessionIds.filter((id) => surviving.has(id)),
+          terminals: g.terminals.map((t) => ({
+            ...t,
+            sessionId: t.sessionId && surviving.has(t.sessionId) ? t.sessionId : null
+          }))
+        }))
+      const ids = new Set([...surviving, ...retained.map((g) => g.id)])
+      return {
+        sessions: survivingSessions,
+        groups: retained,
+        displayOrder: state.displayOrder.filter((id) => ids.has(id)),
+        focusedSessionId:
+          state.focusedSessionId && surviving.has(state.focusedSessionId)
+            ? state.focusedSessionId
+            : null,
+        selectedSessionIds: state.selectedSessionIds.filter((id) => surviving.has(id)),
+        searchQuery: ''
+      }
     })
   },
 

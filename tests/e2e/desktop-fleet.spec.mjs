@@ -122,6 +122,8 @@ export async function run(t) {
     })
     app = launched.app
     const win = launched.win
+    const rendererErrors = []
+    win.on('pageerror', (error) => rendererErrors.push(error.message))
     assert.equal(
       await app.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows().some((w) => w.isVisible())
@@ -288,6 +290,21 @@ export async function run(t) {
     await win.evaluate((root) => window.electronAPI.writeFile(root, 'notes.txt', 'A edited'), fileA)
     assert.equal(readFileSync(path.join(a.cwd, 'notes.txt'), 'utf8'), 'A edited')
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
+    const tree = win.locator(`[data-fleet-files="${savedA.id}"]`)
+    if (!(await tree.count())) await win.getByTitle(/^File tree/).click()
+    await tree.getByRole('button', { name: 'notes.txt', exact: true }).click()
+    const editor = win.locator('.cm-content[contenteditable="true"]:visible')
+    await editor.waitFor()
+    assert.deepEqual(rendererErrors, [], 'remote file focus keeps the renderer alive')
+    await editor.fill('A edited in desktop')
+    await editor.press('Meta+s')
+    await check(
+      () =>
+        until(() => readFileSync(path.join(a.cwd, 'notes.txt'), 'utf8') === 'A edited in desktop'),
+      'remote file editor saves bytes on its owner'
+    )
+    assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
+    await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     const png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
     const localImage = path.join(root, 'mac-image.png')
@@ -373,6 +390,16 @@ export async function run(t) {
       kb
     )
     await assert.rejects(win.evaluate((id) => window.electronAPI.sessionsHistory(id), ka))
+    await a.fixture.evaluate((id) => {
+      globalThis.__claveE2E.echo.inject(id, {
+        kind: 'event',
+        event: { type: 'user_message', text: 'missed while this Mac was disconnected' }
+      })
+      globalThis.__claveE2E.echo.inject(id, {
+        kind: 'event',
+        event: { type: 'assistant_text', delta: 'owner reply while disconnected', final: true }
+      })
+    }, collision)
     await win.evaluate((id) => window.electronAPI.fleetConnect(id), savedA.id)
     await check(
       () =>
@@ -397,8 +424,15 @@ export async function run(t) {
     )
     await win.evaluate((id) => window.electronAPI.killSession(id), terminal.id)
     assert.ok(terminalWire)
+    assert.deepEqual(rendererErrors, [], 'desktop has no uncaught renderer errors')
     t.check('closing one colliding tab removes only its owning server tab', true)
     assert.ok(reconnectHistory.items.length > 0, 'owning live history survives reconnect')
+    await win
+      .locator(
+        `[data-session-id="${ka}"] [data-testid="chat-view"] .chat-turn[data-role="assistant"]`
+      )
+      .filter({ hasText: 'owner reply while disconnected' })
+      .waitFor()
     assert.ok(
       JSON.stringify(histories[0]).includes('message only for server A'),
       'live history contains the turn sent through this desktop'

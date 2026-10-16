@@ -178,7 +178,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               <ChatBubbleBottomCenterTextIcon className="w-4 h-4" />
             </button>
           )}
-          {session.claudeMode && session.claudeSessionId && (
+          {!isRemoteKey(sessionId) && session.claudeMode && session.claudeSessionId && (
             <>
               <button
                 onClick={() =>

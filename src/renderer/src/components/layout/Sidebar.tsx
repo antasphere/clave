@@ -773,7 +773,7 @@ export function Sidebar(): React.JSX.Element {
 
         const currentState = useSessionStore.getState()
         useSessionStore.setState({
-          sessions: [...currentState.sessions, newSession],
+          sessions: [...currentState.sessions.filter((s) => s.id !== newSession.id), newSession],
           selectedSessionIds: [sessionInfo.id],
           focusedSessionId: sessionInfo.id
         })

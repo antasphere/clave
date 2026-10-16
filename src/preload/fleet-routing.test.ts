@@ -207,3 +207,10 @@ describe('desktop owner routing', () => {
     ).toHaveLength(0)
   })
 })
+
+it('treats focus on a remote file as no local plugin session context', async () => {
+  await api.pluginsContext(resourceKey('file', 'a', '/repo/notes.txt'))
+  expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'plugins:context')).toHaveLength(
+    0
+  )
+})

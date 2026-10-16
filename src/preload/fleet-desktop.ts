@@ -848,7 +848,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
             new Error('Remote plugin surface views are unavailable. Use a native session view.')
           )
         : local.pluginsViewLease(pluginId, viewId, id),
-    pluginsContext: (id) => (id && remote(id) ? Promise.resolve() : local.pluginsContext(id)),
+    // Focus can name a file tab as well as a session. No remote resource is
+    // a session hosted by the Mac's plugin runtime.
+    pluginsContext: (id) =>
+      id?.startsWith('clave-owner:') ? Promise.resolve() : local.pluginsContext(id),
     readDir: (root, path) =>
       fileRoute(
         root,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { parseResourceKey } from '@clave/contract/fleet'
 import { DocumentIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import {
   attachmentIssue,
@@ -36,6 +37,7 @@ function AttachmentChip({
   const [error, setError] = useState<string>()
   const [open, setOpen] = useState(false)
   const { id, path, name, mimeType, size, delivery } = file
+  const displayPath = parseResourceKey('file', path).id
   // Only a chip that can still change asks the question; a sent one is history.
   const issue = onRemove ? attachmentIssue(file, imagesSupported) : undefined
   useEffect(() => {
@@ -63,7 +65,7 @@ function AttachmentChip({
       <button
         type="button"
         className="chat-attachment-open"
-        title={path}
+        title={displayPath}
         aria-label={`Preview ${name}`}
         onClick={() => setOpen(true)}
       >
@@ -106,7 +108,9 @@ function AttachmentChip({
               <XMarkIcon />
             </DialogClose>
           </div>
-          <DialogDescription className="chat-attachment-dialog-path">{path}</DialogDescription>
+          <DialogDescription className="chat-attachment-dialog-path">
+            {displayPath}
+          </DialogDescription>
           <div className="chat-attachment-dialog-body">
             {error ? (
               <p role="alert">{error}</p>

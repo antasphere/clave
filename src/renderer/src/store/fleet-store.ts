@@ -39,11 +39,14 @@ const connected = (id: string): boolean =>
   useFleetStore.getState().statuses[id]?.state === 'connected'
 const layoutFor = (serverId: string): DesktopLayout => {
   const state = partitionLayout(useSessionStore.getState(), serverId)
+  const files = new Set(state.fileTabs.map((f) => f.id))
   return {
-    groups: state.groups.map((g) => ({ ...g, collapsed: false })),
-    displayOrder: state.displayOrder.filter(
-      (id) => !useSessionStore.getState().fileTabs.some((file) => file.id === id)
-    )
+    groups: state.groups.map((g) => ({
+      ...g,
+      collapsed: false,
+      sessionIds: g.sessionIds.filter((id) => !files.has(id))
+    })),
+    displayOrder: state.displayOrder.filter((id) => !files.has(id))
   }
 }
 function applyLayout(serverId: string, snapshot: LayoutSnapshot): void {
@@ -56,8 +59,14 @@ function applyLayout(serverId: string, snapshot: LayoutSnapshot): void {
   bases.set(serverId, server)
   useSessionStore.setState((state) => {
     const collapsed = new Map(state.groups.map((g) => [g.id, g.collapsed]))
+    const files = new Set(state.fileTabs.map((f) => f.id))
     const groups = merged.groups.map((g) => ({
       ...g,
+      sessionIds: [
+        ...g.sessionIds,
+        ...(state.groups.find((old) => old.id === g.id)?.sessionIds.filter((id) => files.has(id)) ??
+          [])
+      ],
       collapsed: collapsed.get(g.id) ?? false
     })) as SessionGroup[]
     const remainingOrder = state.displayOrder.filter(
