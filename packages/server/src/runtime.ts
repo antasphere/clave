@@ -20,10 +20,12 @@ import type * as HttpServer from '@effect/platform/HttpServer'
 import type * as HttpRouter from '@effect/platform/HttpRouter'
 import { HandlerRegistry, layer as busesLayer } from '@structure-ai/cqrs'
 import { type EventStore, InMemoryAll } from '@structure-ai/eventsourcing'
-import { Middleware } from '@structure-ai/http'
+import { defaultErrorResponse, Middleware } from '@structure-ai/http'
 import { Readiness } from '@structure-ai/runtime'
+import { Correlation } from '@structure-ai/observability'
 import { ApiLive } from './api'
 import { bearerAuth } from './auth'
+import { privateAnswerPath } from './requests/answer-route'
 import { corsForLoopback } from './cors'
 import { ClientRegistry, clientHandlers } from './clients'
 import { ServerEvents } from './events'
@@ -179,7 +181,7 @@ const outer =
       corsForLoopback(
         pushRoute(hub)(
           bearerAuth(options.token)(
-            fixtureRoute(options.testFixtures === true)(boundedFileRequest(app))
+            fixtureRoute(options.testFixtures === true)(boundedFileRequest(privateAnswerJson(app)))
           )
         )
       )
@@ -212,14 +214,53 @@ export const ServerLive = (
  * Authentication runs first; oversized secret inputs are never echoed. */
 const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-    const limit = request.url.startsWith('/requests/')
-      ? 64 * 1024
-      : request.url.startsWith('/files/')
-        ? 7 * 1024 * 1024
-        : undefined
+    const limit =
+      request.url.startsWith('/requests/') || privateAnswerPath(request.url) === '/requests/resolve'
+        ? 64 * 1024
+        : request.url.startsWith('/files/')
+          ? 7 * 1024 * 1024
+          : undefined
     if (limit === undefined) return app
     const length = Number(request.headers['content-length'])
     if (Number.isFinite(length) && length > limit)
       return Effect.succeed(HttpServerResponse.empty({ status: 413 }))
     return HttpIncomingMessage.withMaxBodySize(app, Option.some(limit))
+  })
+
+/** Node's JSON.parse SyntaxError can quote private input. Handle syntax before
+ * the framework turns it into a logged defect. The cached body is decoded by
+ * the normal API schema afterward; unrelated routes and defects stay intact. */
+const privateAnswerJson = (app: HttpApp.Default): HttpApp.Default =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    if (request.method !== 'POST' || privateAnswerPath(request.url) === undefined) return yield* app
+    const contentType = request.headers['content-type']?.toLowerCase().trim() ?? 'application/json'
+    if (!contentType.includes('application/json')) return yield* app
+    const text = yield* request.text.pipe(
+      Effect.catchTag('RequestError', () => Effect.succeed(undefined))
+    )
+    let valid = text !== undefined
+    if (text) {
+      try {
+        JSON.parse(text)
+      } catch {
+        valid = false
+      }
+    }
+    if (!valid) {
+      return yield* Middleware.correlation(
+        Effect.gen(function* () {
+          const context = yield* Correlation.current
+          yield* Effect.logWarning('Invalid private answer JSON body')
+          return HttpServerResponse.setHeaders(
+            defaultErrorResponse(undefined, context.correlationId),
+            {
+              ...(context.requestId && { 'x-request-id': context.requestId }),
+              ...(context.correlationId && { 'x-correlation-id': context.correlationId })
+            }
+          )
+        })
+      )
+    }
+    return yield* app
   })

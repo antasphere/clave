@@ -7,6 +7,8 @@ import { PendingRequests } from './service'
 import { SessionHost } from '../sessions/port'
 import type { Session, SessionStream } from '../../../contract/src/sessions'
 import { requestAwareSessionHost } from '../../../../src/main/sessions/request-aware-host'
+import { CodexTranslator } from '../../../../src/main/sessions/adapters/codex-adapter'
+import type { CodexConnection } from '../../../../src/main/sessions/adapters/codex-app-server'
 
 const closes: Array<() => Promise<unknown> | void> = []
 afterEach(async () => {
@@ -35,6 +37,99 @@ function push(server: EmbeddedServer): PushClient {
 }
 
 describe('shared requests over authenticated HTTP and push', () => {
+  it.each(['/sessions/write', '/requests/resolve'])(
+    'settles exact transport-boundary and ordinary canonical keys once on %s',
+    async (route) => {
+      const requests = new PendingRequests()
+      const respond = vi.fn()
+      let emit!: (id: string, stream: SessionStream) => void
+      const translator = new CodexTranslator((event) => emit('s', { kind: 'event', event }))
+      const wrapped = requestAwareSessionHost({
+        host: {
+          ...SessionHost.none,
+          get: () => ({
+            id: 's',
+            cwd: '/tmp',
+            windowKey: 'server',
+            createdAt: 1,
+            provider: 'codex',
+            adapterId: 'codex-chat',
+            transport: 'events',
+            state: 'blocked',
+            title: 'Question'
+          }),
+          write: async (_id, input) => {
+            if (input.type === 'permission_response')
+              translator.answer(
+                input.id,
+                input.optionId,
+                { respond } as unknown as CodexConnection,
+                input.answers
+              )
+          }
+        },
+        requests,
+        subscribeAll: (listener) => {
+          emit = listener
+          return () => {}
+        }
+      })
+      closes.push(() => {
+        wrapped.close()
+        requests.close()
+      })
+      const server = await startEmbedded({ ports: { requests, sessions: wrapped.host } })
+      closes.push(() => server.stop())
+      for (const [i, key] of ['constructor', 'toString', 'x'.repeat(16_384)].entries()) {
+        expect(
+          translator.request({
+            id: i,
+            method: 'item/tool/requestUserInput',
+            params: {
+              threadId: 'thread',
+              turnId: 'turn',
+              itemId: 'item',
+              isBlocking: true,
+              questions: [{ id: key, question: 'Value?', header: 'Public', options: null }]
+            }
+          })
+        ).toBe(true)
+        const pending = requests.snapshot().pending[0]
+        expect(pending.questions?.[0].id === key).toBe(true)
+        const body =
+          route === '/sessions/write'
+            ? {
+                id: 's',
+                input: {
+                  type: 'permission_response',
+                  id: JSON.stringify(i),
+                  optionId: 'answer',
+                  answers: Object.fromEntries([[key, 'value']])
+                }
+              }
+            : {
+                requestId: pending.id,
+                response: {
+                  type: 'permission',
+                  optionId: 'answer',
+                  answers: Object.fromEntries([[key, 'value']])
+                }
+              }
+        const result = await fetch(server.url + route, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+        expect(result.status).toBe(route === '/sessions/write' ? 204 : 200)
+        expect(requests.snapshot().pending).toEqual([])
+        expect(respond).toHaveBeenLastCalledWith(i, {
+          answers: Object.fromEntries([[key, { answers: ['value'] }]])
+        })
+        expect(respond).toHaveBeenCalledTimes(i + 1)
+      }
+    }
+  )
+
   it.each(['/sessions/write', '/requests/resolve'])(
     'rejects malformed private answers on %s without disclosing values or question keys',
     async (route) => {

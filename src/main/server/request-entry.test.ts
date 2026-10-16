@@ -65,6 +65,10 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
     }
   )
   children.push(child)
+  let stdout = ''
+  child.stdout?.on('data', (chunk) => {
+    stdout += chunk.toString()
+  })
   let stderr = ''
   child.stderr?.on('data', (chunk) => {
     stderr += chunk.toString()
@@ -163,6 +167,51 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
       },
       { timeout: 10_000 }
     )
+    // Exercise Node's actual JSON.parse diagnostics before schema validation.
+    // Bun's SyntaxError text differs, so the built Node run is required evidence.
+    const privateKey = 'K3Y42'
+    const malformedValue = 'S3CR3T42'
+    for (const route of [
+      '/sessions/write',
+      '/requests/resolve',
+      '/SESSIONS//write/?probe=1',
+      '/requests//%72esolve/',
+      '/%73essions/write;probe=1',
+      '/REQUESTS/resolve'
+    ]) {
+      const malformedBodies = [
+        `{"${privateKey}":"${malformedValue}" BROKEN}`,
+        `{"${privateKey}":"${malformedValue}\\q"}`,
+        route === '/sessions/write'
+          ? `{"id":"${providerSession.id}","input":{"type":"permission_response","id":"native-input","optionId":"answer","answers":{"${privateKey}":${malformedValue}}}}`
+          : `{"requestId":"${nativeId}","response":{"type":"secret","value":${malformedValue}}}`
+      ]
+      for (const body of malformedBodies) {
+        const response = await fetch(discovery.url + route, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${discovery.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': 'private-json-test'
+          },
+          body
+        })
+        expect(response.status).toBe(500)
+        expect(response.headers.get('x-correlation-id')).toBe('private-json-test')
+        const text = await response.text()
+        expect(JSON.parse(text)).toMatchObject({
+          error: 'InternalServerError',
+          message: 'internal server error',
+          correlationId: 'private-json-test'
+        })
+        expect(text).not.toContain(privateKey)
+        expect(text).not.toContain(malformedValue)
+        expect((await api.requests.list()).pending.map((r) => r.id)).toEqual([nativeId])
+        expect(existsSync(providerReplies)).toBe(false)
+      }
+    }
+    expect(stdout + stderr).not.toContain(privateKey)
+    expect(stdout + stderr).not.toContain(malformedValue)
     const anotherClient = createApiClient({ url: discovery.url, token: discovery.token })
     const privateValue = 'BUILT-PROVIDER-PRIVATE-SENTINEL'
     try {
@@ -225,6 +274,42 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
         response: { type: 'permission', optionId: 'approve' }
       })
     ).toEqual({ accepted: true })
+    const secretFile = join(dataDir, 'private-action.env')
+    const secretCreated = await client.callTool({
+      name: 'clave_request_secret',
+      arguments: {
+        description: 'Isolated secret action',
+        action: { type: 'env-file', file: secretFile, key: 'FIXTURE_SECRET' }
+      }
+    })
+    const secretRequestId = JSON.parse((secretCreated.content as Array<{ text: string }>)[0].text)
+      .requestId as string
+    for (const route of ['/sessions/write', '/requests/resolve']) {
+      const response = await fetch(discovery.url + route, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${discovery.token}`, 'content-type': 'application/json' },
+        body: `{"requestId":"${secretRequestId}","response":{"type":"secret","value":${malformedValue}}}`
+      })
+      expect(response.status).toBe(500)
+      expect(await response.text()).not.toContain(malformedValue)
+      expect((await api.requests.list()).pending.map((r) => r.id)).toEqual([secretRequestId])
+      expect(existsSync(secretFile)).toBe(false)
+    }
+    const secretValue = 'BUILT-SECRET-ACTION-SENTINEL'
+    expect(
+      await api.requests.resolve({
+        requestId: secretRequestId,
+        response: { type: 'secret', value: secretValue }
+      })
+    ).toEqual({ accepted: true })
+    expect(await readFile(secretFile, 'utf8')).toContain(secretValue)
+    const secretResult = await client.callTool({
+      name: 'clave_secret_result',
+      arguments: { requestId: secretRequestId }
+    })
+    expect(JSON.stringify(secretResult)).toContain('completed')
+    expect(JSON.stringify(secretResult)).not.toContain(secretValue)
+    expect(stdout + stderr).not.toContain(secretValue)
     const file = { root: dataDir, path: 'owned.txt' }
     await api.files.write({ ...file, content: 'FilesPort is wired on this daemon.' })
     expect((await api.files.read(file)).content).toBe('FilesPort is wired on this daemon.')
@@ -241,6 +326,8 @@ it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', 
       attachment.path.startsWith(join(await realpath(dataDir), 'session-attachments') + '/')
     ).toBe(true)
     expect(await readFile(attachment.path, 'utf8')).toBe('owner attachment')
+    expect(stdout + stderr).not.toContain(privateKey)
+    expect(stdout + stderr).not.toContain(malformedValue)
     await api.sessions.stop(id)
     await api.sessions.stop(providerSession.id)
   } finally {

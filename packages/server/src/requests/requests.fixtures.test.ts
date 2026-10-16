@@ -99,6 +99,17 @@ it('loads duplicate-label native questions through the command fixture and verif
     expect(text).not.toContain('private-id')
     expect(respond).not.toHaveBeenCalled()
     expect((await api.requests.list()).pending).toHaveLength(1)
+    for (const route of ['/sessions/write', '/requests/resolve']) {
+      const malformed = await fetch(server.url + route, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+        body: '{"private-fixture-key":"private-fixture-value" BROKEN}'
+      })
+      expect(malformed.status).toBe(500)
+      expect(await malformed.text()).not.toContain('private-fixture')
+      expect((await api.requests.list()).pending.map((r) => r.id)).toEqual([pending.id])
+      expect(respond).not.toHaveBeenCalled()
+    }
     const fixtures = await Effect.runPromise(
       requestFixtureCatalog.prepare('shared-requests/answered-native-questions', {
         requestId: pending.id,

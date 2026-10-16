@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Schema } from 'effect'
+import { isQuestionAnswerKey } from './question-key'
 import {
   PendingRequest,
   RequestRejected,
@@ -92,6 +93,7 @@ export class PendingRequests {
     if (request.kind === 'permission' && !request.options?.length) throw invalid()
     if (request.kind === 'clarification' && !request.questions?.length) throw invalid()
     const questionKeys = request.questions?.map((q) => q.id ?? q.question) ?? []
+    if (questionKeys.some((key) => !isQuestionAnswerKey(key))) throw invalid()
     if (new Set(questionKeys).size !== questionKeys.length) throw invalid()
     this.entries.set(request.id, {
       request: structuredClone(request),
