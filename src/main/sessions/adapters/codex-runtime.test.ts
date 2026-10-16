@@ -431,46 +431,43 @@ it.each([
   'escaping entrypoint',
   'absolute entrypoint',
   'missing entrypoint at executable'
-])(
-  'keeps legacy retention confined to its pair with %s',
-  async (marker) => {
-    const { root, install } = fixture()
-    rmSync(join(install, 'codex-package.json'))
-    let commandInstall = install
-    let manifestDirectory = join(install, 'bin')
-    let entrypoint: string | undefined
-    if (marker === 'distant matching marker') {
-      // This matching manifest is six parents above the executable directory,
-      // outside the nearby-package search. Its tree contains unrelated data.
-      commandInstall = join(install, 'a', 'b', 'c', 'd', 'e')
-      mkdirSync(commandInstall, { recursive: true })
-      renameSync(join(install, 'bin'), join(commandInstall, 'bin'))
-      manifestDirectory = install
-      entrypoint = relative(install, join(commandInstall, 'bin', 'codex'))
-    } else if (marker === 'escaping entrypoint') {
-      // Canonical equality alone must not let an outside alias claim this CLI.
-      const alias = join(root, 'outside-alias')
-      symlinkSync(join(install, 'bin', 'codex'), alias)
-      entrypoint = relative(manifestDirectory, alias)
-    } else if (marker === 'absolute entrypoint') {
-      entrypoint = join(install, 'bin', 'codex')
-    }
-    writeFileSync(
-      join(manifestDirectory, 'codex-package.json'),
-      JSON.stringify({ layoutVersion: 2, entrypoint })
-    )
-    writeFileSync(join(commandInstall, 'bin', 'unrelated-prefix-file'), 'outside the legacy pair')
-    writeFileSync(
-      join(commandInstall, 'bin', 'codex-code-mode-host'),
-      '#!/bin/sh\nprintf legacy-helper',
-      { mode: 0o755 }
-    )
-    const connection = connect(root, commandInstall)
-    const runtime = (await connection.request('runtime')) as { file: string }
-    expect(runtime.file).not.toContain(install)
-    expect(readdirSync(dirname(runtime.file)).sort()).toEqual(['codex', 'codex-code-mode-host'])
-    rmSync(install, { recursive: true })
-    expect(await connection.request('helper')).toEqual({ output: 'legacy-helper' })
-    expect(await connection.request('child')).toEqual({ output: 'legacy-helper' })
+])('keeps legacy retention confined to its pair with %s', async (marker) => {
+  const { root, install } = fixture()
+  rmSync(join(install, 'codex-package.json'))
+  let commandInstall = install
+  let manifestDirectory = join(install, 'bin')
+  let entrypoint: string | undefined
+  if (marker === 'distant matching marker') {
+    // This matching manifest is six parents above the executable directory,
+    // outside the nearby-package search. Its tree contains unrelated data.
+    commandInstall = join(install, 'a', 'b', 'c', 'd', 'e')
+    mkdirSync(commandInstall, { recursive: true })
+    renameSync(join(install, 'bin'), join(commandInstall, 'bin'))
+    manifestDirectory = install
+    entrypoint = relative(install, join(commandInstall, 'bin', 'codex'))
+  } else if (marker === 'escaping entrypoint') {
+    // Canonical equality alone must not let an outside alias claim this CLI.
+    const alias = join(root, 'outside-alias')
+    symlinkSync(join(install, 'bin', 'codex'), alias)
+    entrypoint = relative(manifestDirectory, alias)
+  } else if (marker === 'absolute entrypoint') {
+    entrypoint = join(install, 'bin', 'codex')
   }
-)
+  writeFileSync(
+    join(manifestDirectory, 'codex-package.json'),
+    JSON.stringify({ layoutVersion: 2, entrypoint })
+  )
+  writeFileSync(join(commandInstall, 'bin', 'unrelated-prefix-file'), 'outside the legacy pair')
+  writeFileSync(
+    join(commandInstall, 'bin', 'codex-code-mode-host'),
+    '#!/bin/sh\nprintf legacy-helper',
+    { mode: 0o755 }
+  )
+  const connection = connect(root, commandInstall)
+  const runtime = (await connection.request('runtime')) as { file: string }
+  expect(runtime.file).not.toContain(install)
+  expect(readdirSync(dirname(runtime.file)).sort()).toEqual(['codex', 'codex-code-mode-host'])
+  rmSync(install, { recursive: true })
+  expect(await connection.request('helper')).toEqual({ output: 'legacy-helper' })
+  expect(await connection.request('child')).toEqual({ output: 'legacy-helper' })
+})
