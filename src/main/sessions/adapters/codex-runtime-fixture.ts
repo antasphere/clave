@@ -48,12 +48,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   let result = {};
   if (frame.method === 'thread/start' || frame.method === 'thread/resume') result = { thread: { id: frame.params.threadId || 'fresh-thread' }, model: 'fixture-model' };
   if (frame.method === 'model/list') result = { data: [{ id: 'fixture-model', model: 'fixture-model' }] };
-  if (frame.method === 'runtime') result = { file, home: process.env.CODEX_HOME, tab: process.env.CLAVE_SESSION_ID, marker: process.env.CLAVE_RUNTIME_MARKER, nodeMode: process.env.ELECTRON_RUN_AS_NODE, args: process.argv.slice(2) };
+  if (frame.method === 'runtime') result = { file, home: process.env.CODEX_HOME, tab: process.env.CLAVE_SESSION_ID, marker: process.env.CLAVE_RUNTIME_MARKER, nodeMode: process.env.ELECTRON_RUN_AS_NODE, authenticated: process.env.CLAVE_CODEX_MCP_TOKEN === 'runtime-fixture-token', args: process.argv.slice(2) };
   if (frame.method === 'helper' || frame.method === 'child') {
     try {
       const output = frame.method === 'helper' ? cp.execFileSync(helper, { encoding: 'utf8' }) : cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(require("node:child_process").execFileSync(process.argv[1], {encoding:"utf8"}))', helper], { encoding: 'utf8' });
       result = { output };
-    } catch (error) { result = { error: error.code }; }
+    } catch (error) { result = { error: error.code || error.message, stderr: error.stderr?.toString() }; }
   }
   if (frame.id !== undefined) process.stdout.write(JSON.stringify({ id: frame.id, result }) + '\\n');
 });

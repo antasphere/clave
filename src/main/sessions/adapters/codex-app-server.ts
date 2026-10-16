@@ -240,14 +240,24 @@ export function spawnCodexAppServer(
       shell: windowsDefault
     })
   } catch (error) {
-    runtime?.release()
+    void runtime?.release()
     throw error
   }
-  child.once('close', () => runtime?.release())
-  return new CodexAppServer(
+  child.once('close', () => void runtime?.release())
+  const connection = new CodexAppServer(
     child,
     callbacks,
     30_000,
     env?.CLAVE_CODEX_MCP_TOKEN ? [env.CLAVE_CODEX_MCP_TOKEN] : []
   )
+  return {
+    request: (method, params) => connection.request(method, params),
+    notify: (method, params) => connection.notify(method, params),
+    respond: (id, result) => connection.respond(id, result),
+    reject: (id, message) => connection.reject(id, message),
+    close: async () => {
+      await connection.close()
+      await runtime?.release()
+    }
+  }
 }

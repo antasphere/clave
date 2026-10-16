@@ -27,23 +27,23 @@ function codexCommandIndex(argv: string[]): number {
  * replaces the old one before asynchronous cleanup, so a new launch cannot
  * race the previous root's removal. No expensive copy runs in Electron main. */
 let retained: { root: string; users: number } | undefined
-function lease(): { root: string; release(): void } {
+function lease(): { root: string; release(): Promise<void> } {
   const runtime = (retained ??= {
     root: mkdtempSync(join(tmpdir(), 'clave-codex-runtime-')),
     users: 0
   })
   runtime.users++
-  let released = false
+  let cleanup: Promise<void> | undefined
   return {
     root: runtime.root,
     release() {
-      if (released) return
-      released = true
-      if (--runtime.users !== 0) return
+      if (cleanup) return cleanup
+      if (--runtime.users !== 0) return (cleanup = Promise.resolve())
       if (retained === runtime) retained = undefined
-      void fs.rm(runtime.root, { recursive: true, force: true }).catch(() => {
+      cleanup = fs.rm(runtime.root, { recursive: true, force: true }).catch(() => {
         console.warn('[codex-runtime] Could not remove the retired runtime directory')
       })
+      return cleanup
     }
   }
 }
@@ -51,12 +51,28 @@ function lease(): { root: string; release(): void } {
 /** Executed by the app's Node runtime, after the login shell and inside the
  * profile's env wrapper. It prints only the retained executable path. Keep
  * this script self-contained: it also runs from a packaged Electron app.
- * cp uses filesystem clones when available, dereferencing installer symlinks
+ * Copies use filesystem clones when available, dereferencing installer symlinks
  * so removal of the original package cannot strand a retained resource. */
 const PREPARE = String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+// Some Node versions preserve nested symlinks even with dereference:true.
+// Resolve each entry ourselves so a copy has no dependency on the install.
+function copyTree(source, destination, ancestors = new Set()) {
+  const stat = fs.statSync(source);
+  if (stat.isDirectory()) {
+    const canonical = fs.realpathSync(source);
+    if (ancestors.has(canonical)) throw new Error('Cyclic Codex runtime resource link');
+    const next = new Set(ancestors).add(canonical);
+    fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+    for (const entry of fs.readdirSync(source))
+      copyTree(path.join(source, entry), path.join(destination, entry), next);
+  } else if (stat.isFile()) {
+    fs.copyFileSync(source, destination, fs.constants.COPYFILE_FICLONE);
+    fs.chmodSync(destination, stat.mode & 0o777);
+  } else throw new Error('Unsupported Codex runtime resource type');
+}
 let staging;
 try {
   const command = process.argv[1];
@@ -101,11 +117,10 @@ try {
   const destination = path.join(target, relative);
   if (!fs.existsSync(destination)) {
     staging = fs.mkdtempSync(path.join(cache, 'preparing-'));
-    const options = { recursive: true, dereference: true, mode: fs.constants.COPYFILE_FICLONE };
-    if (packageRoot) fs.cpSync(packageRoot, staging, options);
+    if (packageRoot) copyTree(packageRoot, staging);
     else {
-      fs.cpSync(source, path.join(staging, path.basename(source)), options);
-      fs.cpSync(helper, path.join(staging, 'codex-code-mode-host'), options);
+      copyTree(source, path.join(staging, path.basename(source)));
+      copyTree(helper, path.join(staging, 'codex-code-mode-host'));
     }
     // Publish only a complete copy. Concurrent starts may publish the same
     // immutable installation; each losing staging directory is disposable.
@@ -130,13 +145,18 @@ try {
 export function retainedCodexLaunch(
   argv: string[],
   assignment: string
-): { command: string; release(): void } {
+): { command: string; release(): Promise<void> } {
   const index = codexCommandIndex(argv)
   if (index < 0)
-    return { command: `${assignment}exec ${argv.map(quote).join(' ')}`, release: () => {} }
+    return { command: `${assignment}exec ${argv.map(quote).join(' ')}`, release: async () => {} }
   const runtime = lease()
   const prepare = [
     ...argv.slice(0, index),
+    // Restore preparation's own Node mode AFTER env -i/-u and clear options
+    // meant for the provider. Its final invocation still gets the profile as-is.
+    '/usr/bin/env',
+    'ELECTRON_RUN_AS_NODE=1',
+    'NODE_OPTIONS=',
     process.execPath,
     '-e',
     PREPARE,
@@ -150,7 +170,7 @@ export function retainedCodexLaunch(
       // A background preparation with an explicit PID lets a close cancel a
       // blocked copy/read. Killing only a shell's command substitution leaves
       // its Node child holding the protocol pipes open indefinitely.
-      `(${assignment}ELECTRON_RUN_AS_NODE=1 exec ${prepare.map(quote).join(' ')}) > ${result} & ` +
+      `(${assignment}exec ${prepare.map(quote).join(' ')}) > ${result} & ` +
       `_clave_prepare_pid=$!; ` +
       `trap 'kill "$_clave_prepare_pid" 2>/dev/null; wait "$_clave_prepare_pid" 2>/dev/null; exit 143' TERM INT HUP; ` +
       `wait "$_clave_prepare_pid" || exit $?; ` +

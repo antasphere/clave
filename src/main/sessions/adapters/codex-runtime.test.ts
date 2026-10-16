@@ -1,4 +1,17 @@
-import { mkdtempSync, existsSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  openSync,
+  closeSync,
+  promises as fs,
+  symlinkSync,
+  writeFileSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -56,7 +69,7 @@ it('shares a complete retained package until the last app-server exits', async (
   rmSync(install, { recursive: true })
   expect(await second.request('helper')).toEqual({ output: 'helper-old:old' })
   await second.close()
-  await vi.waitFor(() => expect(existsSync(b.file)).toBe(false))
+  expect(existsSync(b.file)).toBe(false)
 })
 
 it('retains coherent versions across installer replacements and symlink changes', async () => {
@@ -86,6 +99,20 @@ it('retains coherent versions across installer replacements and symlink changes'
   expect(await fresh.request('helper')).toEqual({ output: 'helper-new:new' })
 })
 
+it('starts a new runtime when an installer replaces the same canonical package path', async () => {
+  const { root, install } = fixture()
+  const old = connect(root, install)
+  await old.request('initialize')
+  const next = installFixtureCodex(root, 'new')
+  rmSync(install, { recursive: true })
+  renameSync(next, install)
+  const fresh = connect(root, install)
+  await fresh.request('initialize')
+  rmSync(install, { recursive: true })
+  expect(await old.request('helper')).toEqual({ output: 'helper-old:old' })
+  expect(await fresh.request('helper')).toEqual({ output: 'helper-new:new' })
+})
+
 it('preserves profile wrappers, arguments and tab/account bindings without leaking preparation mode', async () => {
   const { root, install } = fixture()
   const connection = connect(root, install, {
@@ -104,7 +131,77 @@ it('preserves profile wrappers, arguments and tab/account bindings without leaki
   })
   const context = (await connection.request('runtime')) as Record<string, unknown>
   expect(context.marker).toBeUndefined()
-  expect(context.nodeMode).toBeUndefined()
+  expect(context.nodeMode).toBe(process.env.ELECTRON_RUN_AS_NODE)
+  rmSync(install, { recursive: true })
+  expect(await connection.request('helper')).toEqual({ output: 'helper-old:old' })
+})
+
+it('restores account and MCP bindings after a login profile clobbers the public variables', async () => {
+  const { root, install } = fixture()
+  writeFileSync(
+    join(root, 'sh'),
+    `#!/bin/sh
+export CODEX_HOME=/wrong CLAVE_SESSION_ID=wrong CLAVE_CODEX_MCP_TOKEN=wrong
+[ "$1" = -l ] && shift
+exec /bin/sh "$@"
+`,
+    { mode: 0o755 }
+  )
+  const connection = connect(root, install, {
+    env: {
+      ...process.env,
+      CODEX_HOME: '/fixture/account',
+      CLAVE_SESSION_ID: 'fixture-tab',
+      CLAVE_CODEX_MCP_TOKEN: 'runtime-fixture-token'
+    } as Record<string, string>
+  })
+  expect(await connection.request('runtime')).toMatchObject({
+    home: '/fixture/account',
+    tab: 'fixture-tab',
+    authenticated: true
+  })
+})
+
+it('isolates preparation Node settings from env -i while preserving the provider environment', async () => {
+  const { root } = fixture()
+  const executable = join(root, 'codex')
+  writeFileSync(
+    executable,
+    `#!/bin/sh
+while IFS= read -r line; do
+  runtime_mode="$ELECTRON_RUN_AS_NODE"
+  if [ -z "$runtime_mode" ]; then runtime_mode=unset; fi
+  printf '{"id":1,"result":{"mode":"%s","options":"%s"}}\\n' "$runtime_mode" "$NODE_OPTIONS"
+done
+`,
+    { mode: 0o755 }
+  )
+  const connection = spawnCodexAppServer(
+    root,
+    {
+      notification: () => {},
+      request: () => {},
+      error: () => {},
+      exit: () => {}
+    },
+    {
+      id: 'isolated-env',
+      name: 'Fixture',
+      family: 'codex',
+      command: [
+        '/usr/bin/env',
+        '-i',
+        'NODE_OPTIONS=--require=/missing-fixture-preload',
+        executable
+      ],
+      additionalArgs: []
+    }
+  )
+  connections.push(connection)
+  expect(await connection.request('initialize')).toEqual({
+    mode: 'unset',
+    options: '--require=/missing-fixture-preload'
+  })
 })
 
 it('dereferences resources before the installer removes their symlink target', async () => {
@@ -116,8 +213,13 @@ it('dereferences resources before the installer removes their symlink target', a
   symlinkSync(external, join(install, 'codex-resources'))
   const connection = connect(root, install)
   await connection.request('initialize')
+  const runtime = (await connection.request('runtime')) as { file: string }
+  const resources = join(dirname(runtime.file), '..', 'codex-resources')
+  expect(lstatSync(resources).isSymbolicLink()).toBe(false)
+  expect(readFileSync(join(resources, 'version'), 'utf8')).toBe('external-old')
   rmSync(install, { recursive: true })
   rmSync(external, { recursive: true })
+  expect(readFileSync(join(resources, 'version'), 'utf8')).toBe('external-old')
   expect(await connection.request('helper')).toEqual({ output: 'helper-old:external-old' })
 })
 
@@ -133,31 +235,70 @@ it('refuses an incomplete standalone package with an actionable startup error', 
   expect(exit.mock.calls[0][1]).toContain('restart this chat')
 })
 
+it('refuses a resource symlink cycle before starting an incomplete runtime', async () => {
+  const { root, install } = fixture()
+  symlinkSync(install, join(install, 'codex-resources', 'cycle'))
+  const exit = vi.fn()
+  const connection = connect(root, install, { callbacks: { exit } })
+  await expect(connection.request('initialize')).rejects.toThrow()
+  await vi.waitFor(() => expect(exit).toHaveBeenCalled())
+  expect(exit.mock.calls[0][1]).toContain('Cyclic Codex runtime resource link')
+})
+
 it('cancels preparation that is blocked reading an installer artifact', async () => {
   const { root, install } = fixture()
   const manifest = join(install, 'codex-package.json')
   rmSync(manifest)
   execFileSync('/usr/bin/mkfifo', [manifest])
   const connection = connect(root, install)
-  // The FIFO has no writer, so preparation cannot finish by itself.
-  await new Promise((resolve) => setTimeout(resolve, 150))
-  await Promise.race([
-    connection.close(),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Preparation was left running')), 2500)
-    )
-  ])
+  // Opening the writer completes only when preparation has opened the reader.
+  // Keep it open on partial JSON so the read cannot finish before cancellation.
+  const opening = fs.open(manifest, 'w')
+  let handshakeTimer: ReturnType<typeof setTimeout> | undefined
+  const writer = await Promise.race([
+    opening,
+    new Promise<never>((_, reject) => {
+      handshakeTimer = setTimeout(() => {
+        const unblock = openSync(manifest, 'r+')
+        void opening.then(async (handle) => {
+          await handle.close()
+          closeSync(unblock)
+        })
+        reject(new Error('Preparation never opened the installer artifact'))
+      }, 5000)
+    })
+  ]).finally(() => clearTimeout(handshakeTimer))
+  await writer.write('{')
+  const closing = connection.close()
+  let closeTimer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      closing,
+      new Promise<never>((_, reject) => {
+        closeTimer = setTimeout(() => reject(new Error('Preparation was left running')), 2500)
+      })
+    ])
+  } finally {
+    clearTimeout(closeTimer)
+    await writer.close()
+    await closing
+  }
 })
 
 it('retains a legacy native executable and its sibling helper without copying its parent prefix', async () => {
   const { root, install } = fixture()
   rmSync(join(install, 'codex-package.json'))
+  writeFileSync(
+    join(install, 'bin', 'unrelated-prefix-file'),
+    'fixture data outside the executable/helper pair'
+  )
   writeFileSync(join(install, 'bin', 'codex-code-mode-host'), '#!/bin/sh\nprintf legacy-helper', {
     mode: 0o755
   })
   const connection = connect(root, install)
   const runtime = (await connection.request('runtime')) as { file: string }
   expect(existsSync(join(dirname(runtime.file), 'codex-package.json'))).toBe(false)
+  expect(existsSync(join(dirname(runtime.file), 'unrelated-prefix-file'))).toBe(false)
   rmSync(install, { recursive: true })
   expect(await connection.request('helper')).toEqual({ output: 'legacy-helper' })
 })
