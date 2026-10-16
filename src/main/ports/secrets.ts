@@ -1,5 +1,7 @@
 import { execFileSync } from 'child_process'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'crypto'
+import * as path from 'node:path'
+import { privateDirectory, readPrivateFile, createPrivateFile } from './private-files'
 import * as fs from 'fs'
 
 /**
@@ -127,4 +129,74 @@ export function keychainSecrets(options: {
     }
   }
   return port
+}
+
+/** Linux daemon secrets, encrypted and authenticated with a private local key.
+ *  Protect and back up this whole directory as one unit. The local key is a
+ *  filesystem security boundary, not protection against the owning OS user. */
+export function fileSecrets(options: { directory: string }): SecretPort {
+  const directory = options.directory
+  const prefix = 'file:v1:'
+  const fileOf = (sealed: string): string | null => {
+    const handle = sealed.slice(prefix.length)
+    return sealed.startsWith(prefix) && /^[0-9a-f-]{36}$/.test(handle)
+      ? path.join(directory, `${handle}.secret`)
+      : null
+  }
+  const key = (create: boolean): Buffer => {
+    privateDirectory(directory)
+    const file = path.join(directory, 'master.key')
+    if (create && !fs.existsSync(file)) {
+      if (fs.readdirSync(directory).some((name) => name.endsWith('.secret'))) {
+        throw new Error('The server secret key is missing; restore the private directory backup')
+      }
+      try {
+        createPrivateFile(file, randomBytes(32))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+    }
+    const value = readPrivateFile(file)
+    if (value.length !== 32) throw new Error('Invalid server secret key')
+    return value
+  }
+  return {
+    available() {
+      try {
+        key(true)
+        return true
+      } catch {
+        return false
+      }
+    },
+    seal(plain) {
+      if (Buffer.byteLength(plain) > 1024 * 1024) throw new Error('Server secret is too large')
+      const handle = `${prefix}${randomUUID()}`
+      const nonce = randomBytes(12)
+      const cipher = createCipheriv('aes-256-gcm', key(true), nonce)
+      cipher.setAAD(Buffer.from(handle))
+      const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
+      createPrivateFile(fileOf(handle)!, Buffer.concat([nonce, cipher.getAuthTag(), encrypted]))
+      return handle
+    },
+    open(sealed) {
+      const file = fileOf(sealed)
+      if (!file) return undefined
+      try {
+        const value = readPrivateFile(file)
+        const decipher = createDecipheriv('aes-256-gcm', key(false), value.subarray(0, 12))
+        decipher.setAAD(Buffer.from(sealed))
+        decipher.setAuthTag(value.subarray(12, 28))
+        return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString(
+          'utf8'
+        )
+      } catch {
+        return undefined
+      }
+    },
+    discard(sealed) {
+      const file = fileOf(sealed)
+      if (file) fs.rmSync(file, { force: true })
+    }
+  }
 }
