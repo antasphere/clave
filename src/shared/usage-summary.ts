@@ -13,6 +13,35 @@ interface ReadLike {
 
 const rank: Record<string, number> = { normal: 0, warning: 1, critical: 2 }
 
+/** Shared caps and caps whose model is explicitly known to this session. */
+export function usageWindowsForModel<W extends PoolUsageWindow>(
+  windows: ReadonlyArray<W>,
+  model?: string
+): W[] {
+  const tokens =
+    model
+      ?.toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean) ?? []
+  return windows.filter((w) => {
+    if (w.kind !== 'weekly_scoped') return true
+    const scope = w.scope?.trim().toLowerCase()
+    return !!scope && tokens.includes(scope)
+  })
+}
+
+export function usageSummaryForModel(
+  summary: AccountUsageSummary | undefined,
+  model?: string
+): AccountUsageSummary | undefined {
+  if (!summary) return undefined
+  const windows = usageWindowsForModel(
+    summary.windows ?? (summary.tightest ? [summary.tightest] : []),
+    model
+  )
+  return { tightest: tightestOf(windows), windows }
+}
+
 export function tightestOf<W extends PoolUsageWindow>(windows: ReadonlyArray<W>): W | null {
   let best: W | null = null
   for (const w of windows) {
