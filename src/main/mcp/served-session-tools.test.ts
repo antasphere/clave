@@ -521,6 +521,19 @@ describe('an account switch', () => {
     },
     windows: ['wA']
   })
+  it('ignores Fable-only exhaustion when an Opus tab switches to any account', async () => {
+    const h = setup({ ...world(), switchMode: 'automatic' })
+    h.w.records.far.model = 'claude-opus-5-5'
+    const windows = [
+      { kind: 'weekly_all', scope: null, usedPercentage: 25, severity: 'normal' },
+      { kind: 'weekly_scoped', scope: 'Fable', usedPercentage: 100, severity: 'critical' }
+    ]
+    h.w.accounts.claude[1] = { ...h.w.accounts.claude[1], usage: { tightest: windows[1], windows } }
+    expect(await run(h, 'switchAccount', { sessionId: 'far', account: 'any' })).toMatchObject({
+      account: { id: 'acc-2' },
+      switched: true
+    })
+  })
   it('refuses what is not an account tab, an unknown account, and a pool with no headroom', async () => {
     const h = setup(world())
     await expect(run(h, 'switchAccount', { sessionId: 't1', account: 'any' })).rejects.toThrow(

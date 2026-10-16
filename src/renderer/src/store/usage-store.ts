@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PiUsageTotals, UsageError, UsageLimits, UsageWindow } from '../../../preload/index.d'
 import type { Session } from './session-types'
+import { usageWindowsForModel } from '../../../shared/usage-summary'
 import { createUsageResource, type UsageResource } from './usage-resource'
 import { DEFAULT_CLAUDE_PROFILE_ID } from './claude-profile-store'
 import { DEFAULT_CODEX_ACCOUNT_ID } from './codex-account-store'
@@ -227,16 +228,7 @@ export function piTodaySummary(totals: PiUsageTotals): string {
 /** Session views use shared caps plus caps for the explicitly known model.
  * Account-wide views omit the context to keep every reported cap. */
 export function claudeModelWindows(windows: UsageWindow[], model?: string): UsageWindow[] {
-  const tokens =
-    model
-      ?.toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean) ?? []
-  return windows.filter((w) => {
-    if (w.kind !== 'weekly_scoped') return true
-    const scope = w.scope?.trim().toLowerCase()
-    return !!scope && tokens.includes(scope)
-  })
+  return usageWindowsForModel(windows, model)
 }
 
 export function claudeUsageForModel(

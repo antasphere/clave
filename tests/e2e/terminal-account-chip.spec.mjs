@@ -29,7 +29,12 @@ import {
   callMcp,
   until,
   userDataDir,
-  fixturePath
+  fixturePath,
+  mcpHttpClient,
+  mcpEndpoint,
+  toolPayload,
+  toolErrored,
+  mcpRoads
 } from './harness.mjs'
 
 const DIR = userDataDir('terminal-account-chip')
@@ -339,6 +344,30 @@ export async function run(t) {
       'Fable chip retains its warning level',
       await fableChip.getAttribute('data-level'),
       'critical'
+    )
+    const configFile = path.join(DIR, 'mcp-configs', `${opus.sessionId}.json`)
+    if (!(await until(() => existsSync(configFile))))
+      throw new Error('Opus tab did not receive MCP config')
+    const auth = JSON.parse(readFileSync(configFile, 'utf8')).mcpServers.clave.headers.Authorization
+    const client = mcpHttpClient(mcpEndpoint(DIR), auth.replace(/^Bearer /, ''))
+    await client.init()
+    const response = await client.call('clave_list', {})
+    if (toolErrored(response)) throw new Error('HTTP MCP list failed')
+    const listing = toolPayload(response)
+    t.equal(
+      'HTTP MCP list takes the server road',
+      (await mcpRoads(app)).filter((r) => r.command === 'list').at(-1)?.road,
+      'server'
+    )
+    t.equal(
+      'HTTP MCP ignores Fable-only exhaustion for Opus',
+      listing.sessions.find((s) => s.id === opus.sessionId)?.account?.exhausted,
+      false
+    )
+    t.equal(
+      'HTTP MCP retains Fable exhaustion',
+      listing.sessions.find((s) => s.id === fable.sessionId)?.account?.exhausted,
+      true
     )
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
