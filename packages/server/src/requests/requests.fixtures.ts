@@ -21,6 +21,24 @@ export const requestFixtureCatalog = makeCatalog({
             })
         })
       })
+    }),
+    defineScenario({
+      name: 'shared-requests/answered-native-questions',
+      description: 'Resolve distinct native question IDs sharing one displayed prompt.',
+      input: Schema.Struct({
+        requestId: Schema.NonEmptyString,
+        answers: Schema.Record({ key: Schema.String, value: Schema.String })
+      }),
+      fixtures: ({ requestId, answers }) => ({
+        questions: defineFixture({
+          key: 'shared-requests/native-questions',
+          create: ({ dispatch }) =>
+            dispatch(ResolvePendingRequest, {
+              requestId,
+              response: { type: 'permission', optionId: 'answer', answers }
+            })
+        })
+      })
     })
   ]
 })

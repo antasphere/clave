@@ -37,6 +37,99 @@ const frame = {
 }
 
 describe('installed Codex native request_user_input', () => {
+  it('keeps duplicate display text answerable by stable provider question IDs', async () => {
+    const requests = new PendingRequests()
+    let receive!: (id: string, stream: { kind: 'event'; event: SessionEvent }) => void
+    const connection = { respond: vi.fn() } as unknown as CodexConnection
+    const translator = new CodexTranslator((event) =>
+      receive('session-1', { kind: 'event', event })
+    )
+    const wrapped = requestAwareSessionHost({
+      host: {
+        ...SessionHost.none,
+        subscribe: () => () => {},
+        write: async (_id, input) => {
+          if (input.type === 'permission_response')
+            translator.answer(input.id, input.optionId, connection, input.answers)
+        }
+      },
+      requests,
+      subscribeAll: (listener) => {
+        receive = listener
+        return () => {}
+      }
+    })
+    try {
+      expect(
+        translator.request({
+          ...frame,
+          params: {
+            ...frame.params,
+            questions: [
+              { id: 'first-id', header: 'Public', question: 'Value?', options: null },
+              {
+                id: 'second-id',
+                header: 'Private',
+                question: 'Value?',
+                options: null,
+                isSecret: true
+              }
+            ]
+          }
+        })
+      ).toBe(true)
+      const pending = requests.snapshot().pending[0]
+      expect(pending.questions).toEqual([
+        { id: 'first-id', header: 'Public', question: 'Value?', options: [] },
+        { id: 'second-id', header: 'Private', question: 'Value?', options: [] }
+      ])
+      expect(pending.secretQuestions).toEqual(['second-id'])
+      const late = vi.fn()
+      wrapped.host.subscribe('session-1', late)
+      expect(late).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: expect.objectContaining({ questions: pending.questions })
+        })
+      )
+      await expect(
+        requests.resolve({
+          requestId: pending.id,
+          response: {
+            type: 'permission',
+            optionId: 'answer',
+            answers: { 'Value?': 'ambiguous' }
+          }
+        })
+      ).rejects.toMatchObject({ code: 'invalid' })
+      expect(connection.respond).not.toHaveBeenCalled()
+      const results = await Promise.all(
+        [0, 1].map(() =>
+          requests.resolve({
+            requestId: pending.id,
+            response: {
+              type: 'permission',
+              optionId: 'answer',
+              answers: { 'first-id': 'public value', 'second-id': 'PRIVATE-DUPLICATE-SENTINEL' }
+            }
+          })
+        )
+      )
+      expect(results.filter((r) => r.accepted)).toHaveLength(1)
+      expect(connection.respond).toHaveBeenCalledExactlyOnceWith(17, {
+        answers: {
+          'first-id': { answers: ['public value'] },
+          'second-id': { answers: ['PRIVATE-DUPLICATE-SENTINEL'] }
+        }
+      })
+      expect(requests.snapshot().pending).toEqual([])
+      expect(JSON.stringify(requests.result(pending.id, 'session-1'))).not.toContain(
+        'PRIVATE-DUPLICATE-SENTINEL'
+      )
+    } finally {
+      wrapped.close()
+      requests.close()
+    }
+  })
   it('normalizes native questions rather than rejecting the provider request', () => {
     const events: SessionEvent[] = []
     const translator = new CodexTranslator((event) => events.push(event))
@@ -74,7 +167,7 @@ describe('installed Codex native request_user_input', () => {
     expect(pending).toMatchObject({
       kind: 'clarification',
       providerRequestId: '17',
-      secretQuestions: ['Private input?']
+      secretQuestions: ['private_id']
     })
     const lateClient = vi.fn()
     wrapped.host.subscribe('session-1', lateClient)
@@ -87,7 +180,7 @@ describe('installed Codex native request_user_input', () => {
         response: {
           type: 'permission',
           optionId: 'answer',
-          answers: { 'Which branch?': 'custom branch' }
+          answers: { branch_id: 'custom branch' }
         }
       })
     ).rejects.toMatchObject({ code: 'invalid' })
@@ -100,7 +193,7 @@ describe('installed Codex native request_user_input', () => {
           response: {
             type: 'permission',
             optionId: 'answer',
-            answers: { 'Which branch?': 'custom branch', 'Private input?': sentinel }
+            answers: { branch_id: 'custom branch', private_id: sentinel }
           }
         })
       )

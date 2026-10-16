@@ -91,6 +91,8 @@ export class PendingRequests {
     if (request.kind === 'secret' && !request.action) throw invalid()
     if (request.kind === 'permission' && !request.options?.length) throw invalid()
     if (request.kind === 'clarification' && !request.questions?.length) throw invalid()
+    const questionKeys = request.questions?.map((q) => q.id ?? q.question) ?? []
+    if (new Set(questionKeys).size !== questionKeys.length) throw invalid()
     this.entries.set(request.id, {
       request: structuredClone(request),
       result: { requestId: request.id, status: 'pending' },
@@ -192,7 +194,12 @@ export class PendingRequests {
     if (
       !answers ||
       Object.keys(answers).length !== questions.length ||
-      questions.some((q) => typeof answers[q.question] !== 'string' || !answers[q.question].trim())
+      questions.some((q) => {
+        const key = q.id ?? q.question
+        return (
+          !Object.hasOwn(answers, key) || typeof answers[key] !== 'string' || !answers[key].trim()
+        )
+      })
     )
       throw invalid()
   }

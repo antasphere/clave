@@ -95,6 +95,61 @@ describe('pending request ownership', () => {
     })
   })
 
+  it('uses stable IDs when present and text only for legacy questions without an ID', async () => {
+    const requests = new PendingRequests()
+    const action = vi.fn(async () => {})
+    const request = requests.create(
+      {
+        sessionId: 's',
+        kind: 'clarification',
+        description: 'Choose',
+        questions: [
+          { id: 'stable', question: 'Value?', options: [] },
+          { question: 'Legacy?', options: [] }
+        ]
+      },
+      action
+    )
+    await expect(
+      requests.resolve({
+        requestId: request.id,
+        response: {
+          type: 'clarification',
+          answers: {
+            'Value?': 'text alias',
+            'Legacy?': 'legacy value'
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    expect(action).not.toHaveBeenCalled()
+    expect(
+      await requests.resolve({
+        requestId: request.id,
+        response: {
+          type: 'clarification',
+          answers: {
+            stable: 'stable value',
+            'Legacy?': 'legacy value'
+          }
+        }
+      })
+    ).toEqual({ accepted: true })
+    expect(action).toHaveBeenCalledOnce()
+    expect(() =>
+      requests.create({
+        sessionId: 's',
+        kind: 'clarification',
+        description: 'Ambiguous keys',
+        questions: [
+          { id: 'collision', question: 'First?', options: [] },
+          { question: 'collision', options: [] }
+        ]
+      })
+    ).toThrow()
+    requests.close()
+  })
+
   it('never retains secret values, action output or failures in state or notifications', async () => {
     const requests = new PendingRequests()
     const notifications: unknown[] = []
