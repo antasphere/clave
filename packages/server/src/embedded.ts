@@ -26,6 +26,7 @@ import type { ServerPorts } from './ports'
 import type { PushHub } from './push/hub'
 import { PushHubService } from './push/route'
 import { ServerLive } from './runtime'
+import { resolveListenHost } from './listen-host'
 
 export interface EmbeddedOptions {
   /** What this entry can do, one port per domain (`ports.ts`). */
@@ -87,7 +88,7 @@ export const STOP_PEER_GRACE_MS = 250
 export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedServer> {
   const token = options.token ?? randomBytes(32).toString('hex')
   const serverId = options.serverId ?? randomUUID()
-  const host = options.host ?? '127.0.0.1'
+  const host = await resolveListenHost(options.host ?? '127.0.0.1')
   const node = createServer()
   const connections = trackConnections(node)
   const layer = ServerLive({

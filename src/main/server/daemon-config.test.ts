@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -29,6 +29,13 @@ describe('daemon configuration and credential persistence', () => {
     ])
       expect(() => daemonConfig(args)).toThrow()
   })
+
+  it.each(['::0', '0:0:0:0:0:0:0:0', '0', '0.0', '0x0', '0000', '0.0.0.0.', '::ffff:0.0.0.0'])(
+    'rejects the wildcard alias %s before daemon startup',
+    (host) => {
+      expect(() => daemonConfig(['--daemon', '--host', host])).toThrow('never a wildcard')
+    }
+  )
 
   it('persists the same identity/token, with owner-only permissions', () => {
     const dir = directory()
@@ -119,4 +126,62 @@ it('allows one daemon writer and releases its lease on normal shutdown', () => {
   release()
   const again = acquireDaemonLease(dir)
   again()
+})
+
+it('serializes stale reclamation before checking a dead owner', () => {
+  const dir = directory()
+  const daemon = join(dir, 'daemon')
+  fs.mkdirSync(daemon, { mode: 0o700 })
+  const stale = 2147483647
+  fs.writeFileSync(join(daemon, 'process.json'), JSON.stringify({ pid: stale }), { mode: 0o600 })
+  let nested = false
+  const contenders: Array<() => void> = []
+  let rejected: unknown
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+    if (pid !== stale) return true
+    if (!nested) {
+      nested = true
+      try {
+        contenders.push(acquireDaemonLease(dir))
+      } catch (error) {
+        rejected = error
+      }
+    }
+    throw Object.assign(new Error('No such process'), { code: 'ESRCH' })
+  })
+  let release: (() => void) | undefined
+  try {
+    release = acquireDaemonLease(dir)
+    expect(contenders).toHaveLength(0)
+    expect(rejected).toBeInstanceOf(Error)
+    expect(JSON.parse(fs.readFileSync(join(daemon, 'process.json'), 'utf8')).pid).toBe(process.pid)
+  } finally {
+    release?.()
+    contenders.forEach((release) => release())
+    kill.mockRestore()
+  }
+})
+
+it('does not let a previous release delete a newer claim from the same PID', () => {
+  const dir = directory()
+  const oldRelease = acquireDaemonLease(dir)
+  oldRelease()
+  const currentRelease = acquireDaemonLease(dir)
+  try {
+    oldRelease()
+    expect(() => acquireDaemonLease(dir)).toThrow('already owns')
+  } finally {
+    currentRelease()
+  }
+})
+
+it('fails closed on an interrupted lease transaction without deleting its guard', () => {
+  const dir = directory()
+  const daemon = join(dir, 'daemon')
+  fs.mkdirSync(daemon, { mode: 0o700 })
+  const guard = join(daemon, 'process.guard')
+  fs.writeFileSync(guard, 'interrupted transaction', { mode: 0o600 })
+  expect(() => acquireDaemonLease(dir)).toThrow('inspect process.guard')
+  expect(fs.readFileSync(guard, 'utf8')).toBe('interrupted transaction')
+  expect(fs.existsSync(join(daemon, 'process.json'))).toBe(false)
 })
