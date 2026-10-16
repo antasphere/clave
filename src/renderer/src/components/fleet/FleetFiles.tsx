@@ -17,7 +17,7 @@ export function FleetFiles({
   const [notice, setNotice] = useState('')
   const [name, setName] = useState('')
   const [epoch, setEpoch] = useState(0)
-  const root = resourceKey('file', serverId, '/')
+  const root = resourceKey('file', serverId, path)
   useEffect(() => {
     let current = true
     void window.electronAPI.readDir(root, path).then(

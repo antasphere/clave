@@ -1,5 +1,6 @@
 import { FleetFiles } from '../fleet/FleetFiles'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { PANEL_ROOTS, panelRootLadder, type PanelScope } from '../../store/session-types'
@@ -139,9 +140,17 @@ function SidePanelBody(): React.JSX.Element {
     ) ?? null
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
-  const fleetOwner = ownerOf(focusedSession?.id)
-  const fleetRemote = isRemoteKey(focusedSession?.id)
-  const sessionCwd = focusedSession?.cwd ?? null
+  const focusedFile = useSessionStore((s) => s.fileTabs.find((f) => f.id === s.focusedSessionId))
+  const focusedOwnerKey = focusedSession?.id ?? focusedFile?.filePath
+  const fleetOwner = ownerOf(focusedOwnerKey)
+  const fleetRemote = isRemoteKey(focusedOwnerKey)
+  const remoteFile =
+    focusedFile && isRemoteKey(focusedFile.filePath)
+      ? parseResourceKey('file', focusedFile.filePath).id
+      : null
+  const sessionCwd =
+    focusedSession?.cwd ??
+    (remoteFile ? remoteFile.slice(0, remoteFile.lastIndexOf('/')) || '/' : null)
 
   // Determine if focused session is remote
   const isRemoteSession =
