@@ -36,6 +36,8 @@ export interface EmbeddedOptions {
   readonly port?: number
   /** A token to reuse across restarts; a fresh one otherwise. */
   readonly token?: string
+  /** Stable installation identity for an independently managed server. */
+  readonly serverId?: string
   readonly helloTimeoutMs?: number
   /** Wave 3, lane A: how long a `.clave` review waits for its answer (`runtime.ts`). */
   readonly reviewTimeoutMs?: number
@@ -84,7 +86,7 @@ export const STOP_PEER_GRACE_MS = 250
 
 export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedServer> {
   const token = options.token ?? randomBytes(32).toString('hex')
-  const serverId = randomUUID()
+  const serverId = options.serverId ?? randomUUID()
   const host = options.host ?? '127.0.0.1'
   const node = createServer()
   const connections = trackConnections(node)
@@ -109,7 +111,7 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
     await Effect.runPromise(Context.get(context, Readiness).setReady)
     let stopping: Promise<StopReport> | null = null
     return {
-      url: `http://${host}:${address.port}`,
+      url: `http://${host.includes(':') ? `[${host}]` : host}:${address.port}`,
       token,
       serverId,
       publish: (event) => Effect.runPromise(events.publish(event)).then(() => undefined),
