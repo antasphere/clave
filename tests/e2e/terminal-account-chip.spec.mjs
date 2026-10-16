@@ -149,13 +149,23 @@ export async function run(t) {
       }
     })
 
-    const opened = await callMcp(app, 'openSession', {
-      cwd: ROOT,
-      mode: 'claude',
-      profile: 'claude-chat',
-      account: 'Work',
-      name: 'Chip'
+    // Boot can finish before the renderer's account and profile caches load.
+    // Both named-reference errors occur before spawn, so only those are retried.
+    const opened = await until(async () => {
+      try {
+        return await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'claude',
+          profile: 'claude-chat',
+          account: 'Work',
+          name: 'Chip'
+        })
+      } catch (error) {
+        if (/Unknown Claude account|Unknown claude launch profile/.test(error.message)) return null
+        throw error
+      }
     })
+    if (!opened) throw new Error('Claude account and chat profile caches did not become ready')
     const id = opened.sessionId
     await callMcp(app, 'focus', { sessionId: id })
     const pane = win.locator(`.chat-host[data-session-id="${id}"]`)
@@ -263,6 +273,17 @@ export async function run(t) {
     await callMcp(app, 'focus', { sessionId: opus.sessionId })
     const opusChip = win.locator(`.chat-host[data-session-id="${opus.sessionId}"] .term-account`)
     await opusChip.waitFor()
+    t.check(
+      'Opus chip runs on the requested model',
+      !!(await until(() =>
+        lines(PROCESSES).some(
+          (p) =>
+            p.token === WORK_TOKEN &&
+            p.argv.includes('claude-opus-5-5') &&
+            p.argv.includes('--input-format')
+        )
+      ))
+    )
     await win.locator('.sidebar-footer-line[data-usage-provider="claude"]').click()
     await win.getByRole('button', { name: 'Refresh usage' }).click()
     await until(async () => (await win.locator('[aria-label="100% used"]').count()) > 0)
@@ -297,6 +318,17 @@ export async function run(t) {
     await callMcp(app, 'focus', { sessionId: fable.sessionId })
     const fableChip = win.locator(`.chat-host[data-session-id="${fable.sessionId}"] .term-account`)
     await fableChip.waitFor()
+    t.check(
+      'Fable chip runs on the requested model',
+      !!(await until(() =>
+        lines(PROCESSES).some(
+          (p) =>
+            p.token === WORK_TOKEN &&
+            p.argv.includes('claude-fable-5') &&
+            p.argv.includes('--input-format')
+        )
+      ))
+    )
     t.check(
       'Fable chip still reports its exhausted quota',
       !!(await until(
