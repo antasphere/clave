@@ -66,3 +66,7 @@ The same test file also loads `shared-requests/answered-native-questions`,
 rejects a malformed private answer over HTTP, resolves distinct IDs with identical
 prompt text through the command bus and checks the exact provider response.
 Receipts omit submitted answers. Set `CLAVE_E2E_NS` to keep each run's data separate.
+
+Canonical question admission rejects empty keys, keys longer than 16,384 characters, and `__proto__`, which the installed Effect answer-record decoder drops. The key is exactly `q.id ?? q.question`. Supported keys, including `constructor`, are preserved unchanged. Native adapter rejection happens before a prompt is emitted; all other producers use the same pending-service guard.
+
+Authenticated JSON POSTs to `/sessions/write` and `/requests/resolve` receive a syntax check before API decoding. Malformed JSON keeps the generic HTTP 500 `InternalServerError` response, with no body excerpt or parser exception in diagnostics. Only a static warning is logged. Valid JSON still passes through the normal schema and domain validation; unsupported keys are rejected before pending admission. Existing authentication, body limits and other endpoint handling remain in place.

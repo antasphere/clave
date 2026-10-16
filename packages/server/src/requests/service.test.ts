@@ -2,6 +2,57 @@ import { describe, expect, it, vi } from 'vitest'
 import { PendingRequests } from './service'
 
 describe('pending request ownership', () => {
+  it.each([
+    ['prototype', '__proto__'],
+    ['oversized', 'x'.repeat(16_385)],
+    ['empty', '']
+  ])('rejects unanswerable %s canonical keys before exposing pending work', (_label, key) => {
+    for (const question of [
+      { id: key, question: 'Value?', options: [] },
+      { question: key, options: [] }
+    ]) {
+      const requests = new PendingRequests()
+      const listener = vi.fn()
+      requests.subscribe(listener)
+      expect(() =>
+        requests.create({
+          sessionId: 's',
+          kind: 'clarification',
+          description: 'Choose',
+          questions: [question]
+        })
+      ).toThrow()
+      expect(requests.snapshot()).toEqual({ revision: 0, pending: [] })
+      expect(listener).not.toHaveBeenCalled()
+      requests.close()
+    }
+  })
+
+  it('settles supported legacy text keys exactly at the answer codec boundary', async () => {
+    for (const key of ['constructor', 'toString', 'x'.repeat(16_384)]) {
+      const requests = new PendingRequests()
+      const action = vi.fn(async () => {})
+      const request = requests.create(
+        {
+          sessionId: 's',
+          kind: 'clarification',
+          description: 'Choose',
+          questions: [{ question: key, options: [] }]
+        },
+        action
+      )
+      await expect(
+        requests.resolve({
+          requestId: request.id,
+          response: { type: 'clarification', answers: Object.fromEntries([[key, 'value']]) }
+        })
+      ).resolves.toEqual({ accepted: true })
+      expect(action).toHaveBeenCalledOnce()
+      expect(requests.snapshot().pending).toEqual([])
+      requests.close()
+    }
+  })
+
   it('keeps pending work indefinitely without clients and isolates snapshots', () => {
     let now = 0
     const requests = new PendingRequests({ now: () => now })

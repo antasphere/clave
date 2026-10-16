@@ -37,6 +37,34 @@ const frame = {
 }
 
 describe('installed Codex native request_user_input', () => {
+  it.each([
+    ['prototype', '__proto__'],
+    ['oversized', 'x'.repeat(16_385)]
+  ])('rejects %s IDs before emitting a native prompt', (_label, id) => {
+    const emit = vi.fn()
+    const translator = new CodexTranslator(emit)
+    expect(
+      translator.request({
+        ...frame,
+        params: {
+          ...frame.params,
+          questions: [{ id, question: 'Value?', header: 'Public', options: null }]
+        }
+      })
+    ).toBe(false)
+    expect(emit).not.toHaveBeenCalled()
+    const respond = vi.fn()
+    expect(() =>
+      translator.answer(
+        '17',
+        'answer',
+        { respond } as unknown as CodexConnection,
+        Object.fromEntries([[id, 'value']])
+      )
+    ).toThrow('Unknown or expired Codex approval option')
+    expect(respond).not.toHaveBeenCalled()
+  })
+
   it('keeps duplicate display text answerable by stable provider question IDs', async () => {
     const requests = new PendingRequests()
     let receive!: (id: string, stream: { kind: 'event'; event: SessionEvent }) => void
