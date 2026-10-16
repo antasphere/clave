@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileStorage } from '../ports/storage'
@@ -135,5 +135,57 @@ describe('saved server connection registry', () => {
       expect(() => new ServerConnectionRegistry(ports).list()).toThrow(/saved server/i)
       expect(ports.storage.read('server-connections.json')).toBe(content)
     }
+  })
+  it('fails closed on a first-load read error across all operations and retries after recovery', () => {
+    const saved = registry.save(input())
+    const file = join(dir, 'server-connections.json')
+    const original = readFileSync(file, 'utf8')
+    const fresh = new ServerConnectionRegistry(ports, () => 'server-replacement')
+    chmodSync(file, 0)
+    try {
+      // Prove this exercises an actual read failure, not a missing document.
+      expect(() => readFileSync(file, 'utf8')).toThrow()
+      for (const operation of [
+        () => fresh.list(),
+        () => fresh.save({ ...input(), name: 'replacement' }),
+        () => fresh.connect(saved.id),
+        () => fresh.disconnect(saved.id),
+        () => fresh.remove(saved.id),
+        () => fresh.endpoint(saved.id)
+      ])
+        expect(operation).toThrow(/saved server connections could not be read/i)
+      expect(ports.secrets.seal).toHaveBeenCalledTimes(1)
+      expect(ports.secrets.discard).not.toHaveBeenCalled()
+    } finally {
+      chmodSync(file, 0o600)
+    }
+    expect(readFileSync(file, 'utf8')).toBe(original)
+    // A failed read must not cache an empty snapshot in this same instance.
+    expect(fresh.list()).toEqual([saved])
+    expect(fresh.endpoint(saved.id).token).toBe(secret)
+    const added = fresh.save({ ...input(), name: 'second server' })
+    expect(fresh.list()).toEqual([saved, added])
+  })
+  it('refuses lossy-only adapters and redacts checked-read errors without changing the document', () => {
+    registry.save(input())
+    const file = join(dir, 'server-connections.json')
+    const original = readFileSync(file, 'utf8')
+    const checked = ports.storage.readChecked
+    delete ports.storage.readChecked
+    expect(() => new ServerConnectionRegistry(ports).list()).toThrow(/saved server/i)
+    ports.storage.readChecked = () => {
+      throw new Error(`private adapter error: ${secret}`)
+    }
+    const fresh = new ServerConnectionRegistry(ports)
+    for (const operation of [() => fresh.list(), () => fresh.save(input())]) {
+      expect(operation).toThrow(
+        'Saved server connections could not be read. The document was left unchanged.'
+      )
+      expect(operation).not.toThrow(secret)
+    }
+    expect(readFileSync(file, 'utf8')).toBe(original)
+    expect(ports.secrets.seal).toHaveBeenCalledTimes(1)
+    ports.storage.readChecked = checked
+    expect(fresh.list()).toHaveLength(1)
   })
 })

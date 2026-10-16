@@ -177,9 +177,13 @@ export class ServerConnectionRegistry {
 
   private load(): StoredConnection[] {
     if (this.records) return this.records
-    const source = this.ports.storage.read(DOCUMENT)
-    if (source === null) return (this.records = [])
     try {
+      const storage = this.ports.storage
+      // A lossy read cannot distinguish an absent document from a failed
+      // read. Never cache empty state or permit writes after that ambiguity.
+      if (!storage.readChecked) throw new Error('Checked reads are required.')
+      const source = storage.readChecked(DOCUMENT)
+      if (source === null) return (this.records = [])
       const data: unknown = JSON.parse(source)
       if (
         !object(data) ||
