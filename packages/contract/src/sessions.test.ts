@@ -140,6 +140,25 @@ describe('the ported session model agrees with the zod one', () => {
 })
 
 describe('the session stream on the wire', () => {
+  it('preserves stable question IDs and identical display text through both event schemas', () => {
+    const event = {
+      type: 'permission_request',
+      id: 'native',
+      description: 'Two questions',
+      options: [{ id: 'answer', label: 'Submit' }],
+      questions: [
+        { id: 'first-id', question: 'Value?', header: 'Public', options: [] },
+        { id: 'second-id', question: 'Value?', header: 'Private', options: [] }
+      ]
+    }
+    expect(ZodSessionEvent.parse(event)).toEqual(event)
+    expect(Schema.decodeUnknownSync(SessionEvent)(event)).toEqual(event)
+    expect(
+      Schema.encodeSync(SessionStream)(
+        Schema.decodeUnknownSync(SessionStream)({ kind: 'event', event })
+      )
+    ).toEqual({ kind: 'event', event })
+  })
   it('carries terminal bytes as base64 and gives them back as bytes', () => {
     const bytes = new Uint8Array([0x1b, 0x5b, 0x48, 0xc3, 0xa9])
     const encoded = Schema.encodeSync(SessionStream)({ kind: 'pty', data: bytes })

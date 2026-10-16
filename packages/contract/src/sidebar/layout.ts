@@ -21,6 +21,9 @@ import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '../errors'
 
+/** One shared layout on an independently managed server, independent of client windows. */
+export const SERVER_LAYOUT_KEY = 'server'
+
 /** A window's persisted key, the id alphabet the shell mints; it names a
  *  file, so nothing outside this alphabet is ever accepted. */
 export const WindowKey = Schema.String.pipe(
@@ -76,8 +79,8 @@ export const WindowLayout = Schema.Struct({
 export type WindowLayout = typeof WindowLayout.Type
 
 /** A window's layout as the server holds it, with the revision a write must
- *  name. The revision counts the server's writes to this key since it was
- *  loaded, from 0. */
+ *  name. The revision counts committed writes to this key, from 0, and file
+ *  storage retains it across restarts. */
 export const LayoutSnapshot = Schema.Struct({
   windowKey: WindowKey,
   revision: Schema.NonNegativeInt,
