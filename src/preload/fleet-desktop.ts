@@ -83,6 +83,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   let connections: SavedServerConnection[] = []
   const watched = new Map<string, { backing: Backing; off: () => void }>()
   const pendingSnapshots = new Map<string, Promise<FleetSnapshot>>()
+  const queuedSnapshots = new Set<string>()
   const lastSnapshots = new Map<string, FleetSnapshot>()
   const streamRefs = new Map<string, { refs: number; release: () => void }>()
   const chains = new Map<string, Promise<void>>()
@@ -91,6 +92,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const invalidate = (serverId: string): void => {
     generations.set(serverId, (generations.get(serverId) ?? 0) + 1)
     pendingSnapshots.delete(serverId)
+    queuedSnapshots.delete(serverId)
     for (const [id, held] of streamRefs)
       if (parseSessionKey(id).serverId === serverId) {
         held.release()
@@ -171,12 +173,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     pendingSnapshots.set(serverId, read)
     void read
       .finally(() => {
-        if (pendingSnapshots.get(serverId) === read) pendingSnapshots.delete(serverId)
+        if (pendingSnapshots.get(serverId) !== read) return
+        pendingSnapshots.delete(serverId)
+        if (queuedSnapshots.delete(serverId)) refresh(serverId)
       })
       .catch(noop)
     return read
   }
   const refresh = (serverId: string): void => {
+    if (pendingSnapshots.has(serverId)) {
+      queuedSnapshots.add(serverId)
+      return
+    }
     void snapshot(serverId).catch(noop)
   }
   fleet.onStatus((status) => {

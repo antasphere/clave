@@ -87,8 +87,13 @@ export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
             </span>
           </div>
         </FileInfoTooltip>
-        {isMarkdown && <ViewModeToggle mode={viewMode} onChange={setViewMode} />}
-        {isHtml && <ViewModeToggle mode={viewMode} onChange={setViewMode} modes={HTML_MODES} />}
+        {remote && (isMarkdown || isHtml) && (
+          <span className="text-xs text-text-tertiary">Source</span>
+        )}
+        {!remote && isMarkdown && <ViewModeToggle mode={viewMode} onChange={setViewMode} />}
+        {!remote && isHtml && (
+          <ViewModeToggle mode={viewMode} onChange={setViewMode} modes={HTML_MODES} />
+        )}
         {canEdit &&
           (isDirty || saving ? (
             <button
@@ -108,7 +113,7 @@ export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
             </span>
           ))}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {isHtml && viewMode === 'rendered' && (
+          {!remote && isHtml && viewMode === 'rendered' && (
             <button
               onClick={() => setReloadKey((k) => k + 1)}
               className={fileActionButtonClass}

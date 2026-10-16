@@ -123,6 +123,10 @@ export async function run(t) {
     app = launched.app
     const win = launched.win
     const rendererErrors = []
+    const documentImageRequests = []
+    win.on('request', (request) => {
+      if (request.url().includes('server-picture.png')) documentImageRequests.push(request.url())
+    })
     win.on('pageerror', (error) => rendererErrors.push(error.message))
     assert.equal(
       await app.evaluate(({ BrowserWindow }) =>
@@ -277,6 +281,10 @@ export async function run(t) {
 
     writeFileSync(path.join(a.cwd, 'notes.txt'), 'A initial')
     writeFileSync(path.join(b.cwd, 'notes.txt'), 'B initial')
+    writeFileSync(
+      path.join(a.cwd, 'remote.md'),
+      '# From server A\n![server picture](server-picture.png)'
+    )
     const fileA = owned('file', savedA.id, a.cwd)
     const fileB = owned('file', savedB.id, b.cwd)
     const reads = await win.evaluate(
@@ -304,6 +312,26 @@ export async function run(t) {
       'remote file editor saves bytes on its owner'
     )
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
+    await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
+    await win
+      .locator(`[data-fleet-files="${savedA.id}"]`)
+      .getByRole('button', { name: 'remote.md', exact: true })
+      .click()
+    await sleep(400)
+    assert.deepEqual(
+      documentImageRequests.filter((url) => url.startsWith('file:')),
+      [],
+      'remote document must not request its image from the Mac filesystem'
+    )
+    await win
+      .locator('.cm-content:visible')
+      .filter({ hasText: '# From server A' })
+      .waitFor({ timeout: 5000 })
+    assert.equal(
+      await win.locator('.mdxeditor:visible img').count(),
+      0,
+      'remote document image references are not interpreted as Mac paths'
+    )
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     const png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
@@ -373,6 +401,67 @@ export async function run(t) {
       true
     )
 
+    // D's optional question IDs distinguish identical labels and privacy metadata.
+    await a.fixture.evaluate(
+      (id) =>
+        globalThis.__claveE2E.echo.inject(id, {
+          kind: 'event',
+          event: {
+            type: 'permission_request',
+            id: 'native-same-labels',
+            description: 'Distinct native questions',
+            toolName: 'item/tool/requestUserInput',
+            input: {
+              questions: [
+                {
+                  id: 'public-question-id',
+                  question: 'Value?',
+                  header: 'Public value',
+                  isSecret: false
+                },
+                {
+                  id: 'private-question-id',
+                  question: 'Value?',
+                  header: 'Private value',
+                  isSecret: true
+                }
+              ]
+            },
+            questions: [
+              { id: 'public-question-id', question: 'Value?', header: 'Public value', options: [] },
+              {
+                id: 'private-question-id',
+                question: 'Value?',
+                header: 'Private value',
+                options: []
+              }
+            ],
+            options: [
+              { id: 'answer', label: 'Answer' },
+              { id: 'deny', label: 'Deny' }
+            ]
+          }
+        }),
+      collision
+    )
+    const publicQuestion = win.getByLabel('Public value', { exact: true })
+    const privateQuestion = win.getByLabel('Private value', { exact: true })
+    await publicQuestion.waitFor()
+    assert.equal(await publicQuestion.getAttribute('type'), 'text')
+    assert.equal(await privateQuestion.getAttribute('type'), 'password')
+    await publicQuestion.fill('public fixture answer')
+    await privateQuestion.fill('private fixture answer')
+    assert.equal(await publicQuestion.inputValue(), 'public fixture answer')
+    assert.equal(await privateQuestion.inputValue(), 'private fixture answer')
+    assert.equal((await win.locator('body').innerText()).includes('private-question-id'), false)
+    await win.getByRole('button', { name: 'Answer', exact: true }).click()
+    await privateQuestion.waitFor({ state: 'detached' })
+    assert.equal((await win.locator('body').innerText()).includes('private fixture answer'), false)
+    t.check(
+      'same-label native questions retain distinct IDs, public/private inputs and owning resolution',
+      true
+    )
+
     await win.evaluate((id) => window.electronAPI.fleetDisconnect(id), savedA.id)
     await check(
       () =>
@@ -437,6 +526,7 @@ export async function run(t) {
       JSON.stringify(histories[0]).includes('message only for server A'),
       'live history contains the turn sent through this desktop'
     )
+    t.check('owning live history and missed native turns catch up after reconnect', true)
   } finally {
     if (app) await app.close()
     for (const server of servers.reverse()) await server.stop()
