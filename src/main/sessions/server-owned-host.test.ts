@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionHost, type SessionHostService, type StartInput } from '@clave/server'
@@ -106,7 +106,8 @@ function fixture(dataDir = directory()): {
     discardRecord: (id) => {
       records.delete(id)
     },
-    keepOnRecord: vi.fn()
+    keepOnRecord: vi.fn(),
+    history: () => ({ items: [], before: null })
   }
   const sidebar = standaloneSidebar(dataDir)
   const ready = vi.fn()
@@ -277,4 +278,208 @@ it('closes the actual process when close arrives during an in-flight Resume', as
   expect(f.host.get(record.id)).toBeUndefined()
   expect(f.host.listAdoptableRecords()).toHaveLength(0)
   expect(f.sidebar.get('another-client').displayOrder).not.toContain(record.id)
+})
+
+describe('live server-retained history', () => {
+  it('serves a captured live reply when the adapter has no available history', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    try {
+      f.emit(record.id, {
+        kind: 'event',
+        event: {
+          type: 'assistant_text',
+          delta: 'real live reply',
+          final: true
+        }
+      })
+      expect(
+        readFileSync(join(f.dataDir, 'server-history', `${record.id}.json`), 'utf8')
+      ).toContain('real live reply')
+      expect(f.host.history(record.id).items).toContainEqual(
+        expect.objectContaining({
+          event: { type: 'assistant_text', delta: 'real live reply', final: true }
+        })
+      )
+      expect(f.start).not.toHaveBeenCalled()
+    } finally {
+      f.close()
+    }
+  })
+
+  it('pages retained live turns using before and limit without leaking another owner', () => {
+    const a = fixture()
+    const b = fixture()
+    a.live.set(record.id, session)
+    b.live.set(record.id, session)
+    try {
+      for (let i = 0; i < 3; i++) {
+        a.emit(record.id, { kind: 'event', event: { type: 'user_message', text: `q${i}` } })
+        a.emit(record.id, {
+          kind: 'event',
+          event: {
+            type: 'assistant_text',
+            delta: `a${i}`,
+            final: true
+          }
+        })
+      }
+      const newest = a.host.history(record.id, undefined, 2)
+      expect(newest.before).toBe(4)
+      expect(newest.items.map(({ event }) => event)).toEqual([
+        { type: 'user_message', text: 'q2' },
+        { type: 'assistant_text', delta: 'a2', final: true }
+      ])
+      const middle = a.host.history(record.id, newest.before!, 2)
+      expect(middle.before).toBe(2)
+      expect(middle.items.map(({ event }) => event)).toEqual([
+        { type: 'user_message', text: 'q1' },
+        { type: 'assistant_text', delta: 'a1', final: true }
+      ])
+      const oldest = a.host.history(record.id, middle.before!, 2)
+      expect(oldest.before).toBeNull()
+      expect(oldest.items.map(({ event }) => event)).toEqual([
+        { type: 'user_message', text: 'q0' },
+        { type: 'assistant_text', delta: 'a0', final: true }
+      ])
+      expect(a.host.history(record.id, 0, 2)).toEqual({ items: [], before: null })
+      expect(b.host.history(record.id)).toEqual({ items: [], before: null })
+      expect(a.start).not.toHaveBeenCalled()
+      expect(b.start).not.toHaveBeenCalled()
+    } finally {
+      a.close()
+      b.close()
+    }
+  })
+
+  it('returns adapter pages unchanged with the exact requested cursor and limit', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    const page = {
+      items: [
+        {
+          event: {
+            type: 'assistant_text' as const,
+            delta: 'provider transcript',
+            final: true
+          },
+          at: 42
+        }
+      ],
+      before: 7
+    }
+    const history = vi.spyOn(f.base, 'history').mockReturnValue(page)
+    try {
+      f.emit(record.id, {
+        kind: 'event',
+        event: {
+          type: 'assistant_text',
+          delta: 'checkpoint only',
+          final: true
+        }
+      })
+      expect(f.host.history(record.id, 9, 2)).toBe(page)
+      expect(history).toHaveBeenCalledExactlyOnceWith(record.id, 9, 2)
+    } finally {
+      f.close()
+    }
+  })
+
+  it('keeps an empty adapter boundary page when the latest adapter page has history', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    const empty = { items: [], before: null }
+    const history = vi
+      .spyOn(f.base, 'history')
+      .mockImplementation((_id: string, before?: number) =>
+        before === 0
+          ? empty
+          : {
+              items: [
+                { event: { type: 'assistant_text' as const, delta: 'provider', final: true } }
+              ],
+              before: null
+            }
+      )
+    try {
+      f.emit(record.id, {
+        kind: 'event',
+        event: {
+          type: 'assistant_text',
+          delta: 'checkpoint only',
+          final: true
+        }
+      })
+      expect(f.host.history(record.id, 0, 2)).toBe(empty)
+      expect(history.mock.calls[0]).toEqual([record.id, 0, 2])
+    } finally {
+      f.close()
+    }
+  })
+
+  it('preserves an empty adapter page with a continuation cursor', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    const page = { items: [], before: 3 }
+    vi.spyOn(f.base, 'history').mockReturnValue(page)
+    try {
+      expect(f.host.history(record.id, 6, 2)).toBe(page)
+    } finally {
+      f.close()
+    }
+  })
+
+  it('uses adapter history when it becomes available instead of merging checkpoint offsets', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    try {
+      f.emit(record.id, {
+        kind: 'event',
+        event: {
+          type: 'assistant_text',
+          delta: 'retained',
+          final: true
+        }
+      })
+      expect(f.host.history(record.id).items).toHaveLength(1)
+      const page = {
+        items: [
+          {
+            event: {
+              type: 'assistant_text' as const,
+              delta: 'complete provider transcript',
+              final: true
+            }
+          }
+        ],
+        before: null
+      }
+      vi.spyOn(f.base, 'history').mockReturnValue(page)
+      expect(f.host.history(record.id)).toBe(page)
+    } finally {
+      f.close()
+    }
+  })
+
+  it('propagates adapter history errors and rejects checkpoint-only unknown sessions', () => {
+    const f = fixture()
+    f.live.set(record.id, session)
+    vi.spyOn(f.base, 'history').mockImplementation(() => {
+      throw new Error('provider history failed')
+    })
+    try {
+      expect(() => f.host.history(record.id)).toThrow('provider history failed')
+      f.emit('unowned', {
+        kind: 'event',
+        event: {
+          type: 'assistant_text',
+          delta: 'unowned checkpoint',
+          final: true
+        }
+      })
+      expect(() => f.host.history('unowned')).toThrow('Unknown session')
+    } finally {
+      f.close()
+    }
+  })
 })
