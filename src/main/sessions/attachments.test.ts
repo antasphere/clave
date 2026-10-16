@@ -90,3 +90,31 @@ test('ordinary references keep the original path and never embed contents', asyn
   expect(prompt.text).not.toContain('updated')
   expect(prompt.images).toEqual([])
 })
+
+test('accepts exactly 20 MiB and rejects 20 MiB plus one byte and five valid 5 MiB images', async () => {
+  const directory = await setup()
+  const large = Buffer.alloc(5 * 1024 * 1024)
+  png.copy(large)
+  const path = join(directory, 'large.png')
+  await writeFile(path, large)
+  const file = await prepareAttachment(join(directory, 'saved'), { path })
+  const nearlyFullPath = join(directory, 'nearly-full.png')
+  await writeFile(nearlyFullPath, large.subarray(0, large.length - 7))
+  const nearlyFull = await prepareAttachment(join(directory, 'saved'), { path: nearlyFullPath })
+  const tinyPath = join(directory, 'tiny.png')
+  await writeFile(tinyPath, png.subarray(0, 8))
+  const tiny = await prepareAttachment(join(directory, 'saved'), { path: tinyPath })
+  expect((await preparePrompt('', Array(4).fill(file), true)).images).toHaveLength(4)
+  const refuses = async (input: unknown): Promise<void> => {
+    const accepted = await preparePrompt('', input, true).then(
+      () => true,
+      (error: unknown) => {
+        expect(String(error)).toContain('20 MiB')
+        return false
+      }
+    )
+    expect(accepted).toBe(false)
+  }
+  await refuses([file, file, file, nearlyFull, tiny])
+  await refuses(Array(5).fill(file))
+})
