@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -18,7 +19,7 @@ afterEach(async () => {
   }
 })
 
-it('wires requests, server-owned MCP and C FilesPort in the real built daemon', async () => {
+it('wires requests, server-owned MCP and C FilesPort in the real daemon entry', async () => {
   const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
   await mkdir(scratch, { recursive: true })
   const dataDir = await mkdtemp(join(scratch, 'daemon-'))
@@ -38,10 +39,14 @@ it('wires requests, server-owned MCP and C FilesPort in the real built daemon', 
     }),
     { mode: 0o600 }
   )
+  // Linux's unit job intentionally has no bundles. Bun is the production
+  // source-entry runtime; local and macOS checks exercise the built entry.
+  const bundle = resolve('out/main/server-entry.js')
+  const built = existsSync(bundle) && process.env.CLAVE_REQUEST_TEST_SOURCE !== '1'
   const child = spawn(
-    process.execPath,
+    built ? process.execPath : resolve('node_modules/.bin/bun'),
     [
-      resolve('out/main/server-entry.js'),
+      built ? bundle : resolve('src/main/server-entry.ts'),
       '--data-dir',
       dataDir,
       '--daemon',
@@ -52,6 +57,7 @@ it('wires requests, server-owned MCP and C FilesPort in the real built daemon', 
       cwd: process.cwd(),
       env: {
         ...process.env,
+        SHELL: '/bin/sh',
         CLAVE_E2E_NS: process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl',
         CLAVE_KEYCHAIN_FILE: join(dataDir, 'test-keychain.json')
       },
