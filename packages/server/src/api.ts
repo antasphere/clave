@@ -53,6 +53,7 @@ import {
 } from '@clave/contract/plugins'
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
+import { FilesLive } from './files/api'
 import {
   AbsorbLayout,
   AddGroupTerminal,
@@ -183,6 +184,7 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       SettingsLive,
       SidebarLive,
       WorkspaceFilesLive,
+      FilesLive,
       // ── Lane D (wave 3): the view requests ──
       ViewsLive,
       // ── Wave 4, lane C: the agent tools ──
