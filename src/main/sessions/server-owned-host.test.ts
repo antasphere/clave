@@ -251,3 +251,30 @@ it('refuses a Resume racing an already requested close instead of leaving an orp
   expect(f.host.get(record.id)).toBeUndefined()
   f.close()
 })
+
+it('closes the actual process when close arrives during an in-flight Resume', async () => {
+  const f = fixture()
+  const start = f.start.getMockImplementation()!
+  let finish!: () => void
+  f.start.mockImplementationOnce(async (input) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    return start(input)
+  })
+  const resuming = f.host.restart(record.id, {}, false)
+  const closing = f.host.stop(record.id)
+  try {
+    await Promise.resolve()
+    expect(f.stop).not.toHaveBeenCalled()
+  } finally {
+    finish()
+    await Promise.all([resuming, closing])
+    f.close()
+  }
+  expect(f.stop).toHaveBeenCalledWith(record.id)
+  expect(f.live.has(record.id)).toBe(false)
+  expect(f.host.get(record.id)).toBeUndefined()
+  expect(f.host.listAdoptableRecords()).toHaveLength(0)
+  expect(f.sidebar.get('another-client').displayOrder).not.toContain(record.id)
+})

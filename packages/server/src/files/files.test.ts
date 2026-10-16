@@ -1,3 +1,5 @@
+import { beforeAll } from 'vitest'
+import { ensureFileHelper } from './test-support'
 import { execFileSync } from 'node:child_process'
 import {
   mkdir,
@@ -304,3 +306,5 @@ describe('server-owned attachments', () => {
     })
   })
 })
+
+beforeAll(ensureFileHelper, 30_000)

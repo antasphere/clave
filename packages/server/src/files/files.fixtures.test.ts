@@ -1,3 +1,5 @@
+import { beforeAll } from 'vitest'
+import { ensureFileHelper } from './test-support'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Effect, Layer } from 'effect'
@@ -76,3 +78,5 @@ test('loads remote-files/owned-content through commands and verifies the retaine
     await server.stop()
   }
 }, 20_000)
+
+beforeAll(ensureFileHelper, 30_000)

@@ -1,22 +1,11 @@
-import { constants } from 'node:fs'
-import {
-  lstat,
-  mkdir,
-  opendir,
-  open,
-  realpath,
-  rename,
-  rm,
-  stat,
-  writeFile
-} from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Schema } from 'effect'
 import {
+  FileAttachment,
   FileLocation,
   FileOperationFailed,
-  MAX_FILE_ENTRIES,
   MAX_PREVIEW_BYTES,
   MAX_TEXT_BYTES,
   MAX_TRANSFER_BYTES,
@@ -26,7 +15,8 @@ import {
   WriteFileInput
 } from '@clave/contract/files'
 import type { FilesService } from './port'
-import { imageMime, readBounded } from './binary'
+import { imageMime } from './binary'
+import { secureFiles } from './platform'
 
 export interface ServerFilesOptions {
   /** Private durable storage, shared with the session host, independent of clients. */
@@ -40,7 +30,9 @@ const fail = (code: FileOperationFailed['code'], message: string): never => {
 }
 const within = (root: string, path: string): boolean =>
   path === root || path.startsWith(root + (root.endsWith(sep) ? '' : sep))
-const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT'
+const missing = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException)?.code === 'ENOENT' ||
+  (error instanceof FileOperationFailed && error.code === 'not_found')
 const mimeOf = (name: string): string =>
   ({
     '.png': 'image/png',
@@ -68,16 +60,45 @@ export function decodeFileBytes(base64: string): Buffer {
 export function createServerFiles(options: ServerFilesOptions): FilesService {
   if (!isAbsolute(options.attachmentsRoot) || options.attachmentsRoot.includes('\0'))
     throw new Error('attachmentsRoot must be absolute.')
+  const capture = <T>(
+    promise: Promise<T>
+  ): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> =>
+    promise.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+  const unwrap = async <T>(promise: ReturnType<typeof capture<T>>): Promise<T> => {
+    const result = await promise
+    if (!result.ok) throw result.error
+    return result.value
+  }
+  // Configuration roots are resolved once. Re-resolving an allowlist after an
+  // attacker exchanges a root for a link would authorize the link's new target.
+  const policy = capture(Promise.all((options.roots ?? []).map((path) => realpath(path))))
+  const storage = capture(
+    (async () => {
+      let ancestor = resolve(options.attachmentsRoot)
+      const suffix: string[] = []
+      for (;;) {
+        try {
+          return join(await realpath(ancestor), ...suffix.reverse())
+        } catch (error) {
+          if (!missing(error)) throw error
+          suffix.push(basename(ancestor))
+          ancestor = dirname(ancestor)
+        }
+      }
+    })()
+  )
   const checkedRoot = async (root: string): Promise<string> => {
     if (!isAbsolute(root) || root.includes('\0'))
       fail('invalid_path', 'Choose an absolute server directory.')
+    const allowed = await unwrap(policy)
     const canonical = await realpath(root)
-    if (!(await stat(canonical)).isDirectory()) fail('invalid_path', 'Choose a server directory.')
-    if (options.roots) {
-      const allowed = await Promise.all(options.roots.map((path) => realpath(path)))
-      if (!allowed.some((path) => within(path, canonical)))
-        fail('invalid_path', 'Directory is outside the allowed roots.')
-    }
+    if (options.roots && !allowed.some((path) => within(path, canonical)))
+      fail('invalid_path', 'Directory is outside the allowed roots.')
+    if ((await secureFiles.stat(canonical)).type !== 'directory')
+      fail('invalid_path', 'Choose a server directory.')
     return canonical
   }
   const locate = async (input: FileLocation, create = false): Promise<string> => {
@@ -98,7 +119,7 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
     } catch (error) {
       if (!create || !missing(error)) throw error
       // Only the leaf may be new. A dangling symlink must never be followed.
-      const leaf = await lstat(target).catch((e: unknown) => {
+      const leaf = await secureFiles.stat(target).catch((e: unknown) => {
         if (!missing(e)) throw e
         return null
       })
@@ -108,99 +129,47 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
     if (!within(root, canonical)) fail('invalid_path', 'File is outside the requested directory.')
     return canonical
   }
-  const read = async (path: string, limit: number): Promise<{ bytes: Buffer; size: number }> => {
-    const handle = await open(
-      path,
-      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
-    )
-    try {
-      const info = await handle.stat()
-      if (!info.isFile()) fail('not_file', 'Only regular files are supported.')
-      const bytes = Buffer.alloc(Math.min(info.size, limit))
-      let offset = 0
-      while (offset < bytes.length) {
-        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
-        if (!bytesRead) break
-        offset += bytesRead
-      }
-      return { bytes: bytes.subarray(0, offset), size: info.size }
-    } finally {
-      await handle.close()
-    }
-  }
+  const read = secureFiles.read
   const bounded = async (path: string, limit: number): Promise<Buffer> => {
-    const info = await lstat(path)
-    if (!info.isFile()) fail('not_file', 'Only regular files are supported.')
-    if (info.size > limit) fail('too_large', 'Transfers must be 5 MiB or smaller.')
     const sample = await read(path, limit + 1)
     if (sample.size > limit || sample.bytes.length > limit)
-      fail('too_large', 'Transfers must be 5 MiB or smaller.')
+      fail('too_large', 'The file exceeds the transfer limit.')
     if (sample.size !== sample.bytes.length)
       fail('invalid_data', 'File changed while it was being read.')
     return sample.bytes
   }
   const sessionDirectory = async (sessionId: string): Promise<string> => {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) fail('invalid_path', 'Invalid session.')
-    await mkdir(options.attachmentsRoot, { recursive: true, mode: 0o700 })
-    const root = await realpath(options.attachmentsRoot)
-    const path = join(root, sessionId)
-    await mkdir(path, { mode: 0o700 }).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    })
-    if ((await lstat(path)).isSymbolicLink() || !(await stat(path)).isDirectory())
-      fail('invalid_path', 'Invalid attachment storage.')
+    const path = join(await unwrap(storage), sessionId)
+    await secureFiles.mkdirp(path)
     return path
   }
-  const save = async (path: string, bytes: Buffer): Promise<void> => {
-    const info = await lstat(path).catch((error: unknown) => {
-      if (!missing(error)) throw error
-      return null
+  const attachment = (id: string, path: string, name: string, size: number): FileAttachment => {
+    const mimeType = mimeOf(name)
+    // Validate the whole response before any managed bytes are persisted.
+    return Schema.decodeUnknownSync(FileAttachment)({
+      id,
+      path,
+      name,
+      size,
+      mimeType,
+      delivery: mimeType.startsWith('image/') ? 'image' : 'reference'
     })
-    if (info && !info.isFile()) fail('not_file', 'Only regular files can be edited.')
-    const temporary = join(dirname(path), `.clave-${randomUUID()}.tmp`)
-    try {
-      await writeFile(temporary, bytes, { mode: info ? info.mode & 0o777 : 0o600, flag: 'wx' })
-      await rename(temporary, path)
-    } finally {
-      await rm(temporary, { force: true })
-    }
   }
   const service: FilesService = {
     async list(input) {
-      const path = await locate(input)
-      const directory = await opendir(path)
-      const entries: { name: string; path: string; type: 'file' | 'directory'; size: number }[] = []
-      let scanned = 0
-      let truncated = false
-      for await (const entry of directory) {
-        if (++scanned > MAX_FILE_ENTRIES) {
-          truncated = true
-          break
-        }
-        // Do not expose special files or links that may leave this root.
-        if (!entry.isFile() && !entry.isDirectory()) continue
-        const size = entry.isFile() ? (await stat(join(path, entry.name))).size : 0
-        entries.push({
-          name: entry.name,
-          path: join(input.path, entry.name),
-          type: entry.isDirectory() ? 'directory' : 'file',
-          size
-        })
-      }
+      const listing = await secureFiles.list(await locate(input))
+      const entries = listing.entries.map((entry) => ({
+        ...entry,
+        path: join(input.path, entry.name)
+      }))
       entries.sort((a, b) =>
         a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1
       )
-      return { entries, truncated }
+      return { entries, truncated: listing.truncated }
     },
     async stat(input) {
-      const info = await stat(await locate(input))
-      if (!info.isFile() && !info.isDirectory())
-        fail('not_file', 'Only regular files and directories are supported.')
-      return {
-        type: info.isDirectory() ? 'directory' : 'file',
-        size: info.size,
-        modified: info.mtimeMs
-      }
+      return secureFiles.stat(await locate(input))
     },
     async read(input) {
       const { bytes, size } = await read(await locate(input), MAX_TEXT_BYTES)
@@ -221,20 +190,20 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
       Schema.decodeUnknownSync(WriteFileInput)(input)
       const bytes = Buffer.from(input.content, 'utf8')
       if (bytes.length > MAX_TEXT_BYTES) fail('too_large', 'Text edits must be 1 MiB or smaller.')
-      await save(await locate(input, true), bytes)
+      await secureFiles.write(await locate(input, true), bytes)
     },
     async upload(input) {
       Schema.decodeUnknownSync(UploadFileInput)(input)
       const bytes = decodeFileBytes(input.base64)
       const path = await locate(input, true)
       // Uploads do not silently overwrite a repository file.
-      await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })
+      await secureFiles.create(path, bytes)
     },
     async createFile(input) {
-      await writeFile(await locate(input, true), '', { flag: 'wx', mode: 0o600 })
+      await secureFiles.create(await locate(input, true))
     },
     async createDirectory(input) {
-      await mkdir(await locate(input, true), { mode: 0o700 })
+      await secureFiles.mkdir(await locate(input, true))
     },
     async prepareAttachment(input) {
       Schema.decodeUnknownSync(PrepareFileAttachmentInput)(input)
@@ -251,18 +220,26 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
           if (!mime)
             return fail('invalid_data', 'Only PNG, JPEG, GIF and WebP images can be pasted.')
           if (!bytes.length) fail('invalid_data', 'Pasted images cannot be empty.')
-          name = `${name.replace(/\.[^.]+$/, '')}.${mime === 'image/jpeg' ? 'jpg' : mime.slice(6)}`
+          const suffix = `.${mime === 'image/jpeg' ? 'jpg' : mime.slice(6)}`
+          let stem = ''
+          for (const point of name.replace(/\.[^.]+$/, '')) {
+            if (stem.length + point.length > 255 - suffix.length) break
+            stem += point
+          }
+          name = `${stem}${suffix}`
         }
         // Picked files keep their original MIME/delivery. The existing
         // send-time validator checks magic and offers an explicit reference
         // choice for a corrupt or unsupported image, just as for local files.
 
         path = join(directory, `${id}${extname(name).toLowerCase().slice(0, 16)}`)
-        await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })
+        const result = attachment(id, path, name, bytes.length)
+        await secureFiles.create(path, bytes)
+        return result
       } else {
         path = await locate(input.source)
-        const info = await stat(path)
-        if (!info.isFile()) fail('not_file', 'Folders and special files cannot be attached.')
+        const info = await secureFiles.stat(path)
+        if (info.type !== 'file') fail('not_file', 'Folders and special files cannot be attached.')
         name = basename(path)
         // A temporary server file must survive the source's removal, just as
         // a temporary Mac attachment does. Durable remote references stay put.
@@ -272,20 +249,13 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
         ) {
           if (info.size > 100 * 1024 * 1024)
             fail('too_large', 'Temporary files must be 100 MiB or smaller.')
-          const bytes = await readBounded(path, 100 * 1024 * 1024)
+          const bytes = await bounded(path, 100 * 1024 * 1024)
           path = join(directory, `${id}${extname(name).toLowerCase().slice(0, 16)}`)
-          await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })
+          const result = attachment(id, path, name, bytes.length)
+          await secureFiles.create(path, bytes)
+          return result
         }
-      }
-      const info = await stat(path)
-      const mimeType = mimeOf(name)
-      return {
-        id,
-        path,
-        name,
-        mimeType,
-        size: info.size,
-        delivery: mimeType.startsWith('image/') ? 'image' : 'reference'
+        return attachment(id, path, name, info.size)
       }
     },
     async previewAttachment(input) {
