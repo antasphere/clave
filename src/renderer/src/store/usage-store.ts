@@ -224,20 +224,42 @@ export function piTodaySummary(totals: PiUsageTotals): string {
   return `${formatPiTokens(totals.totalTokens)} tokens · $${totals.cost.toFixed(2)} today`
 }
 
-/**
- * The window that is actually going to stop you: the one with the least left,
- * the service's own severity taken first where it disagrees with the raw
- * percentage (it is plan-aware and we are not).
- *
- * This is the auto-detection. Which caps an account has is not ours to know —
- * a session block, a weekly all-models cap, one weekly cap per model, and
- * whatever the service adds next — so nothing here names a window. It reads
- * whatever came back and picks the tightest.
- */
-export function tightestWindow(windows: UsageWindow[]): UsageWindow | null {
+/** Session views use shared caps plus caps for the explicitly known model.
+ * Account-wide views omit the context to keep every reported cap. */
+export function claudeModelWindows(windows: UsageWindow[], model?: string): UsageWindow[] {
+  const tokens =
+    model
+      ?.toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean) ?? []
+  return windows.filter((w) => {
+    if (w.kind !== 'weekly_scoped') return true
+    const scope = w.scope?.trim().toLowerCase()
+    return !!scope && tokens.includes(scope)
+  })
+}
+
+export function claudeUsageForModel(
+  summary: AccountUsageSummary | undefined,
+  model?: string
+): AccountUsageSummary | undefined {
+  if (!summary || summary.status === 'error') return summary
+  const windows = claudeModelWindows(
+    summary.windows ?? (summary.tightest ? [summary.tightest] : []),
+    model
+  )
+  return { ...summary, windows, tightest: tightestWindow(windows) }
+}
+
+/** Select by service severity, then utilization. Without a session context,
+ * consider every reported window for the account overview. */
+export function tightestWindow(
+  windows: UsageWindow[],
+  context?: { model?: string }
+): UsageWindow | null {
   const rank = { normal: 0, warning: 1, critical: 2 }
   let best: UsageWindow | null = null
-  for (const w of windows) {
+  for (const w of context ? claudeModelWindows(windows, context.model) : windows) {
     if (!best) {
       best = w
       continue
