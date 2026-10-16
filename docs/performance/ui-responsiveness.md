@@ -1,6 +1,6 @@
 # Desktop renderer responsiveness
 
-Issue [#204](https://github.com/antasphere/clave/issues/204). This candidate is **performance-blocked**. It reduces the measured extra renderer task time by 69.688%, but tab handler-to-second-animation-frame p95 is 52.3ms against the unchanged 50ms target. Independent diagnosis and current-head CI remain pending. This report does not claim merge readiness.
+Issue [#204](https://github.com/antasphere/clave/issues/204). This candidate is **performance-blocked**. The original formal result remains a 69.688% reduction in extra renderer task time and tab handler-to-second-animation-frame p95 of 52.3ms against 50ms. Independent round one on `7709dc91` is FAIL: the tab ceiling still fails, and the group/composer passes do not reproduce reliably under load. CI jobs on that commit passed, while their informational whole-suite step failed. Validator/test/report repairs require independent reassessment and CI on their committed head. This report does not claim merge readiness.
 
 ## Cause and change
 
@@ -36,9 +36,29 @@ Median extra task time falls from 3827.758ms to 1160.271ms, exceeding the accept
 
 R2 per-launch tab p95 is 52.5/52.3/49.8ms, group 70.9/72.0/71.2ms, composer 37.7/38.1/37.4ms, and native input 8.306/7.158/7.877ms. The raw samples, maxima and every sample over 100ms remain in [the comparison](ui-responsiveness/comparison.json) and measurements. The tab samples above 45ms reveal the long streaming answer. That correlation does not prove a specific reveal-hook cause.
 
-Both formal phases ran with a 1ms CPU profiler, as `config.profileIntervalUs` records. These are instrumented timings; a paired unprofiled cohort has not established their sensitivity to profiling.
+Both formal phases ran with a 1ms CPU profiler, as `config.profileIntervalUs` records. Original one-minute load averages were 36.6–55.6 before and 11.9–14.4 on R2. Those external workloads were uncontrolled; serialization excludes this lane's own builds and checks, not other work on the Mac. The independent diagnostics below quantify profiler sensitivity and test a fresh pair under more comparable load. They do not replace these historical formal results.
 
 The native input clock starts before Playwright's `keyboard.insertText` and ends after observing the controlled textarea value. Focus and clearing precede that clock. Handler clocks start inside the DOM event and end at the second rAF. Tab/group request clocks additionally include Playwright actionability, IPC, frame waits and DOM verification; their tails exceed 100ms and remain disclosed, but they are not the accepted native-input metric. None measures physical input-to-pixel latency.
+
+## Independent round-one diagnostics
+
+The [complete independent report](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824) keeps the verdict FAIL. The following are the peer's diagnostic collections on the R2-identical product, not replacement formal runs or new author measurements.
+
+| Diagnostic metric        | Profiled | Unprofiled |
+| ------------------------ | -------: | ---------: |
+| Tab handler p95          |   54.2ms |     51.6ms |
+| Group handler p95        |   80.2ms |     74.8ms |
+| Composer handler p95     |   45.2ms |     41.5ms |
+| Native input request p95 |   21.2ms |     10.9ms |
+| Median extra task time   |   1176ms |     1098ms |
+
+The peer alternated six launches, P/U/P/U/P/U, with three launches per condition and load averages 6.8–13.7. The unprofiled condition used a private collector copy that disabled CPU profiling. Its diagnostic field discloses that change even though its tooling fields hash the frozen originals. It cannot be treated as the unchanged formal collector. Removing the profiler reduces extra task time by about 6.7%, but tab p95 still exceeds 50ms. [Peer profiler evidence](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824).
+
+The peer also ran a fresh three-before/three-after pair with the original frozen collector at load averages 21–38. Median extra task time fell from 4218ms to 1175ms, 72.1% lower. Stream rates were 19.17–19.58/s, ordered conservation held and there were no page errors. After p95 was tab **56.2ms**, group **86.8ms**, composer **50.1ms** and native input **48.7ms**. Group per-launch p95 was 82.4/82.7/90.9ms, composer 50.4/42.5/48.1ms and native input 42.2/44.6/61.3ms. Two group samples exceeded 100ms. Group and composer therefore remain blockers alongside tab; native input has little margin in the pooled result. [Peer load-pair evidence](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824).
+
+That pair swapped the four base product files into the verifier tree, reproduced all 415 historical before renderer hashes, restored the product byte-identically and reproduced all 415 R2 hashes. Both collector `source` fields name `7709dc91`, so the product hashes identify which build actually ran. These are single-machine diagnostics under uncontrolled external load. The peer used Node v23.11.1/npm 10.9.2; the historical collector recorded Node v22.12.0. No confidence interval, cross-platform result or physical input-to-pixel claim follows.
+
+A separate one-launch attribution experiment compared 12 unprofiled and six 100µs-profiled reveals per condition. Streaming reveal median was 54.4ms to the second rAF, with 37.1ms script, versus 26.4ms and 6.7ms script after streaming stopped and the snapshot was current. The roughly 30ms script difference was in synchronous full-message Markdown parsing, with 36–95k characters in those runs. This supports a bounded parsing proposal; it proves no benefit for an unimplemented cache, block renderer or worker. The [lead's finding decision](https://github.com/antasphere/clave/issues/204#issuecomment-6215683536) keeps the original ceilings and requires scope refinement before product changes.
 
 ## Retained failed refinements
 
@@ -61,11 +81,43 @@ The reusable `chat/renderer-responsiveness` scenario uses `@structure-ai/fixture
 
 The regression checks zero unrelated renders, both views' actual glyph ranges on reveal after a hidden zero-size scroll box, native wheel reading intent under a visible stream, nonzero reading offset through hide/reveal, retained drafts, exact ordered final content, live controls/model/state and changing link labels/destinations. Existing focused specs also cover every selected grid pane, history paging and input history. Live freshness samples remained below the 150ms target. A measured permission arrival reached the DOM in 9–11ms.
 
-Author mutations removed pane memoization, the final-text guard, cancellation and fixed-deadline scheduling. Each failed a meaningful assertion; sources were restored byte-identically. Removing the original reveal scroll notification failed the existing hidden-workspace painted-text assertion in both server modes. The new long-response assertion caught it in-process but passed that reveal step in separate mode, then encountered an unrelated view-menu timeout. Its reveal coverage alone is therefore insufficient to prove notification necessity in every run. These are author checks. Independent Opus verification has not occurred and must assess the remaining tab miss and test limitations itself.
+Original author mutations removed pane memoization, the final-text guard, cancellation and fixed-deadline scheduling. Each failed a meaningful assertion; sources were restored byte-identically. Removing the original reveal scroll notification failed the existing hidden-workspace painted-text assertion in both server modes. The original long-response assertion caught it in-process but passed that reveal step in separate mode, then encountered an unrelated view-menu timeout. That original coverage limit remains part of the record.
+
+Independent round one found no content or control loss, but showed three regression gaps: routing control/non-assistant updates through the text timer, delaying quick reveal, and changing Terminal Markdown component identities all survived the committed checks. The original quiet-gap control check and eventual reveal checks were insufficient. Those peer outcomes remain unchanged in the [full report](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824); author repairs are not an independent verdict.
+
+The [author repair evidence](ui-responsiveness/author-fix-round-1.json) records the stricter validator, active-stream and second-frame assertions, both views' link/table identity checks, original semantic mutation results and restoration. It retains failed setup attempts and the initial history-paging failure alongside its unchanged passing repeat. These repairs still await independent reassessment.
+
+## Author fix round one
+
+The validator now requires exactly `config.samples` values per launch, in both collections, both phases and every action/clock. It retains the collector's minimum of 20 and the historical formal configuration of 30. Dense, finite, nonnegative timings, finite interaction percentiles and reported/raw summary agreement are checked before target comparisons. New negatives cover one/six samples, a short launch concealed by pooled data, missing or invalid percentiles and invalid/sparse values. Before the helper edit, 51 such cases failed because the old validator accepted them. The final validator suite has 86 passing cases. The original archived 30-sample arrays were already valid; their recorded performance FAIL remains unchanged.
+
+The new presentation checks use a fresh echo session created through app commands after the original 100-pane assertion. This avoids inheriting the earlier deliberately unanswered permission's blocked state, in which unfinished text does not use the working-text clock. The checks assert working state explicitly. This extra correctness session does not alter the frozen 100-tab collector or any historical measurement.
+
+Quick reveal waits for a real text paint, hides the view to an actual zero-size box, observes a new raw chunk while hidden, and records the latest delivered marker at the reveal click. An immutable observation is made at the second rAF; later polling only retrieves that observation, never waits for missing text to appear. Ten aligned quick cases are required within 25 attempts. All slower setup attempts remain recorded, and every observed reveal must be fresh.
+
+Permission and non-assistant transcript rows are injected during a continuing stream, about 20ms after a real text paint. The observer watches the transcript's scroll container, independently of the live dock and header. Three aligned injections per kind are required within 12 attempts; slower setup attempts remain visible, and every row still has to appear within the unchanged 75ms assertion. Permissions are answered through the real dock between trials. Both native views also retain link/table/scroll-frame DOM and an 80px table scroll position during visible appends, while URL labels and destinations still update.
+
+Original M4, M6 and M9b now fail their intended semantic assertions in both server modes. Each mutation was restored byte-identically, rebuilt to all 415 R2 renderer hashes and followed by an unmutated in-process check; the required focused suite verifies the restored product in both modes. Earlier author attempts that did not catch M6, and setup failures, remain in the repair evidence. No R2 product repair or new formal timing was performed. [Repair evidence and exact checks](ui-responsiveness/author-fix-round-1.json) distinguish these author results from the independent verdict, which remains FAIL pending reassessment and the unresolved performance work.
+
+| Repair-round check                                    |   Exit | Result                                                                                        |
+| ----------------------------------------------------- | -----: | --------------------------------------------------------------------------------------------- |
+| `npm test`                                            |      0 | 3157 passed, 2 skipped; 271 passing files, 1 skipped                                          |
+| Full lint, typecheck, build, protocol generation/diff | 0 each | No generated change                                                                           |
+| Focused Electron, separate                            |      0 | 75 passed, 0 failed, 1 unstable                                                               |
+| Focused Electron, in-process first / unchanged repeat |  1 / 0 | 74 passed, 1 failed, 1 unstable; then 75 passed, 0 failed, 1 unstable                         |
+| Original M4/M6/M9b, each mode                         | 1 each | Intended assertion caught; exact product restore/rebuild and in-process rerun pass after each |
+| Original-helper snapshot corruption / restoration     |  1 / 0 | Lineage check catches one changed byte; restored archive checks pass                          |
+| Strict audit of historical before/R2                  |  **1** | Historical tab 52.3ms still exceeds 50ms                                                      |
+
+The first in-process focused failure was the unchanged history-paging screen-anchor assertion: 308.296875px became 325.671875px, a 17.375px difference. It passed in the unchanged full repeat. This observation remains recorded without a base comparison, causal attribution, test repair or product fix. The unstable result in both modes is the already documented `chat-view` prompt assertion.
+
+The reviewed R2 runtime source, dependency/build/packaging configuration, 415 renderer JavaScript assets and all 15 non-renderer bundles are unchanged. The peer's successful server-boot, built-terminal and package/module gates on `7709dc91` are reused on that evidence, as the repair brief permits. They were not rerun here; a newly packaged payload is not claimed byte-identical. Future current-head CI still belongs to the lead after review/commit.
 
 ## Artifacts and reproduction
 
 [The manifest](ui-responsiveness/manifest.json) contains all seven frozen tool hashes, product-source hashes per collection, and original/compressed SHA-256 hashes for 95 files. All five complete collections retain their measurements, 60 sanitized raw/normalized CPU profiles as lossless gzip, and 30 openable flamegraphs. Signed raw intervals are preserved; normalized intervals conserve the observed span with no tail extrapolation. Original unsanitized profiles remain private.
+
+The current validator is a later audit revision. [Validator lineage](ui-responsiveness/validator-lineage.json) identifies its SHA-256 and the exact [original helper snapshot](ui-responsiveness/tooling/responsiveness-data.7709dc91.mjs), preserved from source commit `7709dc91`. The snapshot hash equals the historical frozen hash. All 100 pre-existing archive files, including all 95 original artifacts and every original verdict, remain byte-identical. The stricter validator audits an unchanged historical pair; it did not time those runs. Future timed pairs must freeze identical new tooling on both sides, still including this helper in the seven-file hash set. A new-tooling after run cannot be compared with old before data.
 
 The collection `source` field is the checked-out base HEAD `2439b3aba905bc8f9084e33cc51306fb7ae9d766`; product edits were uncommitted during measurement. Use the manifest's product-source hashes and each run's full renderer-chunk hashes to identify the actual build. The final candidate restores all five R2 product sources exactly, and the final build matches all 415 renderer asset hashes in every R2 launch. Test/report changes do not alter those source inputs.
 
@@ -85,9 +137,11 @@ node --test tests/performance/responsiveness-artifacts.test.mjs
 gunzip -k docs/performance/ui-responsiveness/candidate-r2/*.cpuprofile.gz
 ```
 
-To recreate the before build, use an isolated checkout of the base and copy only the four new frozen files, `renderer-responsiveness.mjs`, `responsiveness-data.mjs`, `renderer-workload.mjs` and `renderer-responsiveness-fixture.mjs`, from this candidate into their original paths. The other three frozen files already exist at the base. Verify all seven hashes before building and measuring. Do not copy product changes into the baseline or run builds/checks concurrently with collection.
+Running the collector with the current helper starts a new tooling lineage. It cannot extend the historical pair without restoring the original snapshot as described below.
 
-## Local verification
+To recreate the historical before build, use an isolated checkout of the base. Copy the frozen `renderer-responsiveness.mjs`, `renderer-workload.mjs` and `renderer-responsiveness-fixture.mjs` into their original paths, and copy the **original helper snapshot** to `scripts/performance/responsiveness-data.mjs`. The other three frozen files already exist at the base. The snapshot retains its original relative import, so run it from that restored path, not from the archive directory. Verify all seven historical hashes before building and measuring. Use the same snapshot for historical after reproduction. Do not copy product changes into the baseline or run builds/checks concurrently with collection. For any new-tooling pair, freeze a new before and after together rather than reusing the old before set.
+
+## Historical author verification
 
 [The command inventory](ui-responsiveness/local-checks.json) retains exact commands, environments, timestamps, initial failures and successful repeats. [Author mutation outcomes](ui-responsiveness/author-checks.json) and [both modes' behavior samples](ui-responsiveness/behavior-samples.json) retain fixture identities and measured freshness/control observations.
 
@@ -107,4 +161,14 @@ To recreate the before build, use an isolated checkout of the base and copy only
 
 The packaged checker finds `electron-log/main` but excludes its probe exception, `__electronLog is not defined`, under its existing policy. Passing that checker does not claim this exception disappeared.
 
-The whole informational E2E suite is deferred to current-head CI by the lead. Current-head CI and independent Opus diagnosis are owed before any readiness decision. No push, PR, merge, release or install was performed by the author.
+## Completed CI and retained limits
+
+[CI run 38893406919](https://github.com/antasphere/clave/actions/runs/38893406919) on exact head `7709dc91` completed with both jobs successful. Its informational whole-suite step exited **1**, with **2363 passed, 34 failed, 10 known failures and 10 unstable results**. The existing continue-on-error setting explains the green job; this is not an all-E2E-pass claim. Any subsequent committed repair needs its own current-head CI.
+
+The peer compared base run 38803919813 on `2439b3ab`, which had 2345 passed, 34 failed, 10 known and 11 unstable. Equal failure counts do not prove equal failures: the lead's normalized comparison found 29 shared failures, five candidate-only and five base-only. The peer's assertion-line comparison had six candidate-only FAIL lines and seven base-only FAIL/UNSTABLE lines. These remain informational and unattributed. Restore timing failed on both, 4142ms versus 2651ms from one sample each, which does not establish a regression cause. [Complete comparison and limits](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824).
+
+V1-F5 remains nonblocking. The unstable `chat-view` assertion that no prompt remains produced `1 !== 0` in four candidate runs and both base-product reproductions. It is listed unstable in the repository. No required-check waiver or blanket attribution of the other failures follows.
+
+V1-F9 remains nonblocking and unattributed. The peer's reveal diagnostic logged 249 renderer console errors about its local server not answering. A phase-tagged repeat put all 15 errors after `app.close()` began, with no earlier console warning/error and no uncaught page exception. There is no tagged base comparison. The frozen collector records `pageerror`, not console messages. No collector or shutdown repair was made, and no zero-console-error claim is made. [Peer shutdown observation](https://github.com/antasphere/clave/pull/210#issuecomment-6215668824).
+
+The whole informational suite was not duplicated locally in the author repair round. Product behavior remains R2. No push, PR, merge, release or install was performed by the author. Independent reassessment of the validator/test/report repairs and the unresolved performance scope is still required.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { launchApp, seedWorkspaces, fixturePath, until } from './harness.mjs'
+import { launchApp, seedWorkspaces, fixturePath, until, callMcp } from './harness.mjs'
 import { inject } from './chat-view.spec.mjs'
 import {
   countPaneRenders,
@@ -11,6 +11,11 @@ import {
   loadWorkloadScenario,
   seedRendererWorkload
 } from './renderer-workload.mjs'
+import {
+  checkImmediateReveal,
+  checkImmediateRows,
+  checkMarkdownIdentity
+} from './renderer-presentation-checks.mjs'
 
 export async function run(t) {
   const dir = fixturePath('renderer-responsiveness')
@@ -343,6 +348,42 @@ export async function run(t) {
     assert.equal(await changedLink.getAttribute('href'), 'https://example.com/one/two')
     t.check('Markdown links update label and destination as an unfinished URL grows', true)
     await frames(win)
+    // A fresh session prevents the earlier deliberately unanswered permission
+    // from making this stream blocked, where unfinished text is not throttled.
+    const { sessionId: guardId } = await callMcp(app, 'openSession', {
+      cwd: root,
+      mode: 'claude',
+      profile: 'dev-echo-adapter',
+      account: 'default',
+      name: 'Presentation contract regressions',
+      groupId: receipt.values.workload.groups[0]
+    })
+    console.log(
+      JSON.stringify({ scenario: 'chat/renderer-responsiveness', presentationSessionId: guardId })
+    )
+    await win.locator(`[data-sidebar-item-id="${guardId}"] > button`).click()
+    await win
+      .locator(chatSelector(guardId))
+      .getByRole('textbox', { name: 'Message', exact: true })
+      .waitFor()
+    const chooseGuard = async (kind) => {
+      await win
+        .locator(`.chat-host[data-session-id="${guardId}"]`)
+        .getByLabel('Change view', { exact: true })
+        .click()
+      await win
+        .getByRole('menuitem', { name: kind === 'chat' ? 'Chat' : 'Terminal', exact: true })
+        .click()
+      await win.getByRole('menu').waitFor({ state: 'hidden' })
+      await win
+        .locator(chatSelector(guardId, kind))
+        .getByRole('textbox', { name: 'Message', exact: true })
+        .waitFor()
+      await frames(win)
+    }
+    await checkImmediateReveal({ win, fixture, id: guardId, other: records[1], t })
+    await checkImmediateRows({ win, fixture, id: guardId, t })
+    await checkMarkdownIdentity({ win, fixture, id: guardId, choose: chooseGuard, t })
   } finally {
     await fixture
       .evaluate(() => clearInterval(globalThis.__responsivenessBehavior?.timer))

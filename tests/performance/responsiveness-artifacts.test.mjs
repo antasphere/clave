@@ -16,6 +16,25 @@ const root = fileURLToPath(new URL('../../docs/performance/ui-responsiveness/', 
 const read = (name) => JSON.parse(readFileSync(path.join(root, name), 'utf8'))
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
+test('strict validator revision preserves the original source and historical evidence', () => {
+  const lineage = read('validator-lineage.json')
+  const manifest = read('manifest.json')
+  const repo = fileURLToPath(new URL('../../', import.meta.url))
+  assert.equal(lineage.sourceCommit, '7709dc91df72074da0c2879a8076209d30a31dc1')
+  assert.deepEqual(lineage.historicalFrozenToolingSha256, manifest.frozenToolingSha256)
+  assert.equal(Object.keys(lineage.historicalFrozenToolingSha256).length, 7)
+  assert.equal(
+    lineage.originalHelper.sha256,
+    manifest.frozenToolingSha256['scripts/performance/responsiveness-data.mjs']
+  )
+  for (const helper of [lineage.originalHelper, lineage.auditHelper])
+    assert.equal(sha(readFileSync(path.join(repo, helper.path))), helper.sha256, helper.path)
+  assert.notEqual(lineage.auditHelper.sha256, lineage.originalHelper.sha256)
+  assert.equal(Object.keys(lineage.historicalArchiveSha256).length, 100)
+  for (const [file, hash] of Object.entries(lineage.historicalArchiveSha256))
+    assert.equal(sha(readFileSync(path.join(root, file))), hash, file)
+})
+
 test('archived responsiveness evidence preserves every byte, profile pair and raw timing', () => {
   const manifest = read('manifest.json')
   const names = Object.keys(manifest.collections)
