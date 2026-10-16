@@ -139,36 +139,69 @@ export async function run(t) {
       true
     )
 
-    for (const mac of clients) {
-      const input = mac.win.getByLabel('Fleet native private input?', { exact: true })
-      await input.waitFor()
-      assert.equal(await input.getAttribute('type'), 'password')
-      await input.fill('123-fleet-private-input')
-      assert.equal(await input.inputValue(), '123-fleet-private-input')
-    }
-    const key = nativeQuestion.questions[0].id ?? nativeQuestion.questions[0].question
-    const privateValues = ['123-fleet-private-input', '456-fleet-other-answer']
-    const questionWinner = await race(
-      nativeQuestion,
-      privateValues.map((value) => ({
-        type: 'permission',
-        optionId: 'answer',
-        answers: { [key]: value }
-      }))
+    assert.deepEqual(
+      nativeQuestion.questions.map((q) => q.id),
+      ['fleet-public-id', 'fleet-private-id']
     )
+    assert.deepEqual(
+      nativeQuestion.questions.map((q) => q.question),
+      ['Same fleet label?', 'Same fleet label?']
+    )
+    assert.deepEqual(nativeQuestion.secretQuestions, ['fleet-private-id'])
+    const publicValues = ['Public answer from Mac A', 'Different public answer from Mac B']
+    const privateValues = ['123-fleet-private-input', '456-fleet-other-answer']
+    for (const [index, mac] of clients.entries()) {
+      const publicInput = mac.win.getByLabel('Fleet public answer', { exact: true })
+      const privateInput = mac.win.getByLabel('Fleet private answer', { exact: true })
+      await publicInput.waitFor()
+      await privateInput.waitFor()
+      assert.equal(await publicInput.getAttribute('type'), 'text')
+      assert.equal(await privateInput.getAttribute('type'), 'password')
+      await publicInput.fill(publicValues[index])
+      // Real key events pin the numeric-key handler as well as input state.
+      await privateInput.pressSequentially(privateValues[index])
+      assert.equal(await publicInput.inputValue(), publicValues[index])
+      assert.equal(await privateInput.inputValue(), privateValues[index])
+    }
+    // Exercise the consumer's actual answer-key mapping. A bridge-only race
+    // could pass even if the renderer overwrote one same-label answer.
+    const submit = nativeQuestion.options.find((option) => option.id === 'answer')
+    assert.ok(submit, 'native clarification advertises its submission action')
+    await macA.win.getByRole('button', { name: submit.label, exact: true }).click()
     await eventually(
       () => replies().filter((r) => r.id === 'fleet-native-question').length === 1,
-      'provider receives one private answer'
+      'provider receives the UI submission once'
     )
     assert.deepEqual(replies().find((r) => r.id === 'fleet-native-question').result.answers, {
-      'fleet-private-id': { answers: [privateValues[questionWinner]] }
+      'fleet-public-id': { answers: [publicValues[0]] },
+      'fleet-private-id': { answers: [privateValues[0]] }
     })
-    for (const mac of clients)
+    const stale = await macB.win.evaluate(
+      ({ key, response }) => window.electronAPI.fleetResolve(key, response),
+      {
+        key: owned('request', macB.owners[0].id, nativeQuestion.id),
+        response: {
+          type: 'permission',
+          optionId: 'answer',
+          answers: {
+            'fleet-public-id': publicValues[1],
+            'fleet-private-id': privateValues[1]
+          }
+        }
+      }
+    )
+    assert.equal(stale.accepted, false)
+    assert.equal(replies().filter((r) => r.id === 'fleet-native-question').length, 1)
+    for (const mac of clients) {
       await mac.win
-        .getByLabel('Fleet native private input?', { exact: true })
+        .getByLabel('Fleet public answer', { exact: true })
         .waitFor({ state: 'detached' })
+      await mac.win
+        .getByLabel('Fleet private answer', { exact: true })
+        .waitFor({ state: 'detached' })
+    }
     t.check(
-      'native clarification uses masked inputs on both clients and returns one answer by provider question identity',
+      'same-label native public/private questions keep distinct IDs, masking and typed answers through UI submission and stale-client settlement',
       true
     )
 

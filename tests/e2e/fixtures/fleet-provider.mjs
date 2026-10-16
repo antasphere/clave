@@ -57,9 +57,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         isBlocking: true,
         questions: [
           {
+            id: 'fleet-public-id',
+            header: 'Fleet public answer',
+            question: 'Same fleet label?',
+            isSecret: false,
+            options: null
+          },
+          {
             id: 'fleet-private-id',
-            header: 'Private',
-            question: 'Fleet native private input?',
+            header: 'Fleet private answer',
+            question: 'Same fleet label?',
             isSecret: true,
             options: null
           }
