@@ -104,6 +104,7 @@ export async function run(t) {
           [WORK_TOKEN]: { utilization: '1.01', status: 'rejected', http: 429 },
           [PLAY_TOKEN]: { utilization: '0.2', status: 'allowed', http: 200 }
         }
+        globalThis.__chipQuotaWindows = windows
         globalThis.fetch = async (_url, init) => {
           const token = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')
           const w = windows[token]
@@ -114,7 +115,14 @@ export async function run(t) {
               'content-type': 'application/json',
               'anthropic-ratelimit-unified-5h-utilization': w.utilization,
               'anthropic-ratelimit-unified-5h-reset': reset(),
-              'anthropic-ratelimit-unified-5h-status': w.status
+              'anthropic-ratelimit-unified-5h-status': w.status,
+              ...(w.fable
+                ? {
+                    'anthropic-ratelimit-unified-7d_oi-utilization': '1.0',
+                    'anthropic-ratelimit-unified-7d_oi-reset': reset(),
+                    'anthropic-ratelimit-unified-7d_oi-status': 'rejected'
+                  }
+                : {})
             }
           })
         }
@@ -235,6 +243,71 @@ export async function run(t) {
       t.check('Play is not flagged', (await moved.getAttribute('data-level')) !== 'critical')
     }
 
+    // The same account still has shared headroom after its Fable cap expires.
+    await app.evaluate((_electron, token) => {
+      Object.assign(globalThis.__chipQuotaWindows[token], {
+        utilization: '0.2',
+        status: 'allowed',
+        http: 200,
+        fable: true
+      })
+    }, WORK_TOKEN)
+    const opus = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      profile: 'claude-chat',
+      account: 'Work',
+      name: 'Opus quota chip',
+      model: 'claude-opus-5-5'
+    })
+    await callMcp(app, 'focus', { sessionId: opus.sessionId })
+    const opusChip = win.locator(`.chat-host[data-session-id="${opus.sessionId}"] .term-account`)
+    await opusChip.waitFor()
+    await win.locator('.sidebar-footer-line[data-usage-provider="claude"]').click()
+    await win.getByRole('button', { name: 'Refresh usage' }).click()
+    await until(async () => (await win.locator('[aria-label="100% used"]').count()) > 0)
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    t.check(
+      'Opus chip ignores exhausted Fable quota',
+      !!(await until(
+        async () => (await opusChip.locator('.term-account-headroom').innerText()) === '80% left'
+      ))
+    )
+    t.check(
+      'Opus chip is not marked critical for Fable',
+      (await opusChip.getAttribute('data-level')) !== 'critical'
+    )
+    await opusChip.locator('button').click()
+    await menu.waitFor()
+    t.equal(
+      'Opus account menu agrees with its chip',
+      await menu.locator('[data-account-header]').getAttribute('data-account-exhausted'),
+      null
+    )
+    await win.keyboard.press('Escape')
+
+    const fable = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      profile: 'claude-chat',
+      account: 'Work',
+      name: 'Fable quota chip',
+      model: 'claude-fable-5'
+    })
+    await callMcp(app, 'focus', { sessionId: fable.sessionId })
+    const fableChip = win.locator(`.chat-host[data-session-id="${fable.sessionId}"] .term-account`)
+    await fableChip.waitFor()
+    t.check(
+      'Fable chip still reports its exhausted quota',
+      !!(await until(
+        async () => (await fableChip.locator('.term-account-headroom').innerText()) === 'At limit'
+      ))
+    )
+    t.equal(
+      'Fable chip retains its warning level',
+      await fableChip.getAttribute('data-level'),
+      'critical'
+    )
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
     await app.close().catch(() => {})
