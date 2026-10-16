@@ -170,6 +170,8 @@ legacy native executable/helper pair before starting the app-server. Copies run
 outside Electron main and share a private directory until the last app-server
 exits. A standalone package's metadata and relative executable path are retained
 intact, so an unfamiliar self-contained layout can keep using its own metadata.
+Discovery searches up to six nearby directories and matches the manifest's
+declared entrypoint to the executable, including root and nested entrypoints.
 The current known layout is checked for incomplete resources before startup.
 Filesystem clones are used where available. Windows, arbitrary wrapper
 executables and npm launchers without this standalone layout keep their existing

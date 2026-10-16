@@ -86,12 +86,31 @@ try {
   if (!executable) throw new Error('Codex is not executable on this profile PATH');
   const source = fs.realpathSync(executable);
   const bin = path.dirname(source);
-  const manifest = path.join(path.dirname(bin), 'codex-package.json');
   const helper = path.join(bin, 'codex-code-mode-host');
   let packageRoot;
-  if (fs.existsSync(manifest)) {
-    const layout = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    packageRoot = path.dirname(bin);
+  let layout;
+  let directory = bin;
+  // Bind a nearby manifest to its declared executable, rather than assuming
+  // every installer puts it in bin/. Keep discovery bounded. Metadata with
+  // an unfamiliar entrypoint field retains the original one-level convention.
+  for (let depth = 0; depth < 6; depth++) {
+    const manifest = path.join(directory, 'codex-package.json');
+    if (fs.existsSync(manifest)) {
+      const candidate = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+      const entrypoint = candidate?.entrypoint;
+      let ownsExecutable = depth === 1 && typeof entrypoint !== 'string';
+      if (typeof entrypoint === 'string' && !path.isAbsolute(entrypoint) &&
+          !path.relative(directory, path.resolve(directory, entrypoint)).startsWith('..')) {
+        try { ownsExecutable = fs.realpathSync(path.resolve(directory, entrypoint)) === source; }
+        catch { /* A manifest for another executable does not own this one. */ }
+      }
+      if (ownsExecutable) { packageRoot = directory; layout = candidate; break; }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (packageRoot) {
     // The copy preserves the whole package and its relative executable path.
     // Its CLI interprets future metadata itself; unfamiliar layouts need not
     // stop working just because Clave's current validation doesn't know them.
@@ -114,7 +133,7 @@ try {
     process.exit(0);
   }
   const stat = fs.statSync(source);
-  const identity = [source, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+  const identity = [source, packageRoot || bin, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
   const key = crypto.createHash('sha256').update(identity).digest('hex');
   const target = path.join(cache, key);
   const relative = packageRoot ? path.relative(packageRoot, source) : path.basename(source);

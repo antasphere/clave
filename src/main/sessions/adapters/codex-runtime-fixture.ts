@@ -31,7 +31,13 @@ export function installFixtureCodex(root: string, version = 'old'): string {
     `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
-process.stdout.write('helper-${version}:' + fs.readFileSync(path.join(__dirname, '..', 'codex-resources', 'version'), 'utf8'));
+let root = __dirname;
+while (!fs.existsSync(path.join(root, 'codex-package.json'))) {
+  const parent = path.dirname(root);
+  if (parent === root) throw new Error('Fixture package manifest is missing');
+  root = parent;
+}
+process.stdout.write('helper-${version}:' + fs.readFileSync(path.join(root, 'codex-resources', 'version'), 'utf8'));
 `,
     { mode: 0o755 }
   )

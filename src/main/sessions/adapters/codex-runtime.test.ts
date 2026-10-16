@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   openSync,
   closeSync,
@@ -13,7 +14,7 @@ import {
   rmSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { afterEach, expect, it, vi } from 'vitest'
 import { fixtureConnection, fixtureShell, installFixtureCodex } from './codex-runtime-fixture'
@@ -124,36 +125,77 @@ it('starts a new runtime when an installer replaces the same canonical package p
   expect(await fresh.request('helper')).toEqual({ output: 'helper-new:new' })
 })
 
-it('retains an unfamiliar self-contained package without rejecting its metadata or entrypoint', async () => {
+it('separates package roots when metadata reorganizes around an unchanged executable', async () => {
   const { root, install } = fixture()
-  const manifest = { layoutVersion: 2, entrypoint: 'launch/codex', assets: { format: 'future' } }
-  writeFileSync(join(install, 'codex-package.json'), JSON.stringify(manifest))
-  renameSync(join(install, 'bin'), join(install, 'launch'))
-  const connection = spawnCodexAppServer(
-    root,
-    {
-      notification: () => {},
-      request: () => {},
-      error: () => {},
-      exit: () => {}
-    },
-    {
-      id: 'future-package',
-      name: 'Fixture',
-      family: 'codex',
-      command: [join(install, 'launch', 'codex')],
-      additionalArgs: []
-    }
+  const old = connect(root, install)
+  await old.request('initialize')
+  const nextRoot = join(install, 'bin')
+  mkdirSync(join(nextRoot, 'codex-resources'))
+  writeFileSync(join(nextRoot, 'codex-resources', 'version'), 'new-root')
+  writeFileSync(
+    join(nextRoot, 'codex-package.json'),
+    JSON.stringify({ layoutVersion: 2, entrypoint: 'codex' })
   )
-  connections.push(connection)
-  const runtime = (await connection.request('runtime')) as { file: string }
-  const retainedManifest = join(dirname(runtime.file), '..', 'codex-package.json')
-  expect(JSON.parse(readFileSync(retainedManifest, 'utf8'))).toEqual(manifest)
-  expect(runtime.file).not.toContain(install)
+  const fresh = connect(root, install)
+  await fresh.request('initialize')
   rmSync(install, { recursive: true })
-  expect(await connection.request('helper')).toEqual({ output: 'helper-old:old' })
-  expect(await connection.request('child')).toEqual({ output: 'helper-old:old' })
+  expect(await old.request('helper')).toEqual({ output: 'helper-old:old' })
+  expect(await fresh.request('helper')).toEqual({ output: 'helper-old:new-root' })
 })
+
+it.each([
+  ['launch', false],
+  ['libexec/bin', false],
+  ['', false],
+  ['launch', true]
+] as const)(
+  'retains an unfamiliar package with entrypoint directory %j, omitted metadata key %j',
+  async (directory, omitEntrypoint) => {
+    const { root, install } = fixture()
+    const entrypoint = directory ? `${directory}/codex` : 'codex'
+    const manifest = {
+      layoutVersion: 2,
+      ...(omitEntrypoint ? {} : { entrypoint }),
+      assets: { format: 'future' }
+    }
+    writeFileSync(join(install, 'codex-package.json'), JSON.stringify(manifest))
+    if (directory) {
+      mkdirSync(dirname(join(install, directory)), { recursive: true })
+      renameSync(join(install, 'bin'), join(install, directory))
+    } else {
+      for (const file of readdirSync(join(install, 'bin')))
+        renameSync(join(install, 'bin', file), join(install, file))
+      rmSync(join(install, 'bin'), { recursive: true })
+    }
+    const connection = spawnCodexAppServer(
+      root,
+      {
+        notification: () => {},
+        request: () => {},
+        error: () => {},
+        exit: () => {}
+      },
+      {
+        id: 'future-package',
+        name: 'Fixture',
+        family: 'codex',
+        command: [join(install, directory, 'codex')],
+        additionalArgs: []
+      }
+    )
+    connections.push(connection)
+    const runtime = (await connection.request('runtime')) as { file: string }
+    const retainedRoot = directory
+      ? runtime.file.slice(0, -entrypoint.length)
+      : dirname(runtime.file)
+    const retainedManifest = join(retainedRoot, 'codex-package.json')
+    expect(JSON.parse(readFileSync(retainedManifest, 'utf8'))).toEqual(manifest)
+    expect(runtime.file).not.toContain(install)
+    rmSync(install, { recursive: true })
+    expect(await connection.request('helper')).toEqual({ output: 'helper-old:old' })
+    expect(await connection.request('child')).toEqual({ output: 'helper-old:old' })
+  }
+)
 
 it('preserves profile wrappers, arguments and tab/account bindings without leaking preparation mode', async () => {
   const { root, install } = fixture()
@@ -295,6 +337,21 @@ it('refuses an incomplete standalone package with an actionable startup error', 
   expect(exit.mock.calls[0][1]).toContain('restart this chat')
 })
 
+it('refuses current-layout resources outside the retained package before starting work', async () => {
+  const { root, install } = fixture()
+  const external = join(root, 'outside-package')
+  mkdirSync(external)
+  const manifestFile = join(install, 'codex-package.json')
+  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
+  manifest.resourcesDir = relative(install, external)
+  writeFileSync(manifestFile, JSON.stringify(manifest))
+  const exit = vi.fn()
+  const connection = connect(root, install, { callbacks: { exit } })
+  await expect(connection.request('initialize')).rejects.toThrow()
+  await vi.waitFor(() => expect(exit).toHaveBeenCalled())
+  expect(exit.mock.calls[0][1]).toContain('Invalid Codex standalone resource path')
+})
+
 it('refuses a resource symlink cycle before starting an incomplete runtime', async () => {
   const { root, install } = fixture()
   symlinkSync(install, join(install, 'codex-resources', 'cycle'))
@@ -348,6 +405,12 @@ it('cancels preparation that is blocked reading an installer artifact', async ()
 it('retains a legacy native executable and its sibling helper without copying its parent prefix', async () => {
   const { root, install } = fixture()
   rmSync(join(install, 'codex-package.json'))
+  // A nearby package marker for another executable must not capture this CLI.
+  writeFileSync(join(dirname(install), 'unrelated-codex'), 'unrelated fixture executable')
+  writeFileSync(
+    join(dirname(install), 'codex-package.json'),
+    JSON.stringify({ layoutVersion: 2, entrypoint: 'unrelated-codex' })
+  )
   writeFileSync(
     join(install, 'bin', 'unrelated-prefix-file'),
     'fixture data outside the executable/helper pair'
