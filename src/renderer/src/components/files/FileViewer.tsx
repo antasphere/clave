@@ -1,3 +1,5 @@
+import { parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { useCallback, useState } from 'react'
 import { useSessionStore, type FileTab } from '../../store/session-store'
 import { FileContentRenderer } from './FileContentRenderer'
@@ -26,11 +28,15 @@ interface FileViewerProps {
 export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
   const removeFileTab = useSessionStore((s) => s.removeFileTab)
 
-  const filename = fileTab.filePath.split('/').pop() ?? ''
+  const fileOwner = parseResourceKey('file', fileTab.filePath)
+  const remote = isRemoteKey(fileTab.filePath)
+  const rawPath = fileOwner.id
+  const filename = rawPath.split('/').pop() ?? ''
   const ext = filename.split('.').pop()?.toLowerCase() ?? ''
   const canOpenExternally = EXTERNAL_EXTS.has(ext)
   // Extract cwd: everything up to the last path component
-  const cwd = fileTab.filePath.substring(0, fileTab.filePath.lastIndexOf('/')) || '/'
+  const folder = rawPath.substring(0, rawPath.lastIndexOf('/')) || '/'
+  const cwd = remote ? resourceKey('file', fileOwner.serverId, folder) : folder
   // Relative path for readFile: just the filename
   const relativePath = filename
 
@@ -50,12 +56,21 @@ export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
   const canCopyContent = !!fileData && !fileData.binary && !isImage && !loadError
 
   const handleRevealInFinder = useCallback(() => {
+    if (remote) return
     window.electronAPI?.showItemInFolder(fileTab.filePath)
-  }, [fileTab.filePath])
+  }, [fileTab.filePath, remote])
 
   const handleOpenExternally = useCallback(() => {
+    if (remote) {
+      void window.electronAPI.fleetDownload(
+        resourceKey('file', fileOwner.serverId, '/'),
+        rawPath,
+        true
+      )
+      return
+    }
     window.electronAPI?.openPath(fileTab.filePath)
-  }, [fileTab.filePath])
+  }, [fileTab.filePath, remote, fileOwner.serverId, rawPath])
 
   return (
     <div className="flex flex-col h-full bg-surface-0">
@@ -68,7 +83,7 @@ export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
               {fileTab.name}
             </span>
             <span className="text-[11px] text-text-tertiary truncate hidden sm:inline flex-1 min-w-0">
-              {fileTab.filePath.replace(/^\/Users\/[^/]+/, '~')}
+              {rawPath.replace(/^\/Users\/[^/]+/, '~')}
             </span>
           </div>
         </FileInfoTooltip>
@@ -142,7 +157,7 @@ export function FileViewer({ fileTab }: FileViewerProps): React.JSX.Element {
         editor={editor}
         filePath={relativePath}
         cwd={cwd}
-        viewMode={viewMode}
+        viewMode={remote && isHtml ? 'source' : viewMode}
         reloadKey={reloadKey}
         className="flex-1"
       />

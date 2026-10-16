@@ -1,3 +1,5 @@
+import { createFleetDesktop } from './fleet-desktop'
+import type { ElectronAPI } from './index.d'
 import type {
   Session,
   SessionStream,
@@ -2367,7 +2369,18 @@ const electronAPI = {
   // ── Lane F: the shell ──
 }
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+let fleetNode: Promise<typeof import('@clave/client/node')> | null = null
+contextBridge.exposeInMainWorld(
+  'electronAPI',
+  createFleetDesktop(electronAPI as unknown as ElectronAPI, {
+    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    changed: (callback) => createIpcListener('server:fleet:changed', callback),
+    connect: async (endpoint) => {
+      const { connectThroughNode } = await (fleetNode ??= import('@clave/client/node'))
+      return connectThroughNode(endpoint, { client: 'clave-fleet-preload' })
+    }
+  })
+)
 
 /**
  * `--test-no-activate` again, this time so the RENDERER can see it.

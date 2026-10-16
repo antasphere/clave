@@ -1,3 +1,4 @@
+import { isRemoteKey, ownedFilePath } from '../../lib/fleet-identity'
 import { useEffect, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { useSessionStore } from '../../store/session-store'
@@ -55,7 +56,7 @@ export function FilePreview(): React.JSX.Element | null {
   // Remote files can't be served by the local preview protocol — pin them to source.
   const { isMarkdown, isHtml, viewMode, setViewMode } = useFileViewMode(
     previewFile,
-    previewLocationId ? 'source' : undefined
+    previewLocationId || isRemoteKey(cwd) ? 'source' : undefined
   )
 
   const canOpenExternally = canOpenExternallyExt(filename)
@@ -73,8 +74,10 @@ export function FilePreview(): React.JSX.Element | null {
     if (!previewFile || !cwd) return
     const name = previewFile.split('/').pop() ?? previewFile
     addFileTab({
-      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      filePath: `${cwd}/${previewFile}`,
+      id: isRemoteKey(cwd)
+        ? ownedFilePath(cwd, previewFile)
+        : `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      filePath: ownedFilePath(cwd, previewFile),
       name
     })
     close()
@@ -82,7 +85,7 @@ export function FilePreview(): React.JSX.Element | null {
 
   const openExternally = useCallback(() => {
     if (!previewFile || !cwd) return
-    window.electronAPI?.openPath(`${cwd}/${previewFile}`)
+    window.electronAPI?.openPath(ownedFilePath(cwd, previewFile))
   }, [previewFile, cwd])
 
   // Keyboard: Escape closes; Cmd+S saves (skipped if the editor already handled it)
@@ -206,7 +209,12 @@ export function FilePreview(): React.JSX.Element | null {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-        <FileContent editor={editor} cwd={cwd} filePath={previewFile} viewMode={viewMode} />
+        <FileContent
+          editor={editor}
+          cwd={cwd}
+          filePath={previewFile}
+          viewMode={isRemoteKey(cwd) && isHtml ? 'source' : viewMode}
+        />
 
         {saveError && (
           <div className="px-4 py-1.5 text-xs text-red-400 bg-red-500/5 border-t border-border-subtle flex-shrink-0">

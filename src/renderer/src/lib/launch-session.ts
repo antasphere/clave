@@ -1,3 +1,5 @@
+import { requestFleetLaunch } from '../store/fleet-launch-store'
+import { ownerOf, isRemoteKey } from './fleet-identity'
 import { useSessionStore } from '../store/session-store'
 import { claudeProfileSpawnFields } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
@@ -24,6 +26,7 @@ export type LaunchCwd =
 
 export interface LaunchRequest {
   /** The agent to run, or null for a plain terminal. */
+  serverId?: string
   setup: AgentSetup | null
   cwd: LaunchCwd
   /** One-shot prompt auto-submitted on launch. Ignored for a plain terminal
@@ -69,6 +72,17 @@ async function resolveCwd(cwd: LaunchCwd): Promise<string | null> {
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
+  const target = req.groupId ?? useSessionStore.getState().focusedSessionId
+  const serverId = req.serverId ?? ownerOf(target)
+  if (isRemoteKey(target) || serverId !== 'local') {
+    return requestFleetLaunch({
+      serverId,
+      setup: req.setup,
+      groupId: req.groupId,
+      cwd: req.cwd.kind === 'path' ? req.cwd.path : undefined,
+      initialPrompt: req.initialPrompt
+    })
+  }
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null
 

@@ -1,3 +1,11 @@
+import { bindFleetCatchup } from './fleet-sync'
+import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
+import { parseResourceKey } from '@clave/contract/fleet'
+import {
+  isRemoteKey,
+  ownerOf,
+  canOpenRemotePage
+} from '../../../src/renderer/src/lib/fleet-identity'
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -77,7 +85,9 @@ interface Preparation {
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
-  dt.types.includes('Files') || dt.types.includes('text/uri-list')
+  dt.types.includes('Files') ||
+  dt.types.includes('text/uri-list') ||
+  dt.types.includes('application/x-clave-files')
 const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
@@ -418,6 +428,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    const catchup = bindFleetCatchup(session.id, (page) => {
+      if (!live) return
+      dispatch({ sync: page.items })
+      setBefore(page.before)
+      setReady(true)
+    })
     // An end is taken only once the record confirms it: after a move to
     // another account the old process's end can arrive after this pane has
     // remounted on the new one, and closed it over a live agent.
@@ -428,6 +444,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         })
         .catch(console.error)
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
+      catchup.changed()
       if (value.kind !== 'event') return
       const event = value.event
       const take = (): void => {
@@ -467,7 +484,17 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             setPast((now) => pastStep(now, 'failed'))
           }
         })
-        stopConnected = window.electronAPI.onServerConnected(() => pastReader.current?.retry())
+        const localOff = window.electronAPI.onServerConnected(() => {
+          if (!isRemoteKey(session.id)) pastReader.current?.retry()
+        })
+        const fleetOff = window.electronAPI.onFleetStatus?.((status) => {
+          if (status.serverId === ownerOf(session.id) && status.state === 'connected')
+            pastReader.current?.retry()
+        })
+        stopConnected = () => {
+          localOff()
+          fleetOff?.()
+        }
       })
       .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
     // Whether an attached image can go as image content is the adapter's
@@ -481,6 +508,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       .catch(() => {})
     return () => {
       live = false
+      catchup.close()
       pastReader.current?.stop()
       pastReader.current = null
       stopConnected()
@@ -524,7 +552,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   )
   // /resume is the host's, as in the TUI: it opens the picker rather than
   // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude'
+  const canResume = session.provider === 'claude' && !isRemoteKey(session.id)
   const openResume = (): void => {
     setDraft('')
     setResuming(true)
@@ -665,7 +693,22 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
     const stable = (
-      await Promise.all(paths.map((p) => window.electronAPI.persistDroppedFile(p)))
+      await Promise.all(
+        paths.map(async (p) => {
+          if (!isRemoteKey(session.id)) {
+            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+            return window.electronAPI.persistDroppedFile(p)
+          }
+          if (isRemoteKey(p)) {
+            const file = parseResourceKey('file', p)
+            if (file.serverId !== ownerOf(session.id))
+              throw new Error('This file belongs to another server.')
+            return file.id
+          }
+          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+          return parseResourceKey('file', file.path).id
+        })
+      )
     ).filter((p): p is string => Boolean(p))
     if (!stable.length) return
     const insert = stable.map(pathForMessage).join(' ') + ' '
@@ -728,14 +771,27 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const blocks = useMemo(() => {
+    const entries = remotePending
+      ? presentation.entries.map((entry) =>
+          entry.kind === 'permission' && !entry.answer
+            ? {
+                ...entry,
+                answeredElsewhere: !remotePending.some(
+                  (r) => r.sessionId === session.id && r.providerRequestId === entry.request.id
+                )
+              }
+            : entry
+        )
+      : presentation.entries
     const ordinal = new Map<Entry, number>()
-    presentation.entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(presentation.entries)).map((block) => ({
+    entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [presentation.entries, presentation.first])
+  }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
@@ -745,6 +801,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     <div
       className="chat-view"
       data-testid="chat-view"
+      onClickCapture={(event) => {
+        const href = (event.target as Element).closest('a')?.getAttribute('href')
+        if (isRemoteKey(session.id) && href && /^https?:/i.test(href) && !canOpenRemotePage(href)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && state === 'working') {
           event.preventDefault()
@@ -844,7 +907,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           />
         )}
         <PromptDock
-          requests={resuming ? [] : waitingOn}
+          requests={resuming || isRemoteKey(session.id) ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

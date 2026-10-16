@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { CodeEditor } from './CodeEditor'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MarkdownPageEditor } from './MarkdownPageEditor'
@@ -42,6 +45,8 @@ export function FileContent({
     )
   }
 
+  if (isImage && filePath && cwd && isRemoteKey(cwd))
+    return <FleetImage key={`${cwd}/${filePath}`} cwd={cwd} filePath={filePath} name={filename} />
   if (isImage && filePath) {
     const src = filePath.startsWith('/') ? `file://${filePath}` : `file://${cwd}/${filePath}`
     return (
@@ -124,5 +129,46 @@ export function FileContent({
       autoFocus={autoFocus && canEdit}
       className="flex-1 min-h-0"
     />
+  )
+}
+
+function FleetImage({
+  cwd,
+  filePath,
+  name
+}: {
+  cwd: string
+  filePath: string
+  name: string
+}): React.JSX.Element {
+  const [image, setImage] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let current = true
+    const root = parseResourceKey('file', cwd)
+    const path = filePath.startsWith('/') ? filePath : `${root.id.replace(/\/$/, '')}/${filePath}`
+    void window.electronAPI.readImageAsDataUrl(resourceKey('file', root.serverId, path)).then(
+      (value) => {
+        if (current) {
+          setImage(value)
+          setFailed(!value)
+        }
+      },
+      () => {
+        if (current) setFailed(true)
+      }
+    )
+    return () => {
+      current = false
+    }
+  }, [cwd, filePath])
+  return image ? (
+    <div className="p-4 flex justify-center">
+      <img src={image} alt={name} className="max-w-full max-h-[50vh] object-contain" />
+    </div>
+  ) : (
+    <p className="p-4 text-xs text-text-secondary">
+      {failed ? 'Could not preview this image on the server.' : 'Loading image…'}
+    </p>
   )
 }

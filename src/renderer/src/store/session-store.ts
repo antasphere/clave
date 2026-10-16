@@ -1,3 +1,5 @@
+import { LOCAL_SERVER_ID, resourceKey } from '@clave/contract/fleet'
+import { ownerOf, isRemoteKey, partitionLayout } from '../lib/fleet-identity'
 import { linkedEditorBlocksClose } from './linked-document-store'
 import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
@@ -98,7 +100,7 @@ export function inActiveWorkspace(
   activeId: string | null
 ): boolean {
   if (activeId === null) return true
-  if (x.workspaceId == null) return true
+  if (x.workspaceId == null || isRemoteKey(x.workspaceId)) return true
   return x.workspaceId === activeId
 }
 
@@ -489,7 +491,7 @@ type SaveItem = { data: { groups: SessionGroup[]; displayOrder: string[] }; json
 const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
   current: () => {
     const { groups, displayOrder } = useSessionStore.getState()
-    const data = { groups, displayOrder }
+    const data = partitionLayout({ groups, displayOrder }, LOCAL_SERVER_ID)
     const json = JSON.stringify(data)
     return json === lastPersistedJson ? null : { data, json }
   },
@@ -586,7 +588,15 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   // Only an agent's own placement selects the tab, or the terminal, as the
   // window's launch would (PRDCT-3428 closed the terminal's road).
   const focusTakenIn = cause === 'command'
-  useSessionStore.setState((state) => {
+  useSessionStore.setState((allState) => {
+    const state = {
+      ...partitionLayout(allState, LOCAL_SERVER_ID),
+      sessions: allState.sessions.filter((s) => !isRemoteKey(s.id)),
+      fileTabs: allState.fileTabs.filter((f) => !isRemoteKey(f.id))
+    }
+    const remoteGroups = allState.groups.filter((g) => isRemoteKey(g.id))
+    const remoteOrder = allState.displayOrder.filter((id) => isRemoteKey(id))
+    const remoteSessions = allState.sessions.filter((s) => isRemoteKey(s.id))
     const server = {
       groups: cloneGroupsForSnapshot(snapshot.groups),
       displayOrder: [...snapshot.displayOrder]
@@ -665,11 +675,15 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
       lastPersistedGroups = groups
       lastPersistedOrder = displayOrder
     }
-    if (closed.size === 0) return { groups, displayOrder }
+    if (closed.size === 0)
+      return {
+        groups: [...groups, ...remoteGroups],
+        displayOrder: [...displayOrder, ...remoteOrder]
+      }
     return {
-      groups,
-      displayOrder,
-      sessions: state.sessions.filter((s) => !closed.has(s.id)),
+      groups: [...groups, ...remoteGroups],
+      displayOrder: [...displayOrder, ...remoteOrder],
+      sessions: [...state.sessions.filter((s) => !closed.has(s.id)), ...remoteSessions],
       selectedSessionIds: state.selectedSessionIds.filter((sid) => !closed.has(sid)),
       focusedSessionId:
         state.focusedSessionId && closed.has(state.focusedSessionId) ? null : state.focusedSessionId
@@ -843,7 +857,7 @@ export function getDisplayOrder(state: {
 }
 
 export function isFileTabId(id: string): boolean {
-  return id.startsWith('file-')
+  return id.startsWith('file-') || (id.startsWith('clave-owner:file:') && isRemoteKey(id))
 }
 
 export function fileTabDedupKey(tab: FileTab): string {
@@ -997,7 +1011,9 @@ export const useSessionStore = create<SessionState>((set) => ({
             activeView: 'terminals' as const
           }
         : {}
-      const target = groupId ? state.groups.find((g) => g.id === groupId) : undefined
+      const target = groupId
+        ? state.groups.find((g) => g.id === groupId && ownerOf(g.id) === ownerOf(session.id))
+        : undefined
       // Top of wherever it lands — the group's first row, or the sidebar's,
       // the same rule addSession follows. A drag DROP onto a group still
       // appends (moveLayoutItems, position 'inside'): a hand aiming at a
@@ -1258,19 +1274,21 @@ export const useSessionStore = create<SessionState>((set) => ({
       groupCounter++
       const groupName = name || `Group ${groupCounter}`
       const firstSession = state.sessions.find((s) => sessionIds.includes(s.id))
+      if (sessionIds.some((id) => ownerOf(id) !== ownerOf(firstSession?.id))) return {}
       const newGroup: SessionGroup = {
-        id: `group-${Date.now()}-${groupCounter}`,
+        id: resourceKey('group', ownerOf(firstSession?.id), `group-${Date.now()}-${groupCounter}`),
         name: groupName,
         sessionIds: [...sessionIds],
         collapsed: false,
         cwd: firstSession?.cwd ?? null,
         terminals: [],
         // Explicit stamp > first member's home > the active workspace.
-        workspaceId:
-          workspaceId ??
-          firstSession?.workspaceId ??
-          useWorkspaceStore.getState().activeWorkspaceId ??
-          undefined
+        workspaceId: isRemoteKey(firstSession?.id)
+          ? firstSession?.workspaceId
+          : (workspaceId ??
+            firstSession?.workspaceId ??
+            useWorkspaceStore.getState().activeWorkspaceId ??
+            undefined)
       }
       // Remove these sessions from any existing groups
       const groups = state.groups.map((g) => ({
@@ -1510,6 +1528,9 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   moveItems: (itemIds, targetId, position) =>
     set((state) => {
+      const owner = ownerOf(itemIds[0])
+      if (itemIds.some((id) => ownerOf(id) !== owner) || (targetId && ownerOf(targetId) !== owner))
+        return {}
       // The structural rules live in moveLayoutItems (pure, unit-tested):
       // one place per id, no group inside a group, only a group emptied by
       // this move is dropped. A no-op drop records no undo step.
