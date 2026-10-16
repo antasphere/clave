@@ -1,3 +1,5 @@
+import { isRemoteKey, canOpenRemotePage } from '../lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
 import { useSkinStore } from '../lib/skin'
 import { emitAgentStateWord, emitSessionExited } from '../lib/exchange-capture'
 import { codexStateFromTitle } from '../../../shared/codex-state'
@@ -61,6 +63,7 @@ export function useTerminal(sessionId: string): {
       scrollback: 10000,
       linkHandler: {
         activate: (_event, text) => {
+          if (isRemoteKey(sessionId) && /^https?:/i.test(text) && !canOpenRemotePage(text)) return
           window.electronAPI.openExternal(text)
         }
       }
@@ -259,7 +262,7 @@ export function useTerminal(sessionId: string): {
       outputBuffer = (outputBuffer + stripped).slice(-500)
 
       // Detect localhost URLs in output (skip for hidden terminals — detected on next visible chunk)
-      if (isVisibleRef.current) {
+      if (isVisibleRef.current && !isRemoteKey(sessionId)) {
         const detectedUrl = detectLocalhostUrl(outputBuffer)
         if (detectedUrl) {
           setSessionDetectedUrl(sessionId, detectedUrl)
@@ -449,7 +452,14 @@ export function useTerminal(sessionId: string): {
       // storage, then shell-escape and write the resulting paths to the PTY.
       const stablePaths = (
         await Promise.all(
-          paths.filter(Boolean).map((p) => window.electronAPI.persistDroppedFile(p))
+          paths.filter(Boolean).map(async (p) => {
+            if (!isRemoteKey(sessionId)) {
+              if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+              return window.electronAPI.persistDroppedFile(p)
+            }
+            const file = await window.electronAPI.sessionsFiles.prepare(sessionId, { path: p })
+            return parseResourceKey('file', file.path).id
+          })
         )
       ).filter((p): p is string => Boolean(p))
 

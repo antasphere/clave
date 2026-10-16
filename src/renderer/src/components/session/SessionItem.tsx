@@ -1,3 +1,5 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
+import { FleetBadge } from '../fleet/FleetControls'
 import { memo } from 'react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { useSessionStore, type Session } from '../../store/session-store'
@@ -27,7 +29,7 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
   const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
   const summary = provider === 'codex' ? codex : provider === 'claude' ? claude : undefined
-  if (!provider || !session.alive || !isExhausted(summary)) return null
+  if (isRemoteKey(session.id) || !provider || !session.alive || !isExhausted(summary)) return null
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -206,6 +208,7 @@ function SessionItemImpl({
           ) : getClaudeVariant(session) ? (
             <ClaudeVariantGlyph variant={getClaudeVariant(session)!} />
           ) : null}
+          <FleetBadge sessionId={session.id} />
         </>
       }
       grouped={grouped}

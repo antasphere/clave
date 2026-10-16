@@ -1,3 +1,12 @@
+import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
+import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
+import {
+  isRemoteKey,
+  ownerOf,
+  canOpenRemotePage
+} from '../../../src/renderer/src/lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
+import { bindFleetCatchup } from './fleet-sync'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -76,7 +85,9 @@ interface Preparation {
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
-  dt.types.includes('Files') || dt.types.includes('text/uri-list')
+  dt.types.includes('Files') ||
+  dt.types.includes('text/uri-list') ||
+  dt.types.includes('application/x-clave-files')
 const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
@@ -439,6 +450,12 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    const catchup = bindFleetCatchup(session.id, (page) => {
+      if (!live) return
+      dispatch({ sync: page.items })
+      setBefore(page.before)
+      setReady(true)
+    })
     // An end is taken only once the record confirms it: after a move to
     // another account the old process's end can arrive after this pane has
     // remounted on the new one, and closed it over a live agent.
@@ -449,6 +466,7 @@ export function TerminalView({
         })
         .catch(console.error)
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
+      catchup.changed()
       if (value.kind !== 'event') return
       const event = value.event
       const take = (): void => {
@@ -495,6 +513,7 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
+      catchup.close()
       stop()
       stopExit()
       void window.electronAPI.sessionsUnsubscribe(session.id)
@@ -535,7 +554,7 @@ export function TerminalView({
   )
   // /resume is the host's, as in the TUI: it opens the picker rather than
   // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude'
+  const canResume = session.provider === 'claude' && !isRemoteKey(session.id)
   const openResume = (): void => {
     setDraft('')
     setResuming(true)
@@ -581,7 +600,14 @@ export function TerminalView({
     setPending((current) => [...current, id])
     try {
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      dispatch({ answer: id, optionId, answers })
+      const permission = conversation.entries.find(
+        (entry) => entry.kind === 'permission' && entry.request.id === id
+      )
+      const shown =
+        permission?.kind === 'permission'
+          ? publicQuestionAnswers(permission.request.questions, permission.request.input, answers)
+          : undefined
+      dispatch({ answer: id, optionId, answers: shown })
       textarea.current?.focus()
     } catch (error) {
       report(error)
@@ -678,7 +704,22 @@ export function TerminalView({
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
     const stable = (
-      await Promise.all(paths.map((p) => window.electronAPI.persistDroppedFile(p)))
+      await Promise.all(
+        paths.map(async (p) => {
+          if (!isRemoteKey(session.id)) {
+            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+            return window.electronAPI.persistDroppedFile(p)
+          }
+          if (isRemoteKey(p)) {
+            const file = parseResourceKey('file', p)
+            if (file.serverId !== ownerOf(session.id))
+              throw new Error('This file belongs to another server.')
+            return file.id
+          }
+          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+          return parseResourceKey('file', file.path).id
+        })
+      )
     ).filter((p): p is string => Boolean(p))
     if (!stable.length) return
     const insert = stable.map(pathForMessage).join(' ') + ' '
@@ -741,14 +782,27 @@ export function TerminalView({
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const blocks = useMemo(() => {
+    const entries = remotePending
+      ? presentation.entries.map((entry) =>
+          entry.kind === 'permission' && !entry.answer
+            ? {
+                ...entry,
+                answeredElsewhere: !remotePending.some(
+                  (r) => r.sessionId === session.id && r.providerRequestId === entry.request.id
+                )
+              }
+            : entry
+        )
+      : presentation.entries
     const ordinal = new Map<Entry, number>()
-    presentation.entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(presentation.entries)).map((block) => ({
+    entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [presentation.entries, presentation.first])
+  }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering
   // it, so a pinned question is carried off by its own section's end.
   const turns = useMemo(() => {
@@ -781,6 +835,13 @@ export function TerminalView({
     <div
       className="chat-view terminal-view"
       data-testid="terminal-view"
+      onClickCapture={(event) => {
+        const href = (event.target as Element).closest('a')?.getAttribute('href')
+        if (isRemoteKey(session.id) && href && /^https?:/i.test(href) && !canOpenRemotePage(href)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
       data-pin={pinQuestions || undefined}
       onClick={(event) => {
         // A click on nothing in particular goes to the prompt; one on anything
@@ -887,7 +948,7 @@ export function TerminalView({
           />
         )}
         <PromptDock
-          requests={resuming ? [] : waitingOn}
+          requests={resuming || isRemoteKey(session.id) ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}
