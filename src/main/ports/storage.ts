@@ -19,8 +19,12 @@ import * as path from 'path'
 export interface StoragePort {
   /** The absolute path of a document or folder, for a program that needs one. */
   pathOf(name: string): string
-  /** The document's text, or null when there is none: a missing file is not an error. */
+  /** Legacy best-effort read: null for a missing or unreadable document. */
   read(name: string): string | null
+  /** A preservation-sensitive read: null only for ENOENT; all other I/O
+   * errors throw. Optional so existing adapters/mocks keep their contract.
+   * Domains requiring this guarantee must refuse adapters without it. */
+  readChecked?(name: string): string | null
   /** Replace the document atomically (write, then rename), creating the folders. */
   write(name: string, text: string, options?: { mode?: number }): void
   /** Forget a document. Nothing happens when there is none. */
@@ -34,11 +38,20 @@ export interface StoragePort {
 /** The one storage adapter: JSON documents as files under `dir`. */
 export function fileStorage(dir: string): StoragePort {
   const target = (name: string): string => path.join(dir, name)
+  const readChecked = (name: string): string | null => {
+    try {
+      return fs.readFileSync(target(name), 'utf-8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
   return {
     pathOf: target,
+    readChecked,
     read(name) {
       try {
-        return fs.readFileSync(target(name), 'utf-8')
+        return readChecked(name)
       } catch {
         return null
       }
