@@ -16,6 +16,8 @@ import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
 import { tabIndicators } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
+import { useMarkPack } from '../plugins/native-marks'
+import { tokenColor } from '../../lib/marks'
 
 /** A warning on a row whose account is about to stop it (ADR 0002), before
  *  the next turn fails. Hovering shows the account card the tab's context menu
@@ -92,6 +94,18 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
   // it works, amber when it needs the reader, blue when there is something new
   // to read. Background work is the row's counter, never the logo's.
   const { status } = tabIndicators(session)
+  // Appearance → Agent mark: a plugin's mark pack stands in for the provider's
+  // logo on an agent row (never on a plain terminal). Its mark moves while the
+  // agent works and takes the status colour as its ink, so the row keeps saying
+  // the same things in a different voice; the ring is the logo's and stays off.
+  const pack = useMarkPack()
+  const Mark = pack && Icon !== CommandLineIcon && Icon !== BoltIcon ? pack.Agent : null
+  const markInk =
+    status === 'needs-you'
+      ? tokenColor('--color-status-waiting')
+      : status === 'unread'
+        ? tokenColor('--color-status-working')
+        : undefined
   // A row carrying an attached web view (session.view) makes its logo the way
   // to it: the logo grows on hover and a click shows the view in the main pane,
   // while a click anywhere else on the row still shows the terminal. A span,
@@ -105,6 +119,7 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
     <span
       className="sidebar-tab-icon tab-status relative flex-shrink-0"
       data-status={status}
+      data-mark={Mark ? 'pack' : undefined}
       {...(view
         ? {
             'data-view': '',
@@ -132,7 +147,11 @@ function SessionIcon({ session }: { session: Session }): React.JSX.Element {
                 : undefined
       }
     >
-      <Icon />
+      {Mark ? (
+        <Mark working={status === 'working'} status={status} color={markInk} slot="tab" />
+      ) : (
+        <Icon />
+      )}
     </span>
   )
 }

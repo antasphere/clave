@@ -2,6 +2,12 @@
 
 Issue [#204](https://github.com/antasphere/clave/issues/204). This candidate is **performance-blocked**. The original formal result remains a 69.688% reduction in extra renderer task time and tab handler-to-second-animation-frame p95 of 52.3ms against 50ms. Independent round two on `2748eef4` remains FAIL: the tab ceiling still fails, the group/composer passes do not reproduce reliably under load, and the new quick-reveal test missed its setup quota on CI. That CI run had successful required jobs and a failed informational whole-suite step. Round two independently reverified the validator, lineage and local semantic-mutation repairs. The round-two author setup/disclosure repair has no CI or independent reassessment yet. This report does not claim merge readiness.
 
+## Base-integration snapshot
+
+The task branch now combines the round-two author setup/disclosure repair at `8dc56903` with dev `1c05ac23804e0b727bd1e9551de9f8b9e5ce8a74`. The integration brings the established agent-mark/orbs feature and its exact package/lockfile additions into the responsiveness branch. Git merged all three overlapping native-view/registry files automatically. Memoized pane exports, stable Markdown maps and the existing presentation contracts coexist with the incoming provider/pane marks. This integration is a separate snapshot from the exact historical candidates independently reviewed below.
+
+All measurements, source fields, product hashes and byte-identical build comparisons below describe the historical `2439b3ab`-based candidates. Those artifacts and verdicts are unchanged. The new dependency and integrated renderer require fresh checks; previous bundle/package gate reuse does not establish this snapshot. No new responsiveness timing has been collected. V1-F1/F2, subsequent-candidate CI and independent integration review remain outstanding.
+
 ## Cause and change
 
 Selecting one tab called `RegisteredSessionView`, `ChatView` and `TerminalView` for all 100 mounted sessions. Only two sessions changed visibility. CDP function-entry breakpoints counted 98 unrelated hidden renders. Memoizing the registered host retains its mounted state and subscriptions while preventing those calls. The regression asserts that both changed sessions really hit each breakpoint, so a broken probe cannot report a false zero.
