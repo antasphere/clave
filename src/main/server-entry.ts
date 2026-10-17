@@ -5,6 +5,11 @@
  *       [--terminal-process <bundle> [--node <exec>]] | [--terminals <host:port>]
  *       [--parent <pid>]
  *
+ * `--daemon [--host <Tailscale-IP-or-hostname>] [--token-file <private-file>]`
+ * selects independent server ownership, stable identity/credentials and a
+ * shared sidebar. It forbids --parent and never prints its token. See
+ * docs/server-daemon.md. Without it the app-child protocol below is retained.
+ *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
  * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
@@ -42,6 +47,9 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
+import { standaloneSidebar } from './server/standalone-sidebar'
+import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import {
   startEmbedded,
   Terminals,
@@ -99,6 +107,7 @@ async function main(): Promise<void> {
   // The terminal process this entry starts is told it again, explicitly.
   delete process.env[RUN_AS_NODE_ENV]
 
+  const config = daemonConfig(process.argv.slice(2))
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -115,6 +124,10 @@ async function main(): Promise<void> {
     process.stderr.write(`clave-server: --parent must be a pid, got ${parentRaw}\n`)
     process.exit(2)
   }
+
+  const releaseLease = config.daemon ? acquireDaemonLease(dataDir) : undefined
+  if (releaseLease) process.once('exit', releaseLease)
+  const identity = config.daemon ? daemonIdentity(dataDir, arg('token-file')) : undefined
 
   const log = (line: string): void => {
     process.stderr.write(`clave-server: ${line}\n`)
@@ -212,7 +225,19 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: sessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  const owned = sidebar
+    ? serverOwnedSessionHost({
+        host: originalSessions,
+        sidebar,
+        dataDir,
+        subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+        ready: (id) => sessionManager.ready(id)
+      })
+    : undefined
+  const sessions = owned?.host ?? originalSessions
+  installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
   // The installed plugins, their host and the view leases are this server's:
   // the store under `--data-dir/clave-plugins` in test mode (`~/.clave`
@@ -232,6 +257,7 @@ async function main(): Promise<void> {
     ports: {
       sessions,
       terminals,
+      ...(sidebar && { sidebar }),
       settings: standalone.settings,
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
@@ -243,7 +269,8 @@ async function main(): Promise<void> {
       plugins
     },
     port,
-    ...(token !== undefined && { token }),
+    host: config.host,
+    ...(identity ?? (token !== undefined ? { token } : {})),
     // ── Lane C of wave 3: the end-to-end fixture route, under the app's own
     // test flag (`--test-no-activate`, passed by the harness and never by
     // the packaged app), so the suite reaches this process as it reaches
@@ -269,6 +296,8 @@ async function main(): Promise<void> {
         {
           url: server.url,
           token: server.token,
+          serverId: server.serverId,
+          daemon: config.daemon,
           mode: 'standalone',
           ok: true,
           pid: process.pid,
@@ -287,7 +316,13 @@ async function main(): Promise<void> {
   }
   writeDiscovery()
 
-  process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
+  process.stdout.write(
+    JSON.stringify(
+      config.daemon
+        ? { url: server.url, serverId: server.serverId }
+        : { url: server.url, token: server.token }
+    ) + '\n'
+  )
   process.stderr.write(
     `clave-server: listening on ${server.url} (data in ${dataDir}` +
       (terminalState
@@ -317,6 +352,7 @@ async function main(): Promise<void> {
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
+    owned?.close()
     stopStates()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
