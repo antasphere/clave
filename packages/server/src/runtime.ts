@@ -9,7 +9,10 @@
  * its handlers are one spread in `BusesLive`, its services one line in
  * `ServicesLive`. A lane adds its lines in its section and edits no other.
  */
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Option } from 'effect'
+import * as HttpIncomingMessage from '@effect/platform/HttpIncomingMessage'
+import * as HttpServerRequest from '@effect/platform/HttpServerRequest'
+import * as HttpServerResponse from '@effect/platform/HttpServerResponse'
 import type * as HttpApi from '@effect/platform/HttpApi'
 import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import type * as HttpApp from '@effect/platform/HttpApp'
@@ -37,6 +40,7 @@ import {
   workspaceFilesHandlers
 } from './workspace-files'
 import { ViewRequests, viewHandlers } from './views'
+import { FilesPort, fileHandlers } from './files'
 // ── Wave 4, lane C: the agent tools' tokens ──
 import { AgentTokens, agentToolsHandlers } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
@@ -61,6 +65,7 @@ export interface ServerOptions {
 }
 
 export type ServerServices =
+  | FilesPort
   | ServerEvents
   | ClientRegistry
   | Readiness
@@ -139,6 +144,7 @@ export const BusesLive = busesLayer.pipe(
   Layer.provide(
     HandlerRegistry.layer(
       ...sessionHandlers,
+      ...fileHandlers,
       ...clientHandlers,
       // ── Lane D: settings ──
       ...settingsHandlers,
@@ -165,7 +171,11 @@ const outer =
   (app: HttpApp.Default): HttpApp.Default<never, PushHubService> =>
     Effect.flatMap(PushHubService, (hub) =>
       corsForLoopback(
-        pushRoute(hub)(bearerAuth(options.token)(fixtureRoute(options.testFixtures === true)(app)))
+        pushRoute(hub)(
+          bearerAuth(options.token)(
+            fixtureRoute(options.testFixtures === true)(boundedFileRequest(app))
+          )
+        )
       )
     )
 
@@ -191,3 +201,15 @@ export const ServerLive = (
     Layer.provideMerge(services)
   )
 }
+
+/** Limit file bodies before JSON decoding, independently of schema bounds.
+ * Other domains retain their existing budgets. Authentication runs first. */
+const boundedFileRequest = (app: HttpApp.Default): HttpApp.Default =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+    if (!request.url.startsWith('/files/')) return app
+    const limit = 7 * 1024 * 1024
+    const length = Number(request.headers['content-length'])
+    if (Number.isFinite(length) && length > limit)
+      return Effect.succeed(HttpServerResponse.empty({ status: 413 }))
+    return HttpIncomingMessage.withMaxBodySize(app, Option.some(limit))
+  })

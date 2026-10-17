@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, shell } from 'electron'
+import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileManager } from '../file-manager'
@@ -36,6 +36,27 @@ function closeWatchEntry(wcId: number): void {
 }
 
 export function registerFsHandlers(): void {
+  ipcMain.handle('fs:save-download', async (event, input: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) throw new Error('Downloads require an application window.')
+    const { remoteDownloadBytes } = await import('../server/file-transfers')
+    const { name, bytes } = remoteDownloadBytes(input)
+    const chosen = await dialog.showSaveDialog(win, { defaultPath: name })
+    if (chosen.canceled || !chosen.filePath) return null
+    await fs.promises.writeFile(chosen.filePath, bytes, { mode: 0o600 })
+    return chosen.filePath
+  })
+  ipcMain.handle('fs:open-download', async (event, input: unknown) => {
+    if (!BrowserWindow.fromWebContents(event.sender))
+      throw new Error('Downloads require an application window.')
+    const { saveRemoteDownload } = await import('../server/file-transfers')
+    const local = await saveRemoteDownload(
+      path.join(app.getPath('userData'), 'downloaded-files'),
+      input
+    )
+    const error = await shell.openPath(local)
+    if (error) throw new Error(error)
+  })
   ipcMain.handle('fs:list-files', (_event, cwd: string) => fileManager.listFiles(cwd))
   ipcMain.handle('fs:read-dir', (_event, rootCwd: string, dirPath: string) =>
     fileManager.readDir(rootCwd, dirPath)
