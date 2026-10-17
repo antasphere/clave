@@ -436,7 +436,12 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         const response = await fetch(`${server.url}/plugins`, { headers })
         expect(response.status).toBe(200)
         records = await response.json()
-        if (records.filter((r) => r.status === 'active').length >= 2) break
+        if (
+          ['clave.chat-view', 'clave.github', 'clave.orbs'].every((id) =>
+            records.some((r) => r.id === id && r.status === 'active')
+          )
+        )
+          break
         await new Promise((r) => setTimeout(r, 250))
       }
       const byId = Object.fromEntries(records.map((r) => [r.id, r]))
@@ -444,7 +449,8 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         'clave.chat-view',
         'clave.echo-provider',
         'clave.github',
-        'clave.hello'
+        'clave.hello',
+        'clave.orbs'
       ])
       expect(byId['clave.chat-view']).toMatchObject({
         enabled: true,
@@ -452,6 +458,11 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         source: 'bundled'
       })
       expect(byId['clave.github']).toMatchObject({ enabled: true, status: 'active' })
+      expect(byId['clave.orbs']).toMatchObject({
+        enabled: true,
+        status: 'active',
+        source: 'bundled'
+      })
       expect(byId['clave.hello']).toMatchObject({ enabled: false, status: 'disabled' })
       expect(byId['clave.chat-view'].error).toBeUndefined()
     } finally {
