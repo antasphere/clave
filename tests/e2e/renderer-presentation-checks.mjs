@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { inject } from './chat-view.spec.mjs'
-import { chatSelector, frames } from './renderer-workload.mjs'
+import { chatSelector } from './renderer-workload.mjs'
 
 const RICH_TEXT =
   'Presentation guard [retained reference](https://example.com/retained).\n\n' +
@@ -108,74 +108,140 @@ async function stream(win, fixture, id, action) {
 export async function checkImmediateReveal({ win, fixture, id, other, t }) {
   await stream(win, fixture, id, async (selector) => {
     const samples = []
-    for (let i = 0; i < 25 && samples.filter((s) => s.quick).length < 10; i++) {
-      const paintedAt = await nextTextPaint(win, selector)
-      await win.evaluate((other) => {
-        window.__presentationChecks.hiddenAt = performance.now()
-        window.__presentationChecks.beforeHide = window.__presentationChecks.delivered.at(-1)
-        document.querySelector(`[data-sidebar-item-id="${other}"] > button`).click()
-      }, other)
-      await frames(win)
-      const hidden = await win.evaluate(
-        (selector) => ({
-          height: document.querySelector(selector + ' .chat-scroll').clientHeight,
-          state: document
-            .querySelector(selector)
-            ?.closest('.chat-host')
-            ?.querySelector('.chat-state')
-            ?.getAttribute('data-state')
-        }),
-        selector
-      )
-      assert.equal(hidden.height, 0, 'the quick-reveal subject really becomes hidden')
-      assert.equal(hidden.state, 'working', 'quick reveals exercise an unfinished working answer')
-      await win.waitForTimeout(20)
-      await win.waitForFunction(
-        () =>
-          window.__presentationChecks.delivered.at(-1) !== window.__presentationChecks.beforeHide
-      )
-      await win.evaluate(
-        ({ id, selector, paintedAt }) => {
-          const state = window.__presentationChecks
-          state.reveal = null
-          const listener = (event) => {
-            if (!event.target.closest(`[data-sidebar-item-id="${id}"] > button`)) return
-            document.removeEventListener('click', listener, true)
-            const marker = state.delivered.at(-1)
-            const hiddenMs = performance.now() - state.hiddenAt
-            const paintToClickMs = performance.now() - paintedAt
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() => {
-                const row = [
-                  ...document.querySelectorAll(selector + ' .chat-turn[data-role="assistant"]')
-                ].at(-1)
-                state.reveal = {
-                  marker,
-                  hiddenMs,
-                  paintToClickMs,
-                  paintToSecondFrameMs: performance.now() - paintedAt,
-                  present: !!marker && !!row?.textContent.includes(marker)
+    try {
+      for (let i = 0; i < 25 && samples.filter((s) => s.quick).length < 10; i++) {
+        // One page-local orchestration owns paint -> hide -> hidden delivery -> click ->
+        // second-frame observation. Automation only retrieves the result.
+        const sample = await win.evaluate(
+          ({ id, other, selector }) =>
+            new Promise((resolve) => {
+              const state = window.__presentationChecks
+              const scroll = document.querySelector(selector + ' .chat-scroll')
+              const text = () =>
+                [...scroll.querySelectorAll('.chat-turn[data-role="assistant"]')].at(-1)
+                  ?.textContent
+              const previous = text()
+              const attempt = { paintedAt: null, hiddenAt: null, hidden: null, hiddenArrival: null }
+              let ready = false
+              let revealing = false
+              let finished = false
+              let pause
+              let firstFrame
+              let secondFrame
+              let listener
+              const finish = (result) => {
+                if (finished) return
+                finished = true
+                observer.disconnect()
+                off()
+                clearTimeout(timeout)
+                clearTimeout(pause)
+                cancelAnimationFrame(firstFrame)
+                cancelAnimationFrame(secondFrame)
+                if (listener) document.removeEventListener('click', listener, true)
+                resolve({ ...attempt, ...result })
+              }
+              const reveal = () => {
+                if (!ready || !attempt.hiddenArrival || revealing || finished) return
+                revealing = true
+                listener = (event) => {
+                  if (!event.target.closest(`[data-sidebar-item-id="${id}"] > button`)) return
+                  document.removeEventListener('click', listener, true)
+                  const clickedAt = performance.now()
+                  const marker = state.delivered.at(-1)
+                  const hiddenMs = clickedAt - attempt.hiddenAt
+                  const paintToClickMs = clickedAt - attempt.paintedAt
+                  firstFrame = requestAnimationFrame(() => {
+                    secondFrame = requestAnimationFrame(() => {
+                      const row = [
+                        ...document.querySelectorAll(
+                          selector + ' .chat-turn[data-role="assistant"]'
+                        )
+                      ].at(-1)
+                      finish({
+                        marker,
+                        hiddenMs,
+                        paintToClickMs,
+                        paintToSecondFrameMs: performance.now() - attempt.paintedAt,
+                        present: !!marker && !!row?.textContent.includes(marker)
+                      })
+                    })
+                  })
+                }
+                document.addEventListener('click', listener, true)
+                document.querySelector(`[data-sidebar-item-id="${id}"] > button`).click()
+              }
+              const off = window.electronAPI.onSessionStream(id, (value) => {
+                if (
+                  attempt.hiddenAt !== null &&
+                  scroll.clientHeight === 0 &&
+                  value.kind === 'event' &&
+                  value.event.type === 'assistant_text' &&
+                  /^guard\d{6}/.test(value.event.delta)
+                ) {
+                  attempt.hiddenArrival = {
+                    marker: value.event.delta.slice(0, 11),
+                    at: performance.now(),
+                    height: scroll.clientHeight
+                  }
+                  reveal()
                 }
               })
-            )
-          }
-          state.clickListener = listener
-          document.addEventListener('click', listener, true)
-          document.querySelector(`[data-sidebar-item-id="${id}"] > button`).click()
-        },
-        { id, selector, paintedAt }
-      )
-      // Wait only for the immutable observation made at the second frame,
-      // never for the missing text to appear on a later timer tick.
-      await win.waitForFunction(() => window.__presentationChecks.reveal !== null)
-      const sample = await win.evaluate(() => window.__presentationChecks.reveal)
-      samples.push({
-        ...sample,
-        hidden,
-        quick: sample.hiddenMs < 110 && sample.paintToClickMs < 120
-      })
+              const observer = new MutationObserver(() => {
+                if (text() === previous) return
+                observer.disconnect()
+                attempt.paintedAt = performance.now()
+                attempt.hiddenAt = performance.now()
+                document.querySelector(`[data-sidebar-item-id="${other}"] > button`).click()
+                firstFrame = requestAnimationFrame(() => {
+                  secondFrame = requestAnimationFrame(() => {
+                    attempt.hidden = {
+                      height: scroll.clientHeight,
+                      state: document
+                        .querySelector(selector)
+                        ?.closest('.chat-host')
+                        ?.querySelector('.chat-state')
+                        ?.getAttribute('data-state')
+                    }
+                    if (attempt.hidden.height !== 0 || attempt.hidden.state !== 'working') {
+                      finish({ error: 'quick-reveal hidden/working precondition failed' })
+                      return
+                    }
+                    // Retain the existing pause after proving zero size. A
+                    // real transport chunk must also arrive while hidden.
+                    pause = setTimeout(() => {
+                      ready = true
+                      reveal()
+                    }, 20)
+                  })
+                })
+              })
+              const timeout = setTimeout(
+                () => finish({ error: 'page-local quick-reveal setup did not finish' }),
+                2500
+              )
+              observer.observe(scroll, { childList: true, subtree: true, characterData: true })
+            }),
+          { id, other, selector }
+        )
+        samples.push({
+          ...sample,
+          quick: sample.hiddenMs < 110 && sample.paintToClickMs < 120
+        })
+        assert.equal(sample.error, undefined, JSON.stringify(sample))
+        assert.equal(sample.hidden.height, 0, 'the quick-reveal subject really becomes hidden')
+        assert.equal(
+          sample.hidden.state,
+          'working',
+          'quick reveals exercise an unfinished working answer'
+        )
+        assert.equal(sample.hiddenArrival.height, 0, 'a real text chunk arrives while hidden')
+      }
+    } finally {
+      // Keep every slow or failed attempt, including a setup failure. The
+      // observation is never retried until missing text becomes fresh.
+      console.log(JSON.stringify({ metric: 'quick-reveal-second-frame', samples }))
     }
-    console.log(JSON.stringify({ metric: 'quick-reveal-second-frame', samples }))
     assert.ok(
       samples.filter((s) => s.quick && s.marker).length === 10,
       'obtain ten quick reveals while the text deadline is still pending; retain slower setup attempts'
