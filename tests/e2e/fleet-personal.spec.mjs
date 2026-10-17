@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { fleetWorld, connectMac, eventually, owned, request } from './fixtures/fleet-world.mjs'
+import {
+  fleetWorld,
+  connectMac,
+  eventually,
+  owned,
+  request,
+  ownerReady,
+  clickReady,
+  step
+} from './fixtures/fleet-world.mjs'
 
 const row = (win, id) => win.locator(`[data-sidebar-item-id="${id}"]`)
 const chat = (win, id) => win.locator(`[data-session-id="${id}"] [data-testid="chat-view"]`)
@@ -48,6 +57,10 @@ export async function run(t) {
     await win.getByRole('menuitem', { name: 'claude', exact: true }).click()
     await win.getByLabel('Server launch profile', { exact: true }).click()
     await win.getByRole('menuitem', { name: 'Echo (development)', exact: true }).click()
+    assert.equal(
+      await win.getByLabel('Server launch profile', { exact: true }).getAttribute('data-value'),
+      'dev-echo-adapter'
+    )
     await win.getByLabel('Server folder', { exact: true }).fill(a.root)
     await win.getByRole('button', { name: 'Browse server folders', exact: true }).click()
     if (await win.getByLabel('Server account', { exact: true }).count()) {
@@ -56,15 +69,30 @@ export async function run(t) {
         'default'
       )
     }
+    const localBefore = await win.evaluate(() => window.electronAPI.listSessions())
     await win.getByRole('button', { name: 'Start session', exact: true }).click()
-    await eventually(
-      async () => (await request(a, '/sessions')).some((s) => s.adapterId === 'echo'),
-      'first remote agent exists on empty owner'
+    let created
+    await eventually(async () => {
+      created = (await request(a, '/sessions')).find((s) => s.adapterId === 'echo')
+      return !!created
+    }, 'first remote agent exists on empty owner')
+    assert.equal(
+      realpathSync(created.cwd),
+      realpathSync(a.root),
+      'created agent uses selected server cwd'
     )
+    assert.notEqual(realpathSync(created.cwd), realpathSync(macA.root))
+    assert.equal(created.adapterId, 'echo')
     assert.deepEqual(await request(b, '/sessions'), [])
+    assert.deepEqual(
+      await win.evaluate(() => window.electronAPI.listSessions()),
+      localBefore,
+      'remote creation adds no local agent'
+    )
     const firstAgent = (
       await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), ownerA)
     ).sessions.find((s) => s.adapterId === 'echo')
+    assert.equal(firstAgent.id, owned('session', ownerA, created.id))
     await send(win, firstAgent.id, 'Created on the empty remote through Mac A')
     t.check(
       'Mac UI creates the first remote agent using owning cwd, profile and default account choice',
@@ -184,8 +212,20 @@ export async function run(t) {
     )
 
     // Both desktops stop consuming A. The process and history belong to A.
-    await macB.win.evaluate((owner) => window.electronAPI.fleetDisconnect(owner), macB.owners[0].id)
-    await macA.close()
+    await step('personal detach Mac B from owner one', async () => {
+      await macB.win.evaluate(
+        (owner) => window.electronAPI.fleetDisconnect(owner),
+        macB.owners[0].id
+      )
+      await eventually(
+        async () =>
+          (await row(macB.win, ba)
+            .locator('[data-fleet-owner]')
+            .getAttribute('data-fleet-state')) === 'disconnected',
+        'Mac B observed intentional disconnect'
+      )
+    })
+    await step('personal quit original Mac A', () => macA.close())
     assert.ok((await request(a, '/sessions')).some((s) => s.id === id))
     await request(a, '/sessions/write', {
       id,
@@ -196,20 +236,27 @@ export async function run(t) {
         'Produced with both Macs detached'
       )
     )
-    await macB.win.evaluate((owner) => window.electronAPI.fleetConnect(owner), macB.owners[0].id)
-    await row(macB.win, ba).click()
-    await chat(macB.win, ba)
-      .locator('.chat-turn[data-role="assistant"]')
-      .filter({ hasText: 'Produced with both Macs detached' })
-      .waitFor()
-    const returned = await world.mac('a', { reuse: macA.dir })
+    await step('personal reconnect Mac B and catch up', async () => {
+      await macB.win.evaluate((owner) => window.electronAPI.fleetConnect(owner), macB.owners[0].id)
+      await ownerReady(macB, macB.owners[0].id, ba)
+      await clickReady(row(macB.win, ba))
+      await chat(macB.win, ba)
+        .locator('.chat-turn[data-role="assistant"]')
+        .filter({ hasText: 'Produced with both Macs detached' })
+        .waitFor()
+    })
+    const returned = await step('personal reopen Mac A on saved data', () =>
+      world.mac('a', { reuse: macA.dir })
+    )
     returned.owners = await returned.win.evaluate(() => window.electronAPI.fleetList())
-    await row(returned.win, ka).waitFor()
-    await row(returned.win, ka).click()
-    await chat(returned.win, ka)
-      .locator('.chat-turn[data-role="assistant"]')
-      .filter({ hasText: 'Produced with both Macs detached' })
-      .waitFor()
+    await step('personal startup reconnect Mac A and catch up', async () => {
+      await ownerReady(returned, ownerA, ka)
+      await clickReady(row(returned.win, ka))
+      await chat(returned.win, ka)
+        .locator('.chat-turn[data-role="assistant"]')
+        .filter({ hasText: 'Produced with both Macs detached' })
+        .waitFor()
+    })
     t.check(
       'quit, detached-client interval, reconnect and startup restore preserve running sessions and catch-up history',
       true

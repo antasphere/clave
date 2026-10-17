@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { fleetWorld, connectMac, eventually, owned } from './fixtures/fleet-world.mjs'
+import {
+  fleetWorld,
+  connectMac,
+  eventually,
+  owned,
+  ownerReady,
+  clickReady,
+  step
+} from './fixtures/fleet-world.mjs'
+import { assertFileEndpoint } from './fixtures/fleet-http-observer.mjs'
 
 const PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -10,6 +19,8 @@ export async function run(t) {
   try {
     const report = world.load()
     const [a, b] = world.servers
+    const observers = await world.observeFiles()
+    const mark = () => observers.map((observer) => observer.entries.length)
     const value = report.values.first
     const other = report.values.second
     const mac = await world.mac('a')
@@ -18,13 +29,25 @@ export async function run(t) {
     await connectMac(macB, world.servers, { ui: false })
     const owner = mac.owners[0].id
     const session = owned('session', owner, value.sessionId)
-    await mac.win.locator(`[data-sidebar-item-id="${session}"]`).click()
+    await ownerReady(mac, owner, session)
+    const opening = mark()
+    await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
     const tree = mac.win.locator(`[data-fleet-files="${owner}"]`)
-    if (!(await tree.count())) await mac.win.getByTitle(/^File tree/).click()
-    await tree.getByRole('button', { name: value.directory, exact: true }).click()
-    await tree.getByRole('button', { name: 'notes.txt', exact: true }).click()
+    if (!(await tree.isVisible())) await clickReady(mac.win.getByTitle(/^File tree/))
+    await step('files navigate owning directory', async () => {
+      await tree.getByTitle(a.root, { exact: true }).waitFor({ state: 'visible' })
+      await clickReady(tree.getByRole('button', { name: value.directory, exact: true }))
+      await tree
+        .getByTitle(path.join(a.root, value.directory), { exact: true })
+        .waitFor({ state: 'visible' })
+    })
+    assertFileEndpoint(observers, opening, 0, '/files/list')
+    const reading = mark()
+    await clickReady(tree.getByRole('button', { name: 'notes.txt', exact: true }))
     const editor = mac.win.locator('.cm-content[contenteditable="true"]:visible')
     await editor.waitFor()
+    assertFileEndpoint(observers, reading, 0, '/files/read')
+    const editing = mark()
     await editor.fill('Edited on owner one through the desktop')
     await editor.press('Meta+s')
     await eventually(
@@ -34,16 +57,25 @@ export async function run(t) {
       'UI editor saves on owning filesystem'
     )
     assert.equal(readFileSync(path.join(b.root, other.file), 'utf8'), other.content)
+    assertFileEndpoint(observers, editing, 0, '/files/write')
+    const peerReading = mark()
     const peerRead = await macB.win.evaluate(
       ({ root, file }) => window.electronAPI.readFile(root, file),
       { root: owned('file', macB.owners[0].id, a.root), file: value.file }
     )
     assert.equal(peerRead.content, 'Edited on owner one through the desktop')
+    assertFileEndpoint(observers, peerReading, 0, '/files/read')
     t.check('remote file editor writes real owner bytes and the second Mac reads the edit', true)
 
-    await mac.win.locator(`[data-sidebar-item-id="${session}"]`).click()
-    if (!(await tree.count())) await mac.win.getByTitle(/^File tree/).click()
-    await tree.getByRole('button', { name: value.directory, exact: true }).click()
+    await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
+    if (!(await tree.isVisible())) await clickReady(mac.win.getByTitle(/^File tree/))
+    await step('files restore directory after editor', async () => {
+      await tree.getByTitle(a.root, { exact: true }).waitFor({ state: 'visible' })
+      await clickReady(tree.getByRole('button', { name: value.directory, exact: true }))
+      await tree
+        .getByTitle(path.join(a.root, value.directory), { exact: true })
+        .waitFor({ state: 'visible' })
+    })
 
     const source = path.join(mac.root, 'mac-upload.txt')
     writeFileSync(source, 'Mac upload byte sentinel')
@@ -52,7 +84,8 @@ export async function run(t) {
     await mac.app.evaluate(({ dialog }, source) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
     }, source)
-    await tree.getByRole('button', { name: 'Upload', exact: true }).click()
+    const uploading = mark()
+    await clickReady(tree.getByRole('button', { name: 'Upload', exact: true }))
     const uploaded = `${value.directory}/mac-upload.txt`
     let uploadComplete = false
     try {
@@ -68,15 +101,18 @@ export async function run(t) {
     if (uploadComplete) {
       assert.equal(readFileSync(path.join(a.root, uploaded), 'utf8'), 'Mac upload byte sentinel')
       assert.equal(existsSync(path.join(b.root, uploaded)), false)
+      assertFileEndpoint(observers, uploading, 0, '/files/upload')
       t.check('UI upload transfers exact bytes to the owning server', true)
     }
     const downloaded = path.join(mac.root, 'downloaded-notes.txt')
     await mac.app.evaluate(({ dialog }, target) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: target })
     }, downloaded)
-    await tree.getByLabel('Download notes.txt', { exact: true }).click()
+    const downloading = mark()
+    await clickReady(tree.getByLabel('Download notes.txt', { exact: true }))
     await eventually(() => existsSync(downloaded), 'remote download reaches selected Mac path')
     assert.equal(readFileSync(downloaded, 'utf8'), 'Edited on owner one through the desktop')
+    assertFileEndpoint(observers, downloading, 0, '/files/download')
     t.check('UI download transfers exact owner bytes to the selected Mac path', true)
 
     await mac.win.locator(`[data-sidebar-item-id="${session}"]`).click()

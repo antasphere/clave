@@ -123,6 +123,13 @@ export async function loadPersonalFleet({ enabled = false, namespace, owners, re
     assert.equal(url.hostname, '127.0.0.1')
     assert.ok(path.resolve(owner.root).startsWith(target + path.sep))
   }
+  // Reserve before any command or progress write. Even a caller supplying
+  // an old receipt explicitly cannot erase a previous generation.
+  if (enabled)
+    writeFileSync(receipt, JSON.stringify({ scenario: SCENARIO, completed: [] }), {
+      flag: 'wx',
+      mode: 0o600
+    })
   const clients = owners.map((o) => ({ root: o.root, api: createApiClient(o) }))
   try {
     const fixtures = await Effect.runPromise(personalFleetCatalog().prepare(SCENARIO, {}))

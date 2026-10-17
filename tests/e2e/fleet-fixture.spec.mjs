@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
+import { fixtureRoot } from './harness.mjs'
 import { fleetWorld, request } from './fixtures/fleet-world.mjs'
 
 export async function run(t) {
@@ -28,14 +29,41 @@ export async function run(t) {
       'named fixture creates colliding IDs, owner files and retained live history through commands',
       true
     )
-    const next = world.load({ generation: 'two' })
+    const receipt = readdirSync(fixtureRoot())
+      .filter(
+        (name) => name.startsWith(`clave-e2e-${world.run}-`) && name.endsWith('-receipt.json')
+      )
+      .map((name) => path.join(fixtureRoot(), name))
+    assert.equal(receipt.length, 1)
+    const priorReceipt = readFileSync(receipt[0], 'utf8')
+    const next = world.load()
+    assert.equal(
+      readFileSync(receipt[0], 'utf8'),
+      priorReceipt,
+      'default retry retains prior receipt bytes'
+    )
     assert.notEqual(next.runId, report.runId)
     assert.notEqual(next.values.first.sessionId, first.sessionId)
     assert.equal(readFileSync(path.join(first.root, first.file), 'utf8'), first.content)
+    assert.ok(
+      JSON.stringify(
+        await request(world.servers[0], `/sessions/history?id=${first.sessionId}`)
+      ).includes(first.content)
+    )
     t.check(
       'each fixture invocation has fresh IDs and preserves the earlier receipt and data',
       true
     )
+    const before = await Promise.all(world.servers.map((server) => request(server, '/sessions')))
+    assert.throws(() => world.load({ receipt: receipt[0] }), /fixture load failed/)
+    assert.equal(readFileSync(receipt[0], 'utf8'), priorReceipt)
+    assert.deepEqual(
+      await Promise.all(world.servers.map((server) => request(server, '/sessions'))),
+      before,
+      'refusing an existing receipt happens before creating any records'
+    )
+    assert.equal(readFileSync(path.join(first.root, first.file), 'utf8'), first.content)
+    t.check('an explicit receipt collision refuses before commands and preserves prior bytes', true)
   } finally {
     await world.close()
   }

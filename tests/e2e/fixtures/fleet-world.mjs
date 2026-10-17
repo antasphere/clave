@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { bunBinary } from '../../../scripts/server-process.mjs'
 import { namespaceOf } from '../namespace.mjs'
+import { observeDaemon } from './fleet-http-observer.mjs'
 import {
   REPO,
   fixturePath,
@@ -20,6 +21,53 @@ export const owned = (kind, owner, id) =>
   `clave-owner:${kind}:${encodeURIComponent(owner)}:${encodeURIComponent(id)}`
 export async function eventually(fn, message) {
   assert.ok(await until(fn, { tries: 120, gapMs: 100 }), message)
+}
+export async function step(name, action) {
+  const started = performance.now()
+  console.log(JSON.stringify({ step: name, state: 'begin' }))
+  try {
+    const value = await action()
+    console.log(
+      JSON.stringify({ step: name, state: 'complete', ms: Math.round(performance.now() - started) })
+    )
+    return value
+  } catch (error) {
+    console.error(
+      JSON.stringify({ step: name, state: 'failed', ms: Math.round(performance.now() - started) })
+    )
+    throw error
+  }
+}
+export async function clickReady(locator) {
+  await locator.waitFor({ state: 'visible' })
+  let previous
+  let stable = 0
+  await eventually(async () => {
+    if (!(await locator.isEnabled())) return false
+    const box = await locator.boundingBox()
+    const current = box && JSON.stringify(box)
+    stable = current && current === previous ? stable + 1 : 0
+    previous = current
+    return stable >= 2
+  }, 'intended control has a stable visible layout')
+  // Keep Playwright's normal hit-target/actionability checks enabled.
+  await locator.click()
+}
+export async function ownerReady(mac, owner, session) {
+  const row = mac.win.locator(`[data-sidebar-item-id="${session}"]`)
+  await eventually(async () => {
+    try {
+      const snapshot = await mac.win.evaluate((id) => window.electronAPI.fleetSnapshot(id), owner)
+      return snapshot.sessions.some((s) => s.id === session)
+    } catch {
+      return false
+    }
+  }, 'fresh owner snapshot contains the intended session')
+  await eventually(
+    async () =>
+      (await row.locator('[data-fleet-owner]').getAttribute('data-fleet-state')) === 'connected',
+    'intended owner is connected in the renderer'
+  )
 }
 export async function request(server, route, body) {
   const response = await fetch(server.url + route, {
@@ -40,6 +88,7 @@ export async function fleetWorld(label) {
   const run = `${label}-${randomUUID()}`
   const servers = []
   const clients = new Set()
+  const observers = []
   const seedProfiles = (dir) => {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     writeFileSync(
@@ -71,6 +120,14 @@ export async function fleetWorld(label) {
   const world = {
     run,
     servers,
+    async observeFiles() {
+      for (const server of servers) {
+        const observer = await observeDaemon(server.url)
+        observers.push(observer)
+        server.desktopUrl = observer.url
+      }
+      return observers
+    },
     async restart(index) {
       const old = servers[index]
       await old.stop()
@@ -83,8 +140,11 @@ export async function fleetWorld(label) {
       old.fixture = serverFixture(next.url, next.token)
       return old
     },
-    load({ enabled = true, generation = 'one' } = {}) {
-      const receipt = fixturePath(`${run}-${generation}-receipt.json`)
+    load({
+      enabled = true,
+      generation = 'one',
+      receipt = fixturePath(`${run}-${generation}-${randomUUID()}-receipt.json`)
+    } = {}) {
       const input = {
         enabled,
         namespace: namespaceOf(),
@@ -168,7 +228,11 @@ export async function fleetWorld(label) {
       try {
         for (const mac of clients) await mac.close()
       } finally {
-        for (const server of [...servers].reverse()) await server.stop()
+        try {
+          for (const observer of observers) await observer.close()
+        } finally {
+          for (const server of [...servers].reverse()) await server.stop()
+        }
       }
     }
   }
@@ -194,7 +258,7 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
     const name = `Personal VPS ${index + 1}`
     if (ui) {
       await win.getByLabel('Server name', { exact: true }).fill(name)
-      await win.getByLabel('Server address', { exact: true }).fill(server.url)
+      await win.getByLabel('Server address', { exact: true }).fill(server.desktopUrl ?? server.url)
       await win.getByLabel('Server bearer token', { exact: true }).fill(server.token)
       await win.getByRole('button', { name: 'Add server', exact: true }).click()
       await eventually(
@@ -205,7 +269,7 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
     } else {
       await win.evaluate(
         ({ name, url, token }) => window.electronAPI.fleetSave({ name, url, token }),
-        { name, url: server.url, token: server.token }
+        { name, url: server.desktopUrl ?? server.url, token: server.token }
       )
     }
   }
