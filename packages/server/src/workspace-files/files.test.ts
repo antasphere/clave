@@ -777,6 +777,31 @@ describe('watching scheduled native callbacks', () => {
     expect(heard).toEqual([file])
   })
 
+  it('suppresses an own write at timer delivery without a later native callback', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    writeFileSync(file, single({ name: 'external before own write' }))
+    notify()
+    vi.advanceTimersByTime(20)
+    files.write(file, { name: 'own write', cwd: root, color: null, sessions: [], terminals: [] })
+    // No native callback refreshes lastRevision before the queued timer fires.
+    vi.advanceTimersByTime(40)
+    expect(heard, 'the queued timer must suppress the own write without a later callback').toEqual(
+      []
+    )
+    vi.advanceTimersByTime(300)
+    notify()
+    tick()
+    expect(heard).toEqual([])
+    writeFileSync(file, single({ name: 'later external edit' }))
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+  })
+
   it('does not treat an unreadable revision as missing or permanently suppress recovery', () => {
     const file = join(root, 'w.clave')
     writeFileSync(file, single())
