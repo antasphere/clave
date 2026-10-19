@@ -73,6 +73,7 @@ import {
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 import type { ChatViewProps } from './ChatView'
 
 /** A file on its way into the composer: named at once, a chip once main has
@@ -133,6 +134,9 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
  *  moment it stops. A finished answer stands on its own; a logo resting under
  *  every reply read as the transcript's own decoration rather than a sign. */
 function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
+  // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
+  // breathing logo. Same slot, same arrival and departure.
+  const pack = useMarkPack()
   const Logo =
     provider === 'claude'
       ? ClaudeLogo
@@ -146,10 +150,17 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
       className="chat-provider-mark"
       data-provider={provider}
       data-state="working"
+      data-mark={pack ? 'pack' : undefined}
       role="status"
       aria-label={`${provider} is working`}
     >
-      {Logo ? <Logo /> : <span className="chat-provider-mark-dot" />}
+      {pack ? (
+        <pack.Agent working status="working" slot="transcript" />
+      ) : Logo ? (
+        <Logo />
+      ) : (
+        <span className="chat-provider-mark-dot" />
+      )}
     </div>
   )
 }

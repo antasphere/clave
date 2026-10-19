@@ -674,22 +674,79 @@ export class WorkspaceFiles {
     if (this.watchers.has(absolutePath)) return
     try {
       let debounceTimer: NodeJS.Timeout | null = null
+      let closed = false
+      // Native callbacks can straddle debounce windows for the same write.
+      // Compare the settled bytes, with absence distinct from unreadability.
+      const revision = (): string | undefined => {
+        // Workspace documents are small. Unsupported or oversized inputs
+        // invalidate conservatively instead of blocking on, or loading, them.
+        const limit = 1024 * 1024
+        let fd: number | undefined
+        try {
+          const candidate = fs.statSync(absolutePath, { bigint: true })
+          if (!candidate.isFile() || candidate.size > BigInt(limit)) return undefined
+          // A regular pathname may be swapped for a FIFO after stat. Opening
+          // nonblocking and checking the descriptor closes that race; stat
+          // follows symlinks so regular targets retain revision coalescing.
+          fd = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)
+          const before = fs.fstatSync(fd, { bigint: true })
+          if (!before.isFile() || before.size > BigInt(limit)) return undefined
+          const buffer = Buffer.alloc(Number(before.size) + 1)
+          const read = fs.readSync(fd, buffer, 0, buffer.length, 0)
+          const after = fs.fstatSync(fd, { bigint: true })
+          const current = fs.statSync(absolutePath, { bigint: true })
+          if (
+            read !== Number(before.size) ||
+            after.size !== before.size ||
+            after.mtimeNs !== before.mtimeNs ||
+            after.ctimeNs !== before.ctimeNs ||
+            current.dev !== after.dev ||
+            current.ino !== after.ino ||
+            current.size !== after.size ||
+            current.mtimeNs !== after.mtimeNs ||
+            current.ctimeNs !== after.ctimeNs
+          )
+            return undefined
+          return createHash('sha256').update(buffer.subarray(0, read)).digest('hex')
+        } catch (error) {
+          const failure = error as NodeJS.ErrnoException
+          if (typeof failure.errno !== 'number') throw error
+          if (failure.code === 'ENOENT') return 'missing'
+          // An unreadable revision still invalidates; the next successful
+          // read must be delivered too, even if its bytes match the old ones.
+          return undefined
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd)
+        }
+      }
+      let lastRevision = revision()
       // Watch the parent directory, not the file itself: editors and agents
       // replace files via atomic rename, which orphans a file-inode watcher
       // after the first change. A directory watch survives inode swaps.
       const dir = path.dirname(absolutePath)
       const base = path.basename(absolutePath)
       const watcher = fs.watch(dir, (_eventType, filename) => {
+        if (closed) return
         // filename can be null on some platforms: treat as a possible match.
         if (filename && filename !== base) return
-        if (this.recentWrites.has(absolutePath)) return
+        if (this.recentWrites.has(absolutePath)) {
+          lastRevision = revision()
+          return
+        }
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           debounceTimer = null
+          const current = revision()
+          if (current !== undefined && current === lastRevision) return
+          lastRevision = current
+          // A timer queued before our write must not publish that write.
+          if (this.recentWrites.has(absolutePath)) return
           this.emit({ _tag: 'workspace_files.changed', path: absolutePath })
         }, this.debounceMs)
       })
       const cleanup = (): void => {
+        if (closed) return
+        closed = true
         if (debounceTimer) clearTimeout(debounceTimer)
         watcher.close()
         this.watchers.delete(absolutePath)

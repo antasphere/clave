@@ -10,6 +10,7 @@ import {
   seedTrustedRoots,
   fixturePath,
   serverFixture,
+  callMcp,
   until,
   REPO
 } from './harness.mjs'
@@ -281,6 +282,141 @@ export async function run(t) {
       await win.locator(`[data-sidebar-item-id="${ka}"] [data-fleet-owner="${savedA.id}"]`).count(),
       1
     )
+    // Echo deliberately has no persisted provider/account record. Use an
+    // actual Claude adapter with a recording offline CLI for account identity.
+    const quotaCli = path.join(a.dir, 'quota-cli.cjs')
+    const quotaProcesses = path.join(a.dir, 'quota-cli-processes.jsonl')
+    writeFileSync(
+      quotaCli,
+      `
+      const fs = require('node:fs');
+      const readline = require('node:readline');
+      const argv = process.argv.slice(2);
+      if (argv.includes('-p') && !argv.includes('--input-format')) {
+        process.stdout.write('offline quota title\\n'); process.exit(0);
+      }
+      fs.appendFileSync(${JSON.stringify(quotaProcesses)}, JSON.stringify({pid:process.pid,argv})+'\\n');
+      readline.createInterface({input:process.stdin}).on('line', () => {});
+      setInterval(() => {}, 1000);
+    `
+    )
+    await post(a, '/launch-profiles', {
+      profile: {
+        id: 'desktop-offline-claude',
+        name: 'Desktop quota fixture',
+        family: 'claude',
+        command: [process.execPath, quotaCli],
+        additionalArgs: []
+      }
+    })
+    const quotaId = '33333333-3333-4333-8333-333333333333'
+    await post(a, '/sessions/start', {
+      cwd: a.cwd,
+      options: {
+        claudeMode: true,
+        launchProfileId: 'chat:claude:desktop-offline-claude',
+        claudeProfileId: 'default',
+        adoptSessionId: quotaId
+      }
+    })
+    const quotaKey = owned('session', savedA.id, quotaId)
+    // A default account on a server is unrelated to the Mac's default account.
+    // Stub only the isolated Mac settings source, then load it through the real
+    // Usage UI. A real local echo row proves that its exhausted quota landed.
+    await app.evaluate(() => {
+      const read = () => ({
+        fetchedAt: Date.now(),
+        windows: [
+          {
+            key: '5h',
+            label: 'Current session (5h)',
+            kind: 'session',
+            scope: null,
+            usedPercentage: 100,
+            severity: 'critical',
+            resetsAt: Date.now() + 3600000
+          }
+        ]
+      })
+      const usage = globalThis.__claveE2E.settings.usage
+      usage.readClaude = async (accountId) => {
+        assertDefault(accountId)
+        return read()
+      }
+      usage.claudeSnapshot = () => ({ default: read() })
+      function assertDefault(accountId) {
+        if (accountId !== 'default') throw new Error('Unexpected Mac quota account')
+      }
+    })
+    const localQuota = await callMcp(app, 'openSession', {
+      cwd: root,
+      mode: 'claude',
+      profile: 'dev-echo-adapter',
+      account: 'default',
+      name: 'Mac quota control'
+    })
+    const localRow = win.locator(`[data-sidebar-item-id="${localQuota.sessionId}"]`)
+    await localRow.waitFor()
+    await win.locator('.sidebar-footer-line[data-usage-provider="claude"]').click()
+    await win.getByRole('button', { name: 'Refresh usage' }).click()
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    await localRow.locator('[data-account-limit="default"]').waitFor()
+    const remoteRecord = (
+      await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), savedA.id)
+    ).records.find((record) => record.id === quotaKey)
+    assert.ok(remoteRecord, 'the owner supplies the actual remote session record')
+    assert.equal(remoteRecord.claudeProfileId ?? 'default', 'default')
+    assert.equal(remoteRecord.claudeMode, true)
+    const remoteRow = win.locator(`[data-sidebar-item-id="${quotaKey}"]`)
+    await remoteRow.waitFor()
+    assert.equal(await remoteRow.locator('[data-account-limit]').count(), 0)
+    assert.equal(await remoteRow.locator('.sidebar-tab-icon svg').count(), 1)
+    const ownerBadge = remoteRow.locator(`[data-fleet-owner="${savedA.id}"]`)
+    const assertOwnerBadge = async () => {
+      assert.equal(await ownerBadge.getAttribute('title'), 'VPS A')
+      const nameBox = await remoteRow.getByTestId('session-tab-name').boundingBox()
+      const badgeBox = await ownerBadge.boundingBox()
+      assert.ok(
+        nameBox && badgeBox && badgeBox.x >= nameBox.x + nameBox.width - 1,
+        'the owner badge remains a separate accessory to the right of the name'
+      )
+      assert.equal(await remoteRow.locator('[data-account-limit]').count(), 0)
+    }
+    await assertOwnerBadge()
+    t.check(
+      'remote default-account row retains its provider and owner marks without exhausted Mac quota',
+      true
+    )
+
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+    await win.click('[data-settings-nav-row="appearance"]')
+    await win.click('[data-agent-mark-option="clave.orbs/orbs"]')
+    await win.click('[data-orb-option="weaving"]')
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    const remoteOrb = remoteRow.locator(
+      '.sidebar-tab-icon[data-mark="pack"] canvas[data-orb-state="weaving"]'
+    )
+    await remoteOrb.waitFor()
+    assert.equal(await remoteRow.locator('.sidebar-tab-icon svg').count(), 0)
+    await assertOwnerBadge()
+    await win.evaluate(() => window.electronAPI.pluginsDisable('clave.orbs'))
+    await remoteRow.locator('.sidebar-tab-icon svg').waitFor()
+    assert.equal(await remoteRow.locator('.sidebar-tab-icon canvas').count(), 0)
+    await assertOwnerBadge()
+    await win.evaluate(() => window.electronAPI.pluginsEnable('clave.orbs', []))
+    await remoteOrb.waitFor()
+    await assertOwnerBadge()
+    t.check(
+      'remote mark pack and disabled-plugin logo fallback preserve the separate far-right owner badge',
+      true
+    )
+    await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+    await win.click('[data-settings-nav-row="appearance"]')
+    await win.click('[data-agent-mark-option="logo"]')
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    await remoteRow.locator('.sidebar-tab-icon svg').waitFor()
+    await win.evaluate((id) => window.electronAPI.killSession(id), quotaKey)
+    await win.evaluate((id) => window.electronAPI.killSession(id), localQuota.sessionId)
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     await win
       .locator(`[data-session-id="${ka}"] [data-testid="chat-view"] textarea:not(:disabled)`)
