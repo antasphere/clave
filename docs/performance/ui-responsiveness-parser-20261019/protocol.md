@@ -1,0 +1,96 @@
+# Parser measurement protocol proposal
+
+Prepared on 19 October 2026 for issue 204 and draft PR 210. This document authorizes no collection. The sole lead is `cb5cc236-e743-44ac-b181-62e57e4cd23b`. Tooling remains subject to review, freeze and commit. A separate explicit START is required for every runtime stage below.
+
+The native correctness candidate is `d091a1667341cb5bb96cfa7aa0f61d181424ef55`, tree `c2232ceb1eee94c8dac07cf384eb4f7ff4829efa`. Its accepted native report proves correctness within its recorded limits. Performance remains FAIL pending new evidence. CI status and independent review are separate gates.
+
+## Identities and isolation
+
+Formal BEFORE is raw dev `4555de3d125b496ae4d971b1368ae4363640d6ae`. Formal AFTER is the root's eventual committed tooling candidate containing the exact native product. Resource BEFORE is matching integrated R2 `dee69d38e81ee27871d0fd0edf826e2e1fc87909`, not raw dev. Record actual source HEAD and tree on every side. Do not compare against the older pre-integration R2 or silently choose a moving dev branch.
+
+Root freezes this protocol's hash, the candidate commit, per-side product source and actual build manifests, the intentional tooling overlay, installed tool package manifests, lockfile and all transitive tool hashes. Formal runtime identity is exactly these seven files:
+
+1. `scripts/performance/parser-responsiveness.mjs`
+2. `scripts/performance/parser-responsiveness-data.mjs`
+3. `scripts/performance/renderer-data.mjs`
+4. `tests/e2e/renderer-workload.mjs`
+5. `tests/e2e/renderer-responsiveness-fixture.mjs`
+6. `tests/e2e/harness.mjs`
+7. `tests/e2e/bounds.mjs`
+
+The new validator imports the unchanged strict `responsiveness-data.mjs`; freeze that dependency separately. Hash relative import dependencies, including harness namespace/server-process helpers, and actual installed Electron, Playwright, esbuild, React, ReactDOM, ReactMarkdown and GFM package manifests. Resource tools have their own complete transitive hash map. A resource collector or an unprofiled mode is not identical measurement configuration to primary formal profiling.
+
+Formal collectors require `--frozen <private-json>`. That root-reviewed file contains `before` and `after` objects with `source`, `buildSha256` and `trackedOverlaySha256`, plus shared `toolingSha256` and `transitiveSha256` maps. The collector checks its side before launch. The comparison checks both sides again. SHA256 of `git diff --binary HEAD` identifies the tracked overlay; porcelain status records untracked overlays, whose actual bytes are separately bound in the tool maps. Build manifests hash every file recursively under `out/`, including main/preload/renderer. A source HEAD is never a substitute for built-file identity. The frozen input itself must be retained with the evidence and independently checked against root's published identities.
+
+After a later START, use only this retained author's clean committed worktree for baseline checkouts. Freeze overlays before checkout. Overlay only reviewed tooling, never product sources. Restore the exact committed candidate and build before handoff, verifying every source/build hash and cleanup. No new worker/worktree or verifier tree. A source or base movement stops the protocol for root reconciliation. Dependencies and installed package identities must match the declared per-side provenance.
+
+Every launch is serialized, physically hidden through the unchanged harness `--test-no-activate`, with an isolated disposable profile, separate server, no background throttling and recording echo adapter. Both new collectors pass `--test-no-machine-usage` and a child-only `SHELL=/bin/zsh`. No live account, profile, shell configuration, installed app, real transcript or machine credential is modified. No artificial busy process or external-load cutoff is allowed. Log load rather than using it to select runs.
+
+`TEST_NO_MACHINE_USAGE` requires `TEST_NO_ACTIVATE` and disables only Claude's default machine-login fallback in `credentialFor`. It does not disable token accounts, whose probe path still exists, or every provider. Main's five-minute Claude/Codex polling already stays off under no-activate. Renderer startup separately primes default Claude usage and the focused sidebar requests its provider. In the isolated empty account profile and this all-Claude/default echo workload, that request returns the existing no-credential error before keychain/network inference. Codex boot priming uses cached snapshots without a live read; no Codex/Pi/provider tab or Usage settings is selected. Existing flag callsites are model-quota, terminal-account-chip and markdown-parser-lifecycle. The flag exists on raw4555 and the feature. If any additional live provider read appears during qualification, stop and propose its specific deterministic isolation mechanism. This protocol makes no blanket provider-isolation claim.
+
+## Primary formal pair
+
+The new formal collector derives from the frozen original collector. Preserve its native input request clock, capture-phase handler start and second rAF clock. Keep `metrics`, `arm`, `observed` and `interactions` unchanged. No debugger breakpoint, render-count observer, heap collector or hidden prewarm accompanies latency collection.
+
+Keep 100 tabs in 10 groups, 20 histories of 200 turns, the other 80 histories of two turns, unchanged LONG_RESPONSE of 34380 bytes, unique 128-byte numbered deltas at 50ms intervals, five-second off/on task windows, 30 samples for each action/phase after five warmups, and three fresh launches per side. The unchanged structure fixture receipt and actual session count accompany every launch. Session zero receives the response and stream. The producer's existing 90-second ceiling is an invalidity condition, not a longer sampling window.
+
+Primary order is BEFORE1, BEFORE2, BEFORE3, AFTER1, AFTER2, AFTER3. Use default logo, CPU Profiler enabled with 1000 microsecond interval and the unchanged CPU Performance task clocks. Future command forms, not commands executed during tooling preparation:
+
+```sh
+node scripts/performance/parser-responsiveness.mjs --out <fresh-before> --cohort before --mode primary --frozen <root-before-after-bindings.json>
+node scripts/performance/parser-responsiveness.mjs --out <fresh-after> --cohort after --mode primary --frozen <root-before-after-bindings.json>
+```
+
+The validator requires numeric exit status zero, all three completed/closed/cleaned launches, completed off/on phases, dense finite nonnegative raw samples, exact config and tooling identity, valid nonempty raw and normalized profile artifacts paired by canonical JSON SHA256 and recomputed normalization audit, exact ordered stream conservation, zero page errors and 17-21Hz actual stream rate. Pair mean-rate difference must be at most 10%. Missing profiles or profile-disabled data cannot pass as formal. Keep signed raw CPU intervals and the unchanged normalization audit; do not rewrite observations.
+
+Pass through the unchanged strict comparison. Require at least 60% reduction in median extra renderer task cost; positive before cost; pooled on-phase native composer request p95 at most 50ms; tab/composer handler p95 at most 50ms; group handler p95 at most 75ms. Retain both request and handler distributions for all actions and both phases. Group request, every off-phase clock, maxima and every value above 100ms remain reported even where they have no separate acceptance ceiling. `parserLaunchSummaries` provides each launch's p95/max/over100 lists in addition to pooled summaries. Pure comparison receives parsed actual profile files through its `beforeProfiles` and `afterProfiles` inputs; an artifact filename alone is insufficient.
+
+Before formal data can yield GO, separately establish zero unrelated pane renders with positive entered-function instrumentation using the existing `renderer-responsiveness` functional diagnostic on the exact source/build. It must observe the incoming/outgoing panes, never treat absent breakpoints as zero, and finish/detach/close before latency launches. Native correctness evidence and its mutation limits remain separate. A current candidate render-count diagnostic is still owed at collection START.
+
+A primary invalidity or target miss stops for evidence review. Preserve FAIL, raw samples, all launch/phase data, per-launch and pooled tails, profiles, load and rates. Do not retry an unchanged primary pair to replace it. Synthetic passing fixtures are validator tests, never a performance result or a conversion of historical FAIL to PASS.
+
+## Predeclared secondary diagnostics
+
+Only after a valid passing primary pair, collect six fresh candidate launches in order P/U/P/U/P/U. Each has the same 30 samples, logo, workload and Performance metrics. Only CPU Profiler enable/set interval/start/stop and the associated profile output are disabled in U. The same collector has an explicit mode/config field; never label U as primary or pool its samples with primary. Each P/U invocation has `--runs 1 --cohort after --mode profiled|unprofiled`, a fresh output directory and the same root-frozen identities.
+
+Then collect three fresh candidate launches with actual optional weaving orb, profiled at 1ms, 30 samples and unchanged workload. Use `--cohort after --mode orb --mark weaving`. The disposable profile alone gets actual `clave-agent-mark=clave.orbs/orbs` and `clave-orbs-state=weaving`, then reloads before seeding so the real bundled plugin reads them. Positively assert the selected working weaving canvas and zero Settings swatches. This avoids introducing hidden Appearance sample canvases as an unreported extra workload. Logo runs do not reload or alter the mark. This additional renderer-load diagnostic is disclosed as a different mark configuration, never primary or universal settings proof.
+
+Retain each secondary launch's raw samples, task cost, p95/max/over100, profiles where present, load, realized rates and failures. No external-load threshold discards a run. These nine launches cannot substitute for a primary miss. Exact runtime qualification of both profiler modes and orb selection is still owed; preparation syntax/build checks do not prove them.
+
+## Resource qualification gate
+
+Actual renderer usedSize after forced full GC is the acceptance quantity. Logical prefix/source counters are insufficient. The installed Playwright protocol declares `HeapProfiler.collectGarbage`, `HeapProfiler.takeHeapSnapshot` with numerical capture/internals, and `Runtime.getHeapUsage` with usedSize, totalSize, embedderHeapUsedSize and backingStorageSize. These declarations were inspected without invoking any CDP method.
+
+The supplied resource command is deliberately a qualification collector, not an executable six-launch acceptance collector yet. `--purpose collection` fails before launching an app. There is no override/assume-qualified flag. Pure V8-format graph fixtures validate shape recognition, internal closure/context links, weak-edge exclusion, incomplete graphs, post-close positive prerequisites and deliberately linked old generations. String reconstruction follows only unique internal first/second cons links with iterative finite-graph traversal, cycle checks and the reconstruction runtime's actual string-size ceiling. Fixtures include a500-chunk unbalanced rope and shared empty/nonempty subgraphs. Representation links stay separate from the ordinary application property/context field whitelist. Missing, duplicate, wrong-category and cyclic links fail. Truncated flat display names and sliced, thin or unknown representations do not establish an exact canonical match; a cons label is never used in place of its reconstructed children. These fixtures cannot prove actual installed V8 scope layout, numerical encoding, every string representation, React retaining paths or bounded alternate generations.
+
+Proposed separate narrow first qualification START: one candidate launch, plus one matching-R2 launch if needed to qualify the original-full adapter. Each uses the unchanged 100-tab seed and short-history slot99. Warm LONG_RESPONSE plus exactly 500 numbered chunks at 20Hz through the real server stream, nonfinal and working. Observe actual candidate parser entry/tail reuse separately during warmup; original R2 must show its actual installed full parser and no reuse boundary. Select Chat, then Terminal, then Chat with the producer stopped. Compare the entire native visible text to the original public full renderer oracle and exact received canonical deltas. No long history is removed. Record candidate positive source-shaped prefix and real closure contexts before testing absence.
+
+Detach the diagnostic debugger and remove its breakpoint; all debugger evaluations return by value. Stop/delete the resource producer and remove its temporary renderer stream observer/array. Then measure on a new CDP session with no Runtime application-object handles. Release the named Runtime object group, settle for exactly one second bracketed by two-rAF frames, force two full GCs, read actual heap usage and stream a snapshot. No CPU profiler, Performance task clock or latency pooling. Capture warm and final closed milestones. Close the warmed session through the actual app command and replace it with an equivalent two-turn short seed in the same group before final settling, keeping 100 tabs and all20long histories. Preserve the product's normal closed-session archives/events.
+
+Future qualification command form requires a separate START:
+
+```sh
+node scripts/performance/parser-resource.mjs --purpose qualification --cohort candidate --out <fresh-summary> --private <fresh-outside-repo-private-dir>
+```
+
+The qualifier preserves observations before graph analysis, exits nonzero/HOLD even on successful shape recognition, and never sets `qualified=true`. Unknown numeric/string/context/React shapes, no positive warm store match, missing/incomplete graphs, unexpected history fields, a live post-close prefix or inability to attribute retention is a blocker. Preserve raw snapshots on any failure. Do not invent a zero or suppress a retaining edge. In this preparation patch the shape decoder intentionally does not claim numeric accounting/cap verification, full processor-closure exclusion or bounded React generations. Root must review actual graphs and explicitly approve an exact graph adapter and protocol amendment before resource acceptance collection is enabled.
+
+Raw snapshots stay outside the repo in a fresh0700 directory, each file0600. Never commit/upload raw heap data. Retain metadata and raw SHA256/size in summaries, not the raw canonical strings. Structural path summaries include heap node ids, edge kinds/names and closure names. Review those summaries before any publication.
+
+## Resource acceptance after qualification and amendment
+
+This section specifies the required next collector behavior. It is not implemented as an authorized acceptance run by the unqualified command above.
+
+Collect three fresh matching-R2 launches followed by three fresh candidate launches, serialized with identical fixed seed, short-history slot, isolated data, separate server, child environment, settling and no CPU profiling. For each launch observe the initial LONG_RESPONSE plus500chunk warm state after both views hold the same canonical text. Record usedSize/totalSize and available embedder/backing metrics after full GC.
+
+After the initial probe, close/replace it with an equivalent short two-turn seed. Repeat five replacement warm/close cycles. Each replacement receives LONG_RESPONSE plus a declared unique resource-only cycle label and exactly20 numbered chunks at20Hz; select both native views and return to the first with producer stopped; prove exact canonical text and nonfinal working state. Close/replace through actual session commands, restoring100sessions. Never discard normally retained archive/event records. The proposed milestones are `warm`, `cycle-1-warm`, `cycle-1-closed`, through `cycle-5-warm`, `cycle-5-closed`, then a final identical-settle `final-closed`. A closed milestone is observed after its equivalent short replacement exists, preserving100sessions. The final unused short replacement stays un-warmed.
+
+Graph analysis must positively identify source-shaped kind/signature/snapshot/blocks/accounting objects and actual local store closure contexts via strong roots. Exclude weak edges. Decode and verify actual source/node accounting against unchanged64blocks/131072bytes/4096nodes. Show all store generations, bounded React alternates and concrete current/alternate roots; exclude application predecessor chains, old input/tail histories and retained parser/processor contexts. Any legitimate canonical/transcript or React retention must be identified by concrete paths, compared with equal R2 operations and reported. Final closed graph should have no live probe-store prefix. Cleanup counters alone and zero matches without an earlier positive warm match are invalid.
+
+The resource comparator requires all three launches and every fixed milestone, actual finite positive sizes with totalSize at least usedSize, numeric success status, completed cleanup, zero renderer errors, root-frozen per-side source/build/tool identities and a reviewed actual graph qualification. Candidate warm median usedSize must be at most1.20 times the R2 warm median. Report all individual values, pairwise ratios, range and the full closed-cycle trajectory as well. Never reject a launch after seeing its size. A >20% increase, semantic/cap failure or unexplained retaining path stops for evidence review. This preparation offers no measured ratio, leak conclusion or performance-readiness claim.
+
+## Preservation and handoff
+
+Original frozen collector/validator/harness/workload/fixture/bounds and all historical104archive/report/lineage files stay unchanged. Keep every prior failure, NOT CAUGHT and mutation matrix. New evidence must use a new directory; never overwrite primary FAIL or old receipts. Persist failed child status, unknown/empty work and cleanup evidence. Do not run a formal/resource command during preparation. Static syntax and tooling-only bundle checks are not runtime qualification.
+
+Before any later runtime START, root must commit/freeze tooling, publish exact protocol/hash/source identities, reconcile source/dev/CI, approve the narrow actual-graph qualification, and later approve resource acceptance collection. After resource acceptance, root separately authorizes formal collection and any conditional secondary diagnostics. Same independent Opus review remains required on the committed candidate. No product optimization, cap change, worker, account/profile switch, publication, baseline checkout or integration follows automatically from this document.
