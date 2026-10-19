@@ -118,7 +118,7 @@ Set at most one agent mode. If `antigravityMode`, `codexMode`, `piMode`, or `cla
 
 | Token | Expands to |
 |---|---|
-| `@root_path` | Absolute workspace root, e.g. `/Users/you/.codika` |
+| `@root_path` | Absolute workspace root, e.g. `/Users/you/.antasphere` |
 | `@project_path` | Project dir **relative to root**, e.g. `clients/acme` (derived from the file's location + its `cwd`) |
 | `@project_abs` | Project dir absolute path |
 

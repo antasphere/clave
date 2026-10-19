@@ -15,7 +15,8 @@ import {
   useClaudeAccountsUsage,
   useCodexAccountsUsage,
   headroomLabel,
-  formatReset
+  formatReset,
+  claudeUsageForModel
 } from '../../store/usage-store'
 import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
 import type { Session } from '../../store/session-types'
@@ -45,7 +46,7 @@ export function AccountMenuHeader({
     : describeClaudeProfileAuth(getClaudeProfile(own.removed ? undefined : own.id))
   const claudeSummary = useClaudeAccountsUsage((s) => s.byAccount[own.id])
   const codexSummary = useCodexAccountsUsage((s) => s.byAccount[own.id])
-  const summary = codex ? codexSummary : claudeSummary
+  const summary = codex ? codexSummary : claudeUsageForModel(claudeSummary, session.model)
   const headroom = headroomLabel(summary)
   const exhausted = isExhausted(summary)
   // At its limit the question is when it comes back (the stopping cap's

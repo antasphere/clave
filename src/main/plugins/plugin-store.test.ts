@@ -152,7 +152,7 @@ it('activates only the bundled plugins the host lists, and grants nothing to the
     permissionsGranted: [],
     status: 'disabled'
   })
-  expect(BUNDLED_ON_FIRST_INSTALL).toEqual(['clave.chat-view', 'clave.github'])
+  expect(BUNDLED_ON_FIRST_INSTALL).toEqual(['clave.chat-view', 'clave.github', 'clave.orbs'])
 })
 
 it('keeps declaration and grants independent for bundled plugins', () => {
