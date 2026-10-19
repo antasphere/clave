@@ -1,8 +1,8 @@
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import type { Components } from 'react-markdown'
+import { MarkdownMessage } from './MarkdownMessage'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
@@ -327,9 +327,9 @@ const EntryRow = memo(function EntryRow({
     return (
       <div className="chat-turn-wrap" data-side="start">
         <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          <MarkdownMessage final={entry.final} components={markdownComponents}>
             {entry.text}
-          </ReactMarkdown>
+          </MarkdownMessage>
         </article>
         <TurnMeta at={entry.at} text={entry.text} />
       </div>
