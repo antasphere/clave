@@ -498,6 +498,8 @@ type SaveItem = { data: { groups: SessionGroup[]; displayOrder: string[] }; json
  *  is out, a refusal applying the server's snapshot. */
 const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
   current: () => {
+    // Do not echo a displaced tab back while its process inventory is unresolved.
+    if (pendingLayout) return null
     const { groups, displayOrder } = useSessionStore.getState()
     const data = partitionLayout({ groups, displayOrder }, LOCAL_SERVER_ID)
     const json = JSON.stringify(data)
@@ -524,6 +526,7 @@ const savePipeline = createSavePipeline<SaveItem, SidebarLayoutSnapshot>({
  *  save read every server group the window lacked as the window's removal
  *  and wrote the layout back without them (verifier round 2, Major 1). */
 export function setSidebarBase(snapshot: SidebarLayoutSnapshot): void {
+  pendingLayout = null
   savePipeline.setRevision(snapshot.revision)
   lastPersistedJson = JSON.stringify({
     groups: snapshot.groups,
@@ -579,7 +582,148 @@ export function applyServerLayout(
  * again on the revision it now knows: the refs below are left as they were
  * so the store's subscription fires. The pipeline decides WHEN this runs.
  */
+type Layout = Pick<SidebarLayoutSnapshot, 'groups' | 'displayOrder'>
+type DisplacedSession = { identity: string; placement: string; keep: boolean }
+type PendingLayout = {
+  snapshot: SidebarLayoutSnapshot
+  sessions: Map<string, DisplacedSession>
+  failed: boolean
+}
+let pendingLayout: PendingLayout | null = null
+
+function placementOf(layout: Layout, id: string): string {
+  return JSON.stringify([
+    layout.displayOrder.includes(id),
+    layout.groups
+      .flatMap((g) => [
+        ...(g.sessionIds.includes(id) ? [`member:${g.id}`] : []),
+        ...g.terminals.filter((t) => t.sessionId === id).map((t) => `terminal:${g.id}:${t.id}`)
+      ])
+      .sort()
+  ])
+}
+
+function layoutPlaces(layout: Layout, id: string): boolean {
+  return (
+    layout.displayOrder.includes(id) ||
+    layout.groups.some(
+      (g) => g.sessionIds.includes(id) || g.terminals.some((t) => t.sessionId === id)
+    )
+  )
+}
+
+function sessionIdentity(session: Session): string {
+  return JSON.stringify([
+    session.cwd,
+    session.sessionType,
+    session.spawnedAt,
+    session.restartEpoch,
+    session.claudeSessionId,
+    session.launchProfileId,
+    session.view
+  ])
+}
+
+// Lifecycle actions invalidate reads taken before a restart, including a
+// true/false cycle that ends before the inventory promise settles.
+function preservePendingSession(id: string): void {
+  const candidate = pendingLayout?.sessions.get(id)
+  if (candidate) candidate.keep = true
+}
+
+function settlePendingLayout(
+  pending: PendingLayout,
+  inventory: Awaited<ReturnType<typeof window.electronAPI.sessionsList>> | null
+): void {
+  if (pendingLayout !== pending) return
+  const state = useSessionStore.getState()
+  const closed = new Set<string>()
+  const retained = new Set<string>()
+  for (const [id, candidate] of pending.sessions) {
+    const session = state.sessions.find((s) => s.id === id)
+    if (!session) continue
+    if (
+      candidate.keep ||
+      sessionIdentity(session) !== candidate.identity ||
+      placementOf(state, id) !== candidate.placement ||
+      session.restarting ||
+      linkedEditorBlocksClose(id)
+    ) {
+      retained.add(id)
+    } else if (
+      !session.alive ||
+      (inventory && !inventory.some((s) => s.id === id && s.state !== 'ended'))
+    ) {
+      closed.add(id)
+    } else if (inventory) {
+      retained.add(id)
+    } else {
+      // A failed read is not an empty inventory. Keep the working copy and
+      // suspend saves until a newer layout or a definitive lifecycle event.
+      return
+    }
+  }
+  pendingLayout = null
+  applyResolvedServerLayout(pending.snapshot, closed, retained)
+}
+
 function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
+  pendingLayout = null // A newer snapshot supersedes every older inventory read.
+  const state = useSessionStore.getState()
+  const base: Layout = lastPersistedJson
+    ? JSON.parse(lastPersistedJson)
+    : { groups: [], displayOrder: [] }
+  const sessions = new Map<string, DisplacedSession>()
+  for (const session of state.sessions) {
+    if (
+      isRemoteKey(session.id) ||
+      !session.alive ||
+      session.restarting ||
+      linkedEditorBlocksClose(session.id) ||
+      !layoutPlaces(base, session.id) ||
+      layoutPlaces(snapshot, session.id)
+    )
+      continue
+    const placement = placementOf(state, session.id)
+    sessions.set(session.id, {
+      identity: sessionIdentity(session),
+      placement,
+      keep: placement !== placementOf(base, session.id)
+    })
+  }
+  if (sessions.size === 0) {
+    applyResolvedServerLayout(snapshot)
+    return
+  }
+  const pending: PendingLayout = { snapshot, sessions, failed: false }
+  pendingLayout = pending
+  // Hold the incoming layout, rather than appending a potentially closed tab
+  // and saving that provisional placement. Merge current local edits only
+  // after the existing public inventory has resolved the displaced tabs.
+  void Promise.resolve()
+    .then(() => window.electronAPI.sessionsList())
+    .then(
+      (inventory) => settlePendingLayout(pending, inventory),
+      () => {
+        if (pendingLayout !== pending) return
+        pending.failed = true
+        void window.electronAPI
+          ?.showNotification?.({
+            title: 'Sidebar changes are waiting',
+            body: 'Could not check displaced sessions. Sidebar changes remain in this window until session state is available.',
+            sessionId: ''
+          })
+          .catch(() => {})
+        settlePendingLayout(pending, null)
+      }
+    )
+}
+
+function applyResolvedServerLayout(
+  snapshot: SidebarLayoutSnapshot,
+  confirmedClosed = new Set<string>(),
+  retained = new Set<string>()
+): void {
   let dropped: { id: string; name: string }[] = []
   const closed = new Set<string>()
   const unknownTerminals: string[] = []
@@ -635,7 +779,12 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
     // unsaved edits keeps its tab, as a close made from this window would.
     for (const s of state.sessions) {
       if (nested.has(s.id) || placed.has(s.id)) continue
-      if (!s.alive && !linkedEditorBlocksClose(s.id)) {
+      if (
+        !retained.has(s.id) &&
+        !s.restarting &&
+        (confirmedClosed.has(s.id) || !s.alive) &&
+        !linkedEditorBlocksClose(s.id)
+      ) {
         closed.add(s.id)
         if (s.view?.serverSessionId) closed.add(s.view.serverSessionId)
         continue
@@ -1670,19 +1819,28 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ messageTrailEnabled })
   },
 
-  updateSessionAlive: (id, alive) =>
+  updateSessionAlive: (id, alive) => {
+    if (alive) preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === id ? { ...s, alive, ...(!alive && { activityStatus: 'ended' as const }) } : s
       )
-    })),
+    }))
 
-  setSessionRestarting: (id, restarting) =>
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
+
+  setSessionRestarting: (id, restarting) => {
+    if (restarting) preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) => (s.id === id ? { ...s, restarting } : s))
-    })),
+    }))
 
-  applySessionRestart: (id, patch) =>
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
+
+  applySessionRestart: (id, patch) => {
+    preservePendingSession(id)
     set((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === id
@@ -1699,7 +1857,10 @@ export const useSessionStore = create<SessionState>((set) => ({
             }
           : s
       )
-    })),
+    }))
+
+    if (pendingLayout?.failed) settlePendingLayout(pendingLayout, null)
+  },
 
   setAccountPinned: (id, pinned) =>
     set((state) => ({
@@ -2222,6 +2383,17 @@ export const useSessionStore = create<SessionState>((set) => ({
 // re-adopted sessions. Disabled until `enableSidebarPersistence()` runs so the
 // empty initial state can't clobber the saved file before it's loaded.
 useSessionStore.subscribe((state) => {
+  if (pendingLayout) {
+    for (const [id, candidate] of pendingLayout.sessions) {
+      const session = state.sessions.find((s) => s.id === id)
+      if (
+        session &&
+        (sessionIdentity(session) !== candidate.identity ||
+          placementOf(state, id) !== candidate.placement)
+      )
+        candidate.keep = true
+    }
+  }
   if (!sidebarPersistEnabled) return
   if (state.groups !== lastPersistedGroups || state.displayOrder !== lastPersistedOrder) {
     persistSidebarLayout(state)
