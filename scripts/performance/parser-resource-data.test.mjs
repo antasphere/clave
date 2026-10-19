@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
   decodeHeap,
+  readBoundPrefix,
+  readOwnerFiber,
+  summarizeBoundPrefix,
+  bindCapturedGraph,
+  captureQualificationPair,
+  captureHeapCheckpoint,
   inspectPrefixGraph,
   checkResourceComparison,
   RESOURCE_CONFIG
@@ -59,7 +65,7 @@ function heap({
     ['object', 'Set', []],
     ['closure', 'publish', []],
     ['number', '2', []],
-    ['number', '12', []],
+    ['number', '8', []],
     ['number', '1', []],
     ['object', 'object', []]
   ]
@@ -71,7 +77,8 @@ function heap({
     }
     return i
   }
-  const edge = (from, type, name, to) => specs[from][2].push([type, s(name), to * 5])
+  const edge = (from, type, name, to) =>
+    specs[from][2].push([type, type === 1 ? Number(name) : s(name), to * 6])
   if (missingContext && !weak) edge(0, 0, 'unattributed-state', 1)
   if (!closed) {
     edge(0, weak ? 3 : 0, 'store', 9)
@@ -91,7 +98,7 @@ function heap({
     ['input', 5],
     ['blocks', 6],
     ['accounting', 7],
-    ['cut', 14],
+    ['cut', 12],
     ['line', 14],
     ['rootStart', 15]
   ])
@@ -104,6 +111,27 @@ function heap({
     ['blocks', 14]
   ])
     edge(7, 0, name, to)
+  // Actual captured V8 numbers are number -> internal value -> decimal string.
+  for (const i of [12, 13, 14]) {
+    const n = specs.length
+    specs.push(['string', specs[i][1], []])
+    specs[i][1] = 'smi number'
+    edge(i, 4, 'value', n)
+  }
+  const paragraph = specs.length
+  specs.push(['object', 'Object', []])
+  const text = specs.length
+  specs.push(['object', 'Object', []])
+  const children = specs.length
+  specs.push(['array', 'object', []])
+  const value = specs.length
+  specs.push(['string', 'ab', []])
+  edge(6, 1, '0', paragraph)
+  edge(paragraph, 0, 'type', value)
+  edge(paragraph, 0, 'children', children)
+  edge(children, 1, '0', text)
+  edge(text, 0, 'type', value)
+  edge(text, 0, 'value', value)
   if (history) {
     const oldState = specs.length
     specs.push(['object', 'object', []])
@@ -122,7 +150,7 @@ function heap({
       ['input', oldInput],
       ['blocks', 6],
       ['accounting', 7],
-      ['cut', 14],
+      ['cut', 12],
       ['line', 14],
       ['rootStart', 15]
     ])
@@ -133,14 +161,14 @@ function heap({
   const types = ['synthetic', 'object', 'string', 'array', 'hidden', 'closure', 'number']
   for (let i = 0; i < specs.length; i++) {
     const [type, name, es] = specs[i]
-    nodes.push(types.indexOf(type), s(name), i + 1, 8, es.length)
+    nodes.push(types.indexOf(type), s(name), i + 1, 8, es.length, 0)
     for (const e of es) edges.push(...e)
   }
   return {
     snapshot: {
       meta: {
-        node_fields: ['type', 'name', 'id', 'self_size', 'edge_count'],
-        node_types: [types, 'string', 'number', 'number', 'number'],
+        node_fields: ['type', 'name', 'id', 'self_size', 'edge_count', 'detachedness'],
+        node_types: [types, 'string', 'number', 'number', 'number', 'number'],
         edge_fields: ['type', 'name_or_index', 'to_node'],
         edge_types: [
           ['property', 'element', 'context', 'weak', 'internal'],
@@ -298,7 +326,8 @@ function stringGraph() {
       intern(name),
       index + 1,
       8,
-      links.length
+      links.length,
+      0
     )
     for (const [kind, label, target] of links) {
       raw.edges.push(
@@ -467,8 +496,8 @@ test('ordinary internal map metadata stays outside the application field whiteli
   // Retarget the store context's actual snapshot value to the source-shaped state.
   for (let i = 0; i < g.raw.edges.length; i += 3)
     if (g.raw.edges[i] === 2 && g.raw.strings[g.raw.edges[i + 1]] === 'snapshot')
-      g.raw.edges[i + 2] = internalState * 5
-  assert.equal(originalNodeCount, 16)
+      g.raw.edges[i + 2] = internalState * 6
+  assert.equal(originalNodeCount, 23)
   const result = inspectPrefixGraph(g.raw, { expectedInput: 'synthetic-current' })
   assert.equal(result.storeContexts[0].stateId, internalState + 1)
   assert.equal(decodeHeap(g.raw).properties(internalState).has('map'), false)
@@ -481,4 +510,519 @@ test('explicit truncated metadata cannot establish a match from its display name
     () => inspectPrefixGraph(g.input(index), { expectedInput: 'synthetic-current' }),
     /unsupported heap string representation/
   )
+})
+
+function retarget(raw, label, to, edgeType) {
+  let count = 0
+  for (let i = 0; i < raw.edges.length; i += 3)
+    if (
+      raw.strings[raw.edges[i + 1]] === label &&
+      (edgeType === undefined || raw.snapshot.meta.edge_types[0][raw.edges[i]] === edgeType)
+    ) {
+      raw.edges[i + 2] = to * raw.snapshot.meta.node_fields.length
+      count++
+    }
+  assert.ok(count > 0)
+}
+function boilerplate(appOwned = false) {
+  const g = stringGraph(),
+    hole = g.add('hidden', 'system / Hole')
+  const state = g.add('object', 'Object', [
+    ['property', 'kind', 2],
+    ['property', 'signature', hole],
+    ['property', 'snapshot', hole]
+  ])
+  const site = g.add('code', 'system / AllocationSite', [
+    ['internal', 'transition_info', state],
+    ['internal', 'publisher', 11]
+  ])
+  retarget(g.raw, 'publisher', site, 'property')
+  if (appOwned) retarget(g.raw, 'snapshot', state, 'context')
+  return { g, state, site }
+}
+test('excludes only witnessed code AllocationSite Hole boilerplate', () => {
+  const { g, state } = boilerplate()
+  const result = inspectPrefixGraph(g.raw, { discoveryOnly: true })
+  assert.equal(result.exclusions.length, 1)
+  assert.equal(result.exclusions[0].nodeId, state + 1)
+  assert.equal(result.exclusions[0].incoming[0].edge, 'transition_info')
+  assert.equal(result.allPrefixes.length, 1)
+})
+test('app-owned Hole is an error even with a code AllocationSite holder', () => {
+  const { g } = boilerplate(true)
+  assert.throws(() => inspectPrefixGraph(g.raw, { discoveryOnly: true }), /app-owned/)
+})
+for (const mode of [
+  'missing',
+  'duplicate',
+  'wrong-category',
+  'wrong-target',
+  'negative',
+  'fraction',
+  'nan',
+  'infinity',
+  'overflow',
+  'leading-zero'
+])
+  test('strict real V8 numeric rejects ' + mode, () => {
+    const g = stringGraph()
+    const labels = {
+      negative: '-1',
+      fraction: '1.5',
+      nan: 'NaN',
+      infinity: 'Infinity',
+      overflow: '9007199254740992',
+      'leading-zero': '01'
+    }
+    const value = g.add(mode === 'wrong-target' ? 'object' : 'string', labels[mode] ?? '24')
+    const links =
+      mode === 'missing'
+        ? []
+        : [[mode === 'wrong-category' ? 'property' : 'internal', 'value', value]]
+    if (mode === 'duplicate') links.push(['internal', 'value', value])
+    const n = g.add('number', 'smi number', links)
+    assert.throws(() => decodeHeap(g.raw).integer(n), /numeric|decimal|integer/)
+  })
+test('real numeric value does not use number display label', () => {
+  const g = stringGraph(),
+    value = g.add('string', '24'),
+    n = g.add('number', 'smi number', [['internal', 'value', value]])
+  assert.equal(decodeHeap(g.raw).integer(n), 24)
+  assert.throws(() => decodeHeap(g.raw).integer(value), /typed number/)
+})
+test('structural recount is independent of reported nodes and blocks', () => {
+  const g = stringGraph(),
+    number = g.add('number', 'smi number', [['internal', 'value', g.add('string', '3')]])
+  retarget(g.raw, 'nodes', number, 'property')
+  assert.throws(() => inspectPrefixGraph(g.raw, { discoveryOnly: true }), /nodes recount/)
+})
+function freezeAll(o) {
+  if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+    Object.values(o).forEach(freezeAll)
+    Object.freeze(o)
+  }
+  return o
+}
+function immutablePrefix(input = 'ab tail') {
+  const snapshot = {
+    input,
+    cut: 2,
+    line: 1,
+    blocks: [{ type: 'paragraph', children: [{ type: 'text', value: 'ab' }] }],
+    rootStart: { line: 1, column: 1, offset: 0 },
+    accounting: {
+      blocks: 1,
+      nodes: 2,
+      sourceSpanCodeUnits: 2,
+      astStringCodeUnits: 2,
+      sourceBytes: 8
+    }
+  }
+  return freezeAll({ kind: 'prefix', signature: 'remark-gfm4:singleTilde=true', snapshot })
+}
+function boundRow(state = immutablePrefix()) {
+  return {
+    nodeId: 101,
+    snapshotId: 103,
+    inputId: 105,
+    cut: 2,
+    line: 1,
+    accounting: state.snapshot.accounting,
+    structure: { blocks: 1, nodes: 2 }
+  }
+}
+test('read-only immutable binding recounts full string units and matches same snapshot', () => {
+  const state = immutablePrefix('ab\ud800 tail')
+  const value = readBoundPrefix.call(state, state.snapshot)
+  assert.equal(value.input, state.snapshot.input)
+  const r = summarizeBoundPrefix(value, boundRow(state), [state.snapshot.input])
+  assert.equal(r.inputCodeUnits, 8)
+  assert.equal(r.encoding, 'utf16le')
+  assert.equal(r.exactCanonical, true)
+  assert.equal(Object.hasOwn(value, 'input'), false)
+  assert.throws(() => readBoundPrefix.call(state, immutablePrefix().snapshot), /immutable/)
+})
+for (const mode of ['getter', 'unfrozen', 'unexpected', 'bad-account', 'cycle', 'over-cap'])
+  test('live plain data refuses ' + mode, () => {
+    const state = structuredClone(immutablePrefix())
+    if (mode === 'getter')
+      Object.defineProperty(state.snapshot, 'input', {
+        get() {
+          throw new Error('GETTER EXECUTED')
+        }
+      })
+    if (mode === 'unexpected') state.snapshot.processor = {}
+    if (mode === 'bad-account') state.snapshot.accounting.nodes = 1
+    if (mode === 'cycle') state.snapshot.blocks[0].children = [state.snapshot.blocks[0]]
+    if (mode === 'over-cap') state.snapshot.cut = 200000
+    if (mode !== 'unfrozen') {
+      // Avoid calling an adversarial getter in the test's own freezer.
+      const stack = [state],
+        seen = new Set()
+      while (stack.length) {
+        const o = stack.pop()
+        if (!o || typeof o !== 'object' || seen.has(o)) continue
+        seen.add(o)
+        for (const d of Object.values(Object.getOwnPropertyDescriptors(o)))
+          if ('value' in d) stack.push(d.value)
+        Object.freeze(o)
+      }
+    }
+    assert.throws(() => readBoundPrefix.call(state, state.snapshot), /immutable/)
+  })
+test('clipped display equality cannot substitute for full canonical identity', () => {
+  const state = immutablePrefix('x'.repeat(1024)),
+    value = readBoundPrefix.call(state, state.snapshot)
+  assert.throws(
+    () => summarizeBoundPrefix(value, boundRow(state), ['x'.repeat(2048)]),
+    /exact declared/
+  )
+  assert.equal(Object.hasOwn(value, 'input'), false)
+  const graph = inspectPrefixGraph(heap(), { expectedInput: 'synthetic-current' })
+  assert.equal(graph.matches[0].inputIdentity, 'unbound')
+  assert.equal(graph.matches[0].inputMatches, undefined)
+})
+function fiberPair() {
+  const root = { tag: 3, stateNode: {} },
+    fiber = { tag: 0, return: root },
+    alternate = { tag: 0, return: root }
+  fiber.alternate = alternate
+  alternate.alternate = fiber
+  root.child = fiber
+  root.stateNode.current = root
+  return { root, fiber, alternate }
+}
+test('owner proof distinguishes root.current reachability from return pointers', () => {
+  const { root, fiber, alternate } = fiberPair()
+  assert.equal(readOwnerFiber.call(fiber).branch, 'current')
+  assert.equal(readOwnerFiber.call(alternate).branch, 'alternate')
+  root.child = alternate
+  assert.equal(readOwnerFiber.call(fiber).branch, 'alternate')
+})
+for (const mode of ['nonreciprocal', 'disconnected', 'ambiguous', 'cycle', 'getter'])
+  test('owner rejects ' + mode, () => {
+    const { root, fiber, alternate } = fiberPair()
+    if (mode === 'nonreciprocal') alternate.alternate = null
+    if (mode === 'disconnected') root.child = null
+    if (mode === 'ambiguous') fiber.sibling = alternate
+    if (mode === 'cycle') fiber.return = fiber
+    if (mode === 'getter')
+      Object.defineProperty(fiber, 'alternate', {
+        get() {
+          throw new Error('GETTER EXECUTED')
+        }
+      })
+    assert.throws(() => readOwnerFiber.call(fiber), /Fiber|owner|reachability/)
+  })
+test('unknown, processor and history holders remain unresolved without generation allowance', () => {
+  for (const label of ['processor', 'previous', 'history']) {
+    const g = stringGraph(),
+      unknown = g.add('object', 'Object', [
+        ['property', label, 1],
+        ['internal', 'publisher', 11]
+      ])
+    retarget(g.raw, 'publisher', unknown, 'property')
+    const graph = inspectPrefixGraph(g.raw, { discoveryOnly: true })
+    assert.equal(graph.ownership.qualified, false)
+    assert.ok(graph.ownership.unresolved.some((r) => r.edge === label))
+  }
+})
+function mockCdp({
+  readFails = false,
+  releaseFails = false,
+  invalidation = 'missing',
+  wrongSnapshot = false
+} = {}) {
+  const calls = [],
+    live = new Map(),
+    state = immutablePrefix(),
+    row = boundRow(state)
+  const session = {
+    async send(method, params) {
+      calls.push({ method, params })
+      if (method === 'HeapProfiler.getObjectByHeapObjectId') {
+        const handle = 'remote-' + params.objectId
+        live.set(
+          handle,
+          params.objectId === '101'
+            ? state
+            : wrongSnapshot
+              ? immutablePrefix().snapshot
+              : state.snapshot
+        )
+        return { result: { objectId: handle } }
+      }
+      if (method === 'Runtime.releaseObjectGroup') {
+        if (releaseFails) throw new Error('permission denied')
+        live.clear()
+        return {}
+      }
+      if (method === 'Runtime.callFunctionOn') {
+        if (!live.has(params.objectId)) {
+          if (invalidation === 'usable') return { result: { value: 1 } }
+          throw new Error(
+            invalidation === 'disconnect'
+              ? 'session disconnected'
+              : 'Could not find object with given id'
+          )
+        }
+        if (readFails) throw new Error('mock read unsupported')
+        const fn = Function('return (' + params.functionDeclaration + ')')()
+        return {
+          result: {
+            value: fn.call(
+              live.get(params.objectId),
+              ...(params.arguments ?? []).map((a) => live.get(a.objectId))
+            )
+          }
+        }
+      }
+      throw new Error('unexpected mock method ' + method)
+    }
+  }
+  return { session, calls, state, row, graph: { allPrefixes: [row], ownership: { fibers: [] } } }
+}
+test('mock post-snapshot binding uses exact ids/group, returns no body and invalidates every handle', async () => {
+  const m = mockCdp(),
+    receipt = await bindCapturedGraph(m.session, m.graph, [m.state.snapshot.input])
+  assert.deepEqual(
+    m.calls
+      .filter((c) => c.method === 'HeapProfiler.getObjectByHeapObjectId')
+      .map((c) => c.params.objectId),
+    ['101', '103']
+  )
+  assert.equal(receipt.invalidatedHandles, 2)
+  assert.equal(receipt.qualified, false)
+  assert.equal(JSON.stringify(receipt).includes(m.state.snapshot.input), false)
+  assert.equal(m.calls.at(-1).method, 'Runtime.callFunctionOn')
+})
+for (const mode of ['readFails', 'releaseFails', 'wrongSnapshot', 'usable', 'disconnect'])
+  test('mock binding propagates ' + mode + ' with cleanup attempt', async () => {
+    const m = mockCdp(
+      mode === 'usable' || mode === 'disconnect' ? { invalidation: mode } : { [mode]: true }
+    )
+    await assert.rejects(() => bindCapturedGraph(m.session, m.graph, [m.state.snapshot.input]))
+    assert.ok(m.calls.some((c) => c.method === 'Runtime.releaseObjectGroup'))
+  })
+test('mock binding timeout is bounded and release is still attempted', async () => {
+  const calls = []
+  await assert.rejects(
+    () =>
+      bindCapturedGraph(
+        {
+          send(method) {
+            calls.push(method)
+            return method === 'Runtime.releaseObjectGroup'
+              ? Promise.resolve({})
+              : new Promise(() => {})
+          }
+        },
+        { allPrefixes: [boundRow()], ownership: { fibers: [] } },
+        [],
+        { timeoutMs: 5 }
+      ),
+    /timeout/
+  )
+  assert.ok(calls.includes('Runtime.releaseObjectGroup'))
+})
+test('persisted warm and closed captures precede analysis even on representation failure', async () => {
+  const calls = []
+  const pair = await captureQualificationPair({
+    capture: async (m) => {
+      calls.push('persist-' + m)
+      return { milestone: m }
+    },
+    bind: async (e) => {
+      calls.push('bind-release-' + e.milestone)
+      if (e.milestone === 'warm') throw new Error('unsupported shape')
+    },
+    close: async () => calls.push('close'),
+    analyze: async (e) => {
+      calls.push('analyze-' + e.milestone)
+      return { qualified: false }
+    }
+  })
+  assert.deepEqual(calls, [
+    'persist-warm',
+    'bind-release-warm',
+    'close',
+    'persist-final-closed',
+    'bind-release-final-closed',
+    'analyze-warm',
+    'analyze-final-closed'
+  ])
+  assert.equal(pair.completedRawPair, true)
+  assert.equal(pair.failures.length, 1)
+  assert.equal(pair.qualified, false)
+})
+test('uncertain handle cleanup and semantic close failure stop before another capture', async () => {
+  for (const cleanup of [true, false]) {
+    const calls = []
+    await assert.rejects(() =>
+      captureQualificationPair({
+        capture: async (m) => {
+          calls.push(m)
+          return { milestone: m }
+        },
+        bind: async () => {
+          if (cleanup) throw new AggregateError([], 'cleanup')
+        },
+        close: async () => {
+          throw new Error('semantic close failed')
+        },
+        analyze: async () => {
+          throw new Error('must not analyze')
+        }
+      })
+    )
+    assert.deepEqual(calls, ['warm'])
+  }
+})
+
+function retargetFrom(raw, index, label, to) {
+  const width = raw.snapshot.meta.node_fields.length
+  let start = 0
+  for (let i = 0; i < index; i++) start += raw.nodes[i * width + 4] * 3
+  for (let j = 0; j < raw.nodes[index * width + 4]; j++) {
+    const at = start + j * 3
+    if (raw.strings[raw.edges[at + 1]] === label) {
+      raw.edges[at + 2] = to * width
+      return
+    }
+  }
+  assert.fail('missing test edge ' + label)
+}
+test('raw reciprocal Fiber pair derives finite hook and queue slots from the actual store', () => {
+  const g = stringGraph(),
+    store = g.add('object', 'Object', [['property', 'getSnapshot', 9]])
+  const queue = g.add('object', 'Object', [['property', 'value', 1]])
+  const sync = g.add('object', 'Object', [
+    ['property', 'memoizedState', 1],
+    ['property', 'queue', queue]
+  ])
+  const first = g.add('object', 'Object', [
+    ['property', 'memoizedState', store],
+    ['property', 'next', sync]
+  ])
+  const fiber = g.add('object', 'FiberNode', [
+    ['property', 'memoizedState', first],
+    ['property', 'alternate', 0],
+    ['internal', 'publisher', 11]
+  ])
+  const alternate = g.add('object', 'FiberNode', [
+    ['property', 'memoizedState', first],
+    ['property', 'alternate', fiber]
+  ])
+  retargetFrom(g.raw, fiber, 'alternate', alternate)
+  retarget(g.raw, 'publisher', fiber, 'property')
+  const graph = inspectPrefixGraph(g.raw, { discoveryOnly: true })
+  assert.equal(graph.ownership.fibers.length, 2)
+  assert.ok(graph.ownership.fibers.every((f) => f.slots.length === 2))
+  assert.equal(graph.ownership.unresolved.length, 0)
+  assert.equal(graph.ownership.qualified, false)
+})
+test('internal backing array indices are recounted without entering application fields', () => {
+  const g = stringGraph(),
+    node = g.add('object', 'Object', [['property', 'type', 2]])
+  const backing = g.add('array', '(object elements)', [['internal', '0', node]])
+  const array = g.add('object', 'Array', [['internal', 'elements', backing]])
+  const graph = decodeHeap(g.raw)
+  assert.equal(graph.properties(array).has('elements'), false)
+  // Bad node count must be caught after following the actual backing store.
+  retarget(g.raw, 'blocks', array, 'property')
+  assert.throws(() => inspectPrefixGraph(g.raw, { discoveryOnly: true }), /typed number|recount/)
+})
+test('read-only owner metadata reports terminal view separately and never invents DOM connectedness', () => {
+  const { root, fiber } = fiberPair()
+  const host = {
+    tag: 5,
+    memoizedProps: { className: 'chat-view terminal-view', 'data-session-id': 'synthetic-id' },
+    child: fiber,
+    return: root
+  }
+  root.child = host
+  fiber.return = host
+  const owner = readOwnerFiber.call(fiber)
+  assert.deepEqual(owner.views, ['terminal'])
+  assert.deepEqual(owner.sessionIds, ['synthetic-id'])
+  assert.equal(owner.connected, null)
+  assert.equal(owner.hostAncestorInCurrentTree, true)
+})
+
+test('canonical binding mismatch is semantic and prevents row close or second capture', async () => {
+  const m = mockCdp(),
+    calls = []
+  await assert.rejects(
+    () =>
+      captureQualificationPair({
+        capture: async (milestone) => {
+          calls.push(milestone)
+          return { milestone }
+        },
+        bind: () => bindCapturedGraph(m.session, m.graph, ['a different canonical value']),
+        close: async () => calls.push('close'),
+        analyze: async () => calls.push('analyze')
+      }),
+    /exact declared/
+  )
+  assert.deepEqual(calls, ['warm'])
+  assert.ok(m.calls.some((c) => c.method === 'Runtime.releaseObjectGroup'))
+})
+
+test('actual checkpoint orchestration persists usage then complete raw before heap-id binding', async () => {
+  const calls = [],
+    m = mockCdp()
+  const cdp = {
+    async send(method, params) {
+      calls.push(method)
+      if (method === 'Runtime.getHeapUsage') return { usedSize: 100, totalSize: 200 }
+      if (method === 'HeapProfiler.collectGarbage' || method === 'HeapProfiler.takeHeapSnapshot')
+        return {}
+      return m.session.send(method, params)
+    }
+  }
+  const entry = await captureHeapCheckpoint(cdp, {
+    persistUsage: async (usage) => {
+      calls.push('persist-usage')
+      return { milestone: 'warm', ...usage }
+    },
+    beginSnapshot: async () => calls.push('open-raw'),
+    finishSnapshot: async () => calls.push('persist-complete-raw')
+  })
+  await bindCapturedGraph(cdp, m.graph, [m.state.snapshot.input])
+  assert.equal(entry.usedSize, 100)
+  assert.deepEqual(calls.slice(0, 8), [
+    'Runtime.releaseObjectGroup',
+    'HeapProfiler.collectGarbage',
+    'HeapProfiler.collectGarbage',
+    'Runtime.getHeapUsage',
+    'persist-usage',
+    'open-raw',
+    'HeapProfiler.takeHeapSnapshot',
+    'persist-complete-raw'
+  ])
+  assert.equal(calls[8], 'HeapProfiler.getObjectByHeapObjectId')
+})
+test('incomplete raw checkpoint cannot reach application object lookup', async () => {
+  const calls = []
+  await assert.rejects(
+    () =>
+      captureHeapCheckpoint(
+        {
+          async send(method) {
+            calls.push(method)
+            if (method === 'Runtime.getHeapUsage') return { usedSize: 100, totalSize: 200 }
+            if (method === 'HeapProfiler.takeHeapSnapshot') throw new Error('incomplete raw')
+            return {}
+          }
+        },
+        {
+          persistUsage: async () => ({}),
+          beginSnapshot: async () => {},
+          finishSnapshot: async () => assert.fail('no complete raw')
+        }
+      ),
+    /incomplete raw/
+  )
+  assert.equal(calls.includes('HeapProfiler.getObjectByHeapObjectId'), false)
 })

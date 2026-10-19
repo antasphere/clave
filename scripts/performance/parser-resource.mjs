@@ -30,7 +30,14 @@ import {
   warmResourceProbe,
   replaceResourceSlot
 } from '../../tests/e2e/parser-resource-workload.mjs'
-import { RESOURCE_CONFIG, decodeHeap, inspectPrefixGraph } from './parser-resource-data.mjs'
+import {
+  RESOURCE_CONFIG,
+  decodeHeap,
+  inspectPrefixGraph,
+  bindCapturedGraph,
+  captureQualificationPair,
+  captureHeapCheckpoint
+} from './parser-resource-data.mjs'
 const { values } = parseArgs({
   options: {
     out: { type: 'string' },
@@ -114,6 +121,11 @@ const result = {
     transitiveSha256: Object.fromEntries(
       [...files].sort().map((n) => [n, sha(readFileSync(path.join(REPO, n)))])
     ),
+    dynamicFixtureSha256: {
+      'tests/e2e/renderer-responsiveness-fixture.mjs': sha(
+        readFileSync(path.join(REPO, 'tests/e2e/renderer-responsiveness-fixture.mjs'))
+      )
+    },
     packageLockSha256: sha(readFileSync(path.join(REPO, 'package-lock.json')))
   },
   machine: {
@@ -149,68 +161,87 @@ const record = {
   graphQualified: false
 }
 result.runs.push(record)
-async function observation(milestone, { expected, warm } = {}) {
+const rawFiles = new Map()
+async function observation(milestone) {
   await frames(win)
   await new Promise((resolve) => setTimeout(resolve, RESOURCE_CONFIG.settleMs))
   await frames(win)
-  // Diagnostic was detached in warmResourceProbe. All evaluations returned by value;
-  // no application object is obtained via Runtime remote object handles.
+  // Diagnostic was detached in warmResourceProbe. Application identity reads
+  // begin only after this session has persisted both usage and the full raw file.
   cdp = await win.context().newCDPSession(win)
   let fd, onChunk
   try {
-    await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'parser-resource' })
-    for (let i = 0; i < RESOURCE_CONFIG.gcPasses; i++) await cdp.send('HeapProfiler.collectGarbage')
-    const usage = await cdp.send('Runtime.getHeapUsage')
-    assert.ok(
-      Number.isFinite(usage.usedSize) && usage.usedSize > 0 && usage.totalSize >= usage.usedSize,
-      'actual GC heap metric'
-    )
-    const entry = { milestone, ...usage }
-    record.observations.push(entry)
-    save()
     const filename = path.join(privateDir, `${milestone}.heapsnapshot`)
-    fd = openSync(filename, 'wx', 0o600)
-    onChunk = ({ chunk }) => writeSync(fd, chunk)
-    cdp.on('HeapProfiler.addHeapSnapshotChunk', onChunk)
-    await cdp.send('HeapProfiler.takeHeapSnapshot', {
-      reportProgress: false,
-      captureNumericValue: true,
-      exposeInternals: true
-    })
-    cdp.off('HeapProfiler.addHeapSnapshotChunk', onChunk)
-    onChunk = null
-    closeSync(fd)
-    fd = undefined
-    assert.equal(statSync(filename).mode & 0o777, 0o600, 'private raw heap mode')
-    entry.rawSha256 = sha(readFileSync(filename))
-    entry.rawBytes = statSync(filename).size
-    save()
-    const raw = JSON.parse(readFileSync(filename, 'utf8'))
-    // Unknown/incomplete graph failure preserves both the numeric observation and raw file.
-    if (values.cohort === 'candidate')
-      entry.graph = inspectPrefixGraph(raw, {
-        expectedInput: expected,
-        closed: milestone === 'final-closed',
-        warm
-      })
-    else {
-      const graph = decodeHeap(raw)
-      entry.graph = {
-        qualified: false,
-        reason: 'Original-full graph qualification pending',
-        nodes: graph.nodes.length,
-        strongNodes: graph.parent.size
+    return await captureHeapCheckpoint(cdp, {
+      persistUsage(usage) {
+        const entry = { milestone, ...usage }
+        record.observations.push(entry)
+        save()
+        return entry
+      },
+      beginSnapshot() {
+        fd = openSync(filename, 'wx', 0o600)
+        onChunk = ({ chunk }) => writeSync(fd, chunk)
+        cdp.on('HeapProfiler.addHeapSnapshotChunk', onChunk)
+      },
+      finishSnapshot(entry) {
+        cdp.off('HeapProfiler.addHeapSnapshotChunk', onChunk)
+        onChunk = null
+        closeSync(fd)
+        fd = undefined
+        assert.equal(statSync(filename).mode & 0o777, 0o600, 'private raw heap mode')
+        entry.rawSha256 = sha(readFileSync(filename))
+        entry.rawBytes = statSync(filename).size
+        save()
+        rawFiles.set(milestone, filename)
       }
-    }
-    save()
-    return entry.graph
+    })
   } finally {
     if (onChunk) cdp.off('HeapProfiler.addHeapSnapshotChunk', onChunk)
     if (fd !== undefined) closeSync(fd)
-    await cdp.detach()
-    cdp = null
+    // Retain only this session until bounded post-snapshot binding. No handles yet.
   }
 }
+function analyzeEntry(entry, bindingPlanOnly = false) {
+  const raw = JSON.parse(readFileSync(rawFiles.get(entry.milestone), 'utf8'))
+  if (values.cohort === 'candidate')
+    return inspectPrefixGraph(raw, { discoveryOnly: true, bindingPlanOnly })
+  const graph = decodeHeap(raw)
+  return {
+    qualified: false,
+    reason: 'Original-full graph qualification pending',
+    nodes: graph.nodes.length,
+    strongNodes: graph.parent.size
+  }
+}
+async function binding(entry, expectedInputs) {
+  let result, operationError, detachError
+  try {
+    const graph = analyzeEntry(entry, true)
+    result =
+      values.cohort === 'candidate'
+        ? await bindCapturedGraph(cdp, graph, expectedInputs)
+        : { qualified: false, reason: 'Original-full binding adapter pending' }
+  } catch (e) {
+    operationError = e
+  } finally {
+    try {
+      await cdp.detach()
+      cdp = null
+    } catch (e) {
+      detachError = e
+    }
+    save()
+  }
+  if (detachError)
+    throw new AggregateError(
+      [operationError, detachError].filter(Boolean),
+      'binding session detach failed; stop before lifecycle/GC'
+    )
+  if (operationError) throw operationError
+  return result
+}
+
 try {
   ;({ app, win, fixture } = await launchApp(dir, {
     server: 'separate',
@@ -222,10 +253,28 @@ try {
   record.identity = await app.evaluate(({ app, BrowserWindow }) => ({
     userData: app.getPath('userData'),
     visible: BrowserWindow.getAllWindows()[0].isVisible(),
-    throttled: BrowserWindow.getAllWindows()[0].webContents.getBackgroundThrottling()
+    throttled: BrowserWindow.getAllWindows()[0].webContents.getBackgroundThrottling(),
+    mainPid: process.pid,
+    rendererPid: BrowserWindow.getAllWindows()[0].webContents.getOSProcessId(),
+    versions: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      v8: process.versions.v8
+    },
+    ownedProcesses: app.getAppMetrics().map(({ pid, type }) => ({ pid, type }))
   }))
   assert.equal(record.identity.userData, dir)
   delete record.identity.userData
+  for (const key of ['mainPid', 'rendererPid'])
+    assert.ok(
+      Number.isSafeInteger(record.identity[key]) && record.identity[key] > 0,
+      'owned ' + key
+    )
+  for (const key of ['electron', 'chrome', 'v8'])
+    assert.ok(
+      typeof record.identity.versions[key] === 'string' && record.identity.versions[key].length > 0,
+      'actual ' + key + ' version'
+    )
   assert.equal(record.identity.visible, false)
   assert.equal(record.identity.throttled, false)
   record.server = JSON.parse(readFileSync(path.join(dir, 'clave-server.json'), 'utf8')).mode
@@ -245,13 +294,33 @@ try {
     candidate: values.cohort === 'candidate'
   })
   const { expected, ...diagnostic } = probe
+  delete diagnostic.priorInputs
   record.diagnostic = diagnostic
   save()
-  const warm = await observation('warm', { expected })
-  await replaceResourceSlot({ app, win, fixture, root, workload, id, cycle: 1 })
-  await observation('final-closed', { warm })
+  const pair = await captureQualificationPair({
+    capture: observation,
+    bind: (entry) => binding(entry, [expected, ...probe.priorInputs]),
+    close: async () => {
+      assert.equal(cdp, null, 'binding session detached before lifecycle')
+      assert.deepEqual(record.pageErrors, [], 'semantic errors stop lifecycle')
+      await replaceResourceSlot({ app, win, fixture, root, workload, id, cycle: 1 })
+    },
+    analyze: (entry) => {
+      const graph = analyzeEntry(entry)
+      if (
+        entry.milestone === 'final-closed' &&
+        values.cohort === 'candidate' &&
+        graph.allPrefixes.length
+      )
+        graph.blocker = 'post-close live prefix requires owner/retaining-path review'
+      return graph
+    }
+  })
+  record.representationFailures = pair.failures
+  record.completedRawPair = pair.completedRawPair
+  save()
   assert.deepEqual(record.pageErrors, [])
-  record.ok = true
+  record.ok = pair.failures.length === 0
   result.completedAt = new Date().toISOString()
   // A qualification probe produces evidence, never a resource PASS. Root must
   // review actual shapes/closures/React alternates and approve the next adapter.

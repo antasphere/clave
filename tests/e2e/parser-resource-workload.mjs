@@ -204,6 +204,12 @@ export async function warmResourceProbe({ win, fixture, id, chunks, cycle = 0, c
       )
     return {
       expected,
+      // Exact declared prior versions. Strings remain only in the Node controller,
+      // never in a renderer observer or a persisted public receipt.
+      priorInputs: Array.from(
+        { length: chunks },
+        (_, n) => initial + Array.from({ length: n }, (_, i) => streamChunk(i)).join('')
+      ),
       canonicalBytes: Buffer.byteLength(expected),
       producedChunks: produced.chunks.length,
       elapsedMs: produced.elapsedMs,

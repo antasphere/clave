@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript heap validation */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { constants as bufferConstants } from 'node:buffer'
 import { validateProvenance, validateFrozenPair } from './parser-responsiveness-data.mjs'
 export const RESOURCE_CONFIG = {
@@ -97,12 +98,37 @@ export function decodeHeap(raw) {
         parent.set(edge.to, { from: queue[i], edge })
         queue.push(edge.to)
       }
-  const properties = (index) =>
-    new Map(
-      nodes[index].edges
-        .filter((e) => e.type === 'property' || e.type === 'context')
-        .map((e) => [e.name, e.to])
+  const properties = (index) => {
+    const fields = new Map()
+    for (const e of nodes[index].edges.filter((e) => ['property', 'context'].includes(e.type))) {
+      assert.ok(!fields.has(e.name), 'duplicate application field ' + e.name)
+      fields.set(e.name, e.to)
+    }
+    return fields
+  }
+  const incoming = (targets) => {
+    const result = new Map([...targets].map((i) => [i, []]))
+    for (let from = 0; from < nodes.length; from++) {
+      for (const edge of nodes[from].edges)
+        if (edge.type !== 'weak' && result.has(edge.to)) result.get(edge.to).push({ from, edge })
+    }
+    return result
+  }
+  const integer = (index) => {
+    const node = nodes[index]
+    assert.equal(node?.type, 'number', 'typed number required')
+    const links = node.edges.filter((e) => e.name === 'value')
+    assert.ok(links.length === 1 && links[0].type === 'internal', 'unique internal numeric value')
+    const value = nodes[links[0].to]
+    assert.ok(
+      value?.type === 'string' && value.edges.every((e) => e.name === 'map'),
+      'decimal string required'
     )
+    assert.match(value.name, /^(0|[1-9][0-9]*)$/, 'nonnegative integer decimal')
+    const n = Number(value.name)
+    assert.ok(Number.isSafeInteger(n) && n >= 0, 'safe finite integer required')
+    return n
+  }
   const text = (index) => {
     assert.ok(
       Number.isInteger(index) && index >= 0 && index < nodes.length,
@@ -193,22 +219,76 @@ export function decodeHeap(raw) {
     }
     return path.reverse()
   }
-  return { nodes, parent, properties, text, pathTo }
+  return { nodes, parent, properties, incoming, integer, text, pathTo }
 }
-export function inspectPrefixGraph(raw, { expectedInput, closed = false, warm } = {}) {
+export function inspectPrefixGraph(
+  raw,
+  { expectedInput, closed = false, warm, discoveryOnly = false, bindingPlanOnly = false } = {}
+) {
   const g = decodeHeap(raw),
     matches = [],
     allPrefixes = [],
-    contexts = []
+    contexts = [],
+    exclusions = []
+  const candidates = new Set()
   for (let i = 0; i < g.nodes.length; i++) {
-    if (!g.parent.has(i) || g.nodes[i].type !== 'object') continue
+    if (
+      g.parent.has(i) &&
+      g.nodes[i].type === 'object' &&
+      g.nodes[i].edges.some(
+        (e) =>
+          e.type === 'property' &&
+          e.name === 'kind' &&
+          g.nodes[e.to].type === 'string' &&
+          g.nodes[e.to].name === 'prefix'
+      )
+    )
+      candidates.add(i)
+  }
+  const incoming = g.incoming(candidates)
+  for (let i = 0; i < g.nodes.length; i++) {
+    if (!candidates.has(i)) continue
     const p = g.properties(i)
     if (!p.has('kind') || !p.has('signature') || !p.has('snapshot')) continue
-    if (
-      g.text(p.get('kind')) !== 'prefix' ||
-      g.text(p.get('signature')) !== 'remark-gfm4:singleTilde=true'
-    )
+    if (g.nodes[p.get('kind')].type !== 'string' || g.nodes[p.get('kind')].name !== 'prefix')
       continue
+    const hole = (index) =>
+      g.nodes[index].type === 'hidden' && g.nodes[index].name === 'system / Hole'
+    if (hole(p.get('signature')) || hole(p.get('snapshot'))) {
+      const holders = incoming.get(i)
+      assert.ok(
+        hole(p.get('signature')) &&
+          hole(p.get('snapshot')) &&
+          holders.length > 0 &&
+          holders.every(
+            ({ from, edge }) =>
+              g.nodes[from].type === 'code' &&
+              ['system / AllocationSite', 'AllocationSite'].includes(g.nodes[from].name) &&
+              edge.type === 'internal' &&
+              edge.name === 'transition_info'
+          ),
+        'app-owned or malformed Hole prefix'
+      )
+      assert.deepEqual(
+        [...p.keys()].sort(),
+        ['kind', 'signature', 'snapshot', '__proto__'].filter((k) => p.has(k)).sort(),
+        'boilerplate fields'
+      )
+      exclusions.push({
+        nodeId: g.nodes[i].id,
+        reason: 'code-only AllocationSite boilerplate',
+        incoming: holders.map(({ from, edge }) => ({
+          nodeId: g.nodes[from].id,
+          type: g.nodes[from].type,
+          name: g.nodes[from].name,
+          edge: edge.name,
+          edgeType: edge.type
+        })),
+        path: g.pathTo(i)
+      })
+      continue
+    }
+    if (g.text(p.get('signature')) !== 'remark-gfm4:singleTilde=true') continue
     // Unexpected state fields reveal application-owned history rather than being ignored.
     for (const key of p.keys())
       assert.ok(
@@ -238,19 +318,67 @@ export function inspectPrefixGraph(raw, { expectedInput, closed = false, warm } 
         (g.nodes[s.get('blocks')].type === 'object' && g.nodes[s.get('blocks')].name === 'Array'),
       'actual prefix blocks array'
     )
+    const accounting = Object.fromEntries(
+      [...a]
+        .filter(([k]) => k !== '__proto__')
+        .map(([k, v]) => {
+          assert.ok(
+            [
+              'blocks',
+              'nodes',
+              'sourceSpanCodeUnits',
+              'astStringCodeUnits',
+              'sourceBytes'
+            ].includes(k),
+            'unexpected accounting field ' + k
+          )
+          return [k, g.integer(v)]
+        })
+    )
+    const cut = g.integer(s.get('cut')),
+      line = g.integer(s.get('line'))
+    assert.equal(accounting.sourceSpanCodeUnits, cut, 'raw cut accounting')
+    assert.equal(
+      accounting.sourceBytes,
+      2 * (cut + accounting.astStringCodeUnits),
+      'raw charged UTF16 formula'
+    )
+    assert.ok(
+      accounting.blocks <= 64 && accounting.nodes <= 4096 && accounting.sourceBytes <= 131072,
+      'reported prefix caps'
+    )
+    const structure = recountRawAst(g, s.get('blocks'))
+    assert.equal(structure.blocks, accounting.blocks, 'raw blocks recount')
+    assert.equal(structure.nodes, accounting.nodes, 'raw nodes recount')
+    // V8 flat display names have no completeness bit, even below 1024 characters.
+    // Reconstruct representations only for diagnostics. Identity requires a live binding.
     const input = g.text(s.get('input'))
     const row = {
       nodeId: g.nodes[i].id,
       index: i,
       snapshotId: g.nodes[snapshotIndex].id,
-      inputMatches: input === expectedInput,
+      displayLabelMatches: input === expectedInput,
+      inputIdentity: 'unbound',
+      inputId: g.nodes[s.get('input')].id,
+      displayCodeUnits: input.length,
+      cut,
+      line,
+      accounting,
+      structure,
       path: g.pathTo(i)
     }
     allPrefixes.push(row)
-    if (row.inputMatches) matches.push(row)
+    if (row.displayLabelMatches) matches.push(row)
   }
   for (let i = 0; i < g.nodes.length; i++) {
-    if (!g.parent.has(i) || !g.nodes[i].name.includes('Context')) continue
+    if (
+      !g.parent.has(i) ||
+      !g.nodes[i].name.includes('Context') ||
+      !['snapshot', 'listeners'].every((key) =>
+        g.nodes[i].edges.some((e) => ['property', 'context'].includes(e.type) && e.name === key)
+      )
+    )
+      continue
     const p = g.properties(i)
     if (!p.has('snapshot') || !p.has('listeners')) continue
     const state = allPrefixes.find((row) => row.index === p.get('snapshot'))
@@ -270,22 +398,22 @@ export function inspectPrefixGraph(raw, { expectedInput, closed = false, warm } 
     contexts.push({
       nodeId: g.nodes[i].id,
       stateId: state.nodeId,
-      inputMatches: state.inputMatches,
+      displayLabelMatches: state.displayLabelMatches,
       path: g.pathTo(i),
       closures
     })
   }
-  if (closed) {
+  if (!discoveryOnly && closed) {
     assert.ok(
       warm?.matches?.length > 0 && warm?.storeContexts?.length > 0,
       'prior positive warm graph required'
     )
     // All probes close. Any remaining application prefix needs concrete attribution.
     assert.equal(allPrefixes.length, 0, 'post-close live prefix requires retaining-path review')
-  } else {
+  } else if (!discoveryOnly) {
     assert.ok(matches.length > 0, 'positive warm source-shaped match required')
     assert.ok(
-      contexts.some((c) => c.inputMatches),
+      contexts.some((c) => c.displayLabelMatches),
       'positive warm store context attribution required'
     )
   }
@@ -294,18 +422,18 @@ export function inspectPrefixGraph(raw, { expectedInput, closed = false, warm } 
   return {
     qualified: false,
     reason: 'Actual V8/React retaining-path qualification required',
-    matches: matches.map(({ nodeId, snapshotId, inputMatches, path }) => ({
-      nodeId,
-      snapshotId,
-      inputMatches,
-      path
-    })),
-    allPrefixes: allPrefixes.map(({ nodeId, snapshotId, inputMatches, path }) => ({
-      nodeId,
-      snapshotId,
-      inputMatches,
-      path
-    })),
+    ownership: planPrefixOwnership(g, allPrefixes, contexts, { bindingPlanOnly }),
+    exclusions,
+    matches: matches.map((row) => {
+      const copy = { ...row }
+      delete copy.index
+      return copy
+    }),
+    allPrefixes: allPrefixes.map((row) => {
+      const copy = { ...row }
+      delete copy.index
+      return copy
+    }),
     storeContexts: contexts
   }
 }
@@ -352,4 +480,584 @@ export function checkResourceComparison(before, after, frozen) {
     ratio = median(candidate) / median(baseline)
   assert.ok(ratio <= 1.2, `candidate median heap ratio ${ratio} exceeds 1.20`)
   return { baseline, candidate, ratio, individualRatios: candidate.map((n, i) => n / baseline[i]) }
+}
+
+function rawArray(g, index) {
+  const node = g.nodes[index]
+  assert.ok(
+    node.type === 'array' || (node.type === 'object' && node.name === 'Array'),
+    'raw array required'
+  )
+  const backing = node.edges.filter((e) => e.name === 'elements')
+  let edges = node.edges,
+    kinds = ['element', 'property']
+  if (backing.length) {
+    assert.ok(
+      backing.length === 1 &&
+        backing[0].type === 'internal' &&
+        g.nodes[backing[0].to].type === 'array',
+      'unique internal array elements'
+    )
+    assert.ok(
+      !edges.some(
+        (e) => ['element', 'property'].includes(e.type) && /^(0|[1-9][0-9]*)$/.test(e.name)
+      ),
+      'ambiguous array representation'
+    )
+    edges = g.nodes[backing[0].to].edges
+    kinds = ['internal']
+  }
+  const elements = edges
+    .filter((e) => kinds.includes(e.type) && /^(0|[1-9][0-9]*)$/.test(e.name))
+    .sort((a, b) => Number(a.name) - Number(b.name))
+  elements.forEach((e, i) => assert.equal(e.name, String(i), 'dense raw AST array'))
+  return elements.map((e) => e.to)
+}
+export function recountRawAst(g, index) {
+  const blocks = rawArray(g, index),
+    pending = [...blocks],
+    seen = new Set()
+  let nodes = 0
+  while (pending.length) {
+    const at = pending.pop()
+    assert.ok(!seen.has(at), 'raw AST cycle/shared node')
+    seen.add(at)
+    const p = g.properties(at)
+    assert.ok(p.has('type') && g.nodes[p.get('type')].type === 'string', 'raw AST type')
+    for (const key of p.keys())
+      assert.ok(
+        [
+          '__proto__',
+          'type',
+          'position',
+          'children',
+          'value',
+          'url',
+          'title',
+          'alt',
+          'depth'
+        ].includes(key),
+        'unexpected raw AST field ' + key
+      )
+    nodes++
+    assert.ok(nodes <= 4096, 'raw AST node cap')
+    if (p.has('children')) pending.push(...rawArray(g, p.get('children')))
+  }
+  return {
+    blocks: blocks.length,
+    nodes,
+    astStringCodeUnits: null,
+    reason: 'display labels cannot prove full string units'
+  }
+}
+
+// Serialized by value and invoked only on the captured state handle after the raw
+// checkpoint. No globals, parser calls, publication, property getters or writes.
+export function readBoundPrefix(snapshot) {
+  const fail = () => {
+    throw new Error('invalid immutable prefix binding')
+  }
+  const data = (o, keys, array = false) => {
+    if (
+      !o ||
+      typeof o !== 'object' ||
+      (array
+        ? !Array.isArray(o)
+        : Object.getPrototypeOf(o) !== Object.prototype && Object.getPrototypeOf(o) !== null)
+    )
+      fail()
+    const descriptors = Object.getOwnPropertyDescriptors(o)
+    if (
+      Reflect.ownKeys(descriptors).some(
+        (k) =>
+          typeof k !== 'string' || !('value' in descriptors[k]) || (!array && !keys.includes(k))
+      )
+    )
+      fail()
+    if (!Object.isFrozen(o)) fail()
+    return Object.fromEntries(Object.entries(descriptors).map(([k, v]) => [k, v.value]))
+  }
+  const integer = (n) => {
+    if (!Number.isSafeInteger(n) || n < 0) fail()
+    return n
+  }
+  const state = data(this, ['kind', 'signature', 'snapshot'])
+  if (
+    state.kind !== 'prefix' ||
+    state.signature !== 'remark-gfm4:singleTilde=true' ||
+    state.snapshot !== snapshot
+  )
+    fail()
+  const s = data(snapshot, ['input', 'cut', 'line', 'blocks', 'rootStart', 'accounting'])
+  if (typeof s.input !== 'string') fail()
+  const cut = integer(s.cut),
+    line = integer(s.line)
+  if (cut > s.input.length || line < 1) fail()
+  const point = (p) => {
+    const d = data(p, ['line', 'column', 'offset'])
+    if (integer(d.line) < 1 || integer(d.column) < 1 || integer(d.offset) > s.input.length) fail()
+    return d
+  }
+  point(s.rootStart)
+  const array = (a) => {
+    const d = data(a, [], true),
+      n = integer(d.length)
+    if (n > 4096 || Object.keys(d).length !== n + 1) fail()
+    return Array.from({ length: n }, (_, i) => {
+      if (!Object.hasOwn(d, String(i))) fail()
+      return d[i]
+    })
+  }
+  const blocks = array(s.blocks),
+    pending = [...blocks],
+    seen = new Set()
+  let nodes = 0,
+    astStringCodeUnits = 0
+  while (pending.length) {
+    const at = pending.pop()
+    if (seen.has(at)) fail()
+    seen.add(at)
+    const n = data(at, ['type', 'position', 'children', 'value', 'url', 'title', 'alt', 'depth'])
+    if (typeof n.type !== 'string') fail()
+    if (n.depth !== undefined) integer(n.depth)
+    if (n.position !== undefined) {
+      const p = data(n.position, ['start', 'end']),
+        start = point(p.start),
+        end = point(p.end)
+      if (start.offset > end.offset || end.offset > cut) fail()
+    }
+    nodes++
+    if (nodes > 4096) fail()
+    for (const key of ['value', 'url', 'title', 'alt']) {
+      if (n[key] != null && typeof n[key] !== 'string') fail()
+      astStringCodeUnits += n[key]?.length ?? 0
+    }
+    if (n.children !== undefined) pending.push(...array(n.children))
+  }
+  const accounting = data(s.accounting, [
+    'blocks',
+    'nodes',
+    'sourceSpanCodeUnits',
+    'astStringCodeUnits',
+    'sourceBytes'
+  ])
+  for (const n of Object.values(accounting)) integer(n)
+  const actual = {
+    blocks: blocks.length,
+    nodes,
+    sourceSpanCodeUnits: cut,
+    astStringCodeUnits,
+    sourceBytes: 2 * (cut + astStringCodeUnits)
+  }
+  if (
+    Object.keys(accounting).length !== 5 ||
+    Object.entries(actual).some(([k, v]) => accounting[k] !== v) ||
+    actual.blocks > 64 ||
+    actual.nodes > 4096 ||
+    actual.sourceBytes > 131072
+  )
+    fail()
+  return { input: s.input, cut, line, accounting: actual, deepFrozen: true, sameSnapshot: true }
+}
+
+// Reads actual Fiber ancestors and the HostRoot current child/sibling graph. A
+// return chain alone does not establish which of a reciprocal pair is current.
+export function readOwnerFiber() {
+  const own = (o, k) => {
+    if (!o || (typeof o !== 'object' && typeof o !== 'function')) return undefined
+    const d = Object.getOwnPropertyDescriptor(o, k)
+    if (d && !('value' in d)) throw new Error('owner getter refused')
+    return d?.value
+  }
+  const alternate = own(this, 'alternate')
+  if (!alternate || own(alternate, 'alternate') !== this)
+    throw new Error('nonreciprocal Fiber alternate')
+  const ancestors = [this],
+    visited = new Set()
+  for (let i = 0; i < ancestors.length; i++) {
+    const at = ancestors[i]
+    if (visited.has(at)) throw new Error('Fiber return cycle')
+    visited.add(at)
+    const parent = own(at, 'return')
+    if (parent) ancestors.push(parent)
+  }
+  const hostRoot = ancestors.at(-1),
+    root = own(hostRoot, 'stateNode'),
+    current = own(root, 'current')
+  if (own(hostRoot, 'tag') !== 3 || !current) throw new Error('missing HostRoot current')
+  const pending = [current],
+    seen = new Set()
+  let isCurrent = false,
+    alternateCurrent = false
+  while (pending.length) {
+    const at = pending.pop()
+    if (!at || seen.has(at)) continue
+    seen.add(at)
+    if (seen.size > 1000000) throw new Error('Fiber traversal bound')
+    if (at === this) isCurrent = true
+    if (at === alternate) alternateCurrent = true
+    pending.push(own(at, 'child'), own(at, 'sibling'))
+  }
+  if (isCurrent === alternateCurrent) throw new Error('ambiguous current/alternate reachability')
+  const sessions = new Set(),
+    views = new Set()
+  let hostAncestorInCurrentTree = false
+  for (const at of ancestors) {
+    const props = own(at, 'memoizedProps')
+    for (const key of ['data-session-id', 'sessionId']) {
+      const v = own(props, key)
+      if (typeof v === 'string') sessions.add(v)
+    }
+    const cls = own(props, 'className')
+    if (typeof cls === 'string') {
+      if (cls.split(/\s+/).includes('terminal-view')) views.add('terminal')
+      else if (cls.split(/\s+/).includes('chat-view')) views.add('chat')
+    }
+    // DOM getters are deliberately not invoked. Connectedness requires an actual
+    // root.current path plus a host ancestor in that current graph.
+    if (own(at, 'tag') === 5 && seen.has(at)) hostAncestorInCurrentTree = true
+  }
+  return {
+    branch: isCurrent ? 'current' : 'alternate',
+    reciprocal: true,
+    sessionIds: [...sessions],
+    views: [...views],
+    hostAncestorInCurrentTree,
+    connected: null,
+    currentReachable: true
+  }
+}
+
+export function planPrefixOwnership(g, states, storeContexts, { bindingPlanOnly = false } = {}) {
+  const stateIndexes = new Map(
+    states.map((s) => [g.nodes.findIndex((n) => n.id === s.nodeId), s.nodeId])
+  )
+  const holders = g.incoming(new Set(stateIndexes.keys())),
+    fibers = [],
+    recognized = new Set()
+  // Exactly the slots from MarkdownMessage: first useState owns the store;
+  // next useSyncExternalStore hook owns memoizedState and queue.value. Each
+  // actual reciprocal Fiber contributes at most those slots, not N generations.
+  for (let i = 0; i < g.nodes.length; i++) {
+    if (!g.parent.has(i) || g.nodes[i].name !== 'FiberNode') continue
+    const fp = g.properties(i),
+      alt = fp.get('alternate')
+    if (
+      alt === undefined ||
+      g.nodes[alt].name !== 'FiberNode' ||
+      g.properties(alt).get('alternate') !== i
+    )
+      continue
+    const first = fp.get('memoizedState')
+    if (first === undefined) continue
+    const hook = g.properties(first).get('next')
+    if (hook === undefined) continue
+    const hp = g.properties(hook),
+      queue = hp.get('queue'),
+      store = g.properties(first).get('memoizedState')
+    const context =
+      store === undefined
+        ? undefined
+        : storeContexts.find((c) => {
+            const get = g.properties(store).get('getSnapshot')
+            return get !== undefined && c.closures.some((x) => x.nodeId === g.nodes[get].id)
+          })
+    if (!context) continue
+    const slots = []
+    for (const [from, key] of [
+      [hook, 'memoizedState'],
+      [queue, 'value']
+    ]) {
+      if (from === undefined) continue
+      const state = g.properties(from).get(key)
+      if (stateIndexes.has(state)) {
+        slots.push({ stateId: stateIndexes.get(state), holderId: g.nodes[from].id, key })
+        recognized.add(`${from}:${key}:${state}`)
+      }
+    }
+    if (slots.length)
+      fibers.push({
+        fiberId: g.nodes[i].id,
+        alternateId: g.nodes[alt].id,
+        storeContextId: context.nodeId,
+        slots,
+        requiresLiveOwner: true
+      })
+  }
+  if (bindingPlanOnly)
+    return {
+      qualified: false,
+      fibers,
+      reason:
+        'preliminary handle plan only; full retaining-path analysis deferred until both raw checkpoints persist'
+    }
+  const unresolved = []
+  for (const [to, refs] of holders)
+    for (const { from, edge } of refs) {
+      const store = storeContexts.some(
+        (c) => c.nodeId === g.nodes[from].id && edge.type === 'context' && edge.name === 'snapshot'
+      )
+      if (!store && !recognized.has(`${from}:${edge.name}:${to}`))
+        unresolved.push({
+          stateId: stateIndexes.get(to),
+          holderId: g.nodes[from].id,
+          type: g.nodes[from].type,
+          name: g.nodes[from].name,
+          edge: edge.name,
+          edgeType: edge.type,
+          reason: 'unrecognized hook/attempt/processor/history ownership'
+        })
+    }
+  const inputIndexes = new Set(states.map((s) => g.nodes.findIndex((n) => n.id === s.inputId)))
+  const inputHolders = [...g.incoming(inputIndexes)].flatMap(([to, refs]) =>
+    refs.map(({ from, edge }) => ({
+      inputId: g.nodes[to].id,
+      holderId: g.nodes[from].id,
+      type: g.nodes[from].type,
+      name: g.nodes[from].type === 'string' ? '[string]' : g.nodes[from].name.slice(0, 160),
+      edge: edge.name,
+      edgeType: edge.type,
+      attribution: 'pending'
+    }))
+  )
+  return {
+    qualified: false,
+    inputHolders,
+    fibers,
+    unresolved,
+    reason:
+      'attempt closures, all input holders and current store publication require complete actual attribution; lexical Context.previous is not an application history slot'
+  }
+}
+
+// No returned full body survives in the persisted receipt. UTF16LE SHA256 hashes
+// every JS code unit, including unpaired surrogates, without UTF8 substitution.
+export function summarizeBoundPrefix(value, row, expectedInputs) {
+  assert.ok(value && typeof value.input === 'string', 'full binding input required')
+  try {
+    const version = expectedInputs.findIndex((s) => typeof s === 'string' && s === value.input)
+    if (version < 0) {
+      const error = new Error('binding input is not an exact declared canonical version')
+      error.name = 'QualificationSemanticError'
+      throw error
+    }
+    assert.equal(value.sameSnapshot, true)
+    assert.equal(value.deepFrozen, true)
+    assert.equal(value.cut, row.cut)
+    assert.equal(value.line, row.line)
+    assert.deepEqual(value.accounting, row.accounting)
+    assert.equal(value.accounting.blocks, row.structure.blocks)
+    assert.equal(value.accounting.nodes, row.structure.nodes)
+    return {
+      stateId: row.nodeId,
+      snapshotId: row.snapshotId,
+      inputId: row.inputId,
+      inputCodeUnits: value.input.length,
+      inputSha256: createHash('sha256').update(Buffer.from(value.input, 'utf16le')).digest('hex'),
+      encoding: 'utf16le',
+      canonicalVersion: version,
+      exactCanonical: true,
+      cut: value.cut,
+      line: value.line,
+      accounting: value.accounting,
+      deepFrozen: true
+    }
+  } catch (error) {
+    error.name = 'QualificationSemanticError'
+    throw error
+  } finally {
+    delete value.input
+  }
+}
+
+export async function bindCapturedGraph(
+  cdp,
+  graph,
+  expectedInputs,
+  { objectGroup = 'parser-resource-binding', timeoutMs = 10000 } = {}
+) {
+  const handles = [],
+    states = [],
+    owners = []
+  let operationError,
+    cleanupError,
+    timedOut = false
+  const send = async (method, params) => {
+    let timer
+    try {
+      return await Promise.race([
+        cdp.send(method, params),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            reject(new Error('binding command timeout ' + method))
+          }, timeoutMs)
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  const handle = async (id) => {
+    const r = await send('HeapProfiler.getObjectByHeapObjectId', {
+      objectId: String(id),
+      objectGroup
+    })
+    assert.ok(r.result?.objectId, 'captured heap id did not resolve')
+    handles.push(r.result.objectId)
+    return r.result.objectId
+  }
+  const read = async (objectId, fn, args = []) => {
+    const r = await send('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: fn.toString(),
+      arguments: args,
+      returnByValue: true,
+      silent: true,
+      throwOnSideEffect: true,
+      objectGroup
+    })
+    if (r.exceptionDetails) {
+      const error = new Error('read-only binding exception')
+      if (
+        r.exceptionDetails.exception?.description?.startsWith(
+          'Error: invalid immutable prefix binding'
+        )
+      )
+        error.name = 'QualificationSemanticError'
+      throw error
+    }
+    assert.ok(Object.hasOwn(r.result ?? {}, 'value'), 'primitive binding result required')
+    return r.result.value
+  }
+  const release = async () => {
+    await send('Runtime.releaseObjectGroup', { objectGroup })
+    for (const objectId of handles) {
+      let invalid = false
+      try {
+        await send('Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: 'function(){return 1}',
+          returnByValue: true,
+          silent: true,
+          throwOnSideEffect: true
+        })
+      } catch (e) {
+        if (
+          /(?:^|: )(?:Could not find object with given id|Cannot find object with id)$/.test(
+            String(e)
+          )
+        )
+          invalid = true
+        else throw new Error('handle invalidation failed: ' + String(e))
+      }
+      assert.equal(invalid, true, 'released handle remained usable')
+    }
+  }
+  try {
+    for (const row of graph.allPrefixes) {
+      const state = await handle(row.nodeId),
+        snapshot = await handle(row.snapshotId)
+      const value = await read(state, readBoundPrefix, [{ objectId: snapshot }])
+      states.push(summarizeBoundPrefix(value, row, expectedInputs))
+    }
+    for (const owner of graph.ownership.fibers) {
+      const objectId = await handle(owner.fiberId)
+      owners.push({ ...owner, ...(await read(objectId, readOwnerFiber)) })
+    }
+  } catch (e) {
+    operationError = e
+  } finally {
+    try {
+      await release()
+    } catch (e) {
+      cleanupError = e
+    }
+  }
+  if (timedOut)
+    cleanupError = new Error('binding timeout leaves an outstanding request unqualified')
+  if (cleanupError)
+    throw new AggregateError(
+      [operationError, cleanupError].filter(Boolean),
+      'binding cleanup failed or timeout; stop before lifecycle/GC'
+    )
+  if (operationError) {
+    operationError.bindingReceipt = {
+      qualified: false,
+      states,
+      owners,
+      released: true,
+      invalidatedHandles: handles.length
+    }
+    throw operationError
+  }
+  return {
+    qualified: false,
+    states,
+    owners,
+    released: true,
+    invalidatedHandles: handles.length,
+    reason: 'actual graph owner/input/processor attribution and later runtime review still required'
+  }
+}
+
+export async function captureQualificationPair({ capture, bind, close, analyze }) {
+  const observations = [],
+    failures = []
+  for (const milestone of ['warm', 'final-closed']) {
+    if (milestone === 'final-closed') await close()
+    const entry = await capture(milestone)
+    observations.push(entry)
+    try {
+      entry.binding = await bind(entry)
+    } catch (e) {
+      if (e instanceof AggregateError || e.name === 'QualificationSemanticError') throw e // uncertain cleanup or semantic invalidity stops lifecycle
+      if (e.bindingReceipt) entry.bindingPartial = e.bindingReceipt
+      entry.bindingFailure = {
+        name: e.name,
+        message: 'post-snapshot representation/binding failed'
+      }
+      failures.push({ milestone, error: e })
+    }
+  }
+  for (const entry of observations) {
+    try {
+      entry.graph = await analyze(entry)
+    } catch (e) {
+      entry.analysisFailure = { name: e.name, message: 'offline graph analysis failed' }
+      failures.push({ milestone: entry.milestone, error: e })
+    }
+  }
+  return {
+    qualified: false,
+    observations,
+    failures: failures.map(({ milestone, error }) => ({
+      milestone,
+      name: error.name,
+      message: error.message
+    })),
+    completedRawPair: true
+  }
+}
+
+export async function captureHeapCheckpoint(cdp, { persistUsage, beginSnapshot, finishSnapshot }) {
+  await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'parser-resource-binding' })
+  for (let i = 0; i < RESOURCE_CONFIG.gcPasses; i++) await cdp.send('HeapProfiler.collectGarbage')
+  const usage = await cdp.send('Runtime.getHeapUsage')
+  assert.ok(
+    Number.isFinite(usage.usedSize) &&
+      usage.usedSize > 0 &&
+      Number.isFinite(usage.totalSize) &&
+      usage.totalSize >= usage.usedSize,
+    'actual GC heap metric'
+  )
+  const entry = await persistUsage(usage)
+  await beginSnapshot(entry)
+  await cdp.send('HeapProfiler.takeHeapSnapshot', {
+    reportProgress: false,
+    captureNumericValue: true,
+    exposeInternals: true
+  })
+  await finishSnapshot(entry)
+  return entry
 }
