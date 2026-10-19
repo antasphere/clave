@@ -104,7 +104,9 @@ export function SidebarTabItem({
         onContextMenu={onContextMenu}
         onKeyDown={handleButtonKeyDown}
         title={title}
-        data-selected={isSelected && !groupSelected ? 'true' : undefined}
+        data-selected={
+          isSelected && (!grouped || (!!rowControl && !groupSelected)) ? 'true' : undefined
+        }
         className={cn(
           'sidebar-item group',
           groupSelected

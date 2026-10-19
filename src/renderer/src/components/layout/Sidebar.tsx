@@ -12,6 +12,7 @@ import { subagentPresentation } from '../../lib/subagent-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
+import type { SessionMenuEvent } from '../session/SubagentMenu'
 import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
@@ -658,10 +659,10 @@ export function Sidebar(): React.JSX.Element {
     }
     for (const id of linkedHiddenIds) reachable.delete(id)
     return subagentPresentation(
-      sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
+      sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId) && s.id !== renamingId),
       reachable
     )
-  }, [scopedItems, groups, linkedHiddenIds, sessions, activeWorkspaceId])
+  }, [scopedItems, groups, linkedHiddenIds, sessions, activeWorkspaceId, renamingId])
   const subagentRootsRef = useRef(subagents.rootById)
   subagentRootsRef.current = subagents.rootById
   const visibleItems = useMemo(
@@ -1144,7 +1145,7 @@ export function Sidebar(): React.JSX.Element {
   }, [])
 
   const handleSessionContextMenu = useCallback(
-    (e: React.MouseEvent, sessionId: string) => {
+    (e: SessionMenuEvent, sessionId: string) => {
       e.preventDefault()
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
 
@@ -1657,8 +1658,13 @@ export function Sidebar(): React.JSX.Element {
                           session={session}
                           isSelected={representedSelection(session.id)}
                           subagents={subagents.descendants.get(session.id)}
-                          selectedIds={selectedSessionIds}
-                          focusedId={focusedSessionId}
+                          onSubagentContextMenu={handleSessionContextMenu}
+                          selectedIds={
+                            subagents.descendants.has(session.id) ? selectedSessionIds : undefined
+                          }
+                          focusedId={
+                            subagents.descendants.has(session.id) ? focusedSessionId : undefined
+                          }
                           onSelectSubagent={(id) =>
                             handleSessionClick(id, { metaKey: false, shiftKey: false })
                           }
@@ -1767,8 +1773,15 @@ export function Sidebar(): React.JSX.Element {
                               session={session}
                               isSelected={representedSelection(session.id)}
                               subagents={subagents.descendants.get(session.id)}
-                              selectedIds={selectedSessionIds}
-                              focusedId={focusedSessionId}
+                              onSubagentContextMenu={handleSessionContextMenu}
+                              selectedIds={
+                                subagents.descendants.has(session.id)
+                                  ? selectedSessionIds
+                                  : undefined
+                              }
+                              focusedId={
+                                subagents.descendants.has(session.id) ? focusedSessionId : undefined
+                              }
                               onSelectSubagent={(id) =>
                                 handleSessionClick(id, { metaKey: false, shiftKey: false })
                               }
@@ -1800,8 +1813,8 @@ export function Sidebar(): React.JSX.Element {
                           group.sessionIds.length > 0 &&
                           group.sessionIds.every((id) => selectedSessionIds.includes(id))
                         const groupColorHex = resolveColorHex(group.color)
-                        const railEmpty = group.sessionIds.length === 0
                         const rowIds = group.sessionIds.filter((id) => !subagents.rootById.has(id))
+                        const railEmpty = rowIds.length === 0
                         return (
                           <div key={group.id}>
                             <DropGap active={gapBefore} />
@@ -1955,8 +1968,17 @@ export function Sidebar(): React.JSX.Element {
                                             session={session}
                                             isSelected={representedSelection(session.id)}
                                             subagents={subagents.descendants.get(session.id)}
-                                            selectedIds={selectedSessionIds}
-                                            focusedId={focusedSessionId}
+                                            onSubagentContextMenu={handleSessionContextMenu}
+                                            selectedIds={
+                                              subagents.descendants.has(session.id)
+                                                ? selectedSessionIds
+                                                : undefined
+                                            }
+                                            focusedId={
+                                              subagents.descendants.has(session.id)
+                                                ? focusedSessionId
+                                                : undefined
+                                            }
                                             onSelectSubagent={(id) =>
                                               handleSessionClick(id, {
                                                 metaKey: false,
@@ -2009,7 +2031,9 @@ export function Sidebar(): React.JSX.Element {
                                         data-sidebar-drop-zone="group-end"
                                         data-group-id={group.id}
                                       >
-                                        No sessions
+                                        {group.sessionIds.length
+                                          ? 'Subagents shown with their parent'
+                                          : 'No sessions'}
                                       </div>
                                     )}
                                     {/* The foot of the rail: while dragging, the

@@ -22,7 +22,7 @@ import { tabIndicators } from '../../lib/tab-status'
 import { AccountMenuHeader } from '../layout/AccountMenuHeader'
 import { useMarkPack } from '../plugins/native-marks'
 import { tokenColor } from '../../lib/marks'
-import { SubagentMenu } from './SubagentMenu'
+import { SubagentMenu, type SessionMenuEvent } from './SubagentMenu'
 
 /** A warning on a row whose account is about to stop it (ADR 0002), before
  *  the next turn fails. Hovering shows the account card the tab's context menu
@@ -200,6 +200,7 @@ interface SessionItemProps {
   selectedIds?: string[]
   focusedId?: string | null
   onSelectSubagent?: (id: string) => void
+  onSubagentContextMenu?: (event: SessionMenuEvent, id: string) => void
 }
 
 function SessionItemImpl({
@@ -219,7 +220,8 @@ function SessionItemImpl({
   subagents,
   selectedIds,
   focusedId,
-  onSelectSubagent
+  onSelectSubagent,
+  onSubagentContextMenu
 }: SessionItemProps): React.JSX.Element {
   const renameSession = useSessionStore((s) => s.renameSession)
 
@@ -242,6 +244,7 @@ function SessionItemImpl({
             selectedIds={selectedIds ?? []}
             focusedId={focusedId ?? null}
             onSelect={onSelectSubagent}
+            onContextMenu={onSubagentContextMenu}
           />
         ) : undefined
       }

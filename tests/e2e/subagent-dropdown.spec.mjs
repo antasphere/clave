@@ -92,6 +92,7 @@ exec /bin/sh "$@"
     const pick = async (name) => {
       await trigger().click()
       await menuItem(name).click()
+      await win.getByRole('menu').waitFor({ state: 'hidden' })
     }
     t.equal(
       'only a parent with descendants has a selector',
@@ -103,6 +104,28 @@ exec /bin/sh "$@"
       await win.locator('button button.subagent-trigger').count(),
       0
     )
+    // V1-02: digits count the represented sidebar rows, not folded descendants.
+    await row(parent).locator('.sidebar-item').click()
+    await win.keyboard.press('Meta+2')
+    t.equal(
+      'number shortcut 2 selects the second represented row',
+      (await listing()).focusedSessionId,
+      parent
+    )
+    await row(parent).locator('.sidebar-item').click()
+    await win.keyboard.press('Meta+Shift+]')
+    await focused(terminal)
+    await win.keyboard.press('Meta+Shift+]')
+    await focused(nested)
+    t.check(
+      'next-session cycling still reaches and marks folded children',
+      /Verifier/.test(await trigger().innerText())
+    )
+    await win.keyboard.press('Meta+Shift+[')
+    await focused(terminal)
+    t.check('previous-session cycling retains the full session order', true)
+    await row(parent).locator('.sidebar-item').click()
+
     await pick('Explorer')
     await focused(child)
     t.check(
@@ -147,6 +170,90 @@ exec /bin/sh "$@"
     }
     await win.keyboard.press('Escape')
     await win.getByRole('menu').waitFor({ state: 'hidden' })
+
+    // V1-01: unselected descendants must signal attention while the menu is closed.
+    const title = async (id, value, state) => {
+      await win.evaluate(({ id, value }) => window.electronAPI.writeSession(id, value + '\n'), {
+        id,
+        value
+      })
+      assert.ok(
+        await until(
+          async () => (await listing()).sessions.find((s) => s.id === id)?.agentState === state
+        )
+      )
+    }
+    const checkSignal = async (status, token) => {
+      let paint
+      const settled = await until(
+        async () => {
+          paint = await trigger().evaluate(
+            (button, { status, token }) => {
+              const signal = button.querySelector(`.tab-status[data-status="${status}"]`)
+              const probe = document.createElement('span')
+              probe.style.color = `var(${token})`
+              button.appendChild(probe)
+              const expected = getComputedStyle(probe).color
+              probe.remove()
+              const rect = signal?.getBoundingClientRect()
+              return {
+                visible: !!rect?.width && !!rect?.height,
+                actual: signal ? getComputedStyle(signal).color : null,
+                expected
+              }
+            },
+            { status, token }
+          )
+          return paint.visible && paint.actual === paint.expected
+        },
+        { tries: 20, gapMs: 50 }
+      )
+      t.check(
+        `closed ${status} signal is visible and uses the existing status color`,
+        settled,
+        paint
+      )
+    }
+    await title(nested, 'codex | Working', 'working')
+    t.equal(
+      'closed selector reports a blocked child ahead of working',
+      await trigger().getAttribute('data-status'),
+      'needs-you'
+    )
+    t.check(
+      'closed selector names the child waiting on the user',
+      /Explorer.*Waiting on you/.test(await trigger().getAttribute('aria-label'))
+    )
+    t.equal(
+      'aggregate alert preserves the parent actual state',
+      await row(parent).locator('.sidebar-tab-icon').getAttribute('data-status'),
+      'idle'
+    )
+    await checkSignal('needs-you', '--color-status-waiting')
+    await title(child, 'codex | Ready', 'idle')
+    t.equal(
+      'closed selector reports unread child ahead of working',
+      await trigger().getAttribute('data-status'),
+      'unread'
+    )
+    await checkSignal('unread', '--color-status-working')
+    await pick('Explorer')
+    await focused(child)
+    t.equal(
+      'reading the child clears its unread alert and reveals remaining work',
+      await trigger().getAttribute('data-status'),
+      'working'
+    )
+    await title(nested, 'codex | Ready', 'idle')
+    await pick('Verifier')
+    await focused(nested)
+    t.equal(
+      'reading the remaining child clears aggregate alerts',
+      await trigger().getAttribute('data-status'),
+      'idle'
+    )
+    await pick('Coordinator')
+    await focused(parent)
 
     // Keyboard opening, arrow traversal, selection, Escape and return focus.
     await trigger().focus()
@@ -211,20 +318,93 @@ exec /bin/sh "$@"
     )
     await menuItem('Coordinator').click()
 
+    // The menu forwards child management to the existing sidebar context actions.
+    await trigger().click()
+    await menuItem('Explorer').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Rename', exact: true }).click()
+    const rename = row(child).locator('input')
+    await rename.waitFor()
+    await rename.fill('Explorer renamed')
+    await rename.press('Enter')
+    assert.ok(
+      await until(
+        async () =>
+          (await listing()).sessions.find((s) => s.id === child)?.name === 'Explorer renamed'
+      )
+    )
+    t.equal(
+      'right-click rename applies to the folded child and compacts it again',
+      await row(child).count(),
+      0
+    )
+    await trigger().click()
+    await menuItem('Explorer renamed').focus()
+    await win.keyboard.press('Shift+F10')
+    t.equal(
+      'keyboard context action opens the existing child management menu',
+      await win.getByRole('menuitem', { name: 'Copy session ID', exact: true }).count(),
+      1
+    )
+    await win.getByRole('menuitem', { name: 'Rename', exact: true }).click()
+    await rename.waitFor()
+    await rename.fill('Explorer')
+    await rename.press('Enter')
+    assert.ok(
+      await until(
+        async () => (await listing()).sessions.find((s) => s.id === child)?.name === 'Explorer'
+      )
+    )
+    t.equal('keyboard rename preserves the same session id', await row(child).count(), 0)
+
     // A child in another group compacts only while its parent is reachable.
     const group = await callMcp(app, 'createGroup', { name: 'Workers' })
     assert.ok(group?.groupId)
     await callMcp(app, 'moveSession', { sessionId: child, groupId: group.groupId })
     t.equal('cross-group child compacts under the reachable parent', await row(child).count(), 0)
+    const placeholder = win.locator(`[data-sidebar-empty-group="${group.groupId}"]`)
+    t.equal(
+      'folded-only group explains where its sessions are shown',
+      await placeholder.innerText(),
+      'Subagents shown with their parent'
+    )
+    t.equal(
+      'folded-only group retains its new-session control',
+      await win.getByRole('button', { name: 'New session in Workers', exact: true }).count(),
+      1
+    )
+    t.equal(
+      'folded-only group retains its terminal controls',
+      await win.getByRole('button', { name: 'Terminals of Workers', exact: true }).count(),
+      1
+    )
+
     const chip = win
       .locator('.group-switcher-chips .group-switcher-chip')
       .filter({ hasText: 'Workers' })
     await chip.click()
     await row(child).waitFor()
     t.equal('filtering out the parent restores the child row', await row(child).count(), 1)
+    await win.keyboard.press('Meta+1')
+    await focused(child)
+    t.equal(
+      'number shortcuts follow a group filter that exposes the child',
+      (await listing()).focusedSessionId,
+      child
+    )
+    t.equal(
+      'unrelated grouped-row selection keeps the original styling',
+      await row(child).locator('.sidebar-item').getAttribute('data-selected'),
+      null
+    )
+
     await win.locator('.group-switcher-head .group-switcher-chip').click()
     await trigger().waitFor()
     t.equal('All compacts the child again', await row(child).count(), 0)
+    t.equal(
+      'represented parent retains a selected marker',
+      await row(parent).locator('.sidebar-item').getAttribute('data-selected'),
+      'true'
+    )
 
     const parentGroup = await callMcp(app, 'createGroup', { name: 'Coordination' })
     assert.ok(parentGroup?.groupId)
@@ -243,6 +423,12 @@ exec /bin/sh "$@"
       'expanding the parent compacts its cross-group children again',
       await row(child).count(),
       0
+    )
+
+    t.equal(
+      'grouped represented parent keeps its scoped selected marker',
+      await row(parent).locator('.sidebar-item').getAttribute('data-selected'),
+      'true'
     )
 
     // All four Clave sessions remain available to tools and the session host.
@@ -278,6 +464,12 @@ exec /bin/sh "$@"
     await row(child).waitFor()
     t.equal('surviving child becomes an ordinary parent row', await row(child).count(), 1)
     t.equal('nested child stays represented by the surviving parent', await row(nested).count(), 0)
+    const survivingTrigger = row(child).locator('.subagent-trigger')
+    t.check(
+      'one descendant uses a singular subagent tooltip',
+      /^1 subagent(?: ·|$)/.test(await survivingTrigger.getAttribute('title'))
+    )
+
     await callMcp(app, 'closeSession', { sessionId: child })
     await row(nested).waitFor()
     t.equal('last orphan becomes an ordinary row', await row(nested).count(), 1)

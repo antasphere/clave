@@ -2,8 +2,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { Effect, Layer, Schema } from 'effect'
 import { Command, CommandHandler, HandlerRegistry, layer as busesLayer } from '@structure-ai/cqrs'
 import { defineFixture, defineScenario, run } from '@structure-ai/fixtures'
-import type { Session } from '../store/session-types'
-import { subagentPresentation } from './subagent-presentation'
+import type { Session, SessionGroup } from '../store/session-types'
+import { subagentAttention, subagentPresentation } from './subagent-presentation'
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
   id,
@@ -34,6 +34,25 @@ const graph = (
 ): ReturnType<typeof subagentPresentation> => subagentPresentation(sessions, new Set(reachable))
 
 describe('subagent presentation', () => {
+  it('summarizes child attention ahead of unread activity and ongoing work without changing sessions', () => {
+    const working = session('working', { agentState: 'working' })
+    const unread = session('unread', { hasUnseenActivity: true })
+    const blocked = session('blocked', { agentState: 'blocked' })
+    const ended = session('ended', { alive: false, agentState: 'blocked', hasUnseenActivity: true })
+    expect(subagentAttention([working, unread, blocked, ended])).toEqual({
+      status: 'needs-you',
+      sessions: [blocked]
+    })
+    expect(subagentAttention([working, unread, ended])).toEqual({
+      status: 'unread',
+      sessions: [unread]
+    })
+    expect(subagentAttention([working, ended])).toEqual({ status: 'working', sessions: [working] })
+    expect(subagentAttention([ended])).toEqual({ status: 'idle', sessions: [] })
+    expect(working.agentState).toBe('working')
+    expect(unread.hasUnseenActivity).toBe(true)
+    expect(blocked.agentState).toBe('blocked')
+  })
   it('compacts nested agents while preserving live session objects and terminals', () => {
     const parent = session('parent')
     const child = session('child', { spawnedBy: parent.id })
@@ -102,6 +121,8 @@ describe('subagent presentation', () => {
 })
 
 let store: typeof import('../store/session-store').useSessionStore
+let shortcutOrder: typeof import('../store/session-store').getVisibleFlatOrder
+let cycleOrder: typeof import('../store/session-store').getSessionCycleOrder
 beforeAll(async () => {
   const mem = new Map<string, string>()
   Object.assign(globalThis, {
@@ -112,7 +133,57 @@ beforeAll(async () => {
     },
     window: { electronAPI: { captureTabClosed: () => {} } }
   })
-  store = (await import('../store/session-store')).useSessionStore
+  const module = await import('../store/session-store')
+  store = module.useSessionStore
+  shortcutOrder = module.getVisibleFlatOrder
+  cycleOrder = module.getSessionCycleOrder
+})
+
+it('numbers represented rows while preserving cycle access and rendered search/filter order', () => {
+  const parent = session('parent')
+  const child = session('child', { spawnedBy: parent.id })
+  const nested = session('nested', { spawnedBy: child.id })
+  const terminal = session('terminal', { codexMode: false })
+  const state = {
+    sessions: [terminal, nested, child, parent],
+    groups: [] as SessionGroup[],
+    displayOrder: ['terminal', 'nested', 'child', 'parent']
+  }
+  expect(shortcutOrder(state, 'fixture-workspace')).toEqual(['terminal', 'parent'])
+  expect(cycleOrder(state, 'fixture-workspace')).toEqual(['terminal', 'nested', 'child', 'parent'])
+  expect(shortcutOrder(state, 'fixture-workspace', ['child'])).toEqual(['child'])
+  expect(shortcutOrder(state, 'fixture-workspace', ['parent', 'child', 'nested'])).toEqual([
+    'parent',
+    'child',
+    'nested'
+  ])
+  expect(shortcutOrder(state, 'fixture-workspace', [])).toEqual([])
+  expect(shortcutOrder(state, 'different-workspace')).toEqual([])
+  const collapsed = {
+    ...state,
+    groups: [
+      {
+        id: 'collapsed',
+        name: 'Collapsed',
+        cwd: '/fixture',
+        sessionIds: [parent.id],
+        collapsed: true,
+        workspaceId: 'fixture-workspace',
+        terminals: []
+      }
+    ],
+    displayOrder: ['terminal', 'nested', 'child', 'collapsed']
+  }
+  expect(shortcutOrder(collapsed, 'fixture-workspace')).toEqual(['terminal', 'child'])
+  const linked = session('linked')
+  const linkedState = {
+    ...state,
+    sessions: [
+      ...state.sessions,
+      { ...linked, view: { url: 'http://localhost', serverSessionId: terminal.id } }
+    ]
+  }
+  expect(shortcutOrder(linkedState, 'fixture-workspace')).toEqual(['parent'])
 })
 
 it('loads and verifies the sidebar/subagent-dropdown fixture scenario through session commands', async () => {
@@ -172,15 +243,34 @@ it('loads and verifies the sidebar/subagent-dropdown fixture scenario through se
             expect(result.descendants.size).toBe(1)
             const [parentId, children] = [...result.descendants][0]
             expect(children).toHaveLength(2)
+            expect(shortcutOrder(store.getState(), 'fixture-workspace')).toEqual([parentId])
+            expect(new Set(cycleOrder(store.getState(), 'fixture-workspace'))).toEqual(
+              new Set(sessions.map((s) => s.id))
+            )
+            store.getState().selectSession(parentId, false)
+            store.getState().setAgentState(children[0].id, 'blocked')
+            store.getState().setAgentState(children[1].id, 'working')
+            const attention = (): ReturnType<typeof subagentAttention> =>
+              subagentAttention(store.getState().sessions.filter((s) => s.id !== parentId))
+            expect(attention().status).toBe('needs-you')
+            store.getState().setAgentState(children[0].id, 'idle')
+            expect(attention().status).toBe('unread')
+            store.getState().selectSession(children[0].id, false)
+            expect(attention().status).toBe('working')
+            store.getState().setAgentState(children[1].id, 'idle')
+            expect(attention().status).toBe('unread')
             store.getState().selectSession(children[1].id, false)
+            expect(attention().status).toBe('idle')
             expect(store.getState().focusedSessionId).toBe(children[1].id)
             expect(result.rootById.get(store.getState().focusedSessionId!)).toBe(parentId)
             store.getState().selectSession(parentId, false)
             expect(store.getState().focusedSessionId).toBe(parentId)
             store.getState().removeSession(parentId)
-            expect(graph(store.getState().sessions).descendants.get(children[0].id)).toEqual([
-              children[1]
-            ])
+            expect(
+              graph(store.getState().sessions)
+                .descendants.get(children[0].id)
+                ?.map((s) => s.id)
+            ).toEqual([children[1].id])
           })
       })
     }).pipe(Effect.provide(busesLayer.pipe(Layer.provide(handlers))))

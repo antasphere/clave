@@ -3227,9 +3227,13 @@ html[data-ui-font='synonym'] {
   min-width: 0;
 }
 .subagent-trigger {
+  --chat-glyph: var(--framed-control-icon);
   flex-shrink: 0;
   max-width: 45%;
   cursor: pointer;
+}
+.subagent-trigger .tab-status {
+  flex-shrink: 0;
 }
 .subagent-trigger[data-active='true'] {
   color: var(--text-primary);

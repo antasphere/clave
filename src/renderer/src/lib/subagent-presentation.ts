@@ -1,4 +1,17 @@
 import type { Session } from '../store/session-types'
+import { tabIndicators, type TabStatus } from './tab-status'
+
+/** Folded children have their own attention signal; never replace the parent's. */
+export function subagentAttention(descendants: readonly Session[]): {
+  status: TabStatus
+  sessions: Session[]
+} {
+  for (const status of ['needs-you', 'unread', 'working'] as const) {
+    const sessions = descendants.filter((s) => tabIndicators(s).status === status)
+    if (sessions.length) return { status, sessions }
+  }
+  return { status: 'idle', sessions: [] }
+}
 
 function isLocalAgent(session: Session): boolean {
   return (
