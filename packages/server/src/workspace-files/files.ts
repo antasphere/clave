@@ -674,22 +674,49 @@ export class WorkspaceFiles {
     if (this.watchers.has(absolutePath)) return
     try {
       let debounceTimer: NodeJS.Timeout | null = null
+      let closed = false
+      // Native callbacks can straddle debounce windows for the same write.
+      // Compare the settled bytes, with absence distinct from unreadability.
+      const revision = (): string | undefined => {
+        try {
+          return createHash('sha256').update(fs.readFileSync(absolutePath)).digest('hex')
+        } catch (error) {
+          const failure = error as NodeJS.ErrnoException
+          if (typeof failure.errno !== 'number') throw error
+          if (failure.code === 'ENOENT') return 'missing'
+          // An unreadable revision still invalidates; the next successful
+          // read must be delivered too, even if its bytes match the old ones.
+          return undefined
+        }
+      }
+      let lastRevision = revision()
       // Watch the parent directory, not the file itself: editors and agents
       // replace files via atomic rename, which orphans a file-inode watcher
       // after the first change. A directory watch survives inode swaps.
       const dir = path.dirname(absolutePath)
       const base = path.basename(absolutePath)
       const watcher = fs.watch(dir, (_eventType, filename) => {
+        if (closed) return
         // filename can be null on some platforms: treat as a possible match.
         if (filename && filename !== base) return
-        if (this.recentWrites.has(absolutePath)) return
+        if (this.recentWrites.has(absolutePath)) {
+          lastRevision = revision()
+          return
+        }
         if (debounceTimer) clearTimeout(debounceTimer)
         debounceTimer = setTimeout(() => {
           debounceTimer = null
+          const current = revision()
+          if (current !== undefined && current === lastRevision) return
+          lastRevision = current
+          // A timer queued before our write must not publish that write.
+          if (this.recentWrites.has(absolutePath)) return
           this.emit({ _tag: 'workspace_files.changed', path: absolutePath })
         }, this.debounceMs)
       })
       const cleanup = (): void => {
+        if (closed) return
+        closed = true
         if (debounceTimer) clearTimeout(debounceTimer)
         watcher.close()
         this.watchers.delete(absolutePath)

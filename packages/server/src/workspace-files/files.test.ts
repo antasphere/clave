@@ -13,9 +13,11 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import * as fs from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewAnswer } from '@clave/contract/workspace-files'
 import {
   TRUSTED_CONTENT_FILE,
@@ -25,6 +27,11 @@ import {
   memoryWorkspaceFilesStorage,
   type ReviewRequest
 } from './files'
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>()
+  return { ...actual, watch: vi.fn(actual.watch), readFileSync: vi.fn(actual.readFileSync) }
+})
 
 let root: string
 let files: WorkspaceFiles
@@ -412,6 +419,282 @@ describe('watching', () => {
     renameSync(tmp, file)
     await settle(400)
     expect(heard).toEqual([file])
+  })
+
+  it('loads the workspace-files/revisions fixture and verifies later revisions through the real watcher', async () => {
+    const { Effect, Layer, Schema } = await import('effect')
+    const { HandlerRegistry, layer: busesLayer } = await import('@structure-ai/cqrs')
+    const { defineFixture, defineScenario, makeCatalog, run } =
+      await import('@structure-ai/fixtures')
+    const fixtureFiles = new WorkspaceFiles(memoryWorkspaceFilesStorage(), { debounceMs: 60 })
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'clave-wsf-fixture-')))
+    const scenario = defineScenario({
+      name: 'workspace-files/revisions',
+      description:
+        'An isolated workspace file with two external revisions and one event per revision.',
+      input: Schema.Struct({}),
+      fixtures: () => ({
+        document: defineFixture({
+          key: 'workspace-files/document',
+          create: ({ id }) =>
+            Effect.sync(() => {
+              const file = join(dir, `${id('document')}.clave`)
+              // Author through the public writer; the separately held watcher
+              // represents another process editing that authored document.
+              const author = new WorkspaceFiles(memoryWorkspaceFilesStorage(), { echoMs: 0 })
+              author.write(file, {
+                name: 'Initial',
+                cwd: dir,
+                color: null,
+                sessions: [],
+                terminals: []
+              })
+              author.close()
+              return file
+            })
+        })
+      })
+    })
+    const catalog = makeCatalog({ base: {}, scenarios: [scenario] })
+    const heard: string[] = []
+    fixtureFiles.onEvent((event) => heard.push(event.path))
+    try {
+      const report = await Effect.runPromise(
+        catalog.prepare(scenario.name, {}).pipe(
+          Effect.flatMap((fixtures) =>
+            run({
+              fixtures,
+              // This test's isolated temporary target explicitly enables fixtures.
+              enabled: true,
+              ready: ({ values }) =>
+                Effect.promise(async () => {
+                  const file = values.document as string
+                  expect(await fixtureFiles.read(file)).toMatchObject({ name: 'Initial' })
+                  fixtureFiles.watch(file)
+                  for (const name of ['First external revision', 'Second external revision']) {
+                    const changed = new Promise<void>((resolve) => {
+                      const off = fixtureFiles.onEvent(() => {
+                        off()
+                        resolve()
+                      })
+                    })
+                    writeFileSync(file, single({ name }))
+                    await changed
+                    expect(await fixtureFiles.read(file)).toMatchObject({ name })
+                  }
+                  await settle(200)
+                  expect(heard).toEqual([file, file])
+                }),
+              timeoutMs: 3000
+            })
+          ),
+          Effect.provide(busesLayer.pipe(Layer.provide(HandlerRegistry.layer())))
+        )
+      )
+      const receipt = join(dir, 'receipt.json')
+      writeFileSync(
+        receipt,
+        JSON.stringify(
+          {
+            scenario: scenario.name,
+            target: 'isolated temporary files',
+            runId: report.runId,
+            completed: report.completed,
+            ids: report.ids,
+            verified:
+              'two external revisions, public reads and exactly two real-watcher notifications',
+            directory: dir,
+            cleanup: 'remove this run directory explicitly after inspection'
+          },
+          null,
+          2
+        )
+      )
+      console.info(JSON.stringify({ fixtureScenario: scenario.name, runId: report.runId, receipt }))
+    } finally {
+      fixtureFiles.close()
+      // Retained on success or failure for inspection, never in user app data.
+    }
+  })
+})
+
+describe('watching scheduled native callbacks', () => {
+  let callback: fs.WatchListener<string>
+  let closed: ReturnType<typeof vi.fn>
+  let restoreWatch: () => void
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    files.close()
+    files = new WorkspaceFiles(storage, { debounceMs: 60, echoMs: 300 })
+    closed = vi.fn()
+    const nativeWatch = vi.mocked(fs.watch).getMockImplementation()!
+    restoreWatch = () => vi.mocked(fs.watch).mockImplementation(nativeWatch)
+    vi.mocked(fs.watch).mockImplementation((...args: Parameters<typeof fs.watch>) => {
+      callback = args[1] as fs.WatchListener<string>
+      return Object.assign(new EventEmitter(), { close: closed }) as unknown as fs.FSWatcher
+    })
+  })
+  afterEach(() => {
+    files.close()
+    restoreWatch()
+    vi.mocked(fs.readFileSync).mockReset()
+    vi.useRealTimers()
+  })
+
+  const notify = (event: fs.WatchEventType = 'change', name: string | null = 'w.clave'): void =>
+    callback(event, name)
+  const tick = (): void => {
+    vi.advanceTimersByTime(60)
+  }
+
+  it('coalesces one revision across debounce deadlines but tells later changed bytes, including a revert', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    writeFileSync(file, single({ name: 'A' }))
+    notify()
+    vi.advanceTimersByTime(40)
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    // The same native revision arrives after the previous timer has fired.
+    notify('rename')
+    tick()
+    expect(heard, 'unchanged bytes must not publish a second invalidation').toEqual([file])
+    writeFileSync(file, single({ name: 'B' }))
+    notify('change', null)
+    tick()
+    expect(heard).toEqual([file, file])
+    writeFileSync(file, single({ name: 'A' }))
+    notify()
+    tick()
+    expect(heard).toEqual([file, file, file])
+  })
+
+  it('ignores registration noise and sibling filenames without losing the next edit', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    notify('rename')
+    tick()
+    expect(heard).toEqual([])
+    writeFileSync(file, single({ name: 'later' }))
+    notify('change', 'sibling.clave')
+    tick()
+    expect(heard).toEqual([])
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+  })
+
+  it('survives atomic replacements, deletion and same-byte recreation', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    const tmp = join(root, 'w.clave.tmp')
+    writeFileSync(tmp, single({ name: 'replacement' }))
+    renameSync(tmp, file)
+    notify('rename')
+    tick()
+    notify('rename')
+    tick()
+    expect(heard).toEqual([file])
+    rmSync(file)
+    notify('rename')
+    tick()
+    notify('rename')
+    tick()
+    expect(heard).toEqual([file, file])
+    writeFileSync(file, single({ name: 'replacement' }))
+    notify('rename')
+    tick()
+    expect(heard).toEqual([file, file, file])
+    writeFileSync(file, single({ name: 'after recreation' }))
+    notify()
+    tick()
+    expect(heard).toEqual([file, file, file, file])
+  })
+
+  it('suppresses an own write even with a pending external timer, then tells the next external edit', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    writeFileSync(file, single({ name: 'external before own write' }))
+    notify()
+    files.write(file, { name: 'own write', cwd: root, color: null, sessions: [], terminals: [] })
+    notify()
+    tick()
+    expect(heard).toEqual([])
+    vi.advanceTimersByTime(300)
+    notify()
+    tick()
+    expect(heard).toEqual([])
+    writeFileSync(file, single({ name: 'later external edit' }))
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+  })
+
+  it('does not treat an unreadable revision as missing or permanently suppress recovery', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    vi.mocked(fs.readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('fixture unreadable'), { code: 'EACCES', errno: -13 })
+    })
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    notify()
+    tick()
+    expect(heard).toEqual([file, file])
+    notify()
+    tick()
+    expect(heard).toEqual([file, file])
+  })
+
+  it('keeps one holder alive, cancels on last release and on close, and starts a fresh baseline', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, single())
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file, 'one')
+    files.watch(file, 'two')
+    files.unwatch(file, 'one')
+    writeFileSync(file, single({ name: 'kept' }))
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    writeFileSync(file, single({ name: 'cancelled' }))
+    notify()
+    files.unwatch(file, 'two')
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    expect(closed).toHaveBeenCalledTimes(1)
+    files.watch(file)
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    writeFileSync(file, single({ name: 'closed' }))
+    notify()
+    files.close()
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    expect(files.watched()).toEqual([])
+    expect(closed).toHaveBeenCalledTimes(2)
   })
 })
 
