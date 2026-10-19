@@ -557,6 +557,10 @@ export function readBoundPrefix(snapshot) {
   const fail = (reason) => {
     throw new Error('invalid immutable prefix binding: ' + reason)
   }
+  const pointFields = ['line', 'column', 'offset'],
+    positionFields = ['start', 'end'],
+    nodeFields = ['type', 'position', 'children', 'value', 'url', 'title', 'alt', 'depth'],
+    stringFields = ['value', 'url', 'title', 'alt']
   const data = (o, keys, array = false) => {
     if (
       !o ||
@@ -567,53 +571,57 @@ export function readBoundPrefix(snapshot) {
     )
       fail('plain-object')
     const descriptors = Object.getOwnPropertyDescriptors(o)
-    if (
-      Reflect.ownKeys(descriptors).some(
-        (k) =>
-          typeof k !== 'string' || !('value' in descriptors[k]) || (!array && !keys.includes(k))
+    for (const key of Reflect.ownKeys(descriptors))
+      if (
+        typeof key !== 'string' ||
+        !Object.hasOwn(descriptors[key], 'value') ||
+        (!array && !keys.includes(key))
       )
-    )
-      fail('data-fields')
+        fail('data-fields')
     if (!Object.isFrozen(o)) fail('frozen')
-    const copy = Object.create(null)
-    for (const [key, descriptor] of Object.entries(descriptors)) copy[key] = descriptor.value
-    return copy
+    return descriptors
   }
+  // Optional absent fields must not read Object.prototype through the map.
+  // Reuse the validated own descriptors instead of copying every value again.
+  const value = (descriptors, key) =>
+    Object.hasOwn(descriptors, key) ? descriptors[key].value : undefined
   const integer = (n) => {
     if (!Number.isSafeInteger(n) || n < 0) fail('integer')
     return n
   }
   const state = data(this, ['kind', 'signature', 'snapshot'])
   if (
-    state.kind !== 'prefix' ||
-    state.signature !== 'remark-gfm4:singleTilde=true' ||
-    state.snapshot !== snapshot
+    value(state, 'kind') !== 'prefix' ||
+    value(state, 'signature') !== 'remark-gfm4:singleTilde=true' ||
+    value(state, 'snapshot') !== snapshot
   )
     fail('state-identity')
   const s = data(snapshot, ['input', 'cut', 'line', 'blocks', 'rootStart', 'accounting'])
-  if (typeof s.input !== 'string') fail('input-type')
-  const cut = integer(s.cut),
-    line = integer(s.line)
-  if (cut > s.input.length || line < 1) fail('cut-line')
+  const input = value(s, 'input')
+  if (typeof input !== 'string') fail('input-type')
+  const cut = integer(value(s, 'cut')),
+    line = integer(value(s, 'line'))
+  if (cut > input.length || line < 1) fail('cut-line')
   const point = (p) => {
-    const d = data(p, ['line', 'column', 'offset'])
-    if (integer(d.line) < 1 || integer(d.column) < 1 || integer(d.offset) > s.input.length)
+    const d = data(p, pointFields),
+      offset = integer(value(d, 'offset'))
+    if (integer(value(d, 'line')) < 1 || integer(value(d, 'column')) < 1 || offset > input.length)
       fail('point')
-    return d
+    return offset
   }
-  point(s.rootStart)
+  point(value(s, 'rootStart'))
   const array = (a) => {
     const d = data(a, [], true),
-      n = integer(d.length)
+      n = integer(value(d, 'length'))
     if (n > 4096 || Object.keys(d).length !== n + 1) fail('array-shape')
     const values = []
     for (let i = 0; i < n; i++) {
       if (!Object.hasOwn(d, String(i))) fail('array-hole')
-      values.push(d[i])
+      values.push(d[i].value)
     }
     return values
   }
-  const blocks = array(s.blocks),
+  const blocks = array(value(s, 'blocks')),
     pending = [...blocks],
     seen = new Set()
   let nodes = 0,
@@ -622,31 +630,35 @@ export function readBoundPrefix(snapshot) {
     const at = pending.pop()
     if (seen.has(at)) fail('ast-cycle')
     seen.add(at)
-    const n = data(at, ['type', 'position', 'children', 'value', 'url', 'title', 'alt', 'depth'])
-    if (typeof n.type !== 'string') fail('ast-type')
-    if (n.depth !== undefined) integer(n.depth)
-    if (n.position !== undefined) {
-      const p = data(n.position, ['start', 'end']),
-        start = point(p.start),
-        end = point(p.end)
-      if (start.offset > end.offset || end.offset > cut) fail('position')
+    const n = data(at, nodeFields),
+      depth = value(n, 'depth'),
+      position = value(n, 'position'),
+      children = value(n, 'children')
+    if (typeof value(n, 'type') !== 'string') fail('ast-type')
+    if (depth !== undefined) integer(depth)
+    if (position !== undefined) {
+      const p = data(position, positionFields),
+        start = point(value(p, 'start')),
+        end = point(value(p, 'end'))
+      if (start > end || end > cut) fail('position')
     }
     nodes++
     if (nodes > 4096) fail('node-cap')
-    for (const key of ['value', 'url', 'title', 'alt']) {
-      if (n[key] != null && typeof n[key] !== 'string') fail('ast-string')
-      astStringCodeUnits += n[key]?.length ?? 0
+    for (const key of stringFields) {
+      const text = value(n, key)
+      if (text != null && typeof text !== 'string') fail('ast-string')
+      astStringCodeUnits += text?.length ?? 0
     }
-    if (n.children !== undefined) pending.push(...array(n.children))
+    if (children !== undefined) pending.push(...array(children))
   }
-  const accounting = data(s.accounting, [
+  const accounting = data(value(s, 'accounting'), [
     'blocks',
     'nodes',
     'sourceSpanCodeUnits',
     'astStringCodeUnits',
     'sourceBytes'
   ])
-  for (const n of Object.values(accounting)) integer(n)
+  for (const key of Object.keys(accounting)) integer(value(accounting, key))
   const actual = {
     blocks: blocks.length,
     nodes,
@@ -656,13 +668,13 @@ export function readBoundPrefix(snapshot) {
   }
   if (
     Object.keys(accounting).length !== 5 ||
-    Object.entries(actual).some(([k, v]) => accounting[k] !== v) ||
+    Object.entries(actual).some(([k, v]) => value(accounting, k) !== v) ||
     actual.blocks > 64 ||
     actual.nodes > 4096 ||
     actual.sourceBytes > 131072
   )
     fail('accounting-caps')
-  return { input: s.input, cut, line, accounting: actual, deepFrozen: true, sameSnapshot: true }
+  return { input, cut, line, accounting: actual, deepFrozen: true, sameSnapshot: true }
 }
 
 // Reads actual Fiber ancestors and the HostRoot current child/sibling graph. A

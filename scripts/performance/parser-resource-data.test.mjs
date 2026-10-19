@@ -1,7 +1,17 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript heap graph fixtures */
 import assert from 'node:assert/strict'
 import inspector from 'node:inspector'
+import vm from 'node:vm'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { test } from 'vitest'
+import {
+  createMarkdownAttempt,
+  createMarkdownStore
+} from '../../plugins/chat-view/src/markdown-parser-reuse'
+import { LONG_RESPONSE, streamChunk } from '../../tests/e2e/renderer-workload.mjs'
 import {
   decodeHeap,
   readBoundPrefix,
@@ -633,6 +643,185 @@ function boundRow(state = immutablePrefix()) {
     structure: { blocks: 1, nodes: 2 }
   }
 }
+test('production positioned prefix retains full accounting with bounded reader allocation calls', () => {
+  const input = LONG_RESPONSE + Array.from({ length: 500 }, (_, i) => streamChunk(i)).join(''),
+    store = createMarkdownStore(),
+    attempt = createMarkdownAttempt(undefined, input, false, 'remark-gfm4:singleTilde=true')
+  renderToStaticMarkup(
+    createElement(
+      ReactMarkdown,
+      { remarkPlugins: [[remarkGfm, { singleTilde: true }], attempt.plugin] },
+      input
+    )
+  )
+  assert.equal(attempt.ready(), true)
+  store.publish(attempt.candidate())
+  attempt.release()
+  const state = store.getSnapshot()
+  assert.equal(state.kind, 'prefix')
+  assert.equal(state.snapshot.input.length, 98380)
+  assert.equal(state.snapshot.cut, 34380)
+  assert.equal(state.snapshot.line, 49)
+  assert.deepEqual(state.snapshot.accounting, {
+    blocks: 24,
+    nodes: 2916,
+    sourceSpanCodeUnits: 34380,
+    astStringCodeUnits: 30444,
+    sourceBytes: 129648
+  })
+  let positions = 0,
+    frozenObjects = 0
+  const pending = [state]
+  while (pending.length) {
+    const at = pending.pop()
+    if (!at || typeof at !== 'object') continue
+    assert.equal(Object.isFrozen(at), true)
+    frozenObjects++
+    if (at.type) {
+      assert.ok(at.position)
+      positions++
+    }
+    pending.push(...Object.values(at))
+  }
+  assert.equal(positions, 2916)
+  assert.equal(frozenObjects, 12653)
+  // Census allocating builtins in a separate realm after fixture setup. This
+  // deterministic budget is not a wall-clock, byte-size or inspector mock.
+  const inspect = (state, reader) => {
+    const pending = [state]
+    while (pending.length) {
+      const at = pending.pop()
+      if (!at || typeof at !== 'object') continue
+      pending.push(...Object.values(at))
+      Object.freeze(at)
+    }
+    const counts = {}
+    for (const [owner, name] of [
+      [Object, 'getOwnPropertyDescriptors'],
+      [Object, 'create'],
+      [Object, 'entries'],
+      [Object, 'keys'],
+      [Reflect, 'ownKeys']
+    ]) {
+      const original = owner[name]
+      owner[name] = (...args) => {
+        counts[name] = (counts[name] ?? 0) + 1
+        return original(...args)
+      }
+    }
+    const value = reader.call(state, state.snapshot)
+    if (value.input !== state.snapshot.input) throw new Error('full input mismatch')
+    delete value.input
+    return { counts, value }
+  }
+  const result = vm.runInNewContext(
+    '(' + inspect.toString() + ')(' + JSON.stringify(state) + ',' + readBoundPrefix.toString() + ')'
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(result.value)), {
+    cut: 34380,
+    line: 49,
+    accounting: state.snapshot.accounting,
+    deepFrozen: true,
+    sameSnapshot: true
+  })
+  const allocations = Object.values(result.counts).reduce((sum, count) => sum + count, 0)
+  assert.ok(allocations <= 3 * frozenObjects, 'redundant per-object reader allocation regression')
+})
+
+for (const field of ['position', 'children', 'depth', 'value', 'url', 'title', 'alt'])
+  test('absent own ' + field + ' never invokes an inherited getter', () => {
+    const inspect = (state, reader, field) => {
+      const pending = [state]
+      while (pending.length) {
+        const at = pending.pop()
+        if (!at || typeof at !== 'object') continue
+        pending.push(...Object.values(at))
+        Object.freeze(at)
+      }
+      let touched = 0
+      const descriptor = Object.create(null)
+      descriptor.get = () => {
+        touched++
+        return 'inherited value'
+      }
+      descriptor.configurable = true
+      Object.defineProperty(Object.prototype, field, descriptor)
+      const value = reader.call(state, state.snapshot)
+      delete value.input
+      return { touched, value }
+    }
+    const result = vm.runInNewContext(
+      '(' +
+        inspect.toString() +
+        ')(' +
+        JSON.stringify(immutablePrefix()) +
+        ',' +
+        readBoundPrefix.toString() +
+        ',' +
+        JSON.stringify(field) +
+        ')'
+    )
+    assert.equal(result.touched, 0)
+    assert.equal(result.value.accounting.nodes, 2)
+    assert.equal(result.value.deepFrozen, true)
+  })
+for (const mode of [
+  'prototype',
+  'shared-node',
+  'symbol',
+  'optional-getter',
+  'unfrozen-point',
+  'position-cut'
+])
+  test('descriptor reuse keeps ' + mode + ' rejection', () => {
+    const state = structuredClone(immutablePrefix()),
+      paragraph = state.snapshot.blocks[0]
+    let touched = 0
+    if (mode === 'prototype')
+      Object.setPrototypeOf(paragraph, {
+        get value() {
+          touched++
+          return 'inherited value'
+        }
+      })
+    if (mode === 'shared-node') paragraph.children.push(paragraph.children[0])
+    if (mode === 'symbol') paragraph[Symbol('extra')] = 1
+    if (mode === 'optional-getter')
+      Object.defineProperty(paragraph.children[0], 'url', {
+        get() {
+          touched++
+          return 'inherited value'
+        }
+      })
+    paragraph.position = {
+      start: { line: 1, column: 1, offset: 0 },
+      end: { line: 1, column: 4, offset: mode === 'position-cut' ? 3 : 2 }
+    }
+    const skipped = mode === 'unfrozen-point' ? paragraph.position.end : null,
+      seen = new Set(),
+      pending = [state]
+    while (pending.length) {
+      const at = pending.pop()
+      if (!at || typeof at !== 'object' || seen.has(at)) continue
+      seen.add(at)
+      for (const d of Object.values(Object.getOwnPropertyDescriptors(at)))
+        if ('value' in d) pending.push(d.value)
+      if (at !== skipped) Object.freeze(at)
+    }
+    const reason = {
+      prototype: 'plain-object',
+      'shared-node': 'ast-cycle',
+      symbol: 'data-fields',
+      'optional-getter': 'data-fields',
+      'unfrozen-point': 'frozen',
+      'position-cut': 'position'
+    }[mode]
+    assert.throws(
+      () => readBoundPrefix.call(state, state.snapshot),
+      new RegExp('invalid immutable prefix binding: ' + reason)
+    )
+    assert.equal(touched, 0)
+  })
 test('read-only immutable binding recounts full string units and matches same snapshot', () => {
   const state = immutablePrefix('ab\ud800 tail')
   const value = readBoundPrefix.call(state, state.snapshot)
@@ -1467,6 +1656,13 @@ function syntheticInspectorFixture(mode, className) {
         return 'never read'
       }
     })
+  if (mode === 'optional-getter')
+    Object.defineProperty(snapshot.blocks[0].children[0], 'url', {
+      get() {
+        calls++
+        return 'never read'
+      }
+    })
   if (mode === '__proto__')
     Object.defineProperty(snapshot.blocks, '__proto__', { value: null, enumerable: true })
   if (mode === 'extra')
@@ -1707,6 +1903,7 @@ test('real local Node inspector runs actual prefix and current/alternate readers
 })
 for (const mode of [
   'getter',
+  'optional-getter',
   'unfrozen',
   'signature',
   'accounting',
