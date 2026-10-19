@@ -24,15 +24,15 @@ let applyServerLayout: typeof import('./session-store').applyServerLayout
 let setSidebarBase: typeof import('./session-store').setSidebarBase
 let enableSidebarPersistence: typeof import('./session-store').enableSidebarPersistence
 const notifications = vi.fn(async () => 'shown')
-const saves = vi.fn(
-  async (
-    data: Pick<import('./session-store').SidebarLayoutSnapshot, 'groups' | 'displayOrder'>,
-    baseRevision: number
-  ) => ({
-    ok: true,
-    layout: { ...data, windowKey: 'w', revision: baseRevision + 1 }
-  })
-)
+type SaveResult = Awaited<ReturnType<typeof window.electronAPI.sidebarLayoutSave>>
+const saveLayout = async (
+  data: Pick<import('./session-store').SidebarLayoutSnapshot, 'groups' | 'displayOrder'>,
+  baseRevision: number
+): Promise<SaveResult> => ({
+  ok: true,
+  layout: { ...data, windowKey: 'w', revision: baseRevision + 1 }
+})
+const saves = vi.fn(saveLayout)
 let adoptServerStartedTerminals: typeof import('../lib/adopt-record').adoptServerStartedTerminals
 let adoptRecord: typeof import('../lib/adopt-record').adoptRecord
 /** What main answers to `listSessionRecords`, set per test. */
@@ -139,7 +139,7 @@ beforeEach(() => {
     focusedSessionId: null,
     fileTabs: []
   })
-  saves.mockClear()
+  saves.mockReset().mockImplementation(saveLayout)
   notifications.mockClear()
 })
 
@@ -967,5 +967,256 @@ describe('served close with sidebar persistence enabled', () => {
     expect(useSessionStore.getState().sessions.map((s) => s.id)).toContain('target')
     expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['target'])
     expect(saves).not.toHaveBeenCalled()
+  })
+  it('recovers persistence on an ordinary rename after a transient inventory failure', async () => {
+    start()
+    const inventory = deferred()
+    unplace()
+    await settle()
+    inventory.reject(new Error('one transient public inventory failure'))
+    await settle()
+    expect(saves).not.toHaveBeenCalled()
+    listedAnswer = null
+    listed = []
+    expect(await window.electronAPI.sessionsList()).toEqual([])
+    useSessionStore.getState().renameGroup('g', 'Must survive a restart')
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(useSessionStore.getState().groups[0].name).toBe('Must survive a restart')
+    expect(
+      saves.mock.calls.every(
+        ([layout]) =>
+          !layout.displayOrder.includes('target') &&
+          !layout.groups.some((g) => g.sessionIds.includes('target'))
+      )
+    ).toBe(true)
+    const accepted = await Promise.all(saves.mock.results.map((result) => result.value))
+    expect(
+      accepted.at(-1),
+      'ordinary edits must reach persistence after inventory becomes available'
+    ).toMatchObject({
+      ok: true,
+      layout: { groups: [expect.objectContaining({ name: 'Must survive a restart' })] }
+    })
+  })
+  const failedInventory = async (anchored = false): Promise<void> => {
+    start()
+    if (anchored) {
+      const g = group('g', ['anchor', 'target'])
+      setSidebarBase({ windowKey: 'w', revision: ++revision, groups: [g], displayOrder: ['g'] })
+      useSessionStore.setState({ sessions: [session('anchor'), session('target')], groups: [g] })
+    }
+    const initial = deferred()
+    if (anchored)
+      applyServerLayout({
+        windowKey: 'w',
+        revision: ++revision,
+        groups: [group('g', ['anchor'])],
+        displayOrder: ['g']
+      })
+    else unplace()
+    await settle()
+    initial.reject(new Error('transient inventory rejection'))
+    await settle()
+    expect(saves).not.toHaveBeenCalled()
+  }
+  const noClosedTargetSent = (): void => {
+    expect(
+      saves.mock.calls.every(
+        ([layout]) =>
+          !layout.displayOrder.includes('target') &&
+          !layout.groups.some(
+            (g) =>
+              g.sessionIds.includes('target') || g.terminals.some((t) => t.sessionId === 'target')
+          )
+      )
+    ).toBe(true)
+  }
+  it.each(['missing', 'ended', 'live'])(
+    'ordinary edit retries recovered %s inventory and saves its name',
+    async (state) => {
+      await failedInventory()
+      const read = vi.fn(async () =>
+        state === 'missing' ? [] : [{ id: 'target', state: state === 'ended' ? 'ended' : 'idle' }]
+      )
+      listedAnswer = read
+      useSessionStore.getState().renameGroup('g', 'Recovered name')
+      await settle()
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('Recovered name')
+      if (state === 'live') retained()
+      else {
+        expect(useSessionStore.getState().sessions.map((s) => s.id)).not.toContain('target')
+        noClosedTargetSent()
+      }
+    }
+  )
+  it('coalesces ordinary edits behind one retry and persists the latest edit', async () => {
+    await failedInventory()
+    const response = deferred()
+    const read = vi.fn(listedAnswer!)
+    listedAnswer = read
+    for (const name of ['first', 'second', 'latest'])
+      useSessionStore.getState().renameGroup('g', name)
+    await settle()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(saves).not.toHaveBeenCalled()
+    response.resolve([])
+    await settle()
+    expect(saves).toHaveBeenCalledTimes(1)
+    expect(saves.mock.calls[0][0].groups[0].name).toBe('latest')
+    noClosedTargetSent()
+  })
+  it('keeps edits across repeated rejections without a self-retry loop, then recovers', async () => {
+    await failedInventory()
+    const read = vi.fn(async () => {
+      throw new Error('still unavailable')
+    })
+    listedAnswer = read
+    useSessionStore.getState().renameGroup('g', 'first held edit')
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(saves).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions.map((s) => s.id)).toContain('target')
+    useSessionStore.getState().renameGroup('g', 'second held edit')
+    await settle()
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(saves).not.toHaveBeenCalled()
+    listedAnswer = async () => []
+    useSessionStore.getState().renameGroup('g', 'eventually durable')
+    await settle()
+    expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('eventually durable')
+    expect(useSessionStore.getState().sessions.map((s) => s.id)).not.toContain('target')
+    noClosedTargetSent()
+  })
+  it.each(['move', 'move-back', 'restart', 'alive-cycle', 'identity', 'linked-editor'])(
+    'guards a delayed retry after %s',
+    async (change) => {
+      await failedInventory(true)
+      const retry = deferred()
+      useSessionStore.getState().renameGroup('g', 'held through retry')
+      await settle()
+      const store = useSessionStore.getState()
+      if (change === 'move' || change === 'move-back') {
+        store.moveItems(['target'], null, 'after')
+        if (change === 'move-back') {
+          useSessionStore.getState().moveItems(['target'], 'g', 'inside')
+          expect(useSessionStore.getState().groups[0].sessionIds).toEqual(['anchor', 'target'])
+        }
+      } else if (change === 'restart') {
+        store.setSessionRestarting('target', true)
+        store.setSessionRestarting('target', false)
+        store.updateSessionAlive('target', false)
+      } else if (change === 'alive-cycle') {
+        store.updateSessionAlive('target', false)
+        store.updateSessionAlive('target', true)
+        store.updateSessionAlive('target', false)
+      } else if (change === 'identity')
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === 'target' ? { ...s, cwd: '/new-process', spawnedAt: 250 } : s
+          )
+        }))
+      else blocksClose = true
+      expect(saves).not.toHaveBeenCalled()
+      retry.resolve([])
+      await settle()
+      retained()
+      expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('held through retry')
+    }
+  )
+  it('ignores a delayed retry after a newer legitimate placement and persists held edits', async () => {
+    await failedInventory()
+    const retry = deferred()
+    useSessionStore.getState().renameGroup('g', 'held rename')
+    await settle()
+    applyServerLayout({
+      windowKey: 'w',
+      revision: ++revision,
+      groups: [group('g', ['target'])],
+      displayOrder: ['g']
+    })
+    await settle()
+    retry.resolve([])
+    await settle()
+    expect(useSessionStore.getState().sessions.map((s) => s.id)).toContain('target')
+    expect(useSessionStore.getState().groups[0].sessionIds).toContain('target')
+    expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('held rename')
+  })
+  it('uses the newer unplacement revision instead of an obsolete retry reply', async () => {
+    await failedInventory()
+    const old = deferred()
+    useSessionStore.getState().renameGroup('g', 'local rename')
+    await settle()
+    const newer = deferred()
+    unplace()
+    const newestRevision = revision
+    await settle()
+    old.resolve([{ id: 'target', state: 'idle' }])
+    await settle()
+    expect(saves).not.toHaveBeenCalled()
+    newer.resolve([])
+    await settle()
+    expect(saves.mock.calls[0][1]).toBe(newestRevision)
+    expect(saves.mock.calls[0][0].groups[0].name).toBe('local rename')
+    noClosedTargetSent()
+  })
+  it('keeps a recovered rename through a save conflict and the held newest layout', async () => {
+    await failedInventory()
+    let resolve!: (result: SaveResult) => void
+    const answer = new Promise<SaveResult>((done) => {
+      resolve = done
+    })
+    saves.mockImplementationOnce(() => answer)
+    listedAnswer = async () => []
+    useSessionStore.getState().renameGroup('g', 'survives conflict')
+    await settle()
+    expect(saves).toHaveBeenCalledTimes(1)
+    const conflict = {
+      windowKey: 'w',
+      revision: ++revision,
+      groups: [group('g', [])],
+      displayOrder: ['g']
+    }
+    applyServerLayout(conflict)
+    const newest = { ...conflict, revision: ++revision }
+    applyServerLayout(newest)
+    resolve({ ok: false, reason: 'conflict', current: conflict })
+    await settle()
+    expect(saves.mock.calls.at(-1)?.[1]).toBe(newest.revision)
+    expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('survives conflict')
+    noClosedTargetSent()
+  })
+  it('keeps an unresolved second tab safe while a definitive exit and later recovery share one batch', async () => {
+    start()
+    const g = group('g', ['target', 'second'])
+    setSidebarBase({ windowKey: 'w', revision: ++revision, groups: [g], displayOrder: ['g'] })
+    useSessionStore.setState({ groups: [g], sessions: [session('target'), session('second')] })
+    const initial = deferred()
+    unplace()
+    await settle()
+    initial.reject(new Error('two-tab unavailable inventory'))
+    await settle()
+    useSessionStore.getState().updateSessionAlive('target', false)
+    await settle()
+    // This is an observation of the documented batch hold, not an assertion
+    // that a definitely ended row must remain until the other tab resolves.
+    console.log(
+      'multi-displaced-before-recovery',
+      JSON.stringify({
+        targetPresent: useSessionStore.getState().sessions.some((s) => s.id === 'target'),
+        saves: saves.mock.calls.length
+      })
+    )
+    expect(useSessionStore.getState().sessions.some((s) => s.id === 'second')).toBe(true)
+    expect(saves).not.toHaveBeenCalled()
+    listedAnswer = async () => [{ id: 'second', state: 'idle' }]
+    useSessionStore.getState().renameGroup('g', 'batch recovered')
+    await settle()
+    expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['second'])
+    expect(saves.mock.calls.at(-1)?.[0].groups[0].name).toBe('batch recovered')
+    expect(saves.mock.calls.at(-1)?.[0].displayOrder).toContain('second')
+    noClosedTargetSent()
   })
 })

@@ -547,6 +547,9 @@ function persistSidebarLayout(state: { groups: SessionGroup[]; displayOrder: str
   if (groups === lastPersistedGroups && displayOrder === lastPersistedOrder) return
   lastPersistedGroups = groups
   lastPersistedOrder = displayOrder
+  // An ordinary edit retries a failed read once. Mark it in flight before
+  // dispatch so further edits coalesce; rejection itself never retries.
+  if (pendingLayout?.failed) readPendingLayout(pendingLayout)
   savePipeline.save()
 }
 
@@ -659,7 +662,7 @@ function settlePendingLayout(
       retained.add(id)
     } else {
       // A failed read is not an empty inventory. Keep the working copy and
-      // suspend saves until a newer layout or a definitive lifecycle event.
+      // suspend saves until an edit retries, a newer layout, or a lifecycle event.
       return
     }
   }
@@ -700,6 +703,12 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
   // Hold the incoming layout, rather than appending a potentially closed tab
   // and saving that provisional placement. Merge current local edits only
   // after the existing public inventory has resolved the displaced tabs.
+  readPendingLayout(pending)
+}
+
+function readPendingLayout(pending: PendingLayout): void {
+  if (pendingLayout !== pending) return
+  pending.failed = false
   void Promise.resolve()
     .then(() => window.electronAPI.sessionsList())
     .then(
@@ -710,7 +719,7 @@ function applyServerLayoutToStore(snapshot: SidebarLayoutSnapshot): void {
         void window.electronAPI
           ?.showNotification?.({
             title: 'Sidebar changes are waiting',
-            body: 'Could not check displaced sessions. Sidebar changes remain in this window until session state is available.',
+            body: 'Could not check displaced sessions. Your changes remain in this window; the next sidebar edit will try again.',
             sessionId: ''
           })
           .catch(() => {})
