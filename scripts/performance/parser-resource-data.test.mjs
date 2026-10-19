@@ -1093,6 +1093,366 @@ for (const mode of ['nonreciprocal', 'disconnected', 'ambiguous', 'cycle', 'gett
       })
     assert.throws(() => readOwnerFiber.call(fiber), /Fiber|owner|reachability/)
   })
+function hotOwnerFixture(mode = 'valid', className = 'chat-view terminal-view') {
+  let calls = 0
+  const root = { tag: 3, stateNode: {} },
+    host = {
+      tag: 5,
+      return: root,
+      memoizedProps: { className, 'data-session-id': 'host-session' }
+    },
+    owner = { tag: 0, return: host, memoizedProps: { sessionId: 'owner-session' } },
+    alternate = { tag: 0, return: host, memoizedProps: { sessionId: 'owner-session' } },
+    other = { tag: 0, return: host }
+  owner.alternate = alternate
+  alternate.alternate = owner
+  root.stateNode.current = root
+  root.child = host
+  host.child = owner
+  owner.sibling = other
+  alternate.sibling = other
+  const getter = (object, key) =>
+    Object.defineProperty(object, key, {
+      get() {
+        calls++
+        return 'never read'
+      }
+    })
+  if (mode === 'opposite') host.child = alternate
+  if (mode === 'ambiguous-after-found') other.child = alternate
+  if (mode === 'disconnected') host.child = null
+  if (mode === 'query-child-getter') getter(owner, 'child')
+  if (mode === 'query-sibling-getter') getter(owner, 'sibling')
+  if (mode === 'other-child-getter') getter(other, 'child')
+  if (mode === 'other-sibling-getter') getter(other, 'sibling')
+  if (mode === 'inherited-child-getter' || mode === 'inherited-sibling-getter') {
+    const prototype = {}
+    getter(prototype, mode === 'inherited-child-getter' ? 'child' : 'sibling')
+    Object.setPrototypeOf(other, prototype)
+  }
+  if (mode === 'primitive-refs') {
+    other.child = 1
+    other.sibling = 'text'
+  }
+  if (mode === 'symbol-bigint-refs') {
+    other.child = Symbol('leaf')
+    other.sibling = 1n
+  }
+  if (mode === 'function-ref' || mode === 'function-ambiguous') {
+    const leaf = () => 0
+    other.child = leaf
+    leaf.child = mode === 'function-ambiguous' ? alternate : { tag: 0 }
+    leaf.sibling = other
+  }
+  const falsies = {
+    null: null,
+    undefined: undefined,
+    false: false,
+    zero: 0,
+    nan: NaN,
+    empty: '',
+    bigint: 0n
+  }
+  if (mode.startsWith('falsy-')) {
+    other.child = falsies[mode.slice(6)]
+    other.sibling = falsies[mode.slice(6)]
+  }
+  if (mode === 'shared-cycle') {
+    owner.child = other
+    other.child = other
+    other.sibling = host
+  }
+  if (mode === 'nonreciprocal') alternate.alternate = null
+  if (mode === 'return-cycle') owner.return = owner
+  if (mode === 'return-getter') getter(owner, 'return')
+  if (mode === 'alternate-getter') getter(owner, 'alternate')
+  if (mode === 'root-current-getter') getter(root.stateNode, 'current')
+  if (mode === 'missing-root') root.tag = 0
+  if (mode === 'missing-current') root.stateNode.current = null
+  if (mode === 'host-not-current') root.child = owner
+  if (mode === 'session-getter') getter(host.memoizedProps, 'data-session-id')
+  if (mode === 'props-getter') getter(host.memoizedProps, 'className')
+  if (mode === 'unused-props-getter') getter(other, 'memoizedProps')
+  return { owner, alternate, root, other, getterCalls: () => calls }
+}
+const hotOwnerCases = [
+  ['valid', null],
+  ['opposite', null],
+  ['query-child-getter', 'owner getter refused'],
+  ['query-sibling-getter', 'owner getter refused'],
+  ['other-child-getter', 'owner getter refused'],
+  ['other-sibling-getter', 'owner getter refused'],
+  ['ambiguous-after-found', 'ambiguous current/alternate reachability'],
+  ['disconnected', 'ambiguous current/alternate reachability'],
+  ['inherited-child-getter', null],
+  ['inherited-sibling-getter', null],
+  ['primitive-refs', null],
+  ['symbol-bigint-refs', null],
+  ['function-ref', null],
+  ['function-ambiguous', 'ambiguous current/alternate reachability'],
+  ...['null', 'undefined', 'false', 'zero', 'nan', 'empty', 'bigint'].map((x) => [
+    'falsy-' + x,
+    null
+  ]),
+  ['shared-cycle', null],
+  ['nonreciprocal', 'nonreciprocal Fiber alternate'],
+  ['return-cycle', 'Fiber return cycle'],
+  ['return-getter', 'owner getter refused'],
+  ['alternate-getter', 'owner getter refused'],
+  ['root-current-getter', 'owner getter refused'],
+  ['missing-root', 'missing HostRoot current'],
+  ['missing-current', 'missing HostRoot current'],
+  ['host-not-current', null],
+  ['session-getter', 'owner getter refused'],
+  ['props-getter', 'owner getter refused'],
+  ['unused-props-getter', null]
+]
+for (const [mode, reason] of hotOwnerCases)
+  test('whole owner tree preserves ' + mode, () => {
+    const fixture = hotOwnerFixture(mode)
+    if (reason)
+      assert.throws(() => readOwnerFiber.call(fixture.owner), { name: 'Error', message: reason })
+    else {
+      let value
+      assert.doesNotThrow(() => {
+        value = readOwnerFiber.call(fixture.owner)
+      })
+      assert.deepEqual(value, {
+        branch: mode === 'opposite' ? 'alternate' : 'current',
+        reciprocal: true,
+        sessionIds: ['owner-session', 'host-session'],
+        views: ['terminal'],
+        hostAncestorInCurrentTree: mode !== 'host-not-current',
+        connected: null,
+        currentReachable: true
+      })
+    }
+    assert.equal(fixture.getterCalls(), 0)
+  })
+test('whole owner tree validates the reciprocal alternate against the same current root', () => {
+  const { alternate } = hotOwnerFixture()
+  assert.equal(readOwnerFiber.call(alternate).branch, 'alternate')
+})
+test('owner child descriptor is validated before sibling without invoking either getter', () => {
+  const events = [],
+    fixture = hotOwnerFixture(),
+    target = {}
+  Object.defineProperty(target, 'child', {
+    get() {
+      throw new Error('getter executed')
+    }
+  })
+  const other = new Proxy(target, {
+    getOwnPropertyDescriptor(object, key) {
+      events.push(key)
+      return Reflect.getOwnPropertyDescriptor(object, key)
+    }
+  })
+  fixture.owner.sibling = other
+  assert.throws(() => readOwnerFiber.call(fixture.owner), /owner getter refused/)
+  assert.deepEqual(events, ['child'])
+})
+test('owner reads child data before obtaining the sibling descriptor', () => {
+  const events = [],
+    fixture = hotOwnerFixture()
+  fixture.owner.sibling = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor(object, key) {
+        events.push(key)
+        return Reflect.getOwnPropertyDescriptor(object, key)
+      }
+    }
+  )
+  readOwnerFiber.call(fixture.owner)
+  assert.deepEqual(events, ['child', 'sibling'])
+})
+test('owner preserves sibling-before-child DFS order after both descriptor reads', () => {
+  const events = [],
+    fixture = hotOwnerFixture()
+  const leaf = (label) =>
+    new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor(object, key) {
+          events.push(label + ':' + key)
+          return Reflect.getOwnPropertyDescriptor(object, key)
+        }
+      }
+    )
+  fixture.owner.child = leaf('child')
+  fixture.owner.sibling = leaf('sibling')
+  readOwnerFiber.call(fixture.owner)
+  assert.deepEqual(events, ['sibling:child', 'sibling:sibling', 'child:child', 'child:sibling'])
+})
+for (const separator of ['\v', '\f'])
+  test('owner keeps exact control whitespace U+' + separator.charCodeAt(0).toString(16), () => {
+    const { owner, alternate } = hotOwnerFixture('valid', 'chat-view' + separator + 'terminal-view')
+    assert.deepEqual(readOwnerFiber.call(owner).views, ['terminal'])
+    assert.deepEqual(readOwnerFiber.call(alternate).views, ['terminal'])
+  })
+test('whole owner tree retains the million-node bound after finding its query', () => {
+  const fixture = hotOwnerFixture()
+  let at = fixture.other
+  for (let i = 0; i < 1000000; i++) {
+    at.child = {}
+    at = at.child
+  }
+  assert.throws(() => readOwnerFiber.call(fixture.owner), {
+    name: 'Error',
+    message: 'Fiber traversal bound'
+  })
+})
+function representativeOwnerFixture(mode = 'valid') {
+  let calls = 0
+  const root = { tag: 3, stateNode: {} }
+  let parent = root,
+    host
+  for (let i = 0; i < 40; i++) {
+    const next = { tag: i === 0 ? 5 : 0, return: parent }
+    if (i === 0) {
+      host = next
+      host.memoizedProps = {
+        className: 'chat-view terminal-view',
+        'data-session-id': 'synthetic-representative-session'
+      }
+    }
+    parent.child = next
+    parent = next
+  }
+  const owner = { tag: 0, return: parent },
+    alternate = { tag: 0, return: parent }
+  parent.child = owner
+  owner.alternate = alternate
+  alternate.alternate = owner
+  root.stateNode.current = root
+  const remaining = 40903 - 42,
+    nodes = []
+  for (let i = 0; i < remaining; i++) nodes.push({ tag: 0 })
+  owner.child = nodes[0]
+  nodes[0].return = owner
+  for (let i = 0; i < nodes.length; i++) {
+    const left = 2 * i + 1,
+      right = left + 1
+    if (left < nodes.length) {
+      nodes[i].child = nodes[left]
+      nodes[left].return = nodes[i]
+      if (right < nodes.length) {
+        nodes[left].sibling = nodes[right]
+        nodes[right].return = nodes[i]
+      }
+    }
+  }
+  const seen = new Set(),
+    pending = [root]
+  while (pending.length) {
+    const at = pending.pop()
+    if (!at || seen.has(at)) continue
+    seen.add(at)
+    pending.push(at.child, at.sibling)
+  }
+  const depth = (at) => {
+    let count = 0
+    const visited = new Set()
+    while (at) {
+      if (visited.has(at)) throw new Error('synthetic owner ancestor cycle')
+      visited.add(at)
+      count++
+      at = at.return
+    }
+    return count
+  }
+  const proof = {
+    constructedFibers: nodes.length + 43,
+    currentTreeFibers: seen.size,
+    currentAncestorDepth: depth(owner),
+    alternateAncestorDepth: depth(alternate),
+    ownerInCurrent: seen.has(owner),
+    alternateInCurrent: seen.has(alternate),
+    hostInCurrent: seen.has(host),
+    rootCurrentSame: root.stateNode.current === root,
+    reciprocal: owner.alternate === alternate && alternate.alternate === owner
+  }
+  if (
+    proof.currentTreeFibers !== 40903 ||
+    proof.currentAncestorDepth !== 42 ||
+    proof.alternateAncestorDepth !== 42 ||
+    !proof.ownerInCurrent ||
+    proof.alternateInCurrent ||
+    !proof.hostInCurrent ||
+    !proof.rootCurrentSame ||
+    !proof.reciprocal
+  )
+    throw new Error('representative owner fixture shape mismatch')
+  if (mode === 'props-getter')
+    Object.defineProperty(host.memoizedProps, 'className', {
+      get() {
+        calls++
+        return 'never read'
+      }
+    })
+  if (mode === 'return-getter')
+    for (const at of [owner, alternate])
+      Object.defineProperty(at, 'return', {
+        get() {
+          calls++
+          return parent
+        }
+      })
+  return { owner, alternate, proof, getterCalls: () => calls }
+}
+
+test('full representative owner keeps global proof with bounded pending traversal', () => {
+  const inspect = (fixture, reader) => {
+    const bundle = fixture(),
+      counts = {}
+    for (const [object, name] of [
+      [Array.prototype, 'pop'],
+      [Array.prototype, 'push'],
+      [Object, 'getOwnPropertyDescriptor'],
+      [Set.prototype, 'has'],
+      [Set.prototype, 'add']
+    ]) {
+      const original = object[name]
+      object[name] = function (...args) {
+        counts[name] = (counts[name] ?? 0) + 1
+        return Reflect.apply(original, this, args)
+      }
+    }
+    return {
+      counts,
+      proof: bundle.proof,
+      value: reader.call(bundle.owner),
+      getters: bundle.getterCalls()
+    }
+  }
+  const result = vm.runInNewContext(
+    '(' +
+      inspect.toString() +
+      ')(' +
+      representativeOwnerFixture.toString() +
+      ',' +
+      readOwnerFiber.toString() +
+      ')'
+  )
+  assert.equal(result.proof.currentTreeFibers, 40903)
+  assert.equal(result.proof.currentAncestorDepth, 42)
+  assert.equal(result.getters, 0)
+  assert.deepEqual(JSON.parse(JSON.stringify(result.value)), {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['synthetic-representative-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  })
+  // This partial census counts actual calls, not allocation bytes, exhaustive
+  // operations, inspector cost or a wall-clock threshold. Full graph is required.
+  assert.ok(result.counts.getOwnPropertyDescriptor >= 81806)
+  assert.ok(result.counts.pop <= 50000, 'redundant falsy pending traversal regression')
+})
+
 test('unknown, processor and history holders remain unresolved without generation allowance', () => {
   for (const label of ['processor', 'previous', 'history']) {
     const g = stringGraph(),

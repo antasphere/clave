@@ -733,40 +733,38 @@ export function readOwnerFiber() {
     if (d && !('value' in d)) throw new Error('owner getter refused')
     return d?.value
   }
+  const whitespace = [
+    '\t',
+    '\n',
+    '\v',
+    '\f',
+    '\r',
+    ' ',
+    '\u00a0',
+    '\u1680',
+    '\u2000',
+    '\u2001',
+    '\u2002',
+    '\u2003',
+    '\u2004',
+    '\u2005',
+    '\u2006',
+    '\u2007',
+    '\u2008',
+    '\u2009',
+    '\u200a',
+    '\u2028',
+    '\u2029',
+    '\u202f',
+    '\u205f',
+    '\u3000',
+    '\ufeff'
+  ]
   const hasToken = (value, token) => {
     let word = ''
     for (let i = 0; i <= value.length; i++) {
       const character = value[i]
-      if (
-        i === value.length ||
-        [
-          '\t',
-          '\n',
-          '\v',
-          '\f',
-          '\r',
-          ' ',
-          '\u00a0',
-          '\u1680',
-          '\u2000',
-          '\u2001',
-          '\u2002',
-          '\u2003',
-          '\u2004',
-          '\u2005',
-          '\u2006',
-          '\u2007',
-          '\u2008',
-          '\u2009',
-          '\u200a',
-          '\u2028',
-          '\u2029',
-          '\u202f',
-          '\u205f',
-          '\u3000',
-          '\ufeff'
-        ].includes(character)
-      ) {
+      if (i === value.length || whitespace.includes(character)) {
         if (word === token) return true
         word = ''
       } else word += character
@@ -800,7 +798,17 @@ export function readOwnerFiber() {
     if (seen.size > 1000000) throw new Error('Fiber traversal bound')
     if (at === this) isCurrent = true
     if (at === alternate) alternateCurrent = true
-    pending.push(own(at, 'child'), own(at, 'sibling'))
+    if (typeof at === 'object' || typeof at === 'function') {
+      const childDescriptor = Object.getOwnPropertyDescriptor(at, 'child')
+      if (childDescriptor && !('value' in childDescriptor)) throw new Error('owner getter refused')
+      const child = childDescriptor?.value
+      const siblingDescriptor = Object.getOwnPropertyDescriptor(at, 'sibling')
+      if (siblingDescriptor && !('value' in siblingDescriptor))
+        throw new Error('owner getter refused')
+      const sibling = siblingDescriptor?.value
+      if (child) pending.push(child)
+      if (sibling) pending.push(sibling)
+    }
   }
   if (isCurrent === alternateCurrent) throw new Error('ambiguous current/alternate reachability')
   const sessions = new Set(),
