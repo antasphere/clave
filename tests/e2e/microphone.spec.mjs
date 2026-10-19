@@ -44,6 +44,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import plist from 'plist'
 
 const DIR = userDataDir('microphone')
 const ROOT = fixturePath('mic-root')
@@ -483,12 +484,13 @@ export async function run(t) {
       /NSMicrophoneUsageDescription:\s*\S/.test(builder),
       'no NSMicrophoneUsageDescription in electron-builder.yml — macOS kills the app the moment anything asks, with no prompt and no error the app can see'
     )
-    t.check(
+    const entitlements = plist.parse(
+      readFileSync(path.join(REPO, 'build/entitlements.mac.plist'), 'utf-8')
+    )
+    t.equal(
       'and the hardened build is entitled to the audio input',
-      readFileSync(path.join(REPO, 'build/entitlements.mac.plist'), 'utf-8').includes(
-        'com.apple.security.device.audio-input'
-      ),
-      'no audio-input entitlement — a signed build is refused the microphone by the system'
+      entitlements['com.apple.security.device.audio-input'],
+      true
     )
   } finally {
     await app.close()
