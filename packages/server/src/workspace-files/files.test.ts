@@ -11,12 +11,17 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
+  truncateSync,
   writeFileSync
 } from 'node:fs'
 import * as fs from 'node:fs'
 import { EventEmitter } from 'node:events'
+import { execFileSync, spawn } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewAnswer } from '@clave/contract/workspace-files'
 import {
@@ -30,7 +35,14 @@ import {
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>()
-  return { ...actual, watch: vi.fn(actual.watch), readFileSync: vi.fn(actual.readFileSync) }
+  return {
+    ...actual,
+    watch: vi.fn(actual.watch),
+    readFileSync: vi.fn(actual.readFileSync),
+    openSync: vi.fn(actual.openSync),
+    readSync: vi.fn(actual.readSync),
+    closeSync: vi.fn(actual.closeSync)
+  }
 })
 
 let root: string
@@ -518,6 +530,124 @@ describe('watching', () => {
   })
 })
 
+describe('watch revision I/O in a deadline-enforced child', () => {
+  // The parent owns the deadline: a blocking synchronous read in the child
+  // cannot disable it. Each child has no descendants and is reaped on close.
+  const probe = async (mode: 'registration' | 'delivery' | 'open-race'): Promise<void> => {
+    const file = join(root, 'FIFO.clave')
+    const replacement = join(root, 'replacement.clave')
+    if (mode === 'registration') execFileSync('mkfifo', [file])
+    else {
+      writeFileSync(file, single())
+      execFileSync('mkfifo', [replacement])
+    }
+    const domain = join(root, 'watch-domain.mjs')
+    buildSync({
+      entryPoints: [fileURLToPath(new URL('./files.ts', import.meta.url))],
+      outfile: domain,
+      bundle: true,
+      platform: 'node',
+      format: 'esm'
+    })
+    const script = join(root, 'watch-child.mjs')
+    writeFileSync(
+      script,
+      `
+      import { WorkspaceFiles, memoryWorkspaceFilesStorage } from './watch-domain.mjs'
+      import { renameSync } from 'node:fs'
+      import fs from 'node:fs'
+      import { syncBuiltinESMExports } from 'node:module'
+      const files = new WorkspaceFiles(memoryWorkspaceFilesStorage(), { debounceMs: 20 })
+      const [file, replacement, mode] = process.argv.slice(2)
+      if (mode === 'open-race') {
+        const open = fs.openSync
+        let replaced = false
+        fs.openSync = (...args) => {
+          if (args[0] === file && !replaced) {
+            replaced = true
+            renameSync(replacement, file)
+          }
+          return open(...args)
+        }
+        syncBuiltinESMExports()
+      }
+      files.onEvent(() => {
+        console.log('delivered')
+        files.close()
+      })
+      console.log('before-watch')
+      files.watch(file)
+      console.log('after-watch')
+      // Rename the FIFO to trigger the real directory watcher, at registration
+      // or after replacing an ordinary watched document with the FIFO.
+      if (mode === 'registration' || mode === 'open-race') {
+        renameSync(file, replacement)
+        renameSync(replacement, file)
+      } else renameSync(replacement, file)
+    `
+    )
+    const result = await new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+      timedOut: boolean
+      stdout: string
+      stderr: string
+    }>((resolve, reject) => {
+      const child = spawn(process.execPath, [script, file, replacement, mode], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: process.env
+      })
+      let stdout = ''
+      let stderr = ''
+      let timedOut = false
+      child.stdout.on('data', (data) => {
+        stdout += data
+      })
+      child.stderr.on('data', (data) => {
+        stderr += data
+      })
+      const deadline = setTimeout(() => {
+        timedOut = true
+        child.kill('SIGKILL')
+      }, 2000)
+      child.once('error', (error) => {
+        clearTimeout(deadline)
+        reject(error)
+      })
+      child.once('close', (code, signal) => {
+        clearTimeout(deadline)
+        resolve({ code, signal, timedOut, stdout, stderr })
+      })
+    })
+    console.info(JSON.stringify({ watchChild: mode, ...result }))
+    expect(result.timedOut, JSON.stringify(result)).toBe(false)
+    expect(result.code, JSON.stringify(result)).toBe(0)
+    expect(result.stdout.trim().split('\n')).toEqual(['before-watch', 'after-watch', 'delivered'])
+    expect(result.stderr).toBe('')
+  }
+
+  it.runIf(process.platform !== 'win32')(
+    'does not block registration on an owned FIFO.clave',
+    async () => {
+      await probe('registration')
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'does not block debounce delivery when a regular file becomes a FIFO',
+    async () => {
+      await probe('delivery')
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'does not block if the inspected regular path becomes a FIFO just before open',
+    async () => {
+      await probe('open-race')
+    }
+  )
+})
+
 describe('watching scheduled native callbacks', () => {
   let callback: fs.WatchListener<string>
   let closed: ReturnType<typeof vi.fn>
@@ -539,6 +669,9 @@ describe('watching scheduled native callbacks', () => {
     files.close()
     restoreWatch()
     vi.mocked(fs.readFileSync).mockReset()
+    vi.mocked(fs.openSync).mockReset()
+    vi.mocked(fs.readSync).mockReset()
+    vi.mocked(fs.closeSync).mockReset()
     vi.useRealTimers()
   })
 
@@ -650,7 +783,7 @@ describe('watching scheduled native callbacks', () => {
     const heard: string[] = []
     files.onEvent((event) => heard.push(event.path))
     files.watch(file)
-    vi.mocked(fs.readFileSync).mockImplementationOnce(() => {
+    vi.mocked(fs.openSync).mockImplementationOnce(() => {
       throw Object.assign(new Error('fixture unreadable'), { code: 'EACCES', errno: -13 })
     })
     notify()
@@ -663,6 +796,128 @@ describe('watching scheduled native callbacks', () => {
     tick()
     expect(heard).toEqual([file, file])
   })
+
+  it('coalesces regular symlink targets and tells their later changed bytes', () => {
+    const target = join(root, 'target.clave')
+    const file = join(root, 'w.clave')
+    writeFileSync(target, single())
+    symlinkSync(target, file)
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    notify()
+    tick()
+    expect(heard).toEqual([])
+    writeFileSync(target, single({ name: 'changed target' }))
+    notify()
+    tick()
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+  })
+
+  it('invalidates oversized files without opening or loading them, then observes small-file recovery', () => {
+    const file = join(root, 'w.clave')
+    writeFileSync(file, '')
+    truncateSync(file, 16 * 1024 * 1024)
+    vi.mocked(fs.openSync).mockClear()
+    vi.mocked(fs.readSync).mockClear()
+    vi.mocked(fs.readFileSync).mockClear()
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    notify()
+    tick()
+    notify()
+    tick()
+    expect(heard).toEqual([file, file])
+    expect(fs.openSync).not.toHaveBeenCalled()
+    expect(fs.readSync).not.toHaveBeenCalled()
+    expect(fs.readFileSync).not.toHaveBeenCalled()
+    writeFileSync(file, single({ name: 'small again' }))
+    notify()
+    tick()
+    notify()
+    tick()
+    expect(heard).toEqual([file, file, file])
+    expect(fs.readSync).toHaveBeenCalled()
+  })
+
+  it('bounds a read if the regular file grows after descriptor inspection and closes every descriptor', async () => {
+    const actual = await vi.importActual<typeof fs>('node:fs')
+    const file = join(root, 'w.clave')
+    writeFileSync(file, 'short')
+    const read = actual.readSync
+    const open = actual.openSync
+    const opened: number[] = []
+    vi.mocked(fs.openSync).mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+      const fd = open(...args)
+      opened.push(fd)
+      return fd
+    })
+    vi.mocked(fs.closeSync).mockClear()
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    expect(files.watched()).toEqual([file])
+    vi.mocked(fs.readSync).mockImplementationOnce((...args: Parameters<typeof fs.readSync>) => {
+      truncateSync(file, 16 * 1024 * 1024)
+      return read(...args)
+    })
+    notify()
+    tick()
+    expect(heard).toEqual([file])
+    // Requested capacity is the inspected five bytes plus one growth sentinel.
+    expect(vi.mocked(fs.readSync).mock.calls.at(-1)?.[1]?.byteLength).toBe(6)
+    expect(opened.length).toBeGreaterThan(0)
+    expect(vi.mocked(fs.closeSync).mock.calls.map(([fd]) => fd)).toEqual(opened)
+    notify()
+    tick()
+    expect(heard).toEqual([file, file])
+  })
+
+  it('keeps a missing initial path observable when created and a directory unsupported without opening it', () => {
+    const file = join(root, 'w.clave')
+    const heard: string[] = []
+    files.onEvent((event) => heard.push(event.path))
+    files.watch(file)
+    notify('rename')
+    tick()
+    expect(heard).toEqual([])
+    writeFileSync(file, single())
+    notify('rename')
+    tick()
+    expect(heard).toEqual([file])
+    rmSync(file)
+    mkdirSync(file)
+    vi.mocked(fs.openSync).mockClear()
+    notify('rename')
+    tick()
+    notify('rename')
+    tick()
+    expect(heard).toEqual([file, file, file])
+    expect(fs.openSync).not.toHaveBeenCalled()
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'invalidates a device target without opening or reading it',
+    () => {
+      const file = join(root, 'w.clave')
+      symlinkSync('/dev/null', file)
+      vi.mocked(fs.openSync).mockClear()
+      vi.mocked(fs.readSync).mockClear()
+      const heard: string[] = []
+      files.onEvent((event) => heard.push(event.path))
+      files.watch(file)
+      notify()
+      tick()
+      notify()
+      tick()
+      expect(heard).toEqual([file, file])
+      expect(fs.openSync).not.toHaveBeenCalled()
+      expect(fs.readSync).not.toHaveBeenCalled()
+    }
+  )
 
   it('keeps one holder alive, cancels on last release and on close, and starts a fresh baseline', () => {
     const file = join(root, 'w.clave')

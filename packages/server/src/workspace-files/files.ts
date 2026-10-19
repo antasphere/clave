@@ -678,8 +678,36 @@ export class WorkspaceFiles {
       // Native callbacks can straddle debounce windows for the same write.
       // Compare the settled bytes, with absence distinct from unreadability.
       const revision = (): string | undefined => {
+        // Workspace documents are small. Unsupported or oversized inputs
+        // invalidate conservatively instead of blocking on, or loading, them.
+        const limit = 1024 * 1024
+        let fd: number | undefined
         try {
-          return createHash('sha256').update(fs.readFileSync(absolutePath)).digest('hex')
+          const candidate = fs.statSync(absolutePath, { bigint: true })
+          if (!candidate.isFile() || candidate.size > BigInt(limit)) return undefined
+          // A regular pathname may be swapped for a FIFO after stat. Opening
+          // nonblocking and checking the descriptor closes that race; stat
+          // follows symlinks so regular targets retain revision coalescing.
+          fd = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)
+          const before = fs.fstatSync(fd, { bigint: true })
+          if (!before.isFile() || before.size > BigInt(limit)) return undefined
+          const buffer = Buffer.alloc(Number(before.size) + 1)
+          const read = fs.readSync(fd, buffer, 0, buffer.length, 0)
+          const after = fs.fstatSync(fd, { bigint: true })
+          const current = fs.statSync(absolutePath, { bigint: true })
+          if (
+            read !== Number(before.size) ||
+            after.size !== before.size ||
+            after.mtimeNs !== before.mtimeNs ||
+            after.ctimeNs !== before.ctimeNs ||
+            current.dev !== after.dev ||
+            current.ino !== after.ino ||
+            current.size !== after.size ||
+            current.mtimeNs !== after.mtimeNs ||
+            current.ctimeNs !== after.ctimeNs
+          )
+            return undefined
+          return createHash('sha256').update(buffer.subarray(0, read)).digest('hex')
         } catch (error) {
           const failure = error as NodeJS.ErrnoException
           if (typeof failure.errno !== 'number') throw error
@@ -687,6 +715,8 @@ export class WorkspaceFiles {
           // An unreadable revision still invalidates; the next successful
           // read must be delivered too, even if its bytes match the old ones.
           return undefined
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd)
         }
       }
       let lastRevision = revision()
