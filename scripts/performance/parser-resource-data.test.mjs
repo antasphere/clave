@@ -643,7 +643,7 @@ function boundRow(state = immutablePrefix()) {
     structure: { blocks: 1, nodes: 2 }
   }
 }
-test('production positioned prefix retains full accounting with bounded reader allocation calls', () => {
+test('production positioned prefix retains accounting with bounded monitored reader calls', () => {
   const input = LONG_RESPONSE + Array.from({ length: 500 }, (_, i) => streamChunk(i)).join(''),
     store = createMarkdownStore(),
     attempt = createMarkdownAttempt(undefined, input, false, 'remark-gfm4:singleTilde=true')
@@ -685,8 +685,9 @@ test('production positioned prefix retains full accounting with bounded reader a
   }
   assert.equal(positions, 2916)
   assert.equal(frozenObjects, 12653)
-  // Census allocating builtins in a separate realm after fixture setup. This
-  // deterministic budget is not a wall-clock, byte-size or inspector mock.
+  // Keep the original five-builtin redundancy regression and also count the
+  // changed descriptor/predicate operations. Neither census is exhaustive,
+  // a byte-size estimate, a wall-clock test or an inspector simulation.
   const inspect = (state, reader) => {
     const pending = [state]
     while (pending.length) {
@@ -698,15 +699,21 @@ test('production positioned prefix retains full accounting with bounded reader a
     const counts = {}
     for (const [owner, name] of [
       [Object, 'getOwnPropertyDescriptors'],
+      [Object, 'getOwnPropertyDescriptor'],
+      [Object, 'getPrototypeOf'],
+      [Object, 'isFrozen'],
+      [Object, 'hasOwn'],
       [Object, 'create'],
       [Object, 'entries'],
       [Object, 'keys'],
-      [Reflect, 'ownKeys']
+      [Reflect, 'ownKeys'],
+      [Number, 'isSafeInteger'],
+      [Array.prototype, 'includes']
     ]) {
       const original = owner[name]
-      owner[name] = (...args) => {
+      owner[name] = function (...args) {
         counts[name] = (counts[name] ?? 0) + 1
-        return original(...args)
+        return Reflect.apply(original, this, args)
       }
     }
     const value = reader.call(state, state.snapshot)
@@ -724,9 +731,190 @@ test('production positioned prefix retains full accounting with bounded reader a
     deepFrozen: true,
     sameSnapshot: true
   })
-  const allocations = Object.values(result.counts).reduce((sum, count) => sum + count, 0)
-  assert.ok(allocations <= 3 * frozenObjects, 'redundant per-object reader allocation regression')
+  const legacyCalls = ['getOwnPropertyDescriptors', 'create', 'entries', 'keys', 'ownKeys'].reduce(
+    (sum, name) => sum + (result.counts[name] ?? 0),
+    0
+  )
+  assert.ok(legacyCalls <= 3 * frozenObjects, 'redundant per-object reader allocation regression')
+  const monitoredCalls = Object.values(result.counts).reduce((sum, count) => sum + count, 0)
+  assert.ok(monitoredCalls <= 165000, 'fixed-shape checked-operation regression')
 })
+
+function fixedShapeFixture(shape, mode, field) {
+  const state = structuredClone(immutablePrefix()),
+    paragraph = state.snapshot.blocks[0]
+  paragraph.position = {
+    start: { line: 1, column: 1, offset: 0 },
+    end: { line: 1, column: 3, offset: 2 }
+  }
+  const container = shape === 'point' ? paragraph.position : paragraph,
+    key = shape === 'point' ? 'end' : 'position',
+    expected = field ?? (shape === 'point' ? 'line' : 'start')
+  let target = container[key],
+    calls = 0,
+    skipped
+  if (mode === 'null-prototype') Object.setPrototypeOf(target, null)
+  if (mode === 'reordered') {
+    target = Object.fromEntries(Object.entries(target).reverse())
+    container[key] = target
+  }
+  if (mode === 'expected-nonenumerable')
+    Object.defineProperty(target, expected, { enumerable: false })
+  if (mode === 'missing') delete target[expected]
+  if (
+    ['replacement', 'symbol-replacement', 'hidden-replacement', 'proto-replacement'].includes(mode)
+  )
+    delete target[expected]
+  if (['extra', 'replacement'].includes(mode)) target.extra = 1
+  if (['symbol', 'symbol-replacement'].includes(mode)) target[Symbol('extra')] = 1
+  if (['hidden', 'hidden-replacement'].includes(mode))
+    Object.defineProperty(target, 'extra', { value: 1, enumerable: false })
+  if (mode === 'proto-replacement')
+    Object.defineProperty(target, '__proto__', { value: null, enumerable: true })
+  if (['getter', 'hidden-getter'].includes(mode))
+    Object.defineProperty(target, expected, {
+      enumerable: mode !== 'hidden-getter',
+      get() {
+        calls++
+        return 'never read'
+      }
+    })
+  if (mode === 'prototype')
+    Object.setPrototypeOf(target, {
+      get [expected]() {
+        calls++
+        return 'never read'
+      }
+    })
+  if (['unfrozen', 'sealed-mutable'].includes(mode)) {
+    skipped = target
+    if (mode === 'sealed-mutable') Object.seal(target)
+  }
+  if (mode === 'null') container[key] = null
+  if (mode === 'array') container[key] = []
+  if (mode === 'primitive') container[key] = 1
+  if (mode === 'function') container[key] = () => 1
+  if (mode === 'reversed-position') {
+    paragraph.position.start.offset = 2
+    paragraph.position.end.offset = 1
+  }
+  if (shape === 'point') {
+    const changes = {
+      'offset-fraction': { offset: 0.5 },
+      'offset-negative': { offset: -1 },
+      'offset-overflow': { offset: Number.MAX_SAFE_INTEGER + 1 },
+      'offset-nan': { offset: NaN },
+      'offset-infinite': { offset: Infinity },
+      'offset-string': { offset: '2' },
+      'offset-input-bound': { offset: 8 },
+      'offset-cut-bound': { offset: 3 },
+      'line-zero': { line: 0 },
+      'line-negative': { line: -1 },
+      'line-fraction': { line: 0.5 },
+      'column-zero': { column: 0 },
+      'column-negative': { column: -1 },
+      'column-fraction': { column: 0.5 },
+      'offset-before-line': { offset: NaN, line: 0 },
+      'line-before-column': { line: 0, column: NaN }
+    }
+    if (changes[mode]) Object.assign(target, changes[mode])
+  }
+  const seen = new Set(),
+    pending = [state]
+  while (pending.length) {
+    const at = pending.pop()
+    if (!at || typeof at !== 'object' || seen.has(at)) continue
+    seen.add(at)
+    for (const d of Object.values(Object.getOwnPropertyDescriptors(at)))
+      if ('value' in d) pending.push(d.value)
+    if (at !== skipped) Object.freeze(at)
+  }
+  return { state, calls: () => calls }
+}
+const fixedShapeCases = [
+  ['valid', null],
+  ['null-prototype', null],
+  ['reordered', null],
+  ['expected-nonenumerable', null],
+  ['extra', 'data-fields'],
+  ['symbol', 'data-fields'],
+  ['hidden', 'data-fields'],
+  ['replacement', 'data-fields'],
+  ['symbol-replacement', 'data-fields'],
+  ['hidden-replacement', 'data-fields'],
+  ['proto-replacement', 'data-fields'],
+  ['getter', 'data-fields'],
+  ['hidden-getter', 'data-fields'],
+  ['prototype', 'plain-object'],
+  ['unfrozen', 'frozen'],
+  ['sealed-mutable', 'frozen'],
+  ['null', 'plain-object'],
+  ['array', 'plain-object'],
+  ['primitive', 'plain-object'],
+  ['function', 'plain-object']
+]
+for (const shape of ['point', 'position'])
+  for (const [mode, reason] of [
+    ...fixedShapeCases,
+    ['missing', shape === 'point' ? 'integer' : 'plain-object'],
+    ['reversed-position', 'position']
+  ])
+    test('fixed ' + shape + ' own-data guard ' + mode, () => {
+      const { state, calls } = fixedShapeFixture(shape, mode)
+      if (reason)
+        assert.throws(
+          () => readBoundPrefix.call(state, state.snapshot),
+          new RegExp('invalid immutable prefix binding: ' + reason)
+        )
+      else {
+        const value = readBoundPrefix.call(state, state.snapshot)
+        assert.equal(value.input, state.snapshot.input)
+        assert.equal(value.accounting.nodes, 2)
+        assert.equal(value.deepFrozen, true)
+      }
+      assert.equal(calls(), 0)
+    })
+for (const [shape, field] of [
+  ['point', 'column'],
+  ['point', 'offset'],
+  ['position', 'end']
+])
+  for (const mode of ['getter', 'hidden-getter'])
+    test('fixed ' + shape + ' own-data guard ' + field + ' ' + mode, () => {
+      const { state, calls } = fixedShapeFixture(shape, mode, field)
+      assert.throws(
+        () => readBoundPrefix.call(state, state.snapshot),
+        /invalid immutable prefix binding: data-fields/
+      )
+      assert.equal(calls(), 0)
+    })
+const fixedPointNumbers = [
+  ['offset-fraction', 'integer'],
+  ['offset-negative', 'integer'],
+  ['offset-overflow', 'integer'],
+  ['offset-nan', 'integer'],
+  ['offset-infinite', 'integer'],
+  ['offset-string', 'integer'],
+  ['offset-input-bound', 'point'],
+  ['offset-cut-bound', 'position'],
+  ['line-zero', 'point'],
+  ['line-negative', 'integer'],
+  ['line-fraction', 'integer'],
+  ['column-zero', 'point'],
+  ['column-negative', 'integer'],
+  ['column-fraction', 'integer'],
+  ['offset-before-line', 'integer'],
+  ['line-before-column', 'point']
+]
+for (const [mode, reason] of fixedPointNumbers)
+  test('fixed point numeric guard ' + mode, () => {
+    const { state, calls } = fixedShapeFixture('point', mode)
+    assert.throws(
+      () => readBoundPrefix.call(state, state.snapshot),
+      new RegExp('invalid immutable prefix binding: ' + reason)
+    )
+    assert.equal(calls(), 0)
+  })
 
 for (const field of ['position', 'children', 'depth', 'value', 'url', 'title', 'alt'])
   test('absent own ' + field + ' never invokes an inherited getter', () => {

@@ -603,10 +603,38 @@ export function readBoundPrefix(snapshot) {
     line = integer(value(s, 'line'))
   if (cut > input.length || line < 1) fail('cut-line')
   const point = (p) => {
-    const d = data(p, pointFields),
-      offset = integer(value(d, 'offset'))
-    if (integer(value(d, 'line')) < 1 || integer(value(d, 'column')) < 1 || offset > input.length)
-      fail('point')
+    if (!p || typeof p !== 'object') fail('plain-object')
+    const prototype = Object.getPrototypeOf(p)
+    if (prototype !== Object.prototype && prototype !== null) fail('plain-object')
+    if (Reflect.ownKeys(p).length !== 3) {
+      // Preserve the generic reader's precise missing/extra-field failures.
+      const d = data(p, pointFields),
+        offset = integer(value(d, 'offset'))
+      if (integer(value(d, 'line')) < 1 || integer(value(d, 'column')) < 1 || offset > input.length)
+        fail('point')
+      return offset
+    }
+    const line = Object.getOwnPropertyDescriptor(p, 'line'),
+      column = Object.getOwnPropertyDescriptor(p, 'column'),
+      offsetDescriptor = Object.getOwnPropertyDescriptor(p, 'offset')
+    if (
+      !line ||
+      !column ||
+      !offsetDescriptor ||
+      !Object.hasOwn(line, 'value') ||
+      !Object.hasOwn(column, 'value') ||
+      !Object.hasOwn(offsetDescriptor, 'value')
+    )
+      fail('data-fields')
+    if (!Object.isFrozen(p)) fail('frozen')
+    const offset = offsetDescriptor.value,
+      lineNumber = line.value,
+      columnNumber = column.value
+    if (!Number.isSafeInteger(offset) || offset < 0) fail('integer')
+    if (!Number.isSafeInteger(lineNumber) || lineNumber < 0) fail('integer')
+    if (lineNumber < 1) fail('point')
+    if (!Number.isSafeInteger(columnNumber) || columnNumber < 0) fail('integer')
+    if (columnNumber < 1 || offset > input.length) fail('point')
     return offset
   }
   point(value(s, 'rootStart'))
@@ -637,9 +665,28 @@ export function readBoundPrefix(snapshot) {
     if (typeof value(n, 'type') !== 'string') fail('ast-type')
     if (depth !== undefined) integer(depth)
     if (position !== undefined) {
-      const p = data(position, positionFields),
-        start = point(value(p, 'start')),
+      if (!position || typeof position !== 'object') fail('plain-object')
+      const prototype = Object.getPrototypeOf(position)
+      if (prototype !== Object.prototype && prototype !== null) fail('plain-object')
+      let start, end
+      if (Reflect.ownKeys(position).length !== 2) {
+        const p = data(position, positionFields)
+        start = point(value(p, 'start'))
         end = point(value(p, 'end'))
+      } else {
+        const startDescriptor = Object.getOwnPropertyDescriptor(position, 'start'),
+          endDescriptor = Object.getOwnPropertyDescriptor(position, 'end')
+        if (
+          !startDescriptor ||
+          !endDescriptor ||
+          !Object.hasOwn(startDescriptor, 'value') ||
+          !Object.hasOwn(endDescriptor, 'value')
+        )
+          fail('data-fields')
+        if (!Object.isFrozen(position)) fail('frozen')
+        start = point(startDescriptor.value)
+        end = point(endDescriptor.value)
+      }
       if (start > end || end > cut) fail('position')
     }
     nodes++
