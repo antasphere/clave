@@ -11,7 +11,11 @@ import {
   ClaudeVariantGlyph
 } from '../icons/cli-logos'
 import { SidebarTabItem } from './SidebarTabItem'
-import { useClaudeAccountsUsage, useCodexAccountsUsage } from '../../store/usage-store'
+import {
+  useClaudeAccountsUsage,
+  useCodexAccountsUsage,
+  claudeUsageForModel
+} from '../../store/usage-store'
 import { isExhausted } from '../../lib/account-pool'
 import { accountProviderOf, sessionAccountId } from '../../lib/switch-account'
 import { tabIndicators } from '../../lib/tab-status'
@@ -28,7 +32,12 @@ function AccountLimitBadge({ session }: { session: Session }): React.JSX.Element
   const accountId = provider ? sessionAccountId(session, provider) : ''
   const claude = useClaudeAccountsUsage((s) => s.byAccount[accountId])
   const codex = useCodexAccountsUsage((s) => s.byAccount[accountId])
-  const summary = provider === 'codex' ? codex : provider === 'claude' ? claude : undefined
+  const summary =
+    provider === 'codex'
+      ? codex
+      : provider === 'claude'
+        ? claudeUsageForModel(claude, session.model)
+        : undefined
   if (!provider || !session.alive || !isExhausted(summary)) return null
   return (
     <Tooltip>

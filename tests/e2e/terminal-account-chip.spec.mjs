@@ -29,7 +29,12 @@ import {
   callMcp,
   until,
   userDataDir,
-  fixturePath
+  fixturePath,
+  mcpHttpClient,
+  mcpEndpoint,
+  toolPayload,
+  toolErrored,
+  mcpRoads
 } from './harness.mjs'
 
 const DIR = userDataDir('terminal-account-chip')
@@ -85,7 +90,11 @@ export async function run(t) {
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  const { app, win } = await launchApp(DIR, {
+    server: 'in-process',
+    env,
+    args: ['--test-no-machine-usage']
+  })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
@@ -104,6 +113,7 @@ export async function run(t) {
           [WORK_TOKEN]: { utilization: '1.01', status: 'rejected', http: 429 },
           [PLAY_TOKEN]: { utilization: '0.2', status: 'allowed', http: 200 }
         }
+        globalThis.__chipQuotaWindows = windows
         globalThis.fetch = async (_url, init) => {
           const token = (init?.headers?.Authorization ?? '').replace(/^Bearer /, '')
           const w = windows[token]
@@ -114,7 +124,14 @@ export async function run(t) {
               'content-type': 'application/json',
               'anthropic-ratelimit-unified-5h-utilization': w.utilization,
               'anthropic-ratelimit-unified-5h-reset': reset(),
-              'anthropic-ratelimit-unified-5h-status': w.status
+              'anthropic-ratelimit-unified-5h-status': w.status,
+              ...(w.fable
+                ? {
+                    'anthropic-ratelimit-unified-7d_oi-utilization': '1.0',
+                    'anthropic-ratelimit-unified-7d_oi-reset': reset(),
+                    'anthropic-ratelimit-unified-7d_oi-status': 'rejected'
+                  }
+                : {})
             }
           })
         }
@@ -141,13 +158,23 @@ export async function run(t) {
       }
     })
 
-    const opened = await callMcp(app, 'openSession', {
-      cwd: ROOT,
-      mode: 'claude',
-      profile: 'claude-chat',
-      account: 'Work',
-      name: 'Chip'
+    // Boot can finish before the renderer's account and profile caches load.
+    // Both named-reference errors occur before spawn, so only those are retried.
+    const opened = await until(async () => {
+      try {
+        return await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'claude',
+          profile: 'claude-chat',
+          account: 'Work',
+          name: 'Chip'
+        })
+      } catch (error) {
+        if (/Unknown Claude account|Unknown claude launch profile/.test(error.message)) return null
+        throw error
+      }
     })
+    if (!opened) throw new Error('Claude account and chat profile caches did not become ready')
     const id = opened.sessionId
     await callMcp(app, 'focus', { sessionId: id })
     const pane = win.locator(`.chat-host[data-session-id="${id}"]`)
@@ -235,6 +262,117 @@ export async function run(t) {
       t.check('Play is not flagged', (await moved.getAttribute('data-level')) !== 'critical')
     }
 
+    // The same account still has shared headroom after its Fable cap expires.
+    await app.evaluate((_electron, token) => {
+      Object.assign(globalThis.__chipQuotaWindows[token], {
+        utilization: '0.2',
+        status: 'allowed',
+        http: 200,
+        fable: true
+      })
+    }, WORK_TOKEN)
+    const opus = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      profile: 'claude-chat',
+      account: 'Work',
+      name: 'Opus quota chip',
+      model: 'claude-opus-5-5'
+    })
+    await callMcp(app, 'focus', { sessionId: opus.sessionId })
+    const opusChip = win.locator(`.chat-host[data-session-id="${opus.sessionId}"] .term-account`)
+    await opusChip.waitFor()
+    t.check(
+      'Opus chip runs on the requested model',
+      !!(await until(() =>
+        lines(PROCESSES).some(
+          (p) =>
+            p.token === WORK_TOKEN &&
+            p.argv.includes('claude-opus-5-5') &&
+            p.argv.includes('--input-format')
+        )
+      ))
+    )
+    await win.locator('.sidebar-footer-line[data-usage-provider="claude"]').click()
+    await win.getByRole('button', { name: 'Refresh usage' }).click()
+    await until(async () => (await win.locator('[aria-label="100% used"]').count()) > 0)
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    t.check(
+      'Opus chip ignores exhausted Fable quota',
+      !!(await until(
+        async () => (await opusChip.locator('.term-account-headroom').innerText()) === '80% left'
+      ))
+    )
+    t.check(
+      'Opus chip is not marked critical for Fable',
+      (await opusChip.getAttribute('data-level')) !== 'critical'
+    )
+    await opusChip.locator('button').click()
+    await menu.waitFor()
+    t.equal(
+      'Opus account menu agrees with its chip',
+      await menu.locator('[data-account-header]').getAttribute('data-account-exhausted'),
+      null
+    )
+    await win.keyboard.press('Escape')
+
+    const fable = await callMcp(app, 'openSession', {
+      cwd: ROOT,
+      mode: 'claude',
+      profile: 'claude-chat',
+      account: 'Work',
+      name: 'Fable quota chip',
+      model: 'claude-fable-5'
+    })
+    await callMcp(app, 'focus', { sessionId: fable.sessionId })
+    const fableChip = win.locator(`.chat-host[data-session-id="${fable.sessionId}"] .term-account`)
+    await fableChip.waitFor()
+    t.check(
+      'Fable chip runs on the requested model',
+      !!(await until(() =>
+        lines(PROCESSES).some(
+          (p) =>
+            p.token === WORK_TOKEN &&
+            p.argv.includes('claude-fable-5') &&
+            p.argv.includes('--input-format')
+        )
+      ))
+    )
+    t.check(
+      'Fable chip still reports its exhausted quota',
+      !!(await until(
+        async () => (await fableChip.locator('.term-account-headroom').innerText()) === 'At limit'
+      ))
+    )
+    t.equal(
+      'Fable chip retains its warning level',
+      await fableChip.getAttribute('data-level'),
+      'critical'
+    )
+    const configFile = path.join(DIR, 'mcp-configs', `${opus.sessionId}.json`)
+    if (!(await until(() => existsSync(configFile))))
+      throw new Error('Opus tab did not receive MCP config')
+    const auth = JSON.parse(readFileSync(configFile, 'utf8')).mcpServers.clave.headers.Authorization
+    const client = mcpHttpClient(mcpEndpoint(DIR), auth.replace(/^Bearer /, ''))
+    await client.init()
+    const response = await client.call('clave_list', {})
+    if (toolErrored(response)) throw new Error('HTTP MCP list failed')
+    const listing = toolPayload(response)
+    t.equal(
+      'HTTP MCP list takes the server road',
+      (await mcpRoads(app)).filter((r) => r.command === 'list').at(-1)?.road,
+      'server'
+    )
+    t.equal(
+      'HTTP MCP ignores Fable-only exhaustion for Opus',
+      listing.sessions.find((s) => s.id === opus.sessionId)?.account?.exhausted,
+      false
+    )
+    t.equal(
+      'HTTP MCP retains Fable exhaustion',
+      listing.sessions.find((s) => s.id === fable.sessionId)?.account?.exhausted,
+      true
+    )
     t.check('no renderer error during the run', errors.length === 0, errors)
   } finally {
     await app.close().catch(() => {})

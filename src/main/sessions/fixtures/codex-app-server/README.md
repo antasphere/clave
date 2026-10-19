@@ -145,3 +145,36 @@ It prints its run ID and session ID and keeps only its temporary
 `clave-codex-agent-tasks-<run-id>` folder; remove that folder to clean up.
 After `npm run build`, the Electron check is
 `npm run test:e2e -- codex-chat-agent-tasks`.
+
+## Runtime retained across CLI upgrades
+
+`codex/runtime-survives-upgrade` loads fresh and resumed chats through
+`SessionManager` and `CodexAdapter`, using a local standalone-provider fixture.
+It removes the original installation while both app-servers run, then executes
+their real helper processes directly and through a child. It makes no provider
+requests and uses no existing Clave data. Load its empty input and verify with:
+
+```sh
+npx vitest run src/main/sessions/adapters/codex-runtime.fixtures.test.ts
+```
+
+The receipt prints the run ID, session IDs and isolated target directory,
+`clave-codex-upgrade-fixture-<run-id>`. The manager closes its sessions and revokes
+their credentials. Remove that one directory to clean up the retained receipt.
+`codex-runtime.test.ts` also covers replacement versions, shared runtime leases,
+profile/account bindings, symlinked resources, legacy helper pairs and incomplete
+packages. These are synthetic installer fixtures, not live Codex recordings.
+
+POSIX direct Codex and `env`-wrapped commands retain a standalone package or a
+legacy native executable/helper pair before starting the app-server. Copies run
+outside Electron main and share a private directory until the last app-server
+exits. A standalone package's metadata and relative executable path are retained
+intact, so an unfamiliar self-contained layout can keep using its own metadata.
+Discovery searches up to six nearby directories and matches the manifest's
+declared entrypoint to the executable, including root and nested entrypoints.
+The current known layout is checked for incomplete resources before startup.
+Filesystem clones are used where available. Windows, arbitrary wrapper
+executables and npm launchers without this standalone layout keep their existing
+launch behavior. A process crash can leave its private temporary directory until
+the operating system cleans temporary storage. Existing processes started before
+this change require a chat restart to acquire a retained runtime.

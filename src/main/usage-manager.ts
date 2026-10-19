@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import os from 'os'
 import { promisify } from 'util'
+import { TEST_NO_MACHINE_USAGE } from './test-mode'
 import {
   claudeAccountsManager,
   DEFAULT_CLAUDE_ACCOUNT_ID,
@@ -481,7 +482,8 @@ async function readFromProbe(token: string): Promise<UsageLimits | UsageError> {
 /** Which credential an account reads with. Exported for the tests. */
 export function credentialFor(
   account: ClaudeAccount | undefined,
-  token: string | undefined
+  token: string | undefined,
+  allowMachineLogin = true
 ): ClaudeCredential {
   if (token) return { kind: 'token', token }
   // Only the Default account is the machine login. Another account with no
@@ -489,6 +491,7 @@ export function credentialFor(
   // the wrong subscription's quota under its name (and put up the keychain
   // prompt for nothing).
   if (account && account.id !== DEFAULT_CLAUDE_ACCOUNT_ID) return { kind: 'none' }
+  if (!allowMachineLogin) return { kind: 'none' }
   return { kind: 'keychain' }
 }
 
@@ -634,7 +637,11 @@ export const usageManager = new AccountUsageManager(
     exists: (id) => !!claudeAccountsManager.get(id),
     read: (id) =>
       readLimitsWith(
-        credentialFor(claudeAccountsManager.get(id), claudeAccountsManager.getToken(id))
+        credentialFor(
+          claudeAccountsManager.get(id),
+          claudeAccountsManager.getToken(id),
+          !TEST_NO_MACHINE_USAGE
+        )
       ),
     onUnauthorized: (id) => {
       if (claudeAccountsManager.hasToken(id)) claudeAccountsManager.markTokenInvalid(id)
