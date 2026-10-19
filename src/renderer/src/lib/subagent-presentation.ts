@@ -28,10 +28,12 @@ function isLocalAgent(session: Session): boolean {
 
 /** A view of the live sessions, never a change to their ownership or order.
  * Only follow links whose rows are reachable in this particular sidebar view.
- * Search passes no candidates so its results remain direct session links. */
+ * Search passes no candidates so its results remain direct session links.
+ * An editable target is a temporary presented root, with its real links intact. */
 export function subagentPresentation(
   sessions: readonly Session[],
-  reachableIds: ReadonlySet<string>
+  reachableIds: ReadonlySet<string>,
+  editableRootId?: string | null
 ): {
   rootById: Map<string, string>
   descendants: Map<string, Session[]>
@@ -56,11 +58,16 @@ export function subagentPresentation(
       current = parent
     }
     if (current.id === session.id) continue
-    rootById.set(session.id, current.id)
-    depths.set(session.id, seen.size - 1)
-    const children = descendants.get(current.id) ?? []
+    // Validate the full ancestry before cutting the presented path. Otherwise
+    // an edit inside a malformed cycle could accidentally make that cycle fold.
+    const editableDepth = editableRootId ? [...seen].indexOf(editableRootId) : -1
+    const rootId = editableDepth >= 0 && editableRootId ? editableRootId : current.id
+    if (rootId === session.id) continue
+    rootById.set(session.id, rootId)
+    depths.set(session.id, editableDepth >= 0 ? editableDepth : seen.size - 1)
+    const children = descendants.get(rootId) ?? []
     children.push(session)
-    descendants.set(current.id, children)
+    descendants.set(rootId, children)
   }
   for (const children of descendants.values()) {
     children.sort((a, b) => depths.get(a.id)! - depths.get(b.id)!)

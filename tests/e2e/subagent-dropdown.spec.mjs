@@ -366,6 +366,68 @@ exec /bin/sh "$@"
       )
     )
 
+    // N3-01: a temporary editable root keeps its own descendants attached.
+    for (const [target, name, hasDescendants] of [
+      [child, 'Explorer', true],
+      [nested, 'Verifier', false]
+    ]) {
+      let committedName = name
+      for (const key of ['Enter', 'Escape']) {
+        await trigger().click()
+        await menuItem(committedName).click({ button: 'right' })
+        await win.getByRole('menuitem', { name: 'Rename', exact: true }).click()
+        const editor = row(target).locator('input')
+        await editor.waitFor()
+        await editor.fill(`${name} ${key}`)
+        t.check(
+          `${name} Rename ${key} focuses the editable target`,
+          await editor.evaluate((element) => element === document.activeElement)
+        )
+        t.equal(
+          `${name} Rename ${key} exposes only the editable target`,
+          JSON.stringify((await rowOrder()).filter((id) => id !== target)),
+          ordinaryOrder
+        )
+        t.equal(`${name} Rename ${key} shows one editable row`, await row(target).count(), 1)
+        t.equal(
+          `${name} Rename ${key} retains its own descendant selector`,
+          await row(target).locator('.subagent-trigger').count(),
+          hasDescendants ? 1 : 0
+        )
+        if (hasDescendants)
+          t.equal(`${name} Rename ${key} keeps its child folded`, await row(nested).count(), 0)
+        else
+          t.equal(`${name} Rename ${key} leaves its ancestor folded`, await row(child).count(), 0)
+        await editor.press(key)
+        if (key === 'Enter') committedName = `${name} ${key}`
+        assert.ok(
+          await until(
+            async () =>
+              (await listing()).sessions.find((session) => session.id === target)?.name ===
+              committedName
+          )
+        )
+        t.check(`${name} Rename ${key} ${key === 'Enter' ? 'commits' : 'cancels'} the edit`, true)
+        t.equal(
+          `${name} Rename ${key} folds the target back afterwards`,
+          await row(target).count(),
+          0
+        )
+        t.equal(
+          `${name} Rename ${key} restores represented row order`,
+          JSON.stringify(await rowOrder()),
+          ordinaryOrder
+        )
+      }
+      await callMcp(app, 'rename', { target: 'session', id: target, name })
+      assert.ok(
+        await until(
+          async () =>
+            (await listing()).sessions.find((session) => session.id === target)?.name === name
+        )
+      )
+    }
+
     // The menu forwards child management to the existing sidebar context actions.
     await trigger().click()
     await menuItem('Explorer').click({ button: 'right' })

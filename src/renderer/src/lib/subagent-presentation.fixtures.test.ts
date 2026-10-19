@@ -30,10 +30,73 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
 })
 const graph = (
   sessions: Session[],
-  reachable = sessions.map((s) => s.id)
-): ReturnType<typeof subagentPresentation> => subagentPresentation(sessions, new Set(reachable))
+  reachable = sessions.map((s) => s.id),
+  editableRootId?: string
+): ReturnType<typeof subagentPresentation> =>
+  subagentPresentation(sessions, new Set(reachable), editableRootId)
 
 describe('subagent presentation', () => {
+  it('presents an editable root at any depth with its descendants attached and real links unchanged', () => {
+    const rows = [
+      session('parent'),
+      session('middle', { spawnedBy: 'parent' }),
+      session('leaf', { spawnedBy: 'middle' }),
+      session('deep', { spawnedBy: 'leaf' }),
+      session('sibling', { spawnedBy: 'parent' })
+    ]
+    const links = rows.map((s) => s.spawnedBy)
+    const ids = rows.map((s) => s.id)
+    const middle = graph(rows, ids, 'middle')
+    expect(middle.rootById.has('middle')).toBe(false)
+    expect(middle.descendants.get('middle')).toEqual([rows[2], rows[3]])
+    expect(middle.descendants.get('middle')?.[0]).toBe(rows[2])
+    expect(middle.descendants.get('parent')).toEqual([rows[4]])
+    const leaf = graph(rows, ids, 'leaf')
+    expect(leaf.rootById.has('leaf')).toBe(false)
+    expect(leaf.descendants.get('leaf')).toEqual([rows[3]])
+    expect(leaf.descendants.get('parent')).toEqual([rows[1], rows[4]])
+    const deepest = graph(rows, ids, 'deep')
+    expect(deepest.rootById.has('deep')).toBe(false)
+    expect(deepest.descendants.has('deep')).toBe(false)
+    expect(graph(rows, ids, 'parent')).toEqual(graph(rows))
+    expect(graph(rows, ids, 'absent')).toEqual(graph(rows))
+    expect(graph(rows, ['leaf', 'deep'], 'middle').rootById.get('deep')).toBe('leaf')
+    expect(rows.map((s) => s.spawnedBy)).toEqual(links)
+  })
+
+  it('keeps cycle and workspace fallback intact while a target is editable', () => {
+    const cycle = [
+      session('a', { spawnedBy: 'b' }),
+      session('b', { spawnedBy: 'a' }),
+      session('branch', { spawnedBy: 'a' })
+    ]
+    expect(
+      graph(
+        cycle,
+        cycle.map((s) => s.id),
+        'a'
+      ).rootById.size
+    ).toBe(0)
+    const crossWorkspace = [
+      session('parent'),
+      session('child', { spawnedBy: 'parent', workspaceId: 'elsewhere' }),
+      session('leaf', { spawnedBy: 'child', workspaceId: 'elsewhere' })
+    ]
+    expect(
+      graph(
+        crossWorkspace,
+        crossWorkspace.map((s) => s.id),
+        'child'
+      ).rootById.get('leaf')
+    ).toBe('child')
+    expect(
+      graph(
+        crossWorkspace,
+        crossWorkspace.map((s) => s.id),
+        'parent'
+      ).rootById.has('child')
+    ).toBe(false)
+  })
   it('summarizes child attention ahead of unread activity and ongoing work without changing sessions', () => {
     const working = session('working', { agentState: 'working' })
     const unread = session('unread', { hasUnseenActivity: true })
@@ -243,6 +306,18 @@ it('loads and verifies the sidebar/subagent-dropdown fixture scenario through se
             expect(result.descendants.size).toBe(1)
             const [parentId, children] = [...result.descendants][0]
             expect(children).toHaveLength(2)
+            const links = sessions.map((s) => s.spawnedBy)
+            const editing = graph(
+              sessions,
+              sessions.map((s) => s.id),
+              children[0].id
+            )
+            expect(editing.rootById.has(children[0].id)).toBe(false)
+            expect(editing.descendants.get(children[0].id)?.map((s) => s.id)).toEqual([
+              children[1].id
+            ])
+            expect(store.getState().sessions).toBe(sessions)
+            expect(store.getState().sessions.map((s) => s.spawnedBy)).toEqual(links)
             expect(shortcutOrder(store.getState(), 'fixture-workspace')).toEqual([parentId])
             expect(new Set(cycleOrder(store.getState(), 'fixture-workspace'))).toEqual(
               new Set(sessions.map((s) => s.id))
