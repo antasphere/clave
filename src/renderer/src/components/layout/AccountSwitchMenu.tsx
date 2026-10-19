@@ -8,6 +8,7 @@ import {
   capLevel,
   formatResetAt,
   formatResetIn,
+  claudeUsageForModel,
   type AccountUsageSummary
 } from '../../store/usage-store'
 import { isExhausted, soonestWeeklyReset } from '../../lib/account-pool'
@@ -29,7 +30,8 @@ import { UsageColumn } from '../usage/UsageColumn'
 function useTargetSummary(target: SwitchTarget): AccountUsageSummary | undefined {
   const claude = useClaudeAccountsUsage((s) => s.byAccount[target.id])
   const codex = useCodexAccountsUsage((s) => s.byAccount[target.id])
-  return (target.provider === 'codex' ? codex : claude) ?? target.summary
+  if (target.provider === 'codex') return codex ?? target.summary
+  return claude ? claudeUsageForModel(claude, target.model) : target.summary
 }
 
 export function AccountSwitchRow({ target }: { target: SwitchTarget }): ReactElement {
