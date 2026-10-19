@@ -423,20 +423,21 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
   // main under Node IPC; this is the one unit check of that wiring (the
   // port handed to the server, the runner path, the runner's first message),
   // which the suite otherwise only reached through the app.
-  it('answers its bundled plugins, the chat view and the GitHub panel active in forked runners', async () => {
+  it('answers its bundled plugins, the chat view, GitHub panel and orbs active in forked runners', async () => {
     const dataDir = mkdtempSync(path.join(tmpdir(), 'clave-server-plugins-'))
     let server
     try {
       // Test mode keeps the plugins under the data dir, never in ~/.clave.
       server = await startServerProcess({ repo: REPO, dataDir, args: ['--test-no-activate'] })
       const headers = { authorization: `Bearer ${server.token}` }
+      const required = ['clave.chat-view', 'clave.github', 'clave.orbs']
       let records = []
       const end = Date.now() + 15_000
       while (Date.now() < end) {
         const response = await fetch(`${server.url}/plugins`, { headers })
         expect(response.status).toBe(200)
         records = await response.json()
-        if (records.filter((r) => r.status === 'active').length >= 2) break
+        if (required.every((id) => records.some((r) => r.id === id && r.status === 'active'))) break
         await new Promise((r) => setTimeout(r, 250))
       }
       const byId = Object.fromEntries(records.map((r) => [r.id, r]))
@@ -444,16 +445,21 @@ describe.skipIf(!built)('the terminal process beside the server (from the built 
         'clave.chat-view',
         'clave.echo-provider',
         'clave.github',
-        'clave.hello'
+        'clave.hello',
+        'clave.orbs'
       ])
-      expect(byId['clave.chat-view']).toMatchObject({
-        enabled: true,
-        status: 'active',
-        source: 'bundled'
-      })
-      expect(byId['clave.github']).toMatchObject({ enabled: true, status: 'active' })
-      expect(byId['clave.hello']).toMatchObject({ enabled: false, status: 'disabled' })
-      expect(byId['clave.chat-view'].error).toBeUndefined()
+      for (const id of required) {
+        expect(byId[id], id).toMatchObject({ enabled: true, status: 'active', source: 'bundled' })
+        expect(byId[id].error, id).toBeUndefined()
+      }
+      for (const id of ['clave.echo-provider', 'clave.hello']) {
+        expect(byId[id], id).toMatchObject({
+          enabled: false,
+          status: 'disabled',
+          source: 'bundled'
+        })
+        expect(byId[id].error, id).toBeUndefined()
+      }
     } finally {
       await server?.stop()
       rmSync(dataDir, { recursive: true, force: true })
