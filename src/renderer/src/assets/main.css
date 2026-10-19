@@ -3182,6 +3182,23 @@ html[data-ui-font='synonym'] {
   gap: var(--control-gap);
 }
 
+/* Audio settings: the default input's segmented level meter. */
+.mic-level-meter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--control-h) / 14);
+}
+.mic-level-segment {
+  width: calc(var(--control-h) / 7);
+  height: calc(var(--control-h) / 2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+}
+.mic-level-segment[data-state='lit'] { background: var(--color-accent); }
+.mic-level-segment[data-state='peak'] {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 /* ── Background work (BackgroundTasksChip) ──
    A chat's turn can end while shells and subagents it started keep running.
    The chip names how many, in the pane header; its popover lists them. */
