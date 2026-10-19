@@ -554,8 +554,8 @@ export function recountRawAst(g, index) {
 // Serialized by value and invoked only on the captured state handle after the raw
 // checkpoint. No globals, parser calls, publication, property getters or writes.
 export function readBoundPrefix(snapshot) {
-  const fail = () => {
-    throw new Error('invalid immutable prefix binding')
+  const fail = (reason) => {
+    throw new Error('invalid immutable prefix binding: ' + reason)
   }
   const data = (o, keys, array = false) => {
     if (
@@ -565,7 +565,7 @@ export function readBoundPrefix(snapshot) {
         ? !Array.isArray(o)
         : Object.getPrototypeOf(o) !== Object.prototype && Object.getPrototypeOf(o) !== null)
     )
-      fail()
+      fail('plain-object')
     const descriptors = Object.getOwnPropertyDescriptors(o)
     if (
       Reflect.ownKeys(descriptors).some(
@@ -573,12 +573,14 @@ export function readBoundPrefix(snapshot) {
           typeof k !== 'string' || !('value' in descriptors[k]) || (!array && !keys.includes(k))
       )
     )
-      fail()
-    if (!Object.isFrozen(o)) fail()
-    return Object.fromEntries(Object.entries(descriptors).map(([k, v]) => [k, v.value]))
+      fail('data-fields')
+    if (!Object.isFrozen(o)) fail('frozen')
+    const copy = Object.create(null)
+    for (const [key, descriptor] of Object.entries(descriptors)) copy[key] = descriptor.value
+    return copy
   }
   const integer = (n) => {
-    if (!Number.isSafeInteger(n) || n < 0) fail()
+    if (!Number.isSafeInteger(n) || n < 0) fail('integer')
     return n
   }
   const state = data(this, ['kind', 'signature', 'snapshot'])
@@ -587,26 +589,29 @@ export function readBoundPrefix(snapshot) {
     state.signature !== 'remark-gfm4:singleTilde=true' ||
     state.snapshot !== snapshot
   )
-    fail()
+    fail('state-identity')
   const s = data(snapshot, ['input', 'cut', 'line', 'blocks', 'rootStart', 'accounting'])
-  if (typeof s.input !== 'string') fail()
+  if (typeof s.input !== 'string') fail('input-type')
   const cut = integer(s.cut),
     line = integer(s.line)
-  if (cut > s.input.length || line < 1) fail()
+  if (cut > s.input.length || line < 1) fail('cut-line')
   const point = (p) => {
     const d = data(p, ['line', 'column', 'offset'])
-    if (integer(d.line) < 1 || integer(d.column) < 1 || integer(d.offset) > s.input.length) fail()
+    if (integer(d.line) < 1 || integer(d.column) < 1 || integer(d.offset) > s.input.length)
+      fail('point')
     return d
   }
   point(s.rootStart)
   const array = (a) => {
     const d = data(a, [], true),
       n = integer(d.length)
-    if (n > 4096 || Object.keys(d).length !== n + 1) fail()
-    return Array.from({ length: n }, (_, i) => {
-      if (!Object.hasOwn(d, String(i))) fail()
-      return d[i]
-    })
+    if (n > 4096 || Object.keys(d).length !== n + 1) fail('array-shape')
+    const values = []
+    for (let i = 0; i < n; i++) {
+      if (!Object.hasOwn(d, String(i))) fail('array-hole')
+      values.push(d[i])
+    }
+    return values
   }
   const blocks = array(s.blocks),
     pending = [...blocks],
@@ -615,21 +620,21 @@ export function readBoundPrefix(snapshot) {
     astStringCodeUnits = 0
   while (pending.length) {
     const at = pending.pop()
-    if (seen.has(at)) fail()
+    if (seen.has(at)) fail('ast-cycle')
     seen.add(at)
     const n = data(at, ['type', 'position', 'children', 'value', 'url', 'title', 'alt', 'depth'])
-    if (typeof n.type !== 'string') fail()
+    if (typeof n.type !== 'string') fail('ast-type')
     if (n.depth !== undefined) integer(n.depth)
     if (n.position !== undefined) {
       const p = data(n.position, ['start', 'end']),
         start = point(p.start),
         end = point(p.end)
-      if (start.offset > end.offset || end.offset > cut) fail()
+      if (start.offset > end.offset || end.offset > cut) fail('position')
     }
     nodes++
-    if (nodes > 4096) fail()
+    if (nodes > 4096) fail('node-cap')
     for (const key of ['value', 'url', 'title', 'alt']) {
-      if (n[key] != null && typeof n[key] !== 'string') fail()
+      if (n[key] != null && typeof n[key] !== 'string') fail('ast-string')
       astStringCodeUnits += n[key]?.length ?? 0
     }
     if (n.children !== undefined) pending.push(...array(n.children))
@@ -656,7 +661,7 @@ export function readBoundPrefix(snapshot) {
     actual.nodes > 4096 ||
     actual.sourceBytes > 131072
   )
-    fail()
+    fail('accounting-caps')
   return { input: s.input, cut, line, accounting: actual, deepFrozen: true, sameSnapshot: true }
 }
 
@@ -668,6 +673,46 @@ export function readOwnerFiber() {
     const d = Object.getOwnPropertyDescriptor(o, k)
     if (d && !('value' in d)) throw new Error('owner getter refused')
     return d?.value
+  }
+  const hasToken = (value, token) => {
+    let word = ''
+    for (let i = 0; i <= value.length; i++) {
+      const character = value[i]
+      if (
+        i === value.length ||
+        [
+          '\t',
+          '\n',
+          '\v',
+          '\f',
+          '\r',
+          ' ',
+          '\u00a0',
+          '\u1680',
+          '\u2000',
+          '\u2001',
+          '\u2002',
+          '\u2003',
+          '\u2004',
+          '\u2005',
+          '\u2006',
+          '\u2007',
+          '\u2008',
+          '\u2009',
+          '\u200a',
+          '\u2028',
+          '\u2029',
+          '\u202f',
+          '\u205f',
+          '\u3000',
+          '\ufeff'
+        ].includes(character)
+      ) {
+        if (word === token) return true
+        word = ''
+      } else word += character
+    }
+    return false
   }
   const alternate = own(this, 'alternate')
   if (!alternate || own(alternate, 'alternate') !== this)
@@ -710,8 +755,8 @@ export function readOwnerFiber() {
     }
     const cls = own(props, 'className')
     if (typeof cls === 'string') {
-      if (cls.split(/\s+/).includes('terminal-view')) views.add('terminal')
-      else if (cls.split(/\s+/).includes('chat-view')) views.add('chat')
+      if (hasToken(cls, 'terminal-view')) views.add('terminal')
+      else if (hasToken(cls, 'chat-view')) views.add('chat')
     }
     // DOM getters are deliberately not invoked. Connectedness requires an actual
     // root.current path plus a host ancestor in that current graph.
@@ -870,19 +915,197 @@ export function summarizeBoundPrefix(value, row, expectedInputs) {
   }
 }
 
+const INVARIANT_REASONS = [
+  'plain-object',
+  'data-fields',
+  'frozen',
+  'integer',
+  'state-identity',
+  'input-type',
+  'cut-line',
+  'point',
+  'array-shape',
+  'array-hole',
+  'ast-cycle',
+  'ast-type',
+  'position',
+  'node-cap',
+  'ast-string',
+  'accounting-caps'
+]
+const BINDING_STAGES = [
+  'graph-plan',
+  'before-binding-usage',
+  'prefix-state-handle',
+  'prefix-snapshot-handle',
+  'prefix-state-read',
+  'prefix-serialization',
+  'owner-fiber-handle',
+  'owner-fiber-read',
+  'release-group',
+  'invalidate-handle',
+  'after-binding-usage',
+  'session-detach'
+]
+const safeInteger = (n) => Number.isSafeInteger(n) && n >= 0
+const ownData = (o, k) => {
+  if (!o || typeof o !== 'object') return undefined
+  const d = Object.getOwnPropertyDescriptor(o, k)
+  return d && 'value' in d ? d.value : undefined
+}
+// Protocol responses are untrusted diagnostic data. Keep a small field whitelist
+// and only known tool/engine message literals; unknown text is explicitly redacted.
+export function sanitizeExceptionDetails(details) {
+  const result = {}
+  const pickNumber = (source, key, target) => {
+    const value = ownData(source, key)
+    if (safeInteger(value)) target[key] = value
+  }
+  const text = ownData(details, 'text')
+  if (typeof text === 'string')
+    result.text = ['Uncaught', 'Uncaught (in promise)'].includes(text) ? text : '[redacted]'
+  pickNumber(details, 'lineNumber', result)
+  pickNumber(details, 'columnNumber', result)
+  const exception = ownData(details, 'exception')
+  if (exception && typeof exception === 'object') {
+    result.exception = {}
+    for (const [key, allowed] of [
+      [
+        'type',
+        ['object', 'function', 'undefined', 'string', 'number', 'boolean', 'symbol', 'bigint']
+      ],
+      ['subtype', ['error', 'null']],
+      [
+        'className',
+        [
+          'Error',
+          'EvalError',
+          'TypeError',
+          'RangeError',
+          'ReferenceError',
+          'SyntaxError',
+          'URIError',
+          'AggregateError',
+          'InternalError'
+        ]
+      ]
+    ]) {
+      const value = ownData(exception, key)
+      if (typeof value === 'string')
+        result.exception[key] = allowed.includes(value) ? value.slice(0, 200) : '[redacted]'
+    }
+    const description = ownData(exception, 'description')
+    if (typeof description === 'string') {
+      const first = description.split(/\r?\n/, 1)[0]
+      const invariants = [
+        'Error: invalid immutable prefix binding',
+        ...INVARIANT_REASONS.map((reason) => 'Error: invalid immutable prefix binding: ' + reason)
+      ]
+      result.exception.description =
+        first === 'EvalError: Possible side-effect in debug-evaluate' || invariants.includes(first)
+          ? first.slice(0, 200)
+          : '[redacted remote description]'
+    }
+  }
+  const stack = ownData(details, 'stackTrace'),
+    frames = ownData(stack, 'callFrames')
+  if (Array.isArray(frames))
+    result.stackTrace = {
+      callFrames: frames.slice(0, 10).map((frame) => {
+        const row = {},
+          name = ownData(frame, 'functionName')
+        if (typeof name === 'string')
+          row.functionName = [
+            '',
+            'readBoundPrefix',
+            'readOwnerFiber',
+            'data',
+            'fail',
+            'integer',
+            'point',
+            'array',
+            'own',
+            'post',
+            'Session.post',
+            'call'
+          ].includes(name)
+            ? name.slice(0, 200)
+            : '[redacted]'
+        pickNumber(frame, 'lineNumber', row)
+        pickNumber(frame, 'columnNumber', row)
+        return row
+      })
+    }
+  return result
+}
+function bindingContext(context) {
+  const result = {
+    phase: ['binding', 'warm', 'final-closed'].includes(context.phase) ? context.phase : 'binding',
+    stage: BINDING_STAGES.includes(context.stage) ? context.stage : 'graph-plan'
+  }
+  for (const key of ['rowIndex', 'stateId', 'snapshotId', 'fiberId'])
+    if (safeInteger(context[key])) result[key] = context[key]
+  return result
+}
+function bindingUsage(value) {
+  const result = {}
+  for (const key of ['usedSize', 'totalSize', 'embedderHeapUsedSize', 'backingStorageSize']) {
+    if (Object.hasOwn(value ?? {}, key)) {
+      assert.ok(finite(value[key]), 'finite binding diagnostic usage required')
+      result[key] = value[key]
+    }
+  }
+  assert.ok(
+    Object.hasOwn(result, 'usedSize') &&
+      Object.hasOwn(result, 'totalSize') &&
+      result.totalSize >= result.usedSize,
+    'binding diagnostic usage shape'
+  )
+  return result
+}
 export async function bindCapturedGraph(
   cdp,
   graph,
   expectedInputs,
-  { objectGroup = 'parser-resource-binding', timeoutMs = 10000 } = {}
+  { objectGroup = 'parser-resource-binding', timeoutMs = 10000, phase = 'binding' } = {}
 ) {
   const handles = [],
     states = [],
-    owners = []
+    owners = [],
+    failures = [],
+    methods = [],
+    createdErrors = new WeakSet()
+  const diagnosticUsage = {
+    outsideMeasuredCheckpoint: true,
+    noGC: true,
+    noAcceptance: true,
+    before: null,
+    after: null,
+    deltas: null
+  }
   let operationError,
     cleanupError,
-    timedOut = false
-  const send = async (method, params) => {
+    timedOut = false,
+    invalidatedHandles = 0,
+    released = false
+  const errorFor = (toolMessage, context, protocol, kind = 'binding') => {
+    const error = new Error(toolMessage)
+    error.bindingFailure = {
+      ...bindingContext({ ...context, phase }),
+      kind,
+      toolMessage,
+      ...(protocol ? { protocol: sanitizeExceptionDetails(protocol) } : {})
+    }
+    createdErrors.add(error)
+    failures.push(error.bindingFailure)
+    return error
+  }
+  const send = async (method, params, context) => {
+    methods.push({
+      method,
+      ...bindingContext({ ...context, phase }),
+      parameterKeys: Object.keys(params ?? {}).sort()
+    })
     let timer
     try {
       return await Promise.race([
@@ -890,113 +1113,200 @@ export async function bindCapturedGraph(
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             timedOut = true
-            reject(new Error('binding command timeout ' + method))
+            reject(errorFor('binding command timeout ' + method, context, undefined, 'timeout'))
           }, timeoutMs)
         })
       ])
+    } catch (error) {
+      if (createdErrors.has(error)) throw error
+      const expectedMissing =
+        context.stage === 'invalidate-handle' &&
+        /(?:^|: )(?:Could not find object with given id|Cannot find object with id)$/.test(
+          String(error)
+        )
+      if (expectedMissing) {
+        const missing = new Error('released binding handle not found')
+        missing.bindingObjectNotFound = true
+        throw missing
+      }
+      throw errorFor('binding command transport failed', context, undefined, 'transport')
     } finally {
       clearTimeout(timer)
     }
   }
-  const handle = async (id) => {
-    const r = await send('HeapProfiler.getObjectByHeapObjectId', {
-      objectId: String(id),
-      objectGroup
-    })
-    assert.ok(r.result?.objectId, 'captured heap id did not resolve')
-    handles.push(r.result.objectId)
+  const remember = (id) => {
+    if (typeof id === 'string' && id && !handles.includes(id)) handles.push(id)
+  }
+  const handle = async (id, context) => {
+    const r = await send(
+      'HeapProfiler.getObjectByHeapObjectId',
+      { objectId: String(id), objectGroup },
+      context
+    )
+    if (!r.result?.objectId)
+      throw errorFor('captured heap id did not resolve', context, undefined, 'acquisition')
+    remember(r.result.objectId)
     return r.result.objectId
   }
-  const read = async (objectId, fn, args = []) => {
-    const r = await send('Runtime.callFunctionOn', {
-      objectId,
-      functionDeclaration: fn.toString(),
-      arguments: args,
-      returnByValue: true,
-      silent: true,
-      throwOnSideEffect: true,
-      objectGroup
-    })
+  const read = async (objectId, fn, args, context) => {
+    const r = await send(
+      'Runtime.callFunctionOn',
+      {
+        objectId,
+        functionDeclaration: fn.toString(),
+        arguments: args,
+        returnByValue: true,
+        silent: true,
+        throwOnSideEffect: true,
+        objectGroup
+      },
+      context
+    )
+    remember(r.result?.objectId)
+    remember(ownData(ownData(r.exceptionDetails, 'exception'), 'objectId'))
     if (r.exceptionDetails) {
-      const error = new Error('read-only binding exception')
+      const error = errorFor(
+        'read-only binding exception',
+        context,
+        r.exceptionDetails,
+        'returned-exception'
+      )
+      const description = ownData(ownData(r.exceptionDetails, 'exception'), 'description')
       if (
-        r.exceptionDetails.exception?.description?.startsWith(
-          'Error: invalid immutable prefix binding'
-        )
+        typeof description === 'string' &&
+        description.startsWith('Error: invalid immutable prefix binding')
       )
         error.name = 'QualificationSemanticError'
       throw error
     }
-    assert.ok(Object.hasOwn(r.result ?? {}, 'value'), 'primitive binding result required')
+    if (!Object.hasOwn(r.result ?? {}, 'value'))
+      throw errorFor('primitive binding result required', context, undefined, 'serialization')
     return r.result.value
   }
+  const usage = async (stage) => {
+    const value = await send('Runtime.getHeapUsage', {}, { stage })
+    try {
+      return bindingUsage(value)
+    } catch {
+      throw errorFor('binding diagnostic usage invalid', { stage }, undefined, 'diagnostic-usage')
+    }
+  }
   const release = async () => {
-    await send('Runtime.releaseObjectGroup', { objectGroup })
-    for (const objectId of handles) {
+    await send('Runtime.releaseObjectGroup', { objectGroup }, { stage: 'release-group' })
+    released = true
+    for (let rowIndex = 0; rowIndex < handles.length; rowIndex++) {
       let invalid = false
       try {
-        await send('Runtime.callFunctionOn', {
-          objectId,
-          functionDeclaration: 'function(){return 1}',
-          returnByValue: true,
-          silent: true,
-          throwOnSideEffect: true
-        })
-      } catch (e) {
-        if (
-          /(?:^|: )(?:Could not find object with given id|Cannot find object with id)$/.test(
-            String(e)
-          )
+        await send(
+          'Runtime.callFunctionOn',
+          {
+            objectId: handles[rowIndex],
+            functionDeclaration: 'function(){return 1}',
+            returnByValue: true,
+            silent: true,
+            throwOnSideEffect: true
+          },
+          { stage: 'invalidate-handle', rowIndex }
         )
-          invalid = true
-        else throw new Error('handle invalidation failed: ' + String(e))
+      } catch (error) {
+        if (error.bindingObjectNotFound) invalid = true
+        else throw error
       }
-      assert.equal(invalid, true, 'released handle remained usable')
+      if (!invalid)
+        throw errorFor(
+          'released handle remained usable',
+          { stage: 'invalidate-handle', rowIndex },
+          undefined,
+          'cleanup'
+        )
+      invalidatedHandles++
     }
   }
   try {
-    for (const row of graph.allPrefixes) {
-      const state = await handle(row.nodeId),
-        snapshot = await handle(row.snapshotId)
-      const value = await read(state, readBoundPrefix, [{ objectId: snapshot }])
-      states.push(summarizeBoundPrefix(value, row, expectedInputs))
+    diagnosticUsage.before = await usage('before-binding-usage')
+    for (const [rowIndex, row] of graph.allPrefixes.entries()) {
+      const context = { rowIndex, stateId: row.nodeId, snapshotId: row.snapshotId }
+      const state = await handle(row.nodeId, { ...context, stage: 'prefix-state-handle' }),
+        snapshot = await handle(row.snapshotId, { ...context, stage: 'prefix-snapshot-handle' })
+      const value = await read(state, readBoundPrefix, [{ objectId: snapshot }], {
+        ...context,
+        stage: 'prefix-state-read'
+      })
+      try {
+        states.push(summarizeBoundPrefix(value, row, expectedInputs))
+      } catch (error) {
+        const failure = errorFor(
+          error.message === 'binding input is not an exact declared canonical version'
+            ? error.message
+            : 'binding semantic validation failed',
+          { ...context, stage: 'prefix-serialization' },
+          undefined,
+          'semantic'
+        )
+        failure.name = 'QualificationSemanticError'
+        throw failure
+      }
     }
-    for (const owner of graph.ownership.fibers) {
-      const objectId = await handle(owner.fiberId)
-      owners.push({ ...owner, ...(await read(objectId, readOwnerFiber)) })
+    for (const [rowIndex, owner] of graph.ownership.fibers.entries()) {
+      const context = { rowIndex, fiberId: owner.fiberId }
+      const objectId = await handle(owner.fiberId, { ...context, stage: 'owner-fiber-handle' })
+      owners.push({
+        ...owner,
+        ...(await read(objectId, readOwnerFiber, [], { ...context, stage: 'owner-fiber-read' }))
+      })
     }
-  } catch (e) {
-    operationError = e
+  } catch (error) {
+    operationError = error
   } finally {
     try {
       await release()
-    } catch (e) {
-      cleanupError = e
+    } catch (error) {
+      cleanupError = error
+    }
+    try {
+      diagnosticUsage.after = await usage('after-binding-usage')
+    } catch (error) {
+      operationError ??= error
     }
   }
-  if (timedOut)
-    cleanupError = new Error('binding timeout leaves an outstanding request unqualified')
-  if (cleanupError)
-    throw new AggregateError(
-      [operationError, cleanupError].filter(Boolean),
-      'binding cleanup failed or timeout; stop before lifecycle/GC'
+  if (diagnosticUsage.before && diagnosticUsage.after)
+    diagnosticUsage.deltas = Object.fromEntries(
+      Object.keys(diagnosticUsage.before)
+        .filter((key) => Object.hasOwn(diagnosticUsage.after, key))
+        .map((key) => [key, diagnosticUsage.after[key] - diagnosticUsage.before[key]])
     )
-  if (operationError) {
-    operationError.bindingReceipt = {
-      qualified: false,
-      states,
-      owners,
-      released: true,
-      invalidatedHandles: handles.length
-    }
-    throw operationError
-  }
-  return {
+  diagnosticUsage.callCount = methods.length
+  diagnosticUsage.methodCounts = Object.fromEntries(
+    [...new Set(methods.map((x) => x.method))].map((method) => [
+      method,
+      methods.filter((x) => x.method === method).length
+    ])
+  )
+  diagnosticUsage.methods = methods
+  const receipt = {
     qualified: false,
     states,
     owners,
-    released: true,
-    invalidatedHandles: handles.length,
+    released,
+    invalidatedHandles,
+    diagnosticUsage,
+    failures
+  }
+  if (cleanupError || timedOut) {
+    const error = new AggregateError(
+      [operationError, cleanupError].filter(Boolean),
+      'binding cleanup failed or timeout; stop before lifecycle/GC'
+    )
+    error.bindingFailure = cleanupError?.bindingFailure ?? operationError?.bindingFailure
+    error.bindingReceipt = receipt
+    throw error
+  }
+  if (operationError) {
+    operationError.bindingReceipt = receipt
+    throw operationError
+  }
+  return {
+    ...receipt,
     reason: 'actual graph owner/input/processor attribution and later runtime review still required'
   }
 }
@@ -1011,13 +1321,19 @@ export async function captureQualificationPair({ capture, bind, close, analyze }
     try {
       entry.binding = await bind(entry)
     } catch (e) {
-      if (e instanceof AggregateError || e.name === 'QualificationSemanticError') throw e // uncertain cleanup or semantic invalidity stops lifecycle
       if (e.bindingReceipt) entry.bindingPartial = e.bindingReceipt
       entry.bindingFailure = {
-        name: e.name,
-        message: 'post-snapshot representation/binding failed'
+        name:
+          e.name === 'QualificationSemanticError'
+            ? e.name
+            : e instanceof AggregateError
+              ? 'AggregateError'
+              : 'Error',
+        message: 'post-snapshot representation/binding failed',
+        ...e.bindingFailure
       }
       failures.push({ milestone, error: e })
+      if (e instanceof AggregateError || e.name === 'QualificationSemanticError') throw e // uncertain cleanup or semantic invalidity stops lifecycle
     }
   }
   for (const entry of observations) {
@@ -1034,7 +1350,8 @@ export async function captureQualificationPair({ capture, bind, close, analyze }
     failures: failures.map(({ milestone, error }) => ({
       milestone,
       name: error.name,
-      message: error.message
+      message: error.bindingFailure?.toolMessage ?? 'post-snapshot binding/analysis failed',
+      ...error.bindingFailure
     })),
     completedRawPair: true
   }

@@ -220,10 +220,16 @@ async function binding(entry, expectedInputs) {
     const graph = analyzeEntry(entry, true)
     result =
       values.cohort === 'candidate'
-        ? await bindCapturedGraph(cdp, graph, expectedInputs)
+        ? await bindCapturedGraph(cdp, graph, expectedInputs, { phase: entry.milestone })
         : { qualified: false, reason: 'Original-full binding adapter pending' }
   } catch (e) {
     operationError = e
+    operationError.bindingFailure ??= {
+      phase: entry.milestone,
+      stage: 'graph-plan',
+      kind: 'representation',
+      toolMessage: 'binding graph plan failed'
+    }
   } finally {
     try {
       await cdp.detach()
@@ -233,11 +239,29 @@ async function binding(entry, expectedInputs) {
     }
     save()
   }
-  if (detachError)
-    throw new AggregateError(
-      [operationError, detachError].filter(Boolean),
-      'binding session detach failed; stop before lifecycle/GC'
-    )
+  if (detachError) {
+    const error = new AggregateError([], 'binding session detach failed; stop before lifecycle/GC')
+    error.bindingFailure = {
+      phase: entry.milestone,
+      stage: 'session-detach',
+      kind: 'cleanup',
+      toolMessage: 'binding session detach failed'
+    }
+    error.bindingReceipt = operationError?.bindingReceipt ??
+      result ?? {
+        qualified: false,
+        states: [],
+        owners: [],
+        released: false,
+        invalidatedHandles: 0,
+        failures: operationError?.bindingFailure ? [operationError.bindingFailure] : []
+      }
+    if (error.bindingReceipt) {
+      error.bindingReceipt.failures ??= []
+      error.bindingReceipt.failures.push(error.bindingFailure)
+    }
+    throw error
+  }
   if (operationError) throw operationError
   return result
 }

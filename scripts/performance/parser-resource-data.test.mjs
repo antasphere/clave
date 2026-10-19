@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript heap graph fixtures */
 import assert from 'node:assert/strict'
+import inspector from 'node:inspector'
 import { test } from 'vitest'
 import {
   decodeHeap,
@@ -9,6 +10,7 @@ import {
   bindCapturedGraph,
   captureQualificationPair,
   captureHeapCheckpoint,
+  sanitizeExceptionDetails,
   inspectPrefixGraph,
   checkResourceComparison,
   RESOURCE_CONFIG
@@ -731,16 +733,25 @@ function mockCdp({
   readFails = false,
   releaseFails = false,
   invalidation = 'missing',
-  wrongSnapshot = false
+  wrongSnapshot = false,
+  returnedException,
+  missingValue = false
 } = {}) {
   const calls = [],
     live = new Map(),
+    groups = new Map(),
     state = immutablePrefix(),
     row = boundRow(state)
   const session = {
     async send(method, params) {
       calls.push({ method, params })
+      if (method === 'Runtime.getHeapUsage')
+        return {
+          usedSize: 100 + 20 * calls.filter((c) => c.method === 'Runtime.getHeapUsage').length,
+          totalSize: 300
+        }
       if (method === 'HeapProfiler.getObjectByHeapObjectId') {
+        assert.equal(params.objectGroup, 'parser-resource-binding')
         const handle = 'remote-' + params.objectId
         live.set(
           handle,
@@ -750,11 +761,12 @@ function mockCdp({
               ? immutablePrefix().snapshot
               : state.snapshot
         )
+        groups.set(handle, params.objectGroup)
         return { result: { objectId: handle } }
       }
       if (method === 'Runtime.releaseObjectGroup') {
         if (releaseFails) throw new Error('permission denied')
-        live.clear()
+        for (const [handle, group] of groups) if (group === params.objectGroup) live.delete(handle)
         return {}
       }
       if (method === 'Runtime.callFunctionOn') {
@@ -766,14 +778,35 @@ function mockCdp({
               : 'Could not find object with given id'
           )
         }
+        assert.equal(params.throwOnSideEffect, true)
+        assert.equal(params.returnByValue, true)
+        assert.equal(params.objectGroup, groups.get(params.objectId))
         if (readFails) throw new Error('mock read unsupported')
+        if (returnedException) return { exceptionDetails: returnedException }
+        if (missingValue) return { result: { type: 'undefined' } }
         const fn = Function('return (' + params.functionDeclaration + ')')()
-        return {
-          result: {
-            value: fn.call(
-              live.get(params.objectId),
-              ...(params.arguments ?? []).map((a) => live.get(a.objectId))
-            )
+        try {
+          return {
+            result: {
+              value: fn.call(
+                live.get(params.objectId),
+                ...(params.arguments ?? []).map((a) => live.get(a.objectId))
+              )
+            }
+          }
+        } catch (error) {
+          return {
+            exceptionDetails: {
+              text: 'Uncaught',
+              lineNumber: 0,
+              columnNumber: 0,
+              exception: {
+                type: 'object',
+                subtype: 'error',
+                className: error.name,
+                description: error.name + ': ' + error.message
+              }
+            }
           }
         }
       }
@@ -794,7 +827,7 @@ test('mock post-snapshot binding uses exact ids/group, returns no body and inval
   assert.equal(receipt.invalidatedHandles, 2)
   assert.equal(receipt.qualified, false)
   assert.equal(JSON.stringify(receipt).includes(m.state.snapshot.input), false)
-  assert.equal(m.calls.at(-1).method, 'Runtime.callFunctionOn')
+  assert.equal(m.calls.at(-1).method, 'Runtime.getHeapUsage')
 })
 for (const mode of ['readFails', 'releaseFails', 'wrongSnapshot', 'usable', 'disconnect'])
   test('mock binding propagates ' + mode + ' with cleanup attempt', async () => {
@@ -1001,7 +1034,9 @@ test('actual checkpoint orchestration persists usage then complete raw before he
     'HeapProfiler.takeHeapSnapshot',
     'persist-complete-raw'
   ])
-  assert.equal(calls[8], 'HeapProfiler.getObjectByHeapObjectId')
+  assert.equal(calls[8], 'Runtime.getHeapUsage')
+  assert.equal(calls[9], 'HeapProfiler.getObjectByHeapObjectId')
+  assert.equal(calls.at(-1), 'Runtime.getHeapUsage')
 })
 test('incomplete raw checkpoint cannot reach application object lookup', async () => {
   const calls = []
@@ -1025,4 +1060,760 @@ test('incomplete raw checkpoint cannot reach application object lookup', async (
     /incomplete raw/
   )
   assert.equal(calls.includes('HeapProfiler.getObjectByHeapObjectId'), false)
+})
+
+function returnedDetails(
+  className = 'EvalError',
+  description = 'EvalError: Possible side-effect in debug-evaluate'
+) {
+  return {
+    text: 'Uncaught',
+    lineNumber: 7,
+    columnNumber: 9,
+    exception: { type: 'object', subtype: 'error', className, description }
+  }
+}
+test('protocol sanitizer keeps only bounded data-free diagnostics, no body/ids/URLs/getters', () => {
+  const marker = 'INJECTED_SYNTHETIC_BODY',
+    details = returnedDetails()
+  details.exception.description += '\n' + marker + ' https://private.invalid'
+  details.exception.value = marker
+  details.exception.preview = { body: marker }
+  details.exception.objectId = marker
+  details.url = 'file:///private'
+  details.stackTrace = {
+    callFrames: Array.from({ length: 15 }, (_, i) => ({
+      functionName: i ? 'https://private.invalid/' + marker : 'data',
+      lineNumber: i,
+      columnNumber: i,
+      url: 'file:///private',
+      scriptId: marker
+    }))
+  }
+  const record = sanitizeExceptionDetails(details),
+    text = JSON.stringify(record)
+  assert.equal(record.exception.className, 'EvalError')
+  assert.equal(record.exception.description, 'EvalError: Possible side-effect in debug-evaluate')
+  assert.equal(record.stackTrace.callFrames.length, 10)
+  for (const blocked of [
+    marker,
+    'https://',
+    'file://',
+    'objectId',
+    'preview',
+    'scriptId',
+    'url',
+    'value'
+  ])
+    assert.equal(text.includes(blocked), false, blocked)
+  assert.equal(record.stackTrace.callFrames[0].functionName, 'data')
+  details.text = marker.repeat(1000)
+  details.exception.description = 'TypeError: ' + marker
+  details.exception.className = marker
+  details.lineNumber = -1
+  details.columnNumber = Infinity
+  const other = sanitizeExceptionDetails(details)
+  assert.equal(other.text, '[redacted]')
+  assert.equal(other.exception.description, '[redacted remote description]')
+  assert.equal(Object.hasOwn(other, 'lineNumber'), false)
+  assert.equal(Object.hasOwn(other, 'columnNumber'), false)
+  let called = 0
+  Object.defineProperty(details, 'text', {
+    get() {
+      called++
+      return marker
+    }
+  })
+  sanitizeExceptionDetails(details)
+  assert.equal(called, 0)
+})
+for (const [className, description] of [
+  ['EvalError', 'EvalError: Possible side-effect in debug-evaluate'],
+  ['TypeError', 'TypeError: untrusted synthetic data']
+])
+  test(
+    'returned ' +
+      className +
+      ' persists protocol/stage through closed pair, not a thrown transport mock',
+    async () => {
+      const m = mockCdp({ returnedException: returnedDetails(className, description) }),
+        calls = []
+      const pair = await captureQualificationPair({
+        capture: async (milestone) => {
+          calls.push('persist-' + milestone)
+          return { milestone }
+        },
+        bind: (entry) =>
+          bindCapturedGraph(
+            m.session,
+            entry.milestone === 'warm' ? m.graph : { allPrefixes: [], ownership: { fibers: [] } },
+            [m.state.snapshot.input],
+            { phase: entry.milestone }
+          ),
+        close: async () => calls.push('close'),
+        analyze: async () => ({ qualified: false })
+      })
+      assert.deepEqual(calls, ['persist-warm', 'close', 'persist-final-closed'])
+      const entry = pair.observations[0],
+        failure = entry.bindingFailure
+      assert.equal(failure.name, 'Error')
+      assert.equal(failure.toolMessage, 'read-only binding exception')
+      assert.equal(failure.stage, 'prefix-state-read')
+      assert.equal(failure.phase, 'warm')
+      assert.equal(failure.rowIndex, 0)
+      assert.equal(failure.stateId, 101)
+      assert.equal(failure.snapshotId, 103)
+      assert.equal(failure.protocol.exception.className, className)
+      assert.equal(failure.protocol.lineNumber, 7)
+      assert.deepEqual(pair.failures[0].protocol, failure.protocol)
+      assert.deepEqual(entry.bindingPartial.failures[0].protocol, failure.protocol)
+      assert.equal(entry.bindingPartial.released, true)
+      assert.equal(entry.bindingPartial.invalidatedHandles, 2)
+      assert.equal(pair.qualified, false)
+      assert.equal(
+        m.calls.filter(
+          (c) => c.method === 'Runtime.callFunctionOn' && c.params.arguments?.length
+        )[0].params.throwOnSideEffect,
+        true
+      )
+    }
+  )
+test('returned own validation exception persists semantic code and cleanup before stopping lifecycle', async () => {
+  const m = mockCdp({
+      returnedException: returnedDetails('Error', 'Error: invalid immutable prefix binding: frozen')
+    }),
+    observations = [],
+    calls = []
+  await assert.rejects(
+    () =>
+      captureQualificationPair({
+        capture: async (milestone) => {
+          const entry = { milestone }
+          observations.push(entry)
+          return entry
+        },
+        bind: (e) =>
+          bindCapturedGraph(m.session, m.graph, [m.state.snapshot.input], { phase: e.milestone }),
+        close: async () => calls.push('close'),
+        analyze: async () => ({})
+      }),
+    (e) => e.name === 'QualificationSemanticError'
+  )
+  assert.deepEqual(calls, [])
+  assert.equal(
+    observations[0].bindingFailure.protocol.exception.description,
+    'Error: invalid immutable prefix binding: frozen'
+  )
+  assert.equal(observations[0].bindingPartial.invalidatedHandles, 2)
+  assert.equal(observations[0].bindingPartial.diagnosticUsage.after.usedSize, 140)
+})
+test('returned exception object handles are transient, released and invalidated, never persisted', async () => {
+  const details = returnedDetails()
+  details.exception.objectId = 'synthetic-exception-handle'
+  const m = mockCdp({ returnedException: details })
+  await assert.rejects(
+    () => bindCapturedGraph(m.session, m.graph, [m.state.snapshot.input]),
+    (e) => {
+      assert.equal(e.bindingReceipt.invalidatedHandles, 3)
+      assert.equal(JSON.stringify(e.bindingReceipt).includes('synthetic-exception-handle'), false)
+      return true
+    }
+  )
+})
+test('diagnostic usage is after persisted raw, immediately brackets binding including cleanup, never GC/acceptance', async () => {
+  const m = mockCdp(),
+    receipt = await bindCapturedGraph(m.session, m.graph, [m.state.snapshot.input], {
+      phase: 'warm'
+    })
+  const d = receipt.diagnosticUsage
+  assert.equal(d.outsideMeasuredCheckpoint, true)
+  assert.equal(d.noGC, true)
+  assert.equal(d.noAcceptance, true)
+  assert.deepEqual(d.before, { usedSize: 120, totalSize: 300 })
+  assert.deepEqual(d.after, { usedSize: 140, totalSize: 300 })
+  assert.deepEqual(d.deltas, { usedSize: 20, totalSize: 0 })
+  assert.equal(d.callCount, 8)
+  assert.equal(d.methodCounts['Runtime.getHeapUsage'], 2)
+  assert.equal(d.methods[0].stage, 'before-binding-usage')
+  assert.equal(d.methods.at(-1).stage, 'after-binding-usage')
+  assert.equal(
+    d.methods.some((x) => x.method === 'HeapProfiler.collectGarbage'),
+    false
+  )
+  assert.equal(JSON.stringify(d).includes('remote-'), false)
+  assert.equal(
+    d.methods.some((x) => x.parameterKeys.includes('functionDeclaration')),
+    true
+  )
+  const f = mockCdp({ returnedException: returnedDetails() })
+  await assert.rejects(
+    () => bindCapturedGraph(f.session, f.graph, [f.state.snapshot.input]),
+    (e) => {
+      assert.equal(e.bindingReceipt.diagnosticUsage.callCount, 8)
+      assert.equal(e.bindingReceipt.diagnosticUsage.after.usedSize, 140)
+      return true
+    }
+  )
+})
+for (const mode of [
+  'state-handle',
+  'snapshot-handle',
+  'reader-transport',
+  'serialization',
+  'before-usage',
+  'after-usage',
+  'release',
+  'invalidation'
+])
+  test('safe exact binding stage on ' + mode + ' failure', async () => {
+    const m = mockCdp(),
+      base = m.session.send.bind(m.session)
+    let lookups = 0,
+      usages = 0
+    const expected = {
+      'state-handle': 'prefix-state-handle',
+      'snapshot-handle': 'prefix-snapshot-handle',
+      'reader-transport': 'prefix-state-read',
+      serialization: 'prefix-state-read',
+      'before-usage': 'before-binding-usage',
+      'after-usage': 'after-binding-usage',
+      release: 'release-group',
+      invalidation: 'invalidate-handle'
+    }[mode]
+    const session = {
+      async send(method, params) {
+        if (
+          method === 'Runtime.getHeapUsage' &&
+          ++usages === (mode === 'before-usage' ? 1 : mode === 'after-usage' ? 2 : -1)
+        )
+          return { usedSize: NaN, totalSize: 200 }
+        if (
+          method === 'HeapProfiler.getObjectByHeapObjectId' &&
+          ++lookups === (mode === 'state-handle' ? 1 : mode === 'snapshot-handle' ? 2 : -1)
+        )
+          return { result: {} }
+        if (method === 'Runtime.callFunctionOn' && params.arguments?.length) {
+          if (mode === 'reader-transport') throw new Error('DO_NOT_PERSIST_TRANSPORT_BODY')
+          if (mode === 'serialization') return { result: { type: 'undefined' } }
+        }
+        if (method === 'Runtime.releaseObjectGroup' && mode === 'release')
+          throw new Error('DO_NOT_PERSIST_PERMISSION_BODY')
+        if (
+          method === 'Runtime.callFunctionOn' &&
+          !params.arguments?.length &&
+          mode === 'invalidation'
+        )
+          throw new Error('DO_NOT_PERSIST_DISCONNECT_BODY')
+        return base(method, params)
+      }
+    }
+    await assert.rejects(
+      () => bindCapturedGraph(session, m.graph, [m.state.snapshot.input]),
+      (e) => {
+        assert.equal(e.bindingFailure.stage, expected)
+        assert.equal(JSON.stringify(e.bindingReceipt).includes('DO_NOT_PERSIST'), false)
+        assert.ok(
+          e.bindingReceipt.diagnosticUsage.methods.some(
+            (x) => x.method === 'Runtime.releaseObjectGroup'
+          )
+        )
+        return true
+      }
+    )
+  })
+test('original immutable guards remain semantic reds and data getters are never invoked', async () => {
+  for (const mode of [
+    'getter',
+    'frozen',
+    'signature',
+    'snapshot',
+    'accounting',
+    'caps',
+    'canonical'
+  ]) {
+    let touched = 0
+    const state = structuredClone(immutablePrefix())
+    if (mode === 'getter')
+      Object.defineProperty(state.snapshot, 'input', {
+        get() {
+          touched++
+          return 'INJECTED_BODY'
+        }
+      })
+    if (mode === 'signature') state.signature = 'other'
+    if (mode === 'accounting') state.snapshot.accounting.nodes = 1
+    if (mode === 'caps') state.snapshot.cut = 200000
+    const seen = new Set(),
+      pending = [state]
+    if (mode !== 'frozen')
+      while (pending.length) {
+        const at = pending.pop()
+        if (!at || typeof at !== 'object' || seen.has(at)) continue
+        seen.add(at)
+        for (const d of Object.values(Object.getOwnPropertyDescriptors(at)))
+          if ('value' in d) pending.push(d.value)
+        Object.freeze(at)
+      }
+    const m = mockCdp(),
+      base = m.session.send.bind(m.session)
+    const session = {
+      async send(method, params) {
+        if (method === 'Runtime.callFunctionOn' && params.arguments?.length) {
+          try {
+            return {
+              result: {
+                value: readBoundPrefix.call(
+                  state,
+                  mode === 'snapshot' ? immutablePrefix().snapshot : state.snapshot
+                )
+              }
+            }
+          } catch (e) {
+            return { exceptionDetails: returnedDetails('Error', 'Error: ' + e.message) }
+          }
+        }
+        return base(method, params)
+      }
+    }
+    await assert.rejects(
+      () =>
+        bindCapturedGraph(session, m.graph, [
+          mode === 'canonical' ? 'other canonical' : m.state.snapshot.input
+        ]),
+      (e) => {
+        assert.equal(e.name, 'QualificationSemanticError', mode)
+        assert.equal(e.bindingReceipt.released, true)
+        assert.equal(e.bindingReceipt.invalidatedHandles, 2)
+        return true
+      }
+    )
+    assert.equal(touched, 0)
+  }
+})
+
+for (const mode of ['__proto__', 'extra', 'hole'])
+  test('fresh descriptor copy preserves exact frozen array ' + mode + ' rejection', () => {
+    const state = structuredClone(immutablePrefix())
+    if (mode === '__proto__')
+      Object.defineProperty(state.snapshot.blocks, '__proto__', { value: null, enumerable: true })
+    if (mode === 'extra')
+      Object.defineProperty(state.snapshot.blocks, 'extra', { value: 1, enumerable: false })
+    if (mode === 'hole') delete state.snapshot.blocks[0]
+    freezeAll(state)
+    assert.throws(
+      () => readBoundPrefix.call(state, state.snapshot),
+      /invalid immutable prefix binding: array-shape/
+    )
+  })
+for (const separator of [
+  '\t',
+  '\n',
+  '\r',
+  ' ',
+  '\u00a0',
+  '\u1680',
+  '\u2000',
+  '\u2001',
+  '\u2002',
+  '\u2003',
+  '\u2004',
+  '\u2005',
+  '\u2006',
+  '\u2007',
+  '\u2008',
+  '\u2009',
+  '\u200a',
+  '\u2028',
+  '\u2029',
+  '\u202f',
+  '\u205f',
+  '\u3000',
+  '\ufeff'
+])
+  test('owner token scan preserves whitespace U+' + separator.charCodeAt(0).toString(16), () => {
+    const { root, fiber } = fiberPair(),
+      host = {
+        tag: 5,
+        memoizedProps: { className: 'chat-view' + separator + 'terminal-view' },
+        child: fiber,
+        return: root
+      }
+    root.child = host
+    fiber.return = host
+    assert.deepEqual(readOwnerFiber.call(fiber).views, ['terminal'])
+  })
+function syntheticInspectorFixture(mode, className) {
+  let calls = 0
+  const point = { line: 1, column: 1, offset: 0 },
+    snapshot = {
+      input: 'ab tail',
+      cut: 2,
+      line: 1,
+      blocks: [{ type: 'paragraph', children: [{ type: 'text', value: 'ab' }] }],
+      rootStart: point,
+      accounting: {
+        blocks: 1,
+        nodes: 2,
+        sourceSpanCodeUnits: 2,
+        astStringCodeUnits: 2,
+        sourceBytes: 8
+      }
+    },
+    state = { kind: 'prefix', signature: 'remark-gfm4:singleTilde=true', snapshot }
+  if (mode === 'getter')
+    Object.defineProperty(snapshot, 'input', {
+      get() {
+        calls++
+        return 'never read'
+      }
+    })
+  if (mode === '__proto__')
+    Object.defineProperty(snapshot.blocks, '__proto__', { value: null, enumerable: true })
+  if (mode === 'extra')
+    Object.defineProperty(snapshot.blocks, 'extra', { value: 1, enumerable: false })
+  if (mode === 'hole') delete snapshot.blocks[0]
+  if (mode === 'accounting') snapshot.accounting.nodes = 1
+  if (mode === 'signature') state.signature = 'other'
+  if (mode === 'caps') snapshot.cut = 200000
+  if (mode === 'source-cap') {
+    snapshot.input = 'a'.repeat(70000)
+    snapshot.blocks = [{ type: 'text', value: 'a'.repeat(65536) }]
+    snapshot.accounting = {
+      blocks: 1,
+      nodes: 1,
+      sourceSpanCodeUnits: 2,
+      astStringCodeUnits: 65536,
+      sourceBytes: 131076
+    }
+  }
+  if (mode === 'block-cap') {
+    snapshot.blocks = Array.from({ length: 65 }, () => ({ type: 'paragraph' }))
+    snapshot.accounting = {
+      blocks: 65,
+      nodes: 65,
+      sourceSpanCodeUnits: 2,
+      astStringCodeUnits: 0,
+      sourceBytes: 4
+    }
+  }
+  if (mode === 'node-cap') {
+    // 32 valid paragraph blocks, 4,097 total nodes, without a 4,096-wide array
+    // dominating the inspector checker. The product's node/block caps stay exact.
+    snapshot.blocks = Array.from({ length: 32 }, (_, i) => ({
+      type: 'paragraph',
+      children: Array.from({ length: i === 0 ? 128 : 127 }, () => ({ type: 'text', value: '' }))
+    }))
+    snapshot.accounting = {
+      blocks: 32,
+      nodes: 4097,
+      sourceSpanCodeUnits: 2,
+      astStringCodeUnits: 0,
+      sourceBytes: 4
+    }
+  }
+  if (mode !== 'unfrozen') {
+    const seen = new Set(),
+      pending = [state]
+    while (pending.length) {
+      const at = pending.pop()
+      if (!at || typeof at !== 'object' || seen.has(at)) continue
+      seen.add(at)
+      for (const d of Object.values(Object.getOwnPropertyDescriptors(at)))
+        if ('value' in d) pending.push(d.value)
+      Object.freeze(at)
+    }
+  }
+  const root = { tag: 3, stateNode: {} },
+    host = {
+      tag: 5,
+      memoizedProps: { className, 'data-session-id': 'synthetic-session' },
+      return: root
+    },
+    owner = { tag: 0, return: host },
+    alternate = { tag: 0, return: host }
+  owner.alternate = alternate
+  alternate.alternate = owner
+  root.child = host
+  host.child = owner
+  root.stateNode.current = root
+  return { state, snapshot, owner, alternate, getterCalls: () => calls }
+}
+async function inspectSynthetic(mode = 'valid', className = 'chat-view terminal-view') {
+  const session = new inspector.Session(),
+    group = 'parser-resource-unit-synthetic',
+    handles = [],
+    calls = []
+  session.connect()
+  const post = (method, params) => {
+    calls.push({ method, parameterKeys: Object.keys(params).sort() })
+    return new Promise((resolve, reject) =>
+      session.post(method, params, (error, result) => (error ? reject(error) : resolve(result)))
+    )
+  }
+  const call = async (objectId, fn, args = [], byValue = true) => {
+    const params = {
+      objectId,
+      functionDeclaration: fn.toString(),
+      arguments: args,
+      returnByValue: byValue,
+      silent: true,
+      throwOnSideEffect: true,
+      objectGroup: group
+    }
+    assert.equal(params.throwOnSideEffect, true)
+    assert.equal(params.returnByValue, byValue)
+    assert.equal(params.objectGroup, group)
+    const result = await post('Runtime.callFunctionOn', params)
+    for (const id of [result.result?.objectId, result.exceptionDetails?.exception?.objectId])
+      if (id && !handles.includes(id)) handles.push(id)
+    return result
+  }
+  const release = async () => {
+    await post('Runtime.releaseObjectGroup', { objectGroup: group })
+    released = true
+    for (const objectId of handles) {
+      let invalid = false
+      try {
+        await post('Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: 'function(){return 1}',
+          returnByValue: true,
+          silent: true,
+          throwOnSideEffect: true
+        })
+      } catch (error) {
+        if (/Could not find object with given id/.test(String(error))) invalid = true
+        else throw error
+      }
+      assert.ok(invalid, 'local synthetic handle remained usable')
+      invalidated++
+    }
+  }
+  let result,
+    released = false,
+    invalidated = 0,
+    disconnected = false
+  try {
+    const setup = await post('Runtime.evaluate', {
+      expression:
+        '(' +
+        syntheticInspectorFixture.toString() +
+        ')(' +
+        JSON.stringify(mode) +
+        ',' +
+        JSON.stringify(className) +
+        ')',
+      returnByValue: false,
+      objectGroup: group,
+      silent: true
+    })
+    assert.equal(setup.exceptionDetails, undefined)
+    handles.push(setup.result.objectId)
+    const state = (
+        await call(
+          handles[0],
+          function () {
+            return this.state
+          },
+          [],
+          false
+        )
+      ).result.objectId,
+      snapshot = (
+        await call(
+          handles[0],
+          function () {
+            return this.snapshot
+          },
+          [],
+          false
+        )
+      ).result.objectId
+    const read = await call(state, readBoundPrefix, [{ objectId: snapshot }])
+    result = {
+      node: process.version,
+      v8: process.versions.v8,
+      syntheticOnly: true,
+      qualifiedElectron: false,
+      prefix: read.exceptionDetails
+        ? { success: false, protocol: sanitizeExceptionDetails(read.exceptionDetails) }
+        : { success: true, value: read.result.value }
+    }
+    if (result.prefix.success) {
+      try {
+        if (mode === 'valid')
+          assert.ok(result.prefix.value.input === 'ab tail', 'synthetic input mismatch')
+      } finally {
+        delete result.prefix.value.input
+      }
+    }
+    result.getterCalls = (
+      await call(handles[0], function () {
+        return this.getterCalls()
+      })
+    ).result.value
+    if (mode === 'valid') {
+      result.owners = []
+      for (const field of ['owner', 'alternate']) {
+        const fn =
+            field === 'owner'
+              ? function () {
+                  return this.owner
+                }
+              : function () {
+                  return this.alternate
+                },
+          id = (await call(handles[0], fn, [], false)).result.objectId
+        const owner = await call(id, readOwnerFiber)
+        result.owners.push(
+          owner.exceptionDetails
+            ? { success: false, protocol: sanitizeExceptionDetails(owner.exceptionDetails) }
+            : { success: true, value: owner.result.value }
+        )
+      }
+    }
+  } finally {
+    try {
+      await release()
+    } finally {
+      session.disconnect()
+      disconnected = true
+    }
+  }
+  return { ...result, cleanup: { released, invalidated, disconnected }, calls }
+}
+test('real local Node inspector runs actual prefix and current/alternate readers with checker true', async () => {
+  const result = await inspectSynthetic()
+  assert.equal(result.prefix.success, true, JSON.stringify(result.prefix.protocol))
+  assert.equal(result.prefix.value.deepFrozen, true)
+  assert.equal(result.prefix.value.accounting.nodes, 2)
+  assert.deepEqual(
+    result.owners.map((x) => x.success),
+    [true, true]
+  )
+  assert.deepEqual(
+    result.owners.map((x) => x.value.branch),
+    ['current', 'alternate']
+  )
+  assert.deepEqual(result.owners[0].value.views, ['terminal'])
+  assert.equal(result.cleanup.released, true)
+  assert.equal(result.cleanup.disconnected, true)
+  assert.ok(result.cleanup.invalidated >= 5)
+  assert.equal(
+    result.calls.some((c) => c.method.startsWith('HeapProfiler.')),
+    false
+  )
+  assert.equal(result.qualifiedElectron, false)
+})
+for (const mode of [
+  'getter',
+  'unfrozen',
+  'signature',
+  'accounting',
+  'caps',
+  'source-cap',
+  'block-cap',
+  '__proto__',
+  'extra',
+  'hole'
+])
+  test(
+    'real Node checker keeps ' + mode + ' validation semantic and cleans every local handle',
+    async () => {
+      const result = await inspectSynthetic(mode)
+      assert.equal(result.prefix.success, false)
+      assert.equal(result.prefix.protocol.exception.className, 'Error')
+      assert.match(
+        result.prefix.protocol.exception.description,
+        /^Error: invalid immutable prefix binding/
+      )
+      assert.equal(result.getterCalls, 0)
+      assert.equal(result.cleanup.released, true)
+      assert.equal(result.cleanup.disconnected, true)
+      assert.ok(result.cleanup.invalidated >= 3)
+    }
+  )
+for (const [className, expected] of [
+  ['xterminal-view chat-viewer', []],
+  ['terminal-viewer chat-view', ['chat']],
+  ['chat-view\u00a0terminal-view', ['terminal']],
+  ['chat-view\u180eterminal-view', []]
+])
+  test('real Node owner exact token boundary ' + JSON.stringify(className), async () => {
+    const result = await inspectSynthetic('valid', className)
+    assert.ok(result.owners.every((x) => x.success))
+    assert.deepEqual(result.owners[0].value.views, expected)
+  })
+
+test('real Node inspector rejects an external write to a fresh synthetic sentinel', async () => {
+  const session = new inspector.Session(),
+    group = 'parser-resource-unit-write-negative'
+  session.connect()
+  const post = (method, params) =>
+    new Promise((resolve, reject) =>
+      session.post(method, params, (error, result) => (error ? reject(error) : resolve(result)))
+    )
+  let objectId
+  try {
+    const setup = await post('Runtime.evaluate', {
+      expression: '({counter:0})',
+      objectGroup: group,
+      returnByValue: false,
+      silent: true
+    })
+    objectId = setup.result.objectId
+    const rejected = await post('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function(){this.counter++;return this.counter}',
+      objectGroup: group,
+      returnByValue: true,
+      silent: true,
+      throwOnSideEffect: true
+    })
+    assert.equal(
+      sanitizeExceptionDetails(rejected.exceptionDetails).exception.className,
+      'EvalError'
+    )
+    const read = await post('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function(){return this.counter}',
+      objectGroup: group,
+      returnByValue: true,
+      silent: true,
+      throwOnSideEffect: true
+    })
+    assert.equal(read.exceptionDetails, undefined)
+    assert.equal(read.result.value, 0)
+  } finally {
+    try {
+      await post('Runtime.releaseObjectGroup', { objectGroup: group })
+      if (objectId)
+        await assert.rejects(
+          () =>
+            post('Runtime.callFunctionOn', {
+              objectId,
+              functionDeclaration: 'function(){return 1}',
+              returnByValue: true,
+              silent: true,
+              throwOnSideEffect: true
+            }),
+          /Could not find object with given id/
+        )
+    } finally {
+      session.disconnect()
+    }
+  }
+})
+
+// The full VM checker case is a separate standalone synthetic proof. Walking
+// 4,097 nodes in the debugger is costly under parallel unit-worker load; this
+// direct assertion still enforces the exact node cap on every ordinary run.
+test('exact 4097-node immutable budget fails the actual reader guard', () => {
+  const { state, snapshot } = syntheticInspectorFixture('node-cap', 'chat-view')
+  assert.equal(snapshot.accounting.blocks, 32)
+  assert.equal(snapshot.accounting.nodes, 4097)
+  assert.throws(
+    () => readBoundPrefix.call(state, snapshot),
+    /invalid immutable prefix binding: node-cap/
+  )
 })
