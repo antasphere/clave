@@ -318,6 +318,54 @@ exec /bin/sh "$@"
     )
     await menuItem('Coordinator').click()
 
+    // N2-01: an already-visible parent's editor must keep its descendants folded.
+    const rowOrder = () =>
+      win
+        .locator('[data-sidebar-item-type="session"]')
+        .evaluateAll((rows) =>
+          rows
+            .filter((row) => !row.closest('[data-group-collapsed="true"]'))
+            .map((row) => row.getAttribute('data-sidebar-item-id'))
+        )
+    const ordinaryOrder = JSON.stringify(await rowOrder())
+    let parentName = 'Coordinator'
+    for (const key of ['Enter', 'Escape']) {
+      await row(parent).locator('.sidebar-item').click({ button: 'right' })
+      await win.getByRole('menuitem', { name: 'Rename', exact: true }).click()
+      const editor = row(parent).locator('input')
+      await editor.waitFor()
+      await editor.fill(`Coordinator ${key}`)
+      t.equal(
+        `parent Rename ${key} keeps descendants folded while typing`,
+        (await row(child).count()) + (await row(nested).count()),
+        0
+      )
+      t.equal(
+        `parent Rename ${key} preserves represented row order`,
+        JSON.stringify(await rowOrder()),
+        ordinaryOrder
+      )
+      t.equal(
+        `parent Rename ${key} retains its descendant selector`,
+        await row(parent).locator('.subagent-trigger').count(),
+        1
+      )
+      await editor.press(key)
+      if (key === 'Enter') parentName = `Coordinator ${key}`
+      assert.ok(
+        await until(
+          async () => (await listing()).sessions.find((s) => s.id === parent)?.name === parentName
+        )
+      )
+      t.check(`parent Rename ${key} ${key === 'Enter' ? 'commits' : 'cancels'} the edit`, true)
+    }
+    await callMcp(app, 'rename', { target: 'session', id: parent, name: 'Coordinator' })
+    assert.ok(
+      await until(
+        async () => (await listing()).sessions.find((s) => s.id === parent)?.name === 'Coordinator'
+      )
+    )
+
     // The menu forwards child management to the existing sidebar context actions.
     await trigger().click()
     await menuItem('Explorer').click({ button: 'right' })

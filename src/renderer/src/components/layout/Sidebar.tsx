@@ -658,10 +658,16 @@ export function Sidebar(): React.JSX.Element {
       }
     }
     for (const id of linkedHiddenIds) reachable.delete(id)
-    return subagentPresentation(
-      sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId) && s.id !== renamingId),
-      reachable
-    )
+    const scopedSessions = sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId))
+    const presentation = subagentPresentation(scopedSessions, reachable)
+    // Only a folded target needs exposing for its row editor. An already-visible
+    // parent stays in the graph so its descendants do not unfold while typing.
+    return renamingId && presentation.rootById.has(renamingId)
+      ? subagentPresentation(
+          scopedSessions.filter((s) => s.id !== renamingId),
+          reachable
+        )
+      : presentation
   }, [scopedItems, groups, linkedHiddenIds, sessions, activeWorkspaceId, renamingId])
   const subagentRootsRef = useRef(subagents.rootById)
   subagentRootsRef.current = subagents.rootById
