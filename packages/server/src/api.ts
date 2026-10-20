@@ -8,7 +8,14 @@ import { Layer } from 'effect'
 import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import { Health, HttpCqrs } from '@structure-ai/http'
 import { ClaveApi } from '@clave/contract/api'
-import { ListClients, RegisterClient, UnregisterClient } from '@clave/contract/clients'
+import {
+  ListClients,
+  RegisterClient,
+  UnregisterClient,
+  ReserveClientRegistration,
+  ConfirmClientRegistration,
+  ReleaseClientRegistration
+} from '@clave/contract/clients'
 import {
   GetSession,
   GetSessionCapabilities,
@@ -108,6 +115,9 @@ export const ClientsLive = HttpApiBuilder.group(ClaveApi, 'clients', (handlers) 
     .handle('register', HttpCqrs.command(RegisterClient))
     .handle('list', HttpCqrs.query(ListClients))
     .handle('unregister', HttpCqrs.command(UnregisterClient))
+    .handle('reserveRegistration', HttpCqrs.command(ReserveClientRegistration))
+    .handle('confirmRegistration', HttpCqrs.command(ConfirmClientRegistration))
+    .handle('releaseRegistration', HttpCqrs.command(ReleaseClientRegistration))
 )
 
 // ── Lane D: settings (`settings/api.ts`) ──
