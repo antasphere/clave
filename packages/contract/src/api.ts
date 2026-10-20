@@ -11,7 +11,14 @@
  * group and its line; nobody edits another lane's group.
  */
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
-import { ListClients, RegisterClient, UnregisterClient } from './clients'
+import {
+  ListClients,
+  RegisterClient,
+  UnregisterClient,
+  ReserveClientRegistration,
+  ConfirmClientRegistration,
+  ReleaseClientRegistration
+} from './clients'
 import {
   GetSession,
   GetSessionCapabilities,
@@ -73,6 +80,27 @@ export const clientsGroup = ApiGroup.make('clients')
   .add(HttpCqrs.commandEndpoint('register', '/clients', RegisterClient))
   .add(HttpCqrs.queryEndpoint('list', '/clients', ListClients))
   .add(HttpCqrs.commandEndpoint('unregister', '/clients/unregister', UnregisterClient))
+  .add(
+    HttpCqrs.commandEndpoint(
+      'reserveRegistration',
+      '/clients/registrations/v1/reserve',
+      ReserveClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'confirmRegistration',
+      '/clients/registrations/v1/confirm',
+      ConfirmClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'releaseRegistration',
+      '/clients/registrations/v1/release',
+      ReleaseClientRegistration
+    )
+  )
 
 // ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
 export { settingsGroup }

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { REPO } from './harness.mjs'
+import { REPO } from '../../harness.mjs'
 
 export async function observeNativeParser(win) {
   const assets = path.join(REPO, 'out/renderer/assets')

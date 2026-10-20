@@ -23,8 +23,8 @@
  *    keeps the in-process server for development and the harness; the
  *    environment's url wins over the flag.
  *
- * Either way the shell then REGISTERS itself with the server (`POST /clients`,
- * its pid and version), so the server knows which app is on it, and writes
+ * Either way the shell then reserves an invisible identity and confirms it with the server
+ * before publishing its presence, so the server knows which app is on it, and writes
  * `clave-server.json` in the user-data directory: the url, the token, the mode
  * and whether it worked, the discovery file the harness reads, after the shape
  * of `mcp-server.json`.
@@ -39,6 +39,7 @@
  * Nothing here imports Electron: the paths and the identity come in as
  * arguments, and the module is unit-tested with fakes.
  */
+import type { Client } from '@clave/contract/clients'
 import * as fs from 'fs'
 import * as path from 'path'
 import { ENV_SERVER_URL, ENV_SERVER_TOKEN } from '@clave/contract/env'
@@ -253,17 +254,46 @@ export function markServerGone(userData: string, reason: string): ServerDiscover
   return gone
 }
 
-async function call(
+/** The deadline includes response consumption, even if an adapter ignores abort. */
+async function call<A>(
   doFetch: typeof fetch,
   timeoutMs: number,
   url: string,
-  init: RequestInit & { token?: string | null } = {}
-): Promise<Response> {
+  init: RequestInit & { token?: string | null },
+  consume: (response: Response) => Promise<A>
+): Promise<A> {
+  if (timeoutMs <= 0) throw new DOMException('The registration deadline expired', 'TimeoutError')
   const { token, ...rest } = init
   const headers = new Headers(rest.headers)
   if (token) headers.set('authorization', `Bearer ${token}`)
-  return doFetch(url, { ...rest, headers, signal: AbortSignal.timeout(timeoutMs) })
+  const abort = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => {
+        const error = new DOMException('The registration deadline expired', 'TimeoutError')
+        abort.abort(error)
+        reject(error)
+      },
+      Math.max(0, timeoutMs)
+    )
+  })
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(() => doFetch(url, { ...rest, headers, signal: abort.signal }))
+        .then(consume),
+      timeout
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
+
+class RegistrationResponseError extends Error {}
+
+const failureName = (error: unknown): string =>
+  error instanceof Error ? error.name : 'UnknownError'
 
 /**
  * Start or attach, register, write the discovery file. Resolves with the
@@ -276,6 +306,12 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const timeoutMs = options.timeoutMs ?? 5000
   const launch = options.launch ?? resolveServerLaunch(options.env ?? {})
   const pid = options.identity.pid
+
+  // Preserve the shell's light static import graph. Schemas load only for this boot.
+  const [{ Schema }, { Client: ClientSchema, ClientRegistrationReservation }] = await Promise.all([
+    import('effect'),
+    import('@clave/contract/clients')
+  ])
 
   let server: OwnServer | null = null
   let url: string
@@ -310,93 +346,199 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     token = server.token
   }
 
-  const fail = async (message: string): Promise<never> => {
-    if (server) await server.stop().catch(() => {})
+  let reservationId: string | null = null
+  let cleanup: Promise<void> | undefined
+  const releaseAndStop = (): Promise<void> => {
+    if (cleanup) return cleanup
+    cleanup = (async () => {
+      const started = performance.now()
+      let releaseStatus: number | undefined
+      let releaseError: unknown
+      let stopError: unknown
+      if (reservationId) {
+        const release = (): Promise<number> =>
+          call(
+            doFetch,
+            Math.min(timeoutMs, 1500),
+            `${url}/clients/registrations/v1/release`,
+            {
+              method: 'POST',
+              token,
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ id: reservationId })
+            },
+            async (response) => {
+              await response.body?.cancel()
+              return response.status
+            }
+          )
+        try {
+          const status = await release().catch((error: unknown) => {
+            if (error instanceof TypeError) return release()
+            throw error
+          })
+          releaseStatus = status
+          if (status < 200 || status >= 300)
+            throw new Error(`Client release answered HTTP ${status}`)
+          console.info(
+            '[server] client cleanup ' +
+              JSON.stringify({
+                id: reservationId,
+                outcome: 'released-or-absent',
+                ms: Math.round(performance.now() - started)
+              })
+          )
+        } catch (cause) {
+          releaseError = new Error(`Client release was not acknowledged (${failureName(cause)})`, {
+            cause
+          })
+          console.error(
+            '[server] client cleanup ' +
+              JSON.stringify({
+                id: reservationId,
+                outcome: 'unacknowledged',
+                ms: Math.round(performance.now() - started),
+                error: failureName(cause),
+                ...(releaseStatus !== undefined && { status: releaseStatus })
+              })
+          )
+        }
+      }
+      // Stopping our server is required even if release failed. Attached servers stay up.
+      if (server) {
+        try {
+          await server.stop()
+        } catch (cause) {
+          stopError = new Error('Stopping the owned server failed', { cause })
+        }
+      }
+      if (releaseError && stopError)
+        throw new AggregateError(
+          [releaseError, stopError],
+          'Client release and owned-server stop failed'
+        )
+      if (releaseError) throw releaseError
+      if (stopError) throw stopError
+    })()
+    return cleanup
+  }
+  const fail = async (message: string, cause?: unknown): Promise<never> => {
+    let cleanupFailure: unknown
+    try {
+      await releaseAndStop()
+    } catch (error) {
+      cleanupFailure = error
+    }
+    const detail = message + (cleanupFailure ? '; client cleanup was not acknowledged' : '')
+    const error = new ServerBootError(detail, launch.mode, url)
+    error.cause = cleanupFailure
+      ? new AggregateError([cause, cleanupFailure], 'Boot and cleanup failed')
+      : cause
+    try {
+      writeDiscovery(options.userData, {
+        url,
+        token: null,
+        mode: launch.mode,
+        ok: false,
+        error: detail,
+        pid,
+        clientId: null
+      })
+    } catch (discoveryFailure) {
+      error.cause = new AggregateError(
+        [error.cause, discoveryFailure],
+        'Boot failure could not be published'
+      )
+    }
+    throw error
+  }
+
+  // One remote budget, not a fresh full timeout for each new protocol step.
+  const deadline = performance.now() + timeoutMs
+  const remaining = (): number => Math.max(0, deadline - performance.now())
+  let live: number
+  try {
+    live = await call(doFetch, remaining(), `${url}/health/live`, {}, async (response) => {
+      await response.body?.cancel()
+      return response.status
+    })
+  } catch (cause) {
+    return fail(`nothing answers at ${url}: ${failureName(cause)}`, cause)
+  }
+  if (live < 200 || live >= 300) return fail(`${url} answered ${live} on /health/live`)
+
+  const command = <A>(
+    stage: 'reserve' | 'confirm',
+    payload: unknown,
+    decode: (body: unknown) => A
+  ): Promise<A> =>
+    call(
+      doFetch,
+      remaining(),
+      `${url}/clients/registrations/v1/${stage}`,
+      {
+        method: 'POST',
+        token,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      },
+      async (response) => {
+        if (response.status === 401 || response.status === 403)
+          throw new RegistrationResponseError('The server refused the token')
+        if (response.status === 404 || response.status === 405)
+          throw new RegistrationResponseError(
+            'This server does not support desktop registration v1; upgrade the attached server before this desktop'
+          )
+        if (!response.ok)
+          throw new RegistrationResponseError(
+            `The server answered HTTP ${response.status} on registration ${stage}`
+          )
+        return decode(await response.json())
+      }
+    )
+  let client: Client
+  try {
+    const reserved = await command(
+      'reserve',
+      options.identity,
+      Schema.decodeUnknownSync(ClientRegistrationReservation)
+    )
+    reservationId = reserved.reservationId
+    client = await command('confirm', { id: reservationId }, Schema.decodeUnknownSync(ClientSchema))
+    if (
+      client.id !== reservationId ||
+      client.kind !== options.identity.kind ||
+      client.name !== options.identity.name ||
+      client.pid !== pid
+    )
+      throw new RegistrationResponseError(
+        'The server returned a different desktop registration identity'
+      )
+  } catch (cause) {
+    // Only our bounded, local status messages are public. Schema/network causes stay internal.
+    const detail = cause instanceof RegistrationResponseError ? cause.message : failureName(cause)
+    return fail(`registering with ${url} failed: ${detail}`, cause)
+  }
+
+  try {
     writeDiscovery(options.userData, {
       url,
-      token: null,
-      mode: launch.mode,
-      ok: false,
-      error: message,
-      pid,
-      clientId: null
-    })
-    throw new ServerBootError(message, launch.mode, url)
-  }
-
-  // Is anything there? The probe needs no token, so a wrong token and a dead
-  // url are told apart in the message. The status is read OUTSIDE the try:
-  // a `fail` inside it would be caught by the same catch and reported as
-  // "nothing answers".
-  let live: Response
-  try {
-    live = await call(doFetch, timeoutMs, `${url}/health/live`)
-  } catch (err) {
-    return fail(`nothing answers at ${url}: ${(err as Error).message}`)
-  }
-  if (!live.ok) return fail(`${url} answered ${live.status} on /health/live`)
-
-  let clientId: string | null = null
-  try {
-    const res = await call(doFetch, timeoutMs, `${url}/clients`, {
-      method: 'POST',
       token,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(options.identity)
+      mode: launch.mode,
+      ok: true,
+      pid,
+      clientId: client.id,
+      ...(server?.pid !== undefined && { serverPid: server.pid })
     })
-    if (res.status === 401) return fail(`${url} refused the token`)
-    if (!res.ok) return fail(`${url} answered ${res.status} on POST /clients`)
-    const body = (await res.json()) as { id?: unknown }
-    clientId = typeof body.id === 'string' ? body.id : null
-  } catch (err) {
-    if (err instanceof ServerBootError) throw err
-    return fail(`registering with ${url} failed: ${(err as Error).message}`)
+  } catch (cause) {
+    return fail(`publishing the desktop registration failed: ${failureName(cause)}`, cause)
   }
-
-  writeDiscovery(options.userData, {
-    url,
-    token,
-    mode: launch.mode,
-    ok: true,
-    pid,
-    clientId,
-    ...(server?.pid !== undefined && { serverPid: server.pid })
-  })
-  // The in-process start publishes its own address to the windows
-  // (server/clave-server.ts); an attached or separate one is published by
-  // the boot in `index.ts`, once this resolves.
-
-  let stopped = false
   return {
     url,
     token: token ?? '',
     mode: launch.mode,
-    clientId,
+    clientId: client.id,
     ...(server?.pid !== undefined && { serverPid: server.pid }),
-    stop: async () => {
-      if (stopped) return
-      stopped = true
-      if (clientId) {
-        // Best effort, bounded: a quit must not wait on a server that is gone.
-        // ONE retry on a network error: the main process can stall for
-        // seconds during a quit, the server drops the idle keep-alive socket
-        // meanwhile (Node's default is 5 s), and `fetch` then reuses the dead
-        // socket and fails with ECONNRESET without ever sending the request.
-        // Measured in the e2e harness (lane F, round 3): the client stayed
-        // registered on the server after the app was gone. The retry opens a
-        // fresh connection; a duplicate answers ClientNotFound, harmless.
-        const unregister = (): Promise<Response> =>
-          call(doFetch, Math.min(timeoutMs, 1500), `${url}/clients/unregister`, {
-            method: 'POST',
-            token,
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ id: clientId })
-          })
-        await unregister()
-          .catch((err) => (err instanceof TypeError ? unregister() : undefined))
-          .catch(() => {})
-      }
-      if (server) await server.stop()
-    }
+    stop: releaseAndStop
   }
 }

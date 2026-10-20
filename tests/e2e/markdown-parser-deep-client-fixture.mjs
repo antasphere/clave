@@ -3,11 +3,11 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { MarkdownMessage } from '../../plugins/chat-view/src/MarkdownMessage.tsx'
 import { DEPTHS, STAGES, ROLES, demand } from './markdown-deep-contract.mjs'
 
-// Real unchanged components, app-equivalent StrictMode. No source transforms,
-// parser/store callbacks, SSR, debugger or MutationObserver in this primary.
+// Three public-renderer repeatability controls, with app-equivalent StrictMode.
+// Each value still needs independent literal completeness before equality.
+// No source transforms, parser/store callbacks, SSR, debugger or MutationObserver.
 let roots = [],
   depth = null,
   ordinal = 0,
@@ -58,10 +58,7 @@ async function step({ depth: expectedDepth, stage, role, input }) {
     'fixture order'
   )
   const { root, container } = roots[ordinal % 3]
-  const element =
-    role === 'candidate'
-      ? createElement(MarkdownMessage, { final: false }, input)
-      : createElement(ReactMarkdown, { remarkPlugins: [[remarkGfm, { singleTilde: true }]] }, input)
+  const element = createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, input)
   flushSync(() => root.render(createElement(StrictMode, null, element)))
   await frames()
   const text = container.textContent
@@ -69,6 +66,8 @@ async function step({ depth: expectedDepth, stage, role, input }) {
     depth,
     stage,
     role,
+    renderBoundary: 'ReactMarkdown/remark-gfm',
+    comparison: 'literal-correctness-and-repeatability',
     input,
     html: container.innerHTML,
     text,

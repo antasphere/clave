@@ -13,7 +13,7 @@ import {
   type MarkdownFile,
   type MarkdownProcessor,
   type MarkdownAttempt
-} from '../../plugins/chat-view/src/markdown-parser-reuse'
+} from '../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse'
 
 interface MarkdownSlot {
   current: CommittedMarkdown | undefined

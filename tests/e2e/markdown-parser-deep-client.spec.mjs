@@ -97,16 +97,21 @@ export async function run(t) {
     })
     const inputs = Object.keys(bundled.metafile.inputs)
     for (const suffix of [
-      'plugins/chat-view/src/MarkdownMessage.tsx',
-      'plugins/chat-view/src/markdown-parser-reuse.ts',
       'react-dom/cjs/react-dom-client.development.js',
       'react-markdown/lib/index.js',
-      'remark-parse/lib/index.js'
+      'remark-parse/lib/index.js',
+      'remark-gfm/lib/index.js'
     ])
       assert.ok(
         inputs.some((input) => input.endsWith(suffix)),
         'actual uninstrumented input: ' + suffix
       )
+    assert.ok(
+      inputs.every(
+        (input) => !/MarkdownMessage|markdown-parser-reuse|diagnostics\/prefix-cache/.test(input)
+      ),
+      'direct fixture has no custom cache input'
+    )
     write('bundle', {
       inputs,
       sourceSha256: Object.fromEntries(

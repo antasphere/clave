@@ -192,3 +192,17 @@ The exception sanitizer permits only the exact constant Error first lines for ow
 Repository tests retain the140 accepted single-owner reference values/reasons through the one-member canonical API, the original prefix/owner/formal guards and actual million-Fiber bound. Decoded-snapshot-shaped planner tests prove zero-handle HOLD. Actual adapter CDP mocks prove exact anchor/flat pair order, cache reuse, one batch call, exact raw slot mapping, no partial owner publication and all-known-handle invalidation across semantic/returned/transport/acquisition/diagnostic/cleanup/timeouts. Private final-source local Node checks use the same44 frozen synthetic cases, including both members and two pairs on one40903current-Fiber/42ancestor graph, checkertrue/byvalue/silent and the unchanged parent10second watchdog. Node success is not installed-Electron qualification.
 
 Prefixd7, its989byte state/snapshot/read/summarization loop and unchanged helper dependencies, collector, product source/build, lock, workload/caps and formal tools retain separate exact bindings. Replacing the owner function and changing planning/binding alters helper bytes outside the historical owner function; the old whole-outside-owner OW5 identity condition no longer holds. Historical source-qualified prefix observations stay qualified only to their exact unchanged function/call path/engine/fixture/build facts. The new composed prefix-plus-batch adapter requires a later actual-application qualification. Root review, commit/freeze and a separate representative installed-Electron batch START precede any further runtime. No automatic qualifier, R2, resource/formal collection, build or target retry is authorized. Physical caps, actual ownership/connection, observer residue, lifetime and final performance acceptance remain open.
+
+
+## Full-parser scope amendment, 20 October 2026
+
+The prior cache protocol, measurements, failures and unqualified graph collector
+above remain historical evidence. Current native Chat/Terminal use the public
+ReactMarkdown/GFM full pipeline. Prefix modules and cache-only native subjects
+are explicit legacy diagnostics, with exact move/import provenance in the P4
+archive inventory. The old parser-resource tools retain qualified=false and
+are not current whole-feature evidence. The new renderer-resource-protocol.md
+defines the separately reviewed whole-feature/raw-current-dev question; its
+qualification and collection remain blocked until root GO. All numerical and
+user-facing targets above remain unchanged. Original SSR diagnostic failure
+PRDCT-3634 remains unresolved, not converted into a pass by this amendment.

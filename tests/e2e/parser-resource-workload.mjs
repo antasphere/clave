@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { callMcp, REPO } from './harness.mjs'
 import { LONG_RESPONSE, streamChunk, chatSelector, frames } from './renderer-workload.mjs'
-import { observeNativeParser } from './native-parser-checks.mjs'
+import { observeNativeParser } from './diagnostics/prefix-cache/native-parser-checks.mjs'
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function chooseResourceView(win, id, kind) {
   const host = win.locator(`.chat-host[data-session-id="${id}"]`)

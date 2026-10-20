@@ -2,6 +2,7 @@ import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { rendererModuleMetadata } from './scripts/renderer-module-audit.mjs'
 
 /**
  * What the bundles carry rather than require at runtime. The workspace
@@ -64,6 +65,6 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [react(), tailwindcss(), rendererModuleMetadata()]
   }
 })

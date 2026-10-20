@@ -49,6 +49,25 @@ describe('the typed request client', () => {
     expect(await api.clients.list()).toEqual([])
     expect(await api.health.live()).toBe(true)
   })
+  it('owns invisible reservations and idempotent release through typed public commands', async () => {
+    const reserved = await api.clients.reserveRegistration({
+      kind: 'shell',
+      name: 'v1 shell',
+      pid: 9
+    })
+    expect(reserved.protocol).toBe(1)
+    expect(await api.clients.list()).toEqual([])
+    const first = await api.clients.confirmRegistration(reserved.reservationId)
+    expect(await api.clients.confirmRegistration(reserved.reservationId)).toEqual(first)
+    expect(await api.clients.list()).toEqual([first])
+    await api.clients.releaseRegistration(reserved.reservationId)
+    await api.clients.releaseRegistration(reserved.reservationId)
+    await expect(api.clients.confirmRegistration(reserved.reservationId)).rejects.toMatchObject({
+      _tag: 'ClientRegistrationUnavailable'
+    })
+    expect(await api.clients.list()).toEqual([])
+    expect((await api.sessions.list()).map((session) => session.id).sort()).toEqual(['s1', 's2'])
+  })
   it('throws the declared failure as the tagged error it is', async () => {
     const error = await api.sessions.get('ghost').catch((e) => e)
     expect(error).toBeInstanceOf(SessionNotFound)

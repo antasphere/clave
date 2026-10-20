@@ -10,7 +10,7 @@ import { test } from 'vitest'
 import {
   createMarkdownAttempt,
   createMarkdownStore
-} from '../../plugins/chat-view/src/markdown-parser-reuse'
+} from '../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse'
 import { LONG_RESPONSE, streamChunk } from '../../tests/e2e/renderer-workload.mjs'
 import {
   decodeHeap,

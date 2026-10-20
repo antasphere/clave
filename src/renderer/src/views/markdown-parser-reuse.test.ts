@@ -13,7 +13,7 @@ import {
   type MarkdownTree,
   type MarkdownFile,
   type PrefixInspection
-} from '../../../../plugins/chat-view/src/markdown-parser-reuse'
+} from '../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse'
 
 type ParseEntry = { length: number; file: MarkdownFile; tree: MarkdownTree }
 const components: Components = {

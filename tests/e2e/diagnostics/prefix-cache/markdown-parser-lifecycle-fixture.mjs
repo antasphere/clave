@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { MarkdownMessage } from '../../plugins/chat-view/src/MarkdownMessage'
+import { MarkdownMessage } from '../../../diagnostics/prefix-cache/plugins/chat-view/src/MarkdownMessage'
 
 const probe = {
   phase: 'idle',

@@ -7,7 +7,7 @@ import {
   type MarkdownFile,
   type MarkdownProcessor,
   type MarkdownTree
-} from '../../../../plugins/chat-view/src/markdown-parser-reuse'
+} from '../../../../tests/diagnostics/prefix-cache/plugins/chat-view/src/markdown-parser-reuse'
 import { demand, literal } from '../../../../tests/e2e/markdown-deep-contract.mjs'
 
 export interface DeepSlot {

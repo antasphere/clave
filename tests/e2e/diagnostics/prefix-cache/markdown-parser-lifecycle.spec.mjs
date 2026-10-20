@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 
 async function runScenario({ label, evidenceDir }) {
-  const harness = await import('./harness.mjs')
+  const harness = await import('../../harness.mjs')
   const environment = { ...process.env }
   mkdirSync(harness.fixtureRoot(), { recursive: true })
   const ownedRoot = mkdtempSync(harness.fixturePath('markdown-lifecycle-'))
@@ -70,7 +70,7 @@ async function runScenario({ label, evidenceDir }) {
       activeWorkspaceId: 'markdown',
       fresh: true
     })
-    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
     const anchors = []
     function replaceOnce(source, before, after) {
       assert.equal(source.split(before).length - 1, 1, 'instrumentation anchor: ' + before)
@@ -78,7 +78,7 @@ async function runScenario({ label, evidenceDir }) {
       return source.replace(before, after)
     }
     const built = await build({
-      entryPoints: [path.join(repo, 'tests/e2e/markdown-parser-lifecycle-fixture.mjs')],
+      entryPoints: [path.join(repo, 'tests/e2e/diagnostics/prefix-cache/markdown-parser-lifecycle-fixture.mjs')],
       outfile: path.join(fixture, 'fixture.js'),
       bundle: true,
       platform: 'browser',
@@ -91,7 +91,7 @@ async function runScenario({ label, evidenceDir }) {
           name: 'actual-markdown-observations',
           setup(build) {
             build.onLoad(
-              { filter: /plugins\/chat-view\/src\/markdown-parser-reuse\.ts$/ },
+              { filter: /tests\/diagnostics\/prefix-cache\/plugins\/chat-view\/src\/markdown-parser-reuse\.ts$/ },
               ({ path: file }) => {
                 let source = readFileSync(file, 'utf8')
                 source = replaceOnce(
@@ -143,7 +143,7 @@ async function runScenario({ label, evidenceDir }) {
               }
             )
             build.onLoad(
-              { filter: /plugins\/chat-view\/src\/MarkdownMessage\.tsx$/ },
+              { filter: /tests\/diagnostics\/prefix-cache\/plugins\/chat-view\/src\/MarkdownMessage\.tsx$/ },
               ({ path: file }) => {
                 let source = readFileSync(file, 'utf8')
                 source = replaceOnce(
@@ -513,7 +513,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   } finally {
     if (ownsNamespace) {
       try {
-        const { fixtureRoot } = await import('./namespace.mjs')
+        const { fixtureRoot } = await import('../../namespace.mjs')
         if (existsSync(fixtureRoot())) rmdirSync(fixtureRoot())
       } finally {
         if (previousNamespace === undefined) delete process.env.CLAVE_E2E_NS

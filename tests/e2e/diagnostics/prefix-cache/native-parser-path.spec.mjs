@@ -6,9 +6,9 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { openChat, inject } from './chat-view.spec.mjs'
-import { callMcp, fixturePath } from './harness.mjs'
-import { chatSelector, frames } from './renderer-workload.mjs'
+import { openChat, inject } from '../../chat-view.spec.mjs'
+import { callMcp, fixturePath } from '../../harness.mjs'
+import { chatSelector, frames } from '../../renderer-workload.mjs'
 import { observeNativeParser } from './native-parser-checks.mjs'
 
 export async function run(t) {
