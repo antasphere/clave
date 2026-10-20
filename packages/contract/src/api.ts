@@ -23,6 +23,7 @@ import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -61,6 +62,7 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
+  .add(HttpCqrs.commandEndpoint('control', '/sessions/control', ControlSession))
   .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
   .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
   // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──

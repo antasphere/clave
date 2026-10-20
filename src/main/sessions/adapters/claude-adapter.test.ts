@@ -4,7 +4,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SessionEventSchema, type SessionEvent } from '../../../shared/session-model'
+import {
+  SessionEventSchema,
+  type SessionControl,
+  type SessionEvent
+} from '../../../shared/session-model'
 import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 const mock = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -736,6 +740,108 @@ it('lists the models by version, asking the CLI itself, starting a session that 
   await expect(adapter.models(handle)).rejects.toThrow(/ended/)
   await adapter.kill(handle)
 })
+describe('control requests', () => {
+  type FakeChild = EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough }
+  const fakeChild = (): FakeChild =>
+    Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+  const answer = (child: FakeChild, requestId: string, response: Record<string, unknown>): void => {
+    child.stdout.write(
+      JSON.stringify({
+        type: 'control_response',
+        response: { request_id: requestId, ...response }
+      }) + '\n'
+    )
+  }
+  it.each<[SessionControl, Record<string, unknown>]>([
+    [{ type: 'mcp_status' }, { subtype: 'mcp_status' }],
+    [
+      { type: 'mcp_toggle', server: 'github', enabled: false },
+      { subtype: 'mcp_toggle', serverName: 'github', enabled: false }
+    ],
+    [
+      { type: 'mcp_reconnect', server: 'github' },
+      { subtype: 'mcp_reconnect', serverName: 'github' }
+    ],
+    [
+      { type: 'mcp_authenticate', server: 'github' },
+      { subtype: 'mcp_authenticate', serverName: 'github' }
+    ],
+    [
+      { type: 'mcp_clear_auth', server: 'github' },
+      { subtype: 'mcp_clear_auth', serverName: 'github' }
+    ],
+    [{ type: 'reload_plugins' }, { subtype: 'reload_plugins' }]
+  ])(
+    'sends %j as the exact control request and answers the CLI’s response',
+    async (control, body) => {
+      const child = fakeChild()
+      mock.spawn.mockReturnValue(child)
+      const adapter = new ClaudeAdapter()
+      const handle = await adapter.spawn(spec)
+      expect(mock.spawn).not.toHaveBeenCalled()
+      const answered = adapter.control(handle, control)
+      // A session that has not spoken yet is started to ask it.
+      expect(mock.spawn).toHaveBeenCalledTimes(1)
+      const request = JSON.parse(written(child)!)
+      expect(request).toEqual({
+        type: 'control_request',
+        request_id: request.request_id,
+        request: body
+      })
+      expect(request.request_id).toEqual(expect.any(String))
+      const response = { mcpServers: [{ name: 'github', status: 'connected' }] }
+      answer(child, request.request_id, { subtype: 'success', response })
+      await expect(answered).resolves.toEqual(response)
+      child.emit('close', 0)
+      await adapter.kill(handle)
+    }
+  )
+  it('rejects with the CLI’s own words when it refuses, and a fixed one when it gives none', async () => {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    const refused = adapter.control(handle, { type: 'mcp_reconnect', server: 'gone' })
+    answer(child, JSON.parse(written(child)!).request_id, {
+      subtype: 'error',
+      error: 'Server not found: gone'
+    })
+    await expect(refused).rejects.toThrow('Server not found: gone')
+    const silent = adapter.control(handle, { type: 'mcp_reconnect', server: 'gone' })
+    answer(child, JSON.parse(written(child)!).request_id, { subtype: 'error' })
+    await expect(silent).rejects.toThrow('Claude refused the request')
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+  it('keeps the initialize refusal it always gave when the CLI names no reason', async () => {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    const refused = adapter.models(handle)
+    answer(child, JSON.parse(written(child)!).request_id, { subtype: 'error' })
+    await expect(refused).rejects.toThrow('Claude did not answer initialize')
+    child.emit('close', 0)
+    await adapter.kill(handle)
+  })
+  it('refuses on a session that has ended', async () => {
+    const child = fakeChild()
+    mock.spawn.mockReturnValue(child)
+    const adapter = new ClaudeAdapter()
+    const handle = await adapter.spawn(spec)
+    const pending = adapter.control(handle, { type: 'mcp_status' })
+    child.emit('close', 0)
+    await expect(pending).rejects.toThrow('Claude session has ended')
+    await expect(adapter.control(handle, { type: 'reload_plugins' })).rejects.toThrow(
+      'Claude session has ended'
+    )
+    await adapter.kill(handle)
+  })
+})
 it.each(['sonnet', 'opus[1m]', 'claude-opus-5-5[1m]'])(
   'switches to %s before the first message using the real model validator',
   async (model) => {
@@ -1244,16 +1350,24 @@ it('offers the host /resume before the commands the CLI lists at initialize', as
         response: {
           commands: [
             { name: 'review', description: 'Review a PR', argumentHint: '' },
-            { name: 'resume', description: 'the CLI one' }
+            { name: 'resume', description: 'the CLI one' },
+            {
+              name: 'mcp',
+              description: 'Manage MCP servers',
+              argumentHint: '[reconnect|enable|disable]'
+            }
           ]
         }
       }
     }) + '\n'
   )
+  // The host's panels come first and the CLI's own /mcp, which headless
+  // Claude answers with a line of text, is not offered beside it.
   expect(await listed).toEqual([
     ...HOST_COMMANDS,
     { name: 'review', description: 'Review a PR', insert: '/review ' }
   ])
+  expect(HOST_COMMANDS.map((c) => c.name)).toEqual(['resume', 'mcp', 'plugin'])
   child.emit('close', 0)
   await adapter.kill(handle)
 })
