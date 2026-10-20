@@ -22,6 +22,16 @@ const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'))
 const write = (p, value) => writeFileSync(p, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+export async function waitForMinimum(ms, { now = () => performance.now(), wait = sleep } = {}) {
+  const started = now()
+  let elapsed = 0
+  // Recheck the monotonic minimum after each scheduled delay.
+  while (elapsed < ms) {
+    await wait(ms - elapsed)
+    elapsed = now() - started
+  }
+}
+
 export function configureResourcePage(win) {
   win.setDefaultTimeout(RESOURCE_CONFIG.locatorMs)
 }
@@ -380,7 +390,7 @@ async function launch(frozen, side, index, evidence) {
       const startedAt = Date.now()
       await frames(win)
       const elapsedStart = performance.now()
-      await sleep(1000)
+      await waitForMinimum(1000)
       const elapsedMs = performance.now() - elapsedStart
       await frames(win)
       const settle = {

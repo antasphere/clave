@@ -256,3 +256,10 @@ files remain required before an internal candidate is committed. Original
 5,000 ms and 30,000 ms bounds, workload, thresholds, primary/secondary/orb rules and
 all earlier evidence remain unchanged. Measurement roots and their installed
 source overlay stay pinned to 1f94 until a later reviewed integration/rebind.
+
+
+### 2026-10-20: enforce the resource settle minimum
+
+The first positive resource pilot remains FAILED / NOT QUALIFIED. Its root freeze used an ISO createdAt string where the unchanged validator compares numeric milliseconds. The timestamp-only diagnostic then reached the unchanged settle assertion: cycle-2-closed recorded 999.9432090000046 ms and cycle-3-closed recorded 999.8321250000008 ms. All twelve original values remain diagnostic evidence. Index0 was already accepted when passed explicitly; no index, adapter or validator change is needed.
+
+The shared original collector now rechecks a monotonic clock after each scheduled delay and waits only the remaining time until the same 1000 ms minimum. Its original outer elapsed-time measurement, receipt values, two-before/two-after frame barriers, population, workload, GC/CDP order and all ceilings remain unchanged. No rounding, tolerance, clamping, lower threshold, extra prewarm or replacement 1001 ms delay is introduced. Deterministic injected-clock tests cover early wakes, repeated wakes, exact hits, overshoots and rejected waits without real sleeps or apps. Future reviewed raw/candidate tool overlays must use this same collector change. Independent review, new metadata/private rebind, numeric freeze and fresh explicit physical GO remain separate; this source repair does not requalify the failed pilot or grant measurement acceptance.
