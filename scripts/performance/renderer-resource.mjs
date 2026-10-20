@@ -283,20 +283,37 @@ export function captureResourceWorker(pid, parent, context, writeReceipt, query 
   } catch (error) {
     if (!row.failure) row.failure = { message: error.message, later: 'NOTRUN' }
   }
-  writeReceipt(row)
+  try {
+    writeReceipt(row)
+  } catch (error) {
+    // Return the captured identity to its parent even when the new receipt is unavailable.
+    row.evidenceFailure = {
+      site: 'worker-spawn.json',
+      code: error.code ?? null,
+      message: error.message
+    }
+  }
   return row
 }
 
-export function resourceWorkerExit(row, code, signal, expired) {
+export function resourceWorkerExit(row, code, signal, expired, workerError = null) {
   return {
     pid: row.pid,
     identity: row.identity,
     failure: row.failure,
+    evidenceFailure: row.evidenceFailure ?? null,
+    error: workerError ? { code: workerError.code ?? null, message: workerError.message } : null,
     code,
     signal,
     expired,
     accepted:
-      row.identity !== null && row.failure === null && code === 0 && signal === null && !expired
+      row.identity !== null &&
+      row.failure === null &&
+      !row.evidenceFailure &&
+      workerError === null &&
+      code === 0 &&
+      signal === null &&
+      !expired
   }
 }
 
@@ -807,6 +824,8 @@ export async function main(argv) {
                 timedOut: true,
                 worker: {
                   initial: worker?.identity ?? null,
+                  evidenceFailure: worker?.evidenceFailure ?? null,
+                  error: workerError?.message ?? null,
                   current: currentWorker,
                   signalEligible: cleanupWorker !== null
                 },
@@ -816,33 +835,59 @@ export async function main(argv) {
             } catch (error) {
               log.push(Buffer.from('deadline cleanup failed: ' + error.message + '\n'))
             }
-            reject(new Error('launch ceiling; late results fenced, all later NOTRUN'))
+            reject(
+              new Error(
+                'launch ceiling; late results fenced, all later NOTRUN' +
+                  (worker?.evidenceFailure
+                    ? '; worker spawn receipt failed: ' + worker.evidenceFailure.message
+                    : '')
+              )
+            )
           }, 600000)
           child.stdout.on('data', (b) => log.push(b))
           child.stderr.on('data', (b) => log.push(b))
-          let worker
+          let worker,
+            workerError = null
           child.on('error', (error) => {
-            clearTimeout(timer)
-            write(path.join(evidence, 'worker-error.json'), {
-              pid: child.pid ?? null,
-              identity: worker?.identity ?? null,
-              code: error.code ?? null,
-              message: error.message,
-              later: 'NOTRUN'
-            })
-            reject(error)
+            workerError ||= error
+            try {
+              write(path.join(evidence, 'worker-error.json'), {
+                pid: child.pid ?? null,
+                identity: worker?.identity ?? null,
+                code: error.code ?? null,
+                message: error.message,
+                later: 'NOTRUN'
+              })
+            } catch (receiptError) {
+              log.push(Buffer.from('worker error receipt failed: ' + receiptError.message + '\n'))
+            }
+            // A failed spawn has no PID. An existing child keeps the original exit/fence custody.
+            if (!Number.isInteger(child.pid) || child.pid <= 0) {
+              clearTimeout(timer)
+              reject(workerError)
+            }
           })
           child.on('exit', (code, signal) => {
             clearTimeout(timer)
-            const exit = resourceWorkerExit(worker, code, signal, expired)
-            write(path.join(evidence, 'worker-exit.json'), exit)
-            exit.accepted
-              ? resolve()
-              : reject(
-                  new Error(
-                    `launch failed code=${code} signal=${signal}; workerIdentity=${worker.identity !== null}`
-                  )
+            const exit = resourceWorkerExit(worker, code, signal, expired, workerError)
+            const failure = exit.accepted
+              ? null
+              : new Error(
+                  `launch failed code=${code} signal=${signal}; workerIdentity=${worker.identity !== null}` +
+                    (worker.failure ? '; ownership: ' + worker.failure.message : '') +
+                    (worker.evidenceFailure
+                      ? '; worker spawn receipt failed: ' + worker.evidenceFailure.message
+                      : '') +
+                    (workerError ? '; worker error: ' + workerError.message : '')
                 )
+            try {
+              write(path.join(evidence, 'worker-exit.json'), exit)
+            } catch (receiptError) {
+              log.push(Buffer.from('worker exit receipt failed: ' + receiptError.message + '\n'))
+              reject(failure || receiptError)
+              return
+            }
+            failure ? reject(failure) : resolve()
           })
           // Same direct spawn; capture synchronously before yielding back to the event loop.
           // A capture failure never advances another launch or accepts this child's samples.
@@ -853,6 +898,10 @@ export async function main(argv) {
             { site: 'parent.spawn', side, index },
             (receipt) => write(path.join(evidence, 'worker-spawn.json'), receipt)
           )
+          if (worker.evidenceFailure)
+            log.push(
+              Buffer.from('worker spawn receipt failed: ' + worker.evidenceFailure.message + '\n')
+            )
         })
         runs.push(readJson(path.join(evidence, 'launch.json')))
       } catch (error) {

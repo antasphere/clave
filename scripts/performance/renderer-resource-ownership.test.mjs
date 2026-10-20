@@ -345,7 +345,8 @@ function parentHarness({
   initialGone = false,
   currentIdentity = 'same',
   childPID = 200,
-  autoExit = null
+  autoExit = null,
+  failWrites = []
 } = {}) {
   const events = [],
     writes = [],
@@ -353,7 +354,15 @@ function parentHarness({
     cleanupCalls = [],
     children = [],
     timers = [],
-    queries = []
+    queries = [],
+    rawLogs = [],
+    comparisons = [],
+    writeErrors = Object.fromEntries(
+      failWrites.map((name) => [
+        name,
+        Object.assign(new Error('synthetic unavailable ' + name), { code: 'ENOSPC' })
+      ])
+    )
   const context = {
     assert,
     path,
@@ -395,6 +404,7 @@ function parentHarness({
     write: (file, value) => {
       events.push('write:' + path.basename(file))
       writes.push({ file, value: plain(value) })
+      if (writeErrors[path.basename(file)]) throw writeErrors[path.basename(file)]
     },
     readdirSync: () => [],
     readJson: (file) => ({ syntheticFlowOnly: true, file }),
@@ -403,9 +413,13 @@ function parentHarness({
       assert.equal(path.basename(file), 'raw.log')
       assert.ok(Buffer.isBuffer(bytes))
       events.push('write:raw.log')
+      rawLogs.push(bytes.toString())
     },
     Buffer,
-    compareResources: (runs) => ({ syntheticControlFlowOnly: true, runCount: runs.length }),
+    compareResources: (runs) => {
+      comparisons.push(runs)
+      return { syntheticControlFlowOnly: true, runCount: runs.length }
+    },
     forceOwnedCleanup: async (identities) => {
       cleanupCalls.push([...identities])
       return []
@@ -442,6 +456,10 @@ function parentHarness({
     children,
     timers,
     queries,
+    rawLogs,
+    comparisons,
+    writeErrors,
+    log: context.log,
     startParent: () => vm.runInContext('new Promise(' + actualParent + ')', sandbox),
     startLoop: () => vm.runInContext('(async()=>{' + actualLoop + '})()', sandbox)
   }
@@ -585,6 +603,195 @@ describe('actual production parent spawn, handlers, fence and advance paths with
     ])
     expect(h.writes.filter((r) => r.file.endsWith('worker-spawn.json'))).toHaveLength(6)
     expect(h.writes.filter((r) => r.file.endsWith('worker-exit.json'))).toHaveLength(6)
+  })
+})
+
+// Only microtasks are drained; the existing production fence is a manual fake callback.
+async function pendingCustody(h) {
+  let settled = false
+  const result = h.startLoop().then(
+    (value) => {
+      settled = true
+      return { value }
+    },
+    (error) => {
+      settled = true
+      return { error }
+    }
+  )
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  expect(h.spawns).toHaveLength(1)
+  expect(h.cleanupCalls).toHaveLength(0)
+  expect(h.events).not.toContain('clear-fence')
+  expect(h.rawLogs).toHaveLength(0)
+  expect(h.comparisons).toHaveLength(0)
+  return { result }
+}
+function refusedAfterCustody(h, outcome) {
+  expect(outcome.error?.message).toEqual(expect.any(String))
+  expect(outcome.error.message).toContain('synthetic unavailable worker-spawn.json')
+  expect(h.spawns).toHaveLength(1)
+  expect(h.comparisons).toHaveLength(0)
+  expect(h.writes.find((r) => r.file.endsWith('first-failure.json')).value).toMatchObject({
+    side: 'control',
+    index: 1,
+    completeLaunches: 0,
+    later: 'NOTRUN'
+  })
+  expect(h.writes.some((r) => r.file.endsWith('comparison.json'))).toBe(false)
+  expect(h.rawLogs).toHaveLength(1)
+  expect(h.rawLogs[0]).toContain('synthetic unavailable worker-spawn.json')
+}
+
+describe('SD-A6-F1 actual parent custody when its new receipt cannot be written', () => {
+  it('keeps proven identity and stays pending until exit, then rejects missing evidence even on exit0', async () => {
+    const h = parentHarness({ failWrites: ['worker-spawn.json'] })
+    const { result } = await pendingCustody(h)
+    const initial = h.writes[0].value.identity
+    expect(initial).toMatchObject({ pid: 200, parent: 100, creation: 'Tue Oct 20 22:08:08 2026' })
+    h.children[0].emit('exit', 0, null)
+    refusedAfterCustody(h, await result)
+    const exit = h.writes.find((r) => r.file.endsWith('worker-exit.json')).value
+    expect(exit).toMatchObject({
+      identity: initial,
+      accepted: false,
+      code: 0,
+      evidenceFailure: {
+        site: 'worker-spawn.json',
+        code: 'ENOSPC',
+        message: 'synthetic unavailable worker-spawn.json'
+      }
+    })
+    expect(h.queries).toHaveLength(1)
+  })
+  for (const currentIdentity of ['same', 'reused', 'reparented', 'absent'])
+    it(`retains original identity through receipt failure until the existing fence, current=${currentIdentity}`, async () => {
+      const h = parentHarness({ failWrites: ['worker-spawn.json'], currentIdentity })
+      const { result } = await pendingCustody(h)
+      await h.timers[0].callback()
+      const outcome = await result
+      refusedAfterCustody(h, outcome)
+      expect(outcome.error.message).toContain('launch ceiling; late results fenced')
+      const deadline = h.writes.find((r) => r.file.endsWith('deadline-forced-cleanup.json')).value
+      expect(deadline.worker.initial).toEqual(h.writes[0].value.identity)
+      expect(deadline.worker.evidenceFailure.message).toBe(
+        'synthetic unavailable worker-spawn.json'
+      )
+      expect(deadline.worker.signalEligible).toBe(currentIdentity === 'same')
+      expect(h.cleanupCalls[0]).toHaveLength(currentIdentity === 'same' ? 1 : 0)
+      h.children[0].emit('exit', 0, null)
+      expect(h.writes.at(-1).value).toMatchObject({ code: 0, expired: true, accepted: false })
+    })
+  for (const finish of ['exit', 'fence'])
+    it(`keeps missing capture unknown through receipt failure and ${finish}, never enrolling a later PID`, async () => {
+      const h = parentHarness({ initialGone: true, failWrites: ['worker-spawn.json'] })
+      const { result } = await pendingCustody(h)
+      expect(h.writes[0].value.identity).toBeNull()
+      if (finish === 'exit') h.children[0].emit('exit', 0, null)
+      else await h.timers[0].callback()
+      refusedAfterCustody(h, await result)
+      expect(h.cleanupCalls.flat()).toHaveLength(0)
+      if (finish === 'exit') {
+        const exit = h.writes.find((r) => r.file.endsWith('worker-exit.json')).value
+        expect(exit.identity).toBeNull()
+        expect(exit.failure.message).toContain('owned process is alive when identified')
+        expect(exit.accepted).toBe(false)
+      }
+    })
+  it('preserves the first spawn-receipt failure when the exit receipt also fails, without throwing from the event handler', async () => {
+    const h = parentHarness({ failWrites: ['worker-spawn.json', 'worker-exit.json'] })
+    const { result } = await pendingCustody(h)
+    expect(() => h.children[0].emit('exit', 0, null)).not.toThrow()
+    const outcome = await result
+    refusedAfterCustody(h, outcome)
+    expect(h.writes.find((r) => r.file.endsWith('first-failure.json')).value.error).toContain(
+      'worker-spawn.json'
+    )
+    expect(h.rawLogs[0]).toContain(
+      'worker exit receipt failed: synthetic unavailable worker-exit.json'
+    )
+  })
+  it('rejects an otherwise clean exit when its completion receipt fails, with no next launch', async () => {
+    const h = parentHarness({ failWrites: ['worker-exit.json'] })
+    const { result } = await pendingCustody(h)
+    expect(() => h.children[0].emit('exit', 0, null)).not.toThrow()
+    expect((await result).error).toBe(h.writeErrors['worker-exit.json'])
+    expect(h.spawns).toHaveLength(1)
+    expect(h.comparisons).toHaveLength(0)
+    expect(h.rawLogs[0]).toContain('worker exit receipt failed')
+  })
+  it('preserves a no-PID spawn error when its new error receipt also fails', async () => {
+    const h = parentHarness({ childPID: null, failWrites: ['worker-error.json'] })
+    const { result } = await pendingCustody(h)
+    const error = Object.assign(new Error('synthetic original spawn error'), { code: 'ENOENT' })
+    expect(() => h.children[0].emit('error', error)).not.toThrow()
+    expect((await result).error).toBe(error)
+    expect(h.queries).toHaveLength(0)
+    expect(h.rawLogs[0]).toContain(
+      'worker error receipt failed: synthetic unavailable worker-error.json'
+    )
+    expect(h.spawns).toHaveLength(1)
+  })
+  it('keeps an already spawned child under the same fence after an error, then rejects even exit0', async () => {
+    const h = parentHarness({ failWrites: ['worker-error.json'] })
+    const { result } = await pendingCustody(h)
+    const error = Object.assign(new Error('synthetic live-child error'), { code: 'EIO' })
+    expect(() => h.children[0].emit('error', error)).not.toThrow()
+    await Promise.resolve()
+    expect(h.rawLogs).toHaveLength(0)
+    expect(h.events).not.toContain('clear-fence')
+    h.children[0].emit('exit', 0, null)
+    expect((await result).error.message).toContain(error.message)
+    expect(h.writes.find((r) => r.file.endsWith('worker-exit.json')).value).toMatchObject({
+      accepted: false,
+      code: 0,
+      error: { code: 'EIO', message: error.message }
+    })
+    expect(h.spawns).toHaveLength(1)
+    expect(h.comparisons).toHaveLength(0)
+  })
+  it('retains live-child errors through the original fence without accepting or adding a worker', async () => {
+    const h = parentHarness()
+    const { result } = await pendingCustody(h)
+    h.children[0].emit('error', new Error('synthetic live error before fence'))
+    await Promise.resolve()
+    expect(h.events).not.toContain('clear-fence')
+    await h.timers[0].callback()
+    expect((await result).error.message).toContain('launch ceiling')
+    expect(
+      h.writes.find((r) => r.file.endsWith('deadline-forced-cleanup.json')).value.worker
+    ).toMatchObject({
+      signalEligible: true,
+      error: 'synthetic live error before fence'
+    })
+    expect(h.spawns).toHaveLength(1)
+    expect(h.comparisons).toHaveLength(0)
+  })
+  it('retains the first receipt failure across a later live-child error until actual completion', async () => {
+    const h = parentHarness({ failWrites: ['worker-spawn.json', 'worker-error.json'] })
+    const { result } = await pendingCustody(h)
+    expect(() =>
+      h.children[0].emit('error', new Error('synthetic later child error'))
+    ).not.toThrow()
+    await Promise.resolve()
+    expect(h.rawLogs).toHaveLength(0)
+    expect(h.events).not.toContain('clear-fence')
+    h.children[0].emit('exit', 1, null)
+    refusedAfterCustody(h, await result)
+    expect(h.rawLogs[0]).toContain('worker error receipt failed')
+  })
+  it('also rejects the fast queued exit0 after the failed initial receipt without losing captured identity', async () => {
+    const h = parentHarness({ autoExit: 0, failWrites: ['worker-spawn.json'] })
+    const outcome = await h.startLoop().then(
+      (value) => ({ value }),
+      (error) => ({ error })
+    )
+    refusedAfterCustody(h, outcome)
+    expect(h.writes.find((r) => r.file.endsWith('worker-exit.json')).value.identity).toEqual(
+      h.writes[0].value.identity
+    )
   })
 })
 
