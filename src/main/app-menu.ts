@@ -41,7 +41,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
  */
 export interface AppMenuDeps {
   /** Open a new window on a workspace (index.ts owns createWindow). */
-  openWindow: (workspaceId: string | null) => { windowId: number }
+  openWindow: (workspaceId: string | null) => Promise<{ windowId: number }>
 }
 
 export function buildAppMenu(deps: AppMenuDeps): void {
@@ -70,7 +70,9 @@ export function buildAppMenu(deps: AppMenuDeps): void {
     const workspaceId =
       (current ? windowRegistry.getWorkspaceForWindow(current.id) : null) ??
       workspaceManager.resolveInitialWorkspaceId()
-    deps.openWindow(workspaceId)
+    void deps
+      .openWindow(workspaceId)
+      .catch((error) => console.error('[window] could not open:', error))
   }
   const template: MenuItemConstructorOptions[] = [
     {
