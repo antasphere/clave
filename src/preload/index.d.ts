@@ -595,6 +595,7 @@ export type {
   GitBatchProgressFn
 } from '../shared/git-batch'
 import type { GitBatchProgress } from '../shared/git-batch'
+import type { MicAccessState } from '../shared/mic'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -1197,6 +1198,10 @@ export interface ElectronAPI {
   onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
+  getMicAccess: () => Promise<MicAccessState>
+  requestMicAccess: () => Promise<MicAccessState>
+  openMicPrivacySettings: () => Promise<void>
+  openSoundSettings: () => Promise<void>
   keymapsLoad: () => Promise<unknown>
   keymapsSave: (value: unknown) => Promise<unknown>
   keymapsImport: () => Promise<string | null>
