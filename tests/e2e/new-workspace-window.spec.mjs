@@ -134,6 +134,63 @@ export async function run(t) {
     })
     t.equal('the agent tool opens the requested workspace', toolIdentity?.workspaceId, workspace.id)
 
+    // The native menu has no renderer workspace argument. Its default must
+    // come from the server even when the shell still remembers a removed root.
+    await win.evaluate(async (id) => {
+      const state = await window.electronAPI.workspaceLoad()
+      await window.electronAPI.workspaceUpdateRegistry(
+        state.workspaces.filter((ws) => ws.id === id)
+      )
+      await window.electronAPI.windowSetWorkspace(null)
+    }, workspace.id)
+    const menuCount = app.windows().length
+    await app.evaluate(async ({ Menu }) => {
+      const file = Menu.getApplicationMenu().items.find((item) => item.label === 'File')
+      const item = file.submenu.items.find((item) => item.label === 'New Window')
+      await item.click()
+    })
+    const menuWindow = await until(
+      async () => {
+        if (app.windows().length !== menuCount + 1) return null
+        return identityOf(app.windows().at(-1)).catch(() => null)
+      },
+      { tries: 12, gapMs: 250 }
+    )
+    t.equal(
+      'File New Window opens the authoritative default',
+      menuWindow?.workspaceId,
+      workspace.id
+    )
+    await win.evaluate((id) => window.electronAPI.windowSetWorkspace(id), workspace.id)
+
+    // Exercise the exported opener itself. IPC has a second validation guard,
+    // which otherwise masks a regression in the opener's persistence boundary.
+    const directBefore = persistedWindows(DIR)
+    const direct = await app.evaluate(async ({ app }) => {
+      const { createRequire } = process.getBuiltinModule('module')
+      const entry = app.getAppPath() + '/out/main/index.js'
+      const { openWindow } = createRequire(entry)(entry)
+      return openWindow('unknown-direct-workspace').then(
+        () => null,
+        (error) => String(error)
+      )
+    })
+    t.check(
+      'the opener independently refuses an unknown workspace',
+      direct?.includes('No registered workspace'),
+      direct
+    )
+    t.equal(
+      'the refused opener does not create or persist a window',
+      JSON.stringify(persistedWindows(DIR)),
+      JSON.stringify(directBefore)
+    )
+    t.equal(
+      'the refused opener does not overwrite server last-active',
+      (await win.evaluate(() => window.electronAPI.workspaceLoad())).lastActiveWorkspaceId,
+      workspace.id
+    )
+
     const before = persistedWindows(DIR)
     const rejected = await win.evaluate(() =>
       window.electronAPI.windowSetWorkspace('unknown-workspace')
