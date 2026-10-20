@@ -21,6 +21,11 @@ const canonical = (map) =>
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'))
 const write = (p, value) => writeFileSync(p, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+export function configureResourcePage(win) {
+  win.setDefaultTimeout(RESOURCE_CONFIG.locatorMs)
+}
+
 async function cleanupBounded(label, action) {
   let timer
   try {
@@ -325,6 +330,7 @@ async function launch(frozen, side, index, evidence) {
         }),
       60000
     ))
+    configureResourcePage(win)
     own(app.process().pid, 'main')
     win.on('pageerror', (error) =>
       result.errors.push({ kind: 'pageerror', message: error.message })

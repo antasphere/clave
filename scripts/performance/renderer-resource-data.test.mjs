@@ -1,15 +1,109 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript verification tooling */
 import { randomUUID } from 'node:crypto'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { EchoAdapter } from '../../src/main/sessions/adapters/echo-adapter'
+import { SessionManager } from '../../src/main/sessions/session-manager'
 import {
   RESOURCE_CONFIG,
   MILESTONES,
   ResourceController,
   compareResources,
   REQUIRED_TOOLING,
-  validateToolingInventory
+  validateToolingInventory,
+  validateResourceSeed
 } from './renderer-resource-data.mjs'
-import { resourceLiteral } from '../../tests/e2e/renderer-resource-workload.mjs'
+import { configureResourcePage } from './renderer-resource.mjs'
+import {
+  resourceLiteral,
+  captureResourceSeed,
+  seedResourceWorkload
+} from '../../tests/e2e/renderer-resource-workload.mjs'
+
+async function liveSeedFixture() {
+  const manager = new SessionManager(),
+    adapter = new EchoAdapter()
+  manager.registerAdapter(adapter)
+  const sessions = [],
+    listeners = new Map(),
+    streams = new Map(),
+    barriers = []
+  let groups = 0,
+    disposed = 0
+  const history = vi.fn(() => ({ items: [] }))
+  const app = {
+    evaluate: async (_fn, { command }) => {
+      if (command === 'createGroup') return { ok: true, result: { groupId: 'group-' + groups++ } }
+      if (command !== 'openSession') throw new Error('unexpected seed command')
+      const id = 'seed-' + sessions.length
+      sessions.push(
+        await manager.create({
+          id,
+          provider: 'echo',
+          adapterId: 'echo',
+          transport: 'events',
+          cwd: '/synthetic-source-only',
+          windowKey: 'pure',
+          state: 'done',
+          createdAt: 1,
+          title: id
+        })
+      )
+      streams.set(id, [])
+      return { ok: true, result: { sessionId: id } }
+    }
+  }
+  const host = {
+    subscribe: (id, listener) => {
+      listeners.set(id, listener)
+      const off = manager.subscribe(id, listener)
+      manager.ready(id)
+      return () => {
+        off()
+        listeners.delete(id)
+        disposed++
+      }
+    }
+  }
+  vi.stubGlobal('__claveE2E', {
+    sessionHost: host,
+    echo: {
+      inject: (id, packet) => {
+        streams.get(id).push(packet.event)
+        adapter.inject(id, packet)
+      }
+    }
+  })
+  vi.stubGlobal('window', {
+    electronAPI: { sessionsList: () => manager.list(), sessionsHistory: history }
+  })
+  const win = {
+    evaluate: async (fn) => fn(),
+    locator: (selector) => ({
+      click: async () => {},
+      waitFor: async () => {},
+      filter: ({ hasText }) => ({
+        waitFor: async () => {
+          const id = selector.match(/data-session-id="([^"]+)"/)[1]
+          expect(streams.get(id).at(-2).delta).toContain(hasText)
+          barriers.push({ id, hasText })
+        }
+      })
+    })
+  }
+  const fixture = { evaluate: async (source, args) => Function('return (' + source + ')')()(args) }
+  try {
+    const workload = await seedResourceWorkload(app, win, fixture, '/synthetic-source-only')
+    expect(barriers).toHaveLength(100)
+    expect(barriers[19]).toEqual({ id: 'seed-19', hasText: 'Tab 19 turn 199.' })
+    expect(listeners.size).toBe(0)
+    expect(disposed).toBe(100)
+    expect(history).not.toHaveBeenCalled()
+    expect(manager.history('seed-0')).toEqual({ items: [], before: null })
+    return { workload, sessions: manager.list() }
+  } finally {
+    vi.unstubAllGlobals()
+  }
+}
 
 function fixture(ratio = 1.2) {
   const shared = {
@@ -132,6 +226,98 @@ function fixture(ratio = 1.2) {
 }
 
 describe('whole-feature resource protocol, pure checker qualification only', () => {
+  it('observes the unchanged complete live seed and public barriers despite empty adapter history', async () => {
+    const { workload, sessions } = await liveSeedFixture()
+    expect(workload.seedReceipts.slice(0, 20).every((r) => r.events.length === 200)).toBe(true)
+    expect(() => validateResourceSeed(workload, sessions)).not.toThrow()
+    for (const mutate of [
+      (w) => {
+        w.seedReceipts.pop()
+      },
+      (w) => {
+        w.seedReceipts.reverse()
+      },
+      (w) => {
+        w.seedReceipts[0].events.splice(4, 1)
+      },
+      (w) => {
+        w.seedReceipts[0].events.reverse()
+      },
+      (w) => {
+        w.seedReceipts[19].events.splice(199, 1)
+      },
+      (w) => {
+        w.seedReceipts[19].events[199].delta = 'wrong last turn'
+      },
+      (w) => {
+        w.seedReceipts[0].disposed = false
+      }
+    ]) {
+      const bad = structuredClone(workload)
+      mutate(bad)
+      expect(() => validateResourceSeed(bad, sessions)).toThrow()
+    }
+    expect(() => validateResourceSeed(workload, [])).toThrow('actual live session query')
+    const notDone = structuredClone(sessions)
+    notDone[0].state = 'working'
+    expect(() => validateResourceSeed(workload, notDone)).toThrow(
+      'actual live seeded sessions are done'
+    )
+  })
+  it('removes the live-seed observer on a seed failure and publishes no receipt', async () => {
+    const off = vi.fn(),
+      listener = vi.fn()
+    const host = {
+      subscribe: (_id, fn) => {
+        listener(fn)
+        return off
+      }
+    }
+    await expect(
+      captureResourceSeed(host, 'owned', () => {
+        throw new Error('seed failed')
+      })
+    ).rejects.toThrow('seed failed')
+    expect(off).toHaveBeenCalledTimes(1)
+  })
+  it('applies the fixed owned-page locator budget and fences a missing element at 15000ms', async () => {
+    vi.useFakeTimers()
+    try {
+      let defaultMs = 30000
+      const page = {
+        setDefaultTimeout: vi.fn((ms) => {
+          defaultMs = ms
+        }),
+        locator: () => ({
+          waitFor: () =>
+            new Promise((_resolve, reject) => {
+              setTimeout(() => reject(new Error('locator timeout')), defaultMs)
+            })
+        })
+      }
+      configureResourcePage(page)
+      expect(page.setDefaultTimeout).toHaveBeenCalledExactlyOnceWith(15000)
+      const events = [],
+        c = new ResourceController((event) => events.push(event))
+      const operation = c.bounded(
+        'fixture readiness',
+        () => page.locator('#absent').waitFor(),
+        RESOURCE_CONFIG.fixtureMs
+      )
+      const rejected = expect(operation).rejects.toThrow('locator timeout')
+      await vi.advanceTimersByTimeAsync(14999)
+      expect(c.stopped).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await rejected
+      expect(c.stopped).toBe(true)
+      expect(c.samples).toEqual([])
+      expect(events).toHaveLength(1)
+      expect(events[0].later).toBe('NOTRUN')
+      await expect(c.bounded('later stage', () => {}, 1)).rejects.toThrow('fenced')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('requires the collector itself and every declared tool/seed/harness dependency in the frozen overlay', () => {
     const complete = Object.fromEntries(REQUIRED_TOOLING.map((p) => [p, 'a'.repeat(64)]))
     expect(() => validateToolingInventory(complete)).not.toThrow()
@@ -158,6 +344,17 @@ describe('whole-feature resource protocol, pure checker qualification only', () 
         s.commands[3].result = s.usage = { usedSize: 1, totalSize: 1000 }
     expect(() => compareResources(runs, frozen)).toThrow('1.20')
   })
+  it.each([Infinity, -Infinity, NaN, '1000', 'not a number', null, undefined, -1, 99])(
+    'rejects invalid totalSize %s even when the actual raw response matches',
+    (totalSize) => {
+      const { runs, frozen } = fixture()
+      const sample = runs[0].observations[0]
+      sample.usage.totalSize = totalSize
+      sample.commands[3].result = { ...sample.usage }
+      expect(sample.commands[3].result).toEqual(sample.usage)
+      expect(() => compareResources(runs, frozen)).toThrow('actual finite usedSize/totalSize')
+    }
+  )
   it.each([
     ['missing launch', ({ runs }) => runs.pop()],
     ['wrong serialized order', ({ runs }) => runs.reverse()],

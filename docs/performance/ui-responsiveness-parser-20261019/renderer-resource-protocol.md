@@ -11,8 +11,15 @@ unfixed and executable separately.
 The six files named `renderer-resource` own the protocol, workload and pure
 validation. Existing harness, echo adapter, seed and fixture APIs remain public
 and unchanged. The actual fixture scenario is `chat/renderer-resource`, with
-its real runId, completed fixture keys, values and positive session/history
-query readiness saved. Each hidden separate-server launch uses its own
+its real runId, completed fixture keys, values and positive live session-query
+readiness saved. The unchanged seed's 100 last-turn native DOM barriers still
+run. A temporary supported session-host subscription observes each actual live
+seed in the server, then unsubscribes in finally. Node checks all 100 ordered
+receipts, exact 200/2-turn content/order, live session-query state=done and
+observer disposal. A repeated done event can be suppressed by SessionManager;
+readiness uses its public queried state rather than requiring that notification.
+Echo has no adapter history; sessionsHistory is not a readiness oracle. No
+production adapter/history behavior is changed. Each hidden separate-server launch uses its own
 namespace and user-data directory, SHELL=/bin/zsh, no machine usage, debugger,
 profiler or visible window. Canonical input, expected HTML, chunks and evidence
 remain in Node or the owned server. The renderer holds only a disposable public
@@ -66,7 +73,20 @@ timed-out cleanup fails the launch. Kill only a proven owned identity.
 Deadlines are boot 60 s, fixture 120 s, locator 15 s, MCP 10 s, producer 60 s,
 each CDP operation 10 s, whole launch 10 minutes. A timeout fences late results,
 persists the first failure and makes every later sample/launch NOTRUN. There is
-no unchanged failed-cohort retry. Cleanup still runs.
+no unchanged failed-cohort retry. The owned page's default locator timeout is
+set to the fixed 15000 ms immediately after boot. Cleanup still runs.
+
+Both usedSize and totalSize must be finite numbers, with usedSize positive and
+totalSize >= usedSize. The recorded raw getHeapUsage response must still equal
+the receipt; matching malformed raw values never qualify as numeric evidence.
+
+The separate build audit requires schema 2 and exact equality between a fresh
+recursive on-disk JavaScript output inventory and unique sidecar chunk records.
+Every physical contributing module, including CommonJS-wrapped source, needs
+its actual source hash. Only the two named generated Vite/CommonJS helpers lack
+physical files. Output, source, lock and config hashes and positive/forbidden
+module checks remain mandatory. Existing schema-1 build artifacts stay frozen;
+rebuild and actual output/negative qualification require a later runtime lease.
 
 The future freeze JSON contains schema 1, createdAt, exact per-side root and
 binding, complete sourceFiles/buildFiles/productFiles manifests and identical

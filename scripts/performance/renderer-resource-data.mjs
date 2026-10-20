@@ -55,6 +55,45 @@ export const MILESTONES = Object.freeze([
   ...Array.from({ length: 5 }, (_, i) => [`cycle-${i + 1}-warm`, `cycle-${i + 1}-closed`]).flat(),
   'final-closed'
 ])
+
+export function validateResourceSeed({ records, groups, seedReceipts }, sessions) {
+  assert.equal(records.length, RESOURCE_CONFIG.tabs, 'complete seed session population')
+  assert.equal(new Set(records).size, RESOURCE_CONFIG.tabs, 'unique seed sessions')
+  assert.equal(groups.length, RESOURCE_CONFIG.groups, 'complete seed group population')
+  assert.equal(new Set(groups).size, RESOURCE_CONFIG.groups, 'unique seed groups')
+  assert.equal(sessions.length, RESOURCE_CONFIG.tabs, 'actual live session query')
+  assert.ok(
+    records.every((id) =>
+      sessions.some((s) => s.id === id && s.adapterId === 'echo' && s.state === 'done')
+    ),
+    'actual live seeded sessions are done'
+  )
+  assert.equal(seedReceipts?.length, RESOURCE_CONFIG.tabs, 'complete live seed receipts')
+  for (let i = 0; i < records.length; i++) {
+    const receipt = seedReceipts[i]
+    assert.equal(receipt.id, records[i], 'ordered live seed session')
+    assert.equal(receipt.disposed, true, 'live seed subscription disposed')
+    const turns =
+      i < RESOURCE_CONFIG.longHistories ? RESOURCE_CONFIG.turns : RESOURCE_CONFIG.shortTurns
+    assert.equal(receipt.events.length, turns, 'complete live seed turns')
+    for (let n = 0; n < turns; n++) {
+      const text =
+        `Tab ${i} turn ${n}.\n\n` +
+        (n % 2
+          ? '**Synthetic report.** A deterministic paragraph for renderer profiling. '.repeat(8) +
+            '\n\n```ts\nconst measurement = 42\n```'
+          : 'Describe a synthetic renderer workload. '.repeat(8))
+      assert.deepEqual(
+        receipt.events[n],
+        n % 2
+          ? { type: 'assistant_text', delta: text, final: true }
+          : { type: 'user_message', text },
+        'ordered complete live seed turn: ' + i + '/' + n
+      )
+    }
+  }
+}
+
 export const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
 const equal = (a, b, message) => assert.deepEqual(a, b, message)
 const positive = (n) => Number.isFinite(n) && n > 0
@@ -158,7 +197,9 @@ export function validateLaunch(run, frozen, side, index, rawIds = new Set()) {
     assert.ok(s.at > previous && s.at <= run.endedAt, 'stale observation time')
     previous = s.at
     assert.ok(
-      positive(s.usage?.usedSize) && s.usage.totalSize >= s.usage.usedSize,
+      positive(s.usage?.usedSize) &&
+        Number.isFinite(s.usage.totalSize) &&
+        s.usage.totalSize >= s.usage.usedSize,
       'actual finite usedSize/totalSize'
     )
     for (const k of ['embedderHeapUsedSize', 'backingStorageSize'])

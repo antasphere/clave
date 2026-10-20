@@ -1,3 +1,6 @@
+// legacy-counter:add-begin
+import { MarkdownCaseCounters } from './markdown-case-counters'
+// legacy-counter:add-end
 import { compareDeep } from './markdown-parser-deep-test-support'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -107,8 +110,25 @@ function render(
 function compare(
   input: string,
   slot: MarkdownSlot,
-  options: Parameters<typeof render>[2] = {}
+  options: Parameters<typeof render>[2] = {},
+  diagnostic?: MarkdownCaseCounters
 ): ReturnType<typeof render> {
+  // legacy-counter:add-begin
+  if (diagnostic) {
+    const full = diagnostic.measure('fullRender', () => render(input, undefined, options))
+    const reused = diagnostic.measure('reusedRender', () => render(input, slot, options))
+    diagnostic.measure('treeExpectation', () => {
+      expect(reused.tree, 'complete document tree/position parity: ' + input).toEqual(full.tree)
+    })
+    diagnostic.measure('htmlExpectation', () => {
+      expect(reused.html, input).toBe(full.html)
+    })
+    diagnostic.measure('urlExpectation', () => {
+      expect(reused.urls, input).toEqual(full.urls)
+    })
+    return reused
+  }
+  // legacy-counter:add-end
   const full = render(input, undefined, options)
   const reused = render(input, slot, options)
   expect(reused.tree, 'complete document tree/position parity: ' + input).toEqual(full.tree)
@@ -324,32 +344,50 @@ it('does not add a deep phrasing inspection/clone failure to accepted full-pipel
 })
 
 it('actually reuses the workload prefix through a substantial sequence with one bounded current state', () => {
-  const slot = makeSlot()
-  let input = LONG_RESPONSE
-  compare(input, slot)
-  let tails = 0
-  for (let n = 0; n < 120; n++) {
-    input += streamChunk(n)
-    const result = compare(input, slot)
-    expect(result.entries).toHaveLength(1)
-    expect(result.entries[0].length).toBeLessThan(input.length)
-    tails++
-    expect(slot.current?.kind).toBe('prefix')
-    if (slot.current?.kind === 'prefix') {
-      expect(slot.current.snapshot.accounting.sourceBytes).toBeLessThanOrEqual(131072)
-      expect(slot.current.snapshot.accounting.nodes).toBeLessThanOrEqual(4096)
-      expect(Object.keys(slot.current).sort()).toEqual(['kind', 'signature', 'snapshot'])
+  // legacy-counter:add-begin
+  const diagnostic = new MarkdownCaseCounters()
+  diagnostic.run(() => {
+  // legacy-counter:add-end
+  // legacy-counter:body-begin
+    const slot = makeSlot()
+    let input = LONG_RESPONSE
+    compare(input, slot, undefined, diagnostic)
+    let tails = 0
+    for (let n = 0; n < 120; n++) {
+      // legacy-counter:add-begin
+      diagnostic.setIteration(n)
+      // legacy-counter:add-end
+      input += streamChunk(n)
+      const result = compare(input, slot, undefined, diagnostic)
+      // legacy-counter:add-begin
+      diagnostic.tailAttempted()
+      // legacy-counter:add-end
+      expect(result.entries).toHaveLength(1)
+      expect(result.entries[0].length).toBeLessThan(input.length)
+      tails++
+      expect(slot.current?.kind).toBe('prefix')
+      if (slot.current?.kind === 'prefix') {
+        expect(slot.current.snapshot.accounting.sourceBytes).toBeLessThanOrEqual(131072)
+        expect(slot.current.snapshot.accounting.nodes).toBeLessThanOrEqual(4096)
+        expect(Object.keys(slot.current).sort()).toEqual(['kind', 'signature', 'snapshot'])
+      }
+      // legacy-counter:add-begin
+      diagnostic.tailCompleted()
+      // legacy-counter:add-end
     }
-  }
-  console.log(
-    JSON.stringify({
-      proof: 'workload-reuse',
-      appends: 120,
-      tails,
-      finalInputLength: input.length,
-      accounting: slot.current?.kind === 'prefix' ? slot.current.snapshot.accounting : null
-    })
-  )
+    console.log(
+      JSON.stringify({
+        proof: 'workload-reuse',
+        appends: 120,
+        tails,
+        finalInputLength: input.length,
+        accounting: slot.current?.kind === 'prefix' ? slot.current.snapshot.accounting : null
+      })
+    )
+  // legacy-counter:body-end
+  // legacy-counter:add-begin
+  })
+  // legacy-counter:add-end
 }, 30_000)
 
 it('accepts original-renderer wide phrasing before bounded full fallback without spread inspection', () => {

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript verification tooling */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,6 +18,35 @@ const required = [
   'node_modules/remark-parse/lib/index.js'
 ]
 
+function physicalSource(id) {
+  assert.equal(typeof id, 'string', 'module identity required')
+  if (['\0commonjsHelpers.js', '\0vite/preload-helper.js'].includes(id)) return null
+  const source = id.startsWith('\0') ? id.slice(1) : id
+  assert.ok(
+    source && !path.isAbsolute(source) && !source.split('/').includes('..'),
+    'contained physical module identity'
+  )
+  return source
+}
+
+// Read the directory independently of the sidecar: omitting a chunk from
+// metadata must never remove it from the inventory checked by the gate.
+export function rendererOutputInventory(out) {
+  const files = []
+  const visit = (dir) => {
+    for (const entry of readdirSync(path.join(out, dir), { withFileTypes: true })) {
+      const file = path.posix.join(dir, entry.name)
+      if (entry.isDirectory()) visit(file)
+      else if (/\.[cm]?js$/.test(file)) {
+        assert.ok(entry.isFile(), 'actual JavaScript output must be a regular file')
+        files.push(file)
+      }
+    }
+  }
+  visit('')
+  return files.sort()
+}
+
 // Both native views are compiled by this same Vite renderer build, through
 // native-views.ts. This hook observes actual Rollup chunk.modules metadata.
 // It emits a sidecar asset and changes no runtime source or compiler option.
@@ -33,9 +62,14 @@ export function rendererModuleMetadata(root = process.cwd()) {
           sha256: digest(readFileSync(path.resolve(root, options.dir, chunk.fileName))),
           modules: Object.entries(chunk.modules).map(([id, contribution]) => {
             const clean = id.split('?')[0]
-            const name = path.relative(root, clean).split(path.sep).join('/')
-            if (path.isAbsolute(clean) && existsSync(clean))
-              sources[name] = digest(readFileSync(clean))
+            const virtual = clean.startsWith('\0')
+            const physical = virtual ? clean.slice(1) : clean
+            const relative = path.isAbsolute(physical)
+              ? path.relative(root, physical).split(path.sep).join('/')
+              : physical
+            const name = (virtual ? '\0' : '') + relative
+            const source = physicalSource(name)
+            if (source) sources[source] = digest(readFileSync(path.join(root, source)))
             return { id: name, renderedLength: contribution.renderedLength }
           })
         }))
@@ -48,7 +82,7 @@ export function rendererModuleMetadata(root = process.cwd()) {
         path.resolve(root, options.dir, 'renderer-module-audit.json'),
         JSON.stringify(
           {
-            schema: 1,
+            schema: 2,
             owner: 'electron.vite.config.ts:renderer',
             nativeRegistry: 'src/renderer/src/views/native-views.ts',
             chunks,
@@ -63,11 +97,27 @@ export function rendererModuleMetadata(root = process.cwd()) {
   }
 }
 
-export function validateRendererAudit(audit, readSource, readOutput) {
-  assert.equal(audit?.schema, 1, 'missing/stale module audit schema')
+export function validateRendererAudit(audit, readSource, readOutput, actualOutputFiles) {
+  assert.equal(audit?.schema, 2, 'missing/stale module audit schema')
   assert.equal(audit.owner, 'electron.vite.config.ts:renderer')
   assert.equal(audit.nativeRegistry, 'src/renderer/src/views/native-views.ts')
   assert.ok(audit.chunks?.length > 0, 'nonempty actual chunks required')
+  assert.ok(
+    Array.isArray(actualOutputFiles) && actualOutputFiles.length > 0,
+    'actual inventory required'
+  )
+  const files = audit.chunks.map((chunk) => chunk.file)
+  assert.equal(new Set(files).size, files.length, 'unique metadata output records required')
+  assert.equal(
+    new Set(actualOutputFiles).size,
+    actualOutputFiles.length,
+    'unique actual inventory required'
+  )
+  assert.deepEqual(
+    [...files].sort(),
+    [...actualOutputFiles].sort(),
+    'complete actual output inventory'
+  )
   const modules = audit.chunks.flatMap((chunk) => {
     assert.ok(
       chunk.file && !path.isAbsolute(chunk.file) && !chunk.file.split('/').includes('..'),
@@ -81,6 +131,11 @@ export function validateRendererAudit(audit, readSource, readOutput) {
     modules.every(({ id }) => !forbidden.test(id)),
     'custom prefix-cache module in actual native build'
   )
+  for (const { id } of modules) {
+    const source = physicalSource(id)
+    if (source)
+      assert.ok(audit.sources?.[source], 'missing physical module source identity: ' + source)
+  }
   for (const id of required) {
     assert.ok(
       modules.some((entry) => entry.id === id && entry.renderedLength > 0),
@@ -116,7 +171,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       validateRendererAudit(
         audit,
         (id) => readFileSync(path.join(root, id)),
-        (id) => readFileSync(path.join(out, id))
+        (id) => readFileSync(path.join(out, id)),
+        rendererOutputInventory(out)
       ),
       null,
       2

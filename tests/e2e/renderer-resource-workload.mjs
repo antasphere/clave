@@ -11,7 +11,45 @@ import {
   LONG_RESPONSE,
   streamChunk
 } from './renderer-workload.mjs'
-import { RESOURCE_CONFIG } from '../../scripts/performance/renderer-resource-data.mjs'
+import {
+  RESOURCE_CONFIG,
+  validateResourceSeed
+} from '../../scripts/performance/renderer-resource-data.mjs'
+
+// Serialized through the existing server fixture. Observe the supported host
+// stream while the unchanged seed injects its events; keep all receipts in
+// Node/server memory, never in the renderer or adapter's historical API.
+export async function captureResourceSeed(host, id, seed) {
+  const events = []
+  const off = host.subscribe(id, (packet) => {
+    if (packet.kind === 'event' && ['user_message', 'assistant_text'].includes(packet.event.type))
+      events.push(packet.event)
+  })
+  if (typeof off !== 'function') throw new Error('live seed subscription missing')
+  try {
+    await seed()
+  } finally {
+    off()
+  }
+  return { id, events, disposed: true }
+}
+
+export async function seedResourceWorkload(app, win, fixture, root) {
+  const seedReceipts = []
+  const observedFixture = {
+    evaluate: async (seed, args) => {
+      const receipt = await fixture.evaluate(
+        `(args) => (${captureResourceSeed.toString()})(globalThis.__claveE2E.sessionHost, args.id, () => (${seed.toString()})(args))`,
+        args
+      )
+      seedReceipts.push(receipt)
+    }
+  }
+  // The original helper still waits for each last turn in the actual visible
+  // native DOM, then queries the live session list before returning.
+  const seeded = await seedRendererWorkload(app, win, observedFixture, root)
+  return { ...seeded, seedReceipts }
+}
 
 export async function loadResourceScenario(app, win, fixture, root, bundlePath) {
   await build({
@@ -26,26 +64,10 @@ export async function loadResourceScenario(app, win, fixture, root, bundlePath) 
   })
   const { loadRendererResource } = await import(pathToFileURL(bundlePath).href)
   return loadRendererResource(
-    () => seedRendererWorkload(app, win, fixture, root),
-    async ({ records }) => {
+    () => seedResourceWorkload(app, win, fixture, root),
+    async (workload) => {
       const sessions = await win.evaluate(() => window.electronAPI.sessionsList())
-      assert.equal(sessions.length, 100)
-      assert.ok(records.every((id) => sessions.some((s) => s.id === id && s.adapterId === 'echo')))
-      for (let i = 0; i < 20; i++) {
-        const history = await win.evaluate(
-          (id) => window.electronAPI.sessionsHistory(id),
-          records[i]
-        )
-        assert.ok(history.items.length > 0, 'real original history query is usable')
-        assert.ok(
-          history.items.some(
-            (item) =>
-              item.event.type === 'assistant_text' &&
-              item.event.delta.includes(`Tab ${i} turn 199.`)
-          ),
-          'original last long turn is present'
-        )
-      }
+      validateResourceSeed(workload, sessions)
     }
   )
 }
