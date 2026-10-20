@@ -2,6 +2,7 @@ import { createElement, Fragment, isValidElement, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { demand, literal } from '../../../../tests/e2e/markdown-deep-contract.mjs'
+import { project } from './markdown-data-projection'
 
 type RemarkAttacher = Extract<
   NonNullable<Options['remarkPlugins']>[number],
@@ -28,53 +29,7 @@ export interface Stages {
 // A lossless ordered data projection. React owner/debug bookkeeping is omitted
 // only at the element boundary. Every key and prop (including children) remains.
 // Unknown component types, callable/symbol props and exotic objects fail closed.
-export function project(value: unknown): unknown[] {
-  const result: unknown[] = []
-  const pending: Array<{ value: unknown; path: string; ancestors: object[] }> = [
-    { value, path: '$', ancestors: [] }
-  ]
-  while (pending.length) {
-    const item = pending.pop()!
-    let current = item.value
-    const ancestors = [...item.ancestors]
-    if (current && typeof current === 'object') {
-      demand(!ancestors.includes(current), 'cyclic projection')
-      ancestors.push(current)
-    }
-    if (isValidElement<Record<string, unknown>>(current)) {
-      demand(typeof current.type === 'string' || current.type === Fragment, 'unsupported JSX type')
-      current = {
-        element: current.type === Fragment ? 'Fragment' : current.type,
-        key: current.key,
-        props: current.props
-      }
-    }
-    if (current === null || ['undefined', 'string', 'number', 'boolean'].includes(typeof current)) {
-      // JSON otherwise aliases NaN/Infinity and drops the sign of zero.
-      const exact =
-        typeof current === 'number' ? (Object.is(current, -0) ? '-0' : String(current)) : current
-      result.push([item.path, typeof current, exact])
-      continue
-    }
-    demand(typeof current === 'object' && current !== null, 'unsupported projected value')
-    const object = current as Record<string, unknown>
-    demand(
-      Array.isArray(object) || [Object.prototype, null].includes(Object.getPrototypeOf(object)),
-      'unsupported projected prototype'
-    )
-    demand(Object.getOwnPropertySymbols(object).length === 0, 'symbol-keyed projection')
-    const keys = Object.keys(object).sort()
-    result.push([
-      item.path,
-      Array.isArray(object) ? 'array' : 'object',
-      keys,
-      Array.isArray(object) ? object.length : null
-    ])
-    for (let i = keys.length - 1; i >= 0; i--)
-      pending.push({ value: object[keys[i]], path: item.path + '/' + keys[i], ancestors })
-  }
-  return result
-}
+export { project }
 
 export function sameData(left: unknown, right: unknown, message: string): void {
   demand(JSON.stringify(project(left)) === JSON.stringify(project(right)), message)
