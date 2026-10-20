@@ -178,24 +178,137 @@ export function verifyFrozenSide(frozen, side) {
 
 // Only proven descendants of this owned application are inspected. `comm`
 // avoids reading arguments or environment. Creation identity fences PID reuse.
-export function processIdentity(pid) {
+export function processIdentity(pid, { query = execFileSync, onQuery = () => {} } = {}) {
+  const args = ['-p', String(pid), '-o', 'pid=,ppid=,lstart=,comm=']
+  let value
   try {
-    const value = execFileSync('ps', ['-p', String(pid), '-o', 'pid=,ppid=,lstart=,comm='], {
-      encoding: 'utf8',
-      timeout: 10000
-    }).trim()
-    const match = value.match(/^(\d+)\s+(\d+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.+)$/)
-    assert.ok(match, 'known owned process creation identity')
-    return {
-      pid: Number(match[1]),
-      parent: Number(match[2]),
-      creation: match[3],
-      executable: match[4]
-    }
+    value = query('ps', args, { encoding: 'utf8', timeout: 10000 })
   } catch (error) {
-    if (error.status === 1) return null
+    const outcome = {
+      command: 'ps',
+      args,
+      status: error.status ?? null,
+      signal: error.signal ?? null,
+      code: error.code ?? null,
+      stdout: String(error.stdout ?? ''),
+      stderr: String(error.stderr ?? '')
+    }
+    onQuery(outcome)
+    // Only an exact clean no-row result is absence. Permission/parse/signal/error stays unknown.
+    if (
+      outcome.status === 1 &&
+      outcome.signal === null &&
+      outcome.stdout.trim() === '' &&
+      outcome.stderr.trim() === '' &&
+      (outcome.code === null || outcome.code === 1)
+    )
+      return null
     throw error
   }
+  onQuery({
+    command: 'ps',
+    args,
+    status: 0,
+    signal: null,
+    code: null,
+    stdout: value,
+    stderr: null,
+    observability: { stdout: true, stderr: false }
+  })
+  const match = value.trim().match(/^(\d+)\s+(\d+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.+)$/)
+  assert.ok(match, 'known owned process creation identity')
+  const identity = {
+    pid: Number(match[1]),
+    parent: Number(match[2]),
+    creation: match[3],
+    executable: match[4]
+  }
+  assert.equal(identity.pid, pid, 'queried owned PID matches result')
+  return identity
+}
+
+export function identifyOwnedProcess(
+  owned,
+  pid,
+  role,
+  expectedParent,
+  context,
+  recordFailure,
+  query = execFileSync
+) {
+  const attempt = {
+    pid,
+    role,
+    expectedParent,
+    context,
+    expectedParentIdentity: owned.get(expectedParent) || null,
+    previousIdentity: owned.get(pid) || null,
+    query: null,
+    observedIdentity: null
+  }
+  try {
+    assert.ok(Number.isInteger(pid) && pid > 0, 'known owned PID')
+    const identity = processIdentity(pid, {
+      query,
+      onQuery: (outcome) => {
+        attempt.query = outcome
+      }
+    })
+    attempt.observedIdentity = identity
+    assert.ok(identity, 'owned process is alive when identified')
+    if (expectedParent !== null) assert.equal(identity.parent, expectedParent, 'proven owned child')
+    if (owned.has(pid)) assert.equal(owned.get(pid).creation, identity.creation, 'owned PID reused')
+    owned.set(pid, { ...identity, role: owned.get(pid)?.role || role })
+    return owned.get(pid)
+  } catch (error) {
+    recordFailure({ ...attempt, message: error.message, later: 'NOTRUN' })
+    throw error
+  }
+}
+
+export function captureResourceWorker(pid, parent, context, writeReceipt, query = execFileSync) {
+  const row = { pid: pid ?? null, expectedParent: parent, context, identity: null, failure: null }
+  try {
+    row.identity = identifyOwnedProcess(
+      new Map(),
+      pid,
+      'collector-worker',
+      parent,
+      context,
+      (failure) => {
+        row.failure = failure
+      },
+      query
+    )
+  } catch (error) {
+    if (!row.failure) row.failure = { message: error.message, later: 'NOTRUN' }
+  }
+  writeReceipt(row)
+  return row
+}
+
+export function resourceWorkerExit(row, code, signal, expired) {
+  return {
+    pid: row.pid,
+    identity: row.identity,
+    failure: row.failure,
+    code,
+    signal,
+    expired,
+    accepted:
+      row.identity !== null && row.failure === null && code === 0 && signal === null && !expired
+  }
+}
+
+export function resourceWorkerForCleanup(row, current) {
+  const initial = row?.identity
+  return initial &&
+    current &&
+    initial.pid === current.pid &&
+    initial.creation === current.creation &&
+    current.parent === row.expectedParent
+    ? initial
+    : null
 }
 
 async function forceOwnedCleanup(identities) {
@@ -270,19 +383,19 @@ async function launch(frozen, side, index, evidence) {
     closures: 0
   }
   const owned = new Map()
-  const own = (pid, role, expectedParent = null) => {
-    assert.ok(Number.isInteger(pid) && pid > 0, 'known owned PID')
-    const identity = processIdentity(pid)
-    assert.ok(identity, 'owned process is alive when identified')
-    if (expectedParent !== null) assert.equal(identity.parent, expectedParent, 'proven owned child')
-    if (owned.has(pid)) assert.equal(owned.get(pid).creation, identity.creation, 'owned PID reused')
-    owned.set(pid, { ...identity, role: owned.get(pid)?.role || role })
-  }
-  const inventory = async () => {
+  const own = (pid, role, expectedParent = null, context = { site: 'unspecified' }) =>
+    identifyOwnedProcess(owned, pid, role, expectedParent, context, (failure) => {
+      result.ownershipFailures ||= []
+      result.ownershipFailures.push(failure)
+      persist({ ownershipFailure: failure, later: 'NOTRUN' })
+    })
+  const inventory = async (phase) => {
     const discovery = readJson(path.join(dir, 'clave-server.json'))
-    own(discovery.serverPid, 'server', app.process().pid)
+    own(discovery.serverPid, 'server', app.process().pid, { site: phase + '.server-discovery' })
     const terminal = readJson(path.join(separateServerDataDir(dir), 'clave-server.json'))
-    own(terminal.terminalProcessPid, 'terminal-process', discovery.serverPid)
+    own(terminal.terminalProcessPid, 'terminal-process', discovery.serverPid, {
+      site: phase + '.terminal-discovery'
+    })
     const queue = [...owned.values()],
       visited = new Set()
     while (queue.length) {
@@ -291,22 +404,58 @@ async function launch(frozen, side, index, evidence) {
       visited.add(identity.pid)
       const current = processIdentity(identity.pid)
       if (!current || current.creation !== identity.creation) continue
-      let children
+      let children, discoveryQuery
       try {
-        children = execFileSync('pgrep', ['-P', String(identity.pid)], {
+        const stdout = execFileSync('pgrep', ['-P', String(identity.pid)], {
           encoding: 'utf8',
           timeout: 10000
         })
-          .trim()
-          .split('\n')
-          .filter(Boolean)
-          .map(Number)
+        discoveryQuery = {
+          command: 'pgrep',
+          args: ['-P', String(identity.pid)],
+          status: 0,
+          signal: null,
+          stdout,
+          stderr: null,
+          observability: { stdout: true, stderr: false }
+        }
+        children = stdout.trim().split('\n').filter(Boolean).map(Number)
       } catch (e) {
-        if (e.status !== 1) throw e
+        discoveryQuery = {
+          command: 'pgrep',
+          args: ['-P', String(identity.pid)],
+          status: e.status ?? null,
+          signal: e.signal ?? null,
+          code: e.code ?? null,
+          stdout: String(e.stdout ?? ''),
+          stderr: String(e.stderr ?? '')
+        }
+        if (
+          discoveryQuery.status !== 1 ||
+          discoveryQuery.signal !== null ||
+          discoveryQuery.stdout.trim() !== '' ||
+          discoveryQuery.stderr.trim() !== '' ||
+          (discoveryQuery.code !== null && discoveryQuery.code !== 1)
+        ) {
+          persist({
+            ownershipDiscoveryFailure: {
+              context: phase + '.pgrep-parent',
+              parent: current,
+              query: discoveryQuery
+            },
+            later: 'NOTRUN'
+          })
+          throw e
+        }
         children = []
       }
       for (const pid of children) {
-        own(pid, 'descendant', identity.pid)
+        own(pid, 'descendant', identity.pid, {
+          site: phase + '.pgrep-child',
+          discoveredParent: current,
+          discoveredChildren: children,
+          discoveryQuery
+        })
         queue.push(owned.get(pid))
       }
     }
@@ -314,7 +463,10 @@ async function launch(frozen, side, index, evidence) {
       app.getAppMetrics().map((m) => ({ pid: m.pid, type: m.type }))
     ))
       if (!owned.has(metric.pid))
-        own(metric.pid, metric.type === 'Tab' ? 'renderer' : 'utility', app.process().pid)
+        own(metric.pid, metric.type === 'Tab' ? 'renderer' : 'utility', app.process().pid, {
+          site: phase + '.app-metric',
+          metricType: metric.type
+        })
     persist({ owned: [...owned.values()] })
   }
   const target = () =>
@@ -341,7 +493,7 @@ async function launch(frozen, side, index, evidence) {
       60000
     ))
     configureResourcePage(win)
-    own(app.process().pid, 'main')
+    own(app.process().pid, 'main', process.pid, { site: 'boot.main' })
     win.on('pageerror', (error) =>
       result.errors.push({ kind: 'pageerror', message: error.message })
     )
@@ -350,10 +502,10 @@ async function launch(frozen, side, index, evidence) {
         result.errors.push({ kind: 'console', message: message.text() })
     })
     result.target = await target()
-    own(result.target.pid, 'renderer', app.process().pid)
+    own(result.target.pid, 'renderer', app.process().pid, { site: 'boot.target-renderer' })
     assert.equal(result.target.hidden, true)
     assert.equal(result.target.backgroundThrottling, false)
-    await inventory()
+    await inventory('boot.inventory')
     const scenario = await controller.bounded(
       'fixture readiness',
       () => loadResourceScenario(app, win, fixture, root, path.join(evidence, 'scenario.mjs')),
@@ -377,7 +529,7 @@ async function launch(frozen, side, index, evidence) {
         result.originalLongIds,
         label.endsWith('closed')
       )
-      await inventory()
+      await inventory('sample.' + label)
       assert.deepEqual(await target(), result.target, 'same intended renderer')
       assert.deepEqual(result.errors, [])
       const disposed = await disposeResourceWork(win, fixture)
@@ -500,7 +652,7 @@ async function launch(frozen, side, index, evidence) {
     try {
       if (win && fixture) persist({ cleanupDisposal: await disposeResourceWork(win, fixture) })
       if (app) {
-        await inventory()
+        await inventory('cleanup.inventory')
         writeFileSync(
           path.join(dir, 'resource-empty.html'),
           '<!doctype html><html><body></body></html>'
@@ -525,7 +677,8 @@ async function launch(frozen, side, index, evidence) {
         )
       } else {
         cleanup.unknown.push('boot did not return a complete owned application identity')
-        for (const pid of liveAppPids()) own(pid, 'main')
+        for (const pid of liveAppPids())
+          own(pid, 'main', process.pid, { site: 'cleanup.boot-incomplete' })
         cleanup.forced = true
         cleanup.forcedActions = await forceOwnedCleanup(owned.values())
       }
@@ -646,11 +799,17 @@ export async function main(argv) {
               const identities = new Map(
                 snapshots.flatMap((s) => s.owned || []).map((p) => [p.pid, p])
               )
-              const worker = processIdentity(child.pid)
-              if (worker) identities.set(worker.pid, worker)
+              const currentWorker = processIdentity(child.pid)
+              const cleanupWorker = resourceWorkerForCleanup(worker, currentWorker)
+              if (cleanupWorker) identities.set(cleanupWorker.pid, cleanupWorker)
               write(path.join(evidence, 'deadline-forced-cleanup.json'), {
                 forced: true,
                 timedOut: true,
+                worker: {
+                  initial: worker?.identity ?? null,
+                  current: currentWorker,
+                  signalEligible: cleanupWorker !== null
+                },
                 actions: await forceOwnedCleanup(identities.values()),
                 later: 'NOTRUN'
               })
@@ -661,16 +820,39 @@ export async function main(argv) {
           }, 600000)
           child.stdout.on('data', (b) => log.push(b))
           child.stderr.on('data', (b) => log.push(b))
+          let worker
           child.on('error', (error) => {
             clearTimeout(timer)
+            write(path.join(evidence, 'worker-error.json'), {
+              pid: child.pid ?? null,
+              identity: worker?.identity ?? null,
+              code: error.code ?? null,
+              message: error.message,
+              later: 'NOTRUN'
+            })
             reject(error)
           })
           child.on('exit', (code, signal) => {
             clearTimeout(timer)
-            code === 0 && !signal && !expired
+            const exit = resourceWorkerExit(worker, code, signal, expired)
+            write(path.join(evidence, 'worker-exit.json'), exit)
+            exit.accepted
               ? resolve()
-              : reject(new Error(`launch failed code=${code} signal=${signal}`))
+              : reject(
+                  new Error(
+                    `launch failed code=${code} signal=${signal}; workerIdentity=${worker.identity !== null}`
+                  )
+                )
           })
+          // Same direct spawn; capture synchronously before yielding back to the event loop.
+          // A capture failure never advances another launch or accepts this child's samples.
+          // Keep the existing current-child cleanup/600000ms fence; never kill an unproven PID.
+          worker = captureResourceWorker(
+            child.pid,
+            process.pid,
+            { site: 'parent.spawn', side, index },
+            (receipt) => write(path.join(evidence, 'worker-spawn.json'), receipt)
+          )
         })
         runs.push(readJson(path.join(evidence, 'launch.json')))
       } catch (error) {
