@@ -15,7 +15,8 @@ import { LONG_RESPONSE, streamChunk } from '../../tests/e2e/renderer-workload.mj
 import {
   decodeHeap,
   readBoundPrefix,
-  readOwnerFiber,
+  readOwnerBatch,
+  planOwnerBatch,
   summarizeBoundPrefix,
   bindCapturedGraph,
   captureQualificationPair,
@@ -1061,6 +1062,20 @@ test('clipped display equality cannot substitute for full canonical identity', (
   assert.equal(graph.matches[0].inputIdentity, 'unbound')
   assert.equal(graph.matches[0].inputMatches, undefined)
 })
+function readOneOwner(root, owner) {
+  const state = Object.getOwnPropertyDescriptor(root, 'stateNode')?.value
+  const current = state && Object.getOwnPropertyDescriptor(state, 'current')?.value
+  const alternate = Object.getOwnPropertyDescriptor(owner, 'alternate')?.value
+  const { ordinal, alternateOrdinal, ...value } = readOwnerBatch.call(
+    state,
+    current,
+    owner,
+    alternate
+  ).members[0]
+  void ordinal
+  void alternateOrdinal
+  return value
+}
 function fiberPair() {
   const root = { tag: 3, stateNode: {} },
     fiber = { tag: 0, return: root },
@@ -1073,10 +1088,10 @@ function fiberPair() {
 }
 test('owner proof distinguishes root.current reachability from return pointers', () => {
   const { root, fiber, alternate } = fiberPair()
-  assert.equal(readOwnerFiber.call(fiber).branch, 'current')
-  assert.equal(readOwnerFiber.call(alternate).branch, 'alternate')
+  assert.equal(readOneOwner(root, fiber).branch, 'current')
+  assert.equal(readOneOwner(root, alternate).branch, 'alternate')
   root.child = alternate
-  assert.equal(readOwnerFiber.call(fiber).branch, 'alternate')
+  assert.equal(readOneOwner(root, fiber).branch, 'alternate')
 })
 for (const mode of ['nonreciprocal', 'disconnected', 'ambiguous', 'cycle', 'getter'])
   test('owner rejects ' + mode, () => {
@@ -1091,7 +1106,7 @@ for (const mode of ['nonreciprocal', 'disconnected', 'ambiguous', 'cycle', 'gett
           throw new Error('GETTER EXECUTED')
         }
       })
-    assert.throws(() => readOwnerFiber.call(fiber), /Fiber|owner|reachability/)
+    assert.throws(() => readOneOwner(root, fiber), /Fiber|owner|reachability/)
   })
 function hotOwnerFixture(mode = 'valid', className = 'chat-view terminal-view') {
   let calls = 0
@@ -1211,11 +1226,14 @@ for (const [mode, reason] of hotOwnerCases)
   test('whole owner tree preserves ' + mode, () => {
     const fixture = hotOwnerFixture(mode)
     if (reason)
-      assert.throws(() => readOwnerFiber.call(fixture.owner), { name: 'Error', message: reason })
+      assert.throws(() => readOneOwner(fixture.root, fixture.owner), {
+        name: 'Error',
+        message: reason
+      })
     else {
       let value
       assert.doesNotThrow(() => {
-        value = readOwnerFiber.call(fixture.owner)
+        value = readOneOwner(fixture.root, fixture.owner)
       })
       assert.deepEqual(value, {
         branch: mode === 'opposite' ? 'alternate' : 'current',
@@ -1230,8 +1248,8 @@ for (const [mode, reason] of hotOwnerCases)
     assert.equal(fixture.getterCalls(), 0)
   })
 test('whole owner tree validates the reciprocal alternate against the same current root', () => {
-  const { alternate } = hotOwnerFixture()
-  assert.equal(readOwnerFiber.call(alternate).branch, 'alternate')
+  const { root, alternate } = hotOwnerFixture()
+  assert.equal(readOneOwner(root, alternate).branch, 'alternate')
 })
 test('owner child descriptor is validated before sibling without invoking either getter', () => {
   const events = [],
@@ -1249,7 +1267,7 @@ test('owner child descriptor is validated before sibling without invoking either
     }
   })
   fixture.owner.sibling = other
-  assert.throws(() => readOwnerFiber.call(fixture.owner), /owner getter refused/)
+  assert.throws(() => readOneOwner(fixture.root, fixture.owner), /owner getter refused/)
   assert.deepEqual(events, ['child'])
 })
 test('owner reads child data before obtaining the sibling descriptor', () => {
@@ -1264,7 +1282,7 @@ test('owner reads child data before obtaining the sibling descriptor', () => {
       }
     }
   )
-  readOwnerFiber.call(fixture.owner)
+  readOneOwner(fixture.root, fixture.owner)
   assert.deepEqual(events, ['child', 'sibling'])
 })
 test('owner preserves sibling-before-child DFS order after both descriptor reads', () => {
@@ -1282,14 +1300,17 @@ test('owner preserves sibling-before-child DFS order after both descriptor reads
     )
   fixture.owner.child = leaf('child')
   fixture.owner.sibling = leaf('sibling')
-  readOwnerFiber.call(fixture.owner)
+  readOneOwner(fixture.root, fixture.owner)
   assert.deepEqual(events, ['sibling:child', 'sibling:sibling', 'child:child', 'child:sibling'])
 })
 for (const separator of ['\v', '\f'])
   test('owner keeps exact control whitespace U+' + separator.charCodeAt(0).toString(16), () => {
-    const { owner, alternate } = hotOwnerFixture('valid', 'chat-view' + separator + 'terminal-view')
-    assert.deepEqual(readOwnerFiber.call(owner).views, ['terminal'])
-    assert.deepEqual(readOwnerFiber.call(alternate).views, ['terminal'])
+    const { root, owner, alternate } = hotOwnerFixture(
+      'valid',
+      'chat-view' + separator + 'terminal-view'
+    )
+    assert.deepEqual(readOneOwner(root, owner).views, ['terminal'])
+    assert.deepEqual(readOneOwner(root, alternate).views, ['terminal'])
   })
 test('whole owner tree retains the million-node bound after finding its query', () => {
   const fixture = hotOwnerFixture()
@@ -1298,7 +1319,7 @@ test('whole owner tree retains the million-node bound after finding its query', 
     at.child = {}
     at = at.child
   }
-  assert.throws(() => readOwnerFiber.call(fixture.owner), {
+  assert.throws(() => readOneOwner(fixture.root, fixture.owner), {
     name: 'Error',
     message: 'Fiber traversal bound'
   })
@@ -1399,7 +1420,7 @@ function representativeOwnerFixture(mode = 'valid') {
           return parent
         }
       })
-  return { owner, alternate, proof, getterCalls: () => calls }
+  return { owner, alternate, root, proof, getterCalls: () => calls }
 }
 
 test('full representative owner keeps global proof with bounded pending traversal', () => {
@@ -1422,7 +1443,17 @@ test('full representative owner keeps global proof with bounded pending traversa
     return {
       counts,
       proof: bundle.proof,
-      value: reader.call(bundle.owner),
+      value: (() => {
+        const { ordinal, alternateOrdinal, ...value } = reader.call(
+          bundle.root.stateNode,
+          bundle.root,
+          bundle.owner,
+          bundle.alternate
+        ).members[0]
+        void ordinal
+        void alternateOrdinal
+        return value
+      })(),
       getters: bundle.getterCalls()
     }
   }
@@ -1432,7 +1463,7 @@ test('full representative owner keeps global proof with bounded pending traversa
       ')(' +
       representativeOwnerFixture.toString() +
       ',' +
-      readOwnerFiber.toString() +
+      readOwnerBatch.toString() +
       ')'
   )
   assert.equal(result.proof.currentTreeFibers, 40903)
@@ -1712,7 +1743,7 @@ test('read-only owner metadata reports terminal view separately and never invent
   }
   root.child = host
   fiber.return = host
-  const owner = readOwnerFiber.call(fiber)
+  const owner = readOneOwner(root, fiber)
   assert.deepEqual(owner.views, ['terminal'])
   assert.deepEqual(owner.sessionIds, ['synthetic-id'])
   assert.equal(owner.connected, null)
@@ -2177,7 +2208,7 @@ for (const separator of [
       }
     root.child = host
     fiber.return = host
-    assert.deepEqual(readOwnerFiber.call(fiber).views, ['terminal'])
+    assert.deepEqual(readOneOwner(root, fiber).views, ['terminal'])
   })
 function syntheticInspectorFixture(mode, className) {
   let calls = 0
@@ -2280,7 +2311,10 @@ function syntheticInspectorFixture(mode, className) {
   root.child = host
   host.child = owner
   root.stateNode.current = root
-  return { state, snapshot, owner, alternate, getterCalls: () => calls }
+  if (mode === 'owner-disconnected') root.stateNode.current = null
+  if (mode === 'owner-nonreciprocal') alternate.alternate = null
+  if (mode === 'owner-ambiguous') owner.sibling = alternate
+  return { state, snapshot, root, owner, alternate, getterCalls: () => calls }
 }
 async function inspectSynthetic(mode = 'valid', className = 'chat-view terminal-view') {
   const session = new inspector.Session(),
@@ -2398,23 +2432,66 @@ async function inspectSynthetic(mode = 'valid', className = 'chat-view terminal-
     ).result.value
     if (mode === 'valid') {
       result.owners = []
-      for (const field of ['owner', 'alternate']) {
-        const fn =
-            field === 'owner'
-              ? function () {
-                  return this.owner
-                }
-              : function () {
-                  return this.alternate
-                },
-          id = (await call(handles[0], fn, [], false)).result.objectId
-        const owner = await call(id, readOwnerFiber)
-        result.owners.push(
-          owner.exceptionDetails
-            ? { success: false, protocol: sanitizeExceptionDetails(owner.exceptionDetails) }
-            : { success: true, value: owner.result.value }
+      const root = (
+        await call(
+          handles[0],
+          function () {
+            return this.root.stateNode
+          },
+          [],
+          false
         )
-      }
+      ).result.objectId
+      const current = (
+        await call(
+          handles[0],
+          function () {
+            return this.root
+          },
+          [],
+          false
+        )
+      ).result.objectId
+      const owner = (
+        await call(
+          handles[0],
+          function () {
+            return this.owner
+          },
+          [],
+          false
+        )
+      ).result.objectId
+      const alternate = (
+        await call(
+          handles[0],
+          function () {
+            return this.alternate
+          },
+          [],
+          false
+        )
+      ).result.objectId
+      const batch = await call(root, readOwnerBatch, [
+        { objectId: current },
+        { objectId: owner },
+        { objectId: alternate },
+        { objectId: alternate },
+        { objectId: owner }
+      ])
+      if (batch.exceptionDetails)
+        result.owners.push({
+          success: false,
+          protocol: sanitizeExceptionDetails(batch.exceptionDetails)
+        })
+      else
+        result.owners.push(
+          ...batch.result.value.members.map(({ ordinal, alternateOrdinal, ...value }) => {
+            void ordinal
+            void alternateOrdinal
+            return { success: true, value }
+          })
+        )
     }
   } finally {
     try {
@@ -2560,5 +2637,1671 @@ test('exact 4097-node immutable budget fails the actual reader guard', () => {
   assert.throws(
     () => readBoundPrefix.call(state, snapshot),
     /invalid immutable prefix binding: node-cap/
+  )
+})
+
+test('batch diagnostic constants survive while unknown descriptions remain redacted', () => {
+  for (const reason of [
+    'owner getter refused',
+    'invalid owner batch shape',
+    'duplicate owner batch member',
+    'mixed owner batch roots'
+  ]) {
+    const value = sanitizeExceptionDetails({ exception: { description: 'Error: ' + reason } })
+    assert.equal(value.exception.description, 'Error: ' + reason)
+  }
+})
+test('decoded ownership includes an explicit empty supported owner batch plan', () => {
+  const graph = inspectPrefixGraph(heap(), { discoveryOnly: true })
+  assert.deepEqual(graph.ownership.ownerBatchPlan, { supported: true, groups: [] })
+})
+
+// Real decoded V8 node/edge tables, with typed numeric tags and actual hook slots.
+function ownerSnapshot(mode = 'valid') {
+  const g = stringGraph()
+  const number = (n) =>
+    g.add('number', 'smi number', [['internal', 'value', g.add('string', String(n))]])
+  const tag0 = number(0),
+    tag3 = number(3)
+  const store = g.add('object', 'Object', [['property', 'getSnapshot', 9]])
+  const queue = g.add('object', 'Object', [['property', 'value', 1]])
+  const hook = g.add('object', 'Object', [
+    ['property', 'memoizedState', 1],
+    ['property', 'queue', queue]
+  ])
+  const first = g.add('object', 'Object', [
+    ['property', 'memoizedState', store],
+    ['property', 'next', hook]
+  ])
+  const state = g.add('object', 'FiberRootNode', [['property', 'current', 0]])
+  const root = g.add('object', 'FiberNode', [
+    ['property', 'tag', tag3],
+    ['property', 'stateNode', state]
+  ])
+  const rootAlternate = g.add('object', 'FiberNode', [
+    ['property', 'tag', tag3],
+    ['property', 'stateNode', state]
+  ])
+  retargetFrom(g.raw, state, 'current', root)
+  const fiber = g.add('object', 'FiberNode', [
+    ['property', 'tag', tag0],
+    ['property', 'return', root],
+    ['property', 'memoizedState', first],
+    ['property', 'alternate', 0],
+    ['internal', 'publisher', 11]
+  ])
+  const alternate = g.add('object', 'FiberNode', [
+    ['property', 'tag', tag0],
+    ['property', 'return', rootAlternate],
+    ['property', 'memoizedState', first],
+    ['property', 'alternate', fiber]
+  ])
+  retargetFrom(g.raw, fiber, 'alternate', alternate)
+  retarget(g.raw, 'publisher', fiber, 'property')
+  const remove = (from, key) => {
+    const width = g.raw.snapshot.meta.node_fields.length
+    let start = 0
+    for (let i = 0; i < from; i++) start += g.raw.nodes[i * width + 4] * 3
+    const count = g.raw.nodes[from * width + 4]
+    for (let i = 0; i < count; i++) {
+      const at = start + 3 * i
+      if (g.raw.strings[g.raw.edges[at + 1]] === key) {
+        g.raw.edges.splice(at, 3)
+        g.raw.nodes[from * width + 4]--
+        g.raw.snapshot.edge_count--
+        return
+      }
+    }
+    assert.fail('missing fixture field')
+  }
+  if (mode === 'multiple') {
+    const otherState = g.add('object', 'FiberRootNode', [['property', 'current', rootAlternate]])
+    retargetFrom(g.raw, rootAlternate, 'stateNode', otherState)
+  }
+  if (mode === 'root-cycle') {
+    const width = g.raw.snapshot.meta.node_fields.length
+    let start = 0
+    for (let i = 0; i <= root; i++) start += g.raw.nodes[i * width + 4] * 3
+    let label = g.raw.strings.indexOf('return')
+    if (label < 0) {
+      label = g.raw.strings.length
+      g.raw.strings.push('return')
+    }
+    g.raw.edges.splice(start, 0, 0, label, root * width)
+    g.raw.nodes[root * width + 4]++
+    g.raw.snapshot.edge_count++
+  }
+  if (mode === 'context-tag') {
+    const width = g.raw.snapshot.meta.node_fields.length
+    let start = 0
+    for (let i = 0; i < fiber; i++) start += g.raw.nodes[i * width + 4] * 3
+    for (let i = 0; i < g.raw.nodes[fiber * width + 4]; i++)
+      if (g.raw.strings[g.raw.edges[start + 3 * i + 1]] === 'tag')
+        g.raw.edges[start + 3 * i] = g.raw.snapshot.meta.edge_types[0].indexOf('context')
+  }
+  if (mode === 'missing-state') remove(root, 'stateNode')
+  if (mode === 'missing-current') remove(state, 'current')
+  if (mode === 'missing-return') remove(fiber, 'return')
+  if (mode === 'missing-tag') remove(fiber, 'tag')
+  if (mode === 'nonnumeric') retargetFrom(g.raw, fiber, 'tag', g.add('string', '0'))
+  if (mode === 'cycle') retargetFrom(g.raw, fiber, 'return', fiber)
+  if (mode === 'unrepresented-state') retargetFrom(g.raw, root, 'stateNode', tag0)
+  if (mode === 'unrepresented-current') retargetFrom(g.raw, state, 'current', tag0)
+  const graph = inspectPrefixGraph(g.raw, { discoveryOnly: true })
+  const id = (index) => index + 1
+  return {
+    graph,
+    raw: g.raw,
+    ids: { fiber: id(fiber), alternate: id(alternate), state: id(state), root: id(root) }
+  }
+}
+function batchCdp({
+  snapshot = ownerSnapshot(),
+  forge,
+  returned = false,
+  transport = false,
+  timeout = false,
+  acquisition = false,
+  resultHandle = false,
+  serialization = false,
+  releaseFails = false
+} = {}) {
+  const base = mockCdp({ releaseFails }),
+    pair = fiberPair(),
+    calls = [],
+    live = new Map(),
+    acquired = []
+  pair.root.memoizedProps = { className: 'terminal-view', 'data-session-id': 'batch-session' }
+  const objects = new Map([
+    [snapshot.ids.state, pair.root.stateNode],
+    [snapshot.ids.root, pair.root],
+    [snapshot.ids.fiber, pair.fiber],
+    [snapshot.ids.alternate, pair.alternate]
+  ])
+  const graph = { allPrefixes: base.graph.allPrefixes, ownership: snapshot.graph.ownership }
+  const session = {
+    async send(method, params) {
+      calls.push({ method, params })
+      if (
+        method === 'HeapProfiler.getObjectByHeapObjectId' &&
+        objects.has(Number(params.objectId))
+      ) {
+        if (acquisition) return { result: { type: 'undefined' } }
+        const objectId = 'batch-' + params.objectId
+        live.set(objectId, objects.get(Number(params.objectId)))
+        acquired.push(objectId)
+        return { result: { objectId } }
+      }
+      if (method === 'Runtime.releaseObjectGroup') {
+        if (releaseFails) throw new Error('release refused')
+        live.clear()
+        return base.session.send(method, params)
+      }
+      if (method === 'Runtime.callFunctionOn' && params.objectId.startsWith('batch-')) {
+        if (!live.has(params.objectId)) throw new Error('Could not find object with given id')
+        assert.equal(params.throwOnSideEffect, true)
+        assert.equal(params.returnByValue, true)
+        assert.equal(params.silent, true)
+        assert.equal(params.objectGroup, 'parser-resource-binding')
+        assert.match(params.functionDeclaration, /^function readOwnerBatch\(/)
+        if (timeout) return new Promise(() => {})
+        if (transport) throw new Error('untrusted transport body')
+        if (returned) {
+          live.set('batch-error', {})
+          return {
+            exceptionDetails: {
+              text: 'Uncaught',
+              exception: {
+                objectId: 'batch-error',
+                className: 'Error',
+                description: 'Error: owner getter refused'
+              }
+            }
+          }
+        }
+        const fn = Function('return (' + params.functionDeclaration + ')')()
+        const value = fn.call(
+          live.get(params.objectId),
+          ...params.arguments.map((x) => live.get(x.objectId))
+        )
+        if (forge) forge(value)
+        if (serialization) {
+          live.set('batch-result', {})
+          return { result: { objectId: 'batch-result' } }
+        }
+        if (resultHandle) live.set('batch-result', {})
+        return { result: { value, ...(resultHandle ? { objectId: 'batch-result' } : {}) } }
+      }
+      return base.session.send(method, params)
+    }
+  }
+  return { session, graph, calls, live, acquired, objects, pair, input: base.state.snapshot.input }
+}
+for (const mode of [
+  'valid',
+  'multiple',
+  'context-tag',
+  'root-cycle',
+  'missing-state',
+  'missing-current',
+  'missing-return',
+  'missing-tag',
+  'nonnumeric',
+  'cycle',
+  'unrepresented-state',
+  'unrepresented-current'
+])
+  test('decoded owner root plan ' + mode, async () => {
+    const snapshot = ownerSnapshot(mode),
+      rows = structuredClone(snapshot.graph.ownership.fibers)
+    assert.equal(rows.length, 2)
+    if (mode === 'valid') {
+      assert.deepEqual(snapshot.graph.ownership.ownerBatchPlan, {
+        supported: true,
+        groups: [
+          { rootStateId: snapshot.ids.state, currentId: snapshot.ids.root, rowIndexes: [0, 1] }
+        ]
+      })
+    } else {
+      assert.equal(snapshot.graph.ownership.ownerBatchPlan.supported, false)
+      const m = batchCdp({ snapshot })
+      let error
+      try {
+        await bindCapturedGraph(m.session, m.graph, [m.input])
+      } catch (e) {
+        error = e
+      }
+      assert.ok(error)
+      assert.equal(error.bindingFailure.kind, 'representation')
+      assert.deepEqual(error.bindingReceipt.owners, [])
+      assert.equal(
+        m.calls.filter((x) => x.method === 'HeapProfiler.getObjectByHeapObjectId').length,
+        0,
+        'HOLD must precede ALL handles'
+      )
+      assert.deepEqual(error.bindingReceipt.ownerBatchPlan, snapshot.graph.ownership.ownerBatchPlan)
+    }
+    assert.deepEqual(
+      snapshot.graph.ownership.fibers,
+      rows,
+      'raw identities/context/slots preserved'
+    )
+  })
+test('root planner rejects duplicated rows and broken reciprocal planned alternates', () => {
+  const s = ownerSnapshot(),
+    g = decodeHeap(s.raw),
+    rows = s.graph.ownership.fibers
+  assert.equal(planOwnerBatch(g, [rows[0], rows[0]]).supported, false)
+  assert.equal(planOwnerBatch(g, [{ ...rows[0], alternateId: rows[0].fiberId }]).supported, false)
+})
+for (const kind of [
+  'omitted-row',
+  'omitted-group',
+  'duplicate-row',
+  'multiple-groups',
+  'wrong-count',
+  'missing-plan'
+])
+  test('adapter holds incomplete plan ' + kind + ' before handles', async () => {
+    const m = batchCdp(),
+      p = m.graph.ownership.ownerBatchPlan
+    if (kind === 'omitted-row') p.groups[0].rowIndexes.pop()
+    if (kind === 'omitted-group') p.groups = []
+    if (kind === 'duplicate-row') p.groups[0].rowIndexes = [0, 0]
+    if (kind === 'multiple-groups') p.groups.push(p.groups[0])
+    if (kind === 'wrong-count') p.groups[0].rowIndexes.push(2)
+    if (kind === 'missing-plan') delete m.graph.ownership.ownerBatchPlan
+    await assert.rejects(
+      () => bindCapturedGraph(m.session, m.graph, [m.input]),
+      (e) => {
+        assert.equal(e.bindingFailure.kind, 'representation')
+        assert.deepEqual(e.bindingReceipt.owners, [])
+        return true
+      }
+    )
+    assert.equal(
+      m.calls.filter((x) => x.method === 'HeapProfiler.getObjectByHeapObjectId').length,
+      0
+    )
+  })
+test('real adapter batches exact captured anchors/flat pairs once with cache and atomic mapping', async () => {
+  const m = batchCdp({ resultHandle: true }),
+    receipt = await bindCapturedGraph(m.session, m.graph, [m.input])
+  const group = m.graph.ownership.ownerBatchPlan.groups[0],
+    rows = m.graph.ownership.fibers
+  const reads = m.calls.filter(
+    (x) =>
+      x.method === 'Runtime.callFunctionOn' &&
+      x.params.functionDeclaration.startsWith('function readOwnerBatch(')
+  )
+  assert.equal(reads.length, 1, 'one canonical batch call')
+  assert.equal(reads[0].params.objectId, 'batch-' + group.rootStateId)
+  assert.deepEqual(reads[0].params.arguments, [
+    { objectId: 'batch-' + group.currentId },
+    ...rows.flatMap((x) => [
+      { objectId: 'batch-' + x.fiberId },
+      { objectId: 'batch-' + x.alternateId }
+    ])
+  ])
+  assert.equal(m.acquired.length, 4, 'root/current/two members acquired once each')
+  assert.equal(new Set(m.acquired).size, 4)
+  assert.deepEqual(
+    receipt.owners.map(
+      ({
+        branch,
+        reciprocal,
+        sessionIds,
+        views,
+        hostAncestorInCurrentTree,
+        connected,
+        currentReachable,
+        ...raw
+      }) => {
+        void branch
+        void reciprocal
+        void sessionIds
+        void views
+        void hostAncestorInCurrentTree
+        void connected
+        void currentReachable
+        return raw
+      }
+    ),
+    rows
+  )
+  assert.deepEqual(
+    receipt.owners.map((x) => x.branch),
+    ['current', 'alternate']
+  )
+  assert.deepEqual(
+    receipt.owners.map((x) => x.sessionIds),
+    [['batch-session'], ['batch-session']]
+  )
+  assert.equal(receipt.invalidatedHandles, 7, 'prefix2 + anchors/members4 + returned result1')
+  assert.equal(receipt.released, true)
+  assert.equal(m.live.size, 0)
+  assert.equal(
+    m.calls.filter(
+      (x) =>
+        x.method === 'Runtime.callFunctionOn' &&
+        x.params.functionDeclaration === 'function(){return 1}'
+    ).length,
+    7
+  )
+})
+const forgeries = [
+  ['missing', (v) => v.members.pop()],
+  ['extra', (v) => v.members.push(v.members[0])],
+  ['sparse', (v) => delete v.members[0]],
+  ['reordered', (v) => v.members.reverse()],
+  ['ordinal', (v) => (v.members[1].ordinal = 0)],
+  ['alternate', (v) => (v.members[0].alternateOrdinal = -1)],
+  ['count', (v) => (v.memberCount = 1)],
+  ['sameRoot', (v) => (v.sameRoot = false)],
+  ['contradictory', (v) => (v.members[1].branch = 'current')],
+  ['metadata', (v) => (v.members[1].connected = true)],
+  ['missing-metadata', (v) => delete v.members[1].views],
+  ['extra-key', (v) => (v.private = 'secret')],
+  ['sparse-metadata', (v) => delete v.members[0].sessionIds[0]],
+  ['unknown-view', (v) => (v.members[0].views = ['other'])]
+]
+for (const [name, forge] of forgeries)
+  test('real adapter rejects forged batch ' + name + ' without partial owners', async () => {
+    const m = batchCdp({ forge, resultHandle: true })
+    await assert.rejects(
+      () => bindCapturedGraph(m.session, m.graph, [m.input]),
+      (e) => {
+        assert.equal(e.name, 'QualificationSemanticError')
+        assert.deepEqual(e.bindingReceipt.owners, [])
+        assert.equal(e.bindingFailure.stage, 'owner-batch-validation')
+        assert.equal(e.bindingFailure.memberCount, 2)
+        assert.equal(e.bindingReceipt.invalidatedHandles, 7)
+        return true
+      }
+    )
+    assert.equal(m.live.size, 0)
+  })
+for (const kind of ['returned', 'transport', 'acquisition', 'releaseFails'])
+  test('real batch adapter preserves ' + kind + ' failure and cleanup', async () => {
+    const m = batchCdp({ [kind]: true })
+    await assert.rejects(
+      () => bindCapturedGraph(m.session, m.graph, [m.input]),
+      (e) => {
+        assert.deepEqual(e.bindingReceipt.owners, [])
+        if (kind === 'returned') {
+          assert.equal(e.bindingFailure.stage, 'owner-batch-read')
+          assert.equal(e.bindingFailure.memberCount, 2)
+          assert.equal(
+            e.bindingFailure.protocol.exception.description,
+            'Error: owner getter refused'
+          )
+          assert.equal(e.bindingReceipt.invalidatedHandles, 7)
+        }
+        if (kind === 'transport') {
+          assert.equal(e.bindingFailure.kind, 'transport')
+          assert.equal(e.bindingReceipt.invalidatedHandles, 6)
+        }
+        if (kind === 'acquisition') {
+          assert.equal(e.bindingFailure.kind, 'acquisition')
+          assert.equal(e.bindingReceipt.invalidatedHandles, 2)
+        }
+        if (kind === 'releaseFails') {
+          assert.ok(e instanceof AggregateError)
+          assert.equal(e.bindingReceipt.released, false)
+        }
+        return true
+      }
+    )
+  })
+test('batch timeout fails lifecycle before close/GC and releases known handles', async () => {
+  const m = batchCdp({ timeout: true }),
+    seen = []
+  await assert.rejects(
+    () =>
+      captureQualificationPair({
+        capture: async (milestone) => {
+          seen.push(milestone)
+          return { milestone }
+        },
+        bind: () => bindCapturedGraph(m.session, m.graph, [m.input], { timeoutMs: 10 }),
+        close: async () => seen.push('close'),
+        analyze: async () => seen.push('analyze')
+      }),
+    (e) => {
+      assert.ok(e instanceof AggregateError)
+      assert.deepEqual(e.bindingReceipt.owners, [])
+      assert.equal(e.bindingReceipt.invalidatedHandles, 6)
+      assert.equal(e.bindingFailure.kind, 'timeout')
+      return true
+    }
+  )
+  assert.deepEqual(seen, ['warm'])
+  assert.equal(m.live.size, 0)
+})
+test('batch root identity mismatch fails checked runtime call without publication', async () => {
+  const m = batchCdp()
+  m.pair.root.stateNode.current = { tag: 3 }
+  // Returned exceptions use real CDP semantics, not a mock transport throw.
+  const send = m.session.send.bind(m.session)
+  m.session.send = async (method, params) => {
+    try {
+      return await send(method, params)
+    } catch (e) {
+      if (
+        method === 'Runtime.callFunctionOn' &&
+        params.functionDeclaration.startsWith('function readOwnerBatch(')
+      )
+        return {
+          exceptionDetails: {
+            exception: { className: 'Error', description: 'Error: ' + e.message }
+          }
+        }
+      throw e
+    }
+  }
+  await assert.rejects(
+    () => bindCapturedGraph(m.session, m.graph, [m.input]),
+    (e) => {
+      assert.equal(
+        e.bindingFailure.protocol.exception.description,
+        'Error: missing HostRoot current'
+      )
+      assert.deepEqual(e.bindingReceipt.owners, [])
+      return true
+    }
+  )
+})
+test('batch diagnostic whitelist is exact and data-free for all constants and stack names', () => {
+  const reasons = [
+    'owner getter refused',
+    'nonreciprocal Fiber alternate',
+    'Fiber return cycle',
+    'missing HostRoot current',
+    'Fiber traversal bound',
+    'ambiguous current/alternate reachability',
+    'invalid owner batch shape',
+    'duplicate owner batch member',
+    'mixed owner batch roots'
+  ]
+  for (const reason of reasons) {
+    assert.equal(
+      sanitizeExceptionDetails({ exception: { description: 'Error: ' + reason } }).exception
+        .description,
+      'Error: ' + reason
+    )
+    for (const description of [
+      'Error: ' + reason + ' secret-session',
+      'Error: ' + reason + '\r injected',
+      'Error: ' + reason + ' index=3',
+      'Error: ' + reason + '\u0000secret',
+      'Arbitrary: ' + reason
+    ])
+      assert.equal(
+        sanitizeExceptionDetails({ exception: { description } }).exception.description,
+        '[redacted remote description]'
+      )
+  }
+  const value = sanitizeExceptionDetails({
+    exception: { description: 'secret-body' },
+    stackTrace: {
+      callFrames: [{ functionName: 'readOwnerBatch' }, { functionName: 'secret-body' }]
+    }
+  })
+  assert.deepEqual(
+    value.stackTrace.callFrames.map((x) => x.functionName),
+    ['readOwnerBatch', '[redacted]']
+  )
+  assert.equal(JSON.stringify(value).includes('secret-body'), false)
+})
+
+for (const stage of ['before', 'after', 'invalidation'])
+  test('batch ' + stage + ' failure cannot publish owner rows', async () => {
+    const m = batchCdp(),
+      send = m.session.send.bind(m.session)
+    let usage = 0
+    m.session.send = async (method, params) => {
+      if (
+        method === 'Runtime.getHeapUsage' &&
+        ++usage === (stage === 'before' ? 1 : 2) &&
+        stage !== 'invalidation'
+      )
+        throw new Error('untrusted usage failure')
+      if (
+        stage === 'invalidation' &&
+        method === 'Runtime.callFunctionOn' &&
+        params.functionDeclaration === 'function(){return 1}'
+      )
+        return { result: { value: 1 } }
+      return send(method, params)
+    }
+    await assert.rejects(
+      () => bindCapturedGraph(m.session, m.graph, [m.input]),
+      (e) => {
+        assert.deepEqual(e.bindingReceipt.owners, [])
+        assert.ok(e.bindingFailure)
+        if (stage === 'invalidation') assert.ok(e instanceof AggregateError)
+        return true
+      }
+    )
+  })
+
+// Exact 140 accepted849 single-owner semantic references; only the API changes.
+const ownerReferenceValues = [
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['synthetic-representative-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['synthetic-representative-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['owner-session', 'host-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['owner-session', 'host-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['owner-session', 'host-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: false,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['owner-session', 'host-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: false,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: ['terminal'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: [],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: [],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'current',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: ['chat'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  },
+  {
+    branch: 'alternate',
+    reciprocal: true,
+    sessionIds: ['synthetic-session'],
+    views: ['chat'],
+    hostAncestorInCurrentTree: true,
+    connected: null,
+    currentReachable: true
+  }
+]
+const ownerReferences = [
+  ['full-valid-owner', 'full', 'valid', null, 'owner', null, 0],
+  ['full-valid-alternate', 'full', 'valid', null, 'alternate', null, 1],
+  ['full-props-getter-owner', 'full', 'props-getter', null, 'owner', 'owner getter refused', null],
+  [
+    'full-props-getter-alternate',
+    'full',
+    'props-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'full-return-getter-owner',
+    'full',
+    'return-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'full-return-getter-alternate',
+    'full',
+    'return-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  ['hot-valid-owner', 'hot', 'valid', null, 'owner', null, 2],
+  ['hot-valid-alternate', 'hot', 'valid', null, 'alternate', null, 3],
+  ['hot-opposite-owner', 'hot', 'opposite', null, 'owner', null, 3],
+  ['hot-opposite-alternate', 'hot', 'opposite', null, 'alternate', null, 2],
+  [
+    'hot-query-child-getter-owner',
+    'hot',
+    'query-child-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-query-child-getter-alternate',
+    'hot',
+    'query-child-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-query-sibling-getter-owner',
+    'hot',
+    'query-sibling-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-query-sibling-getter-alternate',
+    'hot',
+    'query-sibling-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-other-child-getter-owner',
+    'hot',
+    'other-child-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-other-child-getter-alternate',
+    'hot',
+    'other-child-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-other-sibling-getter-owner',
+    'hot',
+    'other-sibling-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-other-sibling-getter-alternate',
+    'hot',
+    'other-sibling-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-ambiguous-after-found-owner',
+    'hot',
+    'ambiguous-after-found',
+    null,
+    'owner',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  [
+    'hot-ambiguous-after-found-alternate',
+    'hot',
+    'ambiguous-after-found',
+    null,
+    'alternate',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  [
+    'hot-disconnected-owner',
+    'hot',
+    'disconnected',
+    null,
+    'owner',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  [
+    'hot-disconnected-alternate',
+    'hot',
+    'disconnected',
+    null,
+    'alternate',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  ['hot-inherited-child-getter-owner', 'hot', 'inherited-child-getter', null, 'owner', null, 2],
+  [
+    'hot-inherited-child-getter-alternate',
+    'hot',
+    'inherited-child-getter',
+    null,
+    'alternate',
+    null,
+    3
+  ],
+  ['hot-inherited-sibling-getter-owner', 'hot', 'inherited-sibling-getter', null, 'owner', null, 2],
+  [
+    'hot-inherited-sibling-getter-alternate',
+    'hot',
+    'inherited-sibling-getter',
+    null,
+    'alternate',
+    null,
+    3
+  ],
+  ['hot-primitive-refs-owner', 'hot', 'primitive-refs', null, 'owner', null, 2],
+  ['hot-primitive-refs-alternate', 'hot', 'primitive-refs', null, 'alternate', null, 3],
+  ['hot-symbol-bigint-refs-owner', 'hot', 'symbol-bigint-refs', null, 'owner', null, 2],
+  ['hot-symbol-bigint-refs-alternate', 'hot', 'symbol-bigint-refs', null, 'alternate', null, 3],
+  ['hot-function-ref-owner', 'hot', 'function-ref', null, 'owner', null, 2],
+  ['hot-function-ref-alternate', 'hot', 'function-ref', null, 'alternate', null, 3],
+  [
+    'hot-function-ambiguous-owner',
+    'hot',
+    'function-ambiguous',
+    null,
+    'owner',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  [
+    'hot-function-ambiguous-alternate',
+    'hot',
+    'function-ambiguous',
+    null,
+    'alternate',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  ['hot-falsy-null-owner', 'hot', 'falsy-null', null, 'owner', null, 2],
+  ['hot-falsy-null-alternate', 'hot', 'falsy-null', null, 'alternate', null, 3],
+  ['hot-falsy-undefined-owner', 'hot', 'falsy-undefined', null, 'owner', null, 2],
+  ['hot-falsy-undefined-alternate', 'hot', 'falsy-undefined', null, 'alternate', null, 3],
+  ['hot-falsy-false-owner', 'hot', 'falsy-false', null, 'owner', null, 2],
+  ['hot-falsy-false-alternate', 'hot', 'falsy-false', null, 'alternate', null, 3],
+  ['hot-falsy-zero-owner', 'hot', 'falsy-zero', null, 'owner', null, 2],
+  ['hot-falsy-zero-alternate', 'hot', 'falsy-zero', null, 'alternate', null, 3],
+  ['hot-falsy-nan-owner', 'hot', 'falsy-nan', null, 'owner', null, 2],
+  ['hot-falsy-nan-alternate', 'hot', 'falsy-nan', null, 'alternate', null, 3],
+  ['hot-falsy-empty-owner', 'hot', 'falsy-empty', null, 'owner', null, 2],
+  ['hot-falsy-empty-alternate', 'hot', 'falsy-empty', null, 'alternate', null, 3],
+  ['hot-falsy-bigint-owner', 'hot', 'falsy-bigint', null, 'owner', null, 2],
+  ['hot-falsy-bigint-alternate', 'hot', 'falsy-bigint', null, 'alternate', null, 3],
+  ['hot-shared-cycle-owner', 'hot', 'shared-cycle', null, 'owner', null, 2],
+  ['hot-shared-cycle-alternate', 'hot', 'shared-cycle', null, 'alternate', null, 3],
+  [
+    'hot-nonreciprocal-owner',
+    'hot',
+    'nonreciprocal',
+    null,
+    'owner',
+    'nonreciprocal Fiber alternate',
+    null
+  ],
+  [
+    'hot-nonreciprocal-alternate',
+    'hot',
+    'nonreciprocal',
+    null,
+    'alternate',
+    'nonreciprocal Fiber alternate',
+    null
+  ],
+  ['hot-return-cycle-owner', 'hot', 'return-cycle', null, 'owner', 'Fiber return cycle', null],
+  ['hot-return-cycle-alternate', 'hot', 'return-cycle', null, 'alternate', null, 3],
+  ['hot-return-getter-owner', 'hot', 'return-getter', null, 'owner', 'owner getter refused', null],
+  ['hot-return-getter-alternate', 'hot', 'return-getter', null, 'alternate', null, 3],
+  [
+    'hot-alternate-getter-owner',
+    'hot',
+    'alternate-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-alternate-getter-alternate',
+    'hot',
+    'alternate-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-root-current-getter-owner',
+    'hot',
+    'root-current-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-root-current-getter-alternate',
+    'hot',
+    'root-current-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-missing-root-owner',
+    'hot',
+    'missing-root',
+    null,
+    'owner',
+    'missing HostRoot current',
+    null
+  ],
+  [
+    'hot-missing-root-alternate',
+    'hot',
+    'missing-root',
+    null,
+    'alternate',
+    'missing HostRoot current',
+    null
+  ],
+  [
+    'hot-missing-current-owner',
+    'hot',
+    'missing-current',
+    null,
+    'owner',
+    'missing HostRoot current',
+    null
+  ],
+  [
+    'hot-missing-current-alternate',
+    'hot',
+    'missing-current',
+    null,
+    'alternate',
+    'missing HostRoot current',
+    null
+  ],
+  ['hot-host-not-current-owner', 'hot', 'host-not-current', null, 'owner', null, 4],
+  ['hot-host-not-current-alternate', 'hot', 'host-not-current', null, 'alternate', null, 5],
+  [
+    'hot-session-getter-owner',
+    'hot',
+    'session-getter',
+    null,
+    'owner',
+    'owner getter refused',
+    null
+  ],
+  [
+    'hot-session-getter-alternate',
+    'hot',
+    'session-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  ['hot-props-getter-owner', 'hot', 'props-getter', null, 'owner', 'owner getter refused', null],
+  [
+    'hot-props-getter-alternate',
+    'hot',
+    'props-getter',
+    null,
+    'alternate',
+    'owner getter refused',
+    null
+  ],
+  ['hot-unused-props-getter-owner', 'hot', 'unused-props-getter', null, 'owner', null, 2],
+  ['hot-unused-props-getter-alternate', 'hot', 'unused-props-getter', null, 'alternate', null, 3],
+  ['token-whitespace-0-owner', 'legacy', 'valid', 'chat-view\tterminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-0-alternate',
+    'legacy',
+    'valid',
+    'chat-view\tterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-1-owner', 'legacy', 'valid', 'chat-view\nterminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-1-alternate',
+    'legacy',
+    'valid',
+    'chat-view\nterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-2-owner', 'legacy', 'valid', 'chat-view\u000bterminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-2-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u000bterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-3-owner', 'legacy', 'valid', 'chat-view\fterminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-3-alternate',
+    'legacy',
+    'valid',
+    'chat-view\fterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-4-owner', 'legacy', 'valid', 'chat-view\rterminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-4-alternate',
+    'legacy',
+    'valid',
+    'chat-view\rterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-5-owner', 'legacy', 'valid', 'chat-view terminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-5-alternate',
+    'legacy',
+    'valid',
+    'chat-view terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-6-owner', 'legacy', 'valid', 'chat-view\u00a0terminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-6-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u00a0terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-7-owner', 'legacy', 'valid', 'chat-view\u1680terminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-7-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u1680terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-8-owner', 'legacy', 'valid', 'chat-view\u2000terminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-8-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2000terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-whitespace-9-owner', 'legacy', 'valid', 'chat-view\u2001terminal-view', 'owner', null, 6],
+  [
+    'token-whitespace-9-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2001terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-10-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2002terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-10-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2002terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-11-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2003terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-11-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2003terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-12-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2004terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-12-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2004terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-13-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2005terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-13-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2005terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-14-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2006terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-14-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2006terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-15-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2007terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-15-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2007terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-16-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2008terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-16-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2008terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-17-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2009terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-17-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2009terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-18-owner',
+    'legacy',
+    'valid',
+    'chat-view\u200aterminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-18-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u200aterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-19-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2028terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-19-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2028terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-20-owner',
+    'legacy',
+    'valid',
+    'chat-view\u2029terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-20-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u2029terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-21-owner',
+    'legacy',
+    'valid',
+    'chat-view\u202fterminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-21-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u202fterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-22-owner',
+    'legacy',
+    'valid',
+    'chat-view\u205fterminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-22-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u205fterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-23-owner',
+    'legacy',
+    'valid',
+    'chat-view\u3000terminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-23-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u3000terminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'token-whitespace-24-owner',
+    'legacy',
+    'valid',
+    'chat-view\ufeffterminal-view',
+    'owner',
+    null,
+    6
+  ],
+  [
+    'token-whitespace-24-alternate',
+    'legacy',
+    'valid',
+    'chat-view\ufeffterminal-view',
+    'alternate',
+    null,
+    7
+  ],
+  ['token-partial-owner', 'legacy', 'valid', 'xterminal-view chat-viewer', 'owner', null, 8],
+  [
+    'token-partial-alternate',
+    'legacy',
+    'valid',
+    'xterminal-view chat-viewer',
+    'alternate',
+    null,
+    9
+  ],
+  ['token-chat-owner', 'legacy', 'valid', 'terminal-viewer chat-view', 'owner', null, 10],
+  ['token-chat-alternate', 'legacy', 'valid', 'terminal-viewer chat-view', 'alternate', null, 11],
+  [
+    'token-nonwhitespace-owner',
+    'legacy',
+    'valid',
+    'chat-view\u180eterminal-view',
+    'owner',
+    null,
+    8
+  ],
+  [
+    'token-nonwhitespace-alternate',
+    'legacy',
+    'valid',
+    'chat-view\u180eterminal-view',
+    'alternate',
+    null,
+    9
+  ],
+  ['token-nul-owner', 'legacy', 'valid', 'chat-view\u0000terminal-view', 'owner', null, 8],
+  ['token-nul-alternate', 'legacy', 'valid', 'chat-view\u0000terminal-view', 'alternate', null, 9],
+  ['token-terminal-owner', 'legacy', 'valid', 'terminal-view', 'owner', null, 6],
+  ['token-terminal-alternate', 'legacy', 'valid', 'terminal-view', 'alternate', null, 7],
+  ['token-precedence-owner', 'legacy', 'valid', 'terminal-view chat-view', 'owner', null, 6],
+  [
+    'token-precedence-alternate',
+    'legacy',
+    'valid',
+    'terminal-view chat-view',
+    'alternate',
+    null,
+    7
+  ],
+  [
+    'legacy-owner-disconnected-owner',
+    'legacy',
+    'owner-disconnected',
+    'chat-view',
+    'owner',
+    'missing HostRoot current',
+    null
+  ],
+  [
+    'legacy-owner-disconnected-alternate',
+    'legacy',
+    'owner-disconnected',
+    'chat-view',
+    'alternate',
+    'missing HostRoot current',
+    null
+  ],
+  [
+    'legacy-owner-nonreciprocal-owner',
+    'legacy',
+    'owner-nonreciprocal',
+    'chat-view',
+    'owner',
+    'nonreciprocal Fiber alternate',
+    null
+  ],
+  [
+    'legacy-owner-nonreciprocal-alternate',
+    'legacy',
+    'owner-nonreciprocal',
+    'chat-view',
+    'alternate',
+    'nonreciprocal Fiber alternate',
+    null
+  ],
+  [
+    'legacy-owner-ambiguous-owner',
+    'legacy',
+    'owner-ambiguous',
+    'chat-view',
+    'owner',
+    'ambiguous current/alternate reachability',
+    null
+  ],
+  [
+    'legacy-owner-ambiguous-alternate',
+    'legacy',
+    'owner-ambiguous',
+    'chat-view',
+    'alternate',
+    'ambiguous current/alternate reachability',
+    null
+  ]
+]
+for (const [name, kind, mode, className, field, reason, valueIndex] of ownerReferences)
+  test('canonical one-member reference ' + name, () => {
+    const b =
+      kind === 'full'
+        ? representativeOwnerFixture(mode)
+        : kind === 'hot'
+          ? hotOwnerFixture(mode)
+          : syntheticInspectorFixture(mode, className)
+    if (reason)
+      assert.throws(() => readOneOwner(b.root, b[field]), { name: 'Error', message: reason })
+    else assert.deepEqual(readOneOwner(b.root, b[field]), ownerReferenceValues[valueIndex])
+    assert.equal(b.getterCalls(), 0)
+  })
+function readBoth(b, members = [b.owner, b.alternate]) {
+  const current = Object.getOwnPropertyDescriptor(b.root.stateNode, 'current')?.value
+  return readOwnerBatch.call(
+    b.root.stateNode,
+    current,
+    ...members.flatMap((x) => [x, Object.getOwnPropertyDescriptor(x, 'alternate')?.value])
+  )
+}
+for (const [mode, reason] of hotOwnerCases)
+  test('canonical both-member composition ' + mode, () => {
+    const b = hotOwnerFixture(mode)
+    if (reason) assert.throws(() => readBoth(b), { name: 'Error', message: reason })
+    else {
+      const v = readBoth(b)
+      assert.equal(v.memberCount, 2)
+      for (let i = 0; i < 2; i++) {
+        const { ordinal, alternateOrdinal, ...metadata } = v.members[i]
+        assert.equal(ordinal, i)
+        assert.equal(alternateOrdinal, 1 - i)
+        assert.deepEqual(metadata, readOneOwner(b.root, i ? b.alternate : b.owner))
+      }
+    }
+    assert.equal(b.getterCalls(), 0)
+  })
+test('canonical batch duplicates/mixed roots/shape/later errors are atomic', () => {
+  const b = hotOwnerFixture(),
+    other = hotOwnerFixture()
+  assert.throws(() => readBoth(b, [b.owner, b.owner]), /duplicate owner batch member/)
+  assert.throws(() => readBoth(b, [b.owner, other.owner]), /mixed owner batch roots/)
+  assert.throws(() => readOwnerBatch.call(b.root.stateNode, b.root), /invalid owner batch shape/)
+  assert.throws(
+    () => readOwnerBatch.call(b.root.stateNode, b.root, b.owner),
+    /invalid owner batch shape/
+  )
+  const bad = hotOwnerFixture('props-getter')
+  bad.alternate.return = bad.alternate
+  assert.throws(() => readBoth(bad), /Fiber return cycle/)
+  assert.equal(bad.getterCalls(), 0)
+  const after = hotOwnerFixture()
+  Object.defineProperty(after.alternate, 'memoizedProps', {
+    get() {
+      throw new Error('invoked')
+    }
+  })
+  assert.throws(() => readBoth(after), /owner getter refused/)
+  const global = hotOwnerFixture('other-child-getter')
+  global.owner.child = global.alternate
+  assert.throws(() => readBoth(global), /owner getter refused/)
+  assert.equal(global.getterCalls(), 0)
+})
+test('canonical batch permits different HostRoot Fibers with identical root-state/current', () => {
+  const b = hotOwnerFixture(),
+    alternateRoot = { tag: 3, stateNode: b.root.stateNode }
+  b.alternate.return = {
+    tag: 5,
+    return: alternateRoot,
+    memoizedProps: { className: 'chat-view', sessionId: 'alternate-session' }
+  }
+  const value = readBoth(b)
+  assert.equal(value.members[1].branch, 'alternate')
+  assert.equal(value.members[1].hostAncestorInCurrentTree, false)
+  assert.deepEqual(value.members[1].sessionIds, ['owner-session', 'alternate-session'])
+})
+
+function sharedOwnerFixture(pairs = 1) {
+  const bundle = representativeOwnerFixture()
+  const { root, owner, alternate } = bundle
+  const members = [owner, alternate]
+  if (pairs === 2) {
+    const all = [],
+      pending = [owner.child],
+      seen = new Set()
+    while (pending.length) {
+      const at = pending.pop()
+      if (!at || seen.has(at)) continue
+      seen.add(at)
+      all.push(at)
+      pending.push(at.child, at.sibling)
+    }
+    const second = all.find((at) => !at.child && !at.sibling && at.return.child !== at)
+    if (!second) throw new Error('missing removable right leaf')
+    const left = second.return.child
+    if (left.sibling !== second) throw new Error('leaf adjacency')
+    left.sibling = null
+    second.return = owner.return
+    second.child = null
+    second.sibling = null
+    const secondAlternate = { tag: 0, return: owner.return, alternate: second }
+    second.alternate = secondAlternate
+    owner.sibling = second
+    members.push(second, secondAlternate)
+  }
+  const seen = new Set(),
+    pending = [root]
+  while (pending.length) {
+    const at = pending.pop()
+    if (!at || seen.has(at)) continue
+    seen.add(at)
+    pending.push(at.child, at.sibling)
+  }
+  const depths = members.map((at) => {
+    let n = 0
+    const visited = new Set()
+    while (at) {
+      if (visited.has(at)) throw new Error('fixture cycle')
+      visited.add(at)
+      n++
+      at = at.return
+    }
+    return n
+  })
+  const proof = {
+    currentTreeFibers: seen.size,
+    depths,
+    membership: members.map((x) => seen.has(x)),
+    reciprocal: members.every((x) => x.alternate.alternate === x),
+    sameRoot: members.every((x) => x.return === owner.return),
+    constructedFibers: seen.size + pairs,
+    originalConstruction: bundle.proof
+  }
+  if (seen.size !== 40903 || depths.some((x) => x !== 42) || !proof.sameRoot || !proof.reciprocal)
+    throw new Error('shared representative fixture shape')
+  return { ...bundle, members, proof }
+}
+
+for (const count of [1, 2])
+  test('canonical shared representative ' + count + ' pairs has one full DFS', () => {
+    const inspect = function (factory, batch) {
+      const b = factory(),
+        pop = Array.prototype.pop
+      let pops = 0
+      Array.prototype.pop = function () {
+        pops++
+        return Reflect.apply(pop, this, [])
+      }
+      let value
+      try {
+        value = batch.call(b.root.stateNode, b.root, ...b.members.flatMap((x) => [x, x.alternate]))
+      } finally {
+        Array.prototype.pop = pop
+      }
+      return { value, proof: b.proof, pops, getters: b.getterCalls() }
+    }
+    const source =
+      representativeOwnerFixture.toString() +
+      ';' +
+      sharedOwnerFixture.toString() +
+      ';(' +
+      inspect.toString() +
+      ')(()=>sharedOwnerFixture(' +
+      count +
+      '),' +
+      readOwnerBatch.toString() +
+      ')'
+    const result = JSON.parse(JSON.stringify(vm.runInNewContext(source)))
+    assert.equal(result.proof.currentTreeFibers, 40903)
+    assert.deepEqual(result.proof.depths, Array(2 * count).fill(42))
+    assert.equal(result.pops, 40903, 'only one complete DFS across all members')
+    assert.equal(result.value.memberCount, 2 * count)
+    assert.equal(result.getters, 0)
+    for (let i = 0; i < 2 * count; i++) {
+      const { ordinal, alternateOrdinal, ...metadata } = result.value.members[i]
+      assert.equal(ordinal, i)
+      assert.equal(alternateOrdinal, i % 2 ? i - 1 : i + 1)
+      assert.deepEqual(metadata, ownerReferenceValues[i % 2])
+    }
+  })
+
+test('planner checks the separately captured alternate reciprocal property', () => {
+  const s = ownerSnapshot(),
+    raw = structuredClone(s.raw)
+  retargetFrom(raw, s.ids.alternate - 1, 'alternate', s.ids.alternate - 1)
+  assert.equal(
+    planOwnerBatch(decodeHeap(raw), s.graph.ownership.fibers.slice(0, 1)).supported,
+    false
+  )
+})
+test('canonical reader rejects a different separately captured expected alternate', () => {
+  const b = hotOwnerFixture(),
+    other = hotOwnerFixture()
+  assert.throws(
+    () => readOwnerBatch.call(b.root.stateNode, b.root, b.owner, other.owner),
+    /nonreciprocal Fiber alternate/
+  )
+})
+test('batch serialization failure tracks and invalidates its returned handle', async () => {
+  const m = batchCdp({ serialization: true })
+  await assert.rejects(
+    () => bindCapturedGraph(m.session, m.graph, [m.input]),
+    (e) => {
+      assert.equal(e.bindingFailure.kind, 'serialization')
+      assert.equal(e.bindingFailure.stage, 'owner-batch-read')
+      assert.deepEqual(e.bindingReceipt.owners, [])
+      assert.equal(e.bindingReceipt.invalidatedHandles, 7)
+      return true
+    }
   )
 })

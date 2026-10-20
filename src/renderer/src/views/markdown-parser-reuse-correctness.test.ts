@@ -1,3 +1,4 @@
+import { compareDeep } from './markdown-parser-deep-test-support'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown, { defaultUrlTransform, type Options } from 'react-markdown'
@@ -317,8 +318,8 @@ it('does not add a deep phrasing inspection/clone failure to accepted full-pipel
   for (const depth of [16, 64, 128, 256]) {
     const text = '*a **b '.repeat(depth) + 'middle' + ' b** a*'.repeat(depth) + '\n\nMutable'
     const slot = makeSlot()
-    compare(text, slot)
-    compare(text + ' grows', slot)
+    compareDeep(text, slot, depth, 'initial')
+    compareDeep(text + ' grows', slot, depth, 'append')
   }
 })
 

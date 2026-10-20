@@ -726,7 +726,7 @@ export function readBoundPrefix(snapshot) {
 
 // Reads actual Fiber ancestors and the HostRoot current child/sibling graph. A
 // return chain alone does not establish which of a reciprocal pair is current.
-export function readOwnerFiber() {
+export function readOwnerBatch(current, ...pairs) {
   const own = (o, k) => {
     if (!o || (typeof o !== 'object' && typeof o !== 'function')) return undefined
     const d = Object.getOwnPropertyDescriptor(o, k)
@@ -771,33 +771,45 @@ export function readOwnerFiber() {
     }
     return false
   }
-  const alternate = own(this, 'alternate')
-  if (!alternate || own(alternate, 'alternate') !== this)
-    throw new Error('nonreciprocal Fiber alternate')
-  const ancestors = [this],
-    visited = new Set()
-  for (let i = 0; i < ancestors.length; i++) {
-    const at = ancestors[i]
-    if (visited.has(at)) throw new Error('Fiber return cycle')
-    visited.add(at)
-    const parent = own(at, 'return')
-    if (parent) ancestors.push(parent)
+  if (!pairs.length || pairs.length % 2) throw new Error('invalid owner batch shape')
+  const capturedCurrent = own(this, 'current')
+  if (!current || capturedCurrent !== current) throw new Error('missing HostRoot current')
+  const members = [],
+    requested = [],
+    unique = new Set()
+  for (let ordinal = 0; ordinal < pairs.length / 2; ordinal++) {
+    const owner = pairs[2 * ordinal],
+      expectedAlternate = pairs[2 * ordinal + 1]
+    if (unique.has(owner)) throw new Error('duplicate owner batch member')
+    unique.add(owner)
+    requested.push(owner)
+    const alternate = own(owner, 'alternate')
+    if (!alternate || alternate !== expectedAlternate || own(alternate, 'alternate') !== owner)
+      throw new Error('nonreciprocal Fiber alternate')
+    const ancestors = [owner],
+      visited = new Set()
+    for (let i = 0; i < ancestors.length; i++) {
+      const at = ancestors[i]
+      if (visited.has(at)) throw new Error('Fiber return cycle')
+      visited.add(at)
+      const parent = own(at, 'return')
+      if (parent) ancestors.push(parent)
+    }
+    const hostRoot = ancestors.at(-1),
+      root = own(hostRoot, 'stateNode')
+    if (own(hostRoot, 'tag') !== 3 || !own(root, 'current'))
+      throw new Error('missing HostRoot current')
+    if (root !== this || own(root, 'current') !== current)
+      throw new Error('mixed owner batch roots')
+    members.push({ owner, alternate, ancestors })
   }
-  const hostRoot = ancestors.at(-1),
-    root = own(hostRoot, 'stateNode'),
-    current = own(root, 'current')
-  if (own(hostRoot, 'tag') !== 3 || !current) throw new Error('missing HostRoot current')
   const pending = [current],
     seen = new Set()
-  let isCurrent = false,
-    alternateCurrent = false
   while (pending.length) {
     const at = pending.pop()
     if (!at || seen.has(at)) continue
     seen.add(at)
     if (seen.size > 1000000) throw new Error('Fiber traversal bound')
-    if (at === this) isCurrent = true
-    if (at === alternate) alternateCurrent = true
     if (typeof at === 'object' || typeof at === 'function') {
       const childDescriptor = Object.getOwnPropertyDescriptor(at, 'child')
       if (childDescriptor && !('value' in childDescriptor)) throw new Error('owner getter refused')
@@ -810,34 +822,194 @@ export function readOwnerFiber() {
       if (sibling) pending.push(sibling)
     }
   }
-  if (isCurrent === alternateCurrent) throw new Error('ambiguous current/alternate reachability')
-  const sessions = new Set(),
-    views = new Set()
-  let hostAncestorInCurrentTree = false
-  for (const at of ancestors) {
-    const props = own(at, 'memoizedProps')
-    for (const key of ['data-session-id', 'sessionId']) {
-      const v = own(props, key)
-      if (typeof v === 'string') sessions.add(v)
+  const values = []
+  for (let ordinal = 0; ordinal < members.length; ordinal++) {
+    const { owner, alternate, ancestors } = members[ordinal]
+    const isCurrent = seen.has(owner),
+      alternateCurrent = seen.has(alternate)
+    if (isCurrent === alternateCurrent) throw new Error('ambiguous current/alternate reachability')
+    const sessions = new Set(),
+      views = new Set()
+    let hostAncestorInCurrentTree = false
+    for (const at of ancestors) {
+      const props = own(at, 'memoizedProps')
+      for (const key of ['data-session-id', 'sessionId']) {
+        const v = own(props, key)
+        if (typeof v === 'string') sessions.add(v)
+      }
+      const cls = own(props, 'className')
+      if (typeof cls === 'string') {
+        if (hasToken(cls, 'terminal-view')) views.add('terminal')
+        else if (hasToken(cls, 'chat-view')) views.add('chat')
+      }
+      // DOM getters are deliberately not invoked. Connectedness requires an actual
+      // root.current path plus a host ancestor in that current graph.
+      if (own(at, 'tag') === 5 && seen.has(at)) hostAncestorInCurrentTree = true
     }
-    const cls = own(props, 'className')
-    if (typeof cls === 'string') {
-      if (hasToken(cls, 'terminal-view')) views.add('terminal')
-      else if (hasToken(cls, 'chat-view')) views.add('chat')
+    values.push({
+      ordinal,
+      alternateOrdinal: requested.indexOf(alternate),
+      branch: isCurrent ? 'current' : 'alternate',
+      reciprocal: true,
+      sessionIds: [...sessions],
+      views: [...views],
+      hostAncestorInCurrentTree,
+      connected: null,
+      currentReachable: true
+    })
+  }
+  return { memberCount: members.length, sameRoot: true, members: values }
+}
+
+// A snapshot plan is a hint only. The reader confirms the full terminal chain
+// against these separately captured anchors. Unsupported graphs retain all rows.
+export function planOwnerBatch(g, fibers) {
+  try {
+    const ids = new Map(g.nodes.map((node, index) => [node.id, index]))
+    const unique = new Set(),
+      groups = []
+    const property = (index, key) => {
+      const edges = g.nodes[index]?.edges.filter((e) => e.type === 'property' && e.name === key)
+      assert.equal(edges?.length, 1, 'represented strong property required')
+      const to = edges[0].to
+      assert.ok(g.parent.has(to), 'strongly reachable anchor required')
+      return to
     }
-    // DOM getters are deliberately not invoked. Connectedness requires an actual
-    // root.current path plus a host ancestor in that current graph.
-    if (own(at, 'tag') === 5 && seen.has(at)) hostAncestorInCurrentTree = true
+    for (const [rowIndex, row] of fibers.entries()) {
+      assert.ok(Number.isSafeInteger(row.fiberId) && row.fiberId >= 0)
+      assert.ok(Number.isSafeInteger(row.alternateId) && row.alternateId >= 0)
+      assert.ok(!unique.has(row.fiberId), 'unique owner rows required')
+      unique.add(row.fiberId)
+      const index = ids.get(row.fiberId),
+        alternate = ids.get(row.alternateId)
+      assert.ok(index !== undefined && alternate !== undefined)
+      assert.equal(property(index, 'alternate'), alternate)
+      assert.equal(property(alternate, 'alternate'), index)
+      const visited = new Set()
+      let at = index,
+        hintRoot
+      while (true) {
+        assert.ok(!visited.has(at), 'owner return cycle')
+        visited.add(at)
+        if (g.integer(property(at, 'tag')) === 3 && hintRoot === undefined) hintRoot = at
+        const links = g.nodes[at].edges.filter((e) => e.name === 'return')
+        if (!links.length) {
+          assert.ok(hintRoot !== undefined)
+          break
+        }
+        const next = property(at, 'return')
+        // A non-object end is only a discovery boundary, never runtime proof.
+        if (g.nodes[next].type !== 'object') {
+          assert.ok(hintRoot !== undefined)
+          break
+        }
+        at = next
+      }
+      const root = property(hintRoot, 'stateNode'),
+        current = property(root, 'current')
+      assert.equal(g.nodes[root].type, 'object')
+      assert.equal(g.nodes[current].type, 'object')
+      assert.equal(g.integer(property(current, 'tag')), 3)
+      const rootStateId = g.nodes[root].id,
+        currentId = g.nodes[current].id
+      assert.ok(Number.isSafeInteger(rootStateId) && rootStateId >= 0)
+      assert.ok(Number.isSafeInteger(currentId) && currentId >= 0)
+      let group = groups.find((x) => x.rootStateId === rootStateId && x.currentId === currentId)
+      if (!group) {
+        group = { rootStateId, currentId, rowIndexes: [] }
+        groups.push(group)
+      }
+      group.rowIndexes.push(rowIndex)
+    }
+    if (groups.length > 1)
+      return {
+        supported: false,
+        groups,
+        reason: 'multiple owner roots require representation review'
+      }
+    return { supported: true, groups }
+  } catch {
+    return {
+      supported: false,
+      groups: [],
+      reason: 'owner root anchors are not completely represented'
+    }
   }
-  return {
-    branch: isCurrent ? 'current' : 'alternate',
-    reciprocal: true,
-    sessionIds: [...sessions],
-    views: [...views],
-    hostAncestorInCurrentTree,
-    connected: null,
-    currentReachable: true
+}
+
+function checkedOwnerGroup(fibers, plan) {
+  assert.ok(plan?.supported === true && Array.isArray(plan.groups), 'supported owner plan required')
+  if (!fibers.length) {
+    assert.equal(plan.groups.length, 0)
+    return undefined
   }
+  assert.equal(plan.groups.length, 1, 'one root group required')
+  const group = plan.groups[0]
+  for (const key of ['rootStateId', 'currentId']) assert.ok(safeInteger(group[key]))
+  assert.deepEqual(
+    group.rowIndexes,
+    fibers.map((_, i) => i),
+    'complete ordered owner membership'
+  )
+  const unique = new Set()
+  for (const row of fibers) {
+    assert.ok(safeInteger(row.fiberId) && safeInteger(row.alternateId))
+    assert.ok(!unique.has(row.fiberId), 'unique owner identity required')
+    unique.add(row.fiberId)
+    const other = fibers.find((x) => x.fiberId === row.alternateId)
+    if (other) assert.equal(other.alternateId, row.fiberId)
+  }
+  return group
+}
+
+function mappedOwnerBatch(fibers, value) {
+  assert.deepEqual(Object.keys(value).sort(), ['memberCount', 'members', 'sameRoot'])
+  assert.equal(value.sameRoot, true)
+  assert.equal(value.memberCount, fibers.length)
+  const dense = (array, length) => {
+    assert.ok(Array.isArray(array))
+    assert.equal(array.length, length)
+    assert.equal(Object.keys(array).length, length)
+    for (let i = 0; i < length; i++) assert.ok(Object.hasOwn(array, i))
+  }
+  dense(value.members, fibers.length)
+  const result = value.members.map((member, ordinal) => {
+    assert.deepEqual(Object.keys(member).sort(), [
+      'alternateOrdinal',
+      'branch',
+      'connected',
+      'currentReachable',
+      'hostAncestorInCurrentTree',
+      'ordinal',
+      'reciprocal',
+      'sessionIds',
+      'views'
+    ])
+    assert.equal(member.ordinal, ordinal)
+    assert.equal(
+      member.alternateOrdinal,
+      fibers.findIndex((x) => x.fiberId === fibers[ordinal].alternateId)
+    )
+    assert.ok(['current', 'alternate'].includes(member.branch))
+    assert.equal(member.reciprocal, true)
+    assert.equal(member.currentReachable, true)
+    assert.equal(member.connected, null)
+    assert.equal(typeof member.hostAncestorInCurrentTree, 'boolean')
+    for (const key of ['sessionIds', 'views']) {
+      dense(member[key], member[key].length)
+      assert.equal(new Set(member[key]).size, member[key].length)
+      assert.ok(member[key].every((x) => typeof x === 'string'))
+    }
+    assert.ok(member.views.every((x) => x === 'terminal' || x === 'chat'))
+    const { ordinal: index, alternateOrdinal: unused, ...metadata } = member
+    void unused
+    return { ...fibers[index], ...metadata }
+  })
+  for (let i = 0; i < fibers.length; i++) {
+    const alternate = fibers.findIndex((x) => x.fiberId === fibers[i].alternateId)
+    if (alternate >= 0) assert.notEqual(result[i].branch, result[alternate].branch)
+  }
+  return result
 }
 
 export function planPrefixOwnership(g, states, storeContexts, { bindingPlanOnly = false } = {}) {
@@ -900,6 +1072,7 @@ export function planPrefixOwnership(g, states, storeContexts, { bindingPlanOnly 
     return {
       qualified: false,
       fibers,
+      ownerBatchPlan: planOwnerBatch(g, fibers),
       reason:
         'preliminary handle plan only; full retaining-path analysis deferred until both raw checkpoints persist'
     }
@@ -936,6 +1109,7 @@ export function planPrefixOwnership(g, states, storeContexts, { bindingPlanOnly 
     qualified: false,
     inputHolders,
     fibers,
+    ownerBatchPlan: planOwnerBatch(g, fibers),
     unresolved,
     reason:
       'attempt closures, all input holders and current store publication require complete actual attribution; lexical Context.previous is not an application history slot'
@@ -1009,6 +1183,11 @@ const BINDING_STAGES = [
   'prefix-serialization',
   'owner-fiber-handle',
   'owner-fiber-read',
+  'owner-root-handle',
+  'owner-current-handle',
+  'owner-alternate-handle',
+  'owner-batch-read',
+  'owner-batch-validation',
   'release-group',
   'invalidate-handle',
   'after-binding-usage',
@@ -1064,7 +1243,19 @@ export function sanitizeExceptionDetails(details) {
     const description = ownData(exception, 'description')
     if (typeof description === 'string') {
       const first = description.split(/\r?\n/, 1)[0]
+      const ownerReasons = [
+        'owner getter refused',
+        'nonreciprocal Fiber alternate',
+        'Fiber return cycle',
+        'missing HostRoot current',
+        'Fiber traversal bound',
+        'ambiguous current/alternate reachability',
+        'invalid owner batch shape',
+        'duplicate owner batch member',
+        'mixed owner batch roots'
+      ]
       const invariants = [
+        ...ownerReasons.map((reason) => 'Error: ' + reason),
         'Error: invalid immutable prefix binding',
         ...INVARIANT_REASONS.map((reason) => 'Error: invalid immutable prefix binding: ' + reason)
       ]
@@ -1085,7 +1276,7 @@ export function sanitizeExceptionDetails(details) {
           row.functionName = [
             '',
             'readBoundPrefix',
-            'readOwnerFiber',
+            'readOwnerBatch',
             'data',
             'fail',
             'integer',
@@ -1110,7 +1301,17 @@ function bindingContext(context) {
     phase: ['binding', 'warm', 'final-closed'].includes(context.phase) ? context.phase : 'binding',
     stage: BINDING_STAGES.includes(context.stage) ? context.stage : 'graph-plan'
   }
-  for (const key of ['rowIndex', 'stateId', 'snapshotId', 'fiberId'])
+  for (const key of [
+    'rowIndex',
+    'stateId',
+    'snapshotId',
+    'fiberId',
+    'batchIndex',
+    'memberCount',
+    'rootStateId',
+    'currentId',
+    'alternateId'
+  ])
     if (safeInteger(context[key])) result[key] = context[key]
   return result
 }
@@ -1289,7 +1490,22 @@ export async function bindCapturedGraph(
       invalidatedHandles++
     }
   }
+  let ownerGroup,
+    pendingOwners = []
+  const ownerBatchPlan =
+    graph.ownership.ownerBatchPlan ??
+    (graph.ownership.fibers.length === 0 ? { supported: true, groups: [] } : undefined)
   try {
+    try {
+      ownerGroup = checkedOwnerGroup(graph.ownership.fibers, ownerBatchPlan)
+    } catch {
+      throw errorFor(
+        'unsupported owner batch plan',
+        { stage: 'graph-plan' },
+        undefined,
+        'representation'
+      )
+    }
     diagnosticUsage.before = await usage('before-binding-usage')
     for (const [rowIndex, row] of graph.allPrefixes.entries()) {
       const context = { rowIndex, stateId: row.nodeId, snapshotId: row.snapshotId }
@@ -1314,13 +1530,63 @@ export async function bindCapturedGraph(
         throw failure
       }
     }
-    for (const [rowIndex, owner] of graph.ownership.fibers.entries()) {
-      const context = { rowIndex, fiberId: owner.fiberId }
-      const objectId = await handle(owner.fiberId, { ...context, stage: 'owner-fiber-handle' })
-      owners.push({
-        ...owner,
-        ...(await read(objectId, readOwnerFiber, [], { ...context, stage: 'owner-fiber-read' }))
+    if (ownerGroup) {
+      const context = {
+        batchIndex: 0,
+        memberCount: graph.ownership.fibers.length,
+        rootStateId: ownerGroup.rootStateId,
+        currentId: ownerGroup.currentId
+      }
+      const cache = new Map()
+      const ownerHandle = async (id, details) => {
+        if (!cache.has(id)) cache.set(id, await handle(id, details))
+        return cache.get(id)
+      }
+      const root = await ownerHandle(ownerGroup.rootStateId, {
+        ...context,
+        stage: 'owner-root-handle'
       })
+      const current = await ownerHandle(ownerGroup.currentId, {
+        ...context,
+        stage: 'owner-current-handle'
+      })
+      const args = [{ objectId: current }]
+      for (const [rowIndex, row] of graph.ownership.fibers.entries()) {
+        args.push({
+          objectId: await ownerHandle(row.fiberId, {
+            ...context,
+            rowIndex,
+            fiberId: row.fiberId,
+            stage: 'owner-fiber-handle'
+          })
+        })
+        args.push({
+          objectId: await ownerHandle(row.alternateId, {
+            ...context,
+            rowIndex,
+            alternateId: row.alternateId,
+            stage: 'owner-alternate-handle'
+          })
+        })
+      }
+      const value = await read(root, readOwnerBatch, args, {
+        ...context,
+        stage: 'owner-batch-read'
+      })
+      let mapped
+      try {
+        mapped = mappedOwnerBatch(graph.ownership.fibers, value)
+      } catch {
+        const failure = errorFor(
+          'owner batch semantic validation failed',
+          { ...context, stage: 'owner-batch-validation' },
+          undefined,
+          'semantic'
+        )
+        failure.name = 'QualificationSemanticError'
+        throw failure
+      }
+      pendingOwners = mapped
     }
   } catch (error) {
     operationError = error
@@ -1354,6 +1620,7 @@ export async function bindCapturedGraph(
     qualified: false,
     states,
     owners,
+    ownerBatchPlan,
     released,
     invalidatedHandles,
     diagnosticUsage,
@@ -1372,6 +1639,7 @@ export async function bindCapturedGraph(
     operationError.bindingReceipt = receipt
     throw operationError
   }
+  owners.push(...pendingOwners)
   return {
     ...receipt,
     reason: 'actual graph owner/input/processor attribution and later runtime review still required'

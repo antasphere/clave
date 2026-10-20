@@ -144,6 +144,11 @@ jobs:
         env:
           CLAVE_E2E_SERVER: separate
 
+      # Client completeness, actual native shorter-tail entry and committed-only
+      # metadata publication are required gates (PRDCT-3633 / #204).
+      - name: Gate, deep client Markdown and native parser lifecycle
+        run: node tests/e2e/run.mjs markdown-parser-deep-client native-parser-path markdown-parser-lifecycle
+
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
