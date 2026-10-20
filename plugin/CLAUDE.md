@@ -64,7 +64,7 @@ From the repo root:
 npx plugins add .
 ```
 
-Skills surface as `/clave:<skill>` in any installed host. Note that this copies the working tree — in the Antasphere workspace, prefer `./antasphere plugins`, which installs from the committed tree instead.
+Skills surface as `/clave:<skill>` in any installed host. Note that this copies the working tree — in the Antasphere workspace, prefer `steward plugins`.
 
 ## Conventions
 
