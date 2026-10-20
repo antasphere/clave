@@ -3,6 +3,18 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { validateProfile, normalizeProfile } from './renderer-data.mjs'
 import { responsivenessSummary, checkResponsivenessComparison } from './responsiveness-data.mjs'
+// Dated current-dev control. A later dev base requires a reviewed source/freeze update.
+export const APPROVED_RAW_CONTROL_SOURCE = 'af0a9f6d1edf595fb6dfcdc82e61f31af8e95555'
+export const APPROVED_RAW_CONTROL_TREE = 'f7a5335209493eb47f64295e6512d29369ac89b0'
+
+export function validateRawControlBinding(frozen) {
+  assert.ok(frozen?.before, 'root-frozen raw control binding required')
+  assert.match(frozen.before.source, /^[a-f0-9]{40}$/, 'raw control source HEAD')
+  assert.match(frozen.before.tree, /^[a-f0-9]{40}$/, 'raw control tree')
+  assert.equal(frozen.before.source, APPROVED_RAW_CONTROL_SOURCE, 'exact raw dev BEFORE source')
+  assert.equal(frozen.before.tree, APPROVED_RAW_CONTROL_TREE, 'exact raw dev BEFORE tree')
+}
+
 export const FORMAL_RUNTIME_FILES = [
   'scripts/performance/parser-responsiveness.mjs',
   'scripts/performance/parser-responsiveness-data.mjs',
@@ -157,7 +169,13 @@ export function validateParserCollection(c, { primary = true, profiles } = {}) {
 }
 export function validateFrozenSide(c, frozen, key) {
   assert.ok(frozen?.[key], 'root-frozen source/build binding required')
+  validateRawControlBinding(frozen)
+  assert.match(c.source, /^[a-f0-9]{40}$/, 'source HEAD')
+  assert.match(frozen[key].source, /^[a-f0-9]{40}$/, 'frozen source HEAD')
+  assert.match(c.provenance?.tree, /^[a-f0-9]{40}$/, 'source tree')
+  assert.match(frozen[key].tree, /^[a-f0-9]{40}$/, 'frozen source tree')
   assert.equal(c.source, frozen[key].source, 'frozen source HEAD')
+  assert.equal(c.provenance.tree, frozen[key].tree, 'frozen source tree')
   assert.deepEqual(c.provenance.buildSha256, frozen[key].buildSha256, 'frozen actual build')
   assert.equal(
     c.provenance.trackedOverlaySha256,
@@ -186,7 +204,6 @@ export function checkParserComparison(
   { beforeProfiles, afterProfiles } = {}
 ) {
   validateFrozenPair(before, after, frozen)
-  assert.equal(before.source, '4555de3d125b496ae4d971b1368ae4363640d6ae', 'raw frozen dev BEFORE')
   assert.equal(before.cohort, 'before')
   assert.equal(after.cohort, 'after')
   validateParserCollection(before, { profiles: beforeProfiles })

@@ -206,3 +206,28 @@ defines the separately reviewed whole-feature/raw-current-dev question; its
 qualification and collection remain blocked until root GO. All numerical and
 user-facing targets above remain unchanged. Original SSR diagnostic failure
 PRDCT-3634 remains unresolved, not converted into a pass by this amendment.
+
+## 2026-10-20 current-dev control binding
+
+The approved raw BEFORE for this dated full-parser collector is now commit
+`af0a9f6d1edf595fb6dfcdc82e61f31af8e95555`, tree
+`f7a5335209493eb47f64295e6512d29369ac89b0`, the actual development source after
+lifecycle PR220 and microphone PR66. Earlier controls, measurements, failures and
+limits remain historical evidence. This amendment does not qualify new source,
+builds, resource collection or latency results.
+
+The data module owns the exact approved control source/tree constants. The CLI
+checks that binding before collection; the same guard applies when validating
+either side and comparing a pair. Matching receipt and freeze values cannot
+authorize an old or arbitrary raw control. Both receipt and frozen source/tree
+identities must be 40 lowercase hexadecimal characters, and each receipt tree
+must equal its own frozen tree for BEFORE and AFTER. Missing trees fail, including when both
+receipt and freeze omit the same field. A later dev move requires a fresh dated
+source/freeze review, not an arbitrary-source flag.
+
+All actual source HEAD, full output, transitive/tooling, lock, tracked overlay,
+profile and comparison checks remain. Original workload, rates, 30 samples after
+five warmups, 3+3 primary launches, thresholds and secondary/orb rules are
+unchanged. New pure validator regression fixtures are synthetic checks only.
+Root still owns final source integration, symmetric tooling overlay rehash,
+freeze, independent qualification and separate runtime GO.

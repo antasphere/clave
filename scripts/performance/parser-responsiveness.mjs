@@ -23,7 +23,8 @@ import {
   FORMAL_CONFIG,
   validateParserCollection,
   parserLaunchSummaries,
-  validateFrozenSide
+  validateFrozenSide,
+  validateRawControlBinding
 } from './parser-responsiveness-data.mjs'
 
 const { values } = parseArgs({
@@ -45,12 +46,7 @@ const runs = Number(values.runs),
 assert.ok(['primary', 'profiled', 'unprofiled', 'orb'].includes(values.mode), 'unknown mode')
 assert.ok(['before', 'after'].includes(values.cohort), 'unknown cohort')
 if (values.mode !== 'primary') assert.equal(values.cohort, 'after', 'secondary candidate only')
-if (values.cohort === 'before')
-  assert.equal(
-    frozen.before?.source,
-    '4555de3d125b496ae4d971b1368ae4363640d6ae',
-    'exact raw dev BEFORE'
-  )
+validateRawControlBinding(frozen)
 assert.equal(values.mark, values.mode === 'orb' ? 'weaving' : 'logo', 'mark/mode mismatch')
 assert.equal(
   runs,

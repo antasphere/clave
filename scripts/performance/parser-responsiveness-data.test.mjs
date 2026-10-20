@@ -5,8 +5,12 @@ import { normalizeProfile } from './renderer-data.mjs'
 import { test } from 'vitest'
 import { responsivenessSummary } from './responsiveness-data.mjs'
 import {
+  APPROVED_RAW_CONTROL_SOURCE,
+  APPROVED_RAW_CONTROL_TREE,
   FORMAL_CONFIG,
   FORMAL_RUNTIME_FILES,
+  validateRawControlBinding,
+  validateFrozenSide,
   validateParserCollection,
   checkParserComparison,
   parserLaunchSummaries
@@ -60,7 +64,7 @@ function collection(cohort) {
   })
   const c = {
     schema: 2,
-    source: cohort === 'before' ? '4555de3d125b496ae4d971b1368ae4363640d6ae' : 'c'.repeat(40),
+    source: cohort === 'before' ? APPROVED_RAW_CONTROL_SOURCE : 'c'.repeat(40),
     mode: 'primary',
     cohort,
     config: { ...FORMAL_CONFIG, profiled: true, mark: 'logo' },
@@ -68,7 +72,7 @@ function collection(cohort) {
     completedAt: '2026-10-19T00:00:00Z',
     toolingSha256: Object.fromEntries(FORMAL_RUNTIME_FILES.map((f) => [f, hash])),
     provenance: {
-      tree: 'd'.repeat(40),
+      tree: cohort === 'before' ? APPROVED_RAW_CONTROL_TREE : 'd'.repeat(40),
       status: '',
       trackedOverlaySha256: hash,
       buildSha256: { 'out/main/index.js': hash, 'out/renderer/index.html': hash },
@@ -107,11 +111,13 @@ function frozen(b, a) {
   return {
     before: {
       source: b.source,
+      tree: b.provenance.tree,
       buildSha256: b.provenance.buildSha256,
       trackedOverlaySha256: b.provenance.trackedOverlaySha256
     },
     after: {
       source: a.source,
+      tree: a.provenance.tree,
       buildSha256: a.provenance.buildSha256,
       trackedOverlaySha256: a.provenance.trackedOverlaySha256
     },
@@ -127,6 +133,74 @@ function compare(b, a) {
 }
 test('strict primary delegates unchanged target comparison and accepts a valid synthetic pair', () =>
   assert.ok(compare(collection('before'), collection('after')).reduction >= 0.6))
+
+test('pins this dated collector to the approved current-dev control source and tree', () => {
+  assert.equal(APPROVED_RAW_CONTROL_SOURCE, 'af0a9f6d1edf595fb6dfcdc82e61f31af8e95555')
+  assert.equal(APPROVED_RAW_CONTROL_TREE, 'f7a5335209493eb47f64295e6512d29369ac89b0')
+  const b = collection('before'),
+    a = collection('after'),
+    f = frozen(b, a)
+  assert.doesNotThrow(() => validateRawControlBinding(f))
+  assert.doesNotThrow(() => validateFrozenSide(b, f, 'before'))
+  assert.doesNotThrow(() => validateFrozenSide(a, f, 'after'))
+})
+
+const bindingNegatives = {
+  'old4555 receipt and freeze': ({ b, f }) => {
+    b.source = f.before.source = '4555de3d125b496ae4d971b1368ae4363640d6ae'
+  },
+  'same wrong raw source in receipt and freeze': ({ b, f }) => {
+    b.source = f.before.source = 'e'.repeat(40)
+  },
+  'same wrong raw tree in receipt and freeze': ({ b, f }) => {
+    b.provenance.tree = f.before.tree = 'e'.repeat(40)
+  },
+  'missing raw frozen tree': ({ f }) => delete f.before.tree,
+  'missing raw receipt tree': ({ b }) => delete b.provenance.tree,
+  'missing both raw trees': ({ b, f }) => {
+    delete b.provenance.tree
+    delete f.before.tree
+  },
+  'raw receipt tree differs from freeze': ({ b }) => (b.provenance.tree = 'e'.repeat(40)),
+  'candidate tree differs from freeze': ({ f }) => (f.after.tree = 'e'.repeat(40)),
+  'missing candidate frozen tree': ({ f }) => delete f.after.tree,
+  'missing candidate receipt tree': ({ a }) => delete a.provenance.tree,
+  'missing both candidate trees': ({ a, f }) => {
+    delete a.provenance.tree
+    delete f.after.tree
+  },
+  'non-hex matching candidate source': ({ a, f }) => {
+    a.source = f.after.source = 'z'.repeat(40)
+  },
+  'short candidate frozen source': ({ f }) => (f.after.source = 'c'.repeat(39)),
+  'short candidate receipt source': ({ a }) => (a.source = 'c'.repeat(39)),
+  'short matching candidate tree': ({ a, f }) => {
+    a.provenance.tree = f.after.tree = 'd'.repeat(39)
+  },
+  'non-hex matching candidate tree': ({ a, f }) => {
+    a.provenance.tree = f.after.tree = 'z'.repeat(40)
+  }
+}
+for (const [name, mutate] of Object.entries(bindingNegatives))
+  test('rejects frozen binding with ' + name, () => {
+    const b = collection('before'),
+      a = collection('after'),
+      f = structuredClone(frozen(b, a))
+    mutate({ b, a, f })
+    assert.throws(
+      () => checkParserComparison(b, a, f),
+      /source HEAD|source tree|raw control tree|exact raw dev BEFORE/
+    )
+    assert.doesNotThrow(() => compare(collection('before'), collection('after')))
+  })
+
+test('candidate collection also requires the approved raw control binding', () => {
+  const b = collection('before'),
+    a = collection('after'),
+    f = structuredClone(frozen(b, a))
+  f.before.source = 'e'.repeat(40)
+  assert.throws(() => validateFrozenSide(a, f, 'after'), /exact raw dev BEFORE source/)
+})
 const negatives = {
   'missing phase': (c) => delete c.runs[0].phases.off,
   'incomplete phase': (c) => (c.runs[0].phases.on.complete = false),
