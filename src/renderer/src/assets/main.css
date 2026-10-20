@@ -3214,3 +3214,32 @@ html[data-ui-font='synonym'] {
   .pane-status-dot[data-status='background'],
   .sidebar-tab-icon[data-background] { animation: none !important; }
 }
+
+/* A live subagent selector shares the model picker's chip and menu material.
+   Its button is a sibling of the parent row's button for keyboard access. */
+.subagent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing);
+}
+.subagent-session-row > .sidebar-item {
+  flex: 1;
+  min-width: 0;
+}
+.subagent-trigger {
+  --chat-glyph: var(--framed-control-icon);
+  flex-shrink: 0;
+  max-width: 45%;
+  cursor: pointer;
+}
+.subagent-trigger .tab-status {
+  flex-shrink: 0;
+}
+.subagent-trigger[data-active='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-200);
+}
+.subagent-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+}
