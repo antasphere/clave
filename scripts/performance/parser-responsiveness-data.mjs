@@ -4,8 +4,8 @@ import { createHash } from 'node:crypto'
 import { validateProfile, normalizeProfile } from './renderer-data.mjs'
 import { responsivenessSummary, checkResponsivenessComparison } from './responsiveness-data.mjs'
 // Dated current-dev control. A later dev base requires a reviewed source/freeze update.
-export const APPROVED_RAW_CONTROL_SOURCE = 'af0a9f6d1edf595fb6dfcdc82e61f31af8e95555'
-export const APPROVED_RAW_CONTROL_TREE = 'f7a5335209493eb47f64295e6512d29369ac89b0'
+export const APPROVED_RAW_CONTROL_SOURCE = 'b9114709755e7be5b01ae3de4ae6be2aa88a44e6'
+export const APPROVED_RAW_CONTROL_TREE = '2f3c8e081c07c0c856148414f300ebfeb564a4ba'
 
 export function validateRawControlBinding(frozen) {
   assert.ok(frozen?.before, 'root-frozen raw control binding required')

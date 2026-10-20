@@ -138,8 +138,8 @@ test('strict primary delegates unchanged target comparison and accepts a valid s
   assert.ok(compare(collection('before'), collection('after')).reduction >= 0.6))
 
 test('pins this dated collector to the approved current-dev control source and tree', () => {
-  assert.equal(APPROVED_RAW_CONTROL_SOURCE, 'af0a9f6d1edf595fb6dfcdc82e61f31af8e95555')
-  assert.equal(APPROVED_RAW_CONTROL_TREE, 'f7a5335209493eb47f64295e6512d29369ac89b0')
+  assert.equal(APPROVED_RAW_CONTROL_SOURCE, 'b9114709755e7be5b01ae3de4ae6be2aa88a44e6')
+  assert.equal(APPROVED_RAW_CONTROL_TREE, '2f3c8e081c07c0c856148414f300ebfeb564a4ba')
   const b = collection('before'),
     a = collection('after'),
     f = frozen(b, a)
@@ -149,6 +149,10 @@ test('pins this dated collector to the approved current-dev control source and t
 })
 
 const bindingNegatives = {
+  'matching old AF0 source and f7a tree in receipt and freeze': ({ b, f }) => {
+    b.source = f.before.source = 'af0a9f6d1edf595fb6dfcdc82e61f31af8e95555'
+    b.provenance.tree = f.before.tree = 'f7a5335209493eb47f64295e6512d29369ac89b0'
+  },
   'old4555 receipt and freeze': ({ b, f }) => {
     b.source = f.before.source = '4555de3d125b496ae4d971b1368ae4363640d6ae'
   },
