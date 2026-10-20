@@ -23,7 +23,7 @@ import {
   FORMAL_CONFIG,
   validateParserCollection,
   parserLaunchSummaries,
-  validateFrozenSide,
+  validateCurrentFrozenSide,
   validateRawControlBinding
 } from './parser-responsiveness-data.mjs'
 
@@ -124,7 +124,7 @@ const result = {
   startedAt: new Date().toISOString(),
   runs: []
 }
-validateFrozenSide(result, frozen, values.cohort)
+validateCurrentFrozenSide(result, frozen, values.cohort)
 const json = (name, data) =>
   writeFileSync(path.join(out, name), JSON.stringify(data, null, 2) + '\n')
 const save = () => json('measurements.json', result)

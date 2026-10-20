@@ -231,3 +231,28 @@ five warmups, 3+3 primary launches, thresholds and secondary/orb rules are
 unchanged. New pure validator regression fixtures are synthetic checks only.
 Root still owns final source integration, symmetric tooling overlay rehash,
 freeze, independent qualification and separate runtime GO.
+
+## 2026-10-20 historical validator compatibility
+
+The exported generic validateFrozenSide and validateFrozenPair retain their
+exact pre-C1 contracts from 77c5b6b6. Historical resource consumers may have
+different control identities and omit the new frozen tree fields. Expanding
+those shared generic contracts in C1 broke the unchanged legacy resource
+comparison. Its Linux failure and the other three deep-pipeline timeouts remain
+preserved; this correction addresses only the shared-validator incompatibility.
+
+Current collection uses explicit validateCurrentFrozenSide and
+validateCurrentFrozenPair APIs. They require the literal approved af0/f7a BEFORE,
+40 lowercase hexadecimal source and tree identities, both side-specific tree
+equalities, and all original source/build/overlay/tool/transitive checks. The
+current CLI still checks approval before output creation for both cohorts, then
+uses the strict current-side API. checkParserComparison explicitly uses the
+strict current pair. There is no legacy/current flag or fallback.
+
+No legacy resource source, test, qualification flag or collector was changed or
+reenabled. The historical generic regression and current strict negatives are
+separate checks, not resource qualification. Both old and current focused test
+files remain required before an internal candidate is committed. Original
+5,000 ms and 30,000 ms bounds, workload, thresholds, primary/secondary/orb rules and
+all earlier evidence remain unchanged. Measurement roots and their installed
+source overlay stay pinned to 1f94 until a later reviewed integration/rebind.

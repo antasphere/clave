@@ -11,6 +11,9 @@ import {
   FORMAL_RUNTIME_FILES,
   validateRawControlBinding,
   validateFrozenSide,
+  validateFrozenPair,
+  validateCurrentFrozenSide,
+  validateCurrentFrozenPair,
   validateParserCollection,
   checkParserComparison,
   parserLaunchSummaries
@@ -141,8 +144,8 @@ test('pins this dated collector to the approved current-dev control source and t
     a = collection('after'),
     f = frozen(b, a)
   assert.doesNotThrow(() => validateRawControlBinding(f))
-  assert.doesNotThrow(() => validateFrozenSide(b, f, 'before'))
-  assert.doesNotThrow(() => validateFrozenSide(a, f, 'after'))
+  assert.doesNotThrow(() => validateCurrentFrozenSide(b, f, 'before'))
+  assert.doesNotThrow(() => validateCurrentFrozenSide(a, f, 'after'))
 })
 
 const bindingNegatives = {
@@ -199,7 +202,46 @@ test('candidate collection also requires the approved raw control binding', () =
     a = collection('after'),
     f = structuredClone(frozen(b, a))
   f.before.source = 'e'.repeat(40)
-  assert.throws(() => validateFrozenSide(a, f, 'after'), /exact raw dev BEFORE source/)
+  assert.throws(() => validateCurrentFrozenSide(a, f, 'after'), /exact raw dev BEFORE source/)
+})
+
+test('preserves generic historical freezes without imposing current control or tree fields', () => {
+  const b = collection('before'),
+    a = collection('after')
+  b.source = '4555de3d125b496ae4d971b1368ae4363640d6ae'
+  const f = structuredClone(frozen(b, a))
+  delete f.before.tree
+  delete f.after.tree
+  assert.doesNotThrow(() => validateFrozenSide(b, f, 'before'))
+  assert.doesNotThrow(() => validateFrozenSide(a, f, 'after'))
+  assert.doesNotThrow(() => validateFrozenPair(b, a, f))
+  assert.throws(() => validateCurrentFrozenSide(b, f, 'before'), /raw control tree/)
+  assert.throws(() => validateCurrentFrozenSide(a, f, 'after'), /raw control tree/)
+  assert.throws(() => validateCurrentFrozenPair(b, a, f), /raw control tree/)
+  assert.throws(() => compare(b, a), /exact raw dev BEFORE source/)
+})
+
+test('generic historical bindings retain source, build, overlay and tooling guards', () => {
+  const mutations = [
+    (a) => (a.source = 'e'.repeat(40)),
+    (a) => (a.provenance.buildSha256['out/main/index.js'] = 'e'.repeat(64)),
+    (a) => (a.provenance.trackedOverlaySha256 = 'e'.repeat(64)),
+    (a) => (a.toolingSha256[FORMAL_RUNTIME_FILES[0]] = 'e'.repeat(64)),
+    (a) => (a.provenance.transitiveSha256[FORMAL_RUNTIME_FILES[0]] = 'e'.repeat(64))
+  ]
+  for (const mutate of mutations) {
+    const b = collection('before'),
+      a = collection('after')
+    b.source = '4555de3d125b496ae4d971b1368ae4363640d6ae'
+    const f = structuredClone(frozen(b, a))
+    delete f.before.tree
+    delete f.after.tree
+    mutate(a)
+    assert.throws(
+      () => validateFrozenPair(b, a, f),
+      /frozen source HEAD|frozen actual build|intentional tracked overlay|frozen runtime tooling|frozen transitive tooling/
+    )
+  }
 })
 const negatives = {
   'missing phase': (c) => delete c.runs[0].phases.off,

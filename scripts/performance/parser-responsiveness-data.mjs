@@ -169,13 +169,7 @@ export function validateParserCollection(c, { primary = true, profiles } = {}) {
 }
 export function validateFrozenSide(c, frozen, key) {
   assert.ok(frozen?.[key], 'root-frozen source/build binding required')
-  validateRawControlBinding(frozen)
-  assert.match(c.source, /^[a-f0-9]{40}$/, 'source HEAD')
-  assert.match(frozen[key].source, /^[a-f0-9]{40}$/, 'frozen source HEAD')
-  assert.match(c.provenance?.tree, /^[a-f0-9]{40}$/, 'source tree')
-  assert.match(frozen[key].tree, /^[a-f0-9]{40}$/, 'frozen source tree')
   assert.equal(c.source, frozen[key].source, 'frozen source HEAD')
-  assert.equal(c.provenance.tree, frozen[key].tree, 'frozen source tree')
   assert.deepEqual(c.provenance.buildSha256, frozen[key].buildSha256, 'frozen actual build')
   assert.equal(
     c.provenance.trackedOverlaySha256,
@@ -194,6 +188,22 @@ export function validateFrozenPair(before, after, frozen) {
   validateFrozenSide(before, frozen, 'before')
   validateFrozenSide(after, frozen, 'after')
 }
+export function validateCurrentFrozenSide(c, frozen, key) {
+  assert.ok(frozen?.[key], 'root-frozen source/build binding required')
+  validateRawControlBinding(frozen)
+  assert.match(c.source, /^[a-f0-9]{40}$/, 'source HEAD')
+  assert.match(frozen[key].source, /^[a-f0-9]{40}$/, 'frozen source HEAD')
+  assert.match(c.provenance?.tree, /^[a-f0-9]{40}$/, 'source tree')
+  assert.match(frozen[key].tree, /^[a-f0-9]{40}$/, 'frozen source tree')
+  assert.equal(c.source, frozen[key].source, 'frozen source HEAD')
+  assert.equal(c.provenance.tree, frozen[key].tree, 'frozen source tree')
+  validateFrozenSide(c, frozen, key)
+}
+export function validateCurrentFrozenPair(before, after, frozen) {
+  assert.ok(frozen?.before && frozen?.after, 'root-frozen source/build bindings required')
+  validateCurrentFrozenSide(before, frozen, 'before')
+  validateCurrentFrozenSide(after, frozen, 'after')
+}
 export function parserLaunchSummaries(c) {
   return c.runs.map((r) => ({ run: r.run, ...responsivenessSummary([r]) }))
 }
@@ -203,7 +213,7 @@ export function checkParserComparison(
   frozen,
   { beforeProfiles, afterProfiles } = {}
 ) {
-  validateFrozenPair(before, after, frozen)
+  validateCurrentFrozenPair(before, after, frozen)
   assert.equal(before.cohort, 'before')
   assert.equal(after.cohort, 'after')
   validateParserCollection(before, { profiles: beforeProfiles })
