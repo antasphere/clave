@@ -65,14 +65,28 @@ describe('createRedactor', () => {
     })
   })
 
-  it('never renames a field, and a short value cannot be a known secret', () => {
-    // A pathological token equal to a field name is scrubbed from values only;
-    // one as short as an enum value is not a known secret at all.
+  it('never renames a field, and keeps a fixed contract value a token happens to equal', () => {
     const r = createRedactor({ home: '/h', secrets: ['terminalSessionIds', 'separate'] })
-    expect(r.deep({ terminalSessionIds: ['terminalSessionIds'], mode: 'separate' })).toEqual({
+    expect(
+      r.deep({
+        terminalSessionIds: ['terminalSessionIds'],
+        mode: 'separate',
+        warning: 'the separate server'
+      })
+    ).toEqual({
       terminalSessionIds: [REDACTED],
-      mode: 'separate'
+      mode: 'separate',
+      warning: `the ${REDACTED} server`
     })
+  })
+
+  it('scrubs a known secret as short as six characters, as before', () => {
+    const r = createRedactor({ home: '/h', secrets: ['secret1234', 'abc123', 'abc12'] })
+    expect(r.text('key secret1234 in an error')).toBe(`key ${REDACTED} in an error`)
+    expect(r.path('/data/SECRET1234/x')).toBe(`/data/${REDACTED}/x`)
+    expect(r.deep({ k: 'window-abc123' })).toEqual({ k: `window-${REDACTED}` })
+    // Five characters is below the known-secret floor (the patterns still apply).
+    expect(r.text('abc12')).toBe('abc12')
   })
 
   it('folds case without changing length, whatever else the string holds', () => {

@@ -13,12 +13,60 @@
 /** What replaces a secret. */
 export const REDACTED = '<redacted>'
 
-/** The shortest value treated as a KNOWN secret. Clave's own tokens are 64
- *  hex characters; anything shorter than this cannot equal one of the
- *  contract's enum values (the longest, `external-only`, has 13), so the
- *  scrub can never rewrite a typed field such as `mode`. Shorter secret-shaped
- *  values are still caught by the patterns below. */
-export const MIN_KNOWN_SECRET = 16
+/** The shortest value treated as a KNOWN secret, as before round 4: nothing
+ *  at the source bounds a token's length (an attached server's `--token` is
+ *  whatever its starter chose), so every known value of six characters or
+ *  more is scrubbed. Shorter secret-shaped values are still caught by the
+ *  patterns below. */
+export const MIN_KNOWN_SECRET = 6
+
+/** The contract's own fixed values (`src/shared/triage.ts`) and the closed
+ *  vocabularies the sources report in them. A string that IS one of these, as
+ *  a whole, is Clave's constant, never data read from a secret, and is left as
+ *  it is: a token that happens to equal `separate` or `claude` cannot rewrite
+ *  a typed field. The same token inside any other string is still scrubbed. */
+export const TRUSTED_LITERALS: ReadonlySet<string> = new Set([
+  // TriageServerMode, TriageServerOwnership, TriageAgentLaunch
+  'in-process',
+  'separate',
+  'attached',
+  'unknown',
+  'shell-process',
+  'shell-child',
+  'external',
+  'in-app',
+  'external-only',
+  // TriageSource status, transports
+  'ok',
+  'timeout',
+  'error',
+  'unavailable',
+  'pty',
+  'events',
+  // TriageRecordKind and the session modes and providers
+  'claude',
+  'claude-agents',
+  'codex',
+  'antigravity',
+  'pi',
+  'terminal',
+  // agent states, client kinds, record link kinds
+  'idle',
+  'working',
+  'blocked',
+  'done',
+  'ended',
+  'shell',
+  'browser',
+  'agent',
+  'other',
+  'group-terminal',
+  'session-view',
+  'toolbar',
+  // what the snapshot itself writes
+  'Clave',
+  REDACTED
+])
 
 /** Lowercase A–Z only: always the same length, so indexes found in the folded
  *  string are indexes in the original whatever other characters it holds
@@ -80,6 +128,7 @@ export function createRedactor(options: {
    *  a token in one included), by a plain scan: no expression is built from a
    *  secret, so its length or content cannot make the scrub itself fail. */
   const scrubSecrets = (value: string): string => {
+    if (TRUSTED_LITERALS.has(value)) return value
     let out = value
     for (let i = 0; i < secrets.length; i++) {
       const haystack = foldAscii(out)

@@ -602,4 +602,49 @@ describe('collectSnapshot', () => {
     expect(s.origin.windowKey).not.toContain(SHELL_TOKEN)
     expect(JSON.stringify(s)).not.toContain(SHELL_TOKEN)
   })
+
+  it('round 4: a short known token (10 characters) reused in metadata is scrubbed', async () => {
+    const short = 'secret1234'
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:49457',
+          token: short,
+          mode: 'separate',
+          ok: false,
+          error: `refused ${short}`,
+          pid: 725,
+          serverPid: 1412
+        }),
+        windows: () => base.windows().map((w, i) => (i === 0 ? { ...w, key: `win-${short}` } : w)),
+        sessions: async () => {
+          throw new Error(`401 for ${short}`)
+        }
+      })
+    )
+    expect(JSON.stringify(s)).not.toContain(short)
+    expect(s.server.mode).toBe('separate')
+  })
+
+  it('round 4: a token equal to a fixed contract value leaves the typed field intact', async () => {
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:49457',
+          token: 'separate',
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        })
+      })
+    )
+    expect(s.server.mode).toBe('separate')
+    expect(s.server.ownership).toBe('shell-child')
+    expect(s.sessions.status === 'ok' && s.sessions.value.map((x) => x.provider)).toEqual([
+      'terminal',
+      'claude'
+    ])
+  })
 })
