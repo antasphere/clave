@@ -10,6 +10,18 @@ export function TriageDialog(): React.JSX.Element {
   const accounts = choices?.accounts[selection.provider] ?? []
   const partial =
     prepared && (!prepared.snapshot.reconciliation.complete || prepared.warnings.length > 0)
+  const captureTime =
+    prepared && Number.isFinite(Date.parse(prepared.generatedAt))
+      ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
+          new Date(prepared.generatedAt)
+        )
+      : 'unknown time'
+  const serverLabel =
+    prepared?.summary.mode === 'attached'
+      ? 'Connected server'
+      : prepared?.summary.mode === 'unknown'
+        ? 'Server unknown'
+        : 'Local server'
   return (
     <Dialog
       open={state.open}
@@ -31,12 +43,21 @@ export function TriageDialog(): React.JSX.Element {
           <>
             <p className="text-[11px] text-text-secondary mt-4" data-testid="triage-summary">
               {partial ? 'Partial context' : 'Context captured'} · {prepared.summary.windows}{' '}
-              windows · {prepared.summary.sessions ?? 'Unknown'} sessions · {prepared.summary.mode}
+              {prepared.summary.windows === 1 ? 'window' : 'windows'} ·{' '}
+              {prepared.summary.sessions === null
+                ? 'Session count unknown'
+                : `${prepared.summary.sessions} ${prepared.summary.sessions === 1 ? 'session' : 'sessions'}`}
             </p>
-            <p className="text-[11px] text-text-tertiary break-all mt-1">
-              {prepared.generatedAt} · Instance {prepared.origin.instanceId} · Window{' '}
-              {prepared.origin.windowId ?? 'unknown'}
+            <p className="text-[11px] text-text-tertiary mt-1">
+              Captured {captureTime} · Clave {prepared.snapshot.app.version} · {serverLabel}
             </p>
+            <details className="text-[11px] text-text-secondary mt-2">
+              <summary className="cursor-pointer">Capture details</summary>
+              <p className="break-all select-text mt-1">
+                {prepared.generatedAt} · Instance {prepared.origin.instanceId} · Window{' '}
+                {prepared.origin.windowId ?? 'unknown'}
+              </p>
+            </details>
             {prepared.warnings.length > 0 && (
               <ul className="text-[11px] text-text-secondary list-disc pl-4 mt-2">
                 {prepared.warnings.map((warning, i) => (
@@ -103,9 +124,8 @@ export function TriageDialog(): React.JSX.Element {
         </div>
         <p className="text-[11px] text-text-tertiary mt-2">
           Uses the selected profile&apos;s permissions
-          {selection.dangerousMode ? ' and your current skip-permissions selection' : ''}. Defaults
-          stay unchanged. Account availability comes from Clave&apos;s account list; the provider
-          reports login and startup errors in its tab.
+          {selection.dangerousMode ? ' and your current skip-permissions selection' : ''}. The
+          provider may ask you to sign in.
         </p>
         {selection.dangerousMode && state.launchState === 'ready' && (
           <button

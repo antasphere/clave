@@ -229,6 +229,16 @@ describe('triage support controller', () => {
     expect(deps.writeText).toHaveBeenCalledWith(prepared.contextMarkdown)
   })
 
+  it('never renders external preflight errors even when they resemble a local validation message', async () => {
+    const { store, deps } = fixture()
+    await store.getState().openDialog()
+    deps.snapshot.mockRejectedValue(new Error('The SECRET_TOKEN=sentinel was refused'))
+    await store.getState().start()
+    expect(store.getState().error).not.toContain('sentinel')
+    expect(store.getState().error).toContain('could not be checked')
+    expect(deps.launch).not.toHaveBeenCalled()
+  })
+
   it('announces clipboard success only after it resolves and reports rejection honestly', async () => {
     const { store, deps } = fixture()
     await store.getState().openDialog()

@@ -159,35 +159,36 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
           deadline(deps.snapshot())
         ])
         set({ choices })
+        let validationError: string | null = null
         if (
           !choices.profiles.some(
             (p) => p.id === selection.profileId && p.family === selection.provider
           )
         )
-          throw new Error(
+          validationError =
             'The selected launch profile is no longer available. Choose another profile.'
-          )
         const account = choices.accounts[selection.provider].find(
           (a) => a.id === selection.accountId
         )
-        if (!account?.usable)
-          throw new Error(
+        if (!validationError && !account?.usable)
+          validationError =
             'The selected account is missing or needs a login. Choose an available account.'
-          )
         if (
           deps.workspace() !== captureWorkspace ||
           snapshot.origin.instanceId !== prepared.origin.instanceId ||
           snapshot.origin.windowId !== prepared.origin.windowId ||
           snapshot.origin.windowKey !== prepared.origin.windowKey
         )
-          throw new Error('The window, workspace or app instance changed. Capture context again.')
-      } catch (error) {
-        // Only our own validation messages reach the dialog, never provider output.
-        const message =
-          error instanceof Error && error.message.startsWith('The ')
-            ? error.message
-            : 'Launch choices or app identity could not be checked. Copy the context instead.'
-        set({ launchState: 'ready', error: message })
+          validationError = 'The window, workspace or app instance changed. Capture context again.'
+        if (validationError) {
+          set({ launchState: 'ready', error: validationError })
+          return
+        }
+      } catch {
+        set({
+          launchState: 'ready',
+          error: 'Launch choices or app identity could not be checked. Copy the context instead.'
+        })
         return
       }
       try {

@@ -180,12 +180,31 @@ export async function run(t) {
           window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'triage-claude'),
         workspace.id
       )
+      await win.evaluate(
+        async ({ workspaceId, bin }) => {
+          await window.electronAPI.launchProfileUpsert({
+            id: 'triage-codex-fallback',
+            name: 'codex fallback recording',
+            family: 'codex',
+            command: [`${bin}/codex`],
+            additionalArgs: ['--sandbox', 'read-only']
+          })
+          await window.electronAPI.launchProfileSetWorkspace(
+            workspaceId,
+            'codex',
+            'triage-codex-fallback'
+          )
+        },
+        { workspaceId: workspace.id, bin }
+      )
       const account = await win.evaluate(() =>
         window.electronAPI.codexAccountAdd({ label: 'Triage Codex account', kind: 'chatgpt' })
       )
       const accountHome = path.join(serverDataDirOf(data), 'codex-homes', account.id)
       mkdirSync(accountHome, { recursive: true })
       writeFileSync(path.join(accountHome, 'auth.json'), JSON.stringify({ fixture: true }))
+      await win.reload()
+      await win.locator('.launcher-caret').waitFor()
       const first = await identityOf(win)
       const group = await callMcpIn(app, first.windowId, 'createGroup', {
         name: `Triage fixture ${runId}`
@@ -263,6 +282,7 @@ export async function run(t) {
     for (const s of original)
       assert.ok(context.includes(s.id), `preview includes preexisting ${s.id}`)
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
     assert.deepEqual(
       stableSessions(await win.evaluate(() => window.electronAPI.triageSnapshot())),
       original,
@@ -395,7 +415,7 @@ export async function run(t) {
         .click()
       await failureDialog
         .getByRole('alert')
-        .getByText(/selected launch profile is no longer available/)
+        .filter({ hasText: /selected launch profile is no longer available/ })
         .waitFor()
       assert.equal(
         stableSessions(await failureWindow.evaluate(() => window.electronAPI.triageSnapshot()))
@@ -466,6 +486,67 @@ export async function run(t) {
         'the offered terminal route actually starts with the chosen account and permissions',
         true
       )
+      if (serverMode() === 'in-process') {
+        // Delete AFTER preflight, at the real host boundary. The ordinary
+        // terminal fallback must be refused before any pane supplies a size.
+        await win.evaluate(
+          (root) =>
+            window.electronAPI.launchProfileUpsert({
+              id: 'triage-codex-race',
+              name: 'codex race recording',
+              family: 'codex',
+              command: [`${root}/bin/codex`],
+              additionalArgs: []
+            }),
+          root
+        )
+        const raceWindow = (await openWindow(app, win, f.workspace.id)).page
+        raceWindow.setDefaultTimeout(12_000)
+        const raceDialog = await openTriage(app, raceWindow)
+        await choose(raceWindow, 'Triage provider', 'Codex')
+        await choose(raceWindow, 'Triage launch profile', 'codex race recording')
+        await choose(raceWindow, 'Triage account', 'Triage Codex account')
+        const beforeRace = stableSessions(
+          await raceWindow.evaluate(() => window.electronAPI.triageSnapshot())
+        )
+        const processesBeforeRace = records(root, 'codex').filter((r) => r.kind === 'spawn').length
+        await app.evaluate(() => {
+          const host = globalThis.__claveE2E.sessionHost
+          const original = host.start
+          host.start = async (input) => {
+            if (input.options?.launchProfileId !== 'triage-codex-race') return original(input)
+            host.start = original
+            globalThis.__claveE2E.settings.launchProfiles.delete('triage-codex-race')
+            const info = await original(input)
+            globalThis.__triageProfileRace = { id: info.id, actualProfile: info.launchProfileId }
+            return info
+          }
+        })
+        await raceDialog
+          .getByRole('button', { name: 'Start support conversation', exact: true })
+          .click()
+        await raceDialog
+          .getByRole('alert')
+          .filter({ hasText: /unused handle was removed/ })
+          .waitFor()
+        const race = await app.evaluate(() => globalThis.__triageProfileRace)
+        assert.equal(race.actualProfile, 'triage-codex-fallback')
+        assert.deepEqual(
+          stableSessions(await raceWindow.evaluate(() => window.electronAPI.triageSnapshot())),
+          beforeRace,
+          'only the new fallback handle is removed'
+        )
+        await raceWindow.waitForTimeout(300)
+        assert.equal(
+          records(root, 'codex').filter((r) => r.kind === 'spawn').length,
+          processesBeforeRace,
+          'the mismatched prepared terminal never starts its recording process'
+        )
+        t.check(
+          'a post-preflight profile race removes only its new unstarted handle and preserves every existing session',
+          true
+        )
+      }
     }
     const final = await win.evaluate(() => window.electronAPI.triageSnapshot())
     assert.deepEqual(
