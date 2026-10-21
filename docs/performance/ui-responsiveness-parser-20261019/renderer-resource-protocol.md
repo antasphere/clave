@@ -220,6 +220,20 @@ schema consumers, freeze/isolation, fresh qualification faults/restorations and
 separate formal authority remain mandatory. Frozen13a/14c and all failed history
 stay immutable and cannot authorize this new source.
 
+### Native control-panel integration, 21 October 2026
+
+The source integration of dev `5e9fe284ff7a9835b264fb18ff1ecb63f778836a`
+adds session-manager control-request delegation. Its fixture-source pin changes
+from `28b58e07486d01f8a79a01eeaad2092bf31c33e8b7dbcd80b071eb4d1b2d5f02`
+to `6b082ace63db67a23a53504f3a70030bb902021b6b8d09bd9021e7e626f228a0`.
+The other eight pinned fixture/spawn sources retain their exact bytes. The
+collector's acquisition, decoder, schema2 admission, privacy, transaction,
+custody, cleanup, workload, deadlines and numeric criteria do not change.
+An old source pin still stops before any worker or app. This integration
+requires new exact-head independent review, both-side source/artifact maps,
+private bindings, freeze and explicit authority before any measurement. It
+does not extend the old18a0/b911 review or qualify an existing frozen pair.
+
 ### C1/C2 source repair, 21 October 2026
 
 Retained independent review of4d75 is SOURCE NOT READY. INV-A6-C1 found that

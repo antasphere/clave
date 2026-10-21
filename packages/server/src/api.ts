@@ -20,6 +20,7 @@ import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -94,6 +95,7 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('setView', HttpCqrs.command(SetSessionView))
     .handle('models', HttpCqrs.query(GetSessionModels))
     .handle('commands', HttpCqrs.query(GetSessionCommands))
+    .handle('control', HttpCqrs.command(ControlSession))
     .handle('capabilities', HttpCqrs.query(GetSessionCapabilities))
     .handle('history', HttpCqrs.query(GetSessionHistory))
     // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──

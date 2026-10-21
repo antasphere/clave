@@ -3948,6 +3948,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-left: auto;
 }
 
+/* The /mcp and /plugin panels wear the same dock: one row per server or
+   plugin, its name over its state, the actions on the right ending in the
+   switch. A row being worked on dims until the CLI has answered. */
+.chat-control-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  transition: opacity var(--default-transition-duration);
+}
+.chat-control-row + .chat-control-row {
+  margin-top: var(--row-gap);
+}
+.chat-control-row:hover {
+  background-color: var(--surface-100);
+}
+.chat-control-row[data-busy='true'] {
+  opacity: 0.55;
+}
+.chat-control-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.chat-control-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-control-status {
+  color: var(--text-secondary);
+}
+.chat-control-status[data-status='connected'] {
+  color: var(--color-success);
+}
+.chat-control-status[data-status='needs-auth'],
+.chat-control-status[data-status='pending'] {
+  color: var(--color-warning);
+}
+.chat-control-status[data-status='failed'] {
+  color: var(--color-destructive);
+}
+.chat-control-error {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+}
+.chat-control-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 3);
+}
+.chat-control-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-control-note[data-failed='true'] {
+  color: var(--color-destructive);
+}
+
 /* The transcript's record of a request: one muted row, like a tool call. */
 .chat-permission-row {
   display: flex;

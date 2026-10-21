@@ -1341,6 +1341,22 @@ describe('fixed source/artifact inheritance precondition before any app/worker',
       )
     ).toThrow('ownership frozen fixture source coverage')
   })
+  it('rejects the old session-manager pin after native control-request integration', () => {
+    const stale = {
+      ...frozen,
+      candidate: {
+        root,
+        sourceFiles: {
+          ...sourceFiles,
+          'src/main/sessions/session-manager.ts':
+            '28b58e07486d01f8a79a01eeaad2092bf31c33e8b7dbcd80b071eb4d1b2d5f02'
+        }
+      }
+    }
+    expect(() => verifyOwnershipFixture(stale, 'candidate', { read, stat: () => regular })).toThrow(
+      'ownership frozen fixture source coverage'
+    )
+  })
 })
 
 describe('actual forced cleanup is bounded to initial schema2 tuples, with fake queries/signals', () => {

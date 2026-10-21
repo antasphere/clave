@@ -6,7 +6,8 @@ import type {
   SessionInput,
   ModelOption,
   CommandOption,
-  HistoryItem
+  HistoryItem,
+  SessionControl
 } from '../../shared/session-model'
 
 export type SpawnSpec = Session & { options?: unknown }
@@ -40,6 +41,8 @@ export interface SessionAdapter {
   history?(handle: SessionHandle): HistoryItem[]
   /** The commands the composer offers under "/"; absent when the provider has none. */
   commands?(handle: SessionHandle): Promise<CommandOption[]>
+  /** Send the provider one control request from the closed set; absent when it takes none. */
+  control?(handle: SessionHandle, request: SessionControl): Promise<Record<string, unknown>>
   resize?(handle: SessionHandle, cols: number, rows: number): void
   kill(handle: SessionHandle): void | Promise<void>
   on<K extends keyof SessionAdapterEvents>(
