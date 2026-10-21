@@ -673,6 +673,101 @@ export async function run(t) {
         true
       )
       if (serverMode() === 'in-process') {
+        const claudeAccountId = 'triage-fixture-claude-account'
+        // Supply only synthetic metadata and an injected token lookup in this
+        // hidden app. Nothing is written to credentials, Keychain or config.
+        await app.evaluate((_, accountId) => {
+          const accounts = globalThis.__claveE2E.settings.claudeAccounts
+          const list = accounts.list
+          const getToken = accounts.getToken
+          const host = globalThis.__claveE2E.sessionHost
+          const start = host.start
+          const race = { cleared: false, requested: null }
+          globalThis.__triageClaudeAccountRace = race
+          accounts.list = () => [
+            ...list.call(accounts),
+            {
+              id: accountId,
+              label: 'Fixture Claude account',
+              hasToken: !race.cleared,
+              tokenSetAt: 1,
+              tokenExpiresAt: null,
+              tokenInvalid: false
+            }
+          ]
+          accounts.getToken = (id) =>
+            id === accountId
+              ? race.cleared
+                ? undefined
+                : 'fixture-only-never-persisted'
+              : getToken.call(accounts, id)
+          host.start = async (input) => {
+            if (input.options?.launchProfileId !== 'triage-claude') return start(input)
+            host.start = start
+            race.cleared = true
+            race.requested = input.options.claudeProfileId
+            return start(input)
+          }
+          globalThis.__restoreTriageClaudeAccountRace = () => {
+            accounts.list = list
+            accounts.getToken = getToken
+            host.start = start
+          }
+        }, claudeAccountId)
+        try {
+          const claudeRaceWindow = (await openWindow(app, win, f.workspace.id)).page
+          claudeRaceWindow.setDefaultTimeout(12_000)
+          const claudeRaceDialog = await openTriage(app, claudeRaceWindow)
+          await choose(claudeRaceWindow, 'Triage launch profile', 'claude recording')
+          await choose(claudeRaceWindow, 'Triage account', 'Fixture Claude account')
+          const beforeClaudeRace = await claudeRaceWindow.evaluate(() =>
+            window.electronAPI.triageSnapshot()
+          )
+          const claudeSpawns = records(root, 'claude').filter((r) => r.kind === 'spawn').length
+          await claudeRaceDialog
+            .getByRole('button', { name: 'Start support conversation', exact: true })
+            .click()
+          assert.ok(
+            await until(() =>
+              app.evaluate(() => globalThis.__triageClaudeAccountRace?.cleared === true)
+            ),
+            'the synthetic token lookup is cleared after renderer preflight'
+          )
+          const race = await app.evaluate(() => globalThis.__triageClaudeAccountRace)
+          assert.equal(race.requested, claudeAccountId)
+          await claudeRaceDialog
+            .getByRole('alert')
+            .filter({ hasText: /Startup could not be confirmed/ })
+            .waitFor()
+          assert.equal(
+            records(root, 'claude').filter((r) => r.kind === 'spawn').length,
+            claudeSpawns,
+            'a cleared explicit token never starts a process using the machine login'
+          )
+          const afterClaudeRace = await claudeRaceWindow.evaluate(() =>
+            window.electronAPI.triageSnapshot()
+          )
+          assert.deepEqual(
+            afterClaudeRace.sessions.value.map((s) => s.id),
+            beforeClaudeRace.sessions.value.map((s) => s.id),
+            'a cleared Claude token creates no session and preserves previous handles'
+          )
+          assert.equal(beforeClaudeRace.records.status, 'ok')
+          assert.equal(afterClaudeRace.records.status, 'ok')
+          assert.deepEqual(
+            afterClaudeRace.records.value.items.map((r) => r.key).sort(),
+            beforeClaudeRace.records.value.items.map((r) => r.key).sort(),
+            'a refused Claude launch creates no orphan restore record'
+          )
+          await claudeRaceDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
+          await claudeRaceDialog.getByText('Copied', { exact: true }).waitFor()
+          t.check(
+            'a Claude token cleared after preflight refuses startup without a machine-login process or orphan record',
+            true
+          )
+        } finally {
+          await app.evaluate(() => globalThis.__restoreTriageClaudeAccountRace())
+        }
         const accountRaceWindow = (await openWindow(app, win, f.workspace.id)).page
         accountRaceWindow.setDefaultTimeout(12_000)
         const accountRaceDialog = await openTriage(app, accountRaceWindow)
