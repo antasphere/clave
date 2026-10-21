@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { DayActivity } from '../shared/activity-fold'
@@ -637,6 +638,10 @@ export interface ElectronAPI {
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
+  /** One control request to the session's provider, from the closed set the
+   *  native panels send (the MCP servers, the plugins); answers the provider's
+   *  own response. */
+  sessionsControl: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
   /** A resumed conversation's past: the page ending at `before` (the end when
    *  absent), oldest first, with what to ask for the page older than it. */

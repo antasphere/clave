@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
@@ -979,6 +980,11 @@ const electronAPI = {
   sessionsCommands: viaServer<[string], CommandOption[]>({
     ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
     server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
+  }),
+  sessionsControl: viaServer<[string, SessionControl], Record<string, unknown>>({
+    ipc: (id, request) => ipcRenderer.invoke('sessions:control', id, request),
+    server: ({ api }, id, request) =>
+      api.sessions.control(id, request) as Promise<Record<string, unknown>>
   }),
   sessionsCapabilities: viaServer<[string], { images: boolean }>({
     ipc: (id) => ipcRenderer.invoke('sessions:capabilities', id),
