@@ -2,7 +2,7 @@
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { createEntryMarkdownPlugins } from './markdown-append'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
@@ -268,6 +268,8 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
+  const streaming = entry.kind === 'assistant' && !entry.final
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
   // Stable component types retain existing links/tables while text grows.
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -330,7 +332,7 @@ const EntryRow = memo(function EntryRow({
     return (
       <div className="chat-turn-wrap" data-side="start">
         <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
             {entry.text}
           </ReactMarkdown>
         </article>
