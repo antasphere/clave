@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
   readdirSync,
-  realpathSync
+  realpathSync,
+  lstatSync,
+  rmSync
 } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -26,6 +29,7 @@ import {
 } from './harness.mjs'
 
 const SECRET = 'triage-forbidden-environment-sentinel-1021'
+const SYNTHETIC_CLAUDE_TOKEN = 'triage-fixture-pinned-claude-token-1021'
 
 function recordingProviders(root) {
   const bin = path.join(root, 'bin')
@@ -41,10 +45,16 @@ function recordingProviders(root) {
       `#!${process.execPath}
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
-if (argv.includes('-p') && !argv.includes('--input-format')) process.exit(0);
 const file = ${JSON.stringify(`${root}/${family}-calls.jsonl`)};
 const record = value => fs.appendFileSync(file, JSON.stringify(value) + '\\n');
-record({kind:'spawn', pid:process.pid, argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME});
+const syntheticToken = require('node:crypto').createHash('sha256').update(process.env.CLAUDE_CODE_OAUTH_TOKEN || '').digest('hex') === ${JSON.stringify(createHash('sha256').update(SYNTHETIC_CLAUDE_TOKEN).digest('hex'))};
+if (argv.includes('-p') && !argv.includes('--input-format')) {
+  let prompt = '';
+  process.stdin.on('data', chunk => { prompt += chunk; });
+  process.stdin.on('end', () => { record({kind:'title', pid:process.pid, prompt, syntheticToken}); process.exit(0); });
+  return;
+}
+record({kind:'spawn', pid:process.pid, argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME, syntheticToken});
 if (argv.includes('--fixture-fail')) { record({kind:'startup-failure', code:23}); process.stderr.write('Fixture provider startup failed\\n'); process.exit(23); }
 if (!argv.includes('app-server') && !argv.includes('--input-format')) {
   process.stdout.write('TRIAGE_TERMINAL_READY\\n');
@@ -143,6 +153,96 @@ function processAlive(pid) {
   }
 }
 
+function captureMainOutput(app) {
+  const streams = [app.process().stdout, app.process().stderr]
+  assert.ok(streams.every(Boolean), 'the hidden main process exposes its output streams')
+  const marker = 'TRIAGE_MAIN_OUTPUT_CONTROL_1021'
+  let observed = false
+  let leaked = false
+  const listeners = streams.map((stream) => {
+    let tail = ''
+    const listener = (chunk) => {
+      const text = tail + chunk.toString()
+      observed ||= text.includes(marker)
+      leaked ||= text.includes(SYNTHETIC_CLAUDE_TOKEN)
+      tail = text.slice(-Math.max(marker.length, SYNTHETIC_CLAUDE_TOKEN.length))
+    }
+    stream.on('data', listener)
+    return listener
+  })
+  return {
+    ready: async () => {
+      await app.evaluate((_, value) => console.log(value), marker)
+      assert.ok(await until(() => observed), 'the privacy check observes main-console output')
+    },
+    assertPrivate: () =>
+      assert.equal(leaked, false, 'the synthetic token is absent from main output'),
+    dispose: () => streams.forEach((stream, index) => stream.off('data', listeners[index]))
+  }
+}
+
+function assertTokenAbsentFromFiles(root, paths) {
+  const owned = realpathSync(root)
+  const seen = new Set()
+  let files = 0
+  const visit = (file) => {
+    if (!existsSync(file)) return
+    const real = realpathSync(file)
+    assert.ok(
+      real === owned || real.startsWith(owned + '/'),
+      'privacy reads stay inside this fixture'
+    )
+    if (seen.has(real)) return
+    seen.add(real)
+    const stat = lstatSync(file)
+    assert.equal(
+      stat.isSymbolicLink(),
+      false,
+      'privacy output is a regular fixture file or directory'
+    )
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(file)) visit(path.join(file, name))
+    } else if (stat.isFile()) {
+      files++
+      assert.equal(
+        readFileSync(file).includes(SYNTHETIC_CLAUDE_TOKEN),
+        false,
+        `synthetic token persisted in ${file}`
+      )
+    }
+  }
+  for (const file of paths) visit(file)
+  assert.ok(files > 0, 'the privacy scan reads actual generated output')
+}
+
+async function assertTokenPrivate(app, pages, root, capture) {
+  const files = new Set()
+  for (const page of pages) {
+    const answers = await page.evaluate(async () => ({
+      sessions: await window.electronAPI.sessionsList(),
+      snapshot: await window.electronAPI.triageSnapshot(),
+      prepared: await window.electronAPI.triagePrepare(),
+      accounts: await window.electronAPI.claudeAccountsList(),
+      profiles: await window.electronAPI.launchProfilesList()
+    }))
+    assert.equal(
+      JSON.stringify(answers).includes(SYNTHETIC_CLAUDE_TOKEN),
+      false,
+      'public IPC answers and diagnostics omit the pinned token'
+    )
+    assert.equal(answers.snapshot.records.status, 'ok')
+    assert.ok(answers.prepared.bundle, 'the privacy check prepares an actual bundle')
+    files.add(answers.snapshot.paths.sessionRecords)
+    files.add(path.dirname(answers.prepared.bundle.dir))
+  }
+  const journal = await app.evaluate(() => globalThis.__claveE2E.terminalJournal.file)
+  assert.ok(existsSync(journal), 'the privacy check includes the actual terminal journal')
+  files.add(journal)
+  assertTokenAbsentFromFiles(root, files)
+  capture.assertPrivate()
+  return [...files]
+}
+
 async function openTriage(app, win) {
   const identity = await identityOf(win)
   await app.evaluate(({ BrowserWindow }, id) => {
@@ -181,6 +281,7 @@ export async function run(t) {
   const { loadTriageScenario } = await import(pathToFileURL(fixtureModule).href)
   let app
   let fixtureRoot
+  let tokenOutputCapture
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
       const root = fixturePath(`triage-${runId}`)
@@ -674,56 +775,190 @@ export async function run(t) {
       )
       if (serverMode() === 'in-process') {
         const claudeAccountId = 'triage-fixture-claude-account'
-        // Supply only synthetic metadata and an injected token lookup in this
-        // hidden app. Nothing is written to credentials, Keychain or config.
-        await app.evaluate((_, accountId) => {
-          const accounts = globalThis.__claveE2E.settings.claudeAccounts
-          const list = accounts.list
-          const getToken = accounts.getToken
-          const host = globalThis.__claveE2E.sessionHost
-          const start = host.start
-          const race = { cleared: false, requested: null }
-          globalThis.__triageClaudeAccountRace = race
-          accounts.list = () => [
-            ...list.call(accounts),
-            {
-              id: accountId,
-              label: 'Fixture Claude account',
-              hasToken: !race.cleared,
-              tokenSetAt: 1,
-              tokenExpiresAt: null,
-              tokenInvalid: false
+        const chunks = path.join(REPO, 'out/main/chunks')
+        const accountChunks = readdirSync(chunks).filter(
+          (name) =>
+            name.endsWith('.js') &&
+            /exports\.claudeAccountsManager\s*=/.test(readFileSync(path.join(chunks, name), 'utf8'))
+        )
+        assert.equal(
+          accountChunks.length,
+          1,
+          'the fixture identifies one bundled account singleton'
+        )
+        const chunkPath = realpathSync(path.join(chunks, accountChunks[0]))
+        tokenOutputCapture = captureMainOutput(app)
+        await tokenOutputCapture.ready()
+        // The settings facade has no token lookup. Patch the already loaded
+        // singleton, without reading or writing any credential or Keychain.
+        await app.evaluate(
+          (_, { accountId, token, chunkPath }) => {
+            const { createRequire } = process.getBuiltinModule('node:module')
+            const requireFromMain = createRequire(chunkPath)
+            if (!requireFromMain.cache[chunkPath])
+              throw new Error('Account singleton is not loaded')
+            const accounts = requireFromMain(chunkPath).claudeAccountsManager
+            if (typeof accounts.getToken !== 'function')
+              throw new Error('Token lookup is unavailable')
+            const methods = ['list', 'getToken', 'hasToken']
+            const descriptors = methods.map((name) =>
+              Object.getOwnPropertyDescriptor(accounts, name)
+            )
+            const list = accounts.list
+            const getToken = accounts.getToken
+            const hasToken = accounts.hasToken
+            const host = globalThis.__claveE2E.sessionHost
+            const start = host.start
+            const race = {
+              cleared: false,
+              lookups: 0,
+              requested: null,
+              clearOn: null,
+              cached: true
             }
-          ]
-          accounts.getToken = (id) =>
-            id === accountId
-              ? race.cleared
-                ? undefined
-                : 'fixture-only-never-persisted'
-              : getToken.call(accounts, id)
-          host.start = async (input) => {
-            if (input.options?.launchProfileId !== 'triage-claude') return start(input)
-            host.start = start
-            race.cleared = true
-            race.requested = input.options.claudeProfileId
-            return start(input)
-          }
-          globalThis.__restoreTriageClaudeAccountRace = () => {
-            accounts.list = list
-            accounts.getToken = getToken
-            host.start = start
-          }
-        }, claudeAccountId)
+            globalThis.__triageClaudeAccountRace = race
+            accounts.list = () => [
+              ...list.call(accounts),
+              {
+                id: accountId,
+                label: 'Fixture Claude account',
+                hasToken: !race.cleared,
+                tokenSetAt: 1,
+                tokenExpiresAt: null,
+                tokenInvalid: false
+              }
+            ]
+            accounts.hasToken = (id) =>
+              id === accountId ? !race.cleared : hasToken.call(accounts, id)
+            accounts.getToken = (id) => {
+              if (id !== accountId) return getToken.call(accounts, id)
+              race.lookups++
+              return race.cleared ? undefined : token
+            }
+            host.start = async (input) => {
+              if (input.options?.launchProfileId === race.clearOn) {
+                race.clearOn = null
+                race.cleared = true
+                race.requested = input.options.claudeProfileId
+              }
+              return start(input)
+            }
+            globalThis.__restoreTriageClaudeAccountRace = () => {
+              methods.forEach((name, index) => {
+                if (descriptors[index]) Object.defineProperty(accounts, name, descriptors[index])
+                else delete accounts[name]
+              })
+              host.start = start
+            }
+          },
+          { accountId: claudeAccountId, token: SYNTHETIC_CLAUDE_TOKEN, chunkPath }
+        )
         try {
+          const beforeHolder = await win.evaluate(() => window.electronAPI.sessionsList())
+          const lookupsBeforeHolder = await app.evaluate(
+            () => globalThis.__triageClaudeAccountRace.lookups
+          )
+          const holder = await win.evaluate(
+            ({ root, accountId, workspaceId }) =>
+              window.electronAPI.spawnSession(root, {
+                claudeMode: true,
+                claudeProfileId: accountId,
+                launchProfileId: 'triage-claude',
+                workspaceId
+              }),
+            { root, accountId: claudeAccountId, workspaceId: f.workspace.id }
+          )
+          assert.ok(!beforeHolder.some((session) => session.id === holder.id))
+          assert.equal(JSON.stringify(holder).includes(SYNTHETIC_CLAUDE_TOKEN), false)
+          const pinned = await app.evaluate(() => globalThis.__triageClaudeAccountRace)
+          assert.equal(pinned.cached, true)
+          assert.equal(pinned.cleared, false)
+          assert.ok(pinned.lookups > lookupsBeforeHolder, 'the real lookup pins a nonempty token')
+          try {
+            const outputs = await assertTokenPrivate(app, [win, second], root, tokenOutputCapture)
+            const bundles = outputs.find((file) => path.basename(file) === 'triage')
+            assert.ok(bundles)
+            const control = path.join(bundles, 'fixture-token-scan-control.txt')
+            writeFileSync(control, SYNTHETIC_CLAUDE_TOKEN, { mode: 0o600 })
+            try {
+              assert.throws(
+                () => assertTokenAbsentFromFiles(root, outputs),
+                /synthetic token persisted/,
+                'the file scanner detects the known synthetic value'
+              )
+            } finally {
+              rmSync(control)
+            }
+            assertTokenAbsentFromFiles(root, outputs)
+          } finally {
+            await win.evaluate((id) => window.electronAPI.killSession(id), holder.id)
+          }
+          assert.deepEqual(
+            (await win.evaluate(() => window.electronAPI.sessionsList())).map(
+              (session) => session.id
+            ),
+            beforeHolder.map((session) => session.id),
+            'only the owned unstarted privacy handle is removed'
+          )
+
+          const positiveRoute = async (profileName) => {
+            const page = (await openWindow(app, win, f.workspace.id)).page
+            page.setDefaultTimeout(12_000)
+            const dialog = await openTriage(app, page)
+            await choose(page, 'Triage provider', 'Claude Code')
+            await choose(page, 'Triage launch profile', profileName)
+            await choose(page, 'Triage account', 'Fixture Claude account')
+            const before = records(root, 'claude').filter(
+              (record) => record.kind === 'spawn'
+            ).length
+            await dialog
+              .getByRole('button', { name: 'Start support conversation', exact: true })
+              .click()
+            await dialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+            assert.ok(
+              await until(() =>
+                records(root, 'claude')
+                  .filter((record) => record.kind === 'spawn')
+                  .slice(before)
+                  .some((record) => record.syntheticToken === true)
+              ),
+              'the actual recording child receives the selected synthetic token'
+            )
+            await assertTokenPrivate(app, [win, second, page], root, tokenOutputCapture)
+            await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+            await dialog.waitFor({ state: 'hidden' })
+            return page
+          }
+          const positiveTerminal = await positiveRoute('claude recording')
+          const positiveChat = await positiveRoute('claude recording (chat)')
+          await assertTokenPrivate(
+            app,
+            [win, second, positiveTerminal, positiveChat],
+            root,
+            tokenOutputCapture
+          )
+          t.check(
+            'a nonempty token reaches both recording Claude routes and stays out of IPC, records, bundles, journal and main output',
+            true
+          )
+
           const claudeRaceWindow = (await openWindow(app, win, f.workspace.id)).page
           claudeRaceWindow.setDefaultTimeout(12_000)
           const claudeRaceDialog = await openTriage(app, claudeRaceWindow)
+          await choose(claudeRaceWindow, 'Triage provider', 'Claude Code')
           await choose(claudeRaceWindow, 'Triage launch profile', 'claude recording')
           await choose(claudeRaceWindow, 'Triage account', 'Fixture Claude account')
           const beforeClaudeRace = await claudeRaceWindow.evaluate(() =>
             window.electronAPI.triageSnapshot()
           )
-          const claudeSpawns = records(root, 'claude').filter((r) => r.kind === 'spawn').length
+          const claudeSpawns = records(root, 'claude').filter(
+            (record) => record.kind === 'spawn'
+          ).length
+          const lookupsBeforeRefusal = await app.evaluate(() => {
+            const race = globalThis.__triageClaudeAccountRace
+            race.clearOn = 'triage-claude'
+            return race.lookups
+          })
           await claudeRaceDialog
             .getByRole('button', { name: 'Start support conversation', exact: true })
             .click()
@@ -731,40 +966,135 @@ export async function run(t) {
             await until(() =>
               app.evaluate(() => globalThis.__triageClaudeAccountRace?.cleared === true)
             ),
-            'the synthetic token lookup is cleared after renderer preflight'
+            'the real synthetic token is cleared after renderer preflight'
           )
-          const race = await app.evaluate(() => globalThis.__triageClaudeAccountRace)
-          assert.equal(race.requested, claudeAccountId)
           await claudeRaceDialog
             .getByRole('alert')
             .filter({ hasText: /Startup could not be confirmed/ })
             .waitFor()
+          const race = await app.evaluate(() => globalThis.__triageClaudeAccountRace)
+          assert.equal(race.requested, claudeAccountId)
+          assert.ok(race.lookups > lookupsBeforeRefusal, 'main consulted the cleared real lookup')
           assert.equal(
-            records(root, 'claude').filter((r) => r.kind === 'spawn').length,
+            records(root, 'claude').filter((record) => record.kind === 'spawn').length,
             claudeSpawns,
-            'a cleared explicit token never starts a process using the machine login'
+            'a cleared explicit token starts no process using the machine login'
           )
           const afterClaudeRace = await claudeRaceWindow.evaluate(() =>
             window.electronAPI.triageSnapshot()
           )
           assert.deepEqual(
-            afterClaudeRace.sessions.value.map((s) => s.id),
-            beforeClaudeRace.sessions.value.map((s) => s.id),
-            'a cleared Claude token creates no session and preserves previous handles'
+            afterClaudeRace.sessions.value.map((session) => session.id),
+            beforeClaudeRace.sessions.value.map((session) => session.id),
+            'a cleared Claude token creates no terminal session and preserves previous handles'
           )
           assert.equal(beforeClaudeRace.records.status, 'ok')
           assert.equal(afterClaudeRace.records.status, 'ok')
           assert.deepEqual(
-            afterClaudeRace.records.value.items.map((r) => r.key).sort(),
-            beforeClaudeRace.records.value.items.map((r) => r.key).sort(),
-            'a refused Claude launch creates no orphan restore record'
+            afterClaudeRace.records.value.items.map((record) => record.key).sort(),
+            beforeClaudeRace.records.value.items.map((record) => record.key).sort(),
+            'a refused Claude terminal creates no orphan restore record'
           )
           await claudeRaceDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
           await claudeRaceDialog.getByText('Copied', { exact: true }).waitFor()
           t.check(
-            'a Claude token cleared after preflight refuses startup without a machine-login process or orphan record',
+            'the real Claude lookup refuses a cleared synthetic token without fallback or an orphan terminal record',
             true
           )
+
+          await app.evaluate(() => {
+            const race = globalThis.__triageClaudeAccountRace
+            race.cleared = false
+            race.clearOn = 'chat:claude:triage-claude'
+          })
+          const failedChat = (await openWindow(app, win, f.workspace.id)).page
+          failedChat.setDefaultTimeout(12_000)
+          const failedChatDialog = await openTriage(app, failedChat)
+          await choose(failedChat, 'Triage provider', 'Claude Code')
+          await choose(failedChat, 'Triage launch profile', 'claude recording (chat)')
+          await choose(failedChat, 'Triage account', 'Fixture Claude account')
+          const beforeFailedChat = await failedChat.evaluate(() =>
+            window.electronAPI.triageSnapshot()
+          )
+          const spawnsBeforeFailedChat = records(root, 'claude').filter(
+            (record) => record.kind === 'spawn'
+          ).length
+          await failedChatDialog
+            .getByRole('button', { name: 'Start support conversation', exact: true })
+            .click()
+          await failedChatDialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+          const afterFailedChat = await failedChat.evaluate(() =>
+            window.electronAPI.triageSnapshot()
+          )
+          const added = afterFailedChat.sessions.value.filter(
+            (session) => !beforeFailedChat.sessions.value.some((old) => old.id === session.id)
+          )
+          assert.equal(added.length, 1, 'the lazy chat retains its acknowledged failed-start tab')
+          assert.equal(added[0].transport, 'events')
+          const refused = await failedChat.evaluate(
+            (id) =>
+              window.electronAPI
+                .sessionsWrite(id, {
+                  type: 'user_message',
+                  text: 'Please name this support conversation after the account was cleared'
+                })
+                .then(
+                  () => false,
+                  () => true
+                ),
+            added[0].id
+          )
+          assert.equal(
+            refused,
+            true,
+            'the cleared chat refuses work instead of using the machine login'
+          )
+          assert.equal(
+            records(root, 'claude').filter((record) => record.kind === 'spawn').length,
+            spawnsBeforeFailedChat
+          )
+          await failedChatDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
+          await failedChatDialog.getByText('Copied', { exact: true }).waitFor()
+          await callMcpIn(app, (await identityOf(failedChat)).windowId, 'closeSession', {
+            sessionId: added[0].id
+          })
+          assert.ok(
+            await until(
+              async () =>
+                !(await failedChat.evaluate(() => window.electronAPI.sessionsList())).some(
+                  (session) => session.id === added[0].id
+                )
+            )
+          )
+          t.check(
+            'a lazy Claude chat refusal keeps copy available and its known tab can be closed',
+            true
+          )
+
+          const controlDir = path.join(root, 'title-control')
+          mkdirSync(controlDir)
+          const titleMarker =
+            'queue control after a cleared account must still generate this Default title'
+          const titleControl = await callMcpIn(app, f.first.windowId, 'openSession', {
+            mode: 'claude',
+            cwd: controlDir,
+            profile: 'chat:claude:triage-claude',
+            account: 'default'
+          })
+          await win.evaluate(
+            ({ id, text }) => window.electronAPI.sessionsWrite(id, { type: 'user_message', text }),
+            { id: titleControl.sessionId, text: titleMarker }
+          )
+          assert.ok(
+            await until(() =>
+              records(root, 'claude').some(
+                (record) => record.kind === 'title' && record.prompt.includes(titleMarker)
+              )
+            ),
+            'a later Default title job runs after the refused account title'
+          )
+          tokenOutputCapture.assertPrivate()
+          t.check('a refused account title leaves the queue working for later Default tabs', true)
         } finally {
           await app.evaluate(() => globalThis.__restoreTriageClaudeAccountRace())
         }
@@ -966,6 +1296,8 @@ export async function run(t) {
           path.join(fixtureRoot, 'teardown.json'),
           JSON.stringify({ owned, pids, remainingTmux: [], remainingProviders: [] }, null, 2)
         )
+        tokenOutputCapture?.assertPrivate()
+        tokenOutputCapture?.dispose()
         t.check('fixture teardown removes only its own tmux sessions and recording processes', true)
       }
     }
