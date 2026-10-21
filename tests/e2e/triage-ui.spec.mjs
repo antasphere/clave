@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -43,7 +44,7 @@ const argv = process.argv.slice(2);
 if (argv.includes('-p') && !argv.includes('--input-format')) process.exit(0);
 const file = ${JSON.stringify(`${root}/${family}-calls.jsonl`)};
 const record = value => fs.appendFileSync(file, JSON.stringify(value) + '\\n');
-record({kind:'spawn', argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME});
+record({kind:'spawn', pid:process.pid, argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME});
 if (argv.includes('--fixture-fail')) { record({kind:'startup-failure', code:23}); process.stderr.write('Fixture provider startup failed\\n'); process.exit(23); }
 if (!argv.includes('app-server') && !argv.includes('--input-format')) {
   process.stdout.write('TRIAGE_TERMINAL_READY\\n');
@@ -87,16 +88,59 @@ const records = (root, family) =>
 const stableSessions = (snapshot) => {
   assert.equal(snapshot.sessions.status, 'ok', 'server session inventory must answer')
   return snapshot.sessions.value.map(
-    ({ id, provider, transport, adapterId, windowKey, groupId, createdAt }) => ({
+    ({ id, provider, transport, adapterId, windowKey, groupId, createdAt, userLabel }) => ({
       id,
       provider,
       transport,
       adapterId,
       windowKey,
       groupId,
-      createdAt
+      createdAt,
+      userLabel
     })
   )
+}
+
+async function launchPreferences(win) {
+  return win.evaluate(async () => {
+    const keys = ['lastAgentSetupByWorkspace', 'selectedClaudeProfileId', 'selectedCodexAccountId']
+    return Object.fromEntries(
+      await Promise.all(
+        keys.map(async (key) => [key, await window.electronAPI.preferencesGet(key)])
+      )
+    )
+  })
+}
+
+function ownedTmuxSessions(root) {
+  let rows
+  try {
+    rows = execFileSync(
+      'tmux',
+      ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
+      { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (error) {
+    if (/no server running|error connecting.*No such file/.test(String(error.stderr))) return []
+    throw error
+  }
+  const roots = [root, realpathSync(root)]
+  return rows
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((row) => ({ name: row.slice(0, row.indexOf('|')), cwd: row.slice(row.indexOf('|') + 1) }))
+    .filter(({ cwd }) => roots.some((prefix) => cwd === prefix || cwd.startsWith(prefix + '/')))
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
 }
 
 async function openTriage(app, win) {
@@ -136,9 +180,11 @@ export async function run(t) {
   })
   const { loadTriageScenario } = await import(pathToFileURL(fixtureModule).href)
   let app
+  let fixtureRoot
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
       const root = fixturePath(`triage-${runId}`)
+      fixtureRoot = root
       const data = path.join(root, 'data')
       const home = path.join(root, 'codex-home')
       mkdirSync(home, { recursive: true })
@@ -292,8 +338,13 @@ export async function run(t) {
     assert.ok(original.some((s) => s.id === f.dormant.id))
     assert.equal(before.windows.length, 2)
     const prefsBefore = await win.evaluate(() => window.electronAPI.launchProfilesList())
+    const launchPrefsBefore = await launchPreferences(win)
     const tickBefore = readFileSync(`${root}/ticks`, 'utf8').split('\n').length
     const tickerPid = readFileSync(`${root}/ticker.pid`, 'utf8')
+    const originalChatPid = records(root, 'codex').find(
+      (r) => r.kind === 'spawn' && r.cwd === realpathSync(root)
+    ).pid
+    assert.ok(processAlive(originalChatPid), 'the original chat process is alive before triage')
     const dialog = await openTriage(app, second)
     await dialog.getByText('Preview context', { exact: true }).click()
     const context = await dialog.getByLabel('Context preview').textContent()
@@ -539,6 +590,12 @@ export async function run(t) {
         )
         const raceWindow = (await openWindow(app, win, f.workspace.id)).page
         raceWindow.setDefaultTimeout(12_000)
+        // sessions:list is window-scoped. Give this window an existing handle
+        // so cleanup cannot pass merely because the window started empty.
+        const previousHandle = await raceWindow.evaluate(
+          (root) => window.electronAPI.spawnSession(root, {}),
+          root
+        )
         const raceDialog = await openTriage(app, raceWindow)
         await choose(raceWindow, 'Triage provider', 'Codex')
         await choose(raceWindow, 'Triage launch profile', 'codex race recording')
@@ -568,6 +625,7 @@ export async function run(t) {
           .waitFor()
         const race = await app.evaluate(() => globalThis.__triageProfileRace)
         assert.equal(race.actualProfile, 'triage-codex-fallback')
+        assert.ok(beforeRace.some((session) => session.id === previousHandle.id))
         assert.deepEqual(
           stableSessions(await raceWindow.evaluate(() => window.electronAPI.triageSnapshot())),
           beforeRace,
@@ -635,6 +693,7 @@ export async function run(t) {
       1,
       'the existing chat keeps its one provider process'
     )
+    assert.ok(processAlive(originalChatPid), 'the same original chat process is still alive')
     assert.equal(
       final.sessions.value.find((s) => s.id === f.dormant.id).state,
       before.sessions.value.find((s) => s.id === f.dormant.id).state,
@@ -666,6 +725,11 @@ export async function run(t) {
       )
     )
     const prefsAfter = await win.evaluate(() => window.electronAPI.launchProfilesList())
+    assert.deepEqual(
+      await launchPreferences(win),
+      launchPrefsBefore,
+      'triage preserves remembered agent setups and selected provider accounts'
+    )
     assert.deepEqual(
       prefsAfter.globalDefaults,
       prefsBefore.globalDefaults,
@@ -712,6 +776,35 @@ export async function run(t) {
       true
     )
   } finally {
-    await app?.close()
+    try {
+      await app?.close()
+    } finally {
+      if (fixtureRoot && existsSync(fixtureRoot)) {
+        // A support terminal's cwd is a capture timestamp, so its tmux name
+        // lacks the harness prefix. Scope by this exact fixture's start path,
+        // then address each owned session by exact name after all assertions.
+        const owned = ownedTmuxSessions(fixtureRoot)
+        for (const { name } of owned)
+          execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${name}`], {
+            timeout: 5_000,
+            stdio: ['ignore', 'pipe', 'pipe']
+          })
+        assert.deepEqual(ownedTmuxSessions(fixtureRoot), [], 'no fixture tmux sessions remain')
+        const pids = ['claude', 'codex'].flatMap((family) =>
+          records(fixtureRoot, family)
+            .filter((r) => r.kind === 'spawn')
+            .map((r) => r.pid)
+        )
+        assert.ok(
+          await until(() => pids.every((pid) => !processAlive(pid))),
+          'all recording provider processes stop after fixture teardown'
+        )
+        writeFileSync(
+          path.join(fixtureRoot, 'teardown.json'),
+          JSON.stringify({ owned, pids, remainingTmux: [], remainingProviders: [] }, null, 2)
+        )
+        t.check('fixture teardown removes only its own tmux sessions and recording processes', true)
+      }
+    }
   }
 }
