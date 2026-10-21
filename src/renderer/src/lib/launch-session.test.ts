@@ -47,6 +47,7 @@ describe('launchSession acknowledgement and opt-in errors', () => {
       codexAccountId: 'work'
     },
     initialPrompt: 'Read this capture',
+    workspaceId: 'capture-workspace',
     remember: false
   }
   it('retains the created id before placement, preserves selections, and writes no default', async () => {
@@ -66,10 +67,12 @@ describe('launchSession acknowledgement and opt-in errors', () => {
         codexAccountId: 'work',
         launchProfileId: 'codex-work',
         dangerousMode: false,
-        initialPrompt: 'Read this capture'
+        initialPrompt: 'Read this capture',
+        workspaceId: 'capture-workspace'
       })
     )
     expect(f.add.mock.calls[0][1]).toBeNull()
+    expect(f.add.mock.calls[0][0].workspaceId).toBe('capture-workspace')
     expect(f.remember).not.toHaveBeenCalled()
   })
   it('propagates provider errors when requested without creating a renderer tab', async () => {

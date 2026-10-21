@@ -207,6 +207,7 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
             remember: false,
             throwOnError: true,
             exactProfile: true,
+            workspaceId: captureWorkspace ?? undefined,
             onCreated: (id) =>
               set({
                 supportSessionId: id,

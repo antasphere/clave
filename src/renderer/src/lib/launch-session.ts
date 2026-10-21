@@ -44,6 +44,8 @@ export interface LaunchRequest {
   onCreated?: (id: string) => void
   /** Refuse a resolved profile different from the explicit selection. */
   exactProfile?: boolean
+  /** Explicit home for a capture-bound launch; ordinary launchers use their current workspace. */
+  workspaceId?: string
 }
 
 export interface LaunchSelectionError extends Error {
@@ -137,6 +139,7 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
       dangerousMode,
       initialPrompt,
       launchProfileId: req.setup?.launchProfileId,
+      ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields
     })
     if (req.exactProfile && sessionInfo.launchProfileId !== req.setup?.launchProfileId) {
@@ -195,7 +198,8 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
         codexAccountLabel: codexAccount?.label,
         // Persisted so Duplicate re-primes the clone with the same prompt.
         initialPrompt,
-        sessionType: 'local'
+        sessionType: 'local',
+        ...(req.workspaceId ? { workspaceId: req.workspaceId } : {})
       },
       req.groupId ?? null
     )

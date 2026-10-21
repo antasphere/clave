@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  realpathSync
+} from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
@@ -356,6 +363,14 @@ export async function run(t) {
       const support = after.sessions.value.filter((s) => !original.some((o) => o.id === s.id))
       assert.equal(support.length, 1, 'double submit creates exactly one tab')
       assert.equal(support[0].windowKey, (await identityOf(second)).windowKey)
+      const supportListing = after.windowListings.find(
+        (s) => s.windowId === after.origin.windowId && s.status === 'ok'
+      )
+      assert.equal(
+        supportListing.value.sessions.find((s) => s.id === support[0].id).workspaceId,
+        f.workspace.id,
+        'support retains the captured workspace'
+      )
       assert.ok(
         await until(
           async () =>
@@ -615,7 +630,8 @@ export async function run(t) {
       'the existing terminal keeps its process identity'
     )
     assert.equal(
-      records(root, 'codex').filter((r) => r.kind === 'spawn' && r.cwd === root).length,
+      records(root, 'codex').filter((r) => r.kind === 'spawn' && r.cwd === realpathSync(root))
+        .length,
       1,
       'the existing chat keeps its one provider process'
     )

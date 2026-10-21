@@ -95,6 +95,7 @@ describe('triage support controller', () => {
         cwd: { kind: 'path', path: prepared.bundle!.dir },
         remember: false,
         throwOnError: true,
+        workspaceId: 'workspace-one',
         setup: {
           kind: provider,
           launchProfileId: `${provider}-work-chat`,
