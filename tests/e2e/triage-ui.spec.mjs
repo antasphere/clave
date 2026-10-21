@@ -37,6 +37,7 @@ if (argv.includes('-p') && !argv.includes('--input-format')) process.exit(0);
 const file = ${JSON.stringify(`${root}/${family}-calls.jsonl`)};
 const record = value => fs.appendFileSync(file, JSON.stringify(value) + '\\n');
 record({kind:'spawn', argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME});
+if (argv.includes('--fixture-fail')) { record({kind:'startup-failure', code:23}); process.stderr.write('Fixture provider startup failed\\n'); process.exit(23); }
 if (!argv.includes('app-server') && !argv.includes('--input-format')) {
   process.stdout.write('TRIAGE_TERMINAL_READY\\n');
   setInterval(() => {}, 1000);
@@ -197,6 +198,17 @@ export async function run(t) {
         },
         { workspaceId: workspace.id, bin }
       )
+      await win.evaluate(
+        (bin) =>
+          window.electronAPI.launchProfileUpsert({
+            id: 'triage-codex-failed',
+            name: 'codex failing recording',
+            family: 'codex',
+            command: [`${bin}/codex`, '--fixture-fail'],
+            additionalArgs: []
+          }),
+        bin
+      )
       const account = await win.evaluate(() =>
         window.electronAPI.codexAccountAdd({ label: 'Triage Codex account', kind: 'chatgpt' })
       )
@@ -213,7 +225,7 @@ export async function run(t) {
         mode: 'terminal',
         cwd: root,
         groupId: group.groupId,
-        command: `i=0; while true; do i=$((i+1)); echo tick-$i >> '${root}/ticks'; sleep 0.2; done`,
+        command: `echo $$ > '${root}/ticker.pid'; i=0; while true; do i=$((i+1)); echo tick-$i >> '${root}/ticks'; sleep 0.2; done`,
         autoRun: true
       })
       assert.ok(
@@ -274,6 +286,7 @@ export async function run(t) {
     assert.equal(before.windows.length, 2)
     const prefsBefore = await win.evaluate(() => window.electronAPI.launchProfilesList())
     const tickBefore = readFileSync(`${root}/ticks`, 'utf8').split('\n').length
+    const tickerPid = readFileSync(`${root}/ticker.pid`, 'utf8')
     const dialog = await openTriage(app, second)
     await dialog.getByText('Preview context', { exact: true }).click()
     const context = await dialog.getByLabel('Context preview').textContent()
@@ -343,6 +356,15 @@ export async function run(t) {
       const support = after.sessions.value.filter((s) => !original.some((o) => o.id === s.id))
       assert.equal(support.length, 1, 'double submit creates exactly one tab')
       assert.equal(support[0].windowKey, (await identityOf(second)).windowKey)
+      assert.ok(
+        await until(
+          async () =>
+            (await second.evaluate(() => window.electronAPI.triageSnapshot())).sessions.value.find(
+              (s) => s.id === support[0].id
+            )?.userLabel === 'Clave triage'
+        ),
+        'support name persists on its own record'
+      )
       const invocation = records(root, 'codex')
         .filter((r) => r.kind === 'spawn')
         .at(-1)
@@ -547,6 +569,36 @@ export async function run(t) {
           true
         )
       }
+      const failedWindow = (await openWindow(app, win, f.workspace.id)).page
+      failedWindow.setDefaultTimeout(12_000)
+      const failedDialog = await openTriage(app, failedWindow)
+      await choose(failedWindow, 'Triage provider', 'Codex')
+      await choose(failedWindow, 'Triage launch profile', 'codex failing recording (chat)')
+      await choose(failedWindow, 'Triage account', 'Triage Codex account')
+      await failedDialog
+        .getByRole('button', { name: 'Start support conversation', exact: true })
+        .click()
+      await failedDialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+      assert.ok(
+        await until(() =>
+          records(root, 'codex').some((r) => r.kind === 'startup-failure' && r.code === 23)
+        ),
+        'recording provider really fails during startup'
+      )
+      await failedDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
+      await failedDialog.getByText('Copied', { exact: true }).waitFor()
+      const failedCopies = await failedWindow.evaluate(() => navigator.clipboard.readText())
+      assert.ok(failedCopies.includes(before.origin.instanceId))
+      assert.equal(
+        await failedDialog
+          .getByRole('button', { name: 'Support tab created', exact: true })
+          .isDisabled(),
+        true
+      )
+      t.check(
+        'copy fallback remains usable after an actual provider process startup failure, without respawning',
+        true
+      )
     }
     const final = await win.evaluate(() => window.electronAPI.triageSnapshot())
     assert.deepEqual(
@@ -557,6 +609,33 @@ export async function run(t) {
       readFileSync(`${root}/ticks`, 'utf8').split('\n').length > tickBefore,
       'existing terminal keeps ticking'
     )
+    assert.equal(
+      readFileSync(`${root}/ticker.pid`, 'utf8'),
+      tickerPid,
+      'the existing terminal keeps its process identity'
+    )
+    assert.equal(
+      records(root, 'codex').filter((r) => r.kind === 'spawn' && r.cwd === root).length,
+      1,
+      'the existing chat keeps its one provider process'
+    )
+    assert.equal(
+      final.sessions.value.find((s) => s.id === f.dormant.id).state,
+      before.sessions.value.find((s) => s.id === f.dormant.id).state,
+      'the dormant chat remains idle'
+    )
+    for (const listing of before.windowListings.filter((s) => s.status === 'ok')) {
+      const afterListing = final.windowListings.find(
+        (s) => s.windowId === listing.windowId && s.status === 'ok'
+      )
+      assert.ok(afterListing)
+      for (const group of listing.value.groups)
+        assert.deepEqual(
+          afterListing.value.groups.find((g) => g.id === group.id),
+          group,
+          'existing group and workspace assignments stay intact'
+        )
+    }
     await win.evaluate(
       (id) =>
         window.electronAPI.sessionsWrite(id, {
