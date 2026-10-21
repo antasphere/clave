@@ -529,6 +529,21 @@ async function runMode(t, mode, loadTriageSnapshot) {
       } finally {
         writeFileSync(file, original)
       }
+      // VA-6: this shell's own discovery file, its address carrying its token
+      // in the host name: the warning that names that address is scrubbed.
+      const own = JSON.parse(original)
+      try {
+        writeFileSync(file, JSON.stringify({ ...own, url: `http://${own.token}.invalid:9` }))
+        const tokenSnap = await a.page.evaluate(() => window.electronAPI.triageSnapshot())
+        t.check(
+          `${label} a discovery address carrying the token is scrubbed from the answer and its warning`,
+          tokenSnap.warnings.some((w) => w.includes('discovery file names')) &&
+            !JSON.stringify(tokenSnap).toLowerCase().includes(String(own.token).toLowerCase()),
+          tokenSnap.warnings
+        )
+      } finally {
+        writeFileSync(file, original)
+      }
     }
 
     // ── A snapshot from window B writes nothing ──

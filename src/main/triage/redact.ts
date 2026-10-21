@@ -54,6 +54,7 @@ export function createRedactor(options: {
   const secrets = [...new Set([...(options.secrets ?? [])])]
     .filter((s): s is string => typeof s === 'string' && s.length >= 6)
     .sort((a, b) => b.length - a.length)
+  const secretPatterns = secrets.map((s) => new RegExp(escapeRegExp(s), 'gi'))
   const home = options.home.replace(/\/+$/, '')
   const homePattern = home.length > 1 ? new RegExp(`${escapeRegExp(home)}(?=/|$|\\b)`, 'g') : null
 
@@ -61,7 +62,8 @@ export function createRedactor(options: {
 
   const text = (value: string, maxChars = 2000): string => {
     let out = String(value)
-    for (const secret of secrets) out = out.split(secret).join(REDACTED)
+    // Case-insensitively: a URL lowercases a host, a token in one included.
+    for (const secret of secretPatterns) out = out.replace(secret, REDACTED)
     for (const [pattern, replacement] of PATTERNS) out = out.replace(pattern, replacement as string)
     out = path(out)
     if (out.length > maxChars)

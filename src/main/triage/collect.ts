@@ -486,9 +486,12 @@ export async function collectSnapshot(
   // the sessions and clients below come from.
   const fileOrigin = originOf(str(trusted?.url))
   const origin = originOf(endpoint?.url ?? null) ?? fileOrigin
+  // `origin` stays raw for the requests below; everything reported goes
+  // through the redactor, which knows the discovery tokens by now.
+  const shownOrigin = origin ? redact.text(origin, 200) : null
   if (fileOrigin && origin && fileOrigin !== origin)
     warnings.push(
-      `The server discovery file names ${fileOrigin} but this shell's server is at ${origin}: the shell's address is used.`
+      `The server discovery file names ${redact.text(fileOrigin, 200)} but this shell's server is at ${shownOrigin}: the shell's address is used.`
     )
   const serverPid =
     mode === 'in-process'
@@ -654,16 +657,18 @@ export async function collectSnapshot(
 
   let windowListings: TriageWindowListing[]
   if (listingsR.status === 'ok') {
-    windowListings = listingsR.value.map((reply) => {
-      const { listing, truncated: cut } = projectListing(
-        reply,
-        redact,
-        limits.maxSessions,
-        limits.maxGroupsPerWindow
-      )
-      if (cut && !truncated.includes('windowListings')) truncated.push('windowListings')
-      return listing
-    })
+    windowListings = cap(listingsR.value, limits.maxOther, 'windowListings', truncated).map(
+      (reply) => {
+        const { listing, truncated: cut } = projectListing(
+          reply,
+          redact,
+          limits.maxSessions,
+          limits.maxGroupsPerWindow
+        )
+        if (cut && !truncated.includes('windowListings')) truncated.push('windowListings')
+        return listing
+      }
+    )
   } else {
     // The fan-out itself failed: every window is said to have failed with it.
     windowListings = windows.map((w) => ({
@@ -692,7 +697,10 @@ export async function collectSnapshot(
   const snapshot: TriageSnapshot = {
     version: TRIAGE_SNAPSHOT_VERSION,
     generatedAt: sources.now().toISOString(),
-    origin: sources.origin,
+    origin: {
+      ...sources.origin,
+      windowKey: sources.origin.windowKey ? redact.text(sources.origin.windowKey, 120) : null
+    },
     app: {
       ...app,
       flags: app.flags.map((f) => redact.text(f, 200)),
@@ -714,7 +722,7 @@ export async function collectSnapshot(
       ownership,
       discoveryOk: bool(trusted?.ok),
       discoveryError: str(trusted?.error) ? redact.text(str(trusted!.error)!, 400) : null,
-      origin,
+      origin: shownOrigin,
       discoveryShellPid,
       serverPid,
       serverAlive,
@@ -730,7 +738,10 @@ export async function collectSnapshot(
       },
       clients
     },
-    mcp: { listening: mcp !== null, origin: originOf(mcp?.url ?? null) },
+    mcp: {
+      listening: mcp !== null,
+      origin: mcp ? redact.text(originOf(mcp.url) ?? '', 200) || null : null
+    },
     workspaces,
     windows,
     sessions,

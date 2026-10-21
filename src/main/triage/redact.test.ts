@@ -42,6 +42,11 @@ describe('createRedactor', () => {
     expect(out).toContain('40 more characters cut')
   })
 
+  it('scrubs a known secret whatever its case (a URL lowercases its host)', () => {
+    const r = createRedactor({ home: '/h', secrets: ['MixedCaseToken42xyz'] })
+    expect(r.text('http://mixedcasetoken42xyz.localhost:1')).toBe(`http://${REDACTED}.localhost:1`)
+  })
+
   it('ignores secrets too short to be one', () => {
     const r = createRedactor({ home: '/h', secrets: ['ab', null, undefined] })
     expect(r.text('ab cd')).toBe('ab cd')

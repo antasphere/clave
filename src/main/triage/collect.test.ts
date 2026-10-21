@@ -478,4 +478,55 @@ describe('collectSnapshot', () => {
     expect(s.server.health.liveError).toBe('unavailable: no server address is known')
     expect(s.server.health.readyError).toBe('unavailable: no server address is known')
   })
+
+  it('round 2: a discovery address carrying a token is scrubbed from the origin and the warning', async () => {
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: `http://${SHELL_TOKEN.toUpperCase()}.localhost:49457`,
+          token: SHELL_TOKEN.toUpperCase(),
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        }),
+        endpoint: () => null,
+        mcpRuntime: () => ({ url: `http://${MCP_TOKEN}.localhost:51000/mcp`, token: MCP_TOKEN })
+      })
+    )
+    const json = JSON.stringify(s).toLowerCase()
+    expect(json).not.toContain(SHELL_TOKEN.toLowerCase())
+    expect(json).not.toContain(MCP_TOKEN.toLowerCase())
+    expect(s.server.origin).toContain('<redacted>')
+  })
+
+  it('round 2: the mismatch warning names neither address raw when one carries a token', async () => {
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: `http://${SHELL_TOKEN}.localhost:49457`,
+          token: SHELL_TOKEN,
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        })
+      })
+    )
+    expect(s.warnings.some((w) => w.includes('discovery file names'))).toBe(true)
+    expect(JSON.stringify(s)).not.toContain(SHELL_TOKEN)
+  })
+
+  it('round 2: caps the window listings and says so', async () => {
+    const replies = Array.from({ length: 6 }, (_, i) => ({
+      windowId: i + 1,
+      ok: true,
+      result: { sessions: [], groups: [] }
+    }))
+    const s = await collectSnapshot(fakeSources({ windowListings: async () => replies }), {
+      maxOther: 4
+    })
+    expect(s.windowListings).toHaveLength(4)
+    expect(s.limits.truncated).toContain('windowListings')
+  })
 })
