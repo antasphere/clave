@@ -544,6 +544,47 @@ async function runMode(t, mode, loadTriageSnapshot) {
       } finally {
         writeFileSync(file, original)
       }
+      // Round 3: a known token equal to a window key is scrubbed wherever the
+      // key appears (it is not only the asking window's origin that carries it).
+      try {
+        writeFileSync(file, JSON.stringify({ ...own, token: L.KEY_B }))
+        const keySnap = await a.page.evaluate(() => window.electronAPI.triageSnapshot())
+        t.check(
+          `${label} a known token equal to a window key reaches no field`,
+          !JSON.stringify(keySnap).includes(L.KEY_B) &&
+            keySnap.windows.some((w) => w.key === '<redacted>'),
+          keySnap.windows
+        )
+      } finally {
+        writeFileSync(file, original)
+      }
+      // Round 3: a valid discovery document with a 200000-character token: the
+      // prepare answers with its bundle and the token is nowhere.
+      const huge = `triage-huge-${'h'.repeat(200_000)}`
+      try {
+        writeFileSync(file, JSON.stringify({ ...own, token: huge }))
+        const big = await a.page.evaluate(() =>
+          window.electronAPI.triagePrepare().then(
+            (r) => ({ ok: true, r }),
+            (e) => ({ ok: false, message: String(e?.message ?? e) })
+          )
+        )
+        const texts = big.ok
+          ? [
+              JSON.stringify(big.r),
+              ...[big.r.bundle?.snapshotPath, big.r.bundle?.contextPath, big.r.bundle?.promptPath]
+                .filter(Boolean)
+                .map((f) => readFileSync(f, 'utf8'))
+            ]
+          : [big.message]
+        t.check(
+          `${label} a 200000-character discovery token is scrubbed and the prepare still answers`,
+          big.ok && !!big.r.bundle && texts.every((x) => !x.includes(huge.slice(0, 40))),
+          big.ok ? big.r.warnings : big.message.slice(0, 200)
+        )
+      } finally {
+        writeFileSync(file, original)
+      }
     }
 
     // ── A snapshot from window B writes nothing ──

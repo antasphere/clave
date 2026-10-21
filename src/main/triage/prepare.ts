@@ -5,7 +5,12 @@
  * temporary directory.
  */
 import type { TriagePrepareResult, TriageSnapshot } from '../../shared/triage'
-import { collectSnapshot, type TriageLimitsInput, type TriageSources } from './collect'
+import {
+  collectSnapshot,
+  collectWithRedactor,
+  type TriageLimitsInput,
+  type TriageSources
+} from './collect'
 import {
   agentLaunchOf,
   externalCommandsFor,
@@ -15,7 +20,7 @@ import {
   seedPrompt
 } from './context'
 import { writeBundle } from './bundle'
-import { createRedactor, errorText } from './redact'
+import { errorText } from './redact'
 
 export interface TriageDeps {
   sources: TriageSources
@@ -32,22 +37,23 @@ export function snapshotWith(
 
 /** Prepare over explicit dependencies: the testable core of `triagePrepare`. */
 export async function prepareWith(deps: TriageDeps): Promise<TriagePrepareResult> {
-  const snapshot = await snapshotWith(deps)
-  const redact = createRedactor({ home: deps.home })
+  // The redactor that knows this collection's secrets scrubs what is written
+  // about it here too (a bundle path, a write error).
+  const { snapshot, redact } = await collectWithRedactor(deps.sources, deps.limits)
   const warnings = [...snapshot.warnings]
   let bundle: TriagePrepareResult['bundle'] = null
   let contextMarkdown: string
   try {
     const written = writeBundle(deps.userData, new Date(snapshot.generatedAt), {
       snapshot: `${JSON.stringify(snapshot, null, 2)}\n`,
-      context: (snapshotPath) => renderContext(snapshot, redact.path(snapshotPath)),
+      context: (snapshotPath) => redact.deep(renderContext(snapshot, redact.path(snapshotPath))),
       prompt: seedPrompt
     })
     bundle = written.bundle
     contextMarkdown = written.context
   } catch (error) {
     warnings.push(`The triage bundle could not be written: ${errorText(redact, error)}`)
-    contextMarkdown = renderContext(snapshot, null)
+    contextMarkdown = redact.deep(renderContext(snapshot, null))
   }
   const prompt = bundle ? launchPrompt(bundle.promptPath) : null
   const live = snapshot.server.health.live

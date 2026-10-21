@@ -425,6 +425,15 @@ export async function collectSnapshot(
   sources: TriageSources,
   limitsInput: TriageLimitsInput = {}
 ): Promise<TriageSnapshot> {
+  return (await collectWithRedactor(sources, limitsInput)).snapshot
+}
+
+/** The snapshot and the redactor that knows this collection's secrets, for
+ *  a caller that writes more text about it (`prepare.ts`). */
+export async function collectWithRedactor(
+  sources: TriageSources,
+  limitsInput: TriageLimitsInput = {}
+): Promise<{ snapshot: TriageSnapshot; redact: Redactor }> {
   const limits = { ...DEFAULT_LIMITS, ...limitsInput }
   const ms = limits.sourceTimeoutMs
   const warnings: string[] = []
@@ -642,12 +651,14 @@ export async function collectSnapshot(
     try {
       return cap(sources.windows(), limits.maxOther, 'windows', truncated).map((w) => ({
         ...w,
+        key: w.key ? redact.text(w.key, 120) : null,
+        workspaceId: w.workspaceId ? redact.text(w.workspaceId, 120) : null,
         boundSessionIds: cap(
           w.boundSessionIds,
           limits.maxSessions,
           'window bound sessions',
           truncated
-        )
+        ).map((id) => redact.text(id, 200))
       }))
     } catch (error) {
       warnings.push(`The window registry could not be read: ${errorText(redact, error)}`)
@@ -792,5 +803,8 @@ export async function collectSnapshot(
     for (const l of windowListings)
       if (l.status !== 'ok') warnings.push(`Window ${l.windowId} did not list its tabs: ${l.error}`)
   if (truncated.length) warnings.push(`Cut at their limit: ${truncated.join(', ')}.`)
-  return snapshot
+  // The last pass: every known secret replaced in every string, whatever
+  // field it reached (a window key, a path, a label), so a field the
+  // projections above forget cannot carry one out.
+  return { snapshot: redact.deep(snapshot), redact }
 }

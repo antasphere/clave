@@ -47,6 +47,43 @@ describe('createRedactor', () => {
     expect(r.text('http://mixedcasetoken42xyz.localhost:1')).toBe(`http://${REDACTED}.localhost:1`)
   })
 
+  it('scrubs a secret of any length without building an expression from it', () => {
+    const huge = `tok${'Z9'.repeat(100_000)}`
+    const r = createRedactor({ home: '/h', secrets: [huge, 'a(b)[c]*+?{d}|^$.x'] })
+    expect(r.text(`x ${huge} y`, 500)).toBe(`x ${REDACTED} y`)
+    expect(r.text(`x ${huge.toLowerCase()} y`, 500)).toBe(`x ${REDACTED} y`)
+    expect(r.text('literal a(b)[c]*+?{d}|^$.x here')).toBe(`literal ${REDACTED} here`)
+  })
+
+  it('scrubs known secrets from paths and from every string of a value', () => {
+    const r = createRedactor({ home: '/Users/t', secrets: ['window-secret-key'] })
+    expect(r.path('/Users/t/window-secret-key/x')).toBe(`~/${REDACTED}/x`)
+    expect(r.deep({ a: ['WINDOW-SECRET-KEY'], b: { c: 'ok' }, n: 3 })).toEqual({
+      a: [REDACTED],
+      b: { c: 'ok' },
+      n: 3
+    })
+  })
+
+  it('never renames a field, and a short value cannot be a known secret', () => {
+    // A pathological token equal to a field name is scrubbed from values only;
+    // one as short as an enum value is not a known secret at all.
+    const r = createRedactor({ home: '/h', secrets: ['terminalSessionIds', 'separate'] })
+    expect(r.deep({ terminalSessionIds: ['terminalSessionIds'], mode: 'separate' })).toEqual({
+      terminalSessionIds: [REDACTED],
+      mode: 'separate'
+    })
+  })
+
+  it('folds case without changing length, whatever else the string holds', () => {
+    const r = createRedactor({ home: '/h', secrets: ['MixedCaseToken42xyz'] })
+    // U+0130 lowercases to two code units; it must not disable the case fold.
+    expect(r.text('İstanbul http://mixedcasetoken42xyz.localhost')).toBe(
+      `İstanbul http://${REDACTED}.localhost`
+    )
+    expect(r.deep('ß İ MIXEDCASETOKEN42XYZ')).toBe(`ß İ ${REDACTED}`)
+  })
+
   it('ignores secrets too short to be one', () => {
     const r = createRedactor({ home: '/h', secrets: ['ab', null, undefined] })
     expect(r.text('ab cd')).toBe('ab cd')

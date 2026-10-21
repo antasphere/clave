@@ -529,4 +529,77 @@ describe('collectSnapshot', () => {
     expect(s.windowListings).toHaveLength(4)
     expect(s.limits.truncated).toContain('windowListings')
   })
+
+  it('round 3: a token reaching any field (a window key, a path, a workspace) is scrubbed', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        windows: () => base.windows().map((w, i) => (i === 0 ? { ...w, key: SHELL_TOKEN } : w)),
+        workspaces: () => [{ id: 'ws-1', name: 'App', rootDir: `/srv/${SHELL_TOKEN}` }],
+        app: () => ({
+          ...base.app(),
+          paths: { userData: `/data/${MCP_TOKEN}`, logs: '/logs', crashDumps: '/dumps' }
+        }),
+        paths: { ...base.paths, mainLog: `/logs/${SERVER_TOKEN}/main.log` },
+        neverRead: [`/data/${MCP_TOKEN}/clave-server.json`]
+      })
+    )
+    const json = JSON.stringify(s).toLowerCase()
+    for (const t of [SHELL_TOKEN, SERVER_TOKEN, MCP_TOKEN])
+      expect(json).not.toContain(t.toLowerCase())
+    expect(s.windows[0].key).toBe('<redacted>')
+  })
+
+  it('round 3: a discovery token of 200000 characters is scrubbed, not a failure', async () => {
+    const huge = `tok-${'q'.repeat(200_000)}`
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:49457',
+          token: huge,
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        }),
+        windows: () => [
+          {
+            id: 1,
+            key: huge,
+            workspaceId: null,
+            isPrimary: true,
+            focused: true,
+            boundSessionIds: []
+          }
+        ]
+      })
+    )
+    expect(JSON.stringify(s)).not.toContain(huge.slice(0, 64))
+    expect(s.server.mode).toBe('separate')
+  })
+
+  it('round 3: the asking window key and window inventory are scrubbed field by field', async () => {
+    // A secret SHAPE, not a known token: only the per-field redaction can catch
+    // it (the final known-secret pass would not), so each field's own scrub is pinned.
+    const shaped = 'sk-live-abcdefghijklmnop'
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        origin: { ...base.origin, windowKey: shaped },
+        windows: () => base.windows().map((w, i) => (i === 0 ? { ...w, key: shaped } : w))
+      })
+    )
+    expect(s.origin.windowKey).toBe('<redacted>')
+    expect(s.windows[0].key).toBe('<redacted>')
+    expect(JSON.stringify(s)).not.toContain(shaped)
+  })
+
+  it('round 3: a known token as the asking window key is scrubbed', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({ origin: { ...base.origin, windowKey: SHELL_TOKEN } })
+    )
+    expect(s.origin.windowKey).not.toContain(SHELL_TOKEN)
+    expect(JSON.stringify(s)).not.toContain(SHELL_TOKEN)
+  })
 })

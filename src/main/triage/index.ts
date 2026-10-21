@@ -27,6 +27,17 @@ export function originFor(win: Pick<BrowserWindow, 'id'> | null): TriageOrigin {
 
 const inFlight = new Map<string, Promise<unknown>>()
 
+/** A failure the collection did not turn into a typed source outcome is a
+ *  bug: it reaches the window as its kind only, never its message, which
+ *  could quote what the collection read. */
+function opaque<T>(run: () => Promise<T>): () => Promise<T> {
+  return () =>
+    run().catch((error: unknown) => {
+      const kind = error instanceof Error ? error.name : typeof error
+      throw new Error(`Debug Clave could not collect this app's facts (${kind})`)
+    })
+}
+
 function once<T>(key: string, run: () => Promise<T>): Promise<T> {
   const running = inFlight.get(key)
   if (running) return running as Promise<T>
@@ -40,17 +51,21 @@ function once<T>(key: string, run: () => Promise<T>): Promise<T> {
 }
 
 export function triageSnapshot(win: BrowserWindow | null): Promise<TriageSnapshot> {
-  return once(`snapshot:${win?.id ?? 'none'}`, () =>
-    snapshotWith({ sources: electronSources(originFor(win)) })
+  return once(
+    `snapshot:${win?.id ?? 'none'}`,
+    opaque(() => snapshotWith({ sources: electronSources(originFor(win)) }))
   )
 }
 
 export function triagePrepare(win: BrowserWindow | null): Promise<TriagePrepareResult> {
-  return once(`prepare:${win?.id ?? 'none'}`, () =>
-    prepareWith({
-      sources: electronSources(originFor(win)),
-      userData: app.getPath('userData'),
-      home: os.homedir()
-    })
+  return once(
+    `prepare:${win?.id ?? 'none'}`,
+    opaque(() =>
+      prepareWith({
+        sources: electronSources(originFor(win)),
+        userData: app.getPath('userData'),
+        home: os.homedir()
+      })
+    )
   )
 }
