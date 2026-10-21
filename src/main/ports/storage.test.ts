@@ -12,6 +12,16 @@ import { tempDataDir } from './testing'
  * every first boot into a crash.
  */
 describe('fileStorage', () => {
+  it('checked reads distinguish absent documents from other filesystem failures', () => {
+    const storage = fileStorage(tempDataDir())
+    expect(storage.readChecked!('missing.json')).toBeNull()
+    expect(storage.readChecked!('absent/folder/missing.json')).toBeNull()
+    storage.write('document.json', '{"v":1}')
+    expect(storage.readChecked!('document.json')).toBe('{"v":1}')
+    // Reading a directory is an I/O error, never an empty settings document.
+    expect(() => storage.readChecked!('.')).toThrow()
+    expect(storage.read('.')).toBeNull()
+  })
   it('reads what it wrote, and null for what is not there', () => {
     const storage = fileStorage(tempDataDir())
     expect(storage.read('nothing.json')).toBeNull()

@@ -29,6 +29,7 @@ const input = {
       }
     ],
     views: [{ id: 'view', renders: ['pty', 'events'] }],
+    marks: [{ id: 'pack', title: 'Pack', slots: ['agent', 'tool'] }],
     adapters: [
       {
         id: 'adapter',

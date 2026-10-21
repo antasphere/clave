@@ -118,7 +118,7 @@ Set at most one agent mode. If `antigravityMode`, `codexMode`, `piMode`, or `cla
 
 | Token | Expands to |
 |---|---|
-| `@root_path` | Absolute workspace root, e.g. `/Users/you/.codika` |
+| `@root_path` | Absolute workspace root, e.g. `/Users/you/.antasphere` |
 | `@project_path` | Project dir **relative to root**, e.g. `clients/acme` (derived from the file's location + its `cwd`) |
 | `@project_abs` | Project dir absolute path |
 
@@ -456,7 +456,7 @@ This is a per-project `.clave` living at `clients/acme/acme-app/.clave/workspace
       "claudeMode": true,
       "dangerousMode": true,
       "rootSession": true,
-      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/CLAUDE.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
+      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/AGENTS.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
     }
   ],
   "terminals": []

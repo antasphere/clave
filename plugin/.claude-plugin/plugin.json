@@ -3,9 +3,9 @@
   "version": "1.6.0",
   "description": "Clave desktop app companion: build `.clave` workspace files (groups, sessions, terminals, views, toolbar actions) and recover lost sessions from local Claude Code transcripts.",
   "author": {
-    "name": "Codika",
-    "email": "team@codika.io",
-    "url": "https://codika.io"
+    "name": "Antasphere",
+    "email": "team@antasphere.com",
+    "url": "https://antasphere.com"
   },
   "homepage": "https://github.com/antasphere/clave",
   "repository": "https://github.com/antasphere/clave",

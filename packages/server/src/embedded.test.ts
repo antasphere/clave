@@ -241,6 +241,116 @@ describe('the HTTP API behind the token', () => {
     })
     expect(twice.status).toBe(422)
   })
+  it('confirms and releases v1 presence with ordered single events and independent sessions', async () => {
+    const peer = new Peer(server.url.replace('http:', 'ws:') + '/push')
+    await peer.opened
+    peer.send({ _tag: 'hello', token: server.token })
+    await peer.next()
+    try {
+      const reserve = async (): Promise<{ reservationId: string }> => {
+        const response = await post(
+          server.url + '/clients/registrations/v1/reserve',
+          server.token,
+          { kind: 'shell', name: 'v1', pid: 1 }
+        )
+        expect(response.status).toBe(200)
+        return (await response.json()) as { reservationId: string }
+      }
+      const reserved = await reserve()
+      expect(await json(await get(server.url + '/clients', server.token))).toEqual([])
+      expect(await peer.silence()).toBe(true)
+      const confirm = (): Promise<Response> =>
+        post(server.url + '/clients/registrations/v1/confirm', server.token, {
+          id: reserved.reservationId
+        })
+      const results = await Promise.all([confirm(), confirm()])
+      expect(results.map((r) => r.status)).toEqual([200, 200])
+      const clients = await Promise.all(results.map((r) => r.json()))
+      expect(clients[1]).toEqual(clients[0])
+      expect(await peer.next()).toMatchObject({
+        event: { _tag: 'client.registered', client: { id: reserved.reservationId } }
+      })
+      expect(await peer.silence()).toBe(true)
+      const releases = await Promise.all(
+        [1, 2].map(() =>
+          post(server.url + '/clients/registrations/v1/release', server.token, {
+            id: reserved.reservationId
+          })
+        )
+      )
+      expect(releases.map((r) => r.status)).toEqual([204, 204])
+      expect(await peer.next()).toMatchObject({
+        event: { _tag: 'client.unregistered', id: reserved.reservationId }
+      })
+      expect(await peer.silence()).toBe(true)
+      expect((await confirm()).status).toBe(422)
+      expect(await json(await get(server.url + '/clients', server.token))).toEqual([])
+      expect(source.get('s1')).toBeTruthy()
+      const pending = await reserve()
+      await post(server.url + '/clients/registrations/v1/release', server.token, {
+        id: pending.reservationId
+      })
+      expect(
+        (
+          await post(server.url + '/clients/registrations/v1/confirm', server.token, {
+            id: pending.reservationId
+          })
+        ).status
+      ).toBe(422)
+    } finally {
+      peer.ws.close()
+    }
+  })
+  it('accepted release defeats both sequential and racing confirmation delivery', async () => {
+    for (const order of ['confirm-first', 'release-first', 'race']) {
+      const reserved = (await (
+        await post(server.url + '/clients/registrations/v1/reserve', server.token, {
+          kind: 'shell',
+          name: order
+        })
+      ).json()) as { reservationId: string }
+      const confirm = (): Promise<Response> =>
+        post(server.url + '/clients/registrations/v1/confirm', server.token, {
+          id: reserved.reservationId
+        })
+      const release = (): Promise<Response> =>
+        post(server.url + '/clients/registrations/v1/release', server.token, {
+          id: reserved.reservationId
+        })
+      if (order === 'confirm-first') {
+        expect((await confirm()).status).toBe(200)
+        expect((await release()).status).toBe(204)
+      } else if (order === 'release-first') {
+        expect((await release()).status).toBe(204)
+        expect((await confirm()).status).toBe(422)
+      } else {
+        const [confirmed, released] = await Promise.all([confirm(), release()])
+        expect([200, 422]).toContain(confirmed.status)
+        expect(released.status).toBe(204)
+      }
+      expect((await confirm()).status).toBe(422)
+      expect(await json(await get(server.url + '/clients', server.token))).toEqual([])
+    }
+  })
+  it('authenticates and validates all registration routes before allocating state', async () => {
+    for (const stage of ['reserve', 'confirm', 'release']) {
+      expect(
+        (await post(server.url + '/clients/registrations/v1/' + stage, 'wrong', {})).status
+      ).toBe(401)
+      expect(
+        (await post(server.url + '/clients/registrations/v1/' + stage, server.token, {})).status
+      ).toBe(400)
+    }
+    expect(
+      (
+        await post(server.url + '/clients/registrations/v1/reserve', server.token, {
+          kind: 'shell',
+          name: 'é'.repeat(129)
+        })
+      ).status
+    ).toBe(400)
+    expect(await json(await get(server.url + '/clients', server.token))).toEqual([])
+  })
   it('starts a session with what the caller sent, and lists it after', async () => {
     const started = await post(`${server.url}/sessions/start`, server.token, {
       cwd: '/work/app',

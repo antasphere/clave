@@ -30,6 +30,9 @@ import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
+import { McpPanel } from './McpPanel'
+import { PluginPanel } from './PluginPanel'
+import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
@@ -61,6 +64,7 @@ import {
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {
   session: Session
@@ -123,6 +127,9 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
  *  moment it stops. A finished answer stands on its own; a logo resting under
  *  every reply read as the transcript's own decoration rather than a sign. */
 function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
+  // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
+  // breathing logo. Same slot, same arrival and departure.
+  const pack = useMarkPack()
   const Logo =
     provider === 'claude'
       ? ClaudeLogo
@@ -136,10 +143,17 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
       className="chat-provider-mark"
       data-provider={provider}
       data-state="working"
+      data-mark={pack ? 'pack' : undefined}
       role="status"
       aria-label={`${provider} is working`}
     >
-      {Logo ? <Logo /> : <span className="chat-provider-mark-dot" />}
+      {pack ? (
+        <pack.Agent working status="working" slot="transcript" />
+      ) : Logo ? (
+        <Logo />
+      ) : (
+        <span className="chat-provider-mark-dot" />
+      )}
     </div>
   )
 }
@@ -402,8 +416,9 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // Preparations the reader removed before main answered; their file is dropped on arrival.
   const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
-  // The /resume picker, open in the dock above the composer.
-  const [resuming, setResuming] = useState(false)
+  // The host's own panel, open in the dock above the composer: the /resume
+  // picker, or the /mcp and /plugin panels headless Claude has no menu for.
+  const [panel, setPanel] = useState<HostPanel | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
   const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
@@ -522,12 +537,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
-  // /resume is the host's, as in the TUI: it opens the picker rather than
-  // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude'
-  const openResume = (): void => {
+  // /resume, /mcp and /plugin are the host's, as in the TUI: each opens its
+  // panel rather than reaching the agent, typed whole or taken from the slash
+  // menu. Claude's commands only; another provider's agent gets the text.
+  const hostPanels = session.provider === 'claude'
+  const openPanel = (which: HostPanel): void => {
     setDraft('')
-    setResuming(true)
+    setPanel(which)
   }
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
@@ -536,7 +552,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const hasDraft = !!draft.trim() || attachments.length > 0
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
-    if (canResume && /^\/resume\s*$/.test(draft.trim())) return openResume()
+    const typedPanel = hostPanels ? hostPanelFor(draft) : null
+    if (typedPanel) return openPanel(typedPanel)
     const imageBytes = attachments
       .filter((file) => file.delivery === 'image')
       .reduce((sum, file) => sum + file.size, 0)
@@ -686,17 +703,18 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
     (command: CommandOption): void => {
-      if (canResume && command.name === 'resume') {
+      const picked = hostPanels ? hostPanelOf(command.name) : null
+      if (picked) {
         setSlashDismissed('')
         setDraft('')
-        setResuming(true)
+        setPanel(picked)
         return
       }
       setDraft(command.insert)
       setSlashDismissed(command.insert)
       textarea.current?.focus()
     },
-    [canResume, setDraft]
+    [hostPanels, setDraft]
   )
   /* A picked conversation opens as a chat tab of its own, on this tab's launch
      profile and beside it; a tab that has said nothing yet gives its place to
@@ -711,7 +729,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       dangerousMode: me?.dangerousMode ?? false,
       launchProfileId: me?.launchProfileId
     })
-    setResuming(false)
+    setPanel(null)
     if (!opened) return report('Could not resume that conversation')
     if (opened === session.id || conversation.entries.length > 0) return
     const current = useViewSessionStore.getState()
@@ -829,7 +847,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
-        {resuming && (
+        {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
             exclude={
@@ -838,13 +856,33 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             }
             onPick={(entry) => void resumeConversation(entry)}
             onClose={() => {
-              setResuming(false)
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'mcp' && (
+          <McpPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'plugin' && (
+          <PluginPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
               textarea.current?.focus()
             }}
           />
         )}
         <PromptDock
-          requests={resuming ? [] : waitingOn}
+          // /resume is a moment's choice; the MCP and plugin panels stay open
+          // across a reconnect or a sign-in, so what the agent waits on stays in sight.
+          requests={panel === 'resume' ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

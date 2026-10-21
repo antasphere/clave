@@ -72,7 +72,11 @@ export function pluginFile(root: string, entry: string): string {
  *  no business putting a tab in someone's side panel or a button in their toolbar until
  *  they ask for it. The list lives in the host, never in a manifest: whether a plugin the
  *  app ships runs unasked is the host's call, not the plugin's own declaration. */
-export const BUNDLED_ON_FIRST_INSTALL: readonly string[] = ['clave.chat-view', 'clave.github']
+export const BUNDLED_ON_FIRST_INSTALL: readonly string[] = [
+  'clave.chat-view',
+  'clave.github',
+  'clave.orbs'
+]
 
 export class PluginStore {
   readonly records = new Map<string, PluginRecord>()

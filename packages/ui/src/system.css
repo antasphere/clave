@@ -315,6 +315,21 @@ body,
     transform: rotate(360deg);
   }
 }
+/* Appearance → Agent mark: the tab's logo is a mark pack's canvas (the orbs
+   pack draws `thinking-orbs`' 20px preset), fitted to the icon slot here. Its
+   own motion says working, so the ring stays off it. Rest and work swap
+   with a short fade; the rest mark keeps its full ink — stillness is the
+   signal, and a dimmed 15px globe was too faint to read (2026-10-15). */
+.sidebar-tab-icon > canvas {
+  width: var(--sidebar-tab-icon-size) !important;
+  height: var(--sidebar-tab-icon-size) !important;
+}
+canvas[data-orb-state] {
+  transition: opacity 300ms;
+}
+.tab-status[data-mark='pack'][data-status='working']::before {
+  content: none;
+}
 @media (prefers-reduced-motion: reduce) {
   .tab-status[data-status='working']::before {
     animation-duration: 2.4s;
@@ -1697,6 +1712,48 @@ body,
   scale: 0.97;
 }
 
+/* Appearance → Agent mark: the nine orbs to pick from, each drawn live at the
+   avatar preset so the choice is made on the animation itself, not a still. */
+.orb-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: calc(var(--spacing) * 2);
+  width: 100%;
+}
+.orb-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background-color: var(--surface-50);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 150ms,
+    background-color 150ms,
+    color 150ms;
+}
+.orb-swatch:hover {
+  background-color: var(--surface-100);
+  color: var(--text-secondary);
+}
+.orb-swatch[data-selected='true'] {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.orb-swatch-label {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+}
+.orb-swatch canvas {
+  width: 48px !important;
+  height: 48px !important;
+}
+
 /* Segmented control: compact inline mode switcher (e.g. Page/Preview/Source
    in file headers). Items mark their active state via data-active="true". */
 .segmented {
@@ -2640,6 +2697,22 @@ button.extension-card:hover {
   background-color: var(--color-status-working);
   animation: pulse-dot 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* The same slot with a mark pack's mark in it (Appearance → Agent mark). */
+.pane-status-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  flex-shrink: 0;
+}
+.pane-status-mark > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.pane-status-mark[data-status='inactive'] {
+  opacity: 0.45;
+}
 
 /* ── Conversation views ──────────────────────────────────────────────────
    The chat view: the host frames it (.chat-host, the pane header above), the
@@ -3038,6 +3111,16 @@ button.chat-turn-from:focus-visible {
 .chat-provider-mark[data-state='working'] {
   animation: chat-breathe 1.4s ease-in-out infinite;
 }
+/* A pack's mark moves on its own; breathing it too would double the signal.
+   The canvas is the library's 20px preset, shown as drawn. */
+.chat-provider-mark[data-mark='pack'] {
+  animation: none;
+  color: var(--text-primary);
+}
+.chat-provider-mark canvas {
+  width: calc(var(--spacing) * 5) !important;
+  height: calc(var(--spacing) * 5) !important;
+}
 @keyframes chat-breathe {
   0%,
   100% {
@@ -3264,6 +3347,24 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-tool-status[data-running='true'] {
   animation: chat-spin 1s linear infinite;
+}
+/* A mark pack's running call (Appearance → Agent mark): the pack's own motion,
+   not the spinner's, in the glyph's box. */
+.chat-tool-status[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: none;
+}
+.chat-tool-status[data-mark='pack'] > canvas,
+.term-call-icon[data-mark='pack'] > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.term-call-icon[data-mark='pack'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 @keyframes chat-spin {
   to {
@@ -3845,6 +3946,73 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-resume-age {
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* The /mcp and /plugin panels wear the same dock: one row per server or
+   plugin, its name over its state, the actions on the right ending in the
+   switch. A row being worked on dims until the CLI has answered. */
+.chat-control-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border-radius: var(--radius-lg);
+  transition: opacity var(--default-transition-duration);
+}
+.chat-control-row + .chat-control-row {
+  margin-top: var(--row-gap);
+}
+.chat-control-row:hover {
+  background-color: var(--surface-100);
+}
+.chat-control-row[data-busy='true'] {
+  opacity: 0.55;
+}
+.chat-control-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  min-width: 0;
+}
+.chat-control-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+}
+.chat-control-status {
+  color: var(--text-secondary);
+}
+.chat-control-status[data-status='connected'] {
+  color: var(--color-success);
+}
+.chat-control-status[data-status='needs-auth'],
+.chat-control-status[data-status='pending'] {
+  color: var(--color-warning);
+}
+.chat-control-status[data-status='failed'] {
+  color: var(--color-destructive);
+}
+.chat-control-error {
+  font-size: var(--text-xs);
+  color: var(--color-destructive);
+  overflow-wrap: anywhere;
+}
+.chat-control-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--spacing) * 3);
+}
+.chat-control-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.chat-control-note[data-failed='true'] {
+  color: var(--color-destructive);
 }
 
 /* The transcript's record of a request: one muted row, like a tool call. */
