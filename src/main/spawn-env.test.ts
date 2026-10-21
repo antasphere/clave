@@ -65,6 +65,25 @@ describe('codexHomeForSpawn', () => {
     expect(codexHomeForSpawn('pi', 'work', syncHome)).toBeUndefined()
     expect(synced).toEqual(['work', 'default'])
   })
+
+  it('refuses an explicitly selected account whose home disappeared instead of using Default', () => {
+    const syncHome = (): undefined => undefined
+    expect(() => codexHomeForSpawn('codex', 'removed-account', syncHome)).toThrow(
+      'The selected Codex account is no longer available.'
+    )
+  })
+
+  it.each([undefined, 'default'])('keeps machine-home behavior for account %s', (id) => {
+    expect(codexHomeForSpawn('codex', id, () => undefined)).toBeUndefined()
+  })
+
+  it('does not resolve Codex homes for other providers or a plain terminal', () => {
+    const syncHome = (): never => {
+      throw new Error('A non-Codex session must not consult Codex accounts')
+    }
+    for (const kind of [null, 'claude', 'claude-agents', 'antigravity', 'pi'] as const)
+      expect(codexHomeForSpawn(kind, 'removed-account', syncHome)).toBeUndefined()
+  })
 })
 
 /**

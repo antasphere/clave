@@ -672,6 +672,74 @@ export async function run(t) {
         'copy fallback remains usable after an actual provider process startup failure, without respawning',
         true
       )
+      if (serverMode() === 'in-process') {
+        const accountRaceWindow = (await openWindow(app, win, f.workspace.id)).page
+        accountRaceWindow.setDefaultTimeout(12_000)
+        const accountRaceDialog = await openTriage(app, accountRaceWindow)
+        await choose(accountRaceWindow, 'Triage provider', 'Codex')
+        await choose(accountRaceWindow, 'Triage launch profile', 'codex recording (chat)')
+        await choose(accountRaceWindow, 'Triage account', 'Triage Codex account')
+        const beforeAccountRace = await accountRaceWindow.evaluate(() =>
+          window.electronAPI.triageSnapshot()
+        )
+        const spawnsBeforeAccountRace = records(root, 'codex').filter(
+          (r) => r.kind === 'spawn'
+        ).length
+        await app.evaluate((_, accountId) => {
+          const host = globalThis.__claveE2E.sessionHost
+          const original = host.start
+          host.start = async (input) => {
+            if (input.options?.launchProfileId !== 'chat:codex:triage-codex') return original(input)
+            host.start = original
+            const removed = globalThis.__claveE2E.settings.codexAccounts.remove(accountId)
+            globalThis.__triageAccountRace = { removed, requested: input.options.codexAccountId }
+            return original(input)
+          }
+        }, f.account.id)
+        await accountRaceDialog
+          .getByRole('button', { name: 'Start support conversation', exact: true })
+          .click()
+        assert.ok(
+          await until(() => app.evaluate(() => globalThis.__triageAccountRace?.removed === true)),
+          'the account was removed at the real host boundary after renderer preflight'
+        )
+        const accountRace = await app.evaluate(() => globalThis.__triageAccountRace)
+        assert.equal(
+          accountRace.requested,
+          f.account.id,
+          'main received the explicit chosen account'
+        )
+        await accountRaceDialog
+          .getByRole('alert')
+          .filter({ hasText: /Startup could not be confirmed/ })
+          .waitFor()
+        assert.equal(
+          records(root, 'codex').filter((r) => r.kind === 'spawn').length,
+          spawnsBeforeAccountRace,
+          'neither the selected nor the Default provider process starts after account removal'
+        )
+        const afterAccountRace = await accountRaceWindow.evaluate(() =>
+          window.electronAPI.triageSnapshot()
+        )
+        assert.deepEqual(
+          afterAccountRace.sessions.value.map((s) => s.id),
+          beforeAccountRace.sessions.value.map((s) => s.id),
+          'a removed account creates no session and preserves every previous handle'
+        )
+        assert.equal(
+          await accountRaceDialog
+            .getByRole('button', { name: 'Check existing tabs', exact: true })
+            .isDisabled(),
+          true,
+          'generic refusal never enables an unconfirmed retry'
+        )
+        await accountRaceDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
+        await accountRaceDialog.getByText('Copied', { exact: true }).waitFor()
+        t.check(
+          'an account removed after preflight refuses startup without a Default process or changes to existing sessions',
+          true
+        )
+      }
     }
     const final = await win.evaluate(() => window.electronAPI.triageSnapshot())
     assert.deepEqual(

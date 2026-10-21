@@ -16,7 +16,7 @@ import type { TerminalProcess } from '../../ports/terminal'
 import { workspaceManager } from '../../workspace-manager'
 import { launchProfileManager } from '../../launch-profile-manager'
 import { claudeAccountsManager } from '../../claude-accounts'
-import { codexAccountsManager } from '../../codex-accounts'
+import { codexAccountsManager, DEFAULT_CODEX_ACCOUNT_ID } from '../../codex-accounts'
 import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { isValidModelName } from '../../../shared/model-name'
@@ -857,7 +857,8 @@ export function accountTokenForSpawn(
  * session. The same boundary as the token above: a Claude tab handed a Codex
  * account id must not have its environment pointed at another home. The sync
  * runs here, at spawn, so the home carries every entry the default one has
- * today (ADR 0002).
+ * today (ADR 0002). An explicitly selected non-default account must still
+ * have a home: a removal racing renderer preflight must never use Default.
  */
 export function codexHomeForSpawn(
   kind: AgentKind | null,
@@ -866,7 +867,10 @@ export function codexHomeForSpawn(
     codexAccountsManager.syncHome(id, getLoginShellEnv())
 ): string | undefined {
   if (kind !== 'codex') return undefined
-  return syncHome(accountId)
+  const home = syncHome(accountId)
+  if (accountId && accountId !== DEFAULT_CODEX_ACCOUNT_ID && !home)
+    throw new Error('The selected Codex account is no longer available.')
+  return home
 }
 
 /**
