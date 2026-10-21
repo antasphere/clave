@@ -1,7 +1,8 @@
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { pathToFileURL } from 'url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { modeFlags, readBoundedBody, readBoundedJson, readRecordFiles } from './files'
 
@@ -27,12 +28,28 @@ describe('readBoundedJson', () => {
     )
   })
 
+  // In a child process with a deadline: a read that blocks on the FIFO would
+  // freeze this test worker itself, so the regression must fail as a timeout
+  // here rather than hang the suite (VA-5).
   it('refuses a FIFO without blocking on it', () => {
     const fifo = path.join(dir, 'fifo.json')
     execFileSync('mkfifo', [fifo])
-    const started = Date.now()
-    expect(() => readBoundedJson(fifo)).toThrow(/not a regular file/)
-    expect(Date.now() - started).toBeLessThan(1000)
+    const module = pathToFileURL(path.join(__dirname, 'files.ts')).href
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--no-warnings',
+        '--input-type=module',
+        '-e',
+        `const { readBoundedJson } = await import(${JSON.stringify(module)})
+         try { readBoundedJson(${JSON.stringify(fifo)}); console.log('read') }
+         catch (e) { console.log(e.message) }`
+      ],
+      { encoding: 'utf-8', timeout: 5000 }
+    )
+    expect(child.signal, 'the read blocked on the FIFO').toBeNull()
+    expect(child.stdout.trim()).toBe('fifo.json is not a regular file')
   })
 
   it('refuses a link, even to a readable file', () => {
@@ -57,7 +74,7 @@ describe('readRecordFiles', () => {
     expect(r.total).toBe(3)
     expect(r.files).toEqual([
       { key: 'a', content: { id: 'a', cwd: '/' } },
-      { key: 'b', content: null }
+      { key: 'b', content: null, error: 'b.json is not valid JSON' }
     ])
     expect(fs.readdirSync(dir).sort()).toEqual(['a.json', 'b.json', 'c.json', 'notes.txt'])
   })

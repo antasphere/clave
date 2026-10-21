@@ -77,6 +77,8 @@ export function problemCount(snapshot: TriageSnapshot): number {
     r.windowMismatch.length +
     r.recordsWithoutSession.length +
     r.tmuxWithoutRecord.length +
+    (snapshot.records.status === 'ok' ? (snapshot.records.value.unreadable?.length ?? 0) : 0) +
+    (snapshot.server.health.liveError ? 1 : 0) +
     failed +
     serverDown
   )
@@ -124,7 +126,7 @@ export function renderContext(snapshot: TriageSnapshot, snapshotPath: string | n
     `- Discovery file says it worked: ${yesNo(server.discoveryOk)}${server.discoveryError ? `; failure: ${server.discoveryError}` : ''}`
   )
   line(
-    `- Health: /health/live → ${server.health.live ?? 'unreachable'}, /health/ready → ${server.health.ready ?? 'unreachable'}`
+    `- Health: /health/live → ${server.health.live ?? `no answer (${server.health.liveError ?? 'unknown'})`}, /health/ready → ${server.health.ready ?? `no answer (${server.health.readyError ?? 'unknown'})`}`
   )
   if (server.health.readyBody)
     line(`- Readiness body: \`${server.health.readyBody.replace(/`/g, "'")}\``)
@@ -206,6 +208,9 @@ export function renderContext(snapshot: TriageSnapshot, snapshotPath: string | n
   line(
     `- Session records: ${sourceLine(snapshot.records, (v) => `${v.total} in \`${v.dir}\` (${v.items.filter((i) => i.tmuxName).length} tmux-backed)`)}`
   )
+  if (snapshot.records.status === 'ok')
+    for (const u of snapshot.records.value.unreadable ?? [])
+      line(`  - not readable as a record, left as it is: \`${u.key}\` (${u.error})`)
   line(
     `- Live tmux sessions on the \`clave\` socket: ${sourceLine(snapshot.tmux, (v) => String(v.live.length))}`
   )

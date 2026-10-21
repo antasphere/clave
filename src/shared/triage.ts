@@ -92,9 +92,11 @@ export interface TriageServer {
   discoveryOk: boolean | null
   /** The failure the discovery file records, redacted. */
   discoveryError: string | null
-  /** `http://127.0.0.1:<port>`; never a token. */
+  /** `http://127.0.0.1:<port>`, the address this shell's server client
+   *  uses; never a token, and never one a stale discovery file names. */
   origin: string | null
-  /** The pid that wrote the discovery file: this shell, or a stale one. */
+  /** The pid that wrote the discovery file: this shell, or a stale one (whose
+   *  other facts are then not reported). */
   discoveryShellPid: number | null
   serverPid: number | null
   serverAlive: boolean | null
@@ -108,8 +110,15 @@ export interface TriageServer {
     generation: number | null
     givenUp: boolean | null
   } | null
-  /** The open health routes (no token): HTTP status, or null when unreachable. */
-  health: { live: number | null; ready: number | null; readyBody: string | null }
+  /** The open health routes (no token): HTTP status, or null when the route
+   *  did not answer, with the reason (`timeout: …`, `error: …`, `unavailable: …`). */
+  health: {
+    live: number | null
+    ready: number | null
+    readyBody: string | null
+    liveError?: string | null
+    readyError?: string | null
+  }
   clients: TriageSource<TriageClient[]>
 }
 
@@ -246,7 +255,14 @@ export interface TriageSnapshot {
   windows: TriageWindow[]
   sessions: TriageSource<TriageSession[]>
   windowListings: TriageWindowListing[]
-  records: TriageSource<{ dir: string; total: number; items: TriageRecord[] }>
+  records: TriageSource<{
+    dir: string
+    total: number
+    items: TriageRecord[]
+    /** Record files that could not be read or are not records: listed, never
+     *  repaired; any of them makes the reconciliation partial. */
+    unreadable?: Array<{ key: string; error: string }>
+  }>
   tmux: TriageSource<{ live: string[] }>
   agents: TriageSource<TriageAgent[]>
   reconciliation: TriageReconciliation

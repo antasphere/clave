@@ -111,7 +111,13 @@ describe('collectSnapshot', () => {
     expect(Date.now() - started).toBeLessThan(2000)
     expect(s.sessions.status).toBe('timeout')
     expect(s.server.clients.status).toBe('timeout')
-    expect(s.server.health).toEqual({ live: null, ready: null, readyBody: null })
+    expect(s.server.health).toEqual({
+      live: null,
+      ready: null,
+      readyBody: null,
+      liveError: 'timeout: GET /health/live did not answer within 100 ms',
+      readyError: 'timeout: GET /health/ready did not answer within 100 ms'
+    })
     expect(s.server.serverAlive).toBe(false)
     expect(s.windowListings.map((l) => l.status)).toEqual(['timeout', 'timeout'])
     expect(s.reconciliation.complete).toBe(false)
@@ -318,5 +324,158 @@ describe('collectSnapshot', () => {
     )
     expect(s.app.flags[0]).toBe('--dev-x')
     expect(s.app.flags[1]).not.toContain(SHELL_TOKEN)
+  })
+
+  // ── Round 1 verifier findings (VA-1…VA-4), pinned ──
+
+  it('VA-1: sets a stale discovery file aside whole and asks the live server', async () => {
+    const asked: string[] = []
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:56205',
+          token: SHELL_TOKEN,
+          mode: 'separate',
+          ok: false,
+          error: 'another instance failed',
+          pid: 999,
+          clientId: 'other-client',
+          serverPid: 1000
+        }),
+        endpoint: () => ({ url: 'http://127.0.0.1:56155', mode: 'in-process' }),
+        health: async (origin, path) => {
+          asked.push(`${origin}${path}`)
+          return { status: 200, body: 'ok' }
+        }
+      })
+    )
+    expect(asked.sort()).toEqual([
+      'http://127.0.0.1:56155/health/live',
+      'http://127.0.0.1:56155/health/ready'
+    ])
+    expect(s.server).toMatchObject({
+      origin: 'http://127.0.0.1:56155',
+      mode: 'in-process',
+      discoveryShellPid: 999,
+      discoveryOk: null,
+      discoveryError: null,
+      clientId: null,
+      serverPid: 725
+    })
+    expect(JSON.stringify(s)).not.toContain('56205')
+    expect(s.warnings.some((w) => w.includes('another instance failed'))).toBe(false)
+  })
+
+  it('VA-1: prefers the address the shell uses over the one its own discovery file names', async () => {
+    const s = await collectSnapshot(
+      fakeSources({ endpoint: () => ({ url: 'http://127.0.0.1:60001', mode: 'attached' }) })
+    )
+    expect(s.server.origin).toBe('http://127.0.0.1:60001')
+    expect(s.warnings.some((w) => w.includes('http://127.0.0.1:49457'))).toBe(true)
+  })
+
+  it('VA-2: bounds nested inventories and reports every cut', async () => {
+    const ids = (p: string): string[] => Array.from({ length: 8 }, (_, i) => `${p}-${i}`)
+    const clients = Array.from({ length: 6 }, (_, i) => ({
+      id: `c-${i}`,
+      kind: 'shell',
+      name: 'x',
+      registeredAt: i
+    }))
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        clients: async () => clients,
+        windows: () => base.windows().map((w) => ({ ...w, boundSessionIds: ids(`bound-${w.id}`) })),
+        windowListings: async () => [
+          {
+            windowId: 1,
+            ok: true,
+            result: {
+              sessions: [],
+              groups: [
+                {
+                  id: 'g',
+                  name: 'G',
+                  sessionIds: ids('member'),
+                  terminals: ids('term').map((sessionId) => ({ id: sessionId, sessionId }))
+                }
+              ]
+            }
+          },
+          { windowId: 2, ok: true, result: { sessions: [], groups: [] } }
+        ]
+      }),
+      { maxSessions: 3, maxOther: 4 }
+    )
+    const listing = s.windowListings[0]
+    if (listing.status !== 'ok') throw new Error('listing')
+    expect(listing.value.groups[0].sessionIds).toHaveLength(3)
+    expect(listing.value.groups[0].terminalSessionIds).toHaveLength(3)
+    expect(listing.value.groups[0].terminalCount).toBe(8)
+    expect(s.server.clients.status === 'ok' && s.server.clients.value).toHaveLength(4)
+    expect(s.windows.every((w) => w.boundSessionIds.length === 3)).toBe(true)
+    expect(s.limits.truncated).toEqual(
+      expect.arrayContaining(['windowListings', 'server clients', 'window bound sessions'])
+    )
+    expect(s.reconciliation.complete).toBe(false)
+    expect(s.warnings.some((w) => w.startsWith('Cut at their limit'))).toBe(true)
+  })
+
+  it('VA-3: lists record files it could not read and calls the comparison partial', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        records: async () => {
+          const r = await base.records('', 10)
+          return {
+            total: 4,
+            files: [
+              ...r.files,
+              { key: 'zz-malformed', content: null, error: 'zz-malformed.json is not valid JSON' },
+              { key: 'zz-no-cwd', content: { id: 'x' } }
+            ]
+          }
+        }
+      })
+    )
+    if (s.records.status !== 'ok') throw new Error('records')
+    expect(s.records.value.total).toBe(4)
+    expect(s.records.value.items).toHaveLength(2)
+    expect(s.records.value.unreadable).toEqual([
+      { key: 'zz-malformed', error: 'zz-malformed.json is not valid JSON' },
+      { key: 'zz-no-cwd', error: 'not a session record (no id or cwd)' }
+    ])
+    expect(s.reconciliation.complete).toBe(false)
+    expect(s.warnings.some((w) => w.includes('2 session record file(s)'))).toBe(true)
+  })
+
+  it('VA-4: keeps why each health route did not answer', async () => {
+    const s = await collectSnapshot(
+      fakeSources({
+        health: async (_origin, path) => {
+          if (path === '/health/live') throw new Error('VA-health-sentinel')
+          return { status: 503, body: 'not ready' }
+        }
+      })
+    )
+    expect(s.server.health).toEqual({
+      live: null,
+      ready: 503,
+      readyBody: 'not ready',
+      liveError: 'error: VA-health-sentinel',
+      readyError: null
+    })
+    expect(
+      s.warnings.some((w) => w.includes('/health/live') && w.includes('VA-health-sentinel'))
+    ).toBe(true)
+  })
+
+  it('VA-4: says the health routes were not asked when no address is known', async () => {
+    const s = await collectSnapshot(
+      fakeSources({ shellDiscovery: async () => null, endpoint: () => null })
+    )
+    expect(s.server.health.liveError).toBe('unavailable: no server address is known')
+    expect(s.server.health.readyError).toBe('unavailable: no server address is known')
   })
 })

@@ -43,6 +43,8 @@ export interface TriageLimitsConfig {
   maxRecords: number
   maxTmux: number
   maxGroupsPerWindow: number
+  /** Windows, workspaces, Electron processes, server clients, unreadable records. */
+  maxOther: number
   sourceTimeoutMs: number
 }
 
@@ -51,7 +53,14 @@ export const DEFAULT_LIMITS: Readonly<TriageLimitsConfig> = {
   maxRecords: 500,
   maxTmux: 500,
   maxGroupsPerWindow: 500,
+  maxOther: 100,
   sourceTimeoutMs: 3000
+}
+
+/** Keep at most `max` of a list, saying in `cuts` when something was cut. */
+function cap<T>(list: readonly T[], max: number, name: string, cuts: string[]): T[] {
+  if (list.length > max && !cuts.includes(name)) cuts.push(name)
+  return list.slice(0, max)
 }
 
 export type TriageLimitsInput = Partial<TriageLimitsConfig>
@@ -82,6 +91,8 @@ export interface RawServerDiscovery {
 export interface RawRecordFile {
   key: string
   content: unknown
+  /** Why the file could not be read, when it could not. */
+  error?: string
 }
 
 export interface RawWindowReply {
@@ -281,8 +292,9 @@ function projectListing(
   }
   const rawSessions = Array.isArray(reply.result.sessions) ? reply.result.sessions : []
   const rawGroups = Array.isArray(reply.result.groups) ? reply.result.groups : []
+  const cuts: string[] = []
   const sessions: TriageListedSession[] = []
-  for (const s of rawSessions.slice(0, maxSessions)) {
+  for (const s of cap(rawSessions, maxSessions, 'sessions', cuts)) {
     if (!isObject(s) || !str(s.id)) continue
     const account = isObject(s.account) ? str(s.account.id) : null
     sessions.push({
@@ -296,28 +308,32 @@ function projectListing(
     })
   }
   const groups: TriageListedGroup[] = []
-  for (const g of rawGroups.slice(0, maxGroups)) {
+  for (const g of cap(rawGroups, maxGroups, 'groups', cuts)) {
     if (!isObject(g) || !str(g.id)) continue
     const terminals = Array.isArray(g.terminals) ? g.terminals : []
+    const memberIds = (Array.isArray(g.sessionIds) ? g.sessionIds : []).filter(
+      (x): x is string => typeof x === 'string'
+    )
+    const terminalIds = terminals
+      .map((t) => (isObject(t) ? str(t.sessionId) : null))
+      .filter((x): x is string => !!x)
     groups.push({
       id: redact.text(str(g.id)!, 120),
       name: redact.text(str(g.name) ?? '', 120),
-      sessionIds: (Array.isArray(g.sessionIds) ? g.sessionIds : [])
-        .filter((x): x is string => typeof x === 'string')
-        .slice(0, maxSessions)
-        .map((x) => redact.text(x, 200)),
+      sessionIds: cap(memberIds, maxSessions, 'group sessions', cuts).map((x) =>
+        redact.text(x, 200)
+      ),
       terminalCount: terminals.length,
-      terminalSessionIds: terminals
-        .map((t) => (isObject(t) ? str(t.sessionId) : null))
-        .filter((x): x is string => !!x)
-        .map((x) => redact.text(x, 200)),
+      terminalSessionIds: cap(terminalIds, maxSessions, 'group terminals', cuts).map((x) =>
+        redact.text(x, 200)
+      ),
       workspaceId: str(g.workspaceId) ? redact.text(str(g.workspaceId)!, 120) : null,
       hasView: isObject(g.view) || typeof g.view === 'string'
     })
   }
   return {
     listing: { windowId: reply.windowId, status: 'ok', value: { sessions, groups } },
-    truncated: rawSessions.length > maxSessions || rawGroups.length > maxGroups
+    truncated: cuts.length > 0
   }
 }
 
@@ -341,7 +357,8 @@ export function reconcile(input: {
   windows: TriageWindow[]
   records: TriageSource<{ items: TriageRecord[] }>
   tmux: TriageSource<{ live: string[] }>
-  truncated: boolean
+  /** Something these comparisons read was cut or could not be read. */
+  partial: boolean
 }): TriageReconciliation {
   const server = input.sessions.status === 'ok' ? input.sessions.value : null
   const okListings = input.listings.filter(
@@ -399,7 +416,7 @@ export function reconcile(input: {
             recordTmux
           )
         : [],
-    complete: !!server && allListed && !!records && !!live && !input.truncated
+    complete: !!server && allListed && !!records && !!live && !input.partial
   }
 }
 
@@ -446,28 +463,38 @@ export async function collectSnapshot(
       return null
     }
   })()
-  const discoveryMode = str(shell?.mode)
-  let mode: TriageServerMode =
+  // A discovery file another shell wrote describes another instance: none of
+  // its facts are this one's, so it is set aside whole (only its writer's pid
+  // is kept, for the warning), never mixed with what this shell knows.
+  const discoveryShellPid = pidOf(shell?.pid)
+  const stale =
+    !!shell && discoveryShellPid !== null && discoveryShellPid !== sources.origin.shellPid
+  if (stale)
+    warnings.push(
+      `The server discovery file was written by pid ${discoveryShellPid}, not this shell (pid ${sources.origin.shellPid}): it describes another Clave instance and is not used.`
+    )
+  const trusted = stale ? null : shell
+  const discoveryMode = str(trusted?.mode)
+  const mode: TriageServerMode =
     discoveryMode === 'in-process' || discoveryMode === 'separate' || discoveryMode === 'attached'
       ? discoveryMode
       : endpoint?.mode === 'in-process'
         ? 'in-process'
         : 'unknown'
-  const discoveryShellPid = pidOf(shell?.pid)
-  if (shell && discoveryShellPid !== null && discoveryShellPid !== sources.origin.shellPid) {
-    warnings.push(
-      `The server discovery file was written by pid ${discoveryShellPid}, not this shell (pid ${sources.origin.shellPid}): it may describe another Clave instance.`
-    )
-    mode = endpoint?.mode === 'in-process' ? 'in-process' : 'unknown'
-  }
   const ownership = ownershipOf(mode)
-  const url = str(shell?.url) || endpoint?.url || null
-  const origin = originOf(url)
+  // The address this shell's own server client uses wins: it is the server
+  // the sessions and clients below come from.
+  const fileOrigin = originOf(str(trusted?.url))
+  const origin = originOf(endpoint?.url ?? null) ?? fileOrigin
+  if (fileOrigin && origin && fileOrigin !== origin)
+    warnings.push(
+      `The server discovery file names ${fileOrigin} but this shell's server is at ${origin}: the shell's address is used.`
+    )
   const serverPid =
     mode === 'in-process'
       ? sources.origin.shellPid
       : mode === 'separate'
-        ? pidOf(shell?.serverPid)
+        ? pidOf(trusted?.serverPid)
         : null
   const alive = (pid: number | null): boolean | null => {
     if (pid === null) return null
@@ -498,17 +525,22 @@ export async function collectSnapshot(
   }
   if (mode === 'separate' && serverAlive === false)
     warnings.push(`The separate server (pid ${serverPid}) is not running.`)
-  if (shell && shell.ok === false)
+  if (trusted && trusted.ok === false)
     warnings.push(
-      `The server discovery file records a failure: ${redact.text(str(shell.error) ?? 'no reason given', 400)}`
+      `The server discovery file records a failure: ${redact.text(str(trusted.error) ?? 'no reason given', 400)}`
     )
 
-  const health = async (path: string): Promise<{ status: number | null; body: string | null }> => {
-    if (!origin) return { status: null, body: null }
+  // Each health route keeps why it did not answer.
+  const health = async (
+    path: string
+  ): Promise<{ status: number | null; body: string | null; error: string | null }> => {
+    if (!origin)
+      return { status: null, body: null, error: 'unavailable: no server address is known' }
     const r = await withDeadline(redact, ms, `GET ${path}`, () => sources.health(origin, path))
-    return r.status === 'ok'
-      ? { status: r.value.status, body: redact.text(r.value.body, 2000) }
-      : { status: null, body: null }
+    if (r.status === 'ok')
+      return { status: r.value.status, body: redact.text(r.value.body, 2000), error: null }
+    warnings.push(`The server's ${path} did not answer (${r.status}): ${r.error}`)
+    return { status: null, body: null, error: `${r.status}: ${r.error}` }
   }
 
   // ── The rest, in parallel ──
@@ -549,19 +581,35 @@ export async function collectSnapshot(
   // Records first: the sessions read their user labels off them.
   let records: TriageSnapshot['records']
   const recordById = new Map<string, Record<string, unknown>>()
+  let unreadableRecords = 0
   if (recordsR.status === 'ok') {
     const items: TriageRecord[] = []
+    const unreadable: Array<{ key: string; error: string }> = []
     for (const file of recordsR.value.files.slice(0, limits.maxRecords)) {
       const projected = projectRecord(file, redact)
       if (projected) items.push(projected)
+      else
+        unreadable.push({
+          key: redact.text(file.key, 200),
+          error: redact.text(file.error ?? 'not a session record (no id or cwd)', 300)
+        })
       if (isObject(file.content) && str(file.content.id))
         recordById.set(str(file.content.id)!, file.content)
     }
-    if (recordsR.value.total > items.length && recordsR.value.total > limits.maxRecords)
-      truncated.push('records')
+    if (recordsR.value.total > limits.maxRecords) truncated.push('records')
+    unreadableRecords = unreadable.length
+    if (unreadable.length)
+      warnings.push(
+        `${unreadable.length} session record file(s) could not be read as records; they are listed and were left as they are.`
+      )
     records = {
       status: 'ok',
-      value: { dir: redact.path(recordsDir!), total: recordsR.value.total, items }
+      value: {
+        dir: redact.path(recordsDir!),
+        total: recordsR.value.total,
+        items,
+        unreadable: cap(unreadable, limits.maxOther, 'unreadable records', truncated)
+      }
     }
   } else records = recordsR
 
@@ -581,15 +629,22 @@ export async function collectSnapshot(
           value: clientsR.value
             .map((c) => projectClient(c, redact))
             .filter((c): c is TriageClient => c !== null)
-            .slice(0, 100)
+            .slice(0, limits.maxOther + 1)
         }
       : clientsR
+  if (clients.status === 'ok')
+    clients.value = cap(clients.value, limits.maxOther, 'server clients', truncated)
 
   const windows = (() => {
     try {
-      return sources.windows().map((w) => ({
+      return cap(sources.windows(), limits.maxOther, 'windows', truncated).map((w) => ({
         ...w,
-        boundSessionIds: w.boundSessionIds.slice(0, limits.maxSessions)
+        boundSessionIds: cap(
+          w.boundSessionIds,
+          limits.maxSessions,
+          'window bound sessions',
+          truncated
+        )
       }))
     } catch (error) {
       warnings.push(`The window registry could not be read: ${errorText(redact, error)}`)
@@ -626,7 +681,7 @@ export async function collectSnapshot(
   } else tmux = tmuxR
 
   const workspaces = await withDeadline(redact, ms, 'the workspaces', () =>
-    sources.workspaces().map((w) => ({
+    cap(sources.workspaces(), limits.maxOther, 'workspaces', truncated).map((w) => ({
       id: redact.text(w.id, 120),
       name: redact.text(w.name, 120),
       rootDir: redact.text(w.rootDir, 1000)
@@ -647,20 +702,32 @@ export async function collectSnapshot(
         crashDumps: redact.path(app.paths.crashDumps)
       }
     },
-    processes: processesR,
+    processes:
+      processesR.status === 'ok'
+        ? {
+            status: 'ok',
+            value: cap(processesR.value, limits.maxOther, 'processes', truncated)
+          }
+        : processesR,
     server: {
       mode,
       ownership,
-      discoveryOk: bool(shell?.ok),
-      discoveryError: str(shell?.error) ? redact.text(str(shell!.error)!, 400) : null,
+      discoveryOk: bool(trusted?.ok),
+      discoveryError: str(trusted?.error) ? redact.text(str(trusted!.error)!, 400) : null,
       origin,
       discoveryShellPid,
       serverPid,
       serverAlive,
-      clientId: str(shell?.clientId) ? redact.text(str(shell!.clientId)!, 120) : null,
+      clientId: str(trusted?.clientId) ? redact.text(str(trusted!.clientId)!, 120) : null,
       version: mode === 'in-process' || mode === 'separate' ? sources.appVersion : 'unknown',
       terminalProcess,
-      health: { live: live.status, ready: ready.status, readyBody: ready.body },
+      health: {
+        live: live.status,
+        ready: ready.status,
+        readyBody: ready.body,
+        liveError: live.error,
+        readyError: ready.error
+      },
       clients
     },
     mcp: { listening: mcp !== null, origin: originOf(mcp?.url ?? null) },
@@ -680,7 +747,7 @@ export async function collectSnapshot(
       windows,
       records,
       tmux,
-      truncated: truncated.length > 0
+      partial: truncated.length > 0 || unreadableRecords > 0
     }),
     paths: {
       mainLog: redact.path(sources.paths.mainLog),

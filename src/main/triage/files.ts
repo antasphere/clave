@@ -92,13 +92,13 @@ export function readRecordFiles(
     .sort()
   const files: RawRecordFile[] = []
   for (const name of names.slice(0, max)) {
-    let content: unknown = null
+    const key = name.slice(0, -'.json'.length)
     try {
-      content = readBoundedJson(path.join(dir, name), MAX_RECORD_BYTES)
-    } catch {
-      // unreadable: projected away by the assembler
+      files.push({ key, content: readBoundedJson(path.join(dir, name), MAX_RECORD_BYTES) })
+    } catch (error) {
+      // Reported by the assembler as unreadable, never repaired or removed.
+      files.push({ key, content: null, error: (error as Error).message })
     }
-    files.push({ key: name.slice(0, -'.json'.length), content })
   }
   return { total: names.length, files }
 }

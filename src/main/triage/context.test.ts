@@ -88,6 +88,30 @@ describe('the context file', () => {
   })
 })
 
+describe('the context says why something is missing', () => {
+  it('names a health route that failed and a record file it could not read', async () => {
+    const base = fakeSources()
+    const snapshot = await collectSnapshot(
+      fakeSources({
+        health: async () => {
+          throw new Error('connect ECONNREFUSED')
+        },
+        records: async () => ({
+          total: 1,
+          files: [{ key: 'broken', content: null, error: 'broken.json is not valid JSON' }]
+        }),
+        sessions: base.sessions
+      })
+    )
+    const md = renderContext(snapshot, null)
+    expect(md).toContain('/health/live → no answer (error: connect ECONNREFUSED)')
+    expect(md).toContain(
+      'not readable as a record, left as it is: `broken` (broken.json is not valid JSON)'
+    )
+    expect(problemCount(snapshot)).toBeGreaterThanOrEqual(2)
+  })
+})
+
 describe('the playbook', () => {
   it('asks first, requires a yes before repairs, uploads and issues, and protects sessions', () => {
     expect(TRIAGE_PLAYBOOK).toContain('## 1. Ask what went wrong')

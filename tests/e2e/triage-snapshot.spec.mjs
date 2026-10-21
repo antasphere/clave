@@ -446,6 +446,13 @@ async function runMode(t, mode, loadTriageSnapshot) {
       s.records.status === 'ok' ? s.records.value.items.map((r) => r.id) : s.records
     )
     t.check(
+      `${label} the planted malformed record is reported, not dropped, and the comparison is partial`,
+      s.records.status === 'ok' &&
+        (s.records.value.unreadable ?? []).some((u) => u.key === 'zz-triage-malformed') &&
+        s.reconciliation.complete === false,
+      s.records.status === 'ok' ? s.records.value.unreadable : s.records
+    )
+    t.check(
       `${label} the opened sessions agree between the server and the windows`,
       ![terminal, chat].some(
         (id) =>
@@ -494,6 +501,35 @@ async function runMode(t, mode, loadTriageSnapshot) {
       tokens.length >= 2 && leaks.length === 0,
       { leaks: leaks.map((x) => x.slice(0, 6) + '…'), tokens: tokens.length }
     )
+
+    // ── A discovery file another shell wrote is set aside whole (in-process:
+    // the separate child's own lifecycle reads that file, so it is not touched there) ──
+    if (mode === 'in-process') {
+      const file = path.join(L.DIR, 'clave-server.json')
+      const original = readFileSync(file, 'utf8')
+      try {
+        writeFileSync(
+          file,
+          JSON.stringify({
+            ...JSON.parse(original),
+            url: 'http://127.0.0.1:9',
+            pid: 999999,
+            clientId: 'another-instance'
+          })
+        )
+        const staleSnap = await a.page.evaluate(() => window.electronAPI.triageSnapshot())
+        t.check(
+          `${label} a stale discovery file is not used: the live server is asked`,
+          staleSnap.server.origin === new URL(discovery.url).origin &&
+            staleSnap.server.health.live === 200 &&
+            staleSnap.server.clientId === null &&
+            staleSnap.warnings.some((w) => w.includes('pid 999999')),
+          staleSnap.server
+        )
+      } finally {
+        writeFileSync(file, original)
+      }
+    }
 
     // ── A snapshot from window B writes nothing ──
     const bundlesBefore = readdirSync(path.join(L.DIR, 'triage')).length
