@@ -880,7 +880,9 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           />
         )}
         <PromptDock
-          requests={panel ? [] : waitingOn}
+          // /resume is a moment's choice; the MCP and plugin panels stay open
+          // across a reconnect or a sign-in, so what the agent waits on stays in sight.
+          requests={panel === 'resume' ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

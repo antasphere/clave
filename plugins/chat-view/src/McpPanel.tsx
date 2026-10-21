@@ -61,6 +61,8 @@ export function McpPanel({
    *  needs-auth or the limit passes. */
   const watchSignIn = (name: string): void => {
     if (polling.current) clearInterval(polling.current)
+    // The panel may have closed while the sign-in request was in flight.
+    if (!live.current) return
     const started = Date.now()
     polling.current = setInterval(() => {
       void read().then((list) => {
@@ -106,7 +108,19 @@ export function McpPanel({
   const q = query.trim().toLowerCase()
   const shown = (servers ?? []).filter((s) => !q || s.name.toLowerCase().includes(q))
   return (
-    <section className="chat-prompt" data-kind="mcp" aria-label="MCP servers">
+    <section
+      className="chat-prompt"
+      data-kind="mcp"
+      aria-label="MCP servers"
+      // Escape closes the panel from any of its controls, and stops here: on
+      // its way up it would reach the view, which takes it as a stop.
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
+    >
       <div className="chat-prompt-head">
         <ServerStackIcon className="chat-tool-status" />
         <span className="chat-prompt-title">MCP servers</span>
@@ -137,12 +151,6 @@ export function McpPanel({
         autoFocus
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape') return
-          event.preventDefault()
-          event.stopPropagation()
-          onClose()
-        }}
       />
       <div className="chat-resume-list" aria-label="Servers">
         {servers === null && !failure && <div className="chat-model-empty">Loading…</div>}

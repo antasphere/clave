@@ -93,7 +93,19 @@ export function PluginPanel({
       !q || [p.name, p.marketplace, p.description ?? ''].some((t) => t.toLowerCase().includes(q))
   )
   return (
-    <section className="chat-prompt" data-kind="plugins" aria-label="Plugins">
+    <section
+      className="chat-prompt"
+      data-kind="plugins"
+      aria-label="Plugins"
+      // Escape closes the panel from any of its controls, and stops here: on
+      // its way up it would reach the view, which takes it as a stop.
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
+    >
       <div className="chat-prompt-head">
         <PuzzlePieceIcon className="chat-tool-status" />
         <span className="chat-prompt-title">Plugins</span>
@@ -127,12 +139,6 @@ export function PluginPanel({
         autoFocus
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape') return
-          event.preventDefault()
-          event.stopPropagation()
-          onClose()
-        }}
       />
       <div className="chat-resume-list" aria-label="Installed plugins">
         {plugins === null && !failure && <div className="chat-model-empty">Loading…</div>}
@@ -164,6 +170,7 @@ export function PluginPanel({
                     <button
                       type="button"
                       className="chat-prompt-btn"
+                      disabled={busy !== null}
                       onClick={() => setConfirming(null)}
                     >
                       Keep
@@ -172,6 +179,7 @@ export function PluginPanel({
                       type="button"
                       className="chat-prompt-btn"
                       data-primary="true"
+                      disabled={busy !== null}
                       onClick={() => void uninstall(plugin)}
                     >
                       Uninstall
