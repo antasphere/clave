@@ -65,19 +65,34 @@ describe('createRedactor', () => {
     })
   })
 
-  it('never renames a field, and keeps a fixed contract value a token happens to equal', () => {
+  it('never renames a field, and keeps a fixed value only in the field the caller names', () => {
     const r = createRedactor({ home: '/h', secrets: ['terminalSessionIds', 'separate'] })
+    const keepMode = (path: readonly (string | number)[]): boolean =>
+      path.length === 1 && path[0] === 'mode'
     expect(
-      r.deep({
-        terminalSessionIds: ['terminalSessionIds'],
-        mode: 'separate',
-        warning: 'the separate server'
-      })
+      r.deep(
+        {
+          terminalSessionIds: ['terminalSessionIds'],
+          mode: 'separate',
+          windowKey: 'separate',
+          warning: 'the separate server'
+        },
+        keepMode
+      )
     ).toEqual({
       terminalSessionIds: [REDACTED],
       mode: 'separate',
+      windowKey: REDACTED,
       warning: `the ${REDACTED} server`
     })
+  })
+
+  it('has no value exemption of its own: a known token equal to a contract word is scrubbed', () => {
+    // The coordinator's probe: createRedactor({secrets:['separate']}).text('separate').
+    const r = createRedactor({ home: '/h', secrets: ['separate'] })
+    expect(r.text('separate')).toBe(REDACTED)
+    expect(r.path('separate')).toBe(REDACTED)
+    expect(r.deep({ mode: 'separate' })).toEqual({ mode: REDACTED })
   })
 
   it('scrubs a known secret as short as six characters, as before', () => {

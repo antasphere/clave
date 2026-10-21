@@ -36,7 +36,13 @@ import type {
   TriageWorkspace
 } from '../../shared/triage'
 import { TRIAGE_SNAPSHOT_VERSION } from '../../shared/triage'
-import { createRedactor, errorText, type Redactor } from './redact'
+import {
+  TRUSTED_LITERALS,
+  createRedactor,
+  errorText,
+  type FieldPath,
+  type Redactor
+} from './redact'
 
 export interface TriageLimitsConfig {
   maxSessions: number
@@ -421,6 +427,27 @@ export function reconcile(input: {
 }
 
 /** Collect the snapshot. Never rejects for a source; see the module note. */
+/** The typed fields whose value the collector writes itself from a fixed
+ *  set, which the final known-secret pass leaves as they are when (and only
+ *  when) the value is one of those constants. Everything else is scrubbed. */
+export function typedSnapshotField(path: FieldPath, value: string): boolean {
+  if (!TRUSTED_LITERALS.has(value)) return false
+  const [a, b, c, d, e] = path
+  if (path.length === 2 && a === 'server' && (b === 'mode' || b === 'ownership')) return true
+  // Every `status` in a snapshot is a TriageSource's.
+  if (path[path.length - 1] === 'status') return true
+  if (path.length === 4 && a === 'sessions' && b === 'value' && d === 'transport') return true
+  if (
+    path.length === 5 &&
+    a === 'records' &&
+    b === 'value' &&
+    c === 'items' &&
+    (e === 'kind' || e === 'transport')
+  )
+    return true
+  return false
+}
+
 export async function collectSnapshot(
   sources: TriageSources,
   limitsInput: TriageLimitsInput = {}
@@ -806,5 +833,5 @@ export async function collectWithRedactor(
   // The last pass: every known secret replaced in every string, whatever
   // field it reached (a window key, a path, a label), so a field the
   // projections above forget cannot carry one out.
-  return { snapshot: redact.deep(snapshot), redact }
+  return { snapshot: redact.deep(snapshot, typedSnapshotField), redact }
 }

@@ -70,6 +70,31 @@ describe('prepareWith', () => {
   })
 })
 
+describe("prepareWith, with the collection's known secrets (VA-11)", () => {
+  it('scrubs a known token from the write error naming the bundle path', async () => {
+    const tokened = path.join(userData, `clave-${SHELL_TOKEN}`)
+    fs.mkdirSync(tokened)
+    fs.symlinkSync(os.tmpdir(), path.join(tokened, 'triage'))
+    const result = await prepareWith({ sources: fakeSources(), userData: tokened, home: HOME })
+    expect(result.bundle).toBeNull()
+    const warning = result.warnings.find((w) => w.includes('could not be written'))
+    expect(warning).toBeDefined()
+    expect(warning).not.toContain(SHELL_TOKEN)
+    expect(JSON.stringify(result)).not.toContain(SHELL_TOKEN)
+  })
+
+  it('scrubs the context while the returned pointers keep the real bundle path', async () => {
+    const tokened = path.join(userData, `clave-${SHELL_TOKEN}`)
+    fs.mkdirSync(tokened)
+    const result = await prepareWith({ sources: fakeSources(), userData: tokened, home: HOME })
+    expect(result.bundle?.dir.includes(SHELL_TOKEN)).toBe(true)
+    expect(result.launchPrompt).toContain(result.bundle!.promptPath)
+    expect(result.contextMarkdown).not.toContain(SHELL_TOKEN)
+    expect(fs.readFileSync(result.bundle!.contextPath, 'utf-8')).not.toContain(SHELL_TOKEN)
+    expect(JSON.stringify(result.snapshot)).not.toContain(SHELL_TOKEN)
+  })
+})
+
 describe('writeBundle', () => {
   const contents = {
     snapshot: '{}',

@@ -676,13 +676,18 @@ async function runMode(t, mode, loadTriageSnapshot) {
     if (app) await app.close()
     disposeOwnTmux(L.ROOT)
   }
+  // VA-12: the teardown is itself checked, so a fixture that leaves a tmux
+  // session behind on the shared socket goes red here.
+  const left = ownTmux(L.ROOT)
+  t.check(`[${mode}] the fixture leaves no tmux session behind`, left.length === 0, left)
 }
 
 /** The tmux sessions this fixture's terminals left: tmux outlives the app,
  *  so after the checks (which need the session alive) every session whose
  *  start path is under THIS fixture's root is ended, by exact name. Nothing
  *  else on the shared socket is touched. */
-function disposeOwnTmux(root) {
+/** The names of the tmux sessions whose start path is under `root`. */
+function ownTmux(root) {
   let rows = ''
   try {
     rows = execFileSync(
@@ -691,12 +696,18 @@ function disposeOwnTmux(root) {
       { encoding: 'utf8', timeout: 5000 }
     )
   } catch {
-    return // no tmux server: nothing left
+    return [] // no tmux server: nothing left
   }
   const under = (p) => p === root || p.startsWith(`${root}/`) || p.startsWith(`/private${root}/`)
-  for (const line of rows.split('\n')) {
-    const [name, start] = line.split('\t')
-    if (!name || !start || !under(start)) continue
+  return rows
+    .split('\n')
+    .map((line) => line.split('\t'))
+    .filter(([name, start]) => !!name && !!start && under(start))
+    .map(([name]) => name)
+}
+
+function disposeOwnTmux(root) {
+  for (const name of ownTmux(root)) {
     try {
       execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${name}`], {
         stdio: 'ignore',

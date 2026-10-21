@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectSnapshot } from './collect'
+import { collectSnapshot, typedSnapshotField } from './collect'
 import {
   CHAT_ID,
   CLAUDE_CONVERSATION,
@@ -646,5 +646,53 @@ describe('collectSnapshot', () => {
       'terminal',
       'claude'
     ])
+  })
+
+  it('round 4: only the typed field keeps the word; a window key equal to the token is scrubbed', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:49457',
+          token: 'separate',
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        }),
+        origin: { ...base.origin, windowKey: 'separate' },
+        windows: () => base.windows().map((w, i) => (i === 0 ? { ...w, key: 'separate' } : w)),
+        workspaces: () => [{ id: 'ws-1', name: 'separate', rootDir: '/srv/separate' }]
+      })
+    )
+    expect(s.server.mode).toBe('separate')
+    expect(s.origin.windowKey).toBe('<redacted>')
+    expect(s.windows[0].key).toBe('<redacted>')
+    expect(s.workspaces.status === 'ok' && s.workspaces.value[0]).toEqual({
+      id: 'ws-1',
+      name: '<redacted>',
+      rootDir: '/srv/<redacted>'
+    })
+  })
+
+  it('round 4: the typed-field rule names only fields the collector writes itself', () => {
+    expect(typedSnapshotField(['server', 'mode'], 'separate')).toBe(true)
+    expect(typedSnapshotField(['server', 'ownership'], 'shell-child')).toBe(true)
+    expect(typedSnapshotField(['sessions', 'status'], 'timeout')).toBe(true)
+    expect(typedSnapshotField(['sessions', 'value', 0, 'transport'], 'events')).toBe(true)
+    expect(typedSnapshotField(['records', 'value', 'items', 3, 'kind'], 'claude')).toBe(true)
+    // Not the collector's constants: source-reported or free-form fields.
+    expect(typedSnapshotField(['windows', 0, 'key'], 'separate')).toBe(false)
+    expect(typedSnapshotField(['sessions', 'value', 0, 'provider'], 'claude')).toBe(false)
+    expect(typedSnapshotField(['server', 'mode'], 'some-token-value')).toBe(false)
+  })
+
+  it('VA-10: a known token in a field only the final pass covers (instanceId) is scrubbed', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({ origin: { ...base.origin, instanceId: `inst-${SHELL_TOKEN}` } })
+    )
+    expect(s.origin.instanceId).toBe('inst-<redacted>')
+    expect(JSON.stringify(s)).not.toContain(SHELL_TOKEN)
   })
 })

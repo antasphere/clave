@@ -20,13 +20,15 @@ export const REDACTED = '<redacted>'
  *  patterns below. */
 export const MIN_KNOWN_SECRET = 6
 
-/** The contract's own fixed values (`src/shared/triage.ts`) and the closed
- *  vocabularies the sources report in them. A string that IS one of these, as
- *  a whole, is Clave's constant, never data read from a secret, and is left as
- *  it is: a token that happens to equal `separate` or `claude` cannot rewrite
- *  a typed field. The same token inside any other string is still scrubbed. */
+/** The fixed values the collector ITSELF writes into typed snapshot fields
+ *  (`src/shared/triage.ts`): server mode and ownership, a source's status, a
+ *  session's or record's transport, a record's kind. Never a free-form string
+ *  read from a source. Only the final pass consults this, and only for those
+ *  exact fields (`collect.ts` `typedSnapshotField`), so a token equal to
+ *  `separate` cannot rewrite `server.mode` while a window key, a label, an
+ *  error or any other string equal to it is still scrubbed. */
 export const TRUSTED_LITERALS: ReadonlySet<string> = new Set([
-  // TriageServerMode, TriageServerOwnership, TriageAgentLaunch
+  // TriageServerMode, TriageServerOwnership
   'in-process',
   'separate',
   'attached',
@@ -34,39 +36,23 @@ export const TRUSTED_LITERALS: ReadonlySet<string> = new Set([
   'shell-process',
   'shell-child',
   'external',
-  'in-app',
-  'external-only',
-  // TriageSource status, transports
+  // TriageSource status
   'ok',
   'timeout',
   'error',
   'unavailable',
+  // transports and TriageRecordKind
   'pty',
   'events',
-  // TriageRecordKind and the session modes and providers
   'claude',
-  'claude-agents',
   'codex',
   'antigravity',
   'pi',
-  'terminal',
-  // agent states, client kinds, record link kinds
-  'idle',
-  'working',
-  'blocked',
-  'done',
-  'ended',
-  'shell',
-  'browser',
-  'agent',
-  'other',
-  'group-terminal',
-  'session-view',
-  'toolbar',
-  // what the snapshot itself writes
-  'Clave',
-  REDACTED
+  'terminal'
 ])
+
+/** Where a string sits in the value the final pass walks. */
+export type FieldPath = ReadonlyArray<string | number>
 
 /** Lowercase A–Z only: always the same length, so indexes found in the folded
  *  string are indexes in the original whatever other characters it holds
@@ -82,8 +68,9 @@ export interface Redactor {
   /** Replace the known secrets only, in every string VALUE of a value,
    *  deeply: the final pass over a whole snapshot, whatever field a secret
    *  ended up in. Object keys are the contract's field names and are left as
-   *  they are, so the pass cannot rename a property. */
-  deep: <T>(value: T) => T
+   *  they are, so the pass cannot rename a property. `keep` names the typed
+   *  fields whose value is the collector's own constant (see TRUSTED_LITERALS). */
+  deep: <T>(value: T, keep?: (path: FieldPath, value: string) => boolean) => T
 }
 
 // Secret shapes, matched case-insensitively where the key names it.
@@ -128,7 +115,6 @@ export function createRedactor(options: {
    *  a token in one included), by a plain scan: no expression is built from a
    *  secret, so its length or content cannot make the scrub itself fail. */
   const scrubSecrets = (value: string): string => {
-    if (TRUSTED_LITERALS.has(value)) return value
     let out = value
     for (let i = 0; i < secrets.length; i++) {
       const haystack = foldAscii(out)
@@ -152,12 +138,16 @@ export function createRedactor(options: {
     return homePattern ? scrubbed.replace(homePattern, '~') : scrubbed
   }
 
-  const deep = <T>(value: T): T => {
-    if (typeof value === 'string') return scrubSecrets(value) as T
-    if (Array.isArray(value)) return value.map((v) => deep(v)) as T
+  const deep = <T>(
+    value: T,
+    keep?: (path: FieldPath, value: string) => boolean,
+    at: FieldPath = []
+  ): T => {
+    if (typeof value === 'string') return (keep?.(at, value) ? value : scrubSecrets(value)) as T
+    if (Array.isArray(value)) return value.map((v, i) => deep(v, keep, [...at, i])) as T
     if (value && typeof value === 'object') {
       const out: Record<string, unknown> = {}
-      for (const [k, v] of Object.entries(value)) out[k] = deep(v)
+      for (const [k, v] of Object.entries(value)) out[k] = deep(v, keep, [...at, k])
       return out as T
     }
     return value
