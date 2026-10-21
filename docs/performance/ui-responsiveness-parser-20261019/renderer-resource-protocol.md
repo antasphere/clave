@@ -132,3 +132,90 @@ Retained A6 found a separate forward custody defect in the original ownership pr
 The follow-up returns the proven identity with an in-memory evidence failure when that new receipt cannot be written. The parent keeps the existing child-completion/fence path and rejects missing evidence even on exit0, without advancing or comparing. Initial absence stays unknown/invalid. Matched original identity alone remains eligible for the unchanged deadline cleanup; receipt failure permits no late PID enrollment or new signaling policy. The original600000ms fence remains at the same point. A child error with an assigned PID retains that same exit/fence custody and fails acceptance; a no-PID spawn error remains an immediate failed spawn. Completion/error receipt-write failures reject without throwing out of their handlers, preserve the original failure and retain downstream diagnostics in the existing combined raw log where available. No new watchdog, worker protocol, query, delay, workload, metric or threshold is added.
 
 Actual parent/iteration tests use in-memory child/query/timer/write callbacks, including successful capture plus failed receipt pending until exit/fence, missing capture, reused/reparented/absent current identity, fast completion, downstream write failures and no next worker. They provide no physical custody, complete stream-tail or generic filesystem/stream/OOM recovery guarantee. Old failures, raw records, source gates and prior reports remain immutable. Historical F1 remains OPEN/UNKNOWN and worker2 creation remains missing. Retained peers must review the exact new committed source; source/private/freeze/isolation rebinding and any diagnostic or formal authority remain separate. This correction grants no retry or execution permission.
+
+### FIRST complete-row ownership, schema 2, 21 October 2026
+
+This source candidate implements the explicitly approved prospective real-UID
+acquisition exception. Original formal b206 R1 remains FAIL: control1 completed
+12 observations; control2 failed before sampling. Its pgrep child PID41319 had
+no initial identity at the subsequent targeted query. That record remains
+fatal, and why that child disappeared remains UNKNOWN. Older failures whose
+PID/site was not captured remain UNKNOWN. No data is adopted or retry granted.
+
+At each existing inventory site, ONE shell-free query acquires complete rows:
+`/bin/ps -U <decimal-real-UID> -x -ww -o ruid=,pid=,ppid=,lstart=,ucomm=`.
+Targeted direct-spawn/current/fence/cleanup queries use
+`/bin/ps -p <PID> -ww -o ruid=,pid=,ppid=,lstart=,ucomm=`. Every query uses
+only its own C locale, the original10000ms deadline and explicit1MiB default
+buffer ceiling. Both streams, numeric status, signal and bounded error category
+are observed. Nonzero discovery, any stderr/signal/error, partial framing,
+invalid encoding/date, ambiguity and overflow STOP. Only targeted status1 with
+both streams empty and no signal/error denotes absence; initial absence for
+EVERY role remains fatal. No PID-only list, retry, census poller or late fill.
+
+Schema2 identity rows contain pid,parent,creation,creationCodec=
+`ps-lstart-C-seconds`,realUid,commandName,commandNameCodec=
+`ps-ucomm-field-width16-verbatim`,commandSource=`ps.ucomm`,role and provenance.
+The original PID/expected-parent/second-resolution PS creation contract stays.
+The exact16-byte ucomm output field is preserved, including its spaces; it is
+nonblank diagnostic text, never a normalized name, executable/path witness or
+ownership key. Apple's formatter prints C lstart in width28 and ucomm in
+minimum width16. The decoder accounts for these declared column boundaries
+without trimming unknown bytes. A name's trailing spaces cannot be separated
+from formatter padding and are deliberately retained. Other encoding/control
+or column ambiguity fails. [Apple formatters](https://raw.githubusercontent.com/apple-oss-distributions/adv_cmds/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/print.c),
+[keyword widths](https://raw.githubusercontent.com/apple-oss-distributions/adv_cmds/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/keyword.c),
+[kernel name bound](https://raw.githubusercontent.com/apple-oss-distributions/xnu/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/param.h).
+These pinned sources do not establish installed-binary compatibility.
+
+The WHOLE selected table is framed before filtering. Indexed ancestry is
+independent of output order, process groups, sessions and names. Main, server,
+terminal-process, target renderer, current metric roles and all reachable
+transitive descendants require complete rows and exact edges. Known instances
+and parents supporting new edges have before/after tuple fences. Duplicate or
+cyclic PIDs, missing required references, reparent/reuse, UID mismatch and
+unresolved previously known chains STOP before GC. Additions are staged until
+ALL guards pass; failure retains the original map and initial objects. Matching
+later diagnostic observations remain separate. A complete captured leaf can
+subsequently be absent while its initial evidence remains available for cleanup.
+
+Before any worker/app spawn, the NEW freeze must explicitly declare:
+`ownershipFixture={schema:2,fixture:'chat/renderer-resource',provider:
+'dev-echo-adapter',credentialScope:'nonroot-inherited-real-equal-effective',
+credentialChangingActions:false}`. Both sides must bind the nine reviewed
+fixture/spawn source paths and exact hashes in OWNERSHIP_FIXTURE_SOURCES through
+sourceFiles/toolingFiles. Runner real/effective UID must match and be nonzero.
+Current Node,/bin/zsh,Electron and four helper executables must be regular,
+executable and free of setuid/setgid mode bits. This is a fixed unprivileged
+fixture/source/artifact precondition, not observed per-child EUID evidence or
+coverage of arbitrary privileged/provider children. Missing coverage, changed
+source/modes or unknown credential scope STOP. Future source/artifact transfer
+review must bind these prerequisites, including the no-credential-action claim.
+
+Raw selected tables and stderr exist only in transient query memory. No
+unrelated rows/names/paths/argv/environment or raw child Error/cause are stored
+on success OR failure. Receipts contain only safe query argv/UID, status,
+signal, bounded error category, byte counts/observability/bounds, necessary row
+counts, owned rows and edge observations. The old comm-only/no-argv claim above
+is historical: comm may internally acquire argv. All NEW collector identity
+paths use ucomm; old receipts/schema are not relabeled or normalized.
+
+Worker initial capture, optional successful-spawn evidenceFailure omission,
+mandatory exit errors, custody through receipt-write failures and the original
+600000ms fence remain. New worker acceptance/cleanup require schema2. Forced
+cleanup additionally rejects changed parent or UID; TERM/250ms/KILL bounds
+are unchanged. This is a new narrow guard; legacy force cleanup checked only
+creation. No unknown/unproven identity becomes signal-eligible.
+
+No atomic process tree, all-birth history, full path or unique generation token
+is claimed. Processes born/gone between inventories and unknown cross-UID
+children are outside the sampled fixed-fixture scope; one-second reuse limits
+remain. Original100 sessions/20 long histories, five cycles/12 samples,
+1000ms+frames, two GCs, all thresholds and original3+3 usedSize ratio<=1.20 are
+unchanged. No app, live OS query, build or collector CLI is run in this source
+phase. Actual-source tests/mutants do not qualify a measurement method. Exact
+retained independent source/schema/platform review and current required CI,
+then NEW both-side tooling/source/artifact maps, immutable private/checker/helper
+schema consumers, freeze/isolation, fresh qualification faults/restorations and
+separate formal authority remain mandatory. Frozen13a/14c and all failed history
+stay immutable and cannot authorize this new source.

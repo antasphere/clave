@@ -1,8 +1,16 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JavaScript verification tooling */
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID, createHash } from 'node:crypto'
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs'
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+  statSync
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -176,55 +184,304 @@ export function verifyFrozenSide(frozen, side) {
   return item
 }
 
-// Only proven descendants of this owned application are inspected. `comm`
-// avoids reading arguments or environment. Creation identity fences PID reuse.
-export function processIdentity(pid, { query = execFileSync, onQuery = () => {} } = {}) {
-  const args = ['-p', String(pid), '-o', 'pid=,ppid=,lstart=,comm=']
-  let value
-  try {
-    value = query('ps', args, { encoding: 'utf8', timeout: 10000 })
-  } catch (error) {
-    const outcome = {
-      command: 'ps',
-      args,
-      status: error.status ?? null,
-      signal: error.signal ?? null,
-      code: error.code ?? null,
-      stdout: String(error.stdout ?? ''),
-      stderr: String(error.stderr ?? '')
-    }
-    onQuery(outcome)
-    // Only an exact clean no-row result is absence. Permission/parse/signal/error stays unknown.
-    if (
-      outcome.status === 1 &&
-      outcome.signal === null &&
-      outcome.stdout.trim() === '' &&
-      outcome.stderr.trim() === '' &&
-      (outcome.code === null || outcome.code === 1)
+// Kernel ucomm is bounded diagnostic metadata, NOT a path or ownership credential.
+// Queries acquire neither argv nor environment. All raw query data is transient.
+export const OWNERSHIP_QUERY = Object.freeze({ timeout: 10000, maxBuffer: 1024 * 1024 })
+const identityFields = 'ruid=,pid=,ppid=,lstart=,ucomm='
+const positivePid = (n) => Number.isSafeInteger(n) && n > 0
+const validUid = (n) => Number.isSafeInteger(n) && n > 0
+const ownershipCheck = (ok, category) => {
+  // Never attach raw output, a parser input or a child-process Error/cause.
+  if (!ok) throw new Error(category)
+}
+
+export function validateOwnershipRunner(realUid, effectiveUid, fixtureBound) {
+  ownershipCheck(validUid(realUid) && realUid === effectiveUid, 'ownership runner UID scope')
+  ownershipCheck(fixtureBound === true, 'ownership fixture inheritance bound')
+  return realUid
+}
+
+// Exact reviewed fixture/spawn sources: these paths must enter the NEW freeze.
+// Source inheritance is conditional on this fixed echo fixture, never child EUID proof.
+export const OWNERSHIP_FIXTURE_SOURCES = Object.freeze({
+  'tests/e2e/harness.mjs': '5a885ec25e5a5518f1a3004a31bd538493b6cd82e7de40d51ed5167b19bc8e84',
+  'tests/e2e/renderer-resource-workload.mjs':
+    '21c4a6817652fe4b8f3e90a6ba71fcf4deb5d883fd48f005d02fcd00d89ce9ff',
+  'tests/e2e/renderer-resource-fixture.mjs':
+    '7afa9ed987c9fbae0e4dca5083ddfa24d33893bf804c83cf7ccf7fcf2d908614',
+  'src/main/sessions/adapters/echo-adapter.ts':
+    'b7e488fb6ae341a8334183cbc557aacc1833ec9e18f22c1f4a4f377dd65e422c',
+  'src/main/sessions/session-manager.ts':
+    '28b58e07486d01f8a79a01eeaad2092bf31c33e8b7dbcd80b071eb4d1b2d5f02',
+  'src/main/server-child.ts': 'a52bcbe2fbac42a3a145b6eb7481eade568346dd71b8bbf3f4628f7de1f5a246',
+  'src/main/server-entry.ts': 'b69359bc3cc5aeef6ec3ae637410b9c84ee11d9e1f8626baae711b27af84818e',
+  'src/main/terminal-process/supervisor.ts':
+    '91638099f61e11cee25ffcc4da233574cb96f4af85b3ce1d21b30fe7c0880ed7',
+  'src/main/terminal-process/announcing.ts':
+    '95fbd39229f836c9ff17c0b31d9314cfc1ab6194af74fd0f83c87d67e84ff938'
+})
+export function verifyOwnershipFixture(
+  frozen,
+  side,
+  {
+    realUid = process.getuid(),
+    effectiveUid = process.geteuid(),
+    read = readFileSync,
+    stat = statSync,
+    execPath = process.execPath
+  } = {}
+) {
+  validateOwnershipRunner(realUid, effectiveUid, true)
+  const item = frozen[side]
+  ownershipCheck(
+    frozen.ownershipFixture?.schema === 2 &&
+      frozen.ownershipFixture.fixture === 'chat/renderer-resource' &&
+      frozen.ownershipFixture.provider === 'dev-echo-adapter' &&
+      frozen.ownershipFixture.credentialScope === 'nonroot-inherited-real-equal-effective' &&
+      frozen.ownershipFixture.credentialChangingActions === false,
+    'ownership explicit frozen fixture scope'
+  )
+  for (const [file, sha] of Object.entries(OWNERSHIP_FIXTURE_SOURCES)) {
+    ownershipCheck(
+      item.sourceFiles[file] === sha || frozen.toolingFiles[file] === sha,
+      'ownership frozen fixture source coverage'
     )
-      return null
-    throw error
+    ownershipCheck(
+      hash(read(contained(item.root, file))) === sha,
+      'ownership fixture source changed'
+    )
   }
-  onQuery({
-    command: 'ps',
+  const app = 'node_modules/electron/dist/Electron.app/Contents/'
+  const executables = [
+    execPath,
+    '/bin/zsh',
+    path.join(item.root, app + 'MacOS/Electron'),
+    ...[
+      'Electron Helper',
+      'Electron Helper (Renderer)',
+      'Electron Helper (GPU)',
+      'Electron Helper (Plugin)'
+    ].map((name) =>
+      path.join(item.root, app + 'Frameworks/' + name + '.app/Contents/MacOS/' + name)
+    )
+  ]
+  for (const file of executables) {
+    const mode = stat(file)
+    ownershipCheck(
+      mode.isFile() && (mode.mode & 0o6000) === 0 && (mode.mode & 0o111) !== 0,
+      'ownership unprivileged executable mode'
+    )
+  }
+  return {
+    schema: 2,
+    realUid,
+    effectiveUid,
+    fixture: 'chat/renderer-resource',
+    provider: 'dev-echo-adapter',
+    sourceFiles: OWNERSHIP_FIXTURE_SOURCES,
+    executableModesChecked: executables.length,
+    limitation:
+      'fixed unprivileged fixture inheritance; RUID is not per-child EUID; no arbitrary privileged/provider coverage'
+  }
+}
+
+export function decodeIdentityRows(bytes, realUid) {
+  ownershipCheck(
+    Buffer.isBuffer(bytes) && bytes.length <= OWNERSHIP_QUERY.maxBuffer,
+    'identity buffer bound'
+  )
+  let text
+  try {
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch {
+    throw new Error('identity encoding')
+  }
+  ownershipCheck(
+    text.length > 0 && text.endsWith('\n') && !/[\p{C}\p{Z}]/u.test(text.replace(/[ \n]/g, '')),
+    'identity whole framing'
+  )
+  const rows = new Map()
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ]
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  for (const line of text.slice(0, -1).split('\n')) {
+    // Apple's formatter prints lstart width28 (C %c is24 bytes), then
+    // ONE separator and ucomm minimum width16. Preserve that last field
+    // verbatim: padding and a kernel-name trailing space cannot be told apart.
+    // It is diagnostic text, never a normalized name or an ownership key.
+    const encoded = Buffer.from(line)
+    ownershipCheck(encoded.length >= 16, 'identity complete row')
+    const commandField = encoded.subarray(-16).toString('utf8')
+    const m = encoded
+      .subarray(0, -16)
+      .toString('utf8')
+      .match(
+        /^ *([0-9]+) +([0-9]+) +([0-9]+) +((Sun|Mon|Tue|Wed|Thu|Fri|Sat) ([A-Z][a-z]{2}) ([ 0-9][0-9]) ([0-9]{2}):([0-9]{2}):([0-9]{2}) ([0-9]{4})) {5}$/u
+      )
+    ownershipCheck(m !== null, 'identity complete row')
+    const uid = Number(m[1]),
+      pid = Number(m[2]),
+      parent = Number(m[3])
+    const month = months.indexOf(m[6]),
+      date = Number(m[7]),
+      hour = Number(m[8]),
+      minute = Number(m[9]),
+      second = Number(m[10]),
+      year = Number(m[11])
+    const calendar = new Date(Date.UTC(year, month, date, hour, minute, second))
+    ownershipCheck(
+      month >= 0 &&
+        year >= 1970 &&
+        calendar.getUTCFullYear() === year &&
+        calendar.getUTCMonth() === month &&
+        calendar.getUTCDate() === date &&
+        hour < 24 &&
+        minute < 60 &&
+        second < 60 &&
+        days[calendar.getUTCDay()] === m[5],
+      'identity C creation codec'
+    )
+    ownershipCheck(validUid(uid) && uid === realUid, 'identity selected real UID')
+    ownershipCheck(
+      positivePid(pid) && Number.isSafeInteger(parent) && parent >= 0 && parent !== pid,
+      'identity PID parent'
+    )
+    ownershipCheck(
+      Buffer.byteLength(commandField) === 16 &&
+        /[^ ]/u.test(commandField) &&
+        !commandField.includes('\ufffd'),
+      'identity kernel name field'
+    )
+    ownershipCheck(!rows.has(pid), 'identity duplicate PID')
+    rows.set(pid, {
+      schema: 2,
+      realUid: uid,
+      pid,
+      parent,
+      creation: m[4],
+      creationCodec: 'ps-lstart-C-seconds',
+      commandName: commandField,
+      commandNameCodec: 'ps-ucomm-field-width16-verbatim',
+      commandSource: 'ps.ucomm'
+    })
+  }
+  return rows
+}
+
+function identityQuery(args, realUid, query, onQuery, allowAbsent = false) {
+  // spawnSync exposes BOTH streams even on status0. Its default buffer ceiling
+  // (1MiB) and original ten-second deadline are explicit, unchanged bounds.
+  let result
+  try {
+    result = query('/bin/ps', args, {
+      ...OWNERSHIP_QUERY,
+      shell: false,
+      encoding: 'buffer',
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch {
+    onQuery({
+      command: '/bin/ps',
+      args,
+      category: 'query-threw',
+      observability: { stdout: false, stderr: false }
+    })
+    throw new Error('identity query threw')
+  }
+  const stdout = result?.stdout,
+    stderr = result?.stderr
+  const streams = Buffer.isBuffer(stdout) && Buffer.isBuffer(stderr)
+  const status = Number.isInteger(result?.status) ? result.status : null
+  const signal =
+    result?.signal === null
+      ? null
+      : /^SIG[A-Z0-9]{1,12}$/.test(result?.signal)
+        ? result.signal
+        : 'invalid-or-unobserved'
+  const code = ['ETIMEDOUT', 'ENOBUFS', 'ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'EIO'].includes(
+    result?.error?.code
+  )
+    ? result.error.code
+    : result?.error
+      ? 'OTHER'
+      : null
+  const outcome = {
+    command: '/bin/ps',
     args,
-    status: 0,
-    signal: null,
-    code: null,
-    stdout: value,
-    stderr: null,
-    observability: { stdout: true, stderr: false }
-  })
-  const match = value.trim().match(/^(\d+)\s+(\d+)\s+(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.+)$/)
-  assert.ok(match, 'known owned process creation identity')
-  const identity = {
-    pid: Number(match[1]),
-    parent: Number(match[2]),
-    creation: match[3],
-    executable: match[4]
+    status,
+    signal,
+    failed: !!result?.error,
+    code,
+    stdoutBytes: Buffer.isBuffer(stdout) ? stdout.length : null,
+    stderrBytes: Buffer.isBuffer(stderr) ? stderr.length : null,
+    observability: { stdout: Buffer.isBuffer(stdout), stderr: Buffer.isBuffer(stderr) },
+    ...OWNERSHIP_QUERY
   }
-  assert.equal(identity.pid, pid, 'queried owned PID matches result')
-  return identity
+  onQuery(outcome)
+  ownershipCheck(
+    streams &&
+      stdout.length <= OWNERSHIP_QUERY.maxBuffer &&
+      stderr.length <= OWNERSHIP_QUERY.maxBuffer,
+    'identity query streams/bound'
+  )
+  ownershipCheck(
+    !result.error && signal === null && stderr.length === 0,
+    'identity query diagnostics'
+  )
+  if (allowAbsent && status === 1 && stdout.length === 0) return null
+  ownershipCheck(status === 0, 'identity query status')
+  return decodeIdentityRows(stdout, realUid)
+}
+
+export function processIdentity(
+  pid,
+  { query = spawnSync, onQuery = () => {}, realUid = process.getuid() } = {}
+) {
+  ownershipCheck(positivePid(pid), 'known owned PID')
+  ownershipCheck(validUid(realUid), 'identity selected real UID')
+  const rows = identityQuery(
+    ['-p', String(pid), '-ww', '-o', identityFields],
+    realUid,
+    query,
+    onQuery,
+    true
+  )
+  if (rows === null) return null
+  ownershipCheck(rows.size === 1 && rows.has(pid), 'queried owned PID matches result')
+  return rows.get(pid)
+}
+
+function sameOwnedInstance(initial, current) {
+  ownershipCheck(initial?.schema === 2 && current?.schema === 2, 'identity schema2 required')
+  ownershipCheck(
+    initial.pid === current.pid &&
+      initial.creation === current.creation &&
+      initial.creationCodec === current.creationCodec,
+    'owned PID reused'
+  )
+  ownershipCheck(initial.parent === current.parent, 'owned parent changed')
+  ownershipCheck(initial.realUid === current.realUid, 'owned UID changed')
+}
+
+function firstOwnedIdentity(identity, role, context, acquisition) {
+  return Object.freeze({
+    ...identity,
+    role,
+    provenance: Object.freeze({ site: context.site, acquisition, expectedParent: identity.parent })
+  })
 }
 
 export function identifyOwnedProcess(
@@ -234,7 +491,7 @@ export function identifyOwnedProcess(
   expectedParent,
   context,
   recordFailure,
-  query = execFileSync
+  query = spawnSync
 ) {
   const attempt = {
     pid,
@@ -247,7 +504,6 @@ export function identifyOwnedProcess(
     observedIdentity: null
   }
   try {
-    assert.ok(Number.isInteger(pid) && pid > 0, 'known owned PID')
     const identity = processIdentity(pid, {
       query,
       onQuery: (outcome) => {
@@ -255,18 +511,197 @@ export function identifyOwnedProcess(
       }
     })
     attempt.observedIdentity = identity
-    assert.ok(identity, 'owned process is alive when identified')
-    if (expectedParent !== null) assert.equal(identity.parent, expectedParent, 'proven owned child')
-    if (owned.has(pid)) assert.equal(owned.get(pid).creation, identity.creation, 'owned PID reused')
-    owned.set(pid, { ...identity, role: owned.get(pid)?.role || role })
-    return owned.get(pid)
+    ownershipCheck(identity !== null, 'owned process is alive when identified')
+    ownershipCheck(
+      expectedParent === null || identity.parent === expectedParent,
+      'proven owned child'
+    )
+    if (owned.has(pid)) {
+      sameOwnedInstance(owned.get(pid), identity)
+      return owned.get(pid)
+    }
+    const initial = firstOwnedIdentity(identity, role, context, 'targeted-ucomm')
+    owned.set(pid, initial)
+    return initial
   } catch (error) {
     recordFailure({ ...attempt, message: error.message, later: 'NOTRUN' })
     throw error
   }
 }
 
-export function captureResourceWorker(pid, parent, context, writeReceipt, query = execFileSync) {
+export function captureOwnedInventory({
+  owned,
+  rootPid,
+  required,
+  realUid,
+  effectiveUid,
+  fixtureBound,
+  context,
+  query = spawnSync,
+  recordFailure = () => {}
+}) {
+  let queryReceipt = null
+  const fences = []
+  const observe = (pid, stage) => {
+    const fence = { pid, stage, query: null, identity: null }
+    fences.push(fence)
+    fence.identity = processIdentity(pid, {
+      query,
+      realUid,
+      onQuery: (receipt) => {
+        fence.query = receipt
+      }
+    })
+    return fence.identity
+  }
+  try {
+    validateOwnershipRunner(realUid, effectiveUid, fixtureBound)
+    const root = owned.get(rootPid)
+    ownershipCheck(root?.role === 'main', 'inventory known main anchor')
+    const needed = new Map(required.map((r) => [r.pid, r]))
+    ownershipCheck(
+      needed.size === required.length &&
+        required.every(
+          (r) =>
+            positivePid(r.pid) &&
+            r.pid !== rootPid &&
+            positivePid(r.parent) &&
+            ['server', 'terminal-process', 'renderer', 'utility'].includes(r.role)
+        ),
+      'inventory required role references'
+    )
+    ownershipCheck(
+      ['server', 'terminal-process'].every((role) => required.some((r) => r.role === role)) &&
+        [...owned.values(), ...required].some((r) => r.role === 'renderer'),
+      'inventory mandatory role coverage'
+    )
+    needed.set(rootPid, { pid: rootPid, parent: root.parent, role: 'main' })
+    for (const initial of owned.values()) {
+      ownershipCheck(
+        initial.schema === 2 && initial.realUid === realUid,
+        'inventory initial schema/UID'
+      )
+      if (['main', 'server', 'terminal-process', 'renderer'].includes(initial.role)) {
+        const ref = needed.get(initial.pid)
+        ownershipCheck(
+          !ref || (ref.parent === initial.parent && ref.role === initial.role),
+          'inventory required reference changed'
+        )
+        needed.set(initial.pid, { pid: initial.pid, parent: initial.parent, role: initial.role })
+      }
+    }
+    const pre = new Map()
+    for (const initial of owned.values()) {
+      const current = observe(initial.pid, 'before')
+      if (current) {
+        sameOwnedInstance(initial, current)
+        pre.set(initial.pid, current)
+      } else ownershipCheck(!needed.has(initial.pid), 'inventory missing required pre-fence')
+    }
+    const rows = identityQuery(
+      ['-U', String(realUid), '-x', '-ww', '-o', identityFields],
+      realUid,
+      query,
+      (r) => {
+        queryReceipt = r
+      }
+    )
+    // Linear indexed validation: output order, PGID, session and names play no role.
+    const checked = new Set()
+    for (const row of rows.values()) {
+      const chain = new Set()
+      let pid = row.pid
+      while (rows.has(pid) && !checked.has(pid)) {
+        ownershipCheck(!chain.has(pid), 'inventory ancestry cycle')
+        chain.add(pid)
+        pid = rows.get(pid).parent
+      }
+      for (const member of chain) checked.add(member)
+    }
+    const children = new Map()
+    for (const r of rows.values()) {
+      if (!children.has(r.parent)) children.set(r.parent, [])
+      children.get(r.parent).push(r.pid)
+    }
+    ownershipCheck(rows.has(rootPid), 'inventory missing main row')
+    sameOwnedInstance(root, rows.get(rootPid))
+    const reachable = new Set(),
+      queue = [rootPid]
+    for (let i = 0; i < queue.length; i++) {
+      const pid = queue[i]
+      ownershipCheck(!reachable.has(pid), 'inventory duplicate owned edge')
+      reachable.add(pid)
+      queue.push(...(children.get(pid) || []))
+    }
+    for (const ref of needed.values()) {
+      ownershipCheck(
+        rows.has(ref.pid) && reachable.has(ref.pid),
+        'inventory missing required role/edge'
+      )
+      ownershipCheck(rows.get(ref.pid).parent === ref.parent, 'inventory required parent')
+    }
+    for (const initial of owned.values()) {
+      if (rows.has(initial.pid)) {
+        ownershipCheck(pre.has(initial.pid), 'inventory missing known pre-fence')
+        sameOwnedInstance(initial, rows.get(initial.pid))
+        ownershipCheck(reachable.has(initial.pid), 'inventory unresolved known chain')
+      } else
+        ownershipCheck(
+          !pre.has(initial.pid) && !needed.has(initial.pid),
+          'inventory missing known row'
+        )
+    }
+    const staged = new Map(owned),
+      observations = []
+    const parents = new Set([rootPid])
+    for (const pid of reachable) {
+      const current = rows.get(pid)
+      if (pid !== rootPid) parents.add(current.parent)
+      if (owned.has(pid)) observations.push({ initialPid: pid, current })
+      else
+        staged.set(
+          pid,
+          firstOwnedIdentity(
+            current,
+            needed.get(pid)?.role || 'descendant',
+            context,
+            'real-uid-first-row'
+          )
+        )
+    }
+    // Known pre-fenced instances and every parent anchoring a new edge must
+    // still match AFTER acquisition. No unknown child's identity is late-filled.
+    for (const pid of new Set([...pre.keys(), ...parents])) {
+      const current = observe(pid, 'after')
+      ownershipCheck(current !== null, 'inventory missing post-fence')
+      sameOwnedInstance(rows.get(pid), current)
+    }
+    const receipt = {
+      schema: 2,
+      context,
+      query: queryReceipt,
+      selectedRows: rows.size,
+      required: [...needed.values()],
+      fences,
+      owned: [...staged.values()],
+      observations
+    }
+    // Commit only after every guard; initial objects/roles remain the originals.
+    for (const [pid, initial] of staged) if (!owned.has(pid)) owned.set(pid, initial)
+    return receipt
+  } catch (error) {
+    recordFailure({
+      context,
+      query: queryReceipt,
+      fences,
+      category: error.message,
+      later: 'NOTRUN'
+    })
+    throw error
+  }
+}
+
+export function captureResourceWorker(pid, parent, context, writeReceipt, query = spawnSync) {
   const row = { pid: pid ?? null, expectedParent: parent, context, identity: null, failure: null }
   try {
     row.identity = identifyOwnedProcess(
@@ -307,7 +742,7 @@ export function resourceWorkerExit(row, code, signal, expired, workerError = nul
     signal,
     expired,
     accepted:
-      row.identity !== null &&
+      row.identity?.schema === 2 &&
       row.failure === null &&
       !row.evidenceFailure &&
       workerError === null &&
@@ -319,8 +754,9 @@ export function resourceWorkerExit(row, code, signal, expired, workerError = nul
 
 export function resourceWorkerForCleanup(row, current) {
   const initial = row?.identity
-  return initial &&
-    current &&
+  return initial?.schema === 2 &&
+    current?.schema === 2 &&
+    initial.realUid === current.realUid &&
     initial.pid === current.pid &&
     initial.creation === current.creation &&
     current.parent === row.expectedParent
@@ -332,14 +768,26 @@ async function forceOwnedCleanup(identities) {
   const receipt = []
   for (const identity of [...identities].reverse()) {
     const current = processIdentity(identity.pid)
-    if (!current || current.creation !== identity.creation) continue
+    if (
+      !current ||
+      current.creation !== identity.creation ||
+      current.parent !== identity.parent ||
+      current.realUid !== identity.realUid ||
+      identity.schema !== 2
+    )
+      continue
     process.kill(identity.pid, 'SIGTERM')
     receipt.push({ ...identity, signal: 'SIGTERM' })
   }
   await sleep(250)
   for (const identity of receipt) {
     const current = processIdentity(identity.pid)
-    if (current?.creation === identity.creation) {
+    if (
+      current?.creation === identity.creation &&
+      current.parent === identity.parent &&
+      current.realUid === identity.realUid &&
+      identity.schema === 2
+    ) {
       process.kill(identity.pid, 'SIGKILL')
       identity.signal = 'SIGKILL'
     }
@@ -349,6 +797,7 @@ async function forceOwnedCleanup(identities) {
 
 async function launch(frozen, side, index, evidence) {
   const item = verifyFrozenSide(frozen, side)
+  const ownershipFixture = verifyOwnershipFixture(frozen, side)
   assert.equal(
     path.resolve(process.cwd()),
     path.resolve(item.root),
@@ -393,6 +842,8 @@ async function launch(frozen, side, index, evidence) {
     status: 'RUNNING',
     binding: item.binding,
     config: RESOURCE_CONFIG,
+    ownershipSchema: 2,
+    ownershipFixture,
     startedAt: Date.now(),
     observations: controller.samples,
     errors: [],
@@ -408,84 +859,44 @@ async function launch(frozen, side, index, evidence) {
     })
   const inventory = async (phase) => {
     const discovery = readJson(path.join(dir, 'clave-server.json'))
-    own(discovery.serverPid, 'server', app.process().pid, { site: phase + '.server-discovery' })
     const terminal = readJson(path.join(separateServerDataDir(dir), 'clave-server.json'))
-    own(terminal.terminalProcessPid, 'terminal-process', discovery.serverPid, {
-      site: phase + '.terminal-discovery'
-    })
-    const queue = [...owned.values()],
-      visited = new Set()
-    while (queue.length) {
-      const identity = queue.shift()
-      if (visited.has(identity.pid)) continue
-      visited.add(identity.pid)
-      const current = processIdentity(identity.pid)
-      if (!current || current.creation !== identity.creation) continue
-      let children, discoveryQuery
-      try {
-        const stdout = execFileSync('pgrep', ['-P', String(identity.pid)], {
-          encoding: 'utf8',
-          timeout: 10000
-        })
-        discoveryQuery = {
-          command: 'pgrep',
-          args: ['-P', String(identity.pid)],
-          status: 0,
-          signal: null,
-          stdout,
-          stderr: null,
-          observability: { stdout: true, stderr: false }
-        }
-        children = stdout.trim().split('\n').filter(Boolean).map(Number)
-      } catch (e) {
-        discoveryQuery = {
-          command: 'pgrep',
-          args: ['-P', String(identity.pid)],
-          status: e.status ?? null,
-          signal: e.signal ?? null,
-          code: e.code ?? null,
-          stdout: String(e.stdout ?? ''),
-          stderr: String(e.stderr ?? '')
-        }
-        if (
-          discoveryQuery.status !== 1 ||
-          discoveryQuery.signal !== null ||
-          discoveryQuery.stdout.trim() !== '' ||
-          discoveryQuery.stderr.trim() !== '' ||
-          (discoveryQuery.code !== null && discoveryQuery.code !== 1)
-        ) {
-          persist({
-            ownershipDiscoveryFailure: {
-              context: phase + '.pgrep-parent',
-              parent: current,
-              query: discoveryQuery
-            },
-            later: 'NOTRUN'
-          })
-          throw e
-        }
-        children = []
-      }
-      for (const pid of children) {
-        own(pid, 'descendant', identity.pid, {
-          site: phase + '.pgrep-child',
-          discoveredParent: current,
-          discoveredChildren: children,
-          discoveryQuery
-        })
-        queue.push(owned.get(pid))
-      }
-    }
-    for (const metric of await app.evaluate(({ app }) =>
+    const metrics = await app.evaluate(({ app }) =>
       app.getAppMetrics().map((m) => ({ pid: m.pid, type: m.type }))
-    ))
-      if (!owned.has(metric.pid))
-        own(metric.pid, metric.type === 'Tab' ? 'renderer' : 'utility', app.process().pid, {
-          site: phase + '.app-metric',
-          metricType: metric.type
-        })
-    persist({ owned: [...owned.values()] })
+    )
+    const references = [
+      { pid: discovery.serverPid, parent: app.process().pid, role: 'server' },
+      { pid: terminal.terminalProcessPid, parent: discovery.serverPid, role: 'terminal-process' },
+      ...metrics
+        .filter(
+          (m) =>
+            m.pid !== app.process().pid &&
+            m.pid !== discovery.serverPid &&
+            m.pid !== terminal.terminalProcessPid
+        )
+        .map((m) => ({
+          pid: m.pid,
+          parent: app.process().pid,
+          role: m.type === 'Tab' ? 'renderer' : 'utility'
+        }))
+    ]
+    persist(
+      captureOwnedInventory({
+        owned,
+        rootPid: app.process().pid,
+        required: references,
+        realUid: process.getuid(),
+        effectiveUid: process.geteuid(),
+        fixtureBound: ownershipFixture.fixture === 'chat/renderer-resource',
+        context: { site: phase + '.real-uid-inventory' },
+        recordFailure: (failure) => {
+          result.ownershipFailures ||= []
+          result.ownershipFailures.push(failure)
+          persist({ ownershipDiscoveryFailure: failure, later: 'NOTRUN' })
+        }
+      })
+    )
   }
+
   const target = () =>
     app.evaluate(({ BrowserWindow }) => {
       const windows = BrowserWindow.getAllWindows()
@@ -755,7 +1166,10 @@ export async function main(argv) {
     'real isolated negative/cleanup qualification must precede collection'
   )
   assert.equal(frozen.schema, 1)
-  for (const side of ['control', 'candidate']) verifyFrozenSide(frozen, side)
+  for (const side of ['control', 'candidate']) {
+    verifyFrozenSide(frozen, side)
+    verifyOwnershipFixture(frozen, side)
+  }
   assert.ok(
     frozen.control.rawCurrentDev === true &&
       frozen.control.binding.product !== frozen.candidate.binding.product
