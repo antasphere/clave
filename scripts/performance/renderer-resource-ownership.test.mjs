@@ -12,6 +12,7 @@ import {
   validateOwnershipRunner,
   verifyOwnershipFixture,
   OWNERSHIP_FIXTURE_SOURCES,
+  unprovenIdentityEvidence,
   processIdentity,
   identifyOwnedProcess,
   captureResourceWorker,
@@ -338,6 +339,8 @@ const plain = (value) => JSON.parse(JSON.stringify(value))
 function parentHarness({
   initialGone = false,
   currentIdentity = 'same',
+  currentName = 'unit-child',
+  laterIdentityDespiteMissing = false,
   childPID = 200,
   autoExit = null,
   failWrites = []
@@ -419,7 +422,8 @@ function parentHarness({
       return []
     },
     resourceWorkerExit,
-    resourceWorkerForCleanup
+    resourceWorkerForCleanup,
+    unprovenIdentityEvidence
   }
   const query = (command, args, options) => {
     assert.equal(command, '/bin/ps')
@@ -436,7 +440,7 @@ function parentHarness({
     assert.equal(options.env.LC_ALL, 'C')
     queries.push(plain(args))
     events.push('identity-query')
-    if (initialGone) return gone()
+    if (initialGone && (!laterIdentityDespiteMissing || queries.length === 1)) return gone()
     const later = queries.length > 1
     if (later && currentIdentity === 'absent') return gone()
     return row(
@@ -444,7 +448,8 @@ function parentHarness({
       later && currentIdentity === 'reparented' ? 999 : 100,
       later && currentIdentity === 'reused'
         ? 'Tue Oct 20 22:08:09 2026'
-        : 'Tue Oct 20 22:08:08 2026'
+        : 'Tue Oct 20 22:08:08 2026',
+      later ? currentName : 'unit-child'
     )
   }
   context.captureResourceWorker = (pid, ppid, site, write) =>
@@ -1485,5 +1490,164 @@ describe('independent admission counterexamples for semantic mutants', () => {
     expect(() =>
       processIdentity(200, { query: () => ({ ...row(), error: { code: 'ENOBUFS' } }) })
     ).toThrow('identity query diagnostics')
+  })
+})
+
+function absentKnownParentScan(suffix = '') {
+  const root = Object.freeze({
+    ...decodeIdentityRows(Buffer.from(textRow(200, 100)), uid).get(200),
+    role: 'main'
+  })
+  const prior = Object.freeze({
+    ...decodeIdentityRows(Buffer.from(textRow(500, 200)), uid).get(500),
+    role: 'descendant'
+  })
+  const known = new Map([
+    [200, root],
+    [500, prior]
+  ])
+  return scan({
+    known,
+    text:
+      textRow(400, 300) +
+      textRow(600, 200) +
+      textRow(700, 200) +
+      textRow(300, 200) +
+      textRow(200, 100) +
+      suffix
+  })
+}
+describe('C1/C2 repair regressions on actual source', () => {
+  for (const mismatch of ['expected-parent', 'reuse', 'reparent'])
+    it('C1 targeted rejected ' + mismatch + ' excludes unproven diagnostic metadata', () => {
+      const c = context()
+      if (mismatch !== 'expected-parent') c.own(() => row())
+      const initial = c.owned.get(200)
+      const query = () =>
+        row(
+          200,
+          mismatch === 'reuse' ? 100 : 999,
+          mismatch === 'reuse' ? 'Tue Oct 20 22:08:09 2026' : undefined,
+          'FOREIGN-NAME'
+        )
+      expect(() => c.own(query)).toThrow(
+        mismatch === 'reuse' ? 'owned PID reused' : 'proven owned child'
+      )
+      expect(JSON.stringify(c.receipts)).not.toContain('FOREIGN-NAME')
+      expect(c.receipts[0].observedIdentity).toMatchObject({
+        pid: 200,
+        parent: mismatch === 'reuse' ? 100 : 999
+      })
+      expect(c.receipts[0].observedIdentity).not.toHaveProperty('commandName')
+      expect(c.receipts[0].observedIdentity).not.toHaveProperty('schema')
+      expect(c.receipts[0].observedIdentity.evidenceKind).toBe('unproven-comparison-tuple')
+      expect(c.owned.get(200)).toBe(initial)
+      expect(c.receipts[0].previousIdentity).toBe(initial ?? null)
+      expect(c.receipts[0].query).toMatchObject({ status: 0, signal: null })
+    })
+  for (const stage of ['before', 'after'])
+    for (const mismatch of ['reuse', 'reparent'])
+      it(
+        'C1 inventory ' +
+          stage +
+          ' rejected ' +
+          mismatch +
+          ' excludes unproven diagnostic metadata',
+        () => {
+          const changed = (pid) =>
+            pid === 200
+              ? row(
+                  200,
+                  mismatch === 'reuse' ? 100 : 999,
+                  mismatch === 'reuse' ? 'Tue Oct 20 22:08:09 2026' : undefined,
+                  'FOREIGN-NAME'
+                )
+              : undefined
+          const h = scan({ [stage]: changed })
+          rolledBack(h, mismatch === 'reuse' ? 'owned PID reused' : 'owned parent changed')
+          expect(JSON.stringify(h.failures) + h.error.stack).not.toContain('FOREIGN-NAME')
+          const fence = h.failures[0].fences.find((f) => f.stage === stage && f.pid === 200)
+          expect(fence.identity).toMatchObject({
+            pid: 200,
+            parent: mismatch === 'reuse' ? 100 : 999
+          })
+          expect(fence.identity).not.toHaveProperty('commandName')
+          expect(fence.identity).not.toHaveProperty('schema')
+          expect(fence.initialIdentity).toBe(h.initial[0][1])
+          expect(fence.query).toMatchObject({ status: 0, signal: null })
+        }
+      )
+  for (const mismatch of ['reused', 'reparented', 'missing-initial'])
+    it(
+      'C1 actual deadline rejected ' + mismatch + ' worker excludes unproven diagnostic metadata',
+      async () => {
+        const h = parentHarness({
+          currentIdentity: mismatch === 'missing-initial' ? 'same' : mismatch,
+          currentName: 'FOREIGN-NAME',
+          initialGone: mismatch === 'missing-initial',
+          laterIdentityDespiteMissing: true
+        })
+        const promise = h.startParent()
+        const rejected = expect(promise).rejects.toThrow('launch ceiling')
+        await h.timers[0].callback()
+        await rejected
+        const receipt = h.writes.find((r) => r.file.endsWith('deadline-forced-cleanup.json')).value
+        expect(receipt.worker.signalEligible).toBe(false)
+        expect(JSON.stringify(h.writes) + JSON.stringify(h.rawLogs)).not.toContain('FOREIGN-NAME')
+        expect(receipt.worker.current).toMatchObject({
+          pid: 200,
+          parent: mismatch === 'reparented' ? 999 : 100
+        })
+        expect(receipt.worker.current).not.toHaveProperty('commandName')
+        expect(receipt.worker.current).not.toHaveProperty('schema')
+        expect(h.cleanupCalls[0]).toHaveLength(0)
+        expect(h.spawns).toHaveLength(1)
+        expect(h.timers[0].ms).toBe(600000)
+        expect(receipt.worker.initial).toEqual(h.writes[0].value.identity)
+      }
+    )
+  it('C1 matching deadline diagnostic change remains proven, preserving original signal fence', async () => {
+    const h = parentHarness({ currentName: 'MATCHED-NAME' })
+    const promise = h.startParent()
+    const rejected = expect(promise).rejects.toThrow('launch ceiling')
+    await h.timers[0].callback()
+    await rejected
+    const receipt = h.writes.find((r) => r.file.endsWith('deadline-forced-cleanup.json')).value
+    expect(receipt.worker.signalEligible).toBe(true)
+    expect(receipt.worker.current.commandName).toBe('MATCHED-NAME'.padEnd(16))
+    expect(receipt.worker.initial.commandName).toBe('unit-child'.padEnd(16))
+    expect(h.cleanupCalls[0]).toHaveLength(1)
+  })
+  for (const [name, suffix] of [
+    ['direct', textRow(800, 500, undefined, 'UNRESOLVED-ROW')],
+    ['deep', textRow(810, 800, undefined, 'UNRESOLVED-ROW') + textRow(800, 750) + textRow(750, 500)]
+  ])
+    it('C2 exposed ' + name + ' chain through absent known parent STOPs transactionally', () => {
+      const h = absentKnownParentScan(suffix)
+      rolledBack(h, 'inventory unresolved absent known chain')
+      expect(h.owned.size).toBe(2)
+      expect(h.owned.has(800)).toBe(false)
+      expect(h.calls.filter((q) => q.args[0] === '-U')).toHaveLength(1)
+      expect(
+        h.calls.some((q) => q.args[0] === '-p' && ['750', '800', '810'].includes(q.args[1]))
+      ).toBe(false)
+      expect(JSON.stringify(h.failures)).not.toContain('UNRESOLVED-ROW')
+      expect(h.failures[0].unresolvedKnownAnchor).toBe(h.initial[1][1])
+      expect(h.failures[0].unresolvedChain).toMatchObject({
+        evidenceKind: 'unproven-ancestry-edges',
+        absentKnownPid: 500
+      })
+      expect(h.failures[0].unresolvedChain.edges.at(-1)).toEqual({
+        pid: name === 'direct' ? 800 : 750,
+        parent: 500
+      })
+      expect(h.failures[0].unresolvedChain.edges).toHaveLength(name === 'direct' ? 1 : 3)
+    })
+  it('C2 absent known leaf without exposed child chain stays valid and retains first object', () => {
+    const h = absentKnownParentScan(textRow(900, 100, undefined, 'UNRELATED-NAME'))
+    expect(h.error).toBeUndefined()
+    expect(h.owned.get(500)).toBe(h.initial[1][1])
+    expect(h.owned.has(900)).toBe(false)
+    expect(JSON.stringify(h.result)).not.toContain('UNRELATED-NAME')
   })
 })

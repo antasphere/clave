@@ -484,6 +484,21 @@ function firstOwnedIdentity(identity, role, context, acquisition) {
   })
 }
 
+// Rejected current rows are not proven owned. Retain only the comparison
+// tuple, never their diagnostic name/source/provenance or arbitrary fields.
+export function unprovenIdentityEvidence(identity) {
+  if (identity === null) return null
+  return {
+    evidenceKind: 'unproven-comparison-tuple',
+    pid: identity.pid,
+    parent: identity.parent,
+    creation: identity.creation,
+    creationCodec: identity.creationCodec,
+    realUid: identity.realUid,
+    diagnosticMetadataOmitted: true
+  }
+}
+
 export function identifyOwnedProcess(
   owned,
   pid,
@@ -524,7 +539,12 @@ export function identifyOwnedProcess(
     owned.set(pid, initial)
     return initial
   } catch (error) {
-    recordFailure({ ...attempt, message: error.message, later: 'NOTRUN' })
+    recordFailure({
+      ...attempt,
+      observedIdentity: unprovenIdentityEvidence(attempt.observedIdentity),
+      message: error.message,
+      later: 'NOTRUN'
+    })
     throw error
   }
 }
@@ -540,7 +560,9 @@ export function captureOwnedInventory({
   query = spawnSync,
   recordFailure = () => {}
 }) {
-  let queryReceipt = null
+  let queryReceipt = null,
+    unresolvedKnownAnchor = null,
+    unresolvedChain = null
   const fences = []
   const observe = (pid, stage) => {
     const fence = { pid, stage, query: null, identity: null }
@@ -607,7 +629,8 @@ export function captureOwnedInventory({
       }
     )
     // Linear indexed validation: output order, PGID, session and names play no role.
-    const checked = new Set()
+    const checked = new Set(),
+      terminalParents = new Map()
     for (const row of rows.values()) {
       const chain = new Set()
       let pid = row.pid
@@ -616,7 +639,11 @@ export function captureOwnedInventory({
         chain.add(pid)
         pid = rows.get(pid).parent
       }
-      for (const member of chain) checked.add(member)
+      const terminal = terminalParents.get(pid) ?? pid
+      for (const member of chain) {
+        checked.add(member)
+        terminalParents.set(member, terminal)
+      }
     }
     const children = new Map()
     for (const r of rows.values()) {
@@ -650,6 +677,28 @@ export function captureOwnedInventory({
           !pre.has(initial.pid) && !needed.has(initial.pid),
           'inventory missing known row'
         )
+    }
+    // Unmatched rows are not owned, but a chain ending at an absent known
+    // PID is unresolved evidence, not grounds to silently filter that chain.
+    // The terminal index reuses the linear, cycle-checked whole-table walk.
+    for (const pid of rows.keys()) {
+      if (reachable.has(pid)) continue
+      unresolvedKnownAnchor = owned.get(terminalParents.get(pid)) || null
+      if (unresolvedKnownAnchor !== null) {
+        const edges = []
+        let cursor = pid
+        while (rows.has(cursor)) {
+          const row = rows.get(cursor)
+          edges.push({ pid: row.pid, parent: row.parent })
+          cursor = row.parent
+        }
+        unresolvedChain = {
+          evidenceKind: 'unproven-ancestry-edges',
+          edges,
+          absentKnownPid: unresolvedKnownAnchor.pid
+        }
+      }
+      ownershipCheck(unresolvedKnownAnchor === null, 'inventory unresolved absent known chain')
     }
     const staged = new Map(owned),
       observations = []
@@ -693,7 +742,13 @@ export function captureOwnedInventory({
     recordFailure({
       context,
       query: queryReceipt,
-      fences,
+      fences: fences.map((fence) => ({
+        ...fence,
+        initialIdentity: owned.get(fence.pid) || null,
+        identity: unprovenIdentityEvidence(fence.identity)
+      })),
+      unresolvedKnownAnchor,
+      unresolvedChain,
       category: error.message,
       later: 'NOTRUN'
     })
@@ -1240,7 +1295,7 @@ export async function main(argv) {
                   initial: worker?.identity ?? null,
                   evidenceFailure: worker?.evidenceFailure ?? null,
                   error: workerError?.message ?? null,
-                  current: currentWorker,
+                  current: cleanupWorker ? currentWorker : unprovenIdentityEvidence(currentWorker),
                   signalEligible: cleanupWorker !== null
                 },
                 actions: await forceOwnedCleanup(identities.values()),

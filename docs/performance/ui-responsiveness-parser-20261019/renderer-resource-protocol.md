@@ -219,3 +219,47 @@ then NEW both-side tooling/source/artifact maps, immutable private/checker/helpe
 schema consumers, freeze/isolation, fresh qualification faults/restorations and
 separate formal authority remain mandatory. Frozen13a/14c and all failed history
 stay immutable and cannot authorize this new source.
+
+### C1/C2 source repair, 21 October 2026
+
+Retained independent review of4d75 is SOURCE NOT READY. INV-A6-C1 found that
+rejected targeted/pre/post-fence current identities could still persist their
+unproven command names. The parent deadline receipt also serialized current
+worker metadata when the original worker fence rejected it. INV-A6-C2 found a
+complete exposed row800->absent previously-known500->main200 could be silently
+filtered. These are prospective source findings, not historical process causes
+or observed real-data leakage. The full review and counterexamples remain
+immutable; author corrections require the same retained reviewer to clear.
+
+Rejected current rows now serialize only an explicitly marked
+`unproven-comparison-tuple`: PID,parent,creation/codec,realUID and a diagnostic
+omission flag. This evidence has no schema2 identity tag, commandName/source,
+role or provenance and cannot serve as an admitted identity. Targeted failure
+receipts retain their original proven identity and safe query/mismatch reason.
+Inventory failure fences retain original known identities plus safe current
+tuples; no rejected or merely staged diagnostic name survives the failure.
+Successful, fully validated observations may retain changed diagnostic names.
+Deadline receipts keep a complete current worker row only when the unchanged
+original worker eligibility check proves a match; otherwise they use the safe
+tuple or explicit absence. The parent body has this narrow serialization change;
+its custody, handlers,600000ms deadline, rejection, signal eligibility and
+advance behavior are unchanged. Its entire body is no longer byte-identical.
+
+The cycle-checked indexed ancestry walk also records each selected chain's
+terminal parent PID. Before staging/commit, every unmatched row chain is checked
+for an absent previously-known anchor/intermediate. Such a chain is unresolved
+and STOPs, preserving all original map objects. The original proven anchor, safe failure/query metadata and explicitly
+unproven numeric PID/parent edges persist, preserving the ambiguity without
+diagnostic names or an inferred parent-generation witness. The exposed rows are not queried,
+enrolled or signaled; no parent generation is inferred. Complete-known-leaf
+absence with no exposed ambiguous child chain remains valid. No new census,
+retry, observer, sleep, deadline or atomic-tree claim is added.
+
+Actual-source regression tests cover targeted mismatch, pre/post reuse/reparent,
+rejected deadline workers including missing initial capture, direct/deep
+unresolved chains and ordinary leaf absence. Narrow semantic inverses must
+restore the privacy leaks or dropped chain and fail these assertions. All
+original workload/math/3+3/caps/GC/timing/source/cleanup gates remain unchanged.
+No app/live OS query/build/collector CLI/private/freeze/GO is authorized here.
+Exact changed-head independent review, current CI, new source/pair/private
+bindings and qualification/formal authority are still required.
