@@ -271,3 +271,11 @@ The f59 draft publication stopped before any remote write because actual dev had
 The strict CURRENT source/tree literals now require b911/2f3. A regression rejects the old matching AF0/f7a receipt-and-freeze tuple even though its two sides agree. All prior current binding negatives and source/build/overlay/tool/transitive checks remain required. Generic historical validation keeps its original contract. No fallback to an old control is permitted.
 
 The inherited resource minimum-wait helper and its seven tests are unchanged. All numeric configuration, thresholds, deadlines, workload, frames, GC/CDP methods and index semantics remain unchanged. The failed R1, wrong ISO freeze, timestamp-only diagnostic and all twelve original values remain preserved and unqualified. Old source proofs, measurement roots, overlays, freezes and private qualifiers retain their original identities. New independent source review, symmetric tooling rebind, numeric FINAL freeze, exact-head CI and separate physical GO remain required. No app or measurement result follows from this source update.
+
+### 2026-10-21: bind CURRENT primary control to integrated dev 5e9
+
+The dated primary control now requires source `5e9fe284ff7a9835b264fb18ff1ecb63f778836a`, tree `53d77559eb734da33187c3c9d21dbc6e2cda45e2`. A fully matching historical b911/2f3 receipt and freeze remains valid only through generic historical validation; CURRENT primary validation rejects it. This updates only the two fixed literals, not a validation function or an arbitrary-current-source policy.
+
+All prior records, thresholds, workload, profile/cadence/deadline checks, primary3BEFORE/3AFTER and subsequent6P/U/3orb order remain unchanged. The native composer request clock ends at verified input acknowledgement before `observed()`; capture-handler-to-second-rAF remains a separate clock. No combined clock or new ceiling is introduced. Primary FINAL retains its ISO `Date.parse` contract, distinct from resource numeric freshness.
+
+This source correction authorizes no collection. Existing bb3/5e9 build maps and the prior UNSEALED host draft remain immutable history. Exact new-head independent source review, current CI, reviewed source/artifact transfer and new pair/private/freeze bindings are required before separate runtime authority. No old failure, adverse tail or unknown cause is waived.

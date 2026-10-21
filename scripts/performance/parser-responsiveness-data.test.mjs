@@ -138,14 +138,29 @@ test('strict primary delegates unchanged target comparison and accepts a valid s
   assert.ok(compare(collection('before'), collection('after')).reduction >= 0.6))
 
 test('pins this dated collector to the approved current-dev control source and tree', () => {
-  assert.equal(APPROVED_RAW_CONTROL_SOURCE, 'b9114709755e7be5b01ae3de4ae6be2aa88a44e6')
-  assert.equal(APPROVED_RAW_CONTROL_TREE, '2f3c8e081c07c0c856148414f300ebfeb564a4ba')
+  assert.equal(APPROVED_RAW_CONTROL_SOURCE, '5e9fe284ff7a9835b264fb18ff1ecb63f778836a')
+  assert.equal(APPROVED_RAW_CONTROL_TREE, '53d77559eb734da33187c3c9d21dbc6e2cda45e2')
   const b = collection('before'),
     a = collection('after'),
     f = frozen(b, a)
   assert.doesNotThrow(() => validateRawControlBinding(f))
   assert.doesNotThrow(() => validateCurrentFrozenSide(b, f, 'before'))
   assert.doesNotThrow(() => validateCurrentFrozenSide(a, f, 'after'))
+})
+
+test('rejects a fully matching old b911 receipt and freeze as current primary evidence', () => {
+  const b = collection('before'),
+    a = collection('after'),
+    f = frozen(b, a)
+  b.source = f.before.source = 'b9114709755e7be5b01ae3de4ae6be2aa88a44e6'
+  b.provenance.tree = f.before.tree = '2f3c8e081c07c0c856148414f300ebfeb564a4ba'
+  assert.doesNotThrow(() => validateFrozenPair(b, a, f))
+  assert.throws(() => validateCurrentFrozenSide(b, f, 'before'), /exact raw dev BEFORE source/)
+  assert.throws(() => validateCurrentFrozenSide(a, f, 'after'), /exact raw dev BEFORE source/)
+  assert.throws(
+    () => checkParserComparison(b, a, f, { beforeProfiles: profiles, afterProfiles: profiles }),
+    /exact raw dev BEFORE source/
+  )
 })
 
 const bindingNegatives = {
