@@ -55,5 +55,20 @@ export const useTriageStore = createTriageStore({
     if (id) useSessionStore.getState().renameSession(id, 'Clave triage')
     return id
   },
-  writeText: (text) => navigator.clipboard.writeText(text)
+  writeText: (text) => navigator.clipboard.writeText(text),
+  findSupport: async (prepared, knownId) => {
+    const sessions = await window.electronAPI.sessionsList()
+    if (knownId)
+      return sessions.some((s) => s.id === knownId)
+        ? { status: 'found', id: knownId }
+        : { status: 'missing' }
+    const matches = sessions.filter(
+      (s) =>
+        s.cwd === prepared.bundle?.dir &&
+        s.windowKey === prepared.origin.windowKey &&
+        (prepared.snapshot.sessions.status !== 'ok' ||
+          !prepared.snapshot.sessions.value.some((old) => old.id === s.id))
+    )
+    return matches.length === 1 ? { status: 'found', id: matches[0].id } : { status: 'unknown' }
+  }
 })

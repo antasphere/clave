@@ -42,6 +42,13 @@ export interface LaunchRequest {
   throwOnError?: boolean
   /** Called as soon as main acknowledges creation, before renderer placement. */
   onCreated?: (id: string) => void
+  /** Refuse a resolved profile different from the explicit selection. */
+  exactProfile?: boolean
+}
+
+export interface LaunchSelectionError extends Error {
+  code: 'launch-profile-mismatch' | 'launch-account-unavailable'
+  cleanupSucceeded: boolean
 }
 
 /** Resolve a LaunchCwd to an absolute path, opening the native folder picker
@@ -105,10 +112,24 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
   const profile = isClaudeSession ? accountForLaunch('claude', req.setup?.claudeProfileId) : null
   const codexAccount = modes.codexMode ? accountForLaunch('codex', req.setup?.codexAccountId) : null
+  if (
+    req.exactProfile &&
+    ((profile && profile.id !== req.setup?.claudeProfileId) ||
+      (codexAccount && codexAccount.id !== req.setup?.codexAccountId))
+  ) {
+    throw Object.assign(new Error('The selected account is no longer available.'), {
+      code: 'launch-account-unavailable' as const,
+      cleanupSucceeded: true
+    }) satisfies LaunchSelectionError
+  }
   const profileFields = {
     ...(profile ? claudeProfileSpawnFields(profile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
+
+  const previousIds = req.exactProfile
+    ? new Set((await window.electronAPI.sessionsList()).map((session) => session.id))
+    : null
 
   try {
     const sessionInfo = await window.electronAPI.spawnSession(folderPath, {
@@ -118,6 +139,35 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
       launchProfileId: req.setup?.launchProfileId,
       ...profileFields
     })
+    if (req.exactProfile && sessionInfo.launchProfileId !== req.setup?.launchProfileId) {
+      let cleanupSucceeded = false
+      try {
+        const created = (await window.electronAPI.sessionsList()).find(
+          (s) => s.id === sessionInfo.id
+        )
+        // A terminal is prepared without a process until its pane sends a
+        // size. We have not placed this handle, and it was absent before our
+        // request. Never clean up an existing tab or an events provider here.
+        if (
+          !previousIds!.has(sessionInfo.id) &&
+          created?.transport === 'pty' &&
+          created.state === 'idle' &&
+          !useSessionStore.getState().sessions.some((s) => s.id === sessionInfo.id)
+        ) {
+          await window.electronAPI.killSession(sessionInfo.id)
+          cleanupSucceeded = !(await window.electronAPI.sessionsList()).some(
+            (s) => s.id === sessionInfo.id
+          )
+        }
+      } catch {
+        /* Keep an uncertain handle; never retry or touch another session. */
+      }
+      if (!cleanupSucceeded && !previousIds!.has(sessionInfo.id)) req.onCreated?.(sessionInfo.id)
+      throw Object.assign(new Error('The selected launch profile changed before startup.'), {
+        code: 'launch-profile-mismatch' as const,
+        cleanupSucceeded
+      }) satisfies LaunchSelectionError
+    }
     req.onCreated?.(sessionInfo.id)
     // One placement, not a placement and then a correction: the group's `+`
     // has already said where this goes, so it goes there — as the group's

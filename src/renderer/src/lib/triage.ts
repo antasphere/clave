@@ -1,7 +1,7 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import type { LaunchProfile } from '../../../shared/agent-launch'
 import type { TriagePrepareResult, TriageSnapshot } from '../../../shared/triage'
-import type { LaunchRequest } from './launch-session'
+import type { LaunchSelectionError, LaunchRequest } from './launch-session'
 
 export type TriageProvider = 'claude' | 'codex'
 export interface TriageSelection {
@@ -22,6 +22,10 @@ export interface TriageDependencies {
   workspace: () => string | null
   launch: (request: LaunchRequest) => Promise<string | null>
   writeText: (text: string) => Promise<void>
+  findSupport: (
+    prepared: TriagePrepareResult,
+    knownId: string | null
+  ) => Promise<{ status: 'found'; id: string } | { status: 'missing' } | { status: 'unknown' }>
 }
 
 type CopyKind = 'context' | 'prompt' | 'external'
@@ -44,6 +48,7 @@ interface TriageState {
   setProblem: (problem: string) => void
   start: () => Promise<void>
   copy: (kind: CopyKind) => Promise<void>
+  checkSupport: () => Promise<void>
 }
 
 function deadline<T>(promise: Promise<T>, milliseconds = 15_000): Promise<T> {
@@ -58,11 +63,11 @@ export function triagePrompt(prepared: TriagePrepareResult, problem: string): st
   return problem.trim() ? `${prompt}\n\nUser's problem:\n${problem.trim()}` : prompt
 }
 
-/** Per-window state, retained across closing the dialog. A lost spawn reply is
- * not permission to repeat a non-idempotent launch. Only a fresh app window
- * resets that uncertainty; inspect the tabs or use the copy fallback first. */
+/** Per-window state, retained across closing the dialog. A lost spawn reply
+ * requires reconciliation; an empty read alone cannot rule out a delayed launch. */
 export function createTriageStore(deps: TriageDependencies): UseBoundStore<StoreApi<TriageState>> {
   let captureWorkspace: string | null = null
+  let selectionInitialised = false
   return create<TriageState>((set, get) => ({
     open: false,
     preparing: false,
@@ -77,6 +82,8 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
     supportSessionId: null,
     openDialog: async () => {
       set({ open: true })
+      if (get().prepared && get().launchState !== 'ready' && get().launchState !== 'launching')
+        await get().checkSupport()
       if (!get().prepared && !get().preparing) await get().refresh()
     },
     closeDialog: () => set({ open: false }),
@@ -91,7 +98,14 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
           () => set({ error: 'Context could not be prepared. Try capturing again.' })
         ),
         deadline(deps.choices()).then(
-          (choices) => set({ choices, choicesError: null, selection: deps.selection() }),
+          (choices) => {
+            set({
+              choices,
+              choicesError: null,
+              ...(!selectionInitialised ? { selection: deps.selection() } : {})
+            })
+            selectionInitialised = true
+          },
           () =>
             set({
               choices: null,
@@ -110,6 +124,24 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
       set({ selection: { ...selection, ...patch }, error: null, copyStatus: null })
     },
     setProblem: (problem) => set({ problem: problem.slice(0, 2_000), copyStatus: null }),
+    checkSupport: async () => {
+      const { prepared, supportSessionId, launchState } = get()
+      if (!prepared || launchState === 'ready' || launchState === 'launching') return
+      try {
+        const result = await deadline(deps.findSupport(prepared, supportSessionId))
+        if (result.status === 'found') set({ supportSessionId: result.id, launchState: 'started' })
+        else if (result.status === 'missing' && supportSessionId) {
+          set({ supportSessionId: null, launchState: 'ready', prepared: null, error: null })
+          await get().refresh()
+        } else
+          set({
+            error:
+              'No support tab could be confirmed. A delayed launch may still finish. Keep this capture or use the copy fallback; another in-app launch is blocked.'
+          })
+      } catch {
+        set({ error: 'The support tab could not be checked. Copy context remains available.' })
+      }
+    },
     start: async () => {
       const { prepared, selection, problem, preparing, launchState } = get()
       if (preparing || launchState !== 'ready' || !prepared) return
@@ -173,6 +205,7 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
             initialPrompt: triagePrompt(prepared, problem),
             remember: false,
             throwOnError: true,
+            exactProfile: true,
             onCreated: (id) =>
               set({
                 supportSessionId: id,
@@ -182,7 +215,24 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
         )
         if (!id) throw new Error('No session acknowledgement')
         set({ supportSessionId: id, launchState: 'started' })
-      } catch {
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error.code === 'launch-profile-mismatch' || error.code === 'launch-account-unavailable')
+        ) {
+          const rejected = error as LaunchSelectionError
+          set({
+            launchState: rejected.cleanupSucceeded ? 'ready' : 'uncertain',
+            error: rejected.cleanupSucceeded
+              ? rejected.code === 'launch-account-unavailable'
+                ? 'The selected account is no longer available. Choose an available account.'
+                : 'The selected launch profile changed before startup. Its unused handle was removed. Choose an available profile.'
+              : 'The launch profile changed and its new handle could not be safely removed. Check sessions before retrying. Copy context remains available.'
+          })
+          return
+        }
         set({
           launchState: get().supportSessionId ? 'started' : 'uncertain',
           error: get().supportSessionId

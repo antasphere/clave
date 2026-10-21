@@ -48,6 +48,9 @@ fixes or restarts. It does not restrict an unrestricted launch profile.
 If login or startup fails, check the new tab and use **Copy context** or
 **Copy support prompt**. An unconfirmed launch is not retried automatically.
 Closing and reopening the dialog keeps the capture and any known support tab.
+Choose **Check support tab** to reconcile an unconfirmed launch. If a known
+support tab was closed, Clave allows a fresh capture. An unknown delayed launch
+stays blocked to avoid creating a duplicate. Capturing again keeps your choices.
 For an attached server, in-app launch is unavailable because the server may
 use another filesystem. Copy the context, or run the displayed external command
 on the same Mac that created the capture, using that Mac's CLI settings and login.

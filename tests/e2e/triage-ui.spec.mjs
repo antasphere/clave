@@ -103,7 +103,9 @@ async function openTriage(app, win) {
   await dialog
     .getByRole('button', { name: 'Triage launch profile', exact: true })
     .waitFor({ state: 'visible' })
-  await until(() => dialog.getByRole('button', { name: 'Capture again', exact: true }).isEnabled())
+  await until(() =>
+    dialog.getByRole('button', { name: /Capture again|Check support tab/ }).isEnabled()
+  )
   return dialog
 }
 
@@ -171,6 +173,13 @@ export async function run(t) {
             }),
           { family, bin }
         )
+      // Title generation for a Codex tab uses the workspace's Claude CLI.
+      // Keep that outgoing effect on the recording wrapper as well.
+      await win.evaluate(
+        (workspaceId) =>
+          window.electronAPI.launchProfileSetWorkspace(workspaceId, 'claude', 'triage-claude'),
+        workspace.id
+      )
       const account = await win.evaluate(() =>
         window.electronAPI.codexAccountAdd({ label: 'Triage Codex account', kind: 'chatgpt' })
       )

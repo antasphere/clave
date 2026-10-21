@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createTriageStore, type TriageChoices, type TriageSelection } from './triage'
+import {
+  createTriageStore,
+  type TriageChoices,
+  type TriageSelection,
+  type TriageDependencies
+} from './triage'
 import type { TriagePrepareResult, TriageSnapshot } from '../../../shared/triage'
 import type { LaunchRequest } from './launch-session'
 
@@ -56,7 +61,11 @@ function fixture() {
       request.onCreated?.('support-one')
       return 'support-one'
     }),
-    writeText: vi.fn<(text: string) => Promise<void>>(async () => {})
+    writeText: vi.fn<(text: string) => Promise<void>>(async () => {}),
+    findSupport: vi.fn<TriageDependencies['findSupport']>(async () => ({
+      status: 'found',
+      id: 'support-one'
+    }))
   }
   const store = createTriageStore(deps)
   return { store, deps, choices }
@@ -191,6 +200,25 @@ describe('triage support controller', () => {
     expect(deps.launch).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'keeps a profile race explicit; cleanup success is %s',
+    async (cleanupSucceeded) => {
+      const { store, deps } = fixture()
+      deps.launch.mockRejectedValue(
+        Object.assign(new Error('profile mismatch'), {
+          code: 'launch-profile-mismatch',
+          cleanupSucceeded
+        })
+      )
+      await store.getState().openDialog()
+      await store.getState().start()
+      expect(store.getState().launchState).toBe(cleanupSucceeded ? 'ready' : 'uncertain')
+      expect(store.getState().error).toContain('profile changed')
+      await store.getState().copy('context')
+      expect(deps.writeText).toHaveBeenCalledWith(prepared.contextMarkdown)
+    }
+  )
+
   it('preserves useful context when reading launch choices fails', async () => {
     const { store, deps } = fixture()
     deps.choices.mockRejectedValue(new Error('provider unavailable'))
@@ -237,6 +265,50 @@ describe('triage support controller', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('recaptures after a known support tab has been closed, preserving the explicit selection', async () => {
+    const { store, deps } = fixture()
+    await store.getState().openDialog()
+    store.getState().select({ provider: 'claude' })
+    await store.getState().start()
+    deps.findSupport.mockResolvedValue({ status: 'missing' })
+    store.getState().closeDialog()
+    await store.getState().openDialog()
+    expect(store.getState()).toMatchObject({
+      launchState: 'ready',
+      supportSessionId: null,
+      prepared
+    })
+    expect(store.getState().selection.provider).toBe('claude')
+    expect(deps.prepare).toHaveBeenCalledTimes(2)
+    expect(deps.launch).toHaveBeenCalledOnce()
+  })
+
+  it('reconciles an ambiguous response by the private capture directory without respawning', async () => {
+    const { store, deps } = fixture()
+    deps.launch.mockRejectedValue(new Error('response lost'))
+    await store.getState().openDialog()
+    await store.getState().start()
+    deps.findSupport.mockResolvedValue({ status: 'found', id: 'found-in-capture' })
+    await store.getState().checkSupport()
+    expect(store.getState()).toMatchObject({
+      launchState: 'started',
+      supportSessionId: 'found-in-capture'
+    })
+    expect(deps.launch).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an unknown launch blocked even when a read currently finds nothing', async () => {
+    const { store, deps } = fixture()
+    deps.launch.mockRejectedValue(new Error('response lost'))
+    await store.getState().openDialog()
+    await store.getState().start()
+    deps.findSupport.mockResolvedValue({ status: 'unknown' })
+    await store.getState().checkSupport()
+    expect(store.getState().launchState).toBe('uncertain')
+    await store.getState().start()
+    expect(deps.launch).toHaveBeenCalledOnce()
   })
 
   it('does not respawn after a timeout and reconciles a later creation acknowledgement', async () => {

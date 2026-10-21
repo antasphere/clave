@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const f = vi.hoisted(() => ({ add: vi.fn(), spawn: vi.fn(), remember: vi.fn() }))
+const f = vi.hoisted(() => ({
+  add: vi.fn(),
+  spawn: vi.fn(),
+  remember: vi.fn(),
+  list: vi.fn(),
+  kill: vi.fn(),
+  accountId: null as string | null
+}))
 vi.mock('../store/session-store', () => ({
-  useSessionStore: { getState: () => ({ addSessionInGroup: f.add }) }
+  useSessionStore: { getState: () => ({ addSessionInGroup: f.add, sessions: [] }) }
 }))
 vi.mock('../store/claude-profile-store', () => ({
   claudeProfileSpawnFields: (p: { id: string }) => ({ claudeProfileId: p.id })
@@ -11,7 +18,7 @@ vi.mock('../store/codex-account-store', () => ({
   codexAccountSpawnFields: (p: { id: string }) => ({ codexAccountId: p.id })
 }))
 vi.mock('./switch-account', () => ({
-  accountForLaunch: (_provider: string, id: string) => ({ id })
+  accountForLaunch: (_provider: string, id: string) => ({ id: f.accountId ?? id })
 }))
 vi.mock('../store/workspace-store', () => ({
   getActiveWorkspaceId: () => 'workspace',
@@ -27,6 +34,7 @@ import { launchSession } from './launch-session'
 afterEach(() => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
+  f.accountId = null
 })
 
 describe('launchSession acknowledgement and opt-in errors', () => {
@@ -82,5 +90,59 @@ describe('launchSession acknowledgement and opt-in errors', () => {
       'placement'
     )
     expect(onCreated).toHaveBeenCalledWith('new')
+  })
+
+  it('rejects a fallback before placement and removes only its new unused terminal handle', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: { spawnSession: f.spawn, sessionsList: f.list, killSession: f.kill }
+    })
+    const existing = { id: 'existing', transport: 'pty', state: 'working' }
+    f.list
+      .mockResolvedValueOnce([existing])
+      .mockResolvedValueOnce([existing, { id: 'new', transport: 'pty', state: 'idle' }])
+      .mockResolvedValueOnce([existing])
+    f.spawn.mockResolvedValue({ id: 'new', launchProfileId: 'builtin-codex' })
+    const onCreated = vi.fn()
+    await expect(
+      launchSession({ ...request, exactProfile: true, throwOnError: true, onCreated })
+    ).rejects.toMatchObject({ code: 'launch-profile-mismatch', cleanupSucceeded: true })
+    expect(f.kill).toHaveBeenCalledExactlyOnceWith('new')
+    expect(f.add).not.toHaveBeenCalled()
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it.each(['existing', 'events', 'working'])(
+    'never cleans up a mismatched %s handle',
+    async (kind) => {
+      vi.stubGlobal('window', {
+        electronAPI: { spawnSession: f.spawn, sessionsList: f.list, killSession: f.kill }
+      })
+      const id = kind === 'existing' ? 'existing' : 'new'
+      f.list.mockResolvedValueOnce([{ id: 'existing' }]).mockResolvedValueOnce([
+        {
+          id,
+          transport: kind === 'events' ? 'events' : 'pty',
+          state: kind === 'working' ? 'working' : 'idle'
+        }
+      ])
+      f.spawn.mockResolvedValue({ id, launchProfileId: 'unexpected' })
+      await expect(
+        launchSession({ ...request, exactProfile: true, throwOnError: true })
+      ).rejects.toMatchObject({ code: 'launch-profile-mismatch', cleanupSucceeded: false })
+      expect(f.kill).not.toHaveBeenCalled()
+      expect(f.add).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects a different account from the existing pool helper before any spawn', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: { spawnSession: f.spawn, sessionsList: f.list, killSession: f.kill }
+    })
+    f.accountId = 'another-account'
+    await expect(
+      launchSession({ ...request, exactProfile: true, throwOnError: true })
+    ).rejects.toMatchObject({ code: 'launch-account-unavailable', cleanupSucceeded: true })
+    expect(f.spawn).not.toHaveBeenCalled()
+    expect(f.kill).not.toHaveBeenCalled()
   })
 })

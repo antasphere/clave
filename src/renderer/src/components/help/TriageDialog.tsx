@@ -104,8 +104,17 @@ export function TriageDialog(): React.JSX.Element {
         <p className="text-[11px] text-text-tertiary mt-2">
           Uses the selected profile&apos;s permissions
           {selection.dangerousMode ? ' and your current skip-permissions selection' : ''}. Defaults
-          stay unchanged. Machine login availability is checked by the provider at startup.
+          stay unchanged. Account availability comes from Clave&apos;s account list; the provider
+          reports login and startup errors in its tab.
         </p>
+        {selection.dangerousMode && state.launchState === 'ready' && (
+          <button
+            className="btn-secondary mt-2"
+            onClick={() => state.select({ dangerousMode: false })}
+          >
+            Use profile permissions only
+          </button>
+        )}
         <label htmlFor="triage-problem" className="field-label block mt-3">
           What went wrong? <span className="text-text-tertiary">Optional</span>
         </label>
@@ -184,8 +193,14 @@ export function TriageDialog(): React.JSX.Element {
           </p>
         )}
         <div className="flex justify-end gap-2 mt-5">
-          <button className="btn-dialog" disabled={busy} onClick={() => void state.refresh()}>
-            Capture again
+          <button
+            className="btn-dialog"
+            disabled={state.preparing || state.launchState === 'launching'}
+            onClick={() =>
+              void (state.launchState === 'ready' ? state.refresh() : state.checkSupport())
+            }
+          >
+            {state.launchState === 'ready' ? 'Capture again' : 'Check support tab'}
           </button>
           <button className="btn-dialog" onClick={state.closeDialog}>
             {state.launchState === 'ready' ? 'Cancel' : 'Close'}
