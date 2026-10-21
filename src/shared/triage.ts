@@ -166,6 +166,9 @@ export interface TriageListedGroup {
   name: string
   sessionIds: string[]
   terminalCount: number
+  /** The sessions serving the group's quick-launch terminals: shown by the
+   *  group, never rows of their own. */
+  terminalSessionIds: string[]
   workspaceId: string | null
   hasView: boolean
 }
