@@ -52,6 +52,35 @@ function w(over: Partial<UsageWindow>): UsageWindow {
 }
 
 describe('tightestWindow', () => {
+  it('ignores exhausted Fable quota for an Opus session but retains shared quotas', () => {
+    const windows = [
+      w({ key: 'weekly', kind: 'weekly_all', usedPercentage: 30 }),
+      w({
+        key: 'fable',
+        kind: 'weekly_scoped',
+        scope: 'Fable',
+        usedPercentage: 100,
+        severity: 'critical'
+      })
+    ]
+    expect(tightestWindow(windows, { model: 'claude-opus-5-5' })?.key).toBe('weekly')
+    expect(tightestWindow(windows, { model: 'claude-fable-5' })?.key).toBe('fable')
+    expect(tightestWindow(windows)?.key).toBe('fable')
+  })
+
+  it('requires model evidence for scoped caps and matches model tokens', () => {
+    const windows = [
+      w({ key: 'session', usedPercentage: 20 }),
+      w({ key: 'fable', kind: 'weekly_scoped', scope: 'Fable', usedPercentage: 99 })
+    ]
+    for (const model of [undefined, '', 'default', 'sonnet', 'notfable']) {
+      expect(tightestWindow(windows, { model })?.key).toBe('session')
+    }
+    for (const model of ['fable', 'FABLE', 'claude-fable-5[1m]']) {
+      expect(tightestWindow(windows, { model })?.key).toBe('fable')
+    }
+  })
+
   it('is null when the service returned nothing', () => {
     expect(tightestWindow([])).toBeNull()
   })

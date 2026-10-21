@@ -490,6 +490,7 @@ export type SettingsSection =
   | 'updates'
   | 'usage'
   | 'activity'
+  | 'audio'
 
 export type ExtensionsSection = 'marketplaces' | 'mcp'
 

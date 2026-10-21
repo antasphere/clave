@@ -2,6 +2,7 @@ import { linkedEditorBlocksClose } from './linked-document-store'
 import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { clearSessionDraft } from '../views/draft-store'
+import { subagentPresentation } from '../lib/subagent-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import type { GitRangeDirection } from '../../../shared/git-range'
@@ -36,6 +37,7 @@ import {
 import type { Agent, AgentStatus } from '../../../shared/remote-types'
 import { useWorkspaceStore } from './workspace-store'
 import { resolveUiFont, type UiFont } from '../lib/ui-font'
+import { LOGO_MARK } from '../lib/marks'
 import {
   mergeLayoutForKeys,
   pruneUnknownSessions,
@@ -126,6 +128,9 @@ interface SessionState {
   textSize: TextSize
   /** The face the chrome is set in (`data-ui-font`). */
   uiFont: UiFont
+  /** What stands for an agent in the chrome: `logo`, or a mark pack's `<pluginId>/<markId>`,
+   *  saved raw and resolved at use against the packs this build can draw (`lib/marks.ts`). */
+  agentMark: string
   /** Run new sessions inside persistent tmux sessions. On by default; falls
    *  back to a plain shell automatically when tmux isn't installed. */
   tmuxMode: boolean
@@ -307,6 +312,7 @@ interface SessionState {
   setDensity: (density: Density) => void
   setTextSize: (textSize: TextSize) => void
   setUiFont: (uiFont: UiFont) => void
+  setAgentMark: (agentMark: string) => void
   setTmuxMode: (enabled: boolean) => void
   setMessageTrailEnabled: (enabled: boolean) => void
   updateSessionAlive: (id: string, alive: boolean) => void
@@ -798,11 +804,8 @@ function pushSidebarSnapshot(stack: SidebarSnapshot[], snap: SidebarSnapshot): S
   return next
 }
 
-/** Flattened, workspace-filtered session id order — the one list behind
- *  Cmd+1..9 and Cmd+Shift+]/[ session cycling. Groups expand to their member
- *  sessions; anything outside the active workspace is skipped; file tabs are
- *  not sessions and never cycle. */
-export function getVisibleFlatOrder(
+/** Session cycling retains every real session, including folded descendants. */
+export function getSessionCycleOrder(
   state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
   activeId: string | null
 ): string[] {
@@ -818,6 +821,37 @@ export function getVisibleFlatOrder(
     if (session && inActiveWorkspace(session, activeId)) flatIds.push(id)
   }
   return flatIds
+}
+
+/** Digit shortcuts count represented rows. A mounted sidebar supplies its
+ * temporary search/filter order; a closed sidebar derives the default view. */
+export function getVisibleFlatOrder(
+  state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
+  activeId: string | null,
+  sidebarRowIds?: readonly string[]
+): string[] {
+  const hiddenIds = new Set<string>()
+  for (const group of state.groups) {
+    for (const terminal of group.terminals)
+      if (terminal.sessionId) hiddenIds.add(terminal.sessionId)
+  }
+  for (const session of state.sessions) {
+    if (session.view?.serverSessionId) hiddenIds.add(session.view.serverSessionId)
+  }
+  const sessions = state.sessions.filter(
+    (s) => inActiveWorkspace(s, activeId) && !hiddenIds.has(s.id)
+  )
+  const ids = new Set(sessions.map((s) => s.id))
+  const order = (
+    sidebarRowIds ??
+    getSessionCycleOrder(state, activeId).filter(
+      (id) => !state.groups.some((g) => g.collapsed && g.sessionIds.includes(id))
+    )
+  ).filter((id) => ids.has(id))
+  // Rendered search results are already presented, including direct child rows.
+  if (sidebarRowIds) return order
+  const presentation = subagentPresentation(sessions, new Set(order))
+  return order.filter((id) => !presentation.rootById.has(id))
 }
 
 export function getDisplayOrder(state: {
@@ -878,6 +912,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   ),
   textSize: resolveTextSize(localStorage.getItem('clave-text-size')),
   uiFont: resolveUiFont(localStorage.getItem('clave-ui-font')),
+  agentMark: localStorage.getItem('clave-agent-mark') ?? LOGO_MARK,
   tmuxMode: localStorage.getItem('clave-tmux-mode') !== 'false',
   messageTrailEnabled: localStorage.getItem('clave-message-trail') !== 'false',
   searchQuery: '',
@@ -1587,6 +1622,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setUiFont: (uiFont) => {
     localStorage.setItem('clave-ui-font', uiFont)
     set({ uiFont })
+  },
+
+  setAgentMark: (agentMark) => {
+    localStorage.setItem('clave-agent-mark', agentMark)
+    set({ agentMark })
   },
 
   setAppIcon: (appIcon) => {

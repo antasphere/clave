@@ -39,6 +39,7 @@ import { registerServerHandlers } from './server-handlers'
 import { registerActivityHandlers } from './activity-handlers'
 // ── Lane C: settings behind ports ──
 // ── Lane F: the shell ──
+import { registerMicHandlers } from './mic-handlers'
 
 export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerAppHandlers()
@@ -82,4 +83,5 @@ export function registerIpcHandlers(deps: KeymapHandlerDeps = {}): void {
   registerServerHandlers()
   // ── Lane C: settings behind ports ──
   // ── Lane F: the shell ──
+  registerMicHandlers()
 }

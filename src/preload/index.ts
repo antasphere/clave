@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
@@ -35,6 +36,13 @@ import type { SessionWrite } from '@clave/contract/sessions'
 import type { SidebarGroup } from '@clave/contract/sidebar'
 import { selectAdoptableRecords, type AdoptionScope } from '../shared/adoption-scope'
 import type { SessionRecord as WireSessionRecord } from '@clave/contract/sessions'
+import {
+  MIC_GET_ACCESS_CHANNEL,
+  MIC_REQUEST_ACCESS_CHANNEL,
+  MIC_OPEN_SETTINGS_CHANNEL,
+  MIC_OPEN_SOUND_SETTINGS_CHANNEL,
+  type MicAccessState
+} from '../shared/mic'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -972,6 +980,11 @@ const electronAPI = {
   sessionsCommands: viaServer<[string], CommandOption[]>({
     ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
     server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
+  }),
+  sessionsControl: viaServer<[string, SessionControl], Record<string, unknown>>({
+    ipc: (id, request) => ipcRenderer.invoke('sessions:control', id, request),
+    server: ({ api }, id, request) =>
+      api.sessions.control(id, request) as Promise<Record<string, unknown>>
   }),
   sessionsCapabilities: viaServer<[string], { images: boolean }>({
     ipc: (id) => ipcRenderer.invoke('sessions:capabilities', id),
@@ -2305,6 +2318,11 @@ const electronAPI = {
   preferencesGet: (key: string) => ipcRenderer.invoke('preferences:get', key),
   preferencesSet: (key: string, value: unknown) =>
     ipcRenderer.invoke('preferences:set', key, value),
+  // ── Microphone (the Audio settings page's OS surface) ──
+  getMicAccess: () => ipcRenderer.invoke(MIC_GET_ACCESS_CHANNEL) as Promise<MicAccessState>,
+  requestMicAccess: () => ipcRenderer.invoke(MIC_REQUEST_ACCESS_CHANNEL) as Promise<MicAccessState>,
+  openMicPrivacySettings: () => ipcRenderer.invoke(MIC_OPEN_SETTINGS_CHANNEL) as Promise<void>,
+  openSoundSettings: () => ipcRenderer.invoke(MIC_OPEN_SOUND_SETTINGS_CHANNEL) as Promise<void>,
   keymapsLoad: () => ipcRenderer.invoke('keymaps:load'),
   keymapsSave: (value: unknown) => ipcRenderer.invoke('keymaps:save', value),
   keymapsImport: () => ipcRenderer.invoke('keymaps:import') as Promise<string | null>,

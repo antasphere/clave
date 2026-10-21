@@ -27,7 +27,7 @@
  *     the MCP server's: no server of its own was started in its place, on
  *     any port.
  *  4. A quit that comes while the registration is still in flight (a proxy
- *     holds POST /clients for 3 s) still ends with the app deregistered: no
+ *     holds confirmation until released during quit) still ends with the app deregistered: no
  *     ghost client stays on the server.
  *  6. In separate mode, the server child SIGKILLed under the running app:
  *     the discovery file turns `ok: false` with the exit named, its token
@@ -76,12 +76,15 @@ import {
   identityOf,
   until,
   CHILD_CALL_TIMEOUT_MS,
-  CLOSE_TIMEOUT_MS
+  CLOSE_TIMEOUT_MS,
+  REPO
 } from './harness.mjs'
-import { mkdirSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
 
 const MODE = serverMode()
 const ROOT = fixturePath('root-server-boot')
@@ -210,8 +213,20 @@ async function appPorts(pid) {
 
 /** A loopback proxy in front of `target` that holds `POST /clients` for
  *  `delayMs` and forwards everything else at once. */
-function delayingProxy(target, { delayMs = null } = {}) {
+function delayingProxy(
+  target,
+  {
+    delayMs = null,
+    holdResponse = false,
+    registrationPath = '/clients/registrations/v1/confirm'
+  } = {}
+) {
   const t = new URL(target)
+  // Allowlisted causal receipts: never headers, tokens or request bodies.
+  const receipts = []
+  const record = (phase, req, detail = {}) => {
+    receipts.push({ at: Date.now(), phase, method: req.method, path: req.url, ...detail })
+  }
   // Held until `release()` (or 20 s, a ceiling for a spec that dies) when no
   // delay is given: a fixed clock let the registration land before the quit
   // whenever the app booted slower than it, on a loaded runner (CI on #175,
@@ -232,6 +247,8 @@ function delayingProxy(target, { delayMs = null } = {}) {
     }, 20_000)
   }
   const server = http.createServer((req, res) => {
+    record('received', req)
+    res.once('close', () => record('downstream-closed', req))
     // The body is read as it arrives and forwarded from this copy: a client
     // that dies while its request is held has already sent it whole, and the
     // server must still receive it (otherwise a quit that does not wait on
@@ -243,6 +260,7 @@ function delayingProxy(target, { delayMs = null } = {}) {
     req.on('data', (c) => chunks.push(c))
     req.on('end', () => {
       ended = true
+      record('body-complete', req)
       if (pendingForward) pendingForward()
     })
     const forward = () => {
@@ -250,6 +268,7 @@ function delayingProxy(target, { delayMs = null } = {}) {
         pendingForward = forward
         return
       }
+      record('forwarded', req, { downstreamDestroyed: res.destroyed })
       const up = http.request(
         {
           host: t.hostname,
@@ -259,26 +278,47 @@ function delayingProxy(target, { delayMs = null } = {}) {
           headers: { ...req.headers, host: t.host }
         },
         (upRes) => {
+          record('upstream-response', req, { status: upRes.statusCode })
           // The server's answer is what "landed" means, whatever became of
           // the client that asked.
-          upRes.once('end', () => req.landed?.())
+          upRes.once('end', () => {
+            record('upstream-complete', req, { status: upRes.statusCode })
+            req.landed?.()
+          })
+          if (holdResponse && req.url === registrationPath && req.method === 'POST') {
+            const responseChunks = []
+            upRes.on('data', (chunk) => responseChunks.push(chunk))
+            upRes.once('end', () => {
+              record('response-withheld', req)
+              hold(() => {
+                record('response-released', req, { downstreamDestroyed: res.destroyed })
+                if (!res.destroyed) {
+                  res.writeHead(upRes.statusCode ?? 502, upRes.headers)
+                  res.end(Buffer.concat(responseChunks))
+                }
+              })
+            })
+            return
+          }
           if (res.destroyed) return upRes.resume()
           res.writeHead(upRes.statusCode ?? 502, upRes.headers)
           upRes.pipe(res)
         }
       )
       up.on('error', () => {
+        record('upstream-error', req)
         req.landed?.()
         if (!res.headersSent) res.writeHead(502)
         res.end()
       })
       up.end(Buffer.concat(chunks))
     }
-    if (req.method === 'POST' && req.url === '/clients') {
+    if (req.method === 'POST' && req.url === registrationPath) {
       let landed
       answered.push(new Promise((resolve) => (landed = resolve)))
       req.landed = () => landed()
-      if (delayMs !== null) setTimeout(forward, delayMs)
+      if (holdResponse) forward()
+      else if (delayMs !== null) setTimeout(forward, delayMs)
       else hold(forward)
     } else forward()
   })
@@ -295,6 +335,7 @@ function delayingProxy(target, { delayMs = null } = {}) {
         held: () => waiting.length,
         /** Resolves once every registration seen so far has had its answer. */
         landed: () => Promise.all(answered),
+        receipts: () => receipts.map((row) => ({ ...row })),
         close: () =>
           new Promise((r) => {
             server.close(() => r())
@@ -303,6 +344,193 @@ function delayingProxy(target, { delayMs = null } = {}) {
       })
     )
   })
+}
+
+// Also exported for a focused causal run through the same assertion runner.
+// Each named scenario controls request or response delivery around the shell's
+// bounded registration call, using the actual public reservation protocol.
+export async function runDelayedRegistrationAfterQuit(t, { scenario = 'reserve-after-exit' } = {}) {
+  const modulePath = fixturePath('shell-client-lifecycle-fixture.mjs')
+  await build({
+    entryPoints: [path.join(REPO, 'tests/e2e/fixtures/shell-client-lifecycle.mjs')],
+    outfile: modulePath,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    banner: {
+      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+    }
+  })
+  const { loadShellClientLifecycle } = await import(pathToFileURL(modulePath).href)
+  let own
+  let proxy
+  let app
+  let client
+  let removeOutputListeners = () => {}
+  const receipt = { scenario: `shell-client/${scenario}`, events: [] }
+  const record = (phase, detail = {}) => receipt.events.push({ at: Date.now(), phase, ...detail })
+  try {
+    const fixture = await loadShellClientLifecycle(
+      async ({ runId, id }) => {
+        receipt.runId = runId
+        const root = fixturePath(`shell-client-${runId}`)
+        const dir = path.join(root, 'install')
+        const workspaceId = id('workspace')
+        mkdirSync(root, { recursive: true })
+        seedWorkspaces(dir, {
+          workspaces: [{ ...WS, id: workspaceId, rootDir: root }],
+          activeWorkspaceId: workspaceId,
+          fresh: true
+        })
+        seedTrustedRoots(dir, [root])
+        own = await startE2eServer(`shell-client-${runId}`)
+        proxy = await delayingProxy(own.url, {
+          holdResponse: scenario.endsWith('lost-response'),
+          registrationPath:
+            '/clients/registrations/v1/' + (scenario.startsWith('reserve-') ? 'reserve' : 'confirm')
+        })
+        client = serverClient(own.url, own.token)
+        const launched = await launchApp(dir, {
+          server: { url: proxy.url, token: own.token },
+          settleMs: 300,
+          waitForServer: false
+        })
+        app = launched.app
+        const keepLifecycleLines = (chunk) => {
+          for (const line of String(chunk).split(/\r?\n/)) {
+            if (/\[server\] not available:|\[quit\]/.test(line))
+              record('app-lifecycle-output', { line: line.slice(0, 1000) })
+          }
+        }
+        const process = app.process()
+        process.stdout?.on('data', keepLifecycleLines)
+        process.stderr?.on('data', keepLifecycleLines)
+        removeOutputListeners = () => {
+          process.stdout?.off('data', keepLifecycleLines)
+          process.stderr?.off('data', keepLifecycleLines)
+        }
+        receipt.appPid = process.pid
+        return { dir }
+      },
+      async () => {
+        const held = await until(() => (proxy.held() > 0 ? true : null), {
+          tries: 80,
+          gapMs: 250
+        })
+        if (!held) throw new Error('The isolated proxy never received the registration')
+      },
+      { delivery: scenario }
+    )
+    const { dir } = fixture.values.shell
+    receipt.fixtureIds = fixture.ids
+    receipt.beforeQuit = {
+      held: proxy.held(),
+      listed: (await client.clients()).body,
+      decided: serverEndpoint(dir)?.ok ?? null
+    }
+    t.check(
+      'causal fixture holds a registration before the shell has decided',
+      receipt.beforeQuit.held > 0 &&
+        receipt.beforeQuit.listed.length === (scenario === 'confirm-lost-response' ? 1 : 0) &&
+        receipt.beforeQuit.decided === null,
+      receipt.beforeQuit
+    )
+    const exited = new Promise((resolve) => {
+      app.process().once('exit', (code) => {
+        record('app-exit', { code })
+        resolve(true)
+      })
+    })
+    record('quit-requested')
+    const quitting = app
+      .evaluate(({ app: electronApp }) => electronApp.quit())
+      .catch(() => undefined)
+    if (scenario === 'during-quit') {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      record('registration-released-during-quit')
+      proxy.release()
+    }
+    const didExit = await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(() => resolve(false), 15_000))
+    ])
+    t.check(
+      'the shell quits within the existing 15 s bound with registration held',
+      didExit === true
+    )
+    await quitting
+    const discovery = serverEndpoint(dir)
+    receipt.discoveryAfterQuit = discovery
+      ? { ok: discovery.ok, clientId: discovery.clientId, error: discovery.error }
+      : null
+    receipt.beforeRelease = (await client.clients()).body
+    if (scenario !== 'during-quit') record('registration-released-after-quit', { didExit })
+    proxy.release()
+    const landed = await Promise.race([
+      proxy.landed().then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 10_000))
+    ])
+    record('upstream-landed-barrier', { landed })
+    t.check('the real upstream registration completed before the query', landed === true)
+    receipt.afterUpstream = (await client.clients()).body
+    receipt.proxy = proxy.receipts()
+    const registrationResponse = receipt.proxy.find(
+      (event) =>
+        event.phase === 'upstream-complete' &&
+        event.path ===
+          '/clients/registrations/v1/' + (scenario.startsWith('reserve-') ? 'reserve' : 'confirm')
+    )
+    t.equal(
+      'the held command has the expected upstream result',
+      registrationResponse?.status,
+      scenario === 'confirm-after-exit' ? 422 : 200
+    )
+    t.check(
+      'the shell published the expected registration outcome',
+      scenario === 'during-quit'
+        ? receipt.discoveryAfterQuit?.ok === true &&
+            typeof receipt.discoveryAfterQuit.clientId === 'string'
+        : receipt.discoveryAfterQuit?.ok === false &&
+            receipt.discoveryAfterQuit.clientId === null &&
+            /registering with .* failed:/.test(receipt.discoveryAfterQuit.error ?? ''),
+      receipt.discoveryAfterQuit
+    )
+    const clean = await until(
+      async () => {
+        const list = (await client.clients()).body ?? []
+        return list.some((entry) => entry.pid === receipt.appPid) ? null : true
+      },
+      { tries: 40, gapMs: 250 }
+    )
+    receipt.afterQuit = (await client.clients()).body
+    t.check('and the app still left no ghost client on the server', clean === true, {
+      clients: receipt.afterQuit
+    })
+    t.equal('the attached server remains live', (await client.live()).status, 200)
+  } finally {
+    // Retain the failure before disposing only this fixture's public clients.
+    try {
+      if (client) {
+        receipt.beforeFixtureCleanup = (await client.clients()).body
+        for (const entry of receipt.beforeFixtureCleanup ?? []) {
+          if (entry.pid === receipt.appPid) await client.deregister(entry.id)
+        }
+        receipt.afterFixtureCleanup = (await client.clients()).body
+      }
+    } catch (error) {
+      receipt.fixtureCleanupError = error.name
+    }
+    if (proxy) receipt.proxy = proxy.receipts()
+    writeFileSync(
+      fixturePath(`shell-client-lifecycle-${scenario}-receipt.json`),
+      JSON.stringify(receipt, null, 2)
+    )
+    console.log(`LIFECYCLE_RECEIPT ${JSON.stringify(receipt)}`)
+    removeOutputListeners()
+    await app?.close().catch(() => {})
+    await proxy?.close()
+    await own?.stop()
+  }
 }
 
 export async function run(t) {
@@ -561,7 +789,11 @@ export async function run(t) {
       await quitting
       // The registration has reached the server (and, with the app gone,
       // the server has registered it) before anything asks who is there.
-      await Promise.race([proxy.landed(), new Promise((r) => setTimeout(r, 10_000))])
+      const landed = await Promise.race([
+        proxy.landed().then(() => true),
+        new Promise((r) => setTimeout(() => r(false), 10_000))
+      ])
+      t.check('the held confirmation reached its actual upstream result', landed === true)
       t.check(
         'the app quit on its own within 15 s',
         (await Promise.race([exited, new Promise((r) => setTimeout(() => r(false), 15_000))])) ===
@@ -582,6 +814,16 @@ export async function run(t) {
       await proxy.close()
       await own.stop()
     }
+  }
+
+  for (const scenario of [
+    'reserve-after-exit',
+    'reserve-lost-response',
+    'confirm-after-exit',
+    'confirm-lost-response',
+    'during-quit'
+  ]) {
+    await runDelayedRegistrationAfterQuit(t, { scenario })
   }
 
   // ── 5. The app's own separate server, whatever the suite runs (wave 5) ──

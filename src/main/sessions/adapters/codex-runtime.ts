@@ -1,0 +1,205 @@
+import { mkdtempSync, promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+
+const quote = (arg: string): string => "'" + arg.replace(/'/g, "'\\''") + "'"
+
+/** Only rewrite a direct Codex command or an env wrapper. Other providers and
+ * arbitrary wrappers keep their own executable resolution and lifecycle. */
+function codexCommandIndex(argv: string[]): number {
+  if (basename(argv[0]) === 'codex') return 0
+  if (basename(argv[0]) !== 'env') return -1
+  let i = 1
+  while (i < argv.length) {
+    if (argv[i] === '-u' || argv[i] === '--unset') i += 2
+    else if (argv[i] === '-i' || argv[i] === '--ignore-environment') i++
+    else if (argv[i].startsWith('--unset=') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i])) i++
+    else if (argv[i] === '--') {
+      i++
+      break
+    } else break
+  }
+  return argv[i] && basename(argv[i]) === 'codex' ? i : -1
+}
+
+/** All app-servers in this process share retained installations. A fresh root
+ * replaces the old one before asynchronous cleanup, so a new launch cannot
+ * race the previous root's removal. No expensive copy runs in Electron main. */
+let retained: { root: string; users: number } | undefined
+function lease(): { root: string; release(): Promise<void> } {
+  const runtime = (retained ??= {
+    root: mkdtempSync(join(tmpdir(), 'clave-codex-runtime-')),
+    users: 0
+  })
+  runtime.users++
+  let cleanup: Promise<void> | undefined
+  return {
+    root: runtime.root,
+    release() {
+      if (cleanup) return cleanup
+      if (--runtime.users !== 0) return (cleanup = Promise.resolve())
+      if (retained === runtime) retained = undefined
+      cleanup = fs.rm(runtime.root, { recursive: true, force: true }).catch(() => {
+        console.warn('[codex-runtime] Could not remove the retired runtime directory')
+      })
+      return cleanup
+    }
+  }
+}
+
+/** Executed by the app's Node runtime, after the login shell and inside the
+ * profile's env wrapper. It prints only the retained executable path. Keep
+ * this script self-contained: it also runs from a packaged Electron app.
+ * Copies use filesystem clones when available, dereferencing installer symlinks
+ * so removal of the original package cannot strand a retained resource. */
+const PREPARE = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+// Some Node versions preserve nested symlinks even with dereference:true.
+// Resolve each entry ourselves so a copy has no dependency on the install.
+function copyTree(source, destination, ancestors = new Set()) {
+  const stat = fs.statSync(source);
+  if (stat.isDirectory()) {
+    const canonical = fs.realpathSync(source);
+    if (ancestors.has(canonical)) throw new Error('Cyclic Codex runtime resource link');
+    const next = new Set(ancestors).add(canonical);
+    fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+    for (const entry of fs.readdirSync(source))
+      copyTree(path.join(source, entry), path.join(destination, entry), next);
+  } else if (stat.isFile()) {
+    fs.copyFileSync(source, destination, fs.constants.COPYFILE_FICLONE);
+    fs.chmodSync(destination, stat.mode & 0o777);
+  } else throw new Error('Unsupported Codex runtime resource type');
+}
+let staging;
+try {
+  const command = process.argv[1];
+  const cache = process.argv[2];
+  const candidates = command.includes('/') ? [path.resolve(command)] :
+    (process.env.PATH || '').split(path.delimiter).map(dir => path.resolve(dir, command));
+  const executable = candidates.find(file => {
+    try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); }
+    catch { return false; }
+  });
+  if (!executable) throw new Error('Codex is not executable on this profile PATH');
+  const source = fs.realpathSync(executable);
+  const bin = path.dirname(source);
+  const helper = path.join(bin, 'codex-code-mode-host');
+  let packageRoot;
+  let layout;
+  let directory = bin;
+  // Bind a nearby manifest to its declared executable, rather than assuming
+  // every installer puts it in bin/. Keep discovery bounded. Metadata with
+  // an unfamiliar entrypoint field retains the original one-level convention.
+  for (let depth = 0; depth < 6; depth++) {
+    const manifest = path.join(directory, 'codex-package.json');
+    if (fs.existsSync(manifest)) {
+      const candidate = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+      const entrypoint = candidate?.entrypoint;
+      let ownsExecutable = depth === 1 && typeof entrypoint !== 'string';
+      if (typeof entrypoint === 'string' && !path.isAbsolute(entrypoint) &&
+          !path.relative(directory, path.resolve(directory, entrypoint)).startsWith('..')) {
+        try { ownsExecutable = fs.realpathSync(path.resolve(directory, entrypoint)) === source; }
+        catch { /* A manifest for another executable does not own this one. */ }
+      }
+      if (ownsExecutable) { packageRoot = directory; layout = candidate; break; }
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (packageRoot) {
+    // The copy preserves the whole package and its relative executable path.
+    // Its CLI interprets future metadata itself; unfamiliar layouts need not
+    // stop working just because Clave's current validation doesn't know them.
+    if (layout?.layoutVersion === 1 && layout.entrypoint === 'bin/codex' &&
+        typeof layout.resourcesDir === 'string' && typeof layout.pathDir === 'string') {
+      for (const key of ['resourcesDir', 'pathDir']) {
+        const value = layout[key];
+        if (!value || path.isAbsolute(value) ||
+            path.relative(packageRoot, path.resolve(packageRoot, value)).startsWith('..'))
+          throw new Error('Invalid Codex standalone resource path');
+        if (!fs.statSync(path.join(packageRoot, value)).isDirectory())
+          throw new Error('Missing Codex standalone resources');
+      }
+      fs.accessSync(helper, fs.constants.X_OK);
+    }
+  } else if (!fs.existsSync(helper)) {
+    // Older single-file and npm launchers without this standalone layout
+    // retain their existing launch path. Do not copy an entire npm prefix.
+    process.stdout.write(executable + '\n');
+    process.exit(0);
+  }
+  const stat = fs.statSync(source);
+  const identity = [source, packageRoot || bin, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+  const key = crypto.createHash('sha256').update(identity).digest('hex');
+  const target = path.join(cache, key);
+  const relative = packageRoot ? path.relative(packageRoot, source) : path.basename(source);
+  const destination = path.join(target, relative);
+  if (!fs.existsSync(destination)) {
+    staging = fs.mkdtempSync(path.join(cache, 'preparing-'));
+    if (packageRoot) copyTree(packageRoot, staging);
+    else {
+      copyTree(source, path.join(staging, path.basename(source)));
+      copyTree(helper, path.join(staging, 'codex-code-mode-host'));
+    }
+    // Publish only a complete copy. Concurrent starts may publish the same
+    // immutable installation; each losing staging directory is disposable.
+    try { fs.renameSync(staging, target); staging = undefined; }
+    catch (error) {
+      if (!['EEXIST', 'ENOTEMPTY'].includes(error.code) || !fs.existsSync(destination)) throw error;
+    }
+  }
+  fs.accessSync(destination, fs.constants.X_OK);
+  process.stdout.write(destination + '\n');
+} catch (error) {
+  process.stderr.write('Clave could not retain the Codex runtime. Check or reinstall the CLI, then restart this chat: ' + error.message + '\n');
+  process.exitCode = 1;
+} finally {
+  if (staging) fs.rmSync(staging, { recursive: true, force: true });
+}
+`
+
+/** Resolve and retain before exec, preserving the profile's arguments and
+ * account bindings on both invocations. ELECTRON_RUN_AS_NODE is scoped to
+ * preparation; it is never added to the provider's environment. */
+export function retainedCodexLaunch(
+  argv: string[],
+  assignment: string
+): { command: string; release(): Promise<void> } {
+  const index = codexCommandIndex(argv)
+  if (index < 0)
+    return { command: `${assignment}exec ${argv.map(quote).join(' ')}`, release: async () => {} }
+  const runtime = lease()
+  const prepare = [
+    ...argv.slice(0, index),
+    // Restore preparation's own Node mode AFTER env -i/-u and clear options
+    // meant for the provider. Its final invocation still gets the profile as-is.
+    '/usr/bin/env',
+    'ELECTRON_RUN_AS_NODE=1',
+    'NODE_OPTIONS=',
+    process.execPath,
+    '-e',
+    PREPARE,
+    argv[index],
+    runtime.root
+  ]
+  const command = argv.map((arg, i) => (i === index ? '"$_clave_codex_runtime"' : quote(arg)))
+  const result = quote(join(runtime.root, `launch-${randomUUID()}`))
+  return {
+    command:
+      // A background preparation with an explicit PID lets a close cancel a
+      // blocked copy/read. Killing only a shell's command substitution leaves
+      // its Node child holding the protocol pipes open indefinitely.
+      `(${assignment}exec ${prepare.map(quote).join(' ')}) > ${result} & ` +
+      `_clave_prepare_pid=$!; ` +
+      `trap 'kill "$_clave_prepare_pid" 2>/dev/null; wait "$_clave_prepare_pid" 2>/dev/null; exit 143' TERM INT HUP; ` +
+      `wait "$_clave_prepare_pid" || exit $?; ` +
+      `IFS= read -r _clave_codex_runtime < ${result} || exit 1; ` +
+      `trap - TERM INT HUP; ` +
+      `${assignment}exec ${command.join(' ')}`,
+    release: runtime.release
+  }
+}
