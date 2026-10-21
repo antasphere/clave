@@ -1,0 +1,532 @@
+import assert from 'node:assert/strict'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
+import {
+  REPO,
+  launchApp,
+  seedWorkspaces,
+  seedTrustedRoots,
+  until,
+  fixturePath,
+  serverDataDirOf,
+  callMcpIn,
+  identityOf,
+  openWindow,
+  serverMode
+} from './harness.mjs'
+
+const SECRET = 'triage-forbidden-environment-sentinel-1021'
+
+function recordingProviders(root) {
+  const bin = path.join(root, 'bin')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(
+    `${bin}/bash`,
+    '#!/bin/sh\nif [ "$1" = "-lic" ]; then env -0; else shift; exec /bin/bash --noprofile --norc "$@"; fi\n',
+    { mode: 0o755 }
+  )
+  for (const family of ['claude', 'codex']) {
+    writeFileSync(
+      `${bin}/${family}`,
+      `#!${process.execPath}
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+if (argv.includes('-p') && !argv.includes('--input-format')) process.exit(0);
+const file = ${JSON.stringify(`${root}/${family}-calls.jsonl`)};
+const record = value => fs.appendFileSync(file, JSON.stringify(value) + '\\n');
+record({kind:'spawn', argv, cwd:process.cwd(), codexHome:process.env.CODEX_HOME});
+if (!argv.includes('app-server') && !argv.includes('--input-format')) {
+  process.stdout.write('TRIAGE_TERMINAL_READY\\n');
+  setInterval(() => {}, 1000);
+  return;
+}
+const send = frame => process.stdout.write(JSON.stringify(frame) + '\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const f = JSON.parse(line);
+  record({kind:'input', frame:f});
+  if (${JSON.stringify(family)} === 'claude') {
+    if (f.type !== 'user') return;
+    const id = argv[argv.indexOf('--session-id') + 1];
+    const frames = fs.readFileSync(${JSON.stringify(path.join(REPO, 'src/main/sessions/fixtures/claude-stream/real-turn.ndjson'))}, 'utf8').trim().split('\\n').map(JSON.parse);
+    for (const frame of frames) { if (frame.session_id) frame.session_id = id; send(frame); }
+  } else {
+    if (f.method === 'initialize') send({id:f.id,result:{}});
+    if (f.method === 'thread/start') send({id:f.id,result:{thread:{id:'triage-'+process.pid},model:'fixture'}});
+    if (f.method === 'turn/start') {
+      send({id:f.id,result:{turn:{id:'turn-'+process.pid}}});
+      send({method:'item/agentMessage/delta',params:{threadId:'triage-'+process.pid,itemId:'answer',delta:'TRIAGE_RECORDING_OK'}});
+      send({method:'turn/completed',params:{threadId:'triage-'+process.pid,turn:{id:'turn-'+process.pid}}});
+    }
+  }
+});
+`,
+      { mode: 0o755 }
+    )
+  }
+  return bin
+}
+
+const records = (root, family) =>
+  existsSync(`${root}/${family}-calls.jsonl`)
+    ? readFileSync(`${root}/${family}-calls.jsonl`, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(JSON.parse)
+    : []
+const stableSessions = (snapshot) => {
+  assert.equal(snapshot.sessions.status, 'ok', 'server session inventory must answer')
+  return snapshot.sessions.value.map(
+    ({ id, provider, transport, adapterId, windowKey, groupId, createdAt }) => ({
+      id,
+      provider,
+      transport,
+      adapterId,
+      windowKey,
+      groupId,
+      createdAt
+    })
+  )
+}
+
+async function openTriage(app, win) {
+  const identity = await identityOf(win)
+  await app.evaluate(({ BrowserWindow }, id) => {
+    // Route the menu's preload event to the non-primary hidden fixture window.
+    BrowserWindow.fromId(id).webContents.send('menu:open-triage')
+  }, identity.windowId)
+  const dialog = win.getByRole('dialog', { name: 'Debug Clave', exact: true })
+  await dialog.waitFor()
+  await dialog.getByTestId('triage-summary').waitFor({ timeout: 25_000 })
+  await dialog
+    .getByRole('button', { name: 'Triage launch profile', exact: true })
+    .waitFor({ state: 'visible' })
+  await until(() => dialog.getByRole('button', { name: 'Capture again', exact: true }).isEnabled())
+  return dialog
+}
+
+async function choose(win, label, value) {
+  await win.getByRole('button', { name: label, exact: true }).click()
+  await win.getByRole('menuitem', { name: value, exact: true }).click()
+}
+
+export async function run(t) {
+  const fixtureModule = fixturePath('triage-scenario.mjs')
+  await build({
+    entryPoints: [path.join(REPO, 'tests/e2e/triage-fixture.mjs')],
+    outfile: fixtureModule,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    banner: {
+      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+    }
+  })
+  const { loadTriageScenario } = await import(pathToFileURL(fixtureModule).href)
+  let app
+  try {
+    const receipt = await loadTriageScenario(async ({ runId, id }) => {
+      const root = fixturePath(`triage-${runId}`)
+      const data = path.join(root, 'data')
+      const home = path.join(root, 'codex-home')
+      mkdirSync(home, { recursive: true })
+      writeFileSync(path.join(home, 'auth.json'), JSON.stringify({ fixture: true }))
+      const bin = recordingProviders(root)
+      const workspace = {
+        id: id('workspace'),
+        name: 'Triage visible',
+        rootDir: root,
+        profileFile: null,
+        createdAt: 1
+      }
+      const hidden = { ...workspace, id: id('hidden'), name: 'Triage hidden' }
+      seedWorkspaces(data, { workspaces: [workspace, hidden], activeWorkspaceId: workspace.id })
+      seedTrustedRoots(data, [root])
+      const launched = await launchApp(data, {
+        env: {
+          SHELL: `${bin}/bash`,
+          CODEX_HOME: home,
+          TRIAGE_SECRET_SENTINEL: SECRET,
+          CLAVE_TRANSCRIPTS_ROOT: `${root}/transcripts`
+        },
+        args: ['--dev-echo-adapter', '--test-no-machine-usage']
+      })
+      app = launched.app
+      const win = launched.win
+      win.setDefaultTimeout(12_000)
+      for (const family of ['claude', 'codex'])
+        await win.evaluate(
+          ({ family, bin }) =>
+            window.electronAPI.launchProfileUpsert({
+              id: `triage-${family}`,
+              name: `${family} recording`,
+              family,
+              command: [`${bin}/${family}`],
+              additionalArgs:
+                family === 'codex'
+                  ? ['--sandbox', 'read-only', '--ask-for-approval', 'on-request']
+                  : ['--permission-mode', 'default']
+            }),
+          { family, bin }
+        )
+      const account = await win.evaluate(() =>
+        window.electronAPI.codexAccountAdd({ label: 'Triage Codex account', kind: 'chatgpt' })
+      )
+      const accountHome = path.join(serverDataDirOf(data), 'codex-homes', account.id)
+      mkdirSync(accountHome, { recursive: true })
+      writeFileSync(path.join(accountHome, 'auth.json'), JSON.stringify({ fixture: true }))
+      const first = await identityOf(win)
+      const group = await callMcpIn(app, first.windowId, 'createGroup', {
+        name: `Triage fixture ${runId}`
+      })
+      const tick = await callMcpIn(app, first.windowId, 'openSession', {
+        mode: 'terminal',
+        cwd: root,
+        groupId: group.groupId,
+        command: `i=0; while true; do i=$((i+1)); echo tick-$i >> '${root}/ticks'; sleep 0.2; done`,
+        autoRun: true
+      })
+      assert.ok(
+        await until(
+          () =>
+            existsSync(`${root}/ticks`) && readFileSync(`${root}/ticks`, 'utf8').includes('tick-2')
+        ),
+        'ticking terminal starts'
+      )
+      const live = await callMcpIn(app, first.windowId, 'openSession', {
+        mode: 'codex',
+        cwd: root,
+        profile: 'chat:codex:triage-codex',
+        account: 'default',
+        prompt: 'Live chat positive control'
+      })
+      assert.ok(
+        await until(() =>
+          records(root, 'codex').some((r) => r.kind === 'input' && r.frame.method === 'turn/start')
+        ),
+        'live chat completes a real protocol turn'
+      )
+      const dormant = await win.evaluate(
+        (root) =>
+          window.electronAPI.spawnSession(root, {
+            claudeMode: true,
+            launchProfileId: 'dev-echo-adapter'
+          }),
+        root
+      )
+      const hiddenTab = await callMcpIn(app, first.windowId, 'openSession', {
+        mode: 'terminal',
+        cwd: root,
+        workspace: hidden.id
+      })
+      const second = await openWindow(app, win, workspace.id)
+      second.page.setDefaultTimeout(12_000)
+      return {
+        root,
+        data,
+        win,
+        second: second.page,
+        first,
+        account,
+        accountHome,
+        tick,
+        live,
+        dormant,
+        hiddenTab,
+        workspace
+      }
+    })
+    const f = receipt.values.app
+    const { root, data, win, second } = f
+    const before = await win.evaluate(() => window.electronAPI.triageSnapshot())
+    const original = stableSessions(before)
+    assert.ok(original.some((s) => s.id === f.dormant.id))
+    assert.equal(before.windows.length, 2)
+    const prefsBefore = await win.evaluate(() => window.electronAPI.launchProfilesList())
+    const tickBefore = readFileSync(`${root}/ticks`, 'utf8').split('\n').length
+    const dialog = await openTriage(app, second)
+    await dialog.getByText('Preview context', { exact: true }).click()
+    const context = await dialog.getByLabel('Context preview').textContent()
+    assert.ok(context.includes(before.origin.instanceId), 'preview binds this app instance')
+    assert.ok(!context.includes(SECRET), 'environment sentinel omitted')
+    for (const s of original)
+      assert.ok(context.includes(s.id), `preview includes preexisting ${s.id}`)
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    assert.deepEqual(
+      stableSessions(await win.evaluate(() => window.electronAPI.triageSnapshot())),
+      original,
+      'cancel creates no session'
+    )
+    t.check(
+      'native entry captures the exact instance across windows and cancel preserves all sessions',
+      true
+    )
+    await second.keyboard.press('Meta+Shift+/')
+    await second.getByRole('button', { name: 'Debug Clave…', exact: true }).click()
+    await dialog.waitFor()
+    await choose(second, 'Triage provider', 'Codex')
+    await choose(second, 'Triage launch profile', 'codex recording (chat)')
+    await choose(second, 'Triage account', 'Triage Codex account')
+    await dialog
+      .getByRole('textbox', { name: 'What went wrong?' })
+      .fill('The session list stopped updating.')
+    await dialog.getByRole('button', { name: 'Copy support prompt', exact: true }).click()
+    await dialog.getByText('Copied', { exact: true }).waitFor()
+    const copied = await second.evaluate(() => navigator.clipboard.readText())
+    assert.ok(copied.includes('The session list stopped updating.'))
+    assert.ok(!copied.includes(SECRET))
+    if (serverMode() === 'attached') {
+      assert.equal(
+        await dialog
+          .getByRole('button', { name: 'Start support conversation', exact: true })
+          .isDisabled(),
+        true
+      )
+      assert.ok(await dialog.getByText(/filesystem may be elsewhere/).isVisible())
+      await dialog.getByRole('button', { name: 'Copy external command', exact: true }).click()
+      await dialog.getByText('Copied', { exact: true }).waitFor()
+      assert.deepEqual(
+        stableSessions(await win.evaluate(() => window.electronAPI.triageSnapshot())),
+        original
+      )
+      t.check(
+        'attached server uses explicit same-machine fallback and creates no support tab',
+        true
+      )
+    } else {
+      const callsBefore = records(root, 'codex').filter((r) => r.kind === 'spawn').length
+      const start = dialog.getByRole('button', { name: 'Start support conversation', exact: true })
+      // Two events in one task exercise the controller guard before async preflight.
+      await start.evaluate((button) => {
+        button.click()
+        button.click()
+      })
+      await dialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+      assert.ok(
+        await until(
+          () => records(root, 'codex').filter((r) => r.kind === 'spawn').length === callsBefore + 1
+        ),
+        'recording Codex process actually starts'
+      )
+      const after = await second.evaluate(() => window.electronAPI.triageSnapshot())
+      const support = after.sessions.value.filter((s) => !original.some((o) => o.id === s.id))
+      assert.equal(support.length, 1, 'double submit creates exactly one tab')
+      assert.equal(support[0].windowKey, (await identityOf(second)).windowKey)
+      const invocation = records(root, 'codex')
+        .filter((r) => r.kind === 'spawn')
+        .at(-1)
+      assert.equal(invocation.codexHome, f.accountHome)
+      const thread = records(root, 'codex')
+        .filter((r) => r.kind === 'input' && r.frame.method === 'thread/start')
+        .at(-1).frame
+      assert.equal(thread.params.sandbox, 'read-only')
+      assert.equal(thread.params.approvalPolicy, 'on-request')
+      assert.ok(invocation.cwd.includes('/triage/'))
+      const promptFile = readdirSync(invocation.cwd).find((name) => /prompt|playbook/.test(name))
+      assert.ok(promptFile, 'launched cwd contains the prepared support playbook')
+      const launchInput = records(root, 'codex')
+        .filter((r) => r.kind === 'input' && r.frame.method === 'turn/start')
+        .at(-1)
+      assert.ok(JSON.stringify(launchInput).includes('The session list stopped updating.'))
+      assert.ok(!JSON.stringify(records(root, 'codex')).includes(SECRET))
+      assert.deepEqual(
+        stableSessions(after).filter((s) => original.some((o) => o.id === s.id)),
+        original
+      )
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+      await openTriage(app, second)
+      assert.equal(
+        await dialog.getByRole('button', { name: 'Support tab created', exact: true }).isDisabled(),
+        true
+      )
+      assert.equal(records(root, 'codex').filter((r) => r.kind === 'spawn').length, callsBefore + 1)
+      t.check(
+        'Codex uses the chosen account/profile/policy, exact capture and one support tab in the invoking window',
+        true
+      )
+      await app.evaluate(({ Menu }) => {
+        const menu = Menu.getApplicationMenu()
+        const item = menu.items
+          .find((entry) => entry.label === 'Help')
+          .submenu.items.find((entry) => entry.label === 'Debug Clave…')
+        if (!item) throw new Error('Native Debug Clave menu item is missing')
+        item.click()
+      })
+      const claudeDialog = await openTriage(app, win)
+      await choose(win, 'Triage launch profile', 'claude recording (chat)')
+      await claudeDialog
+        .getByRole('button', { name: 'Start support conversation', exact: true })
+        .click()
+      await claudeDialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+      assert.ok(
+        await until(() => records(root, 'claude').some((r) => r.kind === 'input')),
+        'recording Claude process receives the prepared first prompt'
+      )
+      const claude = records(root, 'claude').find((r) => r.kind === 'spawn')
+      assert.ok(claude.argv.includes('--permission-mode'))
+      assert.equal(claude.argv[claude.argv.indexOf('--permission-mode') + 1], 'default')
+      assert.ok(!claude.argv.includes('--dangerously-skip-permissions'))
+      t.check(
+        'Claude chat starts through its exact offered profile without adding a permission bypass',
+        true
+      )
+      const failureWindow = (await openWindow(app, win, f.workspace.id)).page
+      failureWindow.setDefaultTimeout(12_000)
+      const failureDialog = await openTriage(app, failureWindow)
+      await choose(failureWindow, 'Triage provider', 'Codex')
+      await choose(failureWindow, 'Triage launch profile', 'codex recording (chat)')
+      const countBeforeFailure = stableSessions(
+        await failureWindow.evaluate(() => window.electronAPI.triageSnapshot())
+      ).length
+      await failureWindow.evaluate(() => window.electronAPI.launchProfileDelete('triage-codex'))
+      await failureDialog
+        .getByRole('button', { name: 'Start support conversation', exact: true })
+        .click()
+      await failureDialog
+        .getByRole('alert')
+        .getByText(/selected launch profile is no longer available/)
+        .waitFor()
+      assert.equal(
+        stableSessions(await failureWindow.evaluate(() => window.electronAPI.triageSnapshot()))
+          .length,
+        countBeforeFailure
+      )
+      await failureWindow.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: async () => {
+              throw new Error('fixture clipboard denied')
+            }
+          }
+        })
+      })
+      await failureDialog.getByRole('button', { name: 'Copy context', exact: true }).click()
+      await failureDialog
+        .getByText('Copy failed. Select and copy the preview text.', { exact: true })
+        .waitFor()
+      await failureWindow.evaluate(() => {
+        delete navigator.clipboard
+      })
+      await failureWindow.evaluate(
+        (profile) => window.electronAPI.launchProfileUpsert(profile),
+        prefsBefore.customProfiles.find((p) => p.id === 'triage-codex')
+      )
+      t.check(
+        'a disappeared profile creates no alternate session and clipboard rejection is reported honestly',
+        true
+      )
+      const terminalDialog = failureDialog
+      await terminalDialog.getByRole('button', { name: 'Capture again', exact: true }).click()
+      assert.ok(
+        await until(() =>
+          terminalDialog.getByRole('button', { name: 'Capture again', exact: true }).isEnabled()
+        )
+      )
+      await choose(failureWindow, 'Triage provider', 'Codex')
+      await choose(failureWindow, 'Triage launch profile', 'codex recording')
+      await choose(failureWindow, 'Triage account', 'Triage Codex account')
+      await terminalDialog.getByRole('button', { name: 'Copy support prompt', exact: true }).click()
+      await terminalDialog.getByText('Copied', { exact: true }).waitFor()
+      const terminalPrompt = await failureWindow.evaluate(() => navigator.clipboard.readText())
+      const beforeTerminal = records(root, 'codex').filter((r) => r.kind === 'spawn').length
+      await terminalDialog
+        .getByRole('button', { name: 'Start support conversation', exact: true })
+        .click()
+      await terminalDialog.getByText(/Support tab created\. It uses this capture/).waitFor()
+      assert.ok(
+        await until(
+          () =>
+            records(root, 'codex').filter((r) => r.kind === 'spawn').length === beforeTerminal + 1
+        ),
+        'support terminal process starts'
+      )
+      const terminal = records(root, 'codex')
+        .filter((r) => r.kind === 'spawn')
+        .at(-1)
+      assert.equal(terminal.codexHome, f.accountHome)
+      assert.ok(terminal.argv.includes('read-only'))
+      assert.ok(
+        terminal.argv.includes(terminalPrompt),
+        'terminal receives the exact prepared support prompt'
+      )
+      assert.ok(!terminal.argv.includes('--yolo'))
+      t.check(
+        'the offered terminal route actually starts with the chosen account and permissions',
+        true
+      )
+    }
+    const final = await win.evaluate(() => window.electronAPI.triageSnapshot())
+    assert.deepEqual(
+      stableSessions(final).filter((s) => original.some((o) => o.id === s.id)),
+      original
+    )
+    assert.ok(
+      readFileSync(`${root}/ticks`, 'utf8').split('\n').length > tickBefore,
+      'existing terminal keeps ticking'
+    )
+    await win.evaluate(
+      (id) =>
+        window.electronAPI.sessionsWrite(id, {
+          type: 'user_message',
+          text: 'Existing chat still accepts work'
+        }),
+      f.live.sessionId
+    )
+    assert.ok(
+      await until(() =>
+        JSON.stringify(records(root, 'codex')).includes('Existing chat still accepts work')
+      )
+    )
+    const prefsAfter = await win.evaluate(() => window.electronAPI.launchProfilesList())
+    assert.deepEqual(
+      prefsAfter.globalDefaults,
+      prefsBefore.globalDefaults,
+      'triage writes no global launch defaults'
+    )
+    assert.deepEqual(
+      prefsAfter.workspaceOverrides,
+      prefsBefore.workspaceOverrides,
+      'triage writes no workspace launch defaults'
+    )
+    assert.deepEqual(
+      prefsAfter.customProfiles.toSorted((a, b) => a.id.localeCompare(b.id)),
+      prefsBefore.customProfiles.toSorted((a, b) => a.id.localeCompare(b.id)),
+      'profile disappearance fixture restores all definitions'
+    )
+    const receiptPath = path.join(root, 'receipt.json')
+    writeFileSync(
+      receiptPath,
+      JSON.stringify(
+        {
+          scenario: 'triage/current-instance',
+          runId: receipt.runId,
+          mode: serverMode(),
+          data,
+          instance: before.origin,
+          original,
+          finalSessionIds: final.sessions.value.map((s) => s.id),
+          checks: 'instance, window, account, profile policy, prompt, continuity, fallback'
+        },
+        null,
+        2
+      )
+    )
+    console.log(
+      JSON.stringify({
+        scenario: 'triage/current-instance',
+        runId: receipt.runId,
+        mode: serverMode(),
+        receipt: receiptPath
+      })
+    )
+    t.check(
+      'live chat/terminal, hidden workspace, dormant chat, original IDs and assignments survive triage',
+      true
+    )
+  } finally {
+    await app?.close()
+  }
+}

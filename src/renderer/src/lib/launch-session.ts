@@ -38,6 +38,10 @@ export interface LaunchRequest {
    *  own agent launches (a caret pick is what makes an agent the remembered
    *  one); off for launches that shouldn't redefine the default. */
   remember?: boolean
+  /** Opt-in error propagation for callers that must preserve a failed launch. */
+  throwOnError?: boolean
+  /** Called as soon as main acknowledges creation, before renderer placement. */
+  onCreated?: (id: string) => void
 }
 
 /** Resolve a LaunchCwd to an absolute path, opening the native folder picker
@@ -114,6 +118,7 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
       launchProfileId: req.setup?.launchProfileId,
       ...profileFields
     })
+    req.onCreated?.(sessionInfo.id)
     // One placement, not a placement and then a correction: the group's `+`
     // has already said where this goes, so it goes there — as the group's
     // first row, the same "newest at the top" the sidebar itself follows.
@@ -149,6 +154,7 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
     if (req.remember && req.setup) rememberAgentSetup(getActiveWorkspaceId(), req.setup)
     return sessionInfo.id
   } catch (err) {
+    if (req.throwOnError) throw err
     console.error('Failed to create session:', err)
     return null
   }

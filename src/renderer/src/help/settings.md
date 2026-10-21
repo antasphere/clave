@@ -31,3 +31,23 @@ Manage multiple workspaces. Each workspace has its own sessions, groups, and set
 ## Locations
 
 Configure remote SSH locations for running sessions on other machines. See the **Remote Sessions** doc for details.
+
+## Debug the running app
+
+Choose **Help > Debug Clave…**, or open Help in the side panel and choose
+**Debug Clave…**. Clave captures the current app instance before adding a support
+tab. The dialog shows the capture time, instance, windows, session count, and
+any missing sources. Preview or copy the context before starting a conversation.
+
+Choose Claude Code or Codex, an offered launch profile, and an existing account.
+The support tab uses those choices and the profile's permissions. This action
+does not change your defaults or stop your other sessions. Describe the problem
+to include it in the support prompt. The playbook tells the agent to ask before
+fixes or restarts. It does not restrict an unrestricted launch profile.
+
+If login or startup fails, check the new tab and use **Copy context** or
+**Copy support prompt**. An unconfirmed launch is not retried automatically.
+Closing and reopening the dialog keeps the capture and any known support tab.
+For an attached server, in-app launch is unavailable because the server may
+use another filesystem. Copy the context, or run the displayed external command
+on the same Mac that created the capture, using that Mac's CLI settings and login.
