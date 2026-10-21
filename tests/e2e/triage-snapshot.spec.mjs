@@ -81,14 +81,14 @@ function layout(mode) {
     WS_A: {
       id: `triage-${mode}-a`,
       name: 'Triage A',
-      rootDir: `${ROOT}/a`,
+      rootDir: `${ROOT}/clave-e2e-triage-a`,
       profileFile: null,
       createdAt: 1
     },
     WS_B: {
       id: `triage-${mode}-b`,
       name: 'Triage B hidden',
-      rootDir: `${ROOT}/b`,
+      rootDir: `${ROOT}/clave-e2e-triage-b`,
       profileFile: null,
       createdAt: 2
     },
@@ -166,7 +166,7 @@ function seedInstall(L) {
         claudeSessionId: `${PLANTED_CONVERSATION}-${id.slice(0, 4)}`,
         launchProfileId: 'chat:claude:stub-claude',
         cwd: L.WS_B.rootDir,
-        folderName: 'b',
+        folderName: 'clave-e2e-triage-b',
         displayName: GENERATED_TITLE,
         claudeMode: true,
         antigravityMode: false,
@@ -674,6 +674,37 @@ async function runMode(t, mode, loadTriageSnapshot) {
       }
     }
     if (app) await app.close()
+    disposeOwnTmux(L.ROOT)
+  }
+}
+
+/** The tmux sessions this fixture's terminals left: tmux outlives the app,
+ *  so after the checks (which need the session alive) every session whose
+ *  start path is under THIS fixture's root is ended, by exact name. Nothing
+ *  else on the shared socket is touched. */
+function disposeOwnTmux(root) {
+  let rows = ''
+  try {
+    rows = execFileSync(
+      'tmux',
+      ['-L', 'clave', 'list-sessions', '-F', '#{session_name}\t#{session_path}'],
+      { encoding: 'utf8', timeout: 5000 }
+    )
+  } catch {
+    return // no tmux server: nothing left
+  }
+  const under = (p) => p === root || p.startsWith(`${root}/`) || p.startsWith(`/private${root}/`)
+  for (const line of rows.split('\n')) {
+    const [name, start] = line.split('\t')
+    if (!name || !start || !under(start)) continue
+    try {
+      execFileSync('tmux', ['-L', 'clave', 'kill-session', '-t', `=${name}`], {
+        stdio: 'ignore',
+        timeout: 5000
+      })
+    } catch {
+      // ended meanwhile
+    }
   }
 }
 
