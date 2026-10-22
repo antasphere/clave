@@ -46,6 +46,7 @@ import {
   MIC_OPEN_SOUND_SETTINGS_CHANNEL,
   type MicAccessState
 } from '../shared/mic'
+import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1678,6 +1679,9 @@ const electronAPI = {
   onOpenSettingsSection: (callback: (section: string) => void) =>
     createIpcListener<[string]>('menu:open-settings-section', callback),
 
+  // The menu's "Debug Clave…" (issue #227): the window opens its triage.
+  onOpenTriage: (callback: () => void) => createIpcListener<[]>(TRIAGE_IPC.open, callback),
+
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),
   onMissionControlExited: (callback: () => void) =>
@@ -2158,6 +2162,11 @@ const electronAPI = {
   getGitStatusBatch: (paths: string[]) => ipcRenderer.invoke('git:status-batch', paths),
   gitFetch: (cwd: string) => ipcRenderer.invoke('git:fetch', cwd),
   gitFetchBatch: (paths: string[]) => ipcRenderer.invoke('git:fetch-batch', paths),
+  gitWatchRepos: (subscriberId: string, paths: string[]) =>
+    ipcRenderer.invoke('git:watch-repos', subscriberId, paths),
+  gitUnwatchRepos: (subscriberId: string) => ipcRenderer.invoke('git:unwatch-repos', subscriberId),
+  onGitReposChanged: (callback: (repos: string[]) => void) =>
+    createIpcListener<[string[]]>('git:repos-changed', callback),
   discoverGitRepos: (cwd: string, force?: boolean) =>
     ipcRenderer.invoke('git:discover-repos', cwd, force),
   gitStage: (cwd: string, files: string[]) => ipcRenderer.invoke('git:stage', cwd, files),
@@ -2415,7 +2424,12 @@ const electronAPI = {
   feedbackSubmit: (submission: { email: string; message?: string }) =>
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
-    >
+    >,
+
+  // ── Triage (issue #227): over IPC only, never routed to the server, whose
+  // failure is one of the things a triage must be able to describe ──
+  triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 

@@ -598,6 +598,7 @@ export type {
 } from '../shared/git-batch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
+import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -927,6 +928,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onDownloadError: (callback: (message: string) => void) => () => void
   onUpdaterState: (callback: (state: UpdaterState) => void) => () => void
   onOpenSettingsSection: (callback: (section: string) => void) => () => void
+  /** The menu's "Debug Clave…" asks this window to open its triage. */
+  onOpenTriage: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>
@@ -1071,6 +1074,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>
+  /** Watch the repos a panel shows (PRDCT-3775); resolves with the ones that
+   *  are watched — the rest are the panel's to poll. The set replaces the
+   *  subscriber's previous one. */
+  gitWatchRepos: (subscriberId: string, paths: string[]) => Promise<string[]>
+  gitUnwatchRepos: (subscriberId: string) => Promise<void>
+  /** A burst of changes in watched repos, one entry per repo that changed. */
+  onGitReposChanged: (callback: (repos: string[]) => void) => () => void
   discoverGitRepos: (
     cwd: string,
     force?: boolean
@@ -1251,6 +1261,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+  /** Collect a read-only snapshot of this running app and write the private
+   *  triage bundle (context, playbook, snapshot). Never rejects for a source
+   *  that fails: the failure is in the snapshot and in `warnings`. */
+  triagePrepare: () => Promise<TriagePrepareResult>
+  /** The same snapshot, collected without writing anything. */
+  triageSnapshot: () => Promise<TriageSnapshot>
 
   // ── Lane C: settings behind ports ──
 
