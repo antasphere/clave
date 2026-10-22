@@ -180,6 +180,9 @@ export interface TriageListedGroup {
   terminalSessionIds: string[]
   workspaceId: string | null
   hasView: boolean
+  /** The group belongs to another fleet server; its sessions are not this
+   *  instance's to inventory or reconcile. Absent for a local group. */
+  remote?: boolean
 }
 
 /** What one window's renderer says it shows. */
