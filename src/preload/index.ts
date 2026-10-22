@@ -1353,6 +1353,7 @@ const electronAPI = {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1362,7 +1363,12 @@ const electronAPI = {
     }) => void
   ) =>
     onServerEventOf('session.restarted', (event) =>
-      callback({ id: event.id, resumed: event.resumed, account: event.account })
+      callback({
+        id: event.id,
+        resumed: event.resumed,
+        account: event.account,
+        requestId: event.requestId
+      })
     ),
   // The pin's link is published on the server in-process and sent to the
   // window over IPC when the app is attached (main publishes nothing there):
@@ -2123,20 +2129,22 @@ const electronAPI = {
         codexAccountLabel?: string
         /** Send the message the limit rejected again on the new account. */
         resendRejected?: boolean
-      }
+      },
+      string | undefined
     ],
-    (SessionInfo & { resumed: boolean }) | { error: string }
+    (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
   >({
     ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
-    server: ({ api }, id, { resendRejected, ...account }) =>
+    server: ({ api }, id, { resendRejected, ...account }, requestId) =>
       api.sessions
         .restart(
           id,
           // The wire's account carries a field only when it is set.
           Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
-          resendRejected === true
+          resendRejected === true,
+          requestId
         )
-        .then(loose<SessionInfo & { resumed: boolean }>)
+        .then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
   }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),

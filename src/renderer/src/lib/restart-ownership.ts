@@ -1,78 +1,58 @@
-/**
- * One restart, applied once. A restart the window asks for itself
- * (`restartSessionProcess`: the Switch account menu, the automatic switch at
- * a limit, the Play button) comes back to the store twice on the server
- * road: as the answer of the call, and as the server's `session.restarted`
- * push, which every window hears (`served-events.ts`), this one included.
- * Each application bumps the pane's restart epoch and remounts it, so two
- * would remount the same pane twice on one process. The window marks the
- * restart it starts; the first of the two to arrive applies, the second
- * finds the mark applied and steps aside. A restart the window did not ask
- * for (an agent's `clave_switch_account`, another window's move) has no
- * mark and is applied by the push as before.
- *
- * The marks are short-lived: on the one road where no push follows (IPC,
- * before the shell has named its server) the mark would otherwise linger
- * and swallow a later restart of the same tab by an agent. The server
- * publishes the push before it answers, so a mark older than the TTL has
- * no second arrival left to wait for.
- */
-export const OWN_RESTART_TTL_MS = 5_000
-
+/** Correlate the answer and push of one operation, never the next restart
+ * of the same session. Pending calls do not expire. Completed answers whose
+ * push was lost keep at most 128 receipts; only their exact IDs can suppress
+ * an event. Older evicted receipts are treated as external events. */
+export const MAX_COMPLETED_RESTARTS = 128
 interface Mark {
-  at: number
+  sessionId: string
   applied: boolean
+  settled: boolean
 }
-
 const marks = new Map<string, Mark>()
-
-/** The window is about to ask for this tab's restart. */
-export function beginOwnRestart(id: string, now: number = Date.now()): void {
-  marks.set(id, { at: now, applied: false })
+export function beginOwnRestart(sessionId: string, requestId: string): void {
+  marks.set(requestId, { sessionId, applied: false, settled: false })
 }
-
-/** The call failed before anything restarted: a push that still comes (the
- *  server did the move and only the answer was lost) applies as a stranger's. */
-export function abandonOwnRestart(id: string): void {
-  marks.delete(id)
+export function abandonOwnRestart(requestId: string): void {
+  marks.delete(requestId)
 }
-
-/** Whether the ANSWER of the window's own call should apply the restart:
- *  not when the push already did. The mark stays, applied, for a push that
- *  arrives after the answer; it is forgotten when that push consumes it or
- *  when it is older than the TTL. */
-export function ownAnswerApplies(id: string, now: number = Date.now()): boolean {
-  const mark = marks.get(id)
-  if (!mark) return true
-  if (mark.applied) {
-    marks.delete(id)
-    return false
-  }
-  mark.applied = true
-  mark.at = now
-  return true
-}
-
-/** Whether a `session.restarted` PUSH should apply the restart: always for
- *  a tab this window did not restart itself, and for its own restart only
- *  when the answer has not applied it already. */
-export function servedRestartApplies(id: string, now: number = Date.now()): boolean {
-  const mark = marks.get(id)
-  if (!mark) return true
-  if (now - mark.at > OWN_RESTART_TTL_MS) {
-    marks.delete(id)
+export function ownAnswerApplies(
+  sessionId: string,
+  requestId: string,
+  echoedRequestId?: string
+): boolean {
+  const mark = marks.get(requestId)
+  // IPC, or an older server that does not echo correlation: no matching
+  // server push is promised. Never suppress a subsequent unrelated restart.
+  if (echoedRequestId !== requestId) {
+    marks.delete(requestId)
     return true
   }
+  if (!mark || mark.sessionId !== sessionId) return true
   if (mark.applied) {
-    marks.delete(id)
+    marks.delete(requestId)
     return false
   }
   mark.applied = true
-  mark.at = now
+  mark.settled = true
+  // Retain by completion order, including a slow call begun before newer calls.
+  marks.delete(requestId)
+  marks.set(requestId, mark)
+  const completed = [...marks].filter(([, entry]) => entry.settled)
+  for (const [id] of completed.slice(0, Math.max(0, completed.length - MAX_COMPLETED_RESTARTS)))
+    marks.delete(id)
   return true
 }
-
-/** Test seam. */
+export function servedRestartApplies(sessionId: string, requestId?: string): boolean {
+  if (!requestId) return true
+  const mark = marks.get(requestId)
+  if (!mark || mark.sessionId !== sessionId) return true
+  if (mark.applied) {
+    marks.delete(requestId)
+    return false
+  }
+  mark.applied = true
+  return true
+}
 export function resetOwnRestarts(): void {
   marks.clear()
 }

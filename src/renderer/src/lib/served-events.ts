@@ -56,13 +56,13 @@ export function initServedToolsEvents(): void {
     const store = useSessionStore.getState()
     if (store.sessions.some((s) => s.id === id)) store.setSessionRestarting(id, true)
   })
-  api.onSessionRestarted?.(({ id, account }) => {
+  api.onSessionRestarted?.(({ id, account, requestId }) => {
     const store = useSessionStore.getState()
     const session = store.sessions.find((s) => s.id === id)
     if (!session) return
     // The window's own switch comes back this way too, beside the answer
     // of its call: whichever arrives second steps aside (`restart-ownership.ts`).
-    if (!servedRestartApplies(id)) return
+    if (!servedRestartApplies(id, requestId)) return
     store.applySessionRestart(id, {
       ...(account.codexAccountId !== undefined
         ? { codexAccountId: account.codexAccountId, codexAccountLabel: account.codexAccountLabel }

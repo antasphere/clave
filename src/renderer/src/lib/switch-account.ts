@@ -274,22 +274,28 @@ export async function restartSessionProcess(
   // Marked before the call: the server's `session.restarted` push for this
   // very move can reach the window before the answer does, and only one of
   // the two may remount the pane (`restart-ownership.ts`).
-  beginOwnRestart(sessionId)
+  const requestId = crypto.randomUUID()
+  beginOwnRestart(sessionId, requestId)
   const result = await window.electronAPI
-    .restartSession(sessionId, {
-      ...options.overrides,
-      resendRejected: options.resendRejected === true
-    })
+    .restartSession(
+      sessionId,
+      {
+        ...options.overrides,
+        resendRejected: options.resendRejected === true
+      },
+      requestId
+    )
     .catch((err) => ({
       error: err instanceof Error ? err.message : String(err)
     }))
   if ('error' in result) {
-    abandonOwnRestart(sessionId)
+    abandonOwnRestart(requestId)
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
   // The push applied it already: the answer only reports.
-  if (!ownAnswerApplies(sessionId)) return { ok: true, resumed: result.resumed }
+  if (!ownAnswerApplies(sessionId, requestId, result.requestId))
+    return { ok: true, resumed: result.resumed }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,
