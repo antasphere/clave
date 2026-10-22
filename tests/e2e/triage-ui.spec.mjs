@@ -14,7 +14,7 @@ import {
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
-import { fleetWorld, connectMac, owned, request } from './fixtures/fleet-world.mjs'
+import { connectMac, owned, request } from './fixtures/fleet-world.mjs'
 import {
   REPO,
   launchApp,
@@ -26,6 +26,7 @@ import {
   callMcpIn,
   identityOf,
   openWindow,
+  startE2eServer,
   serverMode
 } from './harness.mjs'
 
@@ -267,8 +268,8 @@ async function choose(win, label, value) {
   await win.getByRole('menuitem', { name: value, exact: true }).click()
 }
 
-async function closeFixtureApps(app, remoteWorld) {
-  const closed = await Promise.allSettled([app?.close(), remoteWorld?.close()])
+async function closeFixtureApps(app, remoteServer) {
+  const closed = await Promise.allSettled([app?.close(), remoteServer?.stop()])
   const errors = closed
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason)
@@ -291,7 +292,7 @@ export async function run(t) {
   let app
   let fixtureRoot
   let tokenOutputCapture
-  let remoteWorld
+  let remoteServer
   let remoteBefore
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
@@ -426,6 +427,34 @@ export async function run(t) {
         cwd: root,
         workspace: hidden.id
       })
+      let remoteSessionId
+      if (serverMode() !== 'attached') {
+        remoteServer = await startE2eServer(`triage-remote-${runId}`, {
+          env: { SHELL: '/bin/sh' },
+          args: ['--daemon', '--host', '127.0.0.1', '--test-no-activate', '--dev-echo-adapter']
+        })
+        const remoteRoot = path.join(remoteServer.dataDir, 'remote-root')
+        mkdirSync(remoteRoot, { recursive: true })
+        const session = await request(remoteServer, '/sessions/start', {
+          cwd: remoteRoot,
+          windowKey: `fixture-${runId}`,
+          options: {
+            claudeMode: true,
+            launchProfileId: 'dev-echo-adapter',
+            adoptSessionId: id('remote-session')
+          }
+        })
+        remoteSessionId = session.id
+        await request(remoteServer, '/sidebar/groups', {
+          windowKey: 'server',
+          group: {
+            id: id('remote-group'),
+            name: 'Triage remote control',
+            cwd: remoteRoot,
+            sessionIds: [remoteSessionId]
+          }
+        })
+      }
       const second = await openWindow(app, win, workspace.id)
       second.page.setDefaultTimeout(12_000)
       return {
@@ -440,6 +469,7 @@ export async function run(t) {
         live,
         dormant,
         hiddenTab,
+        remoteSessionId,
         workspace
       }
     })
@@ -458,14 +488,12 @@ export async function run(t) {
     ).pid
     assert.ok(processAlive(originalChatPid), 'the original chat process is alive before triage')
     if (serverMode() !== 'attached') {
-      remoteWorld = await fleetWorld('triage-local-capture')
-      const remoteReceipt = remoteWorld.load()
       const client = { win: second, owners: [] }
-      await connectMac(client, [remoteWorld.servers[0]])
-      const remoteId = owned('session', client.owners[0].id, remoteReceipt.values.first.sessionId)
+      await connectMac(client, [remoteServer])
+      const remoteId = owned('session', client.owners[0].id, f.remoteSessionId)
       await second.locator(`[data-sidebar-item-id="${remoteId}"]`).click()
       await second.locator(`[data-session-id="${remoteId}"] [data-testid="chat-view"]`).waitFor()
-      remoteBefore = await request(remoteWorld.servers[0], '/sessions')
+      remoteBefore = await request(remoteServer, '/sessions')
       assert.ok(remoteBefore.length > 0, 'the focused remote fixture contains real sessions')
     }
     const dialog = await openTriage(app, second)
@@ -534,7 +562,7 @@ export async function run(t) {
         'recording Codex process actually starts'
       )
       assert.deepEqual(
-        await request(remoteWorld.servers[0], '/sessions'),
+        await request(remoteServer, '/sessions'),
         remoteBefore,
         'local triage creates or changes no session on the focused remote server'
       )
@@ -1298,7 +1326,7 @@ export async function run(t) {
     )
   } finally {
     try {
-      await closeFixtureApps(app, remoteWorld)
+      await closeFixtureApps(app, remoteServer)
     } finally {
       if (fixtureRoot && existsSync(fixtureRoot)) {
         // A support terminal's cwd is a capture timestamp, so its tmux name
