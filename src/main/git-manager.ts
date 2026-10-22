@@ -421,10 +421,6 @@ export function isPlainRefName(base: string): boolean {
  * name a base lives). When none of them moved, the reading — its base,
  * counts, merged state and last commit — cannot have either, and the ten-odd
  * git commands it costs are skipped.
- *
- * The checkout's own half comes before the `#`, the base's after it: on a
- * first reading the base is not known yet, and only the first half can say
- * whether something moved while the reading ran (`fingerprintMoved`).
  */
 export async function worktreeFingerprint(
   gitDir: string,
@@ -462,14 +458,16 @@ export async function worktreeFingerprint(
 }
 
 /**
- * Whether something the reading depends on moved between the fingerprint
- * taken before it and the one taken after. With the base known before, the
- * whole fingerprints compare; on a first reading, or after a branch switch,
- * only the checkout's own half can.
+ * Whether a reading can be trusted under the fingerprint taken after it.
+ * With the base known before the reading, the two fingerprints compare: any
+ * difference means a ref moved while it ran. On a first reading, or the first
+ * after a branch switch, the base was not known before, so nothing can say
+ * whether IT moved meanwhile (a commit on main from the main checkout touches
+ * none of the worktree's own files); that reading is used once and computed
+ * again on the next read, when the base is known.
  */
 export function fingerprintMoved(before: string, after: string, baseKnown: boolean): boolean {
-  if (baseKnown) return before !== after
-  return before.split('#')[0] !== after.split('#')[0]
+  return !baseKnown || before !== after
 }
 
 /** The env of a status read: `GIT_OPTIONAL_LOCKS=0` keeps `git status` from

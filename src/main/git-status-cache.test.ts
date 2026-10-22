@@ -279,3 +279,72 @@ describe('the cached worktree reading, round 2', () => {
     expect(second.worktree?.base).toBe('main')
   })
 })
+
+describe('the cached worktree reading, round 3', () => {
+  const target = gitManager as unknown as {
+    readWorktree: (...args: unknown[]) => Promise<unknown>
+  }
+
+  it('does not keep a first reading its base moved during', async () => {
+    const wt3 = path.join(root, 'wt-base-moves-first')
+    git(repo, 'worktree', 'add', '-q', wt3, '-b', 'lane/base-first', 'main')
+    const original = target.readWorktree.bind(gitManager)
+    const spy = vi.spyOn(target, 'readWorktree').mockImplementationOnce(async (...args) => {
+      const reading = await original(...args)
+      commit(repo, 'first-base.txt', 'base moves during the first reading')
+      return reading
+    })
+    try {
+      await gitManager.getStatus(wt3)
+    } finally {
+      spy.mockRestore()
+    }
+    expect((await gitManager.getStatus(wt3)).worktree?.behind).toBe(1)
+  })
+
+  it('does not keep a steady reading its base moved during', async () => {
+    const wt4 = path.join(root, 'wt-base-moves-steady')
+    git(repo, 'worktree', 'add', '-q', wt4, '-b', 'lane/base-steady', 'main')
+    await gitManager.getStatus(wt4)
+    // A second read with the base known, so the cache holds a verified reading.
+    commit(wt4, 'own.txt', 'own work')
+    await gitManager.getStatus(wt4)
+    const original = target.readWorktree.bind(gitManager)
+    commit(wt4, 'own2.txt', 'more own work')
+    const spy = vi.spyOn(target, 'readWorktree').mockImplementationOnce(async (...args) => {
+      const reading = await original(...args)
+      commit(repo, 'steady-base.txt', 'base moves during a steady reading')
+      return reading
+    })
+    try {
+      await gitManager.getStatus(wt4)
+    } finally {
+      spy.mockRestore()
+    }
+    expect((await gitManager.getStatus(wt4)).worktree?.behind).toBe(1)
+  })
+
+  it('follows a branch whose name carries a hash sign', async () => {
+    const hashed = path.join(root, 'wt-hash')
+    git(repo, 'worktree', 'add', '-q', hashed, '-b', 'lane/fix#12', 'main')
+    await gitManager.getStatus(hashed)
+    await gitManager.getStatus(hashed)
+    commit(hashed, 'hash.txt', 'on a hashed branch')
+    expect((await gitManager.getStatus(hashed)).worktree?.ahead).toBe(1)
+  })
+
+  it('follows an upstream change that chooses a new base', async () => {
+    const up = path.join(root, 'wt-upstream')
+    git(repo, 'branch', 'side', 'main')
+    // A branch with no reflog creation entry and no upstream: no base yet.
+    git(repo, 'worktree', 'add', '-q', '--detach', up, 'main')
+    git(up, 'checkout', '-q', '-b', 'lane/upstream')
+    const logFile = path.join(repo, '.git', 'logs', 'refs', 'heads', 'lane', 'upstream')
+    rmSync(logFile, { force: true })
+    git(repo, 'remote', 'set-head', 'origin', '--delete')
+    await gitManager.getStatus(up)
+    await gitManager.getStatus(up)
+    git(up, 'branch', '-q', '--set-upstream-to=side', 'lane/upstream')
+    expect((await gitManager.getStatus(up)).worktree?.base).toBe('side')
+  })
+})
