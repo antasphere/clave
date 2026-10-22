@@ -24,9 +24,9 @@ import { parentOf, setParent } from '../sessions/lineage'
 import { publishOrSend } from '../server/session-events'
 import { sessionWindows } from '../sessions/windows'
 import { shellSidebarClient } from './shell-sidebar'
-import { usageSummaryOf } from '../../shared/usage-summary'
+import { usageSummaryOf, usageSummaryForModel } from '../../shared/usage-summary'
 import type { PinnedBlueprint } from '../../shared/pinned-blueprint'
-import type { AccountUsageSummary } from '../../shared/account-pool'
+import { isExhausted, type AccountUsageSummary } from '../../shared/account-pool'
 import { claudeAccountsManager } from '../claude-accounts'
 import { codexAccountsManager } from '../codex-accounts'
 import { usageManager, type UsageError, type UsageLimits } from '../usage-manager'
@@ -396,11 +396,12 @@ const summaryOf = (read: UsageLimits | UsageError | undefined): AccountUsageSumm
 /** Whether an account's last usage read says it is about to stop: the
  *  tightest window critical, or about five percent left (the pool's rule);
  *  an unknown read is not exhaustion. */
-function exhaustedFrom(read: UsageLimits | UsageError | undefined): boolean {
-  const best = summaryOf(read)?.tightest
-  if (!best) return false
-  if (best.severity === 'critical') return true
-  return 100 - best.usedPercentage <= 5
+function exhaustedFrom(
+  read: UsageLimits | UsageError | undefined,
+  context?: { model?: string }
+): boolean {
+  const summary = summaryOf(read)
+  return isExhausted(context ? usageSummaryForModel(summary, context.model) : summary)
 }
 
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
@@ -448,7 +449,7 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
       return {
         id,
         label: account?.label ?? record.claudeProfileLabel ?? 'Removed account',
-        exhausted: exhaustedFrom(read)
+        exhausted: exhaustedFrom(read, { model: record.model })
       }
     }
     return null

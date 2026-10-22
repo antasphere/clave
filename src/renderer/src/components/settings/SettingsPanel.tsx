@@ -11,6 +11,10 @@ import {
 } from '../../store/session-store'
 import { useWorkTrackerStore } from '../../store/work-tracker-store'
 import { UI_FONTS } from '../../lib/ui-font'
+import { availableMarks, resolveMark, LOGO_MARK } from '../../lib/marks'
+import { implementedMarks, nativeMarks } from '../plugins/native-marks'
+import { useRegistry } from '../../views/store'
+import { ClaudeLogo } from '../icons/cli-logos'
 import { useUserStore, USER_ICONS } from '../../store/user-store'
 import { PALETTE_KEYS, PALETTE_LABELS, fieldInk } from '../../lib/brand-field'
 import { BrandField } from '../ui/BrandField'
@@ -52,6 +56,7 @@ import {
 } from './primitives'
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { AudioSettings } from './AudioSettings'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -199,6 +204,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'general' && <GeneralSettings />}
         {settingsSection === 'agents' && <AgentsSettings />}
         {settingsSection === 'appearance' && <AppearanceSettings />}
+        {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}
         {settingsSection === 'updates' && <UpdatesTab />}
         {settingsSection === 'plugins' && <PluginsTab />}
@@ -297,6 +303,7 @@ function AppearanceSettings(): React.JSX.Element {
       </SettingsSection>
 
       <DensitySection />
+      <AgentMarkSection />
       <TreeSeparatorsSection />
       <SidebarWidgetsSection />
       <MissionControlSection />
@@ -430,6 +437,83 @@ function FontRow(): React.JSX.Element {
         ))}
       </div>
     </SettingsRow>
+  )
+}
+
+/**
+ * What stands for an agent in the chrome, and for a tool call in flight
+ * (`lib/marks.ts`): the provider's logo, or a mark pack a bundled plugin
+ * contributes (`contributes.marks[]`). The row lists the logo and every pack
+ * this build can draw; the sample beside the switch shows the chosen mark at
+ * rest and at work, the two states every slot draws it in; a pack's own
+ * settings block, when it has one, follows the row while the pack is chosen.
+ * Hidden entirely when no pack is available: a choice of one is no choice.
+ */
+function AgentMarkSection(): React.JSX.Element | null {
+  const saved = useSessionStore((s) => s.agentMark)
+  const setAgentMark = useSessionStore((s) => s.setAgentMark)
+  const plugins = useRegistry((s) => s.plugins)
+  const marks = availableMarks(plugins, implementedMarks)
+  if (marks.length === 0) return null
+  const agentMark = resolveMark(saved, marks)
+  const pack = agentMark === LOGO_MARK ? null : nativeMarks[agentMark]
+  const options = [{ id: LOGO_MARK, title: 'Logo' }, ...marks]
+
+  return (
+    <SettingsSection
+      title="Agent mark"
+      description="What stands for an agent on its tab, in the chat header, at the end of a transcript, and for a tool call while it runs."
+    >
+      <SettingsCard>
+        <SettingsRow
+          label="Mark"
+          description="The logo keeps each provider's brand mark. A pack is one mark for every agent, moving while it works; plugins contribute them."
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="flex items-center gap-2 text-text-tertiary"
+              aria-hidden
+              data-testid="agent-mark-sample"
+            >
+              {pack ? (
+                <>
+                  <span className="pane-status-mark" title="At rest">
+                    <pack.Agent working={false} status="idle" slot="sample" />
+                  </span>
+                  <span className="pane-status-mark" title="Working">
+                    <pack.Agent working status="working" slot="sample" />
+                  </span>
+                </>
+              ) : (
+                <span className="sidebar-tab-icon tab-status relative" data-status="working">
+                  <ClaudeLogo />
+                </span>
+              )}
+            </span>
+            <div className="segmented" role="radiogroup" aria-label="Agent mark">
+              {options.map((mark) => (
+                <button
+                  key={mark.id}
+                  role="radio"
+                  aria-checked={agentMark === mark.id}
+                  onClick={() => setAgentMark(mark.id)}
+                  data-active={agentMark === mark.id}
+                  data-agent-mark-option={mark.id}
+                  className="segmented-item"
+                >
+                  {mark.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        </SettingsRow>
+        {pack?.Settings && (
+          <div className="settings-row" data-testid="agent-mark-pack-settings">
+            <pack.Settings />
+          </div>
+        )}
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 

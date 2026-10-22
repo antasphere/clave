@@ -2,6 +2,7 @@
  *  renderer's `UsageWindow` and main's own both fit it. */
 export interface PoolUsageWindow {
   kind: string
+  scope?: string | null
   usedPercentage: number
   severity?: string | null
   resetsAt?: number | null

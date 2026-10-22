@@ -12,11 +12,19 @@
  */
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
 import { Schema } from 'effect'
-import { ListClients, RegisterClient, UnregisterClient } from './clients'
+import {
+  ListClients,
+  RegisterClient,
+  UnregisterClient,
+  ReserveClientRegistration,
+  ConfirmClientRegistration,
+  ReleaseClientRegistration
+} from './clients'
 import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -65,6 +73,7 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
+  .add(HttpCqrs.commandEndpoint('control', '/sessions/control', ControlSession))
   .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
   .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
   // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
@@ -84,6 +93,27 @@ export const clientsGroup = ApiGroup.make('clients')
   .add(HttpCqrs.commandEndpoint('register', '/clients', RegisterClient))
   .add(HttpCqrs.queryEndpoint('list', '/clients', ListClients))
   .add(HttpCqrs.commandEndpoint('unregister', '/clients/unregister', UnregisterClient))
+  .add(
+    HttpCqrs.commandEndpoint(
+      'reserveRegistration',
+      '/clients/registrations/v1/reserve',
+      ReserveClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'confirmRegistration',
+      '/clients/registrations/v1/confirm',
+      ConfirmClientRegistration
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'releaseRegistration',
+      '/clients/registrations/v1/release',
+      ReleaseClientRegistration
+    )
+  )
 
 // ── Lane D: settings (`settings/api.ts`, built from the settings modules) ──
 export { settingsGroup }

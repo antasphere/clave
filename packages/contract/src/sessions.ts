@@ -176,6 +176,26 @@ export const CommandOption = Schema.Struct({
   insert: Schema.String
 })
 export type CommandOption = typeof CommandOption.Type
+/** One control request a view may send a live session's provider, the zod
+ *  `SessionControlSchema` on the wire. The set is closed on purpose: the
+ *  provider's control channel also changes the permission mode and the like,
+ *  and none of that may pass here. */
+export const SessionControl = Schema.Union(
+  Schema.Struct({ type: Schema.Literal('mcp_status') }),
+  Schema.Struct({
+    type: Schema.Literal('mcp_toggle'),
+    server: Schema.NonEmptyString,
+    enabled: Schema.Boolean
+  }),
+  Schema.Struct({ type: Schema.Literal('mcp_reconnect'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_authenticate'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('mcp_clear_auth'), server: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal('reload_plugins') })
+)
+export type SessionControl = typeof SessionControl.Type
+/** The provider's answer to a control request, as it gave it. */
+export const SessionControlResult = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+export type SessionControlResult = typeof SessionControlResult.Type
 export const BackgroundTask = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literal('shell', 'agent', 'other'),
@@ -450,6 +470,14 @@ export const GetSessionCommands = Query.define('GetSessionCommands', {
   payload: Schema.Struct({ id: Schema.String }),
   success: Schema.Array(CommandOption),
   failure: SessionNotFound
+})
+/** Send the session's provider one control request and answer what it
+ *  answered. A command, not a query: most of them change state (a server
+ *  turned off, a sign-in started, the plugins reloaded). */
+export const ControlSession = Command.define('ControlSession', {
+  payload: Schema.Struct({ id: Schema.String, request: SessionControl }),
+  success: SessionControlResult,
+  failure: Schema.Union(SessionNotFound, SessionWriteRefused)
 })
 /** What the session's adapter takes beyond text. */
 export const SessionCapabilities = Schema.Struct({ images: Schema.Boolean })
