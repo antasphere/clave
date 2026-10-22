@@ -267,6 +267,14 @@ async function choose(win, label, value) {
   await win.getByRole('menuitem', { name: value, exact: true }).click()
 }
 
+async function closeFixtureApps(app, remoteWorld) {
+  const closed = await Promise.allSettled([app?.close(), remoteWorld?.close()])
+  const errors = closed
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  if (errors.length) throw new AggregateError(errors, 'Fixture shutdown failed')
+}
+
 export async function run(t) {
   const fixtureModule = fixturePath('triage-scenario.mjs')
   await build({
@@ -1290,9 +1298,7 @@ export async function run(t) {
     )
   } finally {
     try {
-      const closed = await Promise.allSettled([app?.close(), remoteWorld?.close()])
-      const failed = closed.find((result) => result.status === 'rejected')
-      if (failed) throw failed.reason
+      await closeFixtureApps(app, remoteWorld)
     } finally {
       if (fixtureRoot && existsSync(fixtureRoot)) {
         // A support terminal's cwd is a capture timestamp, so its tmux name
