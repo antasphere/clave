@@ -114,6 +114,10 @@ export const GIT_REPO_INFO_TTL_MS = 300_000
  *  show up without a restart. */
 export const GIT_NOT_REPO_TTL_MS = 30_000
 
+/** How long a background status read may go silent before it is killed. An
+ *  idle timer like the network one: a big repo still printing is left alone. */
+export const GIT_STATUS_TIMEOUT_MS = 60_000
+
 /** Backstop on a cached worktree reading: even when none of the refs it
  *  depends on moved, it is read again after this long. */
 export const GIT_WORKTREE_CACHE_TTL_MS = 300_000

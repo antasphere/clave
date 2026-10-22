@@ -10,9 +10,10 @@
  * `maxIntervalMs`. A hidden window skips its rounds and catches up with one
  * as soon as it is looked at again (the caller triggers it).
  *
- * `trigger()` runs a round now — a repo the watcher reported, a refresh — and
- * while a round is running it only asks for one more after it, never a second
- * one beside it.
+ * `trigger()` runs a round now — a repo the watcher reported, the window shown
+ * again — and while a round is running it only asks for one more after it,
+ * never a second one beside it. A trigger while hidden does nothing: the
+ * round it asked for comes when the window is shown.
  */
 
 export interface PollLoopOptions {
@@ -89,7 +90,7 @@ export function startPollLoop(opts: PollLoopOptions): PollLoop {
 
   return {
     trigger(): void {
-      if (stopped) return
+      if (stopped || opts.isHidden?.()) return
       if (running) {
         pending = true
         return

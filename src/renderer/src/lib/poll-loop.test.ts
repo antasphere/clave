@@ -150,3 +150,29 @@ describe('startPollLoop', () => {
     expect(rounds).toBe(0)
   })
 })
+
+describe('startPollLoop while hidden', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('ignores a trigger, which the shown window asks again', async () => {
+    let rounds = 0
+    let hidden = true
+    const loop = startPollLoop({
+      run: async () => {
+        rounds++
+      },
+      intervalMs: () => 30_000,
+      maxIntervalMs: 60_000,
+      isHidden: () => hidden
+    })
+    loop.trigger()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(rounds).toBe(0)
+    hidden = false
+    loop.trigger()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(rounds).toBe(1)
+    loop.stop()
+  })
+})

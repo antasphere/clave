@@ -174,4 +174,53 @@ describe('GitRepoWatcher', () => {
     vi.advanceTimersByTime(2000)
     expect(changes).toEqual([])
   })
+
+  it('watches nothing for a subscriber dropped while it subscribed', async () => {
+    let release!: () => void
+    const slow = new Promise<void>((r) => (release = r))
+    const w = new GitRepoWatcher({
+      watch,
+      resolve: async (repo) => {
+        if (repo === '/w/app') await slow
+        return dirsOf[repo] ?? null
+      },
+      onChange: (repos) => changes.push(repos),
+      debounceMs: 300,
+      maxWaitMs: 1500
+    })
+    await w.setRepos('win2:other', ['/w/lib'])
+    const pending = w.setRepos('win1:a', ['/w/app', '/w/lib'])
+    w.drop('win1:a')
+    release()
+    expect(await pending).toEqual([])
+    w.drop('win2:other')
+    expect(w.watchedRepos()).toEqual([])
+    expect(listeners.get('/w/app') ?? []).toEqual([])
+  })
+
+  it('answers nothing to a set replaced while it resolved, and keeps the new one', async () => {
+    let release!: () => void
+    const slow = new Promise<void>((r) => (release = r))
+    const w = new GitRepoWatcher({
+      watch,
+      resolve: async (repo) => {
+        if (repo === '/w/app') await slow
+        return dirsOf[repo] ?? null
+      },
+      onChange: (repos) => changes.push(repos),
+      debounceMs: 300,
+      maxWaitMs: 1500
+    })
+    const first = w.setRepos('win1:a', ['/w/app'])
+    const second = w.setRepos('win1:a', ['/w/lib'])
+    release()
+    expect(await first).toEqual([])
+    expect(await second).toEqual(['/w/lib'])
+    expect(w.watchedRepos()).toEqual(['/w/lib'])
+  })
+
+  it('reports an exclude-file edit and a shared upstream change', () => {
+    expect(isRelevantChange(main, '/w/app/.git/info/exclude', [])).toBe(true)
+    expect(isRelevantChange(linked, '/w/app/.git/config', [])).toBe(true)
+  })
 })

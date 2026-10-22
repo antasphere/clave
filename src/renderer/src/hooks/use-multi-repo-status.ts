@@ -222,7 +222,8 @@ export function useMultiRepoStatus(
     let changed = new Set<string>()
     let reading = false
     const readChanged = async (): Promise<void> => {
-      if (reading || changed.size === 0) return
+      // Hidden: the reported repos wait, and are read when the window is shown.
+      if (reading || changed.size === 0 || isDocumentHidden()) return
       reading = true
       const batch = [...changed]
       changed = new Set()
@@ -256,7 +257,9 @@ export function useMultiRepoStatus(
         allWatched = false
       })
     const onVisible = (): void => {
-      if (!isDocumentHidden()) loop.trigger()
+      if (isDocumentHidden()) return
+      loop.trigger()
+      void readChanged()
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => {

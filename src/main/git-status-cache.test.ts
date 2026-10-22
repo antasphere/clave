@@ -120,3 +120,103 @@ describe('the background fetch', () => {
     expect(git(repo, 'rev-parse', 'origin/main').trim()).toBe(pushed)
   })
 })
+
+describe('the app-wide limit, as the manager applies it', () => {
+  it('runs at most four status reads at once, whatever the batch', async () => {
+    let running = 0
+    let peak = 0
+    const spy = vi.spyOn(gitManager, 'readStatus').mockImplementation(async () => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 5))
+      running--
+      return {
+        isRepo: false,
+        branch: '',
+        ahead: 0,
+        behind: 0,
+        hasUpstream: false,
+        files: [],
+        repoRoot: ''
+      }
+    })
+    try {
+      const paths = Array.from({ length: 40 }, (_, i) => `/nowhere/r${i}`)
+      // Two stacked batches, as two windows or two late rounds would send.
+      await Promise.all([gitManager.getStatusBatch(paths), gitManager.getStatusBatch(paths)])
+      expect(peak).toBe(4)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('runs at most two background fetches at once', async () => {
+    let running = 0
+    let peak = 0
+    const spy = vi.spyOn(gitManager, 'fetchOrThrow').mockImplementation(async () => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 5))
+      running--
+    })
+    try {
+      await gitManager.fetchBatch(Array.from({ length: 12 }, (_, i) => `/nowhere/f${i}`))
+      expect(peak).toBe(2)
+      expect(spy).toHaveBeenCalledTimes(12)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('the cached worktree reading, other shapes', () => {
+  it('follows a detached worktree moved to another commit', async () => {
+    const detached = path.join(root, 'wt-detached')
+    git(repo, 'worktree', 'add', '-q', '--detach', detached, 'main')
+    const first = await gitManager.getStatus(detached)
+    git(detached, 'checkout', '-q', '--detach', 'main~1')
+    const second = await gitManager.getStatus(detached)
+    expect(second.worktree?.lastCommit?.subject).not.toBe(first.worktree?.lastCommit?.subject)
+  })
+
+  it('follows a base spelled as an expression', async () => {
+    const expr = path.join(root, 'wt-expr')
+    git(repo, 'worktree', 'add', '-q', expr, '-b', 'lane/expr', 'main~1')
+    const before = await gitManager.getStatus(expr)
+    expect(before.worktree?.base).toBe('main~1')
+    commit(repo, 'expr.txt', 'base moves under the expression')
+    const after = await gitManager.getStatus(expr)
+    expect(after.worktree?.behind).toBe((before.worktree?.behind ?? 0) + 1)
+  })
+
+  it('does not keep a failed reading as the answer', async () => {
+    const spy = vi
+      .spyOn(gitManager as unknown as { readWorktree: () => Promise<unknown> }, 'readWorktree')
+      .mockRejectedValueOnce(new Error('transient'))
+    const failing = path.join(root, 'wt-flaky')
+    git(repo, 'worktree', 'add', '-q', failing, '-b', 'lane/flaky', 'main')
+    const first = await gitManager.getStatus(failing)
+    expect(first.worktree).toBeUndefined()
+    spy.mockRestore()
+    const second = await gitManager.getStatus(failing)
+    expect(second.worktree?.base).toBe('main')
+  })
+})
+
+describe('what a folder is to git', () => {
+  it('is asked again once its not-a-repo answer has expired', async () => {
+    const folder = path.join(root, 'later')
+    execFileSync('mkdir', [folder])
+    expect((await gitManager.getStatus(folder)).isRepo).toBe(false)
+    git(folder, 'init', '-q')
+    // Within its thirty seconds the answer stands...
+    expect((await gitManager.getStatus(folder)).isRepo).toBe(false)
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 31_000)
+    try {
+      expect((await gitManager.getStatus(folder)).isRepo).toBe(true)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+})

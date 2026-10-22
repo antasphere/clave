@@ -33,7 +33,6 @@ const repoWatcher = new GitRepoWatcher({
   },
   resolve: (repo) => gitManager.repoDirs(repo),
   onChange: (repos) => {
-    for (const repo of repos) gitManager.invalidate(repo)
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('git:repos-changed', repos)
     }

@@ -37,7 +37,7 @@ export type WatchFn = (dir: string, onEvent: (filename: string | null) => void) 
 /** Inside a git directory, what never changes a status: the object store
  *  (every commit and fetch writes there, AND moves a ref, which is what is
  *  read), the reflogs, hooks and LFS, and the lock files git takes and drops. */
-const GIT_DIR_NOISE = new Set(['objects', 'logs', 'hooks', 'lfs', 'info'])
+const GIT_DIR_NOISE = new Set(['objects', 'logs', 'hooks', 'lfs'])
 
 function isUnder(parent: string, child: string): boolean {
   if (child === parent) return true
@@ -69,7 +69,14 @@ export function isRelevantChange(repo: RepoDirs, abs: string, otherRoots: string
     // not this checkout's status.
     const rel = path.relative(repo.commonDir, abs)
     const first = rel.split(path.sep)[0]
-    return first === 'refs' || rel === 'packed-refs' || rel === 'FETCH_HEAD' || rel === ''
+    // `config` carries the upstreams, which a linked worktree reads there too.
+    return (
+      first === 'refs' ||
+      rel === 'packed-refs' ||
+      rel === 'FETCH_HEAD' ||
+      rel === 'config' ||
+      rel === ''
+    )
   }
 
   if (!isUnder(repo.root, abs)) return false
@@ -126,6 +133,10 @@ export class GitRepoWatcher {
       if (!wanted.has(repo)) this.releaseRepo(repo, subscriber)
     }
     for (const repo of wanted) {
+      // Dropped or replaced while an earlier repo resolved: this set is no
+      // longer the subscriber's, and adding to it would leak a watch nobody
+      // ever releases.
+      if (this.subscriptions.get(subscriber) !== wanted) break
       const existing = this.repos.get(repo)
       if (existing) {
         existing.subscribers.add(subscriber)
@@ -180,6 +191,10 @@ export class GitRepoWatcher {
       return
     }
     if (!this.subscriptions.get(subscriber)?.has(repo)) return
+    // Another subscriber's set may still hold this repo while it resolved;
+    // the watch carries every current holder, so the last one releases it.
+    const holders = new Set<string>()
+    for (const [key, set] of this.subscriptions) if (set.has(repo)) holders.add(key)
 
     const watchDirs = [dirs.root]
     if (!isUnder(dirs.root, dirs.commonDir)) watchDirs.push(dirs.commonDir)
@@ -187,7 +202,7 @@ export class GitRepoWatcher {
       watchDirs.push(dirs.gitDir)
     }
     const watches: DirWatch[] = []
-    const entry: WatchedRepo = { name: repo, dirs, watches, subscribers: new Set([subscriber]) }
+    const entry: WatchedRepo = { name: repo, dirs, watches, subscribers: holders }
     try {
       for (const dir of watchDirs) {
         watches.push(this.opts.watch(dir, (filename) => this.onEvent(entry, dir, filename)))

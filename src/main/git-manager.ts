@@ -20,7 +20,8 @@ import {
   GIT_BACKGROUND_FETCH_MIN_AGE_MS,
   GIT_REPO_INFO_TTL_MS,
   GIT_NOT_REPO_TTL_MS,
-  GIT_WORKTREE_CACHE_TTL_MS
+  GIT_WORKTREE_CACHE_TTL_MS,
+  GIT_STATUS_TIMEOUT_MS
 } from './constants'
 import { GitQueue } from './git-queue'
 import type { GitRangeDirection } from '../shared/git-range'
@@ -397,8 +398,16 @@ function baseRefFiles(commonDir: string, base: string): string[] {
   if (/^[0-9a-f]{40}$/.test(base)) return []
   return [
     path.join(commonDir, 'refs', 'heads', base),
-    path.join(commonDir, 'refs', 'remotes', base)
+    path.join(commonDir, 'refs', 'remotes', base),
+    path.join(commonDir, 'refs', 'tags', base)
   ]
+}
+
+/** A base spelled as a plain ref name, whose files say when it moved. A base
+ *  read off a reflog can also be an expression (`main~1`, `v2^`, `HEAD@{2}`),
+ *  which no single file follows. */
+export function isPlainRefName(base: string): boolean {
+  return /^[A-Za-z0-9._/-]+$/.test(base) && !base.includes('..')
 }
 
 /**
@@ -414,7 +423,8 @@ export async function worktreeFingerprint(
   gitDir: string,
   commonDir: string,
   branch: string,
-  base: string | null
+  base: string | null,
+  resolveBase: (base: string) => Promise<string> = async () => ''
 ): Promise<string> {
   const read = (f: string): Promise<string> =>
     fs.promises.readFile(f, 'utf-8').then(
@@ -430,9 +440,13 @@ export async function worktreeFingerprint(
     ...(branch && branch !== 'HEAD' ? baseRefFiles(commonDir, branch).slice(0, 1) : []),
     ...(base ? baseRefFiles(commonDir, base) : [])
   ]
+  // An expression base costs one `rev-parse`, still far below the reading.
+  const resolved =
+    base && !isPlainRefName(base) ? resolveBase(base).catch(() => '-') : Promise.resolve('')
   const parts = await Promise.all([
     read(path.join(gitDir, 'HEAD')),
     ...refs.map(read),
+    resolved,
     stat(path.join(gitDir, 'logs', 'HEAD')),
     stat(path.join(commonDir, 'packed-refs')),
     stat(path.join(commonDir, 'FETCH_HEAD'))
@@ -445,7 +459,12 @@ export async function worktreeFingerprint(
  *  `index.lock` from under the user's own git command, and never writes the
  *  file the repo watcher would then report as a change of its own. */
 function readOnlyGit(cwd: string): ReturnType<typeof simpleGit> {
-  return simpleGit(cwd).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' })
+  // The idle timeout bounds a read that hangs (an unreachable network share):
+  // it holds one of the queue's few slots, so it must give the slot back.
+  return simpleGit(cwd, { timeout: { block: GIT_STATUS_TIMEOUT_MS } }).env({
+    ...process.env,
+    GIT_OPTIONAL_LOCKS: '0'
+  })
 }
 
 class GitManager {
@@ -465,11 +484,6 @@ class GitManager {
   /** The background fetch for many repos at once. The app-wide queue bounds it. */
   async fetchBatch(paths: string[]): Promise<void> {
     await Promise.all(paths.map((p) => this.fetch(p)))
-  }
-
-  /** Forget what is cached about a repo — its watcher saw it move. */
-  invalidate(cwd: string): void {
-    this.worktreeCache.delete(cwd)
   }
 
   async getDiff(
@@ -798,28 +812,43 @@ class GitManager {
     branch: string
   ): Promise<GitWorktreeInfo | undefined> {
     if (info.gitDir === info.commonDir) return undefined
+    const resolveBase = async (base: string): Promise<string> =>
+      (await git.raw(['rev-parse', '--verify', '--quiet', `${base}^{commit}`])).trim()
     const cached = this.worktreeCache.get(cwd)
     if (cached && cached.branch === branch && Date.now() - cached.at < GIT_WORKTREE_CACHE_TTL_MS) {
       const fingerprint = await worktreeFingerprint(
         info.gitDir,
         info.commonDir,
         branch,
-        cached.info?.base ?? null
+        cached.info?.base ?? null,
+        resolveBase
       )
       if (fingerprint === cached.fingerprint) return cached.info
     }
-    const worktree = await this.readWorktree(git, cwd, branch, info)
-    this.worktreeCache.set(cwd, {
+    // The fingerprint is taken before AND after the reading: a ref that moved
+    // while it ran leaves the two apart, and the reading is then not kept, so
+    // the next read computes again rather than trusting a stale answer.
+    const knownBase = cached?.branch === branch ? (cached.info?.base ?? null) : null
+    const before = await worktreeFingerprint(
+      info.gitDir,
+      info.commonDir,
       branch,
-      fingerprint: await worktreeFingerprint(
-        info.gitDir,
-        info.commonDir,
-        branch,
-        worktree?.base ?? null
-      ),
-      info: worktree,
-      at: Date.now()
-    })
+      knownBase,
+      resolveBase
+    )
+    let worktree: GitWorktreeInfo | undefined
+    try {
+      worktree = await this.readWorktree(git, cwd, branch, info)
+    } catch {
+      // A failed reading is not cached: the next status read tries again.
+      this.worktreeCache.delete(cwd)
+      return undefined
+    }
+    const base = worktree?.base ?? null
+    const after = await worktreeFingerprint(info.gitDir, info.commonDir, branch, base, resolveBase)
+    const moved = base === knownBase && before !== after
+    const fingerprint = moved ? `${after}|moved` : after
+    this.worktreeCache.set(cwd, { branch, fingerprint, info: worktree, at: Date.now() })
     return worktree
   }
 
@@ -911,7 +940,10 @@ class GitManager {
         createdAt,
         lastCommit
       }
-    } catch {
+    } catch (err) {
+      // The cached path wants to know a reading failed, so it does not keep
+      // "no worktree" as the answer for five minutes.
+      if (known) throw err
       return undefined
     }
   }
