@@ -16,6 +16,7 @@ import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
 
 export const ServerEvent = Schema.Union(
+  Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
   // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
