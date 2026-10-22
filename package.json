@@ -27,7 +27,7 @@
     "build:win": "npm run typecheck && electron-vite build && electron-builder --win",
     "build:mac": "npm run native:build && electron-vite build && electron-builder --mac",
     "build:mac:test": "bash scripts/build-mac-local-test.sh",
-    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:linux": "npm run native:build -- --linux && electron-vite build && electron-builder --linux",
     "release": "bash scripts/release.sh",
     "test": "node packages/ui/scripts/check-tokens.mjs && vitest run",
     "test:e2e": "node tests/e2e/run.mjs",

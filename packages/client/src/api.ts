@@ -23,6 +23,7 @@ import { type ViewsClient, viewsClient } from './views'
 import { type AgentToolsClient, agentToolsClient } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
 import { type PluginsClient, pluginsClient } from './plugins'
+import { filesClient, type FilesClient } from './files'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -53,6 +54,7 @@ export interface ApiClientOptions {
 }
 
 export interface ClaveApiClient {
+  readonly files: FilesClient
   readonly url: string
   // ── Lane A ──
   readonly sessions: SessionsClient
@@ -130,6 +132,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
   )
   return {
     url: options.url,
+    files: filesClient(call),
     sessions: sessionsClient(call, historyCall),
     clients: clientsClient(call),
     settings: settingsClient(call),

@@ -77,3 +77,5 @@ export {
   pluginHandlers,
   PluginsEventsLive
 } from './plugins'
+
+export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
