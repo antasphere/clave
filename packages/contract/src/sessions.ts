@@ -145,6 +145,8 @@ export type SessionWrite = typeof SessionWrite.Type
 export const PermissionModeOption = Schema.Struct({ id: Schema.String, label: Schema.String })
 export type PermissionModeOption = typeof PermissionModeOption.Type
 export const AgentQuestion = Schema.Struct({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: Schema.optional(Schema.NonEmptyString),
   question: Schema.String,
   header: Schema.optional(Schema.String),
   options: Schema.Array(
