@@ -15,7 +15,7 @@ import {
   readdirSync,
   copyFileSync
 } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
@@ -178,7 +178,7 @@ export function seedServerDataDir(from, to) {
  *  server starts on. */
 export async function startE2eServer(
   name,
-  { timeoutMs = 15_000, env = {}, args = [], seedFrom = null, keep = false } = {}
+  { timeoutMs = 15_000, env = {}, args = [], seedFrom = null, keep = false, port = 0 } = {}
 ) {
   const dataDir = fixturePath(`${name}-server`)
   // `keep`: an app RESTARTED on its data folder gets its server's data back
@@ -186,11 +186,18 @@ export async function startE2eServer(
   // way the in-process app finds its own; a fresh start wipes and seeds.
   if (!keep) {
     rmSync(dataDir, { recursive: true, force: true })
+    if (args.includes('--daemon')) mkdirSync(dataDir, { recursive: true, mode: 0o700 })
     seedServerDataDir(seedFrom, dataDir)
   }
-  const started = await startServerProcess({
+  // A personal fleet daemon has no desktop parent. The ordinary attached
+  // helper deliberately adds --parent, which daemon mode refuses. Run the
+  // built entry directly, retain its exact child handle, and register it in
+  // the same deadline cleanup as every other server this harness owns.
+  const start = args.includes('--daemon') ? startE2eDaemon : startServerProcess
+  const started = await start({
     repo: REPO,
     dataDir,
+    port,
     timeoutMs,
     env: { ...process.env, ...env },
     args
@@ -204,6 +211,70 @@ export async function startE2eServer(
   }
   liveServers.add(server)
   return server
+}
+
+async function startE2eDaemon({ repo, dataDir, port, timeoutMs, env, args }) {
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(repo, 'out/main/server-entry.js'),
+      '--data-dir',
+      dataDir,
+      '--port',
+      String(port),
+      '--terminal-process',
+      path.join(repo, 'out/main/terminal-process.js'),
+      '--node',
+      process.execPath,
+      ...args
+    ],
+    { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  const stop = async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return
+    await new Promise((resolve) => {
+      const hard = setTimeout(() => child.kill('SIGKILL'), 8000)
+      child.once('exit', () => {
+        clearTimeout(hard)
+        resolve()
+      })
+      child.kill('SIGTERM')
+    })
+  }
+  // Keep credentials out of diagnostics, including an unexpected stdout line.
+  let stderr = ''
+  child.stderr.on('data', (d) => {
+    stderr = (stderr + d).slice(-16_384)
+  })
+  child.stdout.resume()
+  try {
+    let spawnError = false
+    child.once('error', () => {
+      spawnError = true
+    })
+    const endpoint = await until(
+      () => {
+        if (spawnError || child.exitCode !== null || child.signalCode !== null)
+          throw new Error('Fleet daemon exited before readiness')
+        try {
+          const value = JSON.parse(readFileSync(path.join(dataDir, 'clave-server.json'), 'utf8'))
+          return value.pid === child.pid &&
+            typeof value.url === 'string' &&
+            typeof value.token === 'string'
+            ? value
+            : null
+        } catch {
+          return null
+        }
+      },
+      { tries: Math.ceil(timeoutMs / 100), gapMs: 100 }
+    )
+    if (!endpoint) throw new Error('Fleet daemon startup timed out')
+    return { ...endpoint, pid: child.pid, dataDir, stop, stderr: () => stderr }
+  } catch (error) {
+    await stop()
+    throw error
+  }
 }
 
 /** SIGTERM every server a spec left running (sync, for the end of the run). */

@@ -1,3 +1,4 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -262,7 +263,9 @@ export function SidebarFooter(): React.ReactElement {
   const provider = useSessionStore((s) =>
     s.focusedSessionId === null
       ? 'claude'
-      : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
+      : isRemoteKey(s.focusedSessionId)
+        ? null
+        : usageProviderForSession(s.sessions.find((session) => session.id === s.focusedSessionId))
   )
   // The foot follows the focused tab's ACCOUNT, not just its provider: a tab
   // on the second subscription reads that subscription's headroom. With no

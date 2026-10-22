@@ -78,7 +78,7 @@ function groupsByName(win) {
  *  the top level holds, which is what "the top of the list" is about. */
 function topLevel(win) {
   return win.evaluate(() =>
-    [...document.querySelectorAll('.group-scope, [class*="sidebar-item"]')]
+    [...document.querySelectorAll('.group-scope, [data-sidebar-item-type="session"]')]
       .filter((el) => el.classList.contains('group-scope') || !el.closest('.group-scope'))
       .map((el) =>
         el.classList.contains('group-scope')
@@ -90,7 +90,11 @@ function topLevel(win) {
                 .slice('New session in '.length)
                 .split(' — ')[0]
             }
-          : { kind: 'row', name: (el.textContent || '').trim() }
+          : {
+              kind: 'row',
+              id: el.getAttribute('data-sidebar-item-id'),
+              name: el.querySelector('[data-testid="session-tab-name"]')?.textContent.trim()
+            }
       )
   )
 }
@@ -165,6 +169,12 @@ export async function run(t) {
     // nested into Lane B, and not appended at the bottom of the list either.
     await selectInside('Lane B')
     const sizesBefore = await groupsByName(win)
+    const orderBefore = await topLevel(win)
+    t.equal(
+      'the Servers control remains outside the session/group sequence',
+      await win.getByLabel('Manage Clave servers', { exact: true }).count(),
+      1
+    )
     await win.click('.launcher-row button')
     await win.waitForTimeout(6000)
 
@@ -172,6 +182,11 @@ export async function run(t) {
     // append behaviour restored the loose row still exists, just at the bottom,
     // and a check that only asked whether it was in a group would stay green.
     const order = await topLevel(win)
+    const previousIds = new Set(
+      orderBefore.filter((item) => item.kind === 'row').map((item) => item.id)
+    )
+    const newRows = order.filter((item) => item.kind === 'row' && !previousIds.has(item.id))
+    t.equal('the launcher adds exactly one identified top-level session', newRows.length, 1)
     t.equal('the launcher’s session is a loose row, not in a group', order[0]?.kind, 'row')
     t.equal(
       'and it is the sidebar’s FIRST item, above both groups',
@@ -182,6 +197,11 @@ export async function run(t) {
       'with the two group cards below it',
       order.slice(1).filter((i) => i.kind === 'group').length === 2,
       order
+    )
+    t.equal(
+      'the complete sequence prepends the new session and preserves every prior row/group in order',
+      JSON.stringify(order),
+      JSON.stringify([...newRows, ...orderBefore])
     )
     const sizesAfter = await groupsByName(win)
     t.equal('so no group grew', sizesAfter['Lane B']?.count, sizesBefore['Lane B'].count)
