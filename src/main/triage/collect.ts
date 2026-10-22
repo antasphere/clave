@@ -36,6 +36,7 @@ import type {
   TriageWorkspace
 } from '../../shared/triage'
 import { TRIAGE_SNAPSHOT_VERSION } from '../../shared/triage'
+import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
 import {
   TRUSTED_LITERALS,
   createRedactor,
@@ -357,6 +358,16 @@ function projectAgents(state: unknown, redact: Redactor): TriageAgent[] {
 const difference = (a: Iterable<string>, b: Set<string>): string[] =>
   [...new Set(a)].filter((x) => !b.has(x)).sort()
 
+/** A session another fleet server owns (`clave-owner:session:<server>:<id>`):
+ *  a window may show it, but it is not this instance's to reconcile. */
+function ownedElsewhere(id: string): boolean {
+  try {
+    return parseSessionKey(id).serverId !== LOCAL_SERVER_ID
+  } catch {
+    return false
+  }
+}
+
 export function reconcile(input: {
   sessions: TriageSource<TriageSession[]>
   listings: TriageWindowListing[]
@@ -374,14 +385,18 @@ export function reconcile(input: {
   const records = input.records.status === 'ok' ? input.records.value.items : null
   const live = input.tmux.status === 'ok' ? input.tmux.value.live : null
 
+  // Only this instance's own sessions are compared: a remote fleet group's
+  // quick-launch terminal is shown here but run by its own server.
   const shown = new Set<string>()
   const tabWindow = new Map<string, number>()
   for (const l of okListings) {
     for (const s of l.value.sessions) {
+      if (ownedElsewhere(s.id)) continue
       shown.add(s.id)
       tabWindow.set(s.id, l.windowId)
     }
-    for (const g of l.value.groups) for (const id of g.terminalSessionIds) shown.add(id)
+    for (const g of l.value.groups)
+      for (const id of g.terminalSessionIds) if (!ownedElsewhere(id)) shown.add(id)
   }
   // A hidden session belongs to its owner (a group terminal, a session
   // view's server, a toolbar button): it is never a row of its own.
