@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Either, Schema } from 'effect'
 import { z } from 'zod'
 import {
+  SessionControlSchema as ZodSessionControl,
   SessionSchema as ZodSession,
   SessionEventSchema as ZodSessionEvent,
   SessionInputSchema as ZodSessionInput
@@ -10,6 +11,7 @@ import {
   Attachments,
   GetSessionHistory,
   Session,
+  SessionControl,
   SessionEvent,
   SessionInfo,
   SessionInput,
@@ -124,6 +126,30 @@ describe('the ported session model agrees with the zod one', () => {
       (m) => (m.fields.type as Schema.Literal<[string]>).literals[0]
     )
     expect([...ours].sort()).toEqual([...zodTypes].sort())
+  })
+  it.each(
+    [
+      { type: 'mcp_status' },
+      { type: 'mcp_toggle', server: 'github', enabled: false },
+      { type: 'mcp_reconnect', server: 'github' },
+      { type: 'mcp_authenticate', server: 'github' },
+      { type: 'mcp_clear_auth', server: 'github' },
+      { type: 'reload_plugins' }
+    ].map((request) => [JSON.stringify(request), request])
+  )('accepts control request %s', (_, request) => {
+    expect(ZodSessionControl.safeParse(request).success).toBe(true)
+    expect(decode(SessionControl, request)).toEqual(Either.right(request))
+  })
+  it.each(
+    [
+      { type: 'set_permission_mode', mode: 'x' },
+      { type: 'mcp_reconnect', server: '' },
+      { type: 'mcp_toggle', server: '', enabled: true },
+      { type: 'mcp_toggle', server: 'github' }
+    ].map((request) => [JSON.stringify(request), request])
+  )('refuses control request %s on both sides', (_, request) => {
+    expect(ZodSessionControl.safeParse(request).success).toBe(false)
+    expect(Either.isLeft(decode(SessionControl, request))).toBe(true)
   })
   it('refuses more than ten attachments, as the renderer does', () => {
     const one = {

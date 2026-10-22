@@ -4,6 +4,7 @@ import { linkedEditorBlocksClose } from './linked-document-store'
 import { adoptServerStartedTerminals, adoptServerStartedSessions } from '../lib/adopt-record'
 import { emitTabClosed } from '../lib/exchange-capture'
 import { clearSessionDraft } from '../views/draft-store'
+import { subagentPresentation } from '../lib/subagent-presentation'
 import { finishesTurn } from '../lib/tab-status'
 import { create } from 'zustand'
 import type { GitRangeDirection } from '../../../shared/git-range'
@@ -978,11 +979,8 @@ function pushSidebarSnapshot(stack: SidebarSnapshot[], snap: SidebarSnapshot): S
   return next
 }
 
-/** Flattened, workspace-filtered session id order — the one list behind
- *  Cmd+1..9 and Cmd+Shift+]/[ session cycling. Groups expand to their member
- *  sessions; anything outside the active workspace is skipped; file tabs are
- *  not sessions and never cycle. */
-export function getVisibleFlatOrder(
+/** Session cycling retains every real session, including folded descendants. */
+export function getSessionCycleOrder(
   state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
   activeId: string | null
 ): string[] {
@@ -998,6 +996,37 @@ export function getVisibleFlatOrder(
     if (session && inActiveWorkspace(session, activeId)) flatIds.push(id)
   }
   return flatIds
+}
+
+/** Digit shortcuts count represented rows. A mounted sidebar supplies its
+ * temporary search/filter order; a closed sidebar derives the default view. */
+export function getVisibleFlatOrder(
+  state: { sessions: Session[]; groups: SessionGroup[]; displayOrder: string[] },
+  activeId: string | null,
+  sidebarRowIds?: readonly string[]
+): string[] {
+  const hiddenIds = new Set<string>()
+  for (const group of state.groups) {
+    for (const terminal of group.terminals)
+      if (terminal.sessionId) hiddenIds.add(terminal.sessionId)
+  }
+  for (const session of state.sessions) {
+    if (session.view?.serverSessionId) hiddenIds.add(session.view.serverSessionId)
+  }
+  const sessions = state.sessions.filter(
+    (s) => inActiveWorkspace(s, activeId) && !hiddenIds.has(s.id)
+  )
+  const ids = new Set(sessions.map((s) => s.id))
+  const order = (
+    sidebarRowIds ??
+    getSessionCycleOrder(state, activeId).filter(
+      (id) => !state.groups.some((g) => g.collapsed && g.sessionIds.includes(id))
+    )
+  ).filter((id) => ids.has(id))
+  // Rendered search results are already presented, including direct child rows.
+  if (sidebarRowIds) return order
+  const presentation = subagentPresentation(sessions, new Set(order))
+  return order.filter((id) => !presentation.rootById.has(id))
 }
 
 export function getDisplayOrder(state: {

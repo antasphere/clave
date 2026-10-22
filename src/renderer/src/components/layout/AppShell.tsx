@@ -7,6 +7,7 @@ import {
   useSessionStore,
   isFileTabId,
   getVisibleFlatOrder,
+  getSessionCycleOrder,
   inActiveWorkspace,
   enableSidebarPersistence,
   setSidebarBase,
@@ -536,12 +537,20 @@ export function AppShell(): React.JSX.Element {
     }
     const selectByIndex = (index: number): void => {
       const state = useSessionStore.getState()
-      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
+      // The sidebar's narrowing is view-local. Read its rendered rows at the
+      // keypress instead of persisting search/group-filter state for shortcuts.
+      const sidebar = state.sidebarOpen ? document.querySelector('[data-sidebar-shell]') : null
+      const rowIds = sidebar
+        ? [...sidebar.querySelectorAll<HTMLElement>('[data-sidebar-item-type="session"]')]
+            .filter((row) => !row.closest('[data-group-collapsed="true"]'))
+            .map((row) => row.dataset.sidebarItemId!)
+        : undefined
+      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId, rowIds)
       if (index < ids.length) state.selectSession(ids[index], false)
     }
     const cycleSession = (direction: 1 | -1): void => {
       const state = useSessionStore.getState()
-      const ids = getVisibleFlatOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
+      const ids = getSessionCycleOrder(state, useWorkspaceStore.getState().activeWorkspaceId)
       if (ids.length === 0) return
       const current = ids.indexOf(state.focusedSessionId ?? '')
       const next =

@@ -39,6 +39,9 @@ import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
+import { McpPanel } from './McpPanel'
+import { PluginPanel } from './PluginPanel'
+import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
@@ -424,8 +427,9 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // Preparations the reader removed before main answered; their file is dropped on arrival.
   const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
-  // The /resume picker, open in the dock above the composer.
-  const [resuming, setResuming] = useState(false)
+  // The host's own panel, open in the dock above the composer: the /resume
+  // picker, or the /mcp and /plugin panels headless Claude has no menu for.
+  const [panel, setPanel] = useState<HostPanel | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
   const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
@@ -562,12 +566,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
-  // /resume is the host's, as in the TUI: it opens the picker rather than
-  // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude' && !isRemoteKey(session.id)
-  const openResume = (): void => {
+  // /resume, /mcp and /plugin are the local host's. Remote commands stay
+  // with their owning agent; the native panels use this desktop's APIs.
+  const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
+  const openPanel = (which: HostPanel): void => {
     setDraft('')
-    setResuming(true)
+    setPanel(which)
   }
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
@@ -576,7 +580,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const hasDraft = !!draft.trim() || attachments.length > 0
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
-    if (canResume && /^\/resume\s*$/.test(draft.trim())) return openResume()
+    const typedPanel = hostPanels ? hostPanelFor(draft) : null
+    if (typedPanel) return openPanel(typedPanel)
     const imageBytes = attachments
       .filter((file) => file.delivery === 'image')
       .reduce((sum, file) => sum + file.size, 0)
@@ -748,17 +753,18 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
     (command: CommandOption): void => {
-      if (canResume && command.name === 'resume') {
+      const picked = hostPanels ? hostPanelOf(command.name) : null
+      if (picked) {
         setSlashDismissed('')
         setDraft('')
-        setResuming(true)
+        setPanel(picked)
         return
       }
       setDraft(command.insert)
       setSlashDismissed(command.insert)
       textarea.current?.focus()
     },
-    [canResume, setDraft]
+    [hostPanels, setDraft]
   )
   /* A picked conversation opens as a chat tab of its own, on this tab's launch
      profile and beside it; a tab that has said nothing yet gives its place to
@@ -773,7 +779,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       dangerousMode: me?.dangerousMode ?? false,
       launchProfileId: me?.launchProfileId
     })
-    setResuming(false)
+    setPanel(null)
     if (!opened) return report('Could not resume that conversation')
     if (opened === session.id || conversation.entries.length > 0) return
     const current = useViewSessionStore.getState()
@@ -911,7 +917,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
-        {resuming && (
+        {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
             exclude={
@@ -920,13 +926,33 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             }
             onPick={(entry) => void resumeConversation(entry)}
             onClose={() => {
-              setResuming(false)
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'mcp' && (
+          <McpPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'plugin' && (
+          <PluginPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
               textarea.current?.focus()
             }}
           />
         )}
         <PromptDock
-          requests={resuming || isRemoteKey(session.id) ? [] : waitingOn}
+          // Remote requests stay with their owner. Locally, only /resume
+          // hides the dock; MCP and plugin panels keep pending prompts in sight.
+          requests={panel === 'resume' || isRemoteKey(session.id) ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

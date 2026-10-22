@@ -6,7 +6,7 @@ The Clave agent plugin, shipped from inside the app repo. [Open Plugin v1](https
 
 The `.clave` schema is mirrored in six places that do not import each other — five in the app's source, and `skills/create-workspace/SKILL.md`, which is the reference agents author `.clave` files from. Nothing in that chain fails loudly: a stale skill writes a field the app has renamed, and the feature simply does nothing.
 
-Before this folder existed the sixth mirror was a separate repo, `codika-io/clave-plugin`, and keeping it in step meant a second PR that had to land *before* the app's. Now all six move in one commit. The full rule, with the round-trip checks that go with it, is in the repo root's `CLAUDE.md` under **`.clave` schema sync rule** — read it there, not here, so there is only one copy.
+Before this folder existed the sixth mirror was a separate repo, `codika-io/clave-plugin`, and keeping it in step meant a second PR that had to land *before* the app's. Now all six move in one commit. The full rule, with the round-trip checks that go with it, is in the repo root's `AGENTS.md` under **`.clave` schema sync rule** — read it there, not here, so there is only one copy.
 
 The running app does **not** read this folder. It reads installed plugins from Claude Code's global `~/.claude/plugins/` cache, so the plugin is still independently installable and independently versioned; it just no longer lives anywhere else.
 
@@ -24,7 +24,7 @@ plugin/
 │       └── scripts/
 │           └── scan-transcripts.py  # Read-only transcript scanner (stdlib only)
 ├── README.md
-├── CLAUDE.md
+├── AGENTS.md
 └── LICENSE
 ```
 
@@ -64,7 +64,7 @@ From the repo root:
 npx plugins add .
 ```
 
-Skills surface as `/clave:<skill>` in any installed host. Note that this copies the working tree — in the Antasphere workspace, prefer `./antasphere plugins`, which installs from the committed tree instead.
+Skills surface as `/clave:<skill>` in any installed host. Note that this copies the working tree — in the Antasphere workspace, prefer `steward plugins`.
 
 ## Conventions
 

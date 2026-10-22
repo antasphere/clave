@@ -6,6 +6,7 @@ import {
   type SessionInput,
   type ModelOption,
   type CommandOption,
+  type SessionControl,
   type HistoryPage,
   type BackgroundTask
 } from '../../shared/session-model'
@@ -194,6 +195,13 @@ export class SessionManager {
   async commands(id: string): Promise<CommandOption[]> {
     const entry = this.require(id)
     return entry.adapter.commands ? entry.adapter.commands(entry.handle) : []
+  }
+  /** One control request to the session's provider, from the closed set a view may send. */
+  async control(id: string, request: SessionControl): Promise<Record<string, unknown>> {
+    const entry = this.require(id)
+    return entry.adapter.control
+      ? entry.adapter.control(entry.handle, request)
+      : Promise.reject(new Error('This session does not take control requests'))
   }
 
   /** The page of the session's past that ends at `before` (its end when

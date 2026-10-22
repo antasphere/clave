@@ -11,9 +11,11 @@ import {
   inActiveWorkspace,
   type GroupTerminalColor
 } from '../../store/session-store'
+import { subagentPresentation } from '../../lib/subagent-presentation'
 import { resolveGroupLaunchCwd } from '../../store/group-defaults'
 import { useWorkspaceStore, getWorkspaceById } from '../../store/workspace-store'
 import ColorPicker from '../ui/ColorPicker'
+import type { SessionMenuEvent } from '../session/SubagentMenu'
 import { SessionItem as BaseSessionItem } from '../session/SessionItem'
 import { FileTabItem } from '../session/FileTabItem'
 import { SessionGroupItem } from '../session/SessionGroupItem'
@@ -639,13 +641,44 @@ export function Sidebar(): React.JSX.Element {
   // The switcher's filter, applied last so everything above it still sees the whole
   // list. Grouped sessions only: filtering to a group means the loose sessions
   // and the file tabs step aside too.
-  const visibleItems = useMemo(() => {
+  const scopedItems = useMemo(() => {
     if (!displayItems) return null
     if (!activeGroupFilter) return displayItems
     return displayItems.filter(
       (item) => item.type === 'group' && item.groupId === activeGroupFilter
     )
   }, [displayItems, activeGroupFilter])
+
+  const subagents = useMemo(() => {
+    const reachable = new Set<string>()
+    for (const item of scopedItems ?? []) {
+      if (item.type === 'session') reachable.add(item.sessionId)
+      if (item.type === 'group') {
+        const group = groups.find((g) => g.id === item.groupId)
+        if (group && !group.collapsed) {
+          for (const id of group.sessionIds) reachable.add(id)
+        }
+      }
+    }
+    for (const id of linkedHiddenIds) reachable.delete(id)
+    return subagentPresentation(
+      sessions.filter((s) => inActiveWorkspace(s, activeWorkspaceId)),
+      reachable,
+      renamingId
+    )
+  }, [scopedItems, groups, linkedHiddenIds, sessions, activeWorkspaceId, renamingId])
+  const subagentRootsRef = useRef(subagents.rootById)
+  subagentRootsRef.current = subagents.rootById
+  const visibleItems = useMemo(
+    () =>
+      scopedItems?.filter(
+        (item) => item.type !== 'session' || !subagents.rootById.has(item.sessionId)
+      ) ?? null,
+    [scopedItems, subagents]
+  )
+  const representedSelection = (id: string): boolean =>
+    selectedSessionIds.includes(id) ||
+    (subagents.descendants.get(id)?.some((s) => selectedSessionIds.includes(s.id)) ?? false)
 
   // Flat ordered list of session/file tab IDs for range selection
   const flatSessionOrder = useMemo(() => {
@@ -659,11 +692,16 @@ export function Sidebar(): React.JSX.Element {
         order.push(item.fileTabId)
       } else {
         const group = groups.find((g) => g.id === item.groupId)
-        if (group) order.push(...group.sessionIds)
+        if (group && !group.collapsed)
+          order.push(
+            ...group.sessionIds.filter(
+              (id) => !subagents.rootById.has(id) && !linkedHiddenIds.has(id)
+            )
+          )
       }
     }
     return order
-  }, [filteredSessions, visibleItems, sessions, groups])
+  }, [filteredSessions, visibleItems, sessions, groups, subagents, linkedHiddenIds])
 
   // Live ref so row-facing handlers can read the current order without listing it
   // as a dependency. Keeping those handlers' identity stable lets the memoized row
@@ -1119,7 +1157,7 @@ export function Sidebar(): React.JSX.Element {
   }, [])
 
   const handleSessionContextMenu = useCallback(
-    (e: React.MouseEvent, sessionId: string) => {
+    (e: SessionMenuEvent, sessionId: string) => {
       e.preventDefault()
       const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
 
@@ -1442,7 +1480,8 @@ export function Sidebar(): React.JSX.Element {
 
       if (modifiers.shiftKey) {
         // Range select from anchor
-        const anchorId = selectionAnchorRef.current
+        const anchor = selectionAnchorRef.current
+        const anchorId = anchor ? (subagentRootsRef.current.get(anchor) ?? anchor) : null
         if (!anchorId) {
           selectSession(sessionId, false)
           selectionAnchorRef.current = sessionId
@@ -1630,7 +1669,18 @@ export function Sidebar(): React.JSX.Element {
                         <SessionItem
                           key={session.id}
                           session={session}
-                          isSelected={selectedSessionIds.includes(session.id)}
+                          isSelected={representedSelection(session.id)}
+                          subagents={subagents.descendants.get(session.id)}
+                          onSubagentContextMenu={handleSessionContextMenu}
+                          selectedIds={
+                            subagents.descendants.has(session.id) ? selectedSessionIds : undefined
+                          }
+                          focusedId={
+                            subagents.descendants.has(session.id) ? focusedSessionId : undefined
+                          }
+                          onSelectSubagent={(id) =>
+                            handleSessionClick(id, { metaKey: false, shiftKey: false })
+                          }
                           onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
                           onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
                           forceEditing={renamingId === session.id}
@@ -1734,8 +1784,21 @@ export function Sidebar(): React.JSX.Element {
                             <DropGap active={gapBefore} />
                             <SessionItem
                               session={session}
-                              isSelected={selectedSessionIds.includes(session.id)}
-                              dimmed={hasSelection && !selectedSessionIds.includes(session.id)}
+                              isSelected={representedSelection(session.id)}
+                              subagents={subagents.descendants.get(session.id)}
+                              onSubagentContextMenu={handleSessionContextMenu}
+                              selectedIds={
+                                subagents.descendants.has(session.id)
+                                  ? selectedSessionIds
+                                  : undefined
+                              }
+                              focusedId={
+                                subagents.descendants.has(session.id) ? focusedSessionId : undefined
+                              }
+                              onSelectSubagent={(id) =>
+                                handleSessionClick(id, { metaKey: false, shiftKey: false })
+                              }
+                              dimmed={hasSelection && !representedSelection(session.id)}
                               onClick={(modifiers) => handleSessionClick(session.id, modifiers)}
                               onContextMenu={(e) => handleSessionContextMenu(e, session.id)}
                               forceEditing={renamingId === session.id}
@@ -1763,7 +1826,8 @@ export function Sidebar(): React.JSX.Element {
                           group.sessionIds.length > 0 &&
                           group.sessionIds.every((id) => selectedSessionIds.includes(id))
                         const groupColorHex = resolveColorHex(group.color)
-                        const railEmpty = group.sessionIds.length === 0
+                        const rowIds = group.sessionIds.filter((id) => !subagents.rootById.has(id))
+                        const railEmpty = rowIds.length === 0
                         return (
                           <div key={group.id}>
                             <DropGap active={gapBefore} />
@@ -1860,9 +1924,9 @@ export function Sidebar(): React.JSX.Element {
                                     // reads this to ignore them (use-sidebar-dnd).
                                     data-group-collapsed={group.collapsed ? 'true' : undefined}
                                   >
-                                    {group.sessionIds.map((sid, sIdx) => {
-                                      const prevSid = sIdx > 0 ? group.sessionIds[sIdx - 1] : null
-                                      const isLastInGroup = sIdx === group.sessionIds.length - 1
+                                    {rowIds.map((sid, sIdx) => {
+                                      const prevSid = sIdx > 0 ? rowIds[sIdx - 1] : null
+                                      const isLastInGroup = sIdx === rowIds.length - 1
                                       const childGapBefore =
                                         isDragging &&
                                         shouldShowGapBefore(dropIndicator, sid, prevSid)
@@ -1915,10 +1979,27 @@ export function Sidebar(): React.JSX.Element {
                                           <DropGap active={childGapBefore} />
                                           <SessionItem
                                             session={session}
-                                            isSelected={selectedSessionIds.includes(session.id)}
+                                            isSelected={representedSelection(session.id)}
+                                            subagents={subagents.descendants.get(session.id)}
+                                            onSubagentContextMenu={handleSessionContextMenu}
+                                            selectedIds={
+                                              subagents.descendants.has(session.id)
+                                                ? selectedSessionIds
+                                                : undefined
+                                            }
+                                            focusedId={
+                                              subagents.descendants.has(session.id)
+                                                ? focusedSessionId
+                                                : undefined
+                                            }
+                                            onSelectSubagent={(id) =>
+                                              handleSessionClick(id, {
+                                                metaKey: false,
+                                                shiftKey: false
+                                              })
+                                            }
                                             dimmed={
-                                              hasSelection &&
-                                              !selectedSessionIds.includes(session.id)
+                                              hasSelection && !representedSelection(session.id)
                                             }
                                             onClick={(modifiers) =>
                                               handleSessionClick(session.id, modifiers)
@@ -1963,7 +2044,9 @@ export function Sidebar(): React.JSX.Element {
                                         data-sidebar-drop-zone="group-end"
                                         data-group-id={group.id}
                                       >
-                                        No sessions
+                                        {group.sessionIds.length
+                                          ? 'Subagents shown with their parent'
+                                          : 'No sessions'}
                                       </div>
                                     )}
                                     {/* The foot of the rail: while dragging, the

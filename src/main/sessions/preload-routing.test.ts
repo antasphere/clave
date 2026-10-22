@@ -164,6 +164,7 @@ beforeEach(async () => {
     setView: vi.fn(async (id: string) => ({ id, via: 'server' })),
     models: vi.fn(async () => [{ id: 'm' }]),
     commands: vi.fn(async () => [{ name: 'c' }]),
+    control: vi.fn(async () => ({ mcpServers: [] })),
     capabilities: vi.fn(async () => ({ images: true })),
     history: vi.fn(async () => ({ items: [], via: 'server' })),
     start: vi.fn(async () => ({ id: 'new', via: 'server' })),
@@ -244,6 +245,7 @@ describe('the preload routes the other session calls', () => {
     await api.sessionsSetView('s1', 'chat')
     await api.sessionsModels('s1')
     await api.sessionsCommands('s1')
+    await api.sessionsControl('s1', { type: 'mcp_status' })
     await api.sessionsCapabilities('s1')
     await api.sessionsHistory('s1', 40, 20)
     await api.spawnSession('/repo', spawnOptions)
@@ -257,6 +259,7 @@ describe('the preload routes the other session calls', () => {
       ['sessions:set-view', 's1', 'chat'],
       ['sessions:models', 's1'],
       ['sessions:commands', 's1'],
+      ['sessions:control', 's1', { type: 'mcp_status' }],
       ['sessions:capabilities', 's1'],
       ['sessions:history', 's1', 40, 20],
       ['pty:spawn', '/repo', spawnOptions],
@@ -272,6 +275,7 @@ describe('the preload routes the other session calls', () => {
     expect(await api.sessionsSetView('s1', 'chat')).toEqual({ id: 's1', via: 'server' })
     expect(await api.sessionsModels('s1')).toEqual([{ id: 'm' }])
     expect(await api.sessionsCommands('s1')).toEqual([{ name: 'c' }])
+    expect(await api.sessionsControl('s1', { type: 'mcp_status' })).toEqual({ mcpServers: [] })
     expect(await api.sessionsCapabilities('s1')).toEqual({ images: true })
     expect(await api.sessionsHistory('s1', 40, 20)).toEqual({ items: [], via: 'server' })
     expect(await api.spawnSession('/repo', spawnOptions)).toEqual({ id: 'new', via: 'server' })
@@ -284,6 +288,7 @@ describe('the preload routes the other session calls', () => {
     expect(mocks.sessions.setView).toHaveBeenCalledExactlyOnceWith('s1', 'chat')
     expect(mocks.sessions.models).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.commands).toHaveBeenCalledExactlyOnceWith('s1')
+    expect(mocks.sessions.control).toHaveBeenCalledExactlyOnceWith('s1', { type: 'mcp_status' })
     expect(mocks.sessions.capabilities).toHaveBeenCalledExactlyOnceWith('s1')
     expect(mocks.sessions.history).toHaveBeenCalledExactlyOnceWith('s1', 40, 20)
     expect(mocks.sessions.start).toHaveBeenCalledExactlyOnceWith({

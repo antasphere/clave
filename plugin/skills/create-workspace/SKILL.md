@@ -456,7 +456,7 @@ This is a per-project `.clave` living at `clients/acme/acme-app/.clave/workspace
       "claudeMode": true,
       "dangerousMode": true,
       "rootSession": true,
-      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/CLAUDE.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
+      "prompt": "We're working on Acme. The project lives at @project_path and spans acme-app, acme-cli, acme-os, acme-website. When we start, read @project_path/acme-app/AGENTS.md first. You're at the workspace root (@root_path), so you have full access. Don't explore yet, just reply that you're ready and wait for my request."
     }
   ],
   "terminals": []

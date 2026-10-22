@@ -8,7 +8,8 @@ import {
   CommandLineIcon,
   PuzzlePieceIcon,
   CpuChipIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  MicrophoneIcon
 } from '@heroicons/react/24/outline'
 import { useUpdaterStore } from '../../store/updater-store'
 import { useSessionStore, type SettingsSection } from '../../store/session-store'
@@ -28,6 +29,7 @@ const GROUPS: { label: string; rows: Row[] }[] = [
     rows: [
       { id: 'general', label: 'General', icon: AdjustmentsHorizontalIcon },
       { id: 'appearance', label: 'Appearance', icon: SwatchIcon },
+      { id: 'audio', label: 'Audio', icon: MicrophoneIcon },
       { id: 'keymaps', label: 'Keymaps', icon: CommandLineIcon }
     ]
   },

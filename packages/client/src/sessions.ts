@@ -16,6 +16,7 @@ import {
   type RestartedSession,
   type Session,
   type SessionCapabilities,
+  type SessionControl,
   type SessionInfo,
   type SessionPage,
   type SessionRecordFields,
@@ -43,6 +44,8 @@ export interface SessionsClient {
   readonly setView: (id: string, viewId: string | null) => Promise<Session>
   readonly models: (id: string) => Promise<ReadonlyArray<ModelOption>>
   readonly commands: (id: string) => Promise<ReadonlyArray<CommandOption>>
+  /** One control request to the session's provider, answered as it answered. */
+  readonly control: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   readonly capabilities: (id: string) => Promise<SessionCapabilities>
   readonly history: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
   // ── Wave 4, lane C: the session records, and a session's release (PRDCT-3376) ──
@@ -115,6 +118,10 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
   setView: (id, viewId) => call((c) => c.sessions.setView({ payload: { id, viewId } })),
   models: (id) => call((c) => c.sessions.models({ payload: { id } })),
   commands: (id) => call((c) => c.sessions.commands({ payload: { id } })),
+  control: (id, request) =>
+    call((c) => c.sessions.control({ payload: { id, request } })) as Promise<
+      Record<string, unknown>
+    >,
   capabilities: (id) => call((c) => c.sessions.capabilities({ payload: { id } })),
   history: (id, before, limit) =>
     historyCall((c) =>

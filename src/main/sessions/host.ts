@@ -175,6 +175,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
     },
     models: (id) => manager.models(id),
     commands: (id) => manager.commands(id),
+    control: (id, request) => manager.control(id, request),
     capabilities: (id): SessionCapabilities => manager.capabilities(id),
     history: (id, before, limit): HistoryPage => manager.history(id, before, limit),
     // ── Wave 4, lane C: the session records (PRDCT-3376) ──
