@@ -294,6 +294,7 @@ export async function run(t) {
   let tokenOutputCapture
   let remoteServer
   let remoteBefore
+  let focusedRemoteKey
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
       const root = fixturePath(`triage-${runId}`)
@@ -490,9 +491,11 @@ export async function run(t) {
     if (serverMode() !== 'attached') {
       const client = { win: second, owners: [] }
       await connectMac(client, [remoteServer])
-      const remoteId = owned('session', client.owners[0].id, f.remoteSessionId)
-      await second.locator(`[data-sidebar-item-id="${remoteId}"]`).click()
-      await second.locator(`[data-session-id="${remoteId}"] [data-testid="chat-view"]`).waitFor()
+      focusedRemoteKey = owned('session', client.owners[0].id, f.remoteSessionId)
+      await second.locator(`[data-sidebar-item-id="${focusedRemoteKey}"]`).click()
+      await second
+        .locator(`[data-session-id="${focusedRemoteKey}"] [data-testid="chat-view"]`)
+        .waitFor()
       remoteBefore = await request(remoteServer, '/sessions')
       assert.ok(remoteBefore.length > 0, 'the focused remote fixture contains real sessions')
     }
@@ -514,8 +517,7 @@ export async function run(t) {
       'native entry captures the exact instance across windows and cancel preserves all sessions',
       true
     )
-    await second.keyboard.press('Meta+Shift+/')
-    await second.getByRole('button', { name: 'Debug Clave…', exact: true }).click()
+    await openTriage(app, second)
     await dialog.waitFor()
     await choose(second, 'Triage provider', 'Codex')
     await choose(second, 'Triage launch profile', 'codex recording (chat)')
@@ -547,6 +549,12 @@ export async function run(t) {
         true
       )
     } else {
+      assert.ok(
+        await second
+          .locator(`[data-session-id="${focusedRemoteKey}"] [data-testid="chat-view"]`)
+          .isVisible(),
+        'the real remote chat is still displayed immediately before local triage launch'
+      )
       const callsBefore = records(root, 'codex').filter((r) => r.kind === 'spawn').length
       const start = dialog.getByRole('button', { name: 'Start support conversation', exact: true })
       // Two events in one task exercise the controller guard before async preflight.
@@ -610,7 +618,9 @@ export async function run(t) {
         original
       )
       await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-      await openTriage(app, second)
+      await second.keyboard.press('Meta+Shift+/')
+      await second.getByRole('button', { name: 'Debug Clave…', exact: true }).click()
+      await dialog.waitFor()
       assert.equal(
         await dialog.getByRole('button', { name: 'Support tab created', exact: true }).isDisabled(),
         true
