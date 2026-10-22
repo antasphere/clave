@@ -1069,6 +1069,13 @@ export interface ElectronAPI extends FleetDesktopAPI {
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>
+  /** Watch the repos a panel shows (PRDCT-3775); resolves with the ones that
+   *  are watched — the rest are the panel's to poll. The set replaces the
+   *  subscriber's previous one. */
+  gitWatchRepos: (subscriberId: string, paths: string[]) => Promise<string[]>
+  gitUnwatchRepos: (subscriberId: string) => Promise<void>
+  /** A burst of changes in watched repos, one entry per repo that changed. */
+  onGitReposChanged: (callback: (repos: string[]) => void) => () => void
   discoverGitRepos: (
     cwd: string,
     force?: boolean

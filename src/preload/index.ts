@@ -2128,6 +2128,11 @@ const electronAPI = {
   getGitStatusBatch: (paths: string[]) => ipcRenderer.invoke('git:status-batch', paths),
   gitFetch: (cwd: string) => ipcRenderer.invoke('git:fetch', cwd),
   gitFetchBatch: (paths: string[]) => ipcRenderer.invoke('git:fetch-batch', paths),
+  gitWatchRepos: (subscriberId: string, paths: string[]) =>
+    ipcRenderer.invoke('git:watch-repos', subscriberId, paths),
+  gitUnwatchRepos: (subscriberId: string) => ipcRenderer.invoke('git:unwatch-repos', subscriberId),
+  onGitReposChanged: (callback: (repos: string[]) => void) =>
+    createIpcListener<[string[]]>('git:repos-changed', callback),
   discoverGitRepos: (cwd: string, force?: boolean) =>
     ipcRenderer.invoke('git:discover-repos', cwd, force),
   gitStage: (cwd: string, files: string[]) => ipcRenderer.invoke('git:stage', cwd, files),
