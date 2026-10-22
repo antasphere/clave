@@ -729,6 +729,45 @@ describe('collectSnapshot', () => {
     ).toContainEqual([remote])
   })
 
+  // ── VA-13: the final pass keeps a fixed value only in its own field, by path ──
+
+  it('VA-13: a token equal to a fixed value is kept only in its own field, not wherever the value is trusted', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:5000',
+          token: 'in-process',
+          mode: 'in-process',
+          ok: true,
+          pid: 725
+        }),
+        // A free-form field only the final pass covers, equal to the token.
+        origin: { ...base.origin, instanceId: 'in-process' }
+      })
+    )
+    expect(s.server.mode).toBe('in-process')
+    expect(s.origin.instanceId).toBe('<redacted>')
+  })
+
+  it('VA-13: a typed field inside an array keeps its value when a token equals it', async () => {
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({
+          url: 'http://127.0.0.1:49457',
+          token: 'events',
+          mode: 'separate',
+          ok: true,
+          pid: 725,
+          serverPid: 1412
+        })
+      })
+    )
+    if (s.sessions.status !== 'ok' || s.records.status !== 'ok') throw new Error('sources')
+    expect(s.sessions.value.map((x) => x.transport)).toEqual(['pty', 'events'])
+    expect(s.records.value.items.find((r) => r.transport !== null)?.transport).toBe('events')
+  })
+
   // ── VA-14: fleet ownership is classified from the raw identity, before redaction ──
 
   const withRemoteGroup = (
