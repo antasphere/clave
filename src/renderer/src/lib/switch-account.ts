@@ -27,6 +27,7 @@ import {
   type PoolAccount
 } from './account-pool'
 import type { CodexAccount } from '../../../preload/index.d'
+import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
 /**
  * The pool at work (ADR 0002): which account a launch lands on, which one a
@@ -268,6 +269,10 @@ export async function restartSessionProcess(
   const session = store.sessions.find((s) => s.id === sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session' }
   store.setSessionRestarting(sessionId, true)
+  // Marked before the call: the server's `session.restarted` push for this
+  // very move can reach the window before the answer does, and only one of
+  // the two may remount the pane (`restart-ownership.ts`).
+  beginOwnRestart(sessionId)
   const result = await window.electronAPI
     .restartSession(sessionId, {
       ...options.overrides,
@@ -277,9 +282,12 @@ export async function restartSessionProcess(
       error: err instanceof Error ? err.message : String(err)
     }))
   if ('error' in result) {
+    abandonOwnRestart(sessionId)
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
+  // The push applied it already: the answer only reports.
+  if (!ownAnswerApplies(sessionId)) return { ok: true, resumed: result.resumed }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,

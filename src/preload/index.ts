@@ -2097,18 +2097,40 @@ const electronAPI = {
     async (api) => usageCatchUp(await api.settings.usage.codexSnapshot())
   ),
   // A session moved to another account: the same tab, its process restarted
-  // on the account with the conversation resumed (ADR 0002).
-  restartSession: (
-    id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-    }
-  ) => ipcRenderer.invoke('pty:restart', id, overrides),
+  // on the account with the conversation resumed (ADR 0002). Routed like
+  // every other session call: the restart is the server's `RestartSession`
+  // once the shell names an endpoint. Main's own PTY manager holds no spawn
+  // for a tab the separate server owns, so over IPC alone every switch on a
+  // packaged app (the Switch account menu, the automatic switch at a limit,
+  // the Play button) answered "cannot be restarted from here" and did
+  // nothing; the agent tools' `clave_switch_account` already went this way.
+  // The server publishes `session.restarted` for the move too; the window
+  // applies one or the other, never both (`lib/restart-ownership.ts`).
+  restartSession: viaServer<
+    [
+      string,
+      {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        /** Send the message the limit rejected again on the new account. */
+        resendRejected?: boolean
+      }
+    ],
+    (SessionInfo & { resumed: boolean }) | { error: string }
+  >({
+    ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
+    server: ({ api }, id, { resendRejected, ...account }) =>
+      api.sessions
+        .restart(
+          id,
+          // The wire's account carries a field only when it is set.
+          Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+          resendRejected === true
+        )
+        .then(loose<SessionInfo & { resumed: boolean }>)
+  }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),
     server: ({ api }, range) => api.settings.usage.readPi(range).then(loose<PiUsageTotals>)

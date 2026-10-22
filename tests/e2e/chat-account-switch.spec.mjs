@@ -1,8 +1,9 @@
 // Pinned to the in-process server (re-examined by wave 5, lane C,
-// PRDCT-3433): the window's restart of a tab is an IPC call main answers
-// from its own PTY manager (`pty:restart`), which cannot restart a session
-// the attached server holds; the spec also stubs that handler and main's
-// host directly. Not a known failure.
+// PRDCT-3433): the spec wraps main's session host and the shell's quota
+// reads directly, which only the in-process server consults. The restart
+// itself takes the server road in every mode since the fix of the
+// separate-server switch (account-switch-served.spec.mjs proves it there);
+// the hold below wraps that road and the IPC one. Not a known failure.
 // A live chat tab moved to another account by hand stays a live chat tab
 // (ADR 0002). On 2026-09-28 a Claude chat tab moved while idle came back as
 // "Session ended (exit 1)" with a disabled composer: the old process's exit —
@@ -227,17 +228,23 @@ export async function run(t) {
           held.push(flush)
           return true
         }
-        const handlers = ipcMain._invokeHandlers
-        const restart = handlers.get('pty:restart')
-        handlers.set('pty:restart', async (...a) => {
-          restarting = true
-          try {
-            return await restart(...a)
-          } finally {
-            restarting = false
-            setTimeout(() => held.splice(0).forEach((flush) => flush()), 50)
+        const around = (fn) =>
+          async function (...a) {
+            restarting = true
+            try {
+              return await fn.apply(this, a)
+            } finally {
+              restarting = false
+              setTimeout(() => held.splice(0).forEach((flush) => flush()), 50)
+            }
           }
-        })
+        // The window's restart reaches the server's `RestartSession`, which
+        // restarts through the host; `pty:restart` is the IPC road a window
+        // without a server still takes. Both are held the same way.
+        const host = globalThis.__claveE2E.sessionHost
+        host.restart = around(host.restart)
+        const handlers = ipcMain._invokeHandlers
+        handlers.set('pty:restart', around(handlers.get('pty:restart')))
       },
       { id }
     )

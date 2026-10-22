@@ -1,9 +1,9 @@
 // Pinned to the in-process server (re-examined by wave 5, lane C,
-// PRDCT-3433): the automatic switch and the Play button restart the tab
-// through `pty:restart`, which main answers from its own PTY manager and
-// cannot restart a session the attached server holds; the spec also reads
-// the session record from the app's folder, which attached is the
-// server's. One of its checks is a known failure of dev (known-failures.json).
+// PRDCT-3433): the spec reads the session record from the app's folder,
+// which attached is the server's, and stubs the quota reads in the shell
+// (below). The restart itself takes the server road in every mode since the
+// fix of the separate-server switch (account-switch-served.spec.mjs proves
+// it there). One of its checks is a known failure of dev (known-failures.json).
 // A chat tab whose account runs out of credits comes back on the next
 // account (ADR 0002). The CLI in `-p` mode does not report that limit as a
 // rate-limit event: it writes a synthetic reply in the model's place ("You're

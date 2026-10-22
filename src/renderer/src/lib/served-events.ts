@@ -13,6 +13,7 @@ import { useSessionStore } from '../store/session-store'
 import { usePinnedStore } from '../store/pinned-store'
 import { useWorkspaceStore } from '../store/workspace-store'
 import { adoptServerStartedTerminals } from './adopt-record'
+import { servedRestartApplies } from './restart-ownership'
 
 let started = false
 
@@ -59,6 +60,9 @@ export function initServedToolsEvents(): void {
     const store = useSessionStore.getState()
     const session = store.sessions.find((s) => s.id === id)
     if (!session) return
+    // The window's own switch comes back this way too, beside the answer
+    // of its call: whichever arrives second steps aside (`restart-ownership.ts`).
+    if (!servedRestartApplies(id)) return
     store.applySessionRestart(id, {
       ...(account.codexAccountId !== undefined
         ? { codexAccountId: account.codexAccountId, codexAccountLabel: account.codexAccountLabel }
