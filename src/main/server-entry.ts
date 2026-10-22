@@ -5,6 +5,11 @@
  *       [--terminal-process <bundle> [--node <exec>]] | [--terminals <host:port>]
  *       [--parent <pid>]
  *
+ * `--daemon [--host <Tailscale-IP-or-hostname>] [--token-file <private-file>]`
+ * selects independent server ownership, stable identity/credentials and a
+ * shared sidebar. It forbids --parent and never prints its token. See
+ * docs/server-daemon.md. Without it the app-child protocol below is retained.
+ *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
  * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
@@ -42,20 +47,28 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemon-config'
+import { standaloneSidebar } from './server/standalone-sidebar'
+import { serverOwnedSessionHost } from './sessions/server-owned-host'
+import { requestAwareSessionHost } from './sessions/request-aware-host'
+import { startStandaloneMcp } from './mcp/standalone-mcp'
+import { executeSecretAction } from './secret-actions'
 import {
   startEmbedded,
   Terminals,
   grpcTerminals,
   type TerminalsService,
   WorkspaceFiles,
-  fileWorkspaceFilesStorage
+  fileWorkspaceFilesStorage,
+  createServerFiles,
+  PendingRequests
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
-import { ptyManager, loginShellEnvAsync } from './pty-manager'
+import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
@@ -99,6 +112,7 @@ async function main(): Promise<void> {
   // The terminal process this entry starts is told it again, explicitly.
   delete process.env[RUN_AS_NODE_ENV]
 
+  const config = daemonConfig(process.argv.slice(2))
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -115,6 +129,10 @@ async function main(): Promise<void> {
     process.stderr.write(`clave-server: --parent must be a pid, got ${parentRaw}\n`)
     process.exit(2)
   }
+
+  const releaseLease = config.daemon ? acquireDaemonLease(dataDir) : undefined
+  if (releaseLease) process.once('exit', releaseLease)
+  const identity = config.daemon ? daemonIdentity(dataDir, arg('token-file')) : undefined
 
   const log = (line: string): void => {
     process.stderr.write(`clave-server: ${line}\n`)
@@ -212,7 +230,26 @@ async function main(): Promise<void> {
   installE2eHooks({ settings: standalone.settings })
   // ── Lane C: the sessions, the app's own host in this process (wave 3) ──
   // and, wave 4, the agent tokens the server resolves for the attached shell.
-  const { host: sessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const { host: originalSessions, agentTools } = standaloneSessionHost({ dataDir, terminals })
+  const sidebar = config.daemon ? standaloneSidebar(dataDir) : undefined
+  const owned = sidebar
+    ? serverOwnedSessionHost({
+        host: originalSessions,
+        sidebar,
+        dataDir,
+        subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+        ready: (id) => sessionManager.ready(id)
+      })
+    : undefined
+  const requests = new PendingRequests()
+  const requestHost = requestAwareSessionHost({
+    host: owned?.host ?? originalSessions,
+    requests,
+    subscribeAll: (listener) => sessionManager.subscribeAll(listener),
+    subscribeRemoved: (listener) => sessionManager.subscribeRemoved(listener)
+  })
+  const sessions = requestHost.host
+  installE2eHooks({ sessionHost: sessions })
   // ── Wave 5, lane C: the plugins (PRDCT-3433) ──
   // The installed plugins, their host and the view leases are this server's:
   // the store under `--data-dir/clave-plugins` in test mode (`~/.clave`
@@ -231,25 +268,50 @@ async function main(): Promise<void> {
   const server = await startEmbedded({
     ports: {
       sessions,
+      requests,
+      files: createServerFiles({ attachmentsRoot: path.join(dataDir, 'session-attachments') }),
       terminals,
+      ...(sidebar && { sidebar }),
       settings: standalone.settings,
       // The workspace files (wave 3, lane A): the `.clave` files of this
       // machine, their trust store under `--data-dir`; a review a read needs
       // is published to the clients and the read waits for the answer.
       workspaceFiles: new WorkspaceFiles(fileWorkspaceFilesStorage(dataDir)),
       // ── Wave 4, lane C: the agent tokens, resolved for the attached shell ──
-      agentTools,
+      // A desktop may still announce its own endpoint for old servers. This
+      // server owns its endpoint and never points local providers at a Mac.
+      agentTools: config.daemon
+        ? { announce: () => {}, resolve: (token) => agentTools.resolve(token) }
+        : agentTools,
       // ── Wave 5, lane C: the plugins ──
       plugins
     },
     port,
-    ...(token !== undefined && { token }),
+    host: config.host,
+    ...(identity ?? (token !== undefined ? { token } : {})),
     // ── Lane C of wave 3: the end-to-end fixture route, under the app's own
     // test flag (`--test-no-activate`, passed by the harness and never by
     // the packaged app), so the suite reaches this process as it reaches
     // the app's; off, the route does not exist.
     testFixtures: TEST_NO_ACTIVATE
   })
+
+  const mcp = config.daemon
+    ? await startStandaloneMcp({
+        sessions,
+        agentTools,
+        requests,
+        executeSecret: async (action, value) => {
+          const outcome = await executeSecretAction(
+            action,
+            value,
+            action.type === 'run' ? { shell: getUserShell(), env: getLoginShellEnv() } : undefined
+          )
+          if (!outcome.ok) throw new Error('Secret action failed.')
+        }
+      })
+    : undefined
+  if (mcp) agentTools.announce(mcp.url)
 
   // A session's title, plan, clear and state go out as server events to
   // every attached client (`server/session-events.ts`), as the in-process
@@ -269,6 +331,9 @@ async function main(): Promise<void> {
         {
           url: server.url,
           token: server.token,
+          serverId: server.serverId,
+          ...(mcp && { agentToolsUrl: mcp.url }),
+          daemon: config.daemon,
           mode: 'standalone',
           ok: true,
           pid: process.pid,
@@ -287,7 +352,13 @@ async function main(): Promise<void> {
   }
   writeDiscovery()
 
-  process.stdout.write(JSON.stringify({ url: server.url, token: server.token }) + '\n')
+  process.stdout.write(
+    JSON.stringify(
+      config.daemon
+        ? { url: server.url, serverId: server.serverId }
+        : { url: server.url, token: server.token }
+    ) + '\n'
+  )
   process.stderr.write(
     `clave-server: listening on ${server.url} (data in ${dataDir}` +
       (terminalState
@@ -317,6 +388,9 @@ async function main(): Promise<void> {
     // The login's listener and timers go with the server; the session on
     // disk is kept as it is for the next start.
     standalone.shutdown()
+    requestHost.close()
+    requests.close()
+    owned?.close()
     stopStates()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──
@@ -335,6 +409,7 @@ async function main(): Promise<void> {
       /* nothing to remove */
     }
     stopping_sessions
+      .then(() => mcp?.close())
       .then(() => server.stop())
       .then(() => closeTerminals())
       .then(

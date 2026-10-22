@@ -22,7 +22,7 @@ const sourceSchema = z.union([
 ])
 const requestSchema = z
   .object({
-    type: z.enum(['prepare', 'pick', 'preview', 'open']),
+    type: z.enum(['prepare', 'pick', 'preview', 'open', 'upload-source']),
     sessionId: z
       .string()
       .regex(/^[a-zA-Z0-9_-]{1,128}$/)
@@ -50,6 +50,11 @@ export function registerAttachmentHandlers(): void {
         properties: ['openFile', 'multiSelections']
       })
       return result.canceled ? [] : result.filePaths
+    }
+    if (value.type === 'upload-source') {
+      if (!value.source) throw new Error('Missing attachment source.')
+      const { localAttachmentUpload } = await import('../server/file-transfers')
+      return localAttachmentUpload(value.source)
     }
     if (value.type === 'prepare') {
       if (!value.sessionId || !value.source) throw new Error('Missing attachment source.')

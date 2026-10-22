@@ -44,6 +44,7 @@ export interface SessionIPCEvents {
   [channel: `sessions:exit:${string}`]: number
 }
 
+import type { FleetDesktopAPI } from './fleet-types'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type {
@@ -617,7 +618,7 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
-export interface ElectronAPI {
+export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
    *  it where the sessions would be (ServerNotice). */

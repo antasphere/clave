@@ -77,3 +77,7 @@ export {
   pluginHandlers,
   PluginsEventsLive
 } from './plugins'
+
+export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
+export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
+export { RequestsPort, type RequestsService } from './requests/port'

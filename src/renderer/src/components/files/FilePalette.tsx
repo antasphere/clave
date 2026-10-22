@@ -1,3 +1,5 @@
+import { isRemoteKey, ownerOf } from '../../lib/fleet-identity'
+import { resourceKey } from '@clave/contract/fleet'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSessionStore } from '../../store/session-store'
@@ -75,7 +77,11 @@ export function FilePalette(): React.JSX.Element {
   const setPreviewFile = useSessionStore((s) => s.setPreviewFile)
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
-  const cwd = focusedSession?.cwd ?? null
+  const rawCwd = focusedSession?.cwd ?? null
+  const cwd =
+    rawCwd && isRemoteKey(focusedSessionId)
+      ? resourceKey('file', ownerOf(focusedSessionId), rawCwd)
+      : rawCwd
 
   const { results, query, setQuery, loading, truncated } = useFileSearch(cwd, isOpen)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -125,11 +131,11 @@ export function FilePalette(): React.JSX.Element {
   const handleInsert = useCallback(
     (filePath: string, absolute: boolean) => {
       if (!focusedSessionId || !cwd) return
-      const pathToInsert = absolute ? `${cwd}/${filePath}` : `./${filePath}`
+      const pathToInsert = absolute ? `${rawCwd}/${filePath}` : `./${filePath}`
       insertPath(focusedSessionId, pathToInsert)
       close()
     },
-    [focusedSessionId, cwd, close]
+    [focusedSessionId, cwd, rawCwd, close]
   )
 
   const handleCopyPath = useCallback(
@@ -142,9 +148,9 @@ export function FilePalette(): React.JSX.Element {
 
   const handlePreview = useCallback(
     (filePath: string) => {
-      setPreviewFile(filePath, 'palette')
+      setPreviewFile(filePath, 'palette', cwd)
     },
-    [setPreviewFile]
+    [setPreviewFile, cwd]
   )
 
   const handleKeyDown = useCallback(
