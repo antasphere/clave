@@ -1,3 +1,6 @@
+import { isRemoteKey } from '../lib/fleet-identity'
+import { reportFleetError } from '../store/fleet-store'
+import { FleetResume } from '../components/fleet/FleetControls'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
@@ -221,6 +224,10 @@ function RegisteredSessionView({
     try {
       await window.electronAPI.killSession(sessionId)
     } catch {
+      if (isRemoteKey(sessionId)) {
+        reportFleetError(new Error('close failed'))
+        return
+      }
       // The provider may already have exited, as in the terminal header.
     }
     useViewSessionStore.getState().removeSession(sessionId)
@@ -257,6 +264,7 @@ function RegisteredSessionView({
           <AccountProposal sessionId={sessionId} />
         </div>
         <div className="pane-header-actions">
+          <FleetResume sessionId={sessionId} />
           <LinkedDocumentReopen sessionId={sessionId} />
           <BackgroundTasksChip tasks={backgroundTasks} />
           <span className="chat-state" data-state={meta.state}>

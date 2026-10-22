@@ -10,6 +10,9 @@
  * composition root (`runtime.ts`) provides every port from this object.
  */
 import { Layer } from 'effect'
+import { RequestsPort, type RequestsService } from './requests/port'
+import { FilesPort, type FilesService } from './files/port'
+export { FilesPort, type FilesService } from './files/port'
 import { SessionHost, type SessionHostService } from './sessions/port'
 import { Terminals, type TerminalsService } from './terminals/port'
 
@@ -36,6 +39,8 @@ import { Plugins, type PluginsService } from './plugins/port'
 export { Plugins, type PluginsService } from './plugins/port'
 
 export interface ServerPorts {
+  readonly requests?: RequestsService
+  readonly files?: FilesService
   /** Lane A: the sessions. `SessionHost.none` when absent. */
   readonly sessions?: SessionHostService
   /** Lane D: the settings. `SettingsSource.none` when absent. */
@@ -62,6 +67,8 @@ export interface ServerPorts {
 export const PortsLive = (
   ports: ServerPorts
 ): Layer.Layer<
+  | FilesPort
+  | RequestsPort
   | SessionHost
   | SettingsSource
   | Terminals
@@ -72,6 +79,8 @@ export const PortsLive = (
   | Plugins
 > =>
   Layer.mergeAll(
+    RequestsPort.layer(ports.requests ?? RequestsPort.none),
+    FilesPort.layer(ports.files ?? FilesPort.none),
     SessionHost.layer(ports.sessions ?? SessionHost.none),
     SettingsSource.layer(ports.settings ?? SettingsSource.none),
     Terminals.layer(ports.terminals ?? Terminals.none),
