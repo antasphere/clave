@@ -36,7 +36,7 @@ import type {
   TriageWorkspace
 } from '../../shared/triage'
 import { TRIAGE_SNAPSHOT_VERSION } from '../../shared/triage'
-import { LOCAL_SERVER_ID, parseSessionKey } from '@clave/contract/fleet'
+import { LOCAL_SERVER_ID, parseResourceKey, parseSessionKey } from '@clave/contract/fleet'
 import {
   TRUSTED_LITERALS,
   createRedactor,
@@ -363,6 +363,15 @@ const difference = (a: Iterable<string>, b: Set<string>): string[] =>
 function ownedElsewhere(id: string): boolean {
   try {
     return parseSessionKey(id).serverId !== LOCAL_SERVER_ID
+  } catch {
+    return false
+  }
+}
+
+/** A group another fleet server owns. */
+function groupOwnedElsewhere(id: string): boolean {
+  try {
+    return parseResourceKey('group', id).serverId !== LOCAL_SERVER_ID
   } catch {
     return false
   }
@@ -844,6 +853,21 @@ export async function collectWithRedactor(
   if (listingsR.status === 'ok')
     for (const l of windowListings)
       if (l.status !== 'ok') warnings.push(`Window ${l.windowId} did not list its tabs: ${l.error}`)
+  // The inventory is this instance's own: what a window shows of a remote
+  // fleet server is said to be outside it, never counted as complete.
+  let remoteGroups = 0
+  let remoteTerminals = 0
+  for (const l of windowListings) {
+    if (l.status !== 'ok') continue
+    for (const g of l.value.groups) {
+      if (groupOwnedElsewhere(g.id)) remoteGroups++
+      remoteTerminals += g.terminalSessionIds.filter(ownedElsewhere).length
+    }
+  }
+  if (remoteGroups || remoteTerminals)
+    warnings.push(
+      `The windows show ${remoteGroups} group(s) and ${remoteTerminals} quick-launch terminal(s) of remote fleet servers: they are listed as the windows report them, but those servers are not inventoried or reconciled here.`
+    )
   if (truncated.length) warnings.push(`Cut at their limit: ${truncated.join(', ')}.`)
   // The last pass: every known secret replaced in every string, whatever
   // field it reached (a window key, a path, a label), so a field the

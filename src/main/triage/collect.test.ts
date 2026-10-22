@@ -717,6 +717,11 @@ describe('collectSnapshot', () => {
     )
     expect(s.reconciliation.uiOnly).toEqual([])
     expect(s.reconciliation.complete).toBe(true)
+    expect(
+      s.warnings.some((w) =>
+        w.includes('1 group(s) and 1 quick-launch terminal(s) of remote fleet servers')
+      )
+    ).toBe(true)
     // The remote group stays in the listing as data.
     const listing = s.windowListings[0]
     expect(

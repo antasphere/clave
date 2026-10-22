@@ -52,6 +52,7 @@ describe('the context file', () => {
     expect(md).toContain('Clave 2.4.0 (packaged app)')
     expect(md).toContain('instance id `instance-1`')
     expect(md).toContain('NEVER read these')
+    expect(md).toContain("Scope: this instance's own server.")
     for (const token of [SHELL_TOKEN, SERVER_TOKEN, MCP_TOKEN]) expect(md).not.toContain(token)
     expect(agentLaunchOf(snapshot)).toBe('in-app')
     expect(problemCount(snapshot)).toBe(0)

@@ -155,6 +155,10 @@ export function renderContext(snapshot: TriageSnapshot, snapshotPath: string | n
   line()
   line('## Sessions the server runs')
   line()
+  line(
+    "Scope: this instance's own server. Sessions and groups of remote fleet servers that a window may show are not inventoried or reconciled here."
+  )
+  line()
   if (snapshot.sessions.status !== 'ok') {
     line(`Not available (${snapshot.sessions.status}): ${snapshot.sessions.error}`)
   } else if (!snapshot.sessions.value.length) {
