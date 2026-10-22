@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resourceKey } from '@clave/contract/fleet'
-import { collectSnapshot, typedSnapshotField } from './collect'
+import { collectSnapshot, typedSnapshotField, type TriageSources } from './collect'
 import {
   CHAT_ID,
   CLAUDE_CONVERSATION,
@@ -861,5 +861,57 @@ describe('collectSnapshot', () => {
     const json = JSON.stringify(s)
     expect(json).not.toContain(TERMINAL_ID)
     expect(json).not.toContain(remote)
+  })
+
+  // ── A8: the reconciliation compares raw identities and redacts only its answer ──
+
+  /** Two supported known tokens, each equal to a real local session id: both
+   *  sessions then DISPLAY as `<redacted>`, and must still be told apart. */
+  const bothLocalIdsKnown = (overrides: Partial<TriageSources>): TriageSources => {
+    const base = fakeSources()
+    return fakeSources({
+      shellDiscovery: async () => ({ ...(await base.shellDiscovery()), token: TERMINAL_ID }),
+      serverDiscovery: async () => ({ ...(await base.serverDiscovery()), token: CHAT_ID }),
+      ...overrides
+    })
+  }
+
+  it('A8: a session shown in no window is still a disagreement when its display equals another session', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      bothLocalIdsKnown({
+        sessions: async () =>
+          (await base.sessions()).map((x) => ({ ...(x as object), windowKey: 'win-a' })),
+        windows: () => [{ ...base.windows()[0], boundSessionIds: [TERMINAL_ID, CHAT_ID] }],
+        // Only window A answers, and it shows the terminal, not the chat.
+        windowListings: async () => [(await base.windowListings(100))[0]]
+      })
+    )
+    expect(s.reconciliation.serverOnly).toEqual(['<redacted>'])
+    expect(s.reconciliation.uiOnly).toEqual([])
+    const json = JSON.stringify(s)
+    expect(json).not.toContain(TERMINAL_ID)
+    expect(json).not.toContain(CHAT_ID)
+  })
+
+  it('A8: records without a session are counted one by one even when they display alike', async () => {
+    const s = await collectSnapshot(bothLocalIdsKnown({ sessions: async () => [] }))
+    expect(s.reconciliation.recordsWithoutSession).toEqual(['<redacted>', '<redacted>'])
+    expect(JSON.stringify(s)).not.toContain(TERMINAL_ID)
+  })
+
+  it('A8: a session shown in the wrong window is found among sessions that display alike', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      bothLocalIdsKnown({
+        // The server runs the terminal for window B, but window A shows it;
+        // the chat is where it belongs.
+        sessions: async () =>
+          (await base.sessions()).map((x) => ({ ...(x as object), windowKey: 'win-b' }))
+      })
+    )
+    expect(s.reconciliation.windowMismatch).toEqual(['<redacted>'])
+    expect(s.reconciliation.serverOnly).toEqual([])
+    expect(JSON.stringify(s)).not.toContain(CHAT_ID)
   })
 })
