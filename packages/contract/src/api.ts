@@ -11,6 +11,7 @@
  * group and its line; nobody edits another lane's group.
  */
 import { Api, ApiGroup, Health, HttpCqrs, annotate } from '@structure-ai/http'
+import { Schema } from 'effect'
 import {
   ListClients,
   RegisterClient,
@@ -23,6 +24,7 @@ import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -49,6 +51,8 @@ import { sidebarGroup } from './sidebar/api'
 import { workspaceFilesGroup } from './workspace-files/api'
 import { viewsGroup } from './views'
 import { pluginsGroup } from './plugins'
+import { filesGroup } from './files'
+import { requestsGroup } from './requests'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -56,11 +60,20 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('get', '/sessions/by-id', GetSession))
   .add(HttpCqrs.commandEndpoint('start', '/sessions/start', StartSession))
   .add(HttpCqrs.commandEndpoint('stop', '/sessions/stop', StopSession))
-  .add(HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession))
+  .add(
+    HttpCqrs.commandEndpoint('write', '/sessions/write', WriteSession).setPayload(
+      // encodedSchema drops annotations while rebuilding nested transforms.
+      // Apply privacy at the final HTTP boundary, before any host is invoked.
+      Schema.encodedSchema(WriteSession.payload).annotations({
+        message: () => ({ message: 'Invalid session input.', override: true })
+      })
+    )
+  )
   .add(HttpCqrs.commandEndpoint('resize', '/sessions/resize', ResizeSession))
   .add(HttpCqrs.commandEndpoint('setView', '/sessions/view', SetSessionView))
   .add(HttpCqrs.queryEndpoint('models', '/sessions/models', GetSessionModels))
   .add(HttpCqrs.queryEndpoint('commands', '/sessions/commands', GetSessionCommands))
+  .add(HttpCqrs.commandEndpoint('control', '/sessions/control', ControlSession))
   .add(HttpCqrs.queryEndpoint('capabilities', '/sessions/capabilities', GetSessionCapabilities))
   .add(HttpCqrs.queryEndpoint('history', '/sessions/history', GetSessionHistory))
   // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
@@ -131,6 +144,8 @@ export const ClaveApi = Api.make('clave')
   .add(agentToolsGroup)
   // ── Wave 5, lane C: the plugins (`plugins.ts`) ──
   .add(pluginsGroup)
+  .add(filesGroup)
+  .add(requestsGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

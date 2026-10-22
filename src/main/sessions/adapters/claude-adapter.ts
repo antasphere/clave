@@ -17,7 +17,8 @@ import {
   type HistoryItem,
   type ModelOption,
   type CommandOption,
-  type PermissionModeOption
+  type PermissionModeOption,
+  type SessionControl
 } from '../../../shared/session-model'
 import { buildAgentArgv, claudeProfilePermissions } from '../../../shared/agent-launch'
 import { isValidModelName } from '../../../shared/model-name'
@@ -101,13 +102,45 @@ const toCommands = (names: string[]): CommandOption[] =>
 type InitializeRequest = {
   resolve: (response: Record<string, unknown>) => void
   reject: (error: Error) => void
+  /** The control request asked: `initialize`, or the type of one a view sent,
+   *  whose answer may be a bare success and whose refusal is its own. */
+  what: string
 }
 /** How long a menu waits on the CLI's initialize answer before calling it unavailable. */
 const INITIALIZE_TIMEOUT_MS = 20_000
+/** The CLI's control request body for one a view may send; the switch is
+ *  exhaustive, so a request added to the union and not mapped here fails the
+ *  typecheck rather than reaching the CLI as something else. */
+function controlBody(request: SessionControl): Record<string, unknown> {
+  switch (request.type) {
+    case 'mcp_status':
+      return { subtype: 'mcp_status' }
+    case 'mcp_toggle':
+      return { subtype: 'mcp_toggle', serverName: request.server, enabled: request.enabled }
+    case 'mcp_reconnect':
+      return { subtype: 'mcp_reconnect', serverName: request.server }
+    case 'mcp_authenticate':
+      return { subtype: 'mcp_authenticate', serverName: request.server }
+    case 'mcp_clear_auth':
+      return { subtype: 'mcp_clear_auth', serverName: request.server }
+    case 'reload_plugins':
+      return { subtype: 'reload_plugins' }
+    default: {
+      const never: never = request
+      throw new Error(`Unknown control request: ${JSON.stringify(never)}`)
+    }
+  }
+}
+/** How long a view waits on a control request: a reconnect or the start of a
+ *  sign-in can take far longer than the initialize answer. */
+const CONTROL_TIMEOUT_MS = 60_000
 /** The host's own commands, offered before the CLI's: the chat view acts on
- *  them itself rather than sending them to the agent. */
+ *  them itself rather than sending them to the agent. Each is a menu in the
+ *  TUI that headless Claude answers with a line of text, or not at all. */
 export const HOST_COMMANDS: CommandOption[] = [
-  { name: 'resume', description: 'Resume a past conversation from this folder', insert: '/resume' }
+  { name: 'resume', description: 'Resume a past conversation from this folder', insert: '/resume' },
+  { name: 'mcp', description: 'Manage MCP servers', insert: '/mcp' },
+  { name: 'plugin', description: 'Manage plugins', insert: '/plugin' }
 ]
 /** What a transcript's human line says, the way the reader typed it: a slash
  *  command as "/name args", the CLI's own wrappers (command output, caveats,
@@ -179,7 +212,7 @@ export class ClaudeStreamTranslator {
     if (this.contextUsed === null) return
     this.emit({ type: 'context_usage', used: this.contextUsed, window: this.contextWindow })
   }
-  /** request_id → the caller waiting on an initialize control request's answer. */
+  /** request_id → the caller waiting on one of our control requests' answer. */
   readonly listRequests = new Map<string, InitializeRequest>()
   private streamed = false
   private finished = false
@@ -313,7 +346,8 @@ export class ClaudeStreamTranslator {
     this.publishBackground()
     return true
   }
-  /** A control_response answering one of our initialize requests; false for any other. */
+  /** A control_response answering one of our own control requests (initialize,
+   *  or one a view sent); false for any other. */
   private listRequest(p: Record<string, unknown>): boolean {
     const response = z
       .object({
@@ -329,7 +363,17 @@ export class ClaudeStreamTranslator {
     this.listRequests.delete(response.data.request_id)
     if (response.data.subtype === 'success' && response.data.response)
       request.resolve(response.data.response)
-    else request.reject(new Error(response.data.error ?? 'Claude did not answer initialize'))
+    else if (response.data.subtype === 'success' && request.what !== 'initialize')
+      request.resolve({})
+    else
+      request.reject(
+        new Error(
+          response.data.error ??
+            (request.what === 'initialize'
+              ? 'Claude did not answer initialize'
+              : 'Claude refused the request')
+        )
+      )
     return true
   }
   /** Tell the reader the mode the CLI is in now. */
@@ -1351,6 +1395,22 @@ export class ClaudeAdapter implements SessionAdapter {
    *  session's own process, started if the session has not spoken yet. No turn
    *  is sent and no token spent; the CLI answers it any number of times. */
   private initialize(live: Live): Promise<Record<string, unknown>> {
+    return this.request(live, { subtype: 'initialize' }, INITIALIZE_TIMEOUT_MS, 'initialize')
+  }
+  /** Send the session's provider one control request from the closed set a
+   *  view may ask (the MCP servers, the plugins) and answer the CLI's own
+   *  response. Started like initialize if the session has not spoken yet. */
+  async control(handle: SessionHandle, request: SessionControl): Promise<Record<string, unknown>> {
+    return this.request(this.live(handle), controlBody(request), CONTROL_TIMEOUT_MS, request.type)
+  }
+  /** One control request to the session's own process, its answer matched by
+   *  request id; `what` names it in the errors. */
+  private request(
+    live: Live,
+    body: Record<string, unknown>,
+    timeoutMs: number,
+    what: string
+  ): Promise<Record<string, unknown>> {
     if (live.ended) return Promise.reject(new Error('Claude session has ended'))
     live.process ??= live.start()
     const requestId = randomUUID()
@@ -1358,18 +1418,22 @@ export class ClaudeAdapter implements SessionAdapter {
     const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         translator.listRequests.delete(requestId)
-        reject(new Error('Claude did not answer initialize in time'))
-      }, INITIALIZE_TIMEOUT_MS)
+        reject(new Error(`Claude did not answer ${what} in time`))
+      }, timeoutMs)
       const settle =
         <T>(done: (value: T) => void) =>
         (value: T): void => {
           clearTimeout(timer)
           done(value)
         }
-      translator.listRequests.set(requestId, { resolve: settle(resolve), reject: settle(reject) })
+      translator.listRequests.set(requestId, {
+        resolve: settle(resolve),
+        reject: settle(reject),
+        what
+      })
     })
     live.process.stdin.write(
-      `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'initialize' } })}\n`
+      `${JSON.stringify({ type: 'control_request', request_id: requestId, request: body })}\n`
     )
     return answer
   }

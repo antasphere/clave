@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { DayActivity } from '../shared/activity-fold'
@@ -43,6 +44,7 @@ export interface SessionIPCEvents {
   [channel: `sessions:exit:${string}`]: number
 }
 
+import type { FleetDesktopAPI } from './fleet-types'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
 import type {
@@ -615,7 +617,7 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
-export interface ElectronAPI {
+export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
    *  it where the sessions would be (ServerNotice). */
@@ -637,6 +639,10 @@ export interface ElectronAPI {
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
+  /** One control request to the session's provider, from the closed set the
+   *  native panels send (the MCP servers, the plugins); answers the provider's
+   *  own response. */
+  sessionsControl: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
   /** A resumed conversation's past: the page ending at `before` (the end when
    *  absent), oldest first, with what to ask for the page older than it. */
@@ -778,6 +784,7 @@ export interface ElectronAPI {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1055,8 +1062,9 @@ export interface ElectronAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
-    }
-  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
+    },
+    requestId?: string
+  ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>

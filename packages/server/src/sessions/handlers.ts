@@ -16,6 +16,7 @@ import {
   SessionScreenUnavailable,
   SetSessionPage,
   TypeIntoSession,
+  ControlSession,
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
@@ -139,6 +140,18 @@ export const sessionHandlers = [
     Effect.flatMap(SessionHost, (host) =>
       known(host, payload.id).pipe(
         Effect.flatMap(() => Effect.promise(() => host.commands(payload.id)))
+      )
+    )
+  ),
+  CommandHandler.make(ControlSession, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: () => host.control(payload.id, payload.request),
+            catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
+          })
+        )
       )
     )
   ),
@@ -279,10 +292,14 @@ export const sessionHandlers = [
       yield* events.publish({
         _tag: 'session.restarted',
         id: payload.id,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId }),
         resumed: restarted.resumed,
         account: payload.account
       })
-      return restarted
+      return {
+        ...restarted,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId })
+      }
     })
   )
 ] as const

@@ -42,16 +42,44 @@ export async function run(t) {
       bootUsage.error,
       'No token for this account yet. Log in from Settings → Accounts.'
     )
-    await app.evaluate(({ ipcMain }) => {
-      ipcMain.removeHandler('pty:spawn')
-      let id = 0
-      ipcMain.handle('pty:spawn', (_event, cwd, options) => ({
-        id: `model-quota-${++id}`,
-        cwd,
-        folderName: 'quota',
-        alive: true,
-        model: options?.model
-      }))
+    await app.evaluate((_electron, root) => {
+      // Even an in-process server takes the HTTP start road. Intercept the
+      // fixture at its host, rather than the unused pty:spawn IPC handler.
+      const host = globalThis.__claveE2E.sessionHost
+      const originalStart = host.start
+      const fixture = (globalThis.__modelQuotaFixture = {
+        starts: [],
+        delegated: 0,
+        beforeIds: host
+          .list()
+          .map((session) => session.id)
+          .sort(),
+        restore: () => {
+          host.start = originalStart
+        }
+      })
+      host.start = async (input) => {
+        if (input.cwd !== root) {
+          fixture.delegated++
+          return originalStart.call(host, input)
+        }
+        const info = {
+          id: `model-quota-${fixture.starts.length + 1}`,
+          cwd: input.cwd,
+          folderName: 'quota',
+          alive: true,
+          claudeSessionId: null,
+          piSessionId: null,
+          model: input.options?.model
+        }
+        fixture.starts.push({
+          id: info.id,
+          cwd: input.cwd,
+          model: input.options?.model ?? null,
+          claudeMode: input.options?.claudeMode
+        })
+        return info
+      }
       const state = (globalThis.__modelQuota = { shared: 25, session: 10 })
       const read = () => ({
         fetchedAt: Date.now(),
@@ -89,7 +117,7 @@ export async function run(t) {
       // including after shared caps change. Never reuse the machine cache.
       globalThis.__claveE2E.settings.usage.readClaude = async () => read()
       globalThis.__claveE2E.settings.usage.claudeSnapshot = () => ({ default: read() })
-    })
+    }, ROOT)
     await win.reload()
     if (
       !(await until(async () => {
@@ -119,6 +147,40 @@ export async function run(t) {
     console.log(`model-quota/fable-exhausted run ${report.runId}`)
     const ids = Object.fromEntries(
       Object.entries(report.values).map(([key, value]) => [key, value.sessionId])
+    )
+    const provenance = await app.evaluate(() => ({
+      starts: globalThis.__modelQuotaFixture.starts,
+      delegated: globalThis.__modelQuotaFixture.delegated,
+      beforeIds: globalThis.__modelQuotaFixture.beforeIds,
+      afterIds: globalThis.__claveE2E.sessionHost
+        .list()
+        .map((session) => session.id)
+        .sort()
+    }))
+    writeFileSync(fixturePath('model-quota-provenance.json'), JSON.stringify(provenance, null, 2))
+    t.equal('the quota fixture intercepts exactly three host starts', provenance.starts.length, 3)
+    t.check(
+      'the generated receipt matches the intercepted IDs, models and owning fixture root',
+      [
+        ['opus', 'claude-opus-5-5'],
+        ['fable', 'claude-fable-5'],
+        ['unknown', null]
+      ].every(([role, model]) =>
+        provenance.starts.some(
+          (start) =>
+            start.id === ids[role] &&
+            start.model === model &&
+            start.cwd === ROOT &&
+            start.claudeMode === true
+        )
+      ),
+      provenance
+    )
+    t.equal('the quota scenario delegates no native provider starts', provenance.delegated, 0)
+    t.equal(
+      'the quota fixture creates no real host sessions',
+      JSON.stringify(provenance.afterIds),
+      JSON.stringify(provenance.beforeIds)
     )
     const footer = win.locator('.sidebar-footer-line[data-usage-provider="claude"]')
     const focus = (id) => callMcp(app, 'focus', { sessionId: id })
@@ -193,6 +255,10 @@ export async function run(t) {
     )
     t.equal('No renderer exceptions', errors.length, 0)
   } finally {
-    await app.close()
+    try {
+      await app.evaluate(() => globalThis.__modelQuotaFixture?.restore())
+    } finally {
+      await app.close()
+    }
   }
 }

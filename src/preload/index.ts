@@ -1,3 +1,6 @@
+import { createFleetDesktop } from './fleet-desktop'
+import type * as NodeClient from '@clave/client/node'
+import type { ElectronAPI } from './index.d'
 import type {
   Session,
   SessionStream,
@@ -5,6 +8,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
@@ -69,6 +73,10 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // The client itself (Effect and the framework underneath) loads on the first
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
+let nodeClient: Promise<typeof NodeClient> | null = null
+const loadNodeClient = (): Promise<typeof NodeClient> =>
+  (nodeClient ??= (async () => await import('@clave/client/node'))())
+
 const serverRouter = createMethodRouter({
   resolve: async (): Promise<Endpoint | null> => {
     const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as
@@ -91,7 +99,7 @@ const serverRouter = createMethodRouter({
     // page's own fetch be refused by its CSP, with the chat view never
     // mounting behind it). The push socket is opened by the first routed
     // subscription, not before.
-    const { connectThroughNode } = await import('@clave/client/node')
+    const { connectThroughNode } = await loadNodeClient()
     const backing = await connectThroughNode(endpoint, { client: 'clave-preload' })
     // Every push listener waiting for the server joins it now (below).
     queueMicrotask(() => announceServer(backing))
@@ -449,7 +457,7 @@ void Promise.resolve()
   .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
   .then(
     (external) => {
-      if (external === true) setTimeout(() => void import('@clave/client/node').catch(noop), 0)
+      if (external === true) setTimeout(() => void loadNodeClient().catch(noop), 0)
     },
     () => {}
   )
@@ -980,6 +988,11 @@ const electronAPI = {
     ipc: (id) => ipcRenderer.invoke('sessions:commands', id),
     server: async ({ api }, id) => [...(await api.sessions.commands(id))] as CommandOption[]
   }),
+  sessionsControl: viaServer<[string, SessionControl], Record<string, unknown>>({
+    ipc: (id, request) => ipcRenderer.invoke('sessions:control', id, request),
+    server: ({ api }, id, request) =>
+      api.sessions.control(id, request) as Promise<Record<string, unknown>>
+  }),
   sessionsCapabilities: viaServer<[string], { images: boolean }>({
     ipc: (id) => ipcRenderer.invoke('sessions:capabilities', id),
     server: ({ api }, id) => api.sessions.capabilities(id)
@@ -1342,6 +1355,7 @@ const electronAPI = {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1351,7 +1365,12 @@ const electronAPI = {
     }) => void
   ) =>
     onServerEventOf('session.restarted', (event) =>
-      callback({ id: event.id, resumed: event.resumed, account: event.account })
+      callback({
+        id: event.id,
+        resumed: event.resumed,
+        account: event.account,
+        requestId: event.requestId
+      })
     ),
   // The pin's link is published on the server in-process and sent to the
   // window over IPC when the app is attached (main publishes nothing there):
@@ -2093,18 +2112,42 @@ const electronAPI = {
     async (api) => usageCatchUp(await api.settings.usage.codexSnapshot())
   ),
   // A session moved to another account: the same tab, its process restarted
-  // on the account with the conversation resumed (ADR 0002).
-  restartSession: (
-    id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-    }
-  ) => ipcRenderer.invoke('pty:restart', id, overrides),
+  // on the account with the conversation resumed (ADR 0002). Routed like
+  // every other session call: the restart is the server's `RestartSession`
+  // once the shell names an endpoint. Main's own PTY manager holds no spawn
+  // for a tab the separate server owns, so over IPC alone every switch on a
+  // packaged app (the Switch account menu, the automatic switch at a limit,
+  // the Play button) answered "cannot be restarted from here" and did
+  // nothing; the agent tools' `clave_switch_account` already went this way.
+  // The server publishes `session.restarted` for the move too; the window
+  // applies one or the other, never both (`lib/restart-ownership.ts`).
+  restartSession: viaServer<
+    [
+      string,
+      {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        /** Send the message the limit rejected again on the new account. */
+        resendRejected?: boolean
+      },
+      string | undefined
+    ],
+    (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
+  >({
+    ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
+    server: ({ api }, id, { resendRejected, ...account }, requestId) =>
+      api.sessions
+        .restart(
+          id,
+          // The wire's account carries a field only when it is set.
+          Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+          resendRejected === true,
+          requestId
+        )
+        .then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
+  }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),
     server: ({ api }, range) => api.settings.usage.readPi(range).then(loose<PiUsageTotals>)
@@ -2381,7 +2424,17 @@ const electronAPI = {
   // ── Lane F: the shell ──
 }
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+contextBridge.exposeInMainWorld(
+  'electronAPI',
+  createFleetDesktop(electronAPI as unknown as ElectronAPI, {
+    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    changed: (callback) => createIpcListener('server:fleet:changed', callback),
+    connect: async (endpoint) => {
+      const { connectThroughNode } = await loadNodeClient()
+      return connectThroughNode(endpoint, { client: 'clave-fleet-preload' })
+    }
+  })
+)
 
 /**
  * `--test-no-activate` again, this time so the RENDERER can see it.

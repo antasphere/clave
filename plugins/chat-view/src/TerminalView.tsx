@@ -1,8 +1,17 @@
+import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
+import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
+import {
+  isRemoteKey,
+  ownerOf,
+  canOpenRemotePage
+} from '../../../src/renderer/src/lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
+import { bindFleetCatchup } from './fleet-sync'
 /** The Terminal view: a third reading of a session, started as a copy of
  *  `ChatView` and diverging from it on purpose. Shares its props with Chat. */
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import { createEntryMarkdownPlugins } from './markdown-append'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
@@ -37,6 +46,9 @@ import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
+import { McpPanel } from './McpPanel'
+import { PluginPanel } from './PluginPanel'
+import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
@@ -77,7 +89,9 @@ interface Preparation {
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
-  dt.types.includes('Files') || dt.types.includes('text/uri-list')
+  dt.types.includes('Files') ||
+  dt.types.includes('text/uri-list') ||
+  dt.types.includes('application/x-clave-files')
 const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
@@ -265,6 +279,34 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
+  const streaming = entry.kind === 'assistant' && !entry.final
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  // Stable component types retain existing links/tables while text grows.
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      code: ChatCode,
+      table: ({ children }) => (
+        <div className="chat-table-scroll">
+          <table>{children}</table>
+        </div>
+      ),
+      a: ({ href, children }) =>
+        href && /^(https?:|mailto:)/i.test(href) ? (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault()
+              void openLink(href, { external: wantsExternal(event) }).catch(onError)
+            }}
+          >
+            {children}
+          </a>
+        ) : (
+          <span>{children}</span>
+        )
+    }),
+    [onError]
+  )
   if (entry.kind === 'user') {
     // A message another tab sent: its sender in a chip, its words without
     // the bracketed header, in the delivery's own tint.
@@ -301,31 +343,7 @@ const EntryRow = memo(function EntryRow({
     return (
       <div className="chat-turn-wrap" data-side="start">
         <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: ChatCode,
-              table: ({ children }) => (
-                <div className="chat-table-scroll">
-                  <table>{children}</table>
-                </div>
-              ),
-              a: ({ href, children }) =>
-                href && /^(https?:|mailto:)/i.test(href) ? (
-                  <a
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void openLink(href, { external: wantsExternal(event) }).catch(onError)
-                    }}
-                  >
-                    {children}
-                  </a>
-                ) : (
-                  <span>{children}</span>
-                )
-            }}
-          >
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
             {entry.text}
           </ReactMarkdown>
         </article>
@@ -434,8 +452,9 @@ export function TerminalView({
   // Preparations the reader removed before main answered; their file is dropped on arrival.
   const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
-  // The /resume picker, open in the dock above the composer.
-  const [resuming, setResuming] = useState(false)
+  // The host's own panel, open in the dock above the composer: the /resume
+  // picker, or the /mcp and /plugin panels headless Claude has no menu for.
+  const [panel, setPanel] = useState<HostPanel | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
   const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
@@ -450,6 +469,12 @@ export function TerminalView({
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    const catchup = bindFleetCatchup(session.id, (page) => {
+      if (!live) return
+      dispatch({ sync: page.items })
+      setBefore(page.before)
+      setReady(true)
+    })
     // An end is taken only once the record confirms it: after a move to
     // another account the old process's end can arrive after this pane has
     // remounted on the new one, and closed it over a live agent.
@@ -460,6 +485,7 @@ export function TerminalView({
         })
         .catch(console.error)
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
+      catchup.changed()
       if (value.kind !== 'event') return
       const event = value.event
       const take = (): void => {
@@ -506,6 +532,7 @@ export function TerminalView({
       .catch(() => {})
     return () => {
       live = false
+      catchup.close()
       stop()
       stopExit()
       void window.electronAPI.sessionsUnsubscribe(session.id)
@@ -544,12 +571,12 @@ export function TerminalView({
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
-  // /resume is the host's, as in the TUI: it opens the picker rather than
-  // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude'
-  const openResume = (): void => {
+  // /resume, /mcp and /plugin are the local host's. Remote commands stay
+  // with their owning agent; the native panels use this desktop's APIs.
+  const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
+  const openPanel = (which: HostPanel): void => {
     setDraft('')
-    setResuming(true)
+    setPanel(which)
   }
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
@@ -558,7 +585,8 @@ export function TerminalView({
   const hasDraft = !!draft.trim() || attachments.length > 0
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
-    if (canResume && /^\/resume\s*$/.test(draft.trim())) return openResume()
+    const typedPanel = hostPanels ? hostPanelFor(draft) : null
+    if (typedPanel) return openPanel(typedPanel)
     const imageBytes = attachments
       .filter((file) => file.delivery === 'image')
       .reduce((sum, file) => sum + file.size, 0)
@@ -592,7 +620,14 @@ export function TerminalView({
     setPending((current) => [...current, id])
     try {
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      dispatch({ answer: id, optionId, answers })
+      const permission = conversation.entries.find(
+        (entry) => entry.kind === 'permission' && entry.request.id === id
+      )
+      const shown =
+        permission?.kind === 'permission'
+          ? publicQuestionAnswers(permission.request.questions, permission.request.input, answers)
+          : undefined
+      dispatch({ answer: id, optionId, answers: shown })
       textarea.current?.focus()
     } catch (error) {
       report(error)
@@ -689,7 +724,22 @@ export function TerminalView({
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
     const stable = (
-      await Promise.all(paths.map((p) => window.electronAPI.persistDroppedFile(p)))
+      await Promise.all(
+        paths.map(async (p) => {
+          if (!isRemoteKey(session.id)) {
+            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+            return window.electronAPI.persistDroppedFile(p)
+          }
+          if (isRemoteKey(p)) {
+            const file = parseResourceKey('file', p)
+            if (file.serverId !== ownerOf(session.id))
+              throw new Error('This file belongs to another server.')
+            return file.id
+          }
+          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+          return parseResourceKey('file', file.path).id
+        })
+      )
     ).filter((p): p is string => Boolean(p))
     if (!stable.length) return
     const insert = stable.map(pathForMessage).join(' ') + ' '
@@ -710,17 +760,18 @@ export function TerminalView({
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
     (command: CommandOption): void => {
-      if (canResume && command.name === 'resume') {
+      const picked = hostPanels ? hostPanelOf(command.name) : null
+      if (picked) {
         setSlashDismissed('')
         setDraft('')
-        setResuming(true)
+        setPanel(picked)
         return
       }
       setDraft(command.insert)
       setSlashDismissed(command.insert)
       textarea.current?.focus()
     },
-    [canResume, setDraft]
+    [hostPanels, setDraft]
   )
   /* A picked conversation opens as a chat tab of its own, on this tab's launch
      profile and beside it; a tab that has said nothing yet gives its place to
@@ -735,7 +786,7 @@ export function TerminalView({
       dangerousMode: me?.dangerousMode ?? false,
       launchProfileId: me?.launchProfileId
     })
-    setResuming(false)
+    setPanel(null)
     if (!opened) return report('Could not resume that conversation')
     if (opened === session.id || conversation.entries.length > 0) return
     const current = useViewSessionStore.getState()
@@ -752,14 +803,27 @@ export function TerminalView({
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const blocks = useMemo(() => {
+    const entries = remotePending
+      ? presentation.entries.map((entry) =>
+          entry.kind === 'permission' && !entry.answer
+            ? {
+                ...entry,
+                answeredElsewhere: !remotePending.some(
+                  (r) => r.sessionId === session.id && r.providerRequestId === entry.request.id
+                )
+              }
+            : entry
+        )
+      : presentation.entries
     const ordinal = new Map<Entry, number>()
-    presentation.entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
-    return groupEntries(visibleEntries(presentation.entries)).map((block) => ({
+    entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [presentation.entries, presentation.first])
+  }, [presentation.entries, presentation.first, remotePending, session.id])
   // One section per exchange: the reader's message and everything answering
   // it, so a pinned question is carried off by its own section's end.
   const turns = useMemo(() => {
@@ -792,6 +856,13 @@ export function TerminalView({
     <div
       className="chat-view terminal-view"
       data-testid="terminal-view"
+      onClickCapture={(event) => {
+        const href = (event.target as Element).closest('a')?.getAttribute('href')
+        if (isRemoteKey(session.id) && href && /^https?:/i.test(href) && !canOpenRemotePage(href)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
       data-pin={pinQuestions || undefined}
       onClick={(event) => {
         // A click on nothing in particular goes to the prompt; one on anything
@@ -883,7 +954,7 @@ export function TerminalView({
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap term-composer-wrap">
-        {resuming && (
+        {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
             exclude={
@@ -892,13 +963,33 @@ export function TerminalView({
             }
             onPick={(entry) => void resumeConversation(entry)}
             onClose={() => {
-              setResuming(false)
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'mcp' && (
+          <McpPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'plugin' && (
+          <PluginPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
               textarea.current?.focus()
             }}
           />
         )}
         <PromptDock
-          requests={resuming ? [] : waitingOn}
+          // Remote requests stay with their owner. Locally, only /resume
+          // hides the dock; MCP and plugin panels keep pending prompts in sight.
+          requests={panel === 'resume' || isRemoteKey(session.id) ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

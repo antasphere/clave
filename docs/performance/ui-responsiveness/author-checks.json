@@ -1,0 +1,82 @@
+{
+  "classification": "author checks, independent review pending",
+  "baselineRenderRegression": {
+    "exit": 1,
+    "scenario": "chat/renderer-responsiveness",
+    "runId": "b9e355d9-c035-413b-bee2-ee4edcb2e8bd",
+    "assertion": "RegisteredSessionView must not render unrelated hidden panes on a switch",
+    "actual": 98,
+    "expected": 0
+  },
+  "stableMarkdownRegression": {
+    "exit": 1,
+    "runId": "98ec7327-6b14-45e1-947e-81dad59ff2e2",
+    "assertion": "existing anchor remains connected after append",
+    "actual": false
+  },
+  "policyMutations": [
+    {
+      "mutation": "final-guard",
+      "exit": 1,
+      "result": "CAUGHT",
+      "restoredSha256": "6819604c6a63475b8d8e07b1a57a3295a8b13aefdeedd0ded87eaa3c5cc41da3"
+    },
+    {
+      "mutation": "cancel",
+      "exit": 1,
+      "result": "CAUGHT",
+      "restoredSha256": "6819604c6a63475b8d8e07b1a57a3295a8b13aefdeedd0ded87eaa3c5cc41da3"
+    },
+    {
+      "mutation": "starvation",
+      "exit": 1,
+      "result": "CAUGHT",
+      "restoredSha256": "6819604c6a63475b8d8e07b1a57a3295a8b13aefdeedd0ded87eaa3c5cc41da3"
+    }
+  ],
+  "memoRemoval": {
+    "buildExit": 0,
+    "testExit": 1,
+    "result": "CAUGHT",
+    "restoredSha256": "ec2a4af46cb933ce840e98dcbed84962aeebeebfcdddc8f442a3e0e512cc74a7",
+    "restoredBuildExit": 0
+  },
+  "revealNotificationRemoval": {
+    "mutation": "Remove reveal scroll notification while retaining animation-frame scheduling",
+    "originalSha256": "9d92e6eb078b7a239861b69e86cb04a50bf941f3a09715d21f0ef0edf5d4f21b",
+    "startedAt": "2026-10-16T11:02:19.054097+00:00",
+    "checks": {
+      "mutation-resync-build": 0,
+      "mutation-resync-in-process": 1,
+      "mutation-resync-separate": 1,
+      "mutation-resync-restored-build": 0
+    },
+    "mutantSha256": "974bd26c61cb03ca303793abbe6be733413bba4f3a5c7b697793c15923add056",
+    "restoredSha256": "9d92e6eb078b7a239861b69e86cb04a50bf941f3a09715d21f0ef0edf5d4f21b",
+    "completedAt": "2026-10-16T11:05:00.192722+00:00"
+  },
+  "revealCoverageLimit": "Existing hidden-workspace painted-text assertion catches removal in both modes. New long-response assertion catches it in-process but passes reveal in separate mode, followed by a view-menu timeout. Do not infer every new reveal path is independently proved.",
+  "restoration": {
+    "productSourcesMatchR2": true,
+    "frozenToolingMatch": true,
+    "rendererAssetsMatchAllR2Launches": true,
+    "rendererChunks": 415,
+    "lintRepeatExit": 0,
+    "lintRepeatReason": "Plain JavaScript archive test requires the same explicit return-type exemption as existing JS checks",
+    "archiveFalseGreenMutationExit": 1,
+    "archiveRestoredExit": 0
+  },
+  "performanceComparator": {
+    "exit": 1,
+    "reason": "tab handler p95 exceeds 50ms"
+  },
+  "informationalWholeE2e": "deferred to current-head CI by lead decision",
+  "fixtureMenuRepair": {
+    "initialFocusedExit": 1,
+    "initialPassed": 45,
+    "failure": "Timeout reopening view menu without awaiting 100ms closing animation",
+    "repair": "Shared choose helper awaits menu hidden and visible target field; no behavior assertion removed",
+    "repeatedFocusedInProcessExit": 0,
+    "repeatedFocusedSeparateExit": 0
+  }
+}

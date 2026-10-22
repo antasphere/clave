@@ -1,3 +1,4 @@
+import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
   useClaudeProfileStore,
@@ -27,6 +28,7 @@ import {
   type PoolAccount
 } from './account-pool'
 import type { CodexAccount } from '../../../preload/index.d'
+import { abandonOwnRestart, beginOwnRestart, ownAnswerApplies } from './restart-ownership'
 
 /**
  * The pool at work (ADR 0002): which account a launch lands on, which one a
@@ -163,6 +165,7 @@ export interface SwitchTarget {
 /** The accounts a session could move to, in the menu's order: those with
  *  headroom first, each side by its soonest weekly reset. */
 export function sessionSwitchTargets(session: Session): SwitchTarget[] {
+  if (isRemoteKey(session.id)) return []
   const provider = accountProviderOf(session)
   if (!provider) return []
   const current = sessionAccountId(session, provider)
@@ -268,18 +271,31 @@ export async function restartSessionProcess(
   const session = store.sessions.find((s) => s.id === sessionId)
   if (!session) return { ok: false, resumed: false, error: 'No such session' }
   store.setSessionRestarting(sessionId, true)
+  // Marked before the call: the server's `session.restarted` push for this
+  // very move can reach the window before the answer does, and only one of
+  // the two may remount the pane (`restart-ownership.ts`).
+  const requestId = crypto.randomUUID()
+  beginOwnRestart(sessionId, requestId)
   const result = await window.electronAPI
-    .restartSession(sessionId, {
-      ...options.overrides,
-      resendRejected: options.resendRejected === true
-    })
+    .restartSession(
+      sessionId,
+      {
+        ...options.overrides,
+        resendRejected: options.resendRejected === true
+      },
+      requestId
+    )
     .catch((err) => ({
       error: err instanceof Error ? err.message : String(err)
     }))
   if ('error' in result) {
+    abandonOwnRestart(requestId)
     useSessionStore.getState().setSessionRestarting(sessionId, false)
     return { ok: false, resumed: false, error: result.error }
   }
+  // The push applied it already: the answer only reports.
+  if (!ownAnswerApplies(sessionId, requestId, result.requestId))
+    return { ok: true, resumed: result.resumed }
   const current = useSessionStore.getState()
   current.applySessionRestart(sessionId, {
     claudeSessionId: result.claudeSessionId,

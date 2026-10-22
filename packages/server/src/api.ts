@@ -20,6 +20,7 @@ import {
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
+  ControlSession,
   GetSessionHistory,
   GetSessionModels,
   ListSessions,
@@ -60,6 +61,14 @@ import {
 } from '@clave/contract/plugins'
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
+import { FilesLive } from './files/api'
+import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
+
+export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
+  handlers
+    .handle('list', HttpCqrs.query(ListPendingRequests))
+    .handle('resolve', HttpCqrs.command(ResolvePendingRequest))
+)
 import {
   AbsorbLayout,
   AddGroupTerminal,
@@ -94,6 +103,7 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('setView', HttpCqrs.command(SetSessionView))
     .handle('models', HttpCqrs.query(GetSessionModels))
     .handle('commands', HttpCqrs.query(GetSessionCommands))
+    .handle('control', HttpCqrs.command(ControlSession))
     .handle('capabilities', HttpCqrs.query(GetSessionCapabilities))
     .handle('history', HttpCqrs.query(GetSessionHistory))
     // ── Wave 4, lane C: the records a window brings back, their discard, a release for a move ──
@@ -193,6 +203,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       SettingsLive,
       SidebarLive,
       WorkspaceFilesLive,
+      FilesLive,
+      RequestsLive,
       // ── Lane D (wave 3): the view requests ──
       ViewsLive,
       // ── Wave 4, lane C: the agent tools ──

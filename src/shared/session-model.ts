@@ -102,6 +102,8 @@ export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.st
 export type PermissionModeOption = z.infer<typeof PermissionModeOptionSchema>
 /** One question an agent asks the reader mid-turn (Claude's AskUserQuestion). */
 export const AgentQuestionSchema = z.object({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: z.string().min(1).optional(),
   question: z.string(),
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
@@ -149,6 +151,22 @@ export const CommandOptionSchema = z.object({
   insert: z.string()
 })
 export type CommandOption = z.infer<typeof CommandOptionSchema>
+/** One control request a view may send a live session's provider: read the
+ *  MCP servers, turn one on or off, reconnect it, start or clear its sign-in,
+ *  reload the plugins. The set is closed on purpose: the provider's control
+ *  channel also changes the permission mode and the like, and none of that
+ *  may pass here. The answer is the provider's own, as it gave it. */
+export const SessionControlSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('mcp_status') }),
+  z.object({ type: z.literal('mcp_toggle'), server: z.string().min(1), enabled: z.boolean() }),
+  z.object({ type: z.literal('mcp_reconnect'), server: z.string().min(1) }),
+  z.object({ type: z.literal('mcp_authenticate'), server: z.string().min(1) }),
+  z.object({ type: z.literal('mcp_clear_auth'), server: z.string().min(1) }),
+  z.object({ type: z.literal('reload_plugins') })
+])
+export type SessionControl = z.infer<typeof SessionControlSchema>
+export const SessionControlResultSchema = z.record(z.string(), z.unknown())
+export type SessionControlResult = z.infer<typeof SessionControlResultSchema>
 export type SessionInput = z.infer<typeof SessionInputSchema>
 /** One piece of work the agent left running past its turn: a background shell,
  *  a background subagent. The turn can be `done` while these still run. */

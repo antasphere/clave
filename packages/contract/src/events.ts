@@ -10,12 +10,13 @@
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
-import { AccountOverride, AgentState, SessionPage } from './sessions'
+import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
 
 export const ServerEvent = Schema.Union(
+  Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
   // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),
   Schema.TaggedStruct('client.unregistered', { id: Schema.String }),
@@ -59,6 +60,7 @@ export const ServerEvent = Schema.Union(
    *  remounts its pane and shows the account. */
   Schema.TaggedStruct('session.restarted', {
     id: Schema.String,
+    requestId: Schema.optional(RestartRequestId),
     resumed: Schema.Boolean,
     account: AccountOverride
   }),
