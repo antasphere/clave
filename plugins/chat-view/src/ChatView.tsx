@@ -8,8 +8,8 @@ import {
   canOpenRemotePage
 } from '../../../src/renderer/src/lib/fleet-identity'
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import { createEntryMarkdownPlugins } from './markdown-append'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
@@ -280,6 +280,34 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
+  const streaming = entry.kind === 'assistant' && !entry.final
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  // Stable component types retain existing links/tables while text grows.
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      code: ChatCode,
+      table: ({ children }) => (
+        <div className="chat-table-scroll">
+          <table>{children}</table>
+        </div>
+      ),
+      a: ({ href, children }) =>
+        href && /^(https?:|mailto:)/i.test(href) ? (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault()
+              void openLink(href, { external: wantsExternal(event) }).catch(onError)
+            }}
+          >
+            {children}
+          </a>
+        ) : (
+          <span>{children}</span>
+        )
+    }),
+    [onError]
+  )
   if (entry.kind === 'user') {
     // A message another tab sent: its sender in a chip, its words without
     // the bracketed header, in the delivery's own tint.
@@ -312,31 +340,7 @@ const EntryRow = memo(function EntryRow({
     return (
       <div className="chat-turn-wrap" data-side="start">
         <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: ChatCode,
-              table: ({ children }) => (
-                <div className="chat-table-scroll">
-                  <table>{children}</table>
-                </div>
-              ),
-              a: ({ href, children }) =>
-                href && /^(https?:|mailto:)/i.test(href) ? (
-                  <a
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void openLink(href, { external: wantsExternal(event) }).catch(onError)
-                    }}
-                  >
-                    {children}
-                  </a>
-                ) : (
-                  <span>{children}</span>
-                )
-            }}
-          >
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
             {entry.text}
           </ReactMarkdown>
         </article>

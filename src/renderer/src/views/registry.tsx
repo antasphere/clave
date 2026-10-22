@@ -1,7 +1,7 @@
 import { isRemoteKey } from '../lib/fleet-identity'
 import { reportFleetError } from '../store/fleet-store'
 import { FleetResume } from '../components/fleet/FleetControls'
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
 import { paneIsTerminal } from './pane-kind'
@@ -123,7 +123,7 @@ function ViewPicker({
     </DropdownMenu.Root>
   )
 }
-export function RegisteredSessionView({
+function RegisteredSessionView({
   sessionId,
   terminalSessionId,
   visible = true
@@ -346,3 +346,6 @@ export function RegisteredSessionView({
     </section>
   )
 }
+
+const MemoizedRegisteredSessionView = memo(RegisteredSessionView)
+export { MemoizedRegisteredSessionView as RegisteredSessionView }

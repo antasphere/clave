@@ -1,0 +1,233 @@
+{
+  "classification": "author local checks; performance remains blocked; independent verification and CI pending",
+  "commonEnvironment": {
+    "SHELL": "/bin/zsh"
+  },
+  "attempts": [
+    {
+      "name": "final-test",
+      "command": ["npm", "test"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:05:46.090679+00:00",
+      "completedAt": "2026-10-16T11:06:38.121707+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-lint",
+      "command": ["npm", "run", "lint"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:06:38.122938+00:00",
+      "completedAt": "2026-10-16T11:07:12.608367+00:00",
+      "exit": 1
+    },
+    {
+      "name": "final-typecheck",
+      "command": ["npm", "run", "typecheck"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:07:12.609066+00:00",
+      "completedAt": "2026-10-16T11:07:29.034396+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-build",
+      "command": ["npm", "run", "build"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:07:29.035137+00:00",
+      "completedAt": "2026-10-16T11:07:54.242812+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-proto",
+      "command": ["npm", "run", "proto:gen"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:07:54.243386+00:00",
+      "completedAt": "2026-10-16T11:07:54.781958+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-proto-diff",
+      "command": ["git", "diff", "--exit-code", "--", "packages/server/src/terminals/proto"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:07:54.782476+00:00",
+      "completedAt": "2026-10-16T11:07:54.801618+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-built-terminal",
+      "command": [
+        "npx",
+        "vitest",
+        "run",
+        "scripts/server-process.test.mjs",
+        "src/main/terminal-process"
+      ],
+      "environment": {},
+      "startedAt": "2026-10-16T11:07:54.802111+00:00",
+      "completedAt": "2026-10-16T11:08:17.213984+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-focused-in-process",
+      "command": [
+        "node",
+        "tests/e2e/run.mjs",
+        "renderer-responsiveness",
+        "hidden-chat-rendering",
+        "chat-scroll-end",
+        "chat-terminal-rows",
+        "chat-input-history",
+        "chat-prompt-dock",
+        "chat-history-pages"
+      ],
+      "environment": {
+        "CLAVE_E2E_NS": "ui204-final-focused-in-process",
+        "CLAVE_E2E_SERVER": "in-process"
+      },
+      "startedAt": "2026-10-16T11:08:17.214478+00:00",
+      "completedAt": "2026-10-16T11:10:19.294842+00:00",
+      "exit": 1
+    },
+    {
+      "name": "final-focused-separate",
+      "command": [
+        "node",
+        "tests/e2e/run.mjs",
+        "renderer-responsiveness",
+        "hidden-chat-rendering",
+        "chat-scroll-end",
+        "chat-terminal-rows",
+        "chat-input-history",
+        "chat-prompt-dock",
+        "chat-history-pages"
+      ],
+      "environment": {
+        "CLAVE_E2E_NS": "ui204-final-focused-separate",
+        "CLAVE_E2E_SERVER": "separate"
+      },
+      "startedAt": "2026-10-16T11:10:19.303474+00:00",
+      "completedAt": "2026-10-16T11:11:53.540675+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-server-in-process",
+      "command": ["node", "tests/e2e/run.mjs", "server-boot"],
+      "environment": {
+        "CLAVE_E2E_NS": "ui204-final-server-in-process",
+        "CLAVE_E2E_SERVER": "in-process"
+      },
+      "startedAt": "2026-10-16T11:11:53.541166+00:00",
+      "completedAt": "2026-10-16T11:12:24.599494+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-server-attached",
+      "command": ["node", "tests/e2e/run.mjs", "server-boot"],
+      "environment": {
+        "CLAVE_E2E_NS": "ui204-final-server-attached",
+        "CLAVE_E2E_SERVER": "attached"
+      },
+      "startedAt": "2026-10-16T11:12:24.599994+00:00",
+      "completedAt": "2026-10-16T11:12:56.917450+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-server-separate",
+      "command": ["node", "tests/e2e/run.mjs", "server-boot"],
+      "environment": {
+        "CLAVE_E2E_NS": "ui204-final-server-separate",
+        "CLAVE_E2E_SERVER": "separate"
+      },
+      "startedAt": "2026-10-16T11:12:56.917945+00:00",
+      "completedAt": "2026-10-16T11:13:36.667381+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-package",
+      "command": [
+        "npx",
+        "electron-builder",
+        "--dir",
+        "--mac",
+        "--arm64",
+        "-c.mac.notarize=false",
+        "-c.mac.identity=null"
+      ],
+      "environment": {
+        "CSC_IDENTITY_AUTO_DISCOVERY": "false"
+      },
+      "startedAt": "2026-10-16T11:13:36.668090+00:00",
+      "completedAt": "2026-10-16T11:14:03.977648+00:00",
+      "exit": 0
+    },
+    {
+      "name": "final-packaged-requires",
+      "command": ["node", "scripts/check-packaged-requires.mjs", "dist/mac-arm64/Clave.app"],
+      "environment": {},
+      "startedAt": "2026-10-16T11:14:03.978317+00:00",
+      "completedAt": "2026-10-16T11:14:07.394065+00:00",
+      "exit": 0
+    }
+  ],
+  "repeatedChecks": [
+    {
+      "name": "final-lint-complete",
+      "command": ["npm", "run", "lint"],
+      "exit": 0,
+      "reason": "Plain JavaScript return-type rule exemption, followed by repaired fixture check"
+    },
+    {
+      "name": "final-focused-in-process-repaired",
+      "command": [
+        "node",
+        "tests/e2e/run.mjs",
+        "renderer-responsiveness",
+        "hidden-chat-rendering",
+        "chat-scroll-end",
+        "chat-terminal-rows",
+        "chat-input-history",
+        "chat-prompt-dock",
+        "chat-history-pages"
+      ],
+      "environment": {
+        "SHELL": "/bin/zsh",
+        "CLAVE_E2E_NS": "ui204-final-focused-in-repaired",
+        "CLAVE_E2E_SERVER": "in-process"
+      },
+      "startedAt": "2026-10-16T11:14:37.180101+00:00",
+      "exit": 0,
+      "completedAt": "2026-10-16T11:16:04.100636+00:00"
+    }
+  ],
+  "counts": {
+    "unit": {
+      "passed": 3080,
+      "skipped": 2,
+      "passingFiles": 271,
+      "skippedFiles": 1
+    },
+    "builtTerminal": {
+      "passed": 52,
+      "files": 4
+    },
+    "focused": {
+      "in-process": 47,
+      "separate": 47
+    },
+    "serverBoot": {
+      "in-process": 71,
+      "attached": 71,
+      "separate": 73
+    },
+    "package": {
+      "externalModules": 51,
+      "bundleFiles": 15,
+      "probeLimit": "electron-log/main found but throws __electronLog is not defined; existing checker excludes that probe"
+    }
+  },
+  "performance": {
+    "exit": 1,
+    "reason": "tab handler p95 exceeds 50ms"
+  },
+  "fullInformationalE2e": "Deferred to current-head CI by lead decision",
+  "generatedAt": "2026-10-16T11:17:00.259109+00:00"
+}
