@@ -618,6 +618,7 @@ export async function run(t) {
         original
       )
       await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+      await second.locator(`[data-sidebar-item-id="${support[0].id}"]`).click()
       await second.keyboard.press('Meta+Shift+/')
       await second.getByRole('button', { name: 'Debug Clave…', exact: true }).click()
       await dialog.waitFor()
