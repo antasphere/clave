@@ -12,11 +12,17 @@ import type {
   GitBatchProgressFn
 } from '../shared/git-batch'
 import {
-  STATUS_BATCH_CONCURRENCY,
   FETCH_BATCH_CONCURRENCY,
   PULL_BATCH_CONCURRENCY,
-  GIT_NETWORK_TIMEOUT_MS
+  GIT_NETWORK_TIMEOUT_MS,
+  GIT_QUEUE_CONCURRENCY,
+  GIT_QUEUE_FETCH_CONCURRENCY,
+  GIT_BACKGROUND_FETCH_MIN_AGE_MS,
+  GIT_REPO_INFO_TTL_MS,
+  GIT_NOT_REPO_TTL_MS,
+  GIT_WORKTREE_CACHE_TTL_MS
 } from './constants'
+import { GitQueue } from './git-queue'
 import type { GitRangeDirection } from '../shared/git-range'
 
 /**
@@ -363,18 +369,107 @@ function mapFiles(status: StatusResult): GitFileStatus[] {
   return files
 }
 
+/**
+ * What a folder is to git, read once and kept: whether it is a repo, its top
+ * level, and its two git directories (the same for a plain checkout, apart for
+ * a linked worktree). Before, every status read asked all of it again — two or
+ * three processes per repo, every five seconds, for answers that change only
+ * when a repo is created, moved or deleted.
+ */
+interface RepoInfo {
+  isRepo: boolean
+  toplevel: string
+  gitDir: string
+  commonDir: string
+  at: number
+}
+
+/** A linked worktree's reading, with what it was computed against. */
+interface WorktreeCacheEntry {
+  branch: string
+  fingerprint: string
+  info: GitWorktreeInfo | undefined
+  at: number
+}
+
+/** The ref files a base name may live in, loose under the common dir. */
+function baseRefFiles(commonDir: string, base: string): string[] {
+  if (/^[0-9a-f]{40}$/.test(base)) return []
+  return [
+    path.join(commonDir, 'refs', 'heads', base),
+    path.join(commonDir, 'refs', 'remotes', base)
+  ]
+}
+
+/**
+ * A cheap fingerprint of everything a worktree reading depends on, from the
+ * files themselves, no git process: the checkout's HEAD, its branch's ref and
+ * the base's ref (their contents, a sha or a symref, a few bytes each), the
+ * checkout's reflog (it grows on every commit, checkout or reset there), and
+ * the shared packed refs and last fetch. When none of them moved, the reading
+ * — its base, counts, merged state and last commit — cannot have either, and
+ * the ten-odd git commands it costs are skipped.
+ */
+export async function worktreeFingerprint(
+  gitDir: string,
+  commonDir: string,
+  branch: string,
+  base: string | null
+): Promise<string> {
+  const read = (f: string): Promise<string> =>
+    fs.promises.readFile(f, 'utf-8').then(
+      (c) => c.trim(),
+      () => '-'
+    )
+  const stat = (f: string): Promise<string> =>
+    fs.promises.stat(f).then(
+      (st) => `${st.mtimeMs}:${st.size}`,
+      () => '-'
+    )
+  const refs = [
+    ...(branch && branch !== 'HEAD' ? baseRefFiles(commonDir, branch).slice(0, 1) : []),
+    ...(base ? baseRefFiles(commonDir, base) : [])
+  ]
+  const parts = await Promise.all([
+    read(path.join(gitDir, 'HEAD')),
+    ...refs.map(read),
+    stat(path.join(gitDir, 'logs', 'HEAD')),
+    stat(path.join(commonDir, 'packed-refs')),
+    stat(path.join(commonDir, 'FETCH_HEAD'))
+  ])
+  return `${base ?? ''}|${parts.join('|')}`
+}
+
+/** The env of a status read: `GIT_OPTIONAL_LOCKS=0` keeps `git status` from
+ *  refreshing the index on disk, so a background read never takes
+ *  `index.lock` from under the user's own git command, and never writes the
+ *  file the repo watcher would then report as a change of its own. */
+function readOnlyGit(cwd: string): ReturnType<typeof simpleGit> {
+  return simpleGit(cwd).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' })
+}
+
 class GitManager {
-  /** Git status for many repos at once, with bounded concurrency. */
+  /** Every background read of every window goes through this one queue. */
+  private readonly queue = new GitQueue(GIT_QUEUE_CONCURRENCY, GIT_QUEUE_FETCH_CONCURRENCY)
+  private readonly repoInfoCache = new Map<string, RepoInfo>()
+  private readonly worktreeCache = new Map<string, WorktreeCacheEntry>()
+  /** When each repo was last fetched, by anything: the background fetch skips
+   *  a repo another window or the Refresh sweep fetched a moment ago. */
+  private readonly lastFetchAt = new Map<string, number>()
+
+  /** Git status for many repos at once. The app-wide queue bounds it. */
   async getStatusBatch(paths: string[]): Promise<Array<{ path: string; status: GitStatusResult }>> {
-    return mapWithConcurrency(paths, STATUS_BATCH_CONCURRENCY, async (p) => ({
-      path: p,
-      status: await this.getStatus(p)
-    }))
+    return Promise.all(paths.map(async (p) => ({ path: p, status: await this.getStatus(p) })))
   }
 
-  /** Git fetch for many repos at once, with bounded concurrency. */
+  /** The background fetch for many repos at once. The app-wide queue bounds it. */
   async fetchBatch(paths: string[]): Promise<void> {
-    await mapWithConcurrency(paths, FETCH_BATCH_CONCURRENCY, (p) => this.fetch(p))
+    await Promise.all(paths.map((p) => this.fetch(p)))
+  }
+
+  /** Forget what is cached about a repo — its watcher saw it move. */
+  invalidate(cwd: string): void {
+    this.worktreeCache.delete(cwd)
   }
 
   async getDiff(
@@ -512,18 +607,33 @@ class GitManager {
   /** The lenient fetch: the background poller's, which must never surface a
    *  transient network failure as an error the user has to dismiss. */
   async fetch(cwd: string): Promise<void> {
-    try {
-      await this.fetchOrThrow(cwd)
-    } catch (err) {
-      console.warn('[git] Fetch skipped:', (err as Error).message)
-    }
+    const last = this.lastFetchAt.get(cwd)
+    if (last !== undefined && Date.now() - last < GIT_BACKGROUND_FETCH_MIN_AGE_MS) return
+    await this.queue.run(`fetch:${cwd}`, 'fetch', async () => {
+      // Checked again at the start: a queued fetch may have waited behind the
+      // one that just fetched this repo for another window.
+      const lastNow = this.lastFetchAt.get(cwd)
+      if (lastNow !== undefined && Date.now() - lastNow < GIT_BACKGROUND_FETCH_MIN_AGE_MS) return
+      try {
+        await this.fetchOrThrow(cwd)
+      } catch (err) {
+        console.warn('[git] Fetch skipped:', (err as Error).message)
+      }
+    })
   }
 
   /** The same fetch, reporting. A batch the user CLICKED has to be able to say
    *  that a remote failed — swallowed into a warning, a failed fetch made the
-   *  repo report "up to date", which is the one answer that is certainly wrong. */
+   *  repo report "up to date", which is the one answer that is certainly wrong.
+   *  Not queued: the user is waiting on it. A failed attempt counts as one for
+   *  the background's spacing too, so an unreachable remote is not retried
+   *  every round. */
   async fetchOrThrow(cwd: string): Promise<void> {
-    await networkGit(cwd).fetch()
+    try {
+      await networkGit(cwd).fetch()
+    } finally {
+      this.lastFetchAt.set(cwd, Date.now())
+    }
   }
 
   async checkIgnored(cwd: string, paths: string[]): Promise<string[]> {
@@ -676,19 +786,64 @@ class GitManager {
    * with `base: null`, and its row carries no base badge and no count: never
    * a base guessed from the folder name.
    */
+  /**
+   * The worktree reading, recomputed only when something it depends on moved
+   * (`worktreeFingerprint`) or the backstop expired. A plain checkout costs
+   * nothing at all: its two git dirs are already known to be the same.
+   */
+  private async cachedWorktree(
+    git: ReturnType<typeof simpleGit>,
+    cwd: string,
+    info: RepoInfo,
+    branch: string
+  ): Promise<GitWorktreeInfo | undefined> {
+    if (info.gitDir === info.commonDir) return undefined
+    const cached = this.worktreeCache.get(cwd)
+    if (cached && cached.branch === branch && Date.now() - cached.at < GIT_WORKTREE_CACHE_TTL_MS) {
+      const fingerprint = await worktreeFingerprint(
+        info.gitDir,
+        info.commonDir,
+        branch,
+        cached.info?.base ?? null
+      )
+      if (fingerprint === cached.fingerprint) return cached.info
+    }
+    const worktree = await this.readWorktree(git, cwd, branch, info)
+    this.worktreeCache.set(cwd, {
+      branch,
+      fingerprint: await worktreeFingerprint(
+        info.gitDir,
+        info.commonDir,
+        branch,
+        worktree?.base ?? null
+      ),
+      info: worktree,
+      at: Date.now()
+    })
+    return worktree
+  }
+
   private async readWorktree(
     git: ReturnType<typeof simpleGit>,
     cwd: string,
-    branch: string
+    branch: string,
+    known?: { gitDir: string; commonDir: string }
   ): Promise<GitWorktreeInfo | undefined> {
     try {
-      const dirs = (await git.raw(['rev-parse', '--git-dir', '--git-common-dir']))
-        .trim()
-        .split('\n')
-        .map((d) => d.trim())
-      if (dirs.length < 2) return undefined
-      const gitDir = path.resolve(cwd, dirs[0])
-      const commonDir = path.resolve(cwd, dirs[1])
+      let gitDir: string
+      let commonDir: string
+      if (known) {
+        gitDir = known.gitDir
+        commonDir = known.commonDir
+      } else {
+        const dirs = (await git.raw(['rev-parse', '--git-dir', '--git-common-dir']))
+          .trim()
+          .split('\n')
+          .map((d) => d.trim())
+        if (dirs.length < 2) return undefined
+        gitDir = path.resolve(cwd, dirs[0])
+        commonDir = path.resolve(cwd, dirs[1])
+      }
       if (gitDir === commonDir) return undefined
       const of = path.dirname(commonDir)
       const onBranch = !!branch && branch !== 'HEAD'
@@ -1002,7 +1157,7 @@ ${diff}`
       const result: MagicSyncResult = { repoPath, actions: [], error: null }
       try {
         progress.step(repoPath, 'checking')
-        const status = await this.getStatus(repoPath)
+        const status = await this.readStatus(repoPath)
         if (!status.isRepo) {
           result.error = 'Not a git repository'
           return result
@@ -1016,7 +1171,7 @@ ${diff}`
         }
 
         // Re-check status after pull (files may have changed)
-        const postPullStatus = status.behind > 0 ? await this.getStatus(repoPath) : status
+        const postPullStatus = status.behind > 0 ? await this.readStatus(repoPath) : status
         const files = postPullStatus.files
 
         if (files.length === 0) {
@@ -1167,7 +1322,9 @@ ${diff}`
 
     // Local, instant, and the last word on who is actually behind.
     for (const repoPath of unique) progress.step(repoPath, 'checking')
-    const statuses = await this.getStatusBatch(unique)
+    const statuses = await Promise.all(
+      unique.map(async (p) => ({ path: p, status: await this.readStatus(p) }))
+    )
 
     const behind: string[] = []
     for (const { path: repoPath, status } of statuses) {
@@ -1377,12 +1534,71 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
     return { title, description }
   }
 
+  /** A repo's status for the panel: through the app-wide queue, where a read
+   *  already waiting for this repo is shared rather than repeated. */
   async getStatus(cwd: string): Promise<GitStatusResult> {
-    try {
-      const git = simpleGit(cwd)
-      const isRepo = await git.checkIsRepo()
+    return this.queue.run(`status:${cwd}`, 'status', () => this.readStatus(cwd))
+  }
 
-      if (!isRepo) {
+  /** A repo's top level and git directories, for the repo watcher; null when
+   *  the folder is not a repo. */
+  async repoDirs(cwd: string): Promise<{ root: string; gitDir: string; commonDir: string } | null> {
+    const info = await this.repoInfo(cwd)
+    if (!info.isRepo) return null
+    return {
+      root: repoRootAsAsked(cwd, info.toplevel),
+      gitDir: info.gitDir,
+      commonDir: info.commonDir
+    }
+  }
+
+  /** What a folder is to git, from the cache when it is fresh. One `rev-parse`
+   *  answers all four questions; outside a repo it fails, and that is the
+   *  answer. */
+  private async repoInfo(cwd: string): Promise<RepoInfo> {
+    const cached = this.repoInfoCache.get(cwd)
+    if (cached) {
+      const ttl = cached.isRepo ? GIT_REPO_INFO_TTL_MS : GIT_NOT_REPO_TTL_MS
+      if (Date.now() - cached.at < ttl) return cached
+    }
+    let info: RepoInfo
+    try {
+      const lines = (
+        await readOnlyGit(cwd).raw([
+          'rev-parse',
+          '--is-inside-work-tree',
+          '--show-toplevel',
+          '--git-dir',
+          '--git-common-dir'
+        ])
+      )
+        .trim()
+        .split('\n')
+        .map((l) => l.trim())
+      info =
+        lines[0] === 'true' && lines.length >= 4
+          ? {
+              isRepo: true,
+              toplevel: lines[1],
+              gitDir: path.resolve(cwd, lines[2]),
+              commonDir: path.resolve(cwd, lines[3]),
+              at: Date.now()
+            }
+          : { isRepo: false, toplevel: '', gitDir: '', commonDir: '', at: Date.now() }
+    } catch {
+      info = { isRepo: false, toplevel: '', gitDir: '', commonDir: '', at: Date.now() }
+    }
+    this.repoInfoCache.set(cwd, info)
+    return info
+  }
+
+  /** The status read itself, unqueued: the user actions call it directly. */
+  async readStatus(cwd: string): Promise<GitStatusResult> {
+    try {
+      const git = readOnlyGit(cwd)
+      const info = await this.repoInfo(cwd)
+
+      if (!info.isRepo) {
         return {
           isRepo: false,
           branch: '',
@@ -1394,10 +1610,15 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
         }
       }
 
-      const [status, repoRoot] = await Promise.all([
-        git.status(),
-        git.revparse(['--show-toplevel']).then((r) => repoRootAsAsked(cwd, r.trim()))
-      ])
+      let status: StatusResult
+      try {
+        status = await git.status()
+      } catch (err) {
+        // The repo may have moved or gone since it was cached: ask afresh next time.
+        this.repoInfoCache.delete(cwd)
+        throw err
+      }
+      const repoRoot = repoRootAsAsked(cwd, info.toplevel)
 
       const hasUpstream = status.tracking != null && status.tracking !== ''
       let ahead = status.ahead
@@ -1412,7 +1633,7 @@ No quotes, no markdown, no extra formatting. Just two lines of plain text.`
         }
       }
 
-      const worktree = await this.readWorktree(git, cwd, status.current ?? '')
+      const worktree = await this.cachedWorktree(git, cwd, info, status.current ?? '')
 
       return {
         isRepo: true,
