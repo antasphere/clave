@@ -214,6 +214,15 @@ function userLabelOf(r: Record<string, unknown> | undefined, redact: Redactor): 
   return label ? redact.text(label, 120) : null
 }
 
+/** The kind of owner a record says hides its session (a group terminal, a
+ *  session view's server, a toolbar button), or null. A record is hidden
+ *  only with a non-empty `link.kind`: the one rule both the projection and
+ *  the reconciliation use, so an empty or incomplete `link` never hides a
+ *  session that is really missing from every window. */
+function recordLinkKind(r: Record<string, unknown>): string | null {
+  return isObject(r.link) ? str(r.link.kind) || null : null
+}
+
 function projectRecord(file: RawRecordFile, redact: Redactor): TriageRecord | null {
   const r = file.content
   if (!isObject(r)) return null
@@ -221,7 +230,7 @@ function projectRecord(file: RawRecordFile, redact: Redactor): TriageRecord | nu
   const cwd = str(r.cwd)
   if (!id || cwd === null) return null
   const transport = r.transport === 'pty' || r.transport === 'events' ? r.transport : null
-  const link = isObject(r.link) ? str(r.link.kind) : null
+  const link = recordLinkKind(r)
   return {
     key: redact.text(file.key, 200),
     id: redact.text(id, 200),
@@ -281,17 +290,13 @@ function projectClient(c: unknown, redact: Redactor): TriageClient | null {
   }
 }
 
-/** What a window shows that another fleet server owns, classified from the
- *  RAW identities before any of them is redacted or cut: a projected id can
- *  no longer be parsed once a known token inside it reads `<redacted>`.
- *  Kept per entry, aligned with the projected listing, never keyed by the
- *  displayed id: two items can display alike (`<redacted>`) and still be one
- *  local and one remote. */
-export interface ListingOwnership {
-  /** One flag per projected tab, in `value.sessions` order. */
-  sessionRemote: boolean[]
-  /** Per projected group, one flag per shown terminal id. */
-  terminalRemote: boolean[][]
+/** A window listing's raw entries for the reconciliation, classified from
+ *  the RAW identities before any of them is redacted or cut (a projected id
+ *  can no longer be parsed once a known token inside it reads `<redacted>`),
+ *  plus the raw counts of what another fleet server owns. */
+interface RawListing {
+  tabs: Array<{ id: string; remote: boolean }>
+  terminals: Array<{ id: string; remote: boolean }>
   remoteGroups: number
   remoteTerminals: number
 }
@@ -301,13 +306,7 @@ function projectListing(
   redact: Redactor,
   maxSessions: number,
   maxGroups: number
-): { listing: TriageWindowListing; truncated: boolean; ownership: ListingOwnership } {
-  const ownership: ListingOwnership = {
-    sessionRemote: [],
-    terminalRemote: [],
-    remoteGroups: 0,
-    remoteTerminals: 0
-  }
+): { listing: TriageWindowListing; truncated: boolean; raw: RawListing | null } {
   if (!reply.ok || !isObject(reply.result)) {
     return {
       listing: {
@@ -316,9 +315,10 @@ function projectListing(
         error: redact.text(reply.error ?? 'the window did not answer', 400)
       },
       truncated: false,
-      ownership
+      raw: null
     }
   }
+  const raw: RawListing = { tabs: [], terminals: [], remoteGroups: 0, remoteTerminals: 0 }
   const rawSessions = Array.isArray(reply.result.sessions) ? reply.result.sessions : []
   const rawGroups = Array.isArray(reply.result.groups) ? reply.result.groups : []
   const cuts: string[] = []
@@ -326,7 +326,7 @@ function projectListing(
   for (const s of cap(rawSessions, maxSessions, 'sessions', cuts)) {
     if (!isObject(s) || !str(s.id)) continue
     const account = isObject(s.account) ? str(s.account.id) : null
-    ownership.sessionRemote.push(ownedElsewhere(str(s.id)!))
+    raw.tabs.push({ id: str(s.id)!, remote: ownedElsewhere(str(s.id)!) })
     sessions.push({
       id: redact.text(str(s.id)!, 200),
       mode: redact.text(str(s.mode) ?? 'unknown', 30),
@@ -348,10 +348,10 @@ function projectListing(
       .map((t) => (isObject(t) ? str(t.sessionId) : null))
       .filter((x): x is string => !!x)
     const remote = groupOwnedElsewhere(str(g.id)!)
-    if (remote) ownership.remoteGroups++
-    ownership.remoteTerminals += terminalIds.filter(ownedElsewhere).length
+    if (remote) raw.remoteGroups++
+    raw.remoteTerminals += terminalIds.filter(ownedElsewhere).length
     const kept = cap(terminalIds, maxSessions, 'group terminals', cuts)
-    ownership.terminalRemote.push(kept.map(ownedElsewhere))
+    for (const id of kept) raw.terminals.push({ id, remote: ownedElsewhere(id) })
     const shownTerminals = kept.map((raw) => redact.text(raw, 200))
     groups.push({
       id: redact.text(str(g.id)!, 120),
@@ -369,7 +369,7 @@ function projectListing(
   return {
     listing: { windowId: reply.windowId, status: 'ok', value: { sessions, groups } },
     truncated: cuts.length > 0,
-    ownership
+    raw
   }
 }
 
@@ -406,47 +406,56 @@ function groupOwnedElsewhere(id: string): boolean {
   }
 }
 
-export function reconcile(input: {
-  sessions: TriageSource<TriageSession[]>
-  listings: TriageWindowListing[]
-  windows: TriageWindow[]
-  records: TriageSource<{ items: TriageRecord[] }>
-  tmux: TriageSource<{ live: string[] }>
+/** What the reconciliation compares: the RAW, canonical identities, captured
+ *  beside the projection with the same caps. Never the displayed ids: two
+ *  distinct ids can both display as `<redacted>`, and comparing displays
+ *  would merge them and hide a real disagreement. */
+export interface RawReconcileInput {
+  /** The server's sessions, or null when they could not be read. */
+  sessions: Array<{ id: string; windowKey: string }> | null
+  /** Per window listing (same order as the snapshot's), or null for a window
+   *  that did not answer. Each tab and terminal carries whether another
+   *  fleet server owns it. */
+  listings: Array<{
+    windowId: number
+    tabs: Array<{ id: string; remote: boolean }>
+    terminals: Array<{ id: string; remote: boolean }>
+  } | null>
+  windows: Array<{ id: number; key: string | null }>
+  records: Array<{ id: string; tmuxName: string | null; linked: boolean }> | null
+  tmux: string[] | null
   /** Something these comparisons read was cut or could not be read. */
   partial: boolean
-  /** Per listing (same index as `listings`), which of its entries another
-   *  fleet server owns, classified before redaction (`projectListing`). */
-  ownership?: ReadonlyArray<ListingOwnership | null>
-}): TriageReconciliation {
-  const server = input.sessions.status === 'ok' ? input.sessions.value : null
-  const okListings = input.listings.filter(
-    (l): l is Extract<TriageWindowListing, { status: 'ok' }> => l.status === 'ok'
-  )
-  const allListed = okListings.length === input.listings.length
-  const records = input.records.status === 'ok' ? input.records.value.items : null
-  const live = input.tmux.status === 'ok' ? input.tmux.value.live : null
+}
+
+/** Compare raw identities; only the lists it answers are mapped through
+ *  `present` (the redactor), each entry on its own, so a count of
+ *  disagreements survives two of them displaying alike. */
+export function reconcile(
+  input: RawReconcileInput,
+  present: (id: string) => string
+): TriageReconciliation {
+  const server = input.sessions
+  const allListed = input.listings.every((l) => l !== null)
+  const records = input.records
+  const live = input.tmux
 
   // Only this instance's own sessions are compared: a remote fleet group's
   // quick-launch terminal is shown here but run by its own server.
   const shown = new Set<string>()
   const tabWindow = new Map<string, number>()
-  input.listings.forEach((l, i) => {
-    if (l.status !== 'ok') return
-    const owned = input.ownership?.[i] ?? null
-    l.value.sessions.forEach((s, j) => {
-      if (owned?.sessionRemote[j]) return
-      shown.add(s.id)
-      tabWindow.set(s.id, l.windowId)
-    })
-    l.value.groups.forEach((g, j) =>
-      g.terminalSessionIds.forEach((id, k) => {
-        if (!owned?.terminalRemote[j]?.[k]) shown.add(id)
-      })
-    )
-  })
+  for (const l of input.listings) {
+    if (!l) continue
+    for (const t of l.tabs) {
+      if (t.remote) continue
+      shown.add(t.id)
+      tabWindow.set(t.id, l.windowId)
+    }
+    for (const t of l.terminals) if (!t.remote) shown.add(t.id)
+  }
   // A hidden session belongs to its owner (a group terminal, a session
   // view's server, a toolbar button): it is never a row of its own.
-  const hidden = new Set((records ?? []).filter((r) => r.link).map((r) => r.id))
+  const hidden = new Set((records ?? []).filter((r) => r.linked).map((r) => r.id))
   const serverIds = new Set((server ?? []).map((s) => s.id))
   const keyOfWindow = new Map(input.windows.map((w) => [w.id, w.key]))
 
@@ -459,30 +468,34 @@ export function reconcile(input: {
   }
 
   const recordTmux = new Set((records ?? []).map((r) => r.tmuxName).filter((n): n is string => !!n))
+  const shownOut = (ids: string[]): string[] => ids.map(present)
   return {
-    uiOnly: server ? difference(shown, serverIds) : [],
-    serverOnly:
+    uiOnly: shownOut(server ? difference(shown, serverIds) : []),
+    serverOnly: shownOut(
       server && allListed
         ? difference(
             server.map((s) => s.id),
             new Set([...shown, ...hidden])
           )
-        : [],
-    windowMismatch: windowMismatch.sort(),
-    recordsWithoutSession:
+        : []
+    ),
+    windowMismatch: shownOut([...new Set(windowMismatch)].sort()),
+    recordsWithoutSession: shownOut(
       server && records
         ? difference(
             records.map((r) => r.id),
             serverIds
           )
-        : [],
-    tmuxWithoutRecord:
+        : []
+    ),
+    tmuxWithoutRecord: shownOut(
       live && records
         ? difference(
             live.filter((n) => n.startsWith('clave-')),
             recordTmux
           )
-        : [],
+        : []
+    ),
     complete: !!server && allListed && !!records && !!live && !input.partial
   }
 }
@@ -682,13 +695,20 @@ export async function collectWithRedactor(
   let records: TriageSnapshot['records']
   const recordById = new Map<string, Record<string, unknown>>()
   let unreadableRecords = 0
+  const rawRecords: NonNullable<RawReconcileInput['records']> = []
   if (recordsR.status === 'ok') {
     const items: TriageRecord[] = []
     const unreadable: Array<{ key: string; error: string }> = []
     for (const file of recordsR.value.files.slice(0, limits.maxRecords)) {
       const projected = projectRecord(file, redact)
-      if (projected) items.push(projected)
-      else
+      if (projected && isObject(file.content)) {
+        items.push(projected)
+        rawRecords.push({
+          id: str(file.content.id)!,
+          tmuxName: str(file.content.tmuxName),
+          linked: recordLinkKind(file.content) !== null
+        })
+      } else
         unreadable.push({
           key: redact.text(file.key, 200),
           error: redact.text(file.error ?? 'not a session record (no id or cwd)', 300)
@@ -714,12 +734,17 @@ export async function collectWithRedactor(
   } else records = recordsR
 
   let sessions: TriageSource<TriageSession[]>
+  let rawSessions: RawReconcileInput['sessions'] = null
   if (sessionsR.status === 'ok') {
-    const all = sessionsR.value
-      .map((s) => projectSession(s, recordById, redact))
-      .filter((s): s is TriageSession => s !== null)
+    const valid = sessionsR.value.filter(
+      (s): s is Record<string, unknown> => isObject(s) && !!str(s.id)
+    )
+    const all = valid.map((s) => projectSession(s, recordById, redact)!)
     if (all.length > limits.maxSessions) truncated.push('sessions')
     sessions = { status: 'ok', value: all.slice(0, limits.maxSessions) }
+    rawSessions = valid
+      .slice(0, limits.maxSessions)
+      .map((s) => ({ id: str(s.id)!, windowKey: str(s.windowKey) ?? '' }))
   } else sessions = sessionsR
 
   const clients: TriageSource<TriageClient[]> =
@@ -735,9 +760,12 @@ export async function collectWithRedactor(
   if (clients.status === 'ok')
     clients.value = cap(clients.value, limits.maxOther, 'server clients', truncated)
 
+  const rawWindows: RawReconcileInput['windows'] = []
   const windows = (() => {
     try {
-      return cap(sources.windows(), limits.maxOther, 'windows', truncated).map((w) => ({
+      const kept = cap(sources.windows(), limits.maxOther, 'windows', truncated)
+      for (const w of kept) rawWindows.push({ id: w.id, key: w.key })
+      return kept.map((w) => ({
         ...w,
         key: w.key ? redact.text(w.key, 120) : null,
         workspaceId: w.workspaceId ? redact.text(w.workspaceId, 120) : null,
@@ -755,7 +783,7 @@ export async function collectWithRedactor(
   })()
 
   let windowListings: TriageWindowListing[]
-  const listingOwnership: Array<ListingOwnership | null> = []
+  const rawListings: RawReconcileInput['listings'] = []
   let remoteGroups = 0
   let remoteTerminals = 0
   if (listingsR.status === 'ok') {
@@ -764,11 +792,13 @@ export async function collectWithRedactor(
         const {
           listing,
           truncated: cut,
-          ownership: owned
+          raw
         } = projectListing(reply, redact, limits.maxSessions, limits.maxGroupsPerWindow)
-        listingOwnership.push(owned)
-        remoteGroups += owned.remoteGroups
-        remoteTerminals += owned.remoteTerminals
+        rawListings.push(
+          raw && { windowId: reply.windowId, tabs: raw.tabs, terminals: raw.terminals }
+        )
+        remoteGroups += raw?.remoteGroups ?? 0
+        remoteTerminals += raw?.remoteTerminals ?? 0
         if (cut && !truncated.includes('windowListings')) truncated.push('windowListings')
         return listing
       }
@@ -780,9 +810,11 @@ export async function collectWithRedactor(
       status: listingsR.status,
       error: listingsR.error
     }))
+    for (let i = 0; i < windowListings.length; i++) rawListings.push(null)
   }
 
   let tmux: TriageSnapshot['tmux']
+  const rawTmux = tmuxR.status === 'ok' ? tmuxR.value.slice(0, limits.maxTmux) : null
   if (tmuxR.status === 'ok') {
     const names = tmuxR.value.map((n) => redact.text(n, 200))
     if (names.length > limits.maxTmux) truncated.push('tmux')
@@ -856,15 +888,17 @@ export async function collectWithRedactor(
       agentsR.status === 'ok'
         ? { status: 'ok', value: projectAgents(agentsR.value, redact) }
         : agentsR,
-    reconciliation: reconcile({
-      sessions,
-      listings: windowListings,
-      windows,
-      records,
-      tmux,
-      partial: truncated.length > 0 || unreadableRecords > 0,
-      ownership: listingOwnership
-    }),
+    reconciliation: reconcile(
+      {
+        sessions: rawSessions,
+        listings: rawListings,
+        windows: rawWindows,
+        records: records.status === 'ok' ? rawRecords : null,
+        tmux: rawTmux,
+        partial: truncated.length > 0 || unreadableRecords > 0
+      },
+      (id) => redact.text(id, 200)
+    ),
     paths: {
       mainLog: redact.path(sources.paths.mainLog),
       sessionRecords: redact.path(recordsDir ?? ''),
