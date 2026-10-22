@@ -829,4 +829,37 @@ describe('collectSnapshot', () => {
     if (listing.status !== 'ok') throw new Error('listing')
     expect(listing.value.groups.find((g) => g.name === 'Local group')?.remote).toBeUndefined()
   })
+
+  it('VA-14: a local tab and a remote terminal that both display as <redacted> keep their own scope', async () => {
+    // Two supported known tokens: the shell discovery token equals the whole
+    // canonical remote key, the server discovery token equals a real local
+    // session id. Both entries display alike; each keeps the scope its raw
+    // identity had, so the local tab stays reconciled and the remote one
+    // stays excluded.
+    const base = fakeSources()
+    const remote = resourceKey('session', 'mac-studio', '99999999-9999-4999-8999-999999999999')
+    const s = await collectSnapshot(
+      fakeSources({
+        shellDiscovery: async () => ({ ...(await base.shellDiscovery()), token: remote }),
+        serverDiscovery: async () => ({ ...(await base.serverDiscovery()), token: TERMINAL_ID }),
+        windowListings: async () => {
+          const l = await base.windowListings(100)
+          const first = l[0].result as { groups: unknown[] }
+          first.groups.push({
+            id: resourceKey('group', 'mac-studio', 'remote-group'),
+            name: 'Remote',
+            sessionIds: [],
+            terminals: [{ id: 't', sessionId: remote }]
+          })
+          return l
+        }
+      })
+    )
+    expect(s.reconciliation.serverOnly).toEqual([])
+    expect(s.reconciliation.uiOnly).toEqual([])
+    expect(s.warnings.some((w) => w.includes(remoteWarning))).toBe(true)
+    const json = JSON.stringify(s)
+    expect(json).not.toContain(TERMINAL_ID)
+    expect(json).not.toContain(remote)
+  })
 })

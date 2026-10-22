@@ -283,10 +283,15 @@ function projectClient(c: unknown, redact: Redactor): TriageClient | null {
 
 /** What a window shows that another fleet server owns, classified from the
  *  RAW identities before any of them is redacted or cut: a projected id can
- *  no longer be parsed once a known token inside it reads `<redacted>`. */
-interface ListingOwnership {
-  /** The projected (displayed) ids of the tabs and terminals owned elsewhere. */
-  remoteIds: Set<string>
+ *  no longer be parsed once a known token inside it reads `<redacted>`.
+ *  Kept per entry, aligned with the projected listing, never keyed by the
+ *  displayed id: two items can display alike (`<redacted>`) and still be one
+ *  local and one remote. */
+export interface ListingOwnership {
+  /** One flag per projected tab, in `value.sessions` order. */
+  sessionRemote: boolean[]
+  /** Per projected group, one flag per shown terminal id. */
+  terminalRemote: boolean[][]
   remoteGroups: number
   remoteTerminals: number
 }
@@ -297,7 +302,12 @@ function projectListing(
   maxSessions: number,
   maxGroups: number
 ): { listing: TriageWindowListing; truncated: boolean; ownership: ListingOwnership } {
-  const ownership: ListingOwnership = { remoteIds: new Set(), remoteGroups: 0, remoteTerminals: 0 }
+  const ownership: ListingOwnership = {
+    sessionRemote: [],
+    terminalRemote: [],
+    remoteGroups: 0,
+    remoteTerminals: 0
+  }
   if (!reply.ok || !isObject(reply.result)) {
     return {
       listing: {
@@ -316,10 +326,9 @@ function projectListing(
   for (const s of cap(rawSessions, maxSessions, 'sessions', cuts)) {
     if (!isObject(s) || !str(s.id)) continue
     const account = isObject(s.account) ? str(s.account.id) : null
-    const id = redact.text(str(s.id)!, 200)
-    if (ownedElsewhere(str(s.id)!)) ownership.remoteIds.add(id)
+    ownership.sessionRemote.push(ownedElsewhere(str(s.id)!))
     sessions.push({
-      id,
+      id: redact.text(str(s.id)!, 200),
       mode: redact.text(str(s.mode) ?? 'unknown', 30),
       alive: s.alive === true,
       agentState: str(s.agentState) ? redact.text(str(s.agentState)!, 30) : null,
@@ -341,11 +350,9 @@ function projectListing(
     const remote = groupOwnedElsewhere(str(g.id)!)
     if (remote) ownership.remoteGroups++
     ownership.remoteTerminals += terminalIds.filter(ownedElsewhere).length
-    const shownTerminals = cap(terminalIds, maxSessions, 'group terminals', cuts).map((raw) => {
-      const id = redact.text(raw, 200)
-      if (ownedElsewhere(raw)) ownership.remoteIds.add(id)
-      return id
-    })
+    const kept = cap(terminalIds, maxSessions, 'group terminals', cuts)
+    ownership.terminalRemote.push(kept.map(ownedElsewhere))
+    const shownTerminals = kept.map((raw) => redact.text(raw, 200))
     groups.push({
       id: redact.text(str(g.id)!, 120),
       name: redact.text(str(g.name) ?? '', 120),
@@ -407,11 +414,10 @@ export function reconcile(input: {
   tmux: TriageSource<{ live: string[] }>
   /** Something these comparisons read was cut or could not be read. */
   partial: boolean
-  /** The displayed ids a window shows that another fleet server owns,
-   *  classified before redaction (`projectListing`). */
-  remoteIds?: ReadonlySet<string>
+  /** Per listing (same index as `listings`), which of its entries another
+   *  fleet server owns, classified before redaction (`projectListing`). */
+  ownership?: ReadonlyArray<ListingOwnership | null>
 }): TriageReconciliation {
-  const remote = input.remoteIds ?? new Set<string>()
   const server = input.sessions.status === 'ok' ? input.sessions.value : null
   const okListings = input.listings.filter(
     (l): l is Extract<TriageWindowListing, { status: 'ok' }> => l.status === 'ok'
@@ -424,15 +430,20 @@ export function reconcile(input: {
   // quick-launch terminal is shown here but run by its own server.
   const shown = new Set<string>()
   const tabWindow = new Map<string, number>()
-  for (const l of okListings) {
-    for (const s of l.value.sessions) {
-      if (remote.has(s.id)) continue
+  input.listings.forEach((l, i) => {
+    if (l.status !== 'ok') return
+    const owned = input.ownership?.[i] ?? null
+    l.value.sessions.forEach((s, j) => {
+      if (owned?.sessionRemote[j]) return
       shown.add(s.id)
       tabWindow.set(s.id, l.windowId)
-    }
-    for (const g of l.value.groups)
-      for (const id of g.terminalSessionIds) if (!remote.has(id)) shown.add(id)
-  }
+    })
+    l.value.groups.forEach((g, j) =>
+      g.terminalSessionIds.forEach((id, k) => {
+        if (!owned?.terminalRemote[j]?.[k]) shown.add(id)
+      })
+    )
+  })
   // A hidden session belongs to its owner (a group terminal, a session
   // view's server, a toolbar button): it is never a row of its own.
   const hidden = new Set((records ?? []).filter((r) => r.link).map((r) => r.id))
@@ -744,7 +755,7 @@ export async function collectWithRedactor(
   })()
 
   let windowListings: TriageWindowListing[]
-  const remoteIds = new Set<string>()
+  const listingOwnership: Array<ListingOwnership | null> = []
   let remoteGroups = 0
   let remoteTerminals = 0
   if (listingsR.status === 'ok') {
@@ -755,7 +766,7 @@ export async function collectWithRedactor(
           truncated: cut,
           ownership: owned
         } = projectListing(reply, redact, limits.maxSessions, limits.maxGroupsPerWindow)
-        for (const id of owned.remoteIds) remoteIds.add(id)
+        listingOwnership.push(owned)
         remoteGroups += owned.remoteGroups
         remoteTerminals += owned.remoteTerminals
         if (cut && !truncated.includes('windowListings')) truncated.push('windowListings')
@@ -852,7 +863,7 @@ export async function collectWithRedactor(
       records,
       tmux,
       partial: truncated.length > 0 || unreadableRecords > 0,
-      remoteIds
+      ownership: listingOwnership
     }),
     paths: {
       mainLog: redact.path(sources.paths.mainLog),
