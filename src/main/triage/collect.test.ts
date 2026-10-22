@@ -979,4 +979,28 @@ describe('collectSnapshot', () => {
     expect(s.limits.truncated).toContain('sessions')
     expect(s.reconciliation.complete).toBe(false)
   })
+
+  it('VA-16: the tmux comparison sees only the capped tmux list and reports exactly the cap', async () => {
+    // Seven live tmux sessions named as Clave names its own
+    // (`clave-<folder>-<6-char hash>`), none with a record; no session and no
+    // tab, so nothing else can disagree. With a cap of three, exactly the
+    // three kept names are orphans: an uncapped raw list would report seven.
+    const names = Array.from({ length: 7 }, (_, i) => `clave-app-0a1b2${i}`)
+    const s = await collectSnapshot(
+      fakeSources({
+        sessions: async () => [],
+        windowListings: async () => [
+          { windowId: 1, ok: true, result: { sessions: [], groups: [] } },
+          { windowId: 2, ok: true, result: { sessions: [], groups: [] } }
+        ],
+        records: async () => ({ total: 0, files: [] }),
+        tmuxSessions: async () => names
+      }),
+      { maxTmux: 3 }
+    )
+    expect(s.reconciliation.tmuxWithoutRecord).toEqual(names.slice(0, 3))
+    expect(problemCount(s)).toBe(3)
+    expect(s.limits.truncated).toContain('tmux')
+    expect(s.reconciliation.complete).toBe(false)
+  })
 })
