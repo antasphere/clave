@@ -22,6 +22,12 @@ import {
 } from './harness.mjs'
 
 const DIR = userDataDir('new-workspace-window')
+const PROVIDER_HOMES = {
+  CLAUDE_CONFIG_DIR: fixturePath('new-workspace-provider-homes/claude'),
+  CODEX_HOME: fixturePath('new-workspace-provider-homes/codex'),
+  PI_CODING_AGENT_DIR: fixturePath('new-workspace-provider-homes/pi')
+}
+const LAUNCH_OPTIONS = { args: ['--test-no-machine-usage'], env: PROVIDER_HOMES }
 const ROOT = fixturePath('existing-workspace')
 const EXISTING = {
   id: 'existing-workspace',
@@ -33,9 +39,14 @@ const EXISTING = {
 
 export async function run(t) {
   mkdirSync(ROOT, { recursive: true })
+  for (const home of Object.values(PROVIDER_HOMES)) mkdirSync(home, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [EXISTING], activeWorkspaceId: EXISTING.id, fresh: true })
-  let { app, win } = await launchApp(DIR)
+  let { app, win } = await launchApp(DIR, LAUNCH_OPTIONS)
   try {
+    t.check(
+      'the initial shell disables machine usage',
+      await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
     // Fixture creation goes through the real Add workspace action; only the
     // native folder dialog is replaced. Every invocation gets its own root.
     const modulePath = fixturePath('new-workspace-fixture.mjs')
@@ -215,9 +226,13 @@ export async function run(t) {
 
     await app.close()
     app = null
-    const restarted = await launchApp(DIR)
+    const restarted = await launchApp(DIR, LAUNCH_OPTIONS)
     app = restarted.app
     win = restarted.win
+    t.check(
+      'the restored shell disables machine usage',
+      await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
     const restored = await Promise.all(app.windows().map((page) => identityOf(page)))
     t.check(
       'restart restores every window on the new workspace',
