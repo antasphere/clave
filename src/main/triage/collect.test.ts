@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resourceKey } from '@clave/contract/fleet'
 import { collectSnapshot, typedSnapshotField, type TriageSources } from './collect'
+import { problemCount } from './context'
 import {
   CHAT_ID,
   CLAUDE_CONVERSATION,
@@ -941,5 +942,41 @@ describe('collectSnapshot', () => {
     expect(s.reconciliation.serverOnly).toEqual([CHAT_ID])
     if (s.records.status !== 'ok') throw new Error('records')
     expect(s.records.value.items.find((r) => r.id === CHAT_ID)?.link).toBeNull()
+  })
+
+  it('VA-16: the reconciliation compares only the capped sessions and reports exactly the cap', async () => {
+    // Seven valid, distinct local sessions; both windows answer and show no
+    // tab; no records and no tmux, so nothing else can disagree. With a cap
+    // of three, the comparison must see exactly the three kept sessions: an
+    // uncapped raw list would report all seven while the public list still
+    // reads three.
+    const ids = Array.from({ length: 7 }, (_, i) => `aaaaaaa${i}-0000-4000-8000-00000000000${i}`)
+    const s = await collectSnapshot(
+      fakeSources({
+        sessions: async () =>
+          ids.map((id, i) => ({
+            id,
+            provider: 'terminal',
+            transport: 'pty',
+            cwd: '/',
+            windowKey: 'win-a',
+            state: 'idle',
+            createdAt: i,
+            adapterId: 'pty',
+            title: ''
+          })),
+        windowListings: async () => [
+          { windowId: 1, ok: true, result: { sessions: [], groups: [] } },
+          { windowId: 2, ok: true, result: { sessions: [], groups: [] } }
+        ],
+        records: async () => ({ total: 0, files: [] }),
+        tmuxSessions: async () => []
+      }),
+      { maxSessions: 3 }
+    )
+    expect(s.reconciliation.serverOnly).toEqual(ids.slice(0, 3))
+    expect(problemCount(s)).toBe(3)
+    expect(s.limits.truncated).toContain('sessions')
+    expect(s.reconciliation.complete).toBe(false)
   })
 })
