@@ -35,9 +35,13 @@ export async function run(t) {
   seedTrustedRoots(DIR, [ROOT])
   let app
   try {
-    const launched = await launchApp(DIR)
+    const launched = await launchApp(DIR, { args: ['--test-no-machine-usage'] })
     app = launched.app
     const { win, fixture } = launched
+    t.check(
+      'the usage clock fixture opts out of machine usage before loading accounts',
+      await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
     const second = (await openWindow(app, win, WS.id)).page
     for (const page of [win, second]) {
       await page.evaluate(() => {
