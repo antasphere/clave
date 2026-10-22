@@ -194,6 +194,7 @@ export function createTriageStore(deps: TriageDependencies): UseBoundStore<Store
       try {
         const id = await deadline(
           deps.launch({
+            serverId: 'local',
             setup: {
               kind: selection.provider,
               dangerousMode: selection.dangerousMode,

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { parseResourceKey } from '@clave/contract/fleet'
+import { ownedFilePath } from '../../lib/fleet-identity'
 import type { FileReadResult } from '../../../../preload/index.d'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@clave/ui/components'
 import { formatSize, countLines } from './file-types'
@@ -46,7 +48,7 @@ export function FileInfoTooltip({
     }
   }, [cwd, filePath, fileData])
 
-  const abs = filePath ? (filePath.startsWith('/') ? filePath : `${cwd ?? ''}/${filePath}`) : ''
+  const abs = filePath ? parseResourceKey('file', ownedFilePath(cwd ?? '/', filePath)).id : ''
   const rows: [string, string][] = []
   if (fileData) rows.push(['Size', formatSize(fileData.size)])
   if (fileData && !fileData.binary) rows.push(['Lines', String(countLines(content))])

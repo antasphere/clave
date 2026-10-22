@@ -92,6 +92,7 @@ describe('triage support controller', () => {
       await store.getState().start()
       const request = deps.launch.mock.calls[0][0]
       expect(request).toMatchObject({
+        serverId: 'local',
         cwd: { kind: 'path', path: prepared.bundle!.dir },
         remember: false,
         throwOnError: true,

@@ -1,3 +1,6 @@
+import { FleetControls } from '../fleet/FleetControls'
+import { reportFleetError } from '../../store/fleet-store'
+import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -714,6 +717,10 @@ export function Sidebar(): React.JSX.Element {
       try {
         await window.electronAPI.killSession(sessionId)
       } catch {
+        if (isRemoteKey(sessionId)) {
+          reportFleetError(new Error('close failed'))
+          return
+        }
         // session may already be dead
       }
       removeSession(sessionId)
@@ -804,7 +811,7 @@ export function Sidebar(): React.JSX.Element {
 
         const currentState = useSessionStore.getState()
         useSessionStore.setState({
-          sessions: [...currentState.sessions, newSession],
+          sessions: [...currentState.sessions.filter((s) => s.id !== newSession.id), newSession],
           selectedSessionIds: [sessionInfo.id],
           focusedSessionId: sessionInfo.id
         })
@@ -961,26 +968,30 @@ export function Sidebar(): React.JSX.Element {
           const initialPrompt = session.claudeAgentsMode
             ? undefined
             : session.initialPrompt || undefined
-          const sessionInfo = await window.electronAPI.spawnSession(session.cwd, {
-            claudeMode: dupOtherProvider ? false : session.claudeMode,
-            antigravityMode: session.antigravityMode,
-            codexMode: session.codexMode,
-            piMode: session.piMode,
-            claudeAgentsMode: session.claudeAgentsMode,
-            dangerousMode: session.dangerousMode,
-            model: session.model,
-            launchProfileId: session.launchProfileId,
-            piProvider: session.piProvider,
-            piThinking: session.piThinking,
-            initialPrompt,
-            // The clone runs on its source's account: main reads the token by
-            // this id at spawn, so leaving it out would put the clone on the
-            // machine login while every readout still named the account.
-            ...(dupClaudeKind ? accountSpawnFields(session) : {}),
-            ...(session.codexMode ? codexAccountSessionFields(session) : {}),
-            // A duplicate belongs where its source lives, not to the active view.
-            workspaceId: session.workspaceId
-          })
+          const sessionInfo = await window.electronAPI.fleetStart(
+            ownerOf(session.id),
+            session.cwd,
+            {
+              claudeMode: dupOtherProvider ? false : session.claudeMode,
+              antigravityMode: session.antigravityMode,
+              codexMode: session.codexMode,
+              piMode: session.piMode,
+              claudeAgentsMode: session.claudeAgentsMode,
+              dangerousMode: session.dangerousMode,
+              model: session.model,
+              launchProfileId: session.launchProfileId,
+              piProvider: session.piProvider,
+              piThinking: session.piThinking,
+              initialPrompt,
+              // The clone runs on its source's account: main reads the token by
+              // this id at spawn, so leaving it out would put the clone on the
+              // machine login while every readout still named the account.
+              ...(dupClaudeKind ? accountSpawnFields(session) : {}),
+              ...(session.codexMode ? codexAccountSessionFields(session) : {}),
+              // A duplicate belongs where its source lives, not to the active view.
+              workspaceId: session.workspaceId
+            }
+          )
           addSession({
             id: sessionInfo.id,
             cwd: sessionInfo.cwd,
@@ -1039,7 +1050,7 @@ export function Sidebar(): React.JSX.Element {
         // launch profile still contributes the current command and extra args.
         const isAgents = !!session.claudeAgentsMode
         const isPi = !!session.piMode
-        const sessionInfo = await window.electronAPI.spawnSession(session.cwd, {
+        const sessionInfo = await window.electronAPI.fleetStart(ownerOf(session.id), session.cwd, {
           claudeMode: !isAgents && !isPi,
           claudeAgentsMode: isAgents,
           piMode: isPi,
@@ -1587,6 +1598,7 @@ export function Sidebar(): React.JSX.Element {
           it lives in the toolbar now, behind the workspace name.) */}
       <div className="px-2 flex-shrink-0">
         <SessionLauncher onRemoteLaunch={setRemotePickerState} />
+        <FleetControls />
       </div>
 
       {/* Group switcher — pinned under the launcher for the same reason: the way to

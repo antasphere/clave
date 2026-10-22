@@ -36,6 +36,7 @@ import type {
   TriageWorkspace
 } from '../../shared/triage'
 import { TRIAGE_SNAPSHOT_VERSION } from '../../shared/triage'
+import { LOCAL_SERVER_ID, parseResourceKey, parseSessionKey } from '@clave/contract/fleet'
 import {
   TRUSTED_LITERALS,
   createRedactor,
@@ -357,6 +358,25 @@ function projectAgents(state: unknown, redact: Redactor): TriageAgent[] {
 const difference = (a: Iterable<string>, b: Set<string>): string[] =>
   [...new Set(a)].filter((x) => !b.has(x)).sort()
 
+/** A session another fleet server owns (`clave-owner:session:<server>:<id>`):
+ *  a window may show it, but it is not this instance's to reconcile. */
+function ownedElsewhere(id: string): boolean {
+  try {
+    return parseSessionKey(id).serverId !== LOCAL_SERVER_ID
+  } catch {
+    return false
+  }
+}
+
+/** A group another fleet server owns. */
+function groupOwnedElsewhere(id: string): boolean {
+  try {
+    return parseResourceKey('group', id).serverId !== LOCAL_SERVER_ID
+  } catch {
+    return false
+  }
+}
+
 export function reconcile(input: {
   sessions: TriageSource<TriageSession[]>
   listings: TriageWindowListing[]
@@ -374,14 +394,18 @@ export function reconcile(input: {
   const records = input.records.status === 'ok' ? input.records.value.items : null
   const live = input.tmux.status === 'ok' ? input.tmux.value.live : null
 
+  // Only this instance's own sessions are compared: a remote fleet group's
+  // quick-launch terminal is shown here but run by its own server.
   const shown = new Set<string>()
   const tabWindow = new Map<string, number>()
   for (const l of okListings) {
     for (const s of l.value.sessions) {
+      if (ownedElsewhere(s.id)) continue
       shown.add(s.id)
       tabWindow.set(s.id, l.windowId)
     }
-    for (const g of l.value.groups) for (const id of g.terminalSessionIds) shown.add(id)
+    for (const g of l.value.groups)
+      for (const id of g.terminalSessionIds) if (!ownedElsewhere(id)) shown.add(id)
   }
   // A hidden session belongs to its owner (a group terminal, a session
   // view's server, a toolbar button): it is never a row of its own.
@@ -829,6 +853,21 @@ export async function collectWithRedactor(
   if (listingsR.status === 'ok')
     for (const l of windowListings)
       if (l.status !== 'ok') warnings.push(`Window ${l.windowId} did not list its tabs: ${l.error}`)
+  // The inventory is this instance's own: what a window shows of a remote
+  // fleet server is said to be outside it, never counted as complete.
+  let remoteGroups = 0
+  let remoteTerminals = 0
+  for (const l of windowListings) {
+    if (l.status !== 'ok') continue
+    for (const g of l.value.groups) {
+      if (groupOwnedElsewhere(g.id)) remoteGroups++
+      remoteTerminals += g.terminalSessionIds.filter(ownedElsewhere).length
+    }
+  }
+  if (remoteGroups || remoteTerminals)
+    warnings.push(
+      `The windows show ${remoteGroups} group(s) and ${remoteTerminals} quick-launch terminal(s) of remote fleet servers: they are listed as the windows report them, but those servers are not inventoried or reconciled here.`
+    )
   if (truncated.length) warnings.push(`Cut at their limit: ${truncated.join(', ')}.`)
   // The last pass: every known secret replaced in every string, whatever
   // field it reached (a window key, a path, a label), so a field the

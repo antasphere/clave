@@ -1,3 +1,5 @@
+import { requestFleetLaunch } from '../store/fleet-launch-store'
+import { ownerOf, isRemoteKey } from './fleet-identity'
 import { useSessionStore } from '../store/session-store'
 import { claudeProfileSpawnFields } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
@@ -23,6 +25,8 @@ export type LaunchCwd =
   | { kind: 'path'; path: string }
 
 export interface LaunchRequest {
+  /** Explicit owner; omit to follow the targeted group or current tab. */
+  serverId?: string
   /** The agent to run, or null for a plain terminal. */
   setup: AgentSetup | null
   cwd: LaunchCwd
@@ -82,6 +86,19 @@ async function resolveCwd(cwd: LaunchCwd): Promise<string | null> {
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
+  // An explicit server must not inherit another server from the focused tab.
+  const target =
+    req.groupId ?? (req.serverId === undefined ? useSessionStore.getState().focusedSessionId : null)
+  const serverId = req.serverId ?? ownerOf(target)
+  if (isRemoteKey(target) || serverId !== 'local') {
+    return requestFleetLaunch({
+      serverId,
+      setup: req.setup,
+      groupId: req.groupId,
+      cwd: req.cwd.kind === 'path' ? req.cwd.path : undefined,
+      initialPrompt: req.initialPrompt
+    })
+  }
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null
 

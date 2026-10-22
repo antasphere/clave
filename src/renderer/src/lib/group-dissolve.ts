@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { useSessionStore } from '../store/session-store'
 import { emitTabClosed } from './exchange-capture'
+import { isRemoteKey } from './fleet-identity'
+import { reportFleetError } from '../store/fleet-store'
 
 /**
  * A group goes away two ways — Delete (its tabs die with it) and Ungroup
@@ -37,17 +39,23 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
   const current = useSessionStore.getState()
   const group = current.groups.find((g) => g.id === groupId)
   if (!group) return
-  await Promise.all(
+  const closed = await Promise.all(
     sessionsToKillOnDissolve(group, mode).map(async (sid) => {
       const session = current.sessions.find((s) => s.id === sid)
       if (session) emitTabClosed(session, current.groups, 'user', null)
       try {
         await window.electronAPI.killSession(sid)
       } catch {
+        if (isRemoteKey(sid)) {
+          reportFleetError(new Error('close failed'))
+          return false
+        }
         // session may already be dead
       }
+      return true
     })
   )
+  if (closed.includes(false)) return
   const store = useSessionStore.getState()
   if (mode === 'delete') store.deleteGroup(groupId)
   else store.ungroupSessions(groupId)

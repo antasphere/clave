@@ -1,3 +1,4 @@
+import { startDesktopFleet } from '../../store/fleet-store'
 import { initializeSkins } from '../../lib/skin'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
@@ -365,6 +366,7 @@ export function AppShell(): React.JSX.Element {
       // instead of a fixed delay (PRDCT-1762): a group created before the
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
+      startDesktopFleet()
 
       // Attached, the records are the SERVER's: the boot read above went over
       // IPC (main's own, empty attached) so the boot stayed fast and an early

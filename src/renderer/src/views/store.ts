@@ -65,12 +65,14 @@ export function useViewRegistry(): void {
     }
     refresh()
     const stop = window.electronAPI.onPluginsChanged(refresh)
+    const stopFleet = window.electronAPI.onFleetSnapshot?.(refresh)
     const stopConnected = window.electronAPI.onServerConnected(refresh)
     return () => {
       active = false
       if (retry !== null) clearTimeout(retry)
       stop()
       stopConnected()
+      stopFleet?.()
     }
   }, [recordsKey])
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resourceKey } from '@clave/contract/fleet'
 import { collectSnapshot, typedSnapshotField } from './collect'
 import {
   CHAT_ID,
@@ -694,5 +695,37 @@ describe('collectSnapshot', () => {
     )
     expect(s.origin.instanceId).toBe('inst-<redacted>')
     expect(JSON.stringify(s)).not.toContain(SHELL_TOKEN)
+  })
+
+  it('a remote fleet group terminal shown in a window is not a local disagreement', async () => {
+    const remote = resourceKey('session', 'mac-studio', '99999999-9999-4999-8999-999999999999')
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        windowListings: async () => {
+          const l = await base.windowListings(100)
+          const first = l[0].result as { groups: unknown[] }
+          first.groups.push({
+            id: resourceKey('group', 'mac-studio', 'g-remote'),
+            name: 'Remote',
+            sessionIds: [],
+            terminals: [{ id: 't', sessionId: remote }]
+          })
+          return l
+        }
+      })
+    )
+    expect(s.reconciliation.uiOnly).toEqual([])
+    expect(s.reconciliation.complete).toBe(true)
+    expect(
+      s.warnings.some((w) =>
+        w.includes('1 group(s) and 1 quick-launch terminal(s) of remote fleet servers')
+      )
+    ).toBe(true)
+    // The remote group stays in the listing as data.
+    const listing = s.windowListings[0]
+    expect(
+      listing.status === 'ok' && listing.value.groups.map((g) => g.terminalSessionIds)
+    ).toContainEqual([remote])
   })
 })

@@ -14,6 +14,7 @@ import {
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import { fleetWorld, connectMac, owned, request } from './fixtures/fleet-world.mjs'
 import {
   REPO,
   launchApp,
@@ -282,6 +283,8 @@ export async function run(t) {
   let app
   let fixtureRoot
   let tokenOutputCapture
+  let remoteWorld
+  let remoteBefore
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
       const root = fixturePath(`triage-${runId}`)
@@ -446,6 +449,17 @@ export async function run(t) {
       (r) => r.kind === 'spawn' && r.cwd === realpathSync(root)
     ).pid
     assert.ok(processAlive(originalChatPid), 'the original chat process is alive before triage')
+    if (serverMode() !== 'attached') {
+      remoteWorld = await fleetWorld('triage-local-capture')
+      const remoteReceipt = remoteWorld.load()
+      const client = { win: second, owners: [] }
+      await connectMac(client, [remoteWorld.servers[0]])
+      const remoteId = owned('session', client.owners[0].id, remoteReceipt.values.first.sessionId)
+      await second.locator(`[data-sidebar-item-id="${remoteId}"]`).click()
+      await second.locator(`[data-session-id="${remoteId}"] [data-testid="chat-view"]`).waitFor()
+      remoteBefore = await request(remoteWorld.servers[0], '/sessions')
+      assert.ok(remoteBefore.length > 0, 'the focused remote fixture contains real sessions')
+    }
     const dialog = await openTriage(app, second)
     await dialog.getByText('Preview context', { exact: true }).click()
     const context = await dialog.getByLabel('Context preview').textContent()
@@ -511,6 +525,12 @@ export async function run(t) {
         ),
         'recording Codex process actually starts'
       )
+      assert.deepEqual(
+        await request(remoteWorld.servers[0], '/sessions'),
+        remoteBefore,
+        'local triage creates or changes no session on the focused remote server'
+      )
+      t.check('local triage starts locally while a real remote session is focused', true)
       const after = await second.evaluate(() => window.electronAPI.triageSnapshot())
       const support = after.sessions.value.filter((s) => !original.some((o) => o.id === s.id))
       assert.equal(support.length, 1, 'double submit creates exactly one tab')
@@ -1270,7 +1290,9 @@ export async function run(t) {
     )
   } finally {
     try {
-      await app?.close()
+      const closed = await Promise.allSettled([app?.close(), remoteWorld?.close()])
+      const failed = closed.find((result) => result.status === 'rejected')
+      if (failed) throw failed.reason
     } finally {
       if (fixtureRoot && existsSync(fixtureRoot)) {
         // A support terminal's cwd is a capture timestamp, so its tmux name

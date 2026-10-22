@@ -102,6 +102,8 @@ export const PermissionModeOptionSchema = z.object({ id: z.string(), label: z.st
 export type PermissionModeOption = z.infer<typeof PermissionModeOptionSchema>
 /** One question an agent asks the reader mid-turn (Claude's AskUserQuestion). */
 export const AgentQuestionSchema = z.object({
+  /** Stable answer key; older providers without IDs use the question text. */
+  id: z.string().min(1).optional(),
   question: z.string(),
   header: z.string().optional(),
   options: z.array(z.object({ label: z.string(), description: z.string().optional() })),

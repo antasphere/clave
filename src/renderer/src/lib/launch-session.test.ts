@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resourceKey } from '@clave/contract/fleet'
 
 const f = vi.hoisted(() => ({
   add: vi.fn(),
@@ -6,11 +7,20 @@ const f = vi.hoisted(() => ({
   remember: vi.fn(),
   list: vi.fn(),
   kill: vi.fn(),
+  fleetLaunch: vi.fn(),
+  focusedSessionId: null as string | null,
   accountId: null as string | null
 }))
 vi.mock('../store/session-store', () => ({
-  useSessionStore: { getState: () => ({ addSessionInGroup: f.add, sessions: [] }) }
+  useSessionStore: {
+    getState: () => ({
+      addSessionInGroup: f.add,
+      sessions: [],
+      focusedSessionId: f.focusedSessionId
+    })
+  }
 }))
+vi.mock('../store/fleet-launch-store', () => ({ requestFleetLaunch: f.fleetLaunch }))
 vi.mock('../store/claude-profile-store', () => ({
   claudeProfileSpawnFields: (p: { id: string }) => ({ claudeProfileId: p.id })
 }))
@@ -35,6 +45,7 @@ afterEach(() => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
   f.accountId = null
+  f.focusedSessionId = null
 })
 
 describe('launchSession acknowledgement and opt-in errors', () => {
@@ -75,6 +86,48 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     expect(f.add.mock.calls[0][0].workspaceId).toBe('capture-workspace')
     expect(f.remember).not.toHaveBeenCalled()
   })
+  it('keeps an explicitly local capture local while a remote session is focused', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+    f.focusedSessionId = resourceKey('session', 'fixture-remote', 'working-chat')
+    f.fleetLaunch.mockResolvedValue('remote-new')
+    f.spawn.mockResolvedValue({ id: 'local-support' })
+    const onCreated = vi.fn()
+    expect(await launchSession({ ...request, serverId: 'local', onCreated })).toBe('local-support')
+    expect(f.fleetLaunch).not.toHaveBeenCalled()
+    expect(f.spawn).toHaveBeenCalledWith(
+      '/private/triage',
+      expect.objectContaining({
+        codexAccountId: 'work',
+        launchProfileId: 'codex-work',
+        workspaceId: 'capture-workspace'
+      })
+    )
+    expect(onCreated).toHaveBeenCalledExactlyOnceWith('local-support')
+  })
+
+  it('keeps ordinary launches on the focused remote server', async () => {
+    f.focusedSessionId = resourceKey('session', 'fixture-remote', 'working-chat')
+    f.fleetLaunch.mockResolvedValue('remote-new')
+    expect(await launchSession(request)).toBe('remote-new')
+    expect(f.fleetLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: 'fixture-remote',
+        cwd: '/private/triage'
+      })
+    )
+    expect(f.spawn).not.toHaveBeenCalled()
+  })
+
+  it('keeps explicit remote launches remote when a local session is focused', async () => {
+    f.focusedSessionId = 'local-chat'
+    f.fleetLaunch.mockResolvedValue('remote-new')
+    expect(await launchSession({ ...request, serverId: 'fixture-remote' })).toBe('remote-new')
+    expect(f.fleetLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: 'fixture-remote' })
+    )
+    expect(f.spawn).not.toHaveBeenCalled()
+  })
+
   it('propagates provider errors when requested without creating a renderer tab', async () => {
     vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
     const failure = new Error('adapter unavailable')

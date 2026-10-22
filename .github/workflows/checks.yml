@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build secure filesystem helper
+        run: npm run native:build
+
       - name: Lint
         run: npm run lint
 
@@ -101,9 +104,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build native helpers
+        run: npm run native:build
+
       - name: Build the app
         id: build
         run: npx electron-vite build
+
+      - name: Gate, actual renderer and native view module audit
+        run: node scripts/renderer-module-audit.mjs
 
       # The packaged app, not the checkout: electron-builder leaves out the
       # peers npm installs on its own, so a module the bundles require can
@@ -143,6 +152,11 @@ jobs:
         run: node tests/e2e/run.mjs server-boot
         env:
           CLAVE_E2E_SERVER: separate
+
+      # Current full-renderer completeness, lifecycle and responsiveness gates.
+      # Retired prefix-cache integration remains explicitly named legacy diagnostics.
+      - name: Gate, full Markdown client, native lifecycle and responsiveness
+        run: node tests/e2e/run.mjs markdown-parser-deep-client markdown-full-native renderer-responsiveness
 
       - name: Report, the whole suite with the server in-process
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
