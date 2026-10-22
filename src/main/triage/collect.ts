@@ -214,6 +214,15 @@ function userLabelOf(r: Record<string, unknown> | undefined, redact: Redactor): 
   return label ? redact.text(label, 120) : null
 }
 
+/** The kind of owner a record says hides its session (a group terminal, a
+ *  session view's server, a toolbar button), or null. A record is hidden
+ *  only with a non-empty `link.kind`: the one rule both the projection and
+ *  the reconciliation use, so an empty or incomplete `link` never hides a
+ *  session that is really missing from every window. */
+function recordLinkKind(r: Record<string, unknown>): string | null {
+  return isObject(r.link) ? str(r.link.kind) || null : null
+}
+
 function projectRecord(file: RawRecordFile, redact: Redactor): TriageRecord | null {
   const r = file.content
   if (!isObject(r)) return null
@@ -221,7 +230,7 @@ function projectRecord(file: RawRecordFile, redact: Redactor): TriageRecord | nu
   const cwd = str(r.cwd)
   if (!id || cwd === null) return null
   const transport = r.transport === 'pty' || r.transport === 'events' ? r.transport : null
-  const link = isObject(r.link) ? str(r.link.kind) : null
+  const link = recordLinkKind(r)
   return {
     key: redact.text(file.key, 200),
     id: redact.text(id, 200),
@@ -697,7 +706,7 @@ export async function collectWithRedactor(
         rawRecords.push({
           id: str(file.content.id)!,
           tmuxName: str(file.content.tmuxName),
-          linked: isObject(file.content.link)
+          linked: recordLinkKind(file.content) !== null
         })
       } else
         unreadable.push({

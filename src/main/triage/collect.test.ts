@@ -914,4 +914,32 @@ describe('collectSnapshot', () => {
     expect(s.reconciliation.serverOnly).toEqual([])
     expect(JSON.stringify(s)).not.toContain(CHAT_ID)
   })
+
+  it('A8: an empty record link does not hide a session missing from every window', async () => {
+    const base = fakeSources()
+    const s = await collectSnapshot(
+      fakeSources({
+        sessions: async () =>
+          (await base.sessions()).map((x) => ({ ...(x as object), windowKey: 'win-a' })),
+        windows: () => [{ ...base.windows()[0], boundSessionIds: [TERMINAL_ID, CHAT_ID] }],
+        // Window A shows only the terminal; the chat's record carries an
+        // empty `link`, which names no owner and so hides nothing.
+        windowListings: async () => [(await base.windowListings(100))[0]],
+        records: async (dir, max) => {
+          const r = await base.records(dir, max)
+          return {
+            ...r,
+            files: r.files.map((f) =>
+              (f.content as { id?: string }).id === CHAT_ID
+                ? { ...f, content: { ...(f.content as object), link: {} } }
+                : f
+            )
+          }
+        }
+      })
+    )
+    expect(s.reconciliation.serverOnly).toEqual([CHAT_ID])
+    if (s.records.status !== 'ok') throw new Error('records')
+    expect(s.records.value.items.find((r) => r.id === CHAT_ID)?.link).toBeNull()
+  })
 })
