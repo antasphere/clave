@@ -103,10 +103,23 @@ const usageIsolation = () => {
 }
 const isolatedOptions = (options = {}) => ({
   ...options,
-  args: [...(options.args ?? []), '--test-no-machine-usage'],
+  args: [...(options.args ?? []), '--test-no-activate', '--test-no-machine-usage'],
   env: { ...options.env, ...usageIsolation() }
 })
-const startE2eServer = (name, options) => startHarnessServer(name, isolatedOptions(options))
+const startE2eServer = async (name, options) => {
+  const server = await startHarnessServer(name, isolatedOptions(options))
+  const isolation = await serverFixture(server.url, server.token).evaluate(() => {
+    const noActivate = process.argv.includes('--test-no-activate')
+    const noMachineUsage = process.argv.includes('--test-no-machine-usage')
+    return { noActivate, noMachineUsage, effectiveNoMachineUsage: noActivate && noMachineUsage }
+  })
+  if (!isolation.noActivate || !isolation.noMachineUsage || !isolation.effectiveNoMachineUsage) {
+    await server.stop()
+    throw new Error('server-boot standalone fixture did not disable machine usage before launch')
+  }
+  console.log('STANDALONE_USAGE_ISOLATION', JSON.stringify({ name, ...isolation }))
+  return server
+}
 const launchApp = async (dir, options) => {
   const launched = await launchHarnessApp(dir, isolatedOptions(options))
   const optedOut = await launched.app.evaluate(
