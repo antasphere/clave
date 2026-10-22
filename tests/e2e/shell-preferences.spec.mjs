@@ -22,11 +22,15 @@ export async function run(t) {
   const { loadShellPreferences } = await import(pathToFileURL(modulePath).href)
   let launched
   const receipt = await loadShellPreferences(async ({ runId }) => {
-    launched = await launchApp(dir)
+    launched = await launchApp(dir, { args: ['--test-no-machine-usage'] })
     return { ...launched, runId }
   })
   console.log(JSON.stringify({ scenario: 'shell/preferences', runId: receipt.runId, target: dir }))
   const { app, win } = launched
+  t.check(
+    'the initial shell opts out of machine usage',
+    await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
   try {
     const second = await openWindow(app, win)
     await app.evaluate(({ app, BrowserWindow }) => {
@@ -176,8 +180,12 @@ export async function run(t) {
   } finally {
     await app.close()
   }
-  const restored = await launchApp(dir)
+  const restored = await launchApp(dir, { args: ['--test-no-machine-usage'] })
   try {
+    t.check(
+      'the relaunched shell opts out of machine usage',
+      await restored.app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
     t.equal(
       'relaunch restores the updater channel',
       (await restored.win.evaluate(() => window.electronAPI.getUpdaterState())).channel,
