@@ -728,4 +728,66 @@ describe('collectSnapshot', () => {
       listing.status === 'ok' && listing.value.groups.map((g) => g.terminalSessionIds)
     ).toContainEqual([remote])
   })
+
+  // ── VA-14: fleet ownership is classified from the raw identity, before redaction ──
+
+  const withRemoteGroup = (
+    serverId: string,
+    token: string,
+    extraLocalTerminal?: string
+  ): ReturnType<typeof fakeSources> => {
+    const base = fakeSources()
+    const remote = resourceKey('session', serverId, '99999999-9999-4999-8999-999999999999')
+    return fakeSources({
+      shellDiscovery: async () => ({ ...(await base.shellDiscovery()), token }),
+      windowListings: async () => {
+        const l = await base.windowListings(100)
+        const first = l[0].result as { groups: unknown[] }
+        first.groups.push({
+          id: resourceKey('group', serverId, 'g-remote'),
+          name: 'Remote group',
+          sessionIds: [],
+          terminals: [{ id: 't', sessionId: remote }]
+        })
+        if (extraLocalTerminal)
+          first.groups.push({
+            id: 'g-local',
+            name: 'Local group',
+            sessionIds: [],
+            terminals: [{ id: 'tl', sessionId: extraLocalTerminal }]
+          })
+        return l
+      }
+    })
+  }
+  const remoteWarning = '1 group(s) and 1 quick-launch terminal(s) of remote fleet servers'
+
+  it('VA-14: a remote owner whose name is a known token stays remote after redaction', async () => {
+    const owner = 'server-8b9a4c51-238f-4d17-a83a-1234567890ab'
+    const s = await collectSnapshot(withRemoteGroup(owner, owner))
+    expect(s.reconciliation.uiOnly).toEqual([])
+    expect(s.warnings.some((w) => w.includes(remoteWarning))).toBe(true)
+    const listing = s.windowListings[0]
+    if (listing.status !== 'ok') throw new Error('listing')
+    expect(listing.value.groups.find((g) => g.name === 'Remote group')?.remote).toBe(true)
+    expect(JSON.stringify(s)).not.toContain(owner)
+  })
+
+  it('VA-14: a remote session id holding a short known token stays remote after redaction', async () => {
+    const s = await collectSnapshot(withRemoteGroup('mac-studio', '999999'))
+    expect(s.reconciliation.uiOnly).toEqual([])
+    expect(s.warnings.some((w) => w.includes(remoteWarning))).toBe(true)
+    expect(JSON.stringify(s)).not.toContain('999999')
+  })
+
+  it('VA-14: an escaped remote owner is still remote, and a genuinely local disagreement is still reported', async () => {
+    const s = await collectSnapshot(
+      withRemoteGroup('remote %:/é', SHELL_TOKEN, 'genuinely-unlisted-local-id')
+    )
+    expect(s.reconciliation.uiOnly).toEqual(['genuinely-unlisted-local-id'])
+    expect(s.warnings.some((w) => w.includes(remoteWarning))).toBe(true)
+    const listing = s.windowListings[0]
+    if (listing.status !== 'ok') throw new Error('listing')
+    expect(listing.value.groups.find((g) => g.name === 'Local group')?.remote).toBeUndefined()
+  })
 })
