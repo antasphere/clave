@@ -163,7 +163,10 @@ async function terminalPrinting(app, win, groupId, marker) {
     cwd: ROOT,
     mode: 'terminal',
     groupId,
-    command: `echo "${marker} $$ END"; sleep 300`,
+    // The terminal retains the user's shell, which may be Nushell or Fish.
+    // Interpret this POSIX fixture program explicitly. Its marker contains
+    // no apostrophes, and the echoed command has $$ rather than output digits.
+    command: `/bin/sh -c 'echo "${marker} $$ END"; sleep 300'`,
     autoRun: true
   })
   const seen = await until(
@@ -652,8 +655,7 @@ export async function run(t) {
           cwd: ROOT,
           mode: 'terminal',
           groupId: g.groupId,
-          command:
-            'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] asnode=[$ELECTRON_RUN_AS_NODE] END"',
+          command: `/bin/sh -c 'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[\${#CLAVE_SERVER_TOKEN}] asnode=[$ELECTRON_RUN_AS_NODE] END"'`,
           autoRun: true
         })
         const probe = await until(
