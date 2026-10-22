@@ -1,3 +1,6 @@
+import { createFleetDesktop } from './fleet-desktop'
+import type * as NodeClient from '@clave/client/node'
+import type { ElectronAPI } from './index.d'
 import type {
   Session,
   SessionStream,
@@ -70,6 +73,10 @@ const sessionSubscriptionRefs = new Map<string, number>()
 // The client itself (Effect and the framework underneath) loads on the first
 // routed call that finds an endpoint, never at window start: measured at about
 // 700 ms of synchronous requires per window when it was a static import.
+let nodeClient: Promise<typeof NodeClient> | null = null
+const loadNodeClient = (): Promise<typeof NodeClient> =>
+  (nodeClient ??= (async () => await import('@clave/client/node'))())
+
 const serverRouter = createMethodRouter({
   resolve: async (): Promise<Endpoint | null> => {
     const found = (await ipcRenderer.invoke(IPC_SERVER_ENDPOINT)) as
@@ -92,7 +99,7 @@ const serverRouter = createMethodRouter({
     // page's own fetch be refused by its CSP, with the chat view never
     // mounting behind it). The push socket is opened by the first routed
     // subscription, not before.
-    const { connectThroughNode } = await import('@clave/client/node')
+    const { connectThroughNode } = await loadNodeClient()
     const backing = await connectThroughNode(endpoint, { client: 'clave-preload' })
     // Every push listener waiting for the server joins it now (below).
     queueMicrotask(() => announceServer(backing))
@@ -450,7 +457,7 @@ void Promise.resolve()
   .then(() => ipcRenderer.invoke(IPC_SERVER_EXTERNAL))
   .then(
     (external) => {
-      if (external === true) setTimeout(() => void import('@clave/client/node').catch(noop), 0)
+      if (external === true) setTimeout(() => void loadNodeClient().catch(noop), 0)
     },
     () => {}
   )
@@ -2407,7 +2414,17 @@ const electronAPI = {
   // ── Lane F: the shell ──
 }
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+contextBridge.exposeInMainWorld(
+  'electronAPI',
+  createFleetDesktop(electronAPI as unknown as ElectronAPI, {
+    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    changed: (callback) => createIpcListener('server:fleet:changed', callback),
+    connect: async (endpoint) => {
+      const { connectThroughNode } = await loadNodeClient()
+      return connectThroughNode(endpoint, { client: 'clave-fleet-preload' })
+    }
+  })
+)
 
 /**
  * `--test-no-activate` again, this time so the RENDERER can see it.

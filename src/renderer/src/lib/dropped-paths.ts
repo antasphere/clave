@@ -1,3 +1,4 @@
+import { parseResourceKey } from '@clave/contract/fleet'
 /**
  * The file paths a drop carries, whichever way they arrived: Finder hands
  * real File objects, VS Code and friends a text/uri-list, Clave's own file and
@@ -6,6 +7,21 @@
  * same drags.
  */
 export function pathsFromDataTransfer(dt: DataTransfer): string[] {
+  const owned = dt.getData('application/x-clave-files')
+  if (owned) {
+    try {
+      const paths = JSON.parse(owned) as unknown
+      if (
+        Array.isArray(paths) &&
+        paths.every(
+          (p) => typeof p === 'string' && parseResourceKey('file', p).serverId !== 'local'
+        )
+      )
+        return paths
+    } catch {
+      return []
+    }
+  }
   // 1. Files from a native file manager
   if (dt.files.length > 0) {
     const paths = Array.from(dt.files)

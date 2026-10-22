@@ -1,3 +1,5 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
+import { reportFleetError } from '../../store/fleet-store'
 import { emitTabClosed } from '../../lib/exchange-capture'
 import { useCallback, useState, type ReactElement } from 'react'
 import {
@@ -41,6 +43,10 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
     try {
       await window.electronAPI.killSession(sessionId)
     } catch {
+      if (isRemoteKey(sessionId)) {
+        reportFleetError(new Error('close failed'))
+        return
+      }
       // session may already be dead
     }
     removeSession(sessionId)
@@ -172,7 +178,7 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
               <ChatBubbleBottomCenterTextIcon className="w-4 h-4" />
             </button>
           )}
-          {session.claudeMode && session.claudeSessionId && (
+          {!isRemoteKey(sessionId) && session.claudeMode && session.claudeSessionId && (
             <>
               <button
                 onClick={() =>

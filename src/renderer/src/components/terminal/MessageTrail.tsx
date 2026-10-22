@@ -1,3 +1,4 @@
+import { isRemoteKey } from '../../lib/fleet-identity'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
@@ -58,13 +59,13 @@ export function MessageTrail({ sessionId }: { sessionId: string }): ReactElement
   }
 
   const refresh = useCallback((): void => {
-    if (!cwd || !claudeSessionId) return
+    if (!cwd || !claudeSessionId || isRemoteKey(sessionId)) return
     window.electronAPI
       .historyConversation(cwd, claudeSessionId, provider)
       .then((res) => setTurns(res.turns))
       // Best-effort: the trail just keeps what it last had.
       .catch(() => {})
-  }, [cwd, claudeSessionId, provider])
+  }, [cwd, claudeSessionId, provider, sessionId])
 
   useEffect(() => {
     refresh()

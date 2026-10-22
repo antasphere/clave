@@ -1,3 +1,4 @@
+import { isRemoteKey } from './fleet-identity'
 import { useSessionStore, type Session } from '../store/session-store'
 import {
   useClaudeProfileStore,
@@ -164,6 +165,7 @@ export interface SwitchTarget {
 /** The accounts a session could move to, in the menu's order: those with
  *  headroom first, each side by its soonest weekly reset. */
 export function sessionSwitchTargets(session: Session): SwitchTarget[] {
+  if (isRemoteKey(session.id)) return []
   const provider = accountProviderOf(session)
   if (!provider) return []
   const current = sessionAccountId(session, provider)
