@@ -46,6 +46,7 @@ import {
   MIC_OPEN_SOUND_SETTINGS_CHANNEL,
   type MicAccessState
 } from '../shared/mic'
+import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1672,6 +1673,9 @@ const electronAPI = {
   onOpenSettingsSection: (callback: (section: string) => void) =>
     createIpcListener<[string]>('menu:open-settings-section', callback),
 
+  // The menu's "Debug Clave…" (issue #227): the window opens its triage.
+  onOpenTriage: (callback: () => void) => createIpcListener<[]>(TRIAGE_IPC.open, callback),
+
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),
   onMissionControlExited: (callback: () => void) =>
@@ -2390,7 +2394,12 @@ const electronAPI = {
   feedbackSubmit: (submission: { email: string; message?: string }) =>
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
-    >
+    >,
+
+  // ── Triage (issue #227): over IPC only, never routed to the server, whose
+  // failure is one of the things a triage must be able to describe ──
+  triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
