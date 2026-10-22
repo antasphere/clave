@@ -36,6 +36,11 @@ import {
 
 const DIR = userDataDir('chat-account-switch')
 const ROOT = fixturePath('chat-switch-root')
+const PROVIDER_HOMES = {
+  CLAUDE_CONFIG_DIR: path.join(ROOT, 'provider-homes/claude'),
+  CODEX_HOME: path.join(ROOT, 'provider-homes/codex'),
+  PI_CODING_AGENT_DIR: path.join(ROOT, 'provider-homes/pi')
+}
 const TRANSCRIPTS = fixturePath('chat-switch-transcripts')
 const PROCESSES = path.join(ROOT, 'processes.jsonl')
 const INPUTS = path.join(ROOT, 'inputs.jsonl')
@@ -49,6 +54,7 @@ function writeFixtures() {
   rmSync(TRANSCRIPTS, { recursive: true, force: true })
   mkdirSync(`${ROOT}/bin`, { recursive: true })
   mkdirSync(TRANSCRIPTS, { recursive: true })
+  for (const home of Object.values(PROVIDER_HOMES)) mkdirSync(home, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   writeFileSync(
@@ -102,11 +108,24 @@ const lines = (file) =>
 export async function run(t) {
   writeFixtures()
   const env = {
+    ...PROVIDER_HOMES,
     SHELL: `${ROOT}/bin/bash`,
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  const { app, win, fixture } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage'],
+    env
+  })
+  t.check(
+    'the actual shell disables machine-login usage',
+    await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
+  t.check(
+    'the actual sessions host disables machine-login usage',
+    await fixture.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
   // The old process's end (below) travels through the session host, and a
   // wrap only reaches the subscriptions made after it: so the host's stream is
   // wrapped here, before the tab exists, and asks a hold the move installs

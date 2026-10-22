@@ -29,6 +29,11 @@ import {
 
 const DIR = userDataDir('account-switch-served')
 const ROOT = fixturePath('account-switch-served-root')
+const PROVIDER_HOMES = {
+  CLAUDE_CONFIG_DIR: path.join(ROOT, 'provider-homes/claude'),
+  CODEX_HOME: path.join(ROOT, 'provider-homes/codex'),
+  PI_CODING_AGENT_DIR: path.join(ROOT, 'provider-homes/pi')
+}
 const KEYCHAIN = fixturePath('account-switch-served-keychain/e2e.keychain-db')
 const WS = {
   id: 'served-switch-ws',
@@ -60,16 +65,32 @@ function deleteKeychain() {
 export async function run(t) {
   rmSync(DIR, { recursive: true, force: true })
   mkdirSync(ROOT, { recursive: true })
+  for (const home of Object.values(PROVIDER_HOMES)) mkdirSync(home, { recursive: true })
+  const transcripts = path.join(ROOT, 'transcripts')
+  mkdirSync(transcripts, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   const mac = process.platform === 'darwin'
   if (mac) createKeychain()
   const { app, win, fixture } = await launchApp(DIR, {
-    env: mac ? { CLAVE_KEYCHAIN_FILE: KEYCHAIN } : {}
+    args: ['--test-no-machine-usage'],
+    env: {
+      ...PROVIDER_HOMES,
+      CLAVE_TRANSCRIPTS_ROOT: transcripts,
+      ...(mac ? { CLAVE_KEYCHAIN_FILE: KEYCHAIN } : {})
+    }
   })
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {
+    t.check(
+      'the actual shell disables machine-login usage',
+      await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
+    t.check(
+      'the actual sessions host disables machine-login usage',
+      await fixture.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+    )
     // In the process that hosts the sessions: the probe answers per token
     // with a quota, an unknown token is refused; the Default account is the
     // machine login and is never read.
