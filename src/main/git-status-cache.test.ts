@@ -220,3 +220,62 @@ describe('what a folder is to git', () => {
     }
   })
 })
+
+describe('the cached worktree reading, round 2', () => {
+  it('does not keep a first reading a commit landed during', async () => {
+    const fresh = path.join(root, 'wt-first')
+    git(repo, 'worktree', 'add', '-q', fresh, '-b', 'lane/first', 'main')
+    const target = gitManager as unknown as {
+      readWorktree: (...args: unknown[]) => Promise<unknown>
+    }
+    const original = target.readWorktree.bind(gitManager)
+    const spy = vi.spyOn(target, 'readWorktree').mockImplementationOnce(async (...args) => {
+      const reading = await original(...args)
+      // The commit lands after the reading computed, before it is stored.
+      commit(fresh, 'during.txt', 'committed during the first reading')
+      return reading
+    })
+    try {
+      await gitManager.getStatus(fresh)
+    } finally {
+      spy.mockRestore()
+    }
+    const next = await gitManager.getStatus(fresh)
+    expect(next.worktree?.ahead).toBe(1)
+    expect(next.worktree?.lastCommit?.subject).toBe('committed during the first reading')
+  })
+
+  it('follows a base that is a tag', async () => {
+    git(repo, 'tag', 'v-base', 'main')
+    const tagged = path.join(root, 'wt-tag')
+    git(repo, 'worktree', 'add', '-q', tagged, '-b', 'lane/tag', 'v-base')
+    const before = await gitManager.getStatus(tagged)
+    expect(before.worktree?.base).toBe('v-base')
+    commit(repo, 'tag.txt', 'the tag moves on')
+    git(repo, 'tag', '-f', 'v-base', 'main')
+    const after = await gitManager.getStatus(tagged)
+    expect(after.worktree?.behind).toBe((before.worktree?.behind ?? 0) + 1)
+  })
+
+  it('follows a base spelled as a full ref name', async () => {
+    const full = path.join(root, 'wt-full')
+    git(repo, 'worktree', 'add', '-q', full, '-b', 'lane/full', 'refs/heads/main')
+    const before = await gitManager.getStatus(full)
+    commit(repo, 'full.txt', 'base moves under its full name')
+    const after = await gitManager.getStatus(full)
+    expect(after.worktree?.behind).toBe((before.worktree?.behind ?? 0) + 1)
+  })
+
+  it('does not keep a reading that failed inside', async () => {
+    const inner = path.join(root, 'wt-inner')
+    git(repo, 'worktree', 'add', '-q', inner, '-b', 'lane/inner', 'main')
+    const spy = vi
+      .spyOn(gitManager, 'resolveWorktreeBase')
+      .mockRejectedValueOnce(new Error('transient inside the reading'))
+    const first = await gitManager.getStatus(inner)
+    expect(first.worktree).toBeUndefined()
+    spy.mockRestore()
+    const second = await gitManager.getStatus(inner)
+    expect(second.worktree?.base).toBe('main')
+  })
+})

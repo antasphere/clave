@@ -396,6 +396,8 @@ interface WorktreeCacheEntry {
 /** The ref files a base name may live in, loose under the common dir. */
 function baseRefFiles(commonDir: string, base: string): string[] {
   if (/^[0-9a-f]{40}$/.test(base)) return []
+  // A base spelled in full (`refs/heads/main`) is its own path.
+  if (base.startsWith('refs/')) return [path.join(commonDir, base)]
   return [
     path.join(commonDir, 'refs', 'heads', base),
     path.join(commonDir, 'refs', 'remotes', base),
@@ -415,9 +417,14 @@ export function isPlainRefName(base: string): boolean {
  * files themselves, no git process: the checkout's HEAD, its branch's ref and
  * the base's ref (their contents, a sha or a symref, a few bytes each), the
  * checkout's reflog (it grows on every commit, checkout or reset there), and
- * the shared packed refs and last fetch. When none of them moved, the reading
- * — its base, counts, merged state and last commit — cannot have either, and
- * the ten-odd git commands it costs are skipped.
+ * the shared packed refs, last fetch and config (where the upstream that can
+ * name a base lives). When none of them moved, the reading — its base,
+ * counts, merged state and last commit — cannot have either, and the ten-odd
+ * git commands it costs are skipped.
+ *
+ * The checkout's own half comes before the `#`, the base's after it: on a
+ * first reading the base is not known yet, and only the first half can say
+ * whether something moved while the reading ran (`fingerprintMoved`).
  */
 export async function worktreeFingerprint(
   gitDir: string,
@@ -436,22 +443,33 @@ export async function worktreeFingerprint(
       (st) => `${st.mtimeMs}:${st.size}`,
       () => '-'
     )
-  const refs = [
-    ...(branch && branch !== 'HEAD' ? baseRefFiles(commonDir, branch).slice(0, 1) : []),
-    ...(base ? baseRefFiles(commonDir, base) : [])
-  ]
-  // An expression base costs one `rev-parse`, still far below the reading.
-  const resolved =
-    base && !isPlainRefName(base) ? resolveBase(base).catch(() => '-') : Promise.resolve('')
-  const parts = await Promise.all([
+  const own = await Promise.all([
     read(path.join(gitDir, 'HEAD')),
-    ...refs.map(read),
-    resolved,
+    ...(branch && branch !== 'HEAD' ? baseRefFiles(commonDir, branch).slice(0, 1) : []).map(read),
     stat(path.join(gitDir, 'logs', 'HEAD')),
     stat(path.join(commonDir, 'packed-refs')),
-    stat(path.join(commonDir, 'FETCH_HEAD'))
+    stat(path.join(commonDir, 'FETCH_HEAD')),
+    stat(path.join(commonDir, 'config'))
   ])
-  return `${base ?? ''}|${parts.join('|')}`
+  // An expression base costs one `rev-parse`, still far below the reading.
+  const ofBase = base
+    ? await Promise.all([
+        ...baseRefFiles(commonDir, base).map(read),
+        isPlainRefName(base) ? Promise.resolve('') : resolveBase(base).catch(() => '-')
+      ])
+    : []
+  return `${own.join('|')}#${base ?? ''}|${ofBase.join('|')}`
+}
+
+/**
+ * Whether something the reading depends on moved between the fingerprint
+ * taken before it and the one taken after. With the base known before, the
+ * whole fingerprints compare; on a first reading, or after a branch switch,
+ * only the checkout's own half can.
+ */
+export function fingerprintMoved(before: string, after: string, baseKnown: boolean): boolean {
+  if (baseKnown) return before !== after
+  return before.split('#')[0] !== after.split('#')[0]
 }
 
 /** The env of a status read: `GIT_OPTIONAL_LOCKS=0` keeps `git status` from
@@ -846,7 +864,7 @@ class GitManager {
     }
     const base = worktree?.base ?? null
     const after = await worktreeFingerprint(info.gitDir, info.commonDir, branch, base, resolveBase)
-    const moved = base === knownBase && before !== after
+    const moved = fingerprintMoved(before, after, base === knownBase)
     const fingerprint = moved ? `${after}|moved` : after
     this.worktreeCache.set(cwd, { branch, fingerprint, info: worktree, at: Date.now() })
     return worktree
