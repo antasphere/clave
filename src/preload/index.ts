@@ -801,7 +801,6 @@ const onAccountStatus = (status: unknown): void => {
 const profiles = loose<LaunchProfilePreferences>
 type UsageRead = typeof import('@clave/contract/settings').UsageReadView.Type
 type PiUsageTotals = typeof import('@clave/contract/settings').PiUsageTotalsView.Type
-type AppIcon = typeof import('@clave/contract/settings').AppIconSchema.Type
 type RegistryWriteResult =
   typeof import('@clave/contract/settings').UpdateWorkspaceRegistry.success.Type
 type PinsWriteResult = typeof import('@clave/contract/settings').UpdateWorkspacePins.success.Type
@@ -1681,11 +1680,10 @@ const electronAPI = {
   missionControlSetEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('mission-control:set-enabled', enabled),
 
-  // ── Settings (lane D): the app icon ──
-  setAppIcon: viaServer<[string], void>({
-    ipc: (icon) => ipcRenderer.invoke('app:set-icon', icon),
-    server: ({ api }, icon) => api.settings.preferences.setAppIcon(icon as AppIcon)
-  }),
+  // The icon belongs to this Electron shell, like the updater channel,
+  // telemetry consent and Mission Control. A standalone session server has
+  // no Dock. Keep the write and the native consumer in the same process.
+  setAppIcon: (icon: string): Promise<void> => ipcRenderer.invoke('app:set-icon', icon),
   hapticTick: (pattern?: 'alignment' | 'generic' | 'level') =>
     ipcRenderer.send('haptic:tick', pattern ?? 'alignment'),
   getUsername: () => ipcRenderer.invoke('app:get-username') as Promise<string | null>,
