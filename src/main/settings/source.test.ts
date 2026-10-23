@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { Effect } from 'effect'
+import { loadUsageClockScenario } from './usage-clock.fixtures'
 import type { SettingsEvent } from '@clave/contract/settings'
 import { ClaudeAccountsManager } from '../claude-accounts'
 import { CodexAccountsManager } from '../codex-accounts'
@@ -384,5 +386,53 @@ describe('the Antasphere account through the source (PRDCT-3259)', () => {
     expect(change).not.toBeNull()
     change!(status('signed-in'))
     expect(events).toEqual([{ _tag: 'accounts.antasphere_changed', status: status('signed-in') }])
+  })
+})
+
+describe('usage-clock/accounts recording scenario', () => {
+  it('polls both live account lists and publishes every read, including accounts added later', async () => {
+    const source = settingsSourceFromManagers(managers)
+    const events: SettingsEvent[] = []
+    source.subscribe((event) => events.push(event))
+    const initial = await Effect.runPromise(loadUsageClockScenario(source))
+    console.log(
+      JSON.stringify({
+        scenario: 'usage-clock/accounts',
+        runId: initial.runId,
+        accounts: initial.values.accounts
+      })
+    )
+    vi.useFakeTimers()
+    try {
+      managers.claudeUsage.startPolling()
+      managers.codexUsage.startPolling()
+      await vi.advanceTimersByTimeAsync(5_000)
+      const before = reads.length
+      const lateClaude = await source.claudeAccounts.add('Late Claude')
+      const lateCodex = await source.codexAccounts.add('Late Codex', 'chatgpt')
+      await vi.advanceTimersByTimeAsync(295_000)
+      expect(reads.length).toBeGreaterThan(before)
+      expect(reads).toContain(lateClaude.id)
+      expect(reads).toContain(lateCodex.id)
+      expect(events).toContainEqual({
+        _tag: 'usage.claude_read',
+        accountId: lateClaude.id,
+        result: READ
+      })
+      expect(events).toContainEqual({
+        _tag: 'usage.codex_read',
+        accountId: lateCodex.id,
+        result: READ
+      })
+      managers.claudeUsage.stopPolling()
+      managers.codexUsage.stopPolling()
+      const stopped = reads.length
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(reads).toHaveLength(stopped)
+    } finally {
+      managers.claudeUsage.stopPolling()
+      managers.codexUsage.stopPolling()
+      vi.useRealTimers()
+    }
   })
 })

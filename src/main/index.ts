@@ -36,6 +36,7 @@ import { locationManager } from './location-manager'
 import { openclawClient, buildOpenclawWsUrl } from './openclaw-client'
 import { preferencesManager } from './preferences-manager'
 import { workspaceManager } from './workspace-manager'
+import { windowWorkspaces } from './window-workspaces'
 import { windowRegistry } from './window-registry'
 import { windowState } from './window-state'
 import { sidebarLayoutManager } from './sidebar-layout-manager'
@@ -83,7 +84,7 @@ import { QUIT_CEILING_MS, QUIT_HAMMER_MS, runQuitCleanup } from './quit-cleanup'
 import { startClaveServer, stopClaveServer } from './server/clave-server'
 import { quitActivityRecord } from './activity/service'
 import { markClaveServerBootSettled } from './server/endpoint'
-import { setClaveServerEndpoint, setServerExternal } from './server/endpoint'
+import { setClaveServerEndpoint, setServerExternal, isServerExternal } from './server/endpoint'
 import { getSessionHost } from './sessions/host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { shellSettingsSource, shellAntasphereAccount } from './settings/shell-source'
@@ -420,13 +421,17 @@ function trackBounds(win: BrowserWindow, key: string): void {
   win.on('move', save)
 }
 
-function createWindow(entry: PersistedWindow): BrowserWindow {
+function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | null): BrowserWindow {
   const savedIcon = preferencesManager.get('appIcon')
   const icon = nativeImage.createFromPath(join(__dirname, `../../resources/icon-${savedIcon}.png`))
   const workspaceId =
-    entry.workspaceId && workspaceManager.isRegistered(entry.workspaceId)
-      ? entry.workspaceId
-      : workspaceManager.resolveInitialWorkspaceId()
+    resolvedWorkspaceId !== undefined
+      ? resolvedWorkspaceId
+      : isServerExternal()
+        ? entry.workspaceId
+        : entry.workspaceId && workspaceManager.isRegistered(entry.workspaceId)
+          ? entry.workspaceId
+          : workspaceManager.resolveInitialWorkspaceId()
 
   const win = new BrowserWindow({
     width: entry.bounds?.width ?? 1400,
@@ -541,10 +546,16 @@ function createWindow(entry: PersistedWindow): BrowserWindow {
 
 /** A new window, the app once more, on `workspaceId` (null = the
  *  no-workspace state). Persisted at once so it comes back at the next boot. */
-export function openWindow(workspaceId: string | null): { windowId: number } {
+export async function openWindow(workspaceId: string | null): Promise<{ windowId: number }> {
+  const state = await windowWorkspaces.load()
+  if (workspaceId !== null && !state.workspaces.some((w) => w.id === workspaceId)) {
+    throw new Error(`No registered workspace with id "${workspaceId}"`)
+  }
+  await windowWorkspaces.setLastActive(workspaceId)
   const key = windowState.mintKey()
-  const win = createWindow({ key, workspaceId })
-  if (workspaceId) workspaceManager.setLastActive(workspaceId)
+  // The runtime command validated against the authoritative registry. The
+  // boot fallback in createWindow must not replace it with a local default.
+  const win = createWindow({ key, workspaceId }, workspaceId)
   broadcastIdentities()
   return { windowId: win.id }
 }

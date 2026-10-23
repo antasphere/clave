@@ -745,3 +745,25 @@ describe('the preload routes the session records', () => {
     expect(mocks.sessions.discardRecord).toHaveBeenCalledWith('clave-r2')
   })
 })
+
+describe('restart correlation at the preload boundary', () => {
+  it('keeps correlation outside account overrides and forwards it only on the served route', async () => {
+    answer(onServer)
+    mocks.sessions.restart = vi.fn(async () => ({ id: 's1', resumed: true, requestId: 'op-123' }))
+    expect(
+      await api.restartSession('s1', { claudeProfileId: 'play', resendRejected: true }, 'op-123')
+    ).toMatchObject({ requestId: 'op-123' })
+    expect(mocks.sessions.restart).toHaveBeenCalledExactlyOnceWith(
+      's1',
+      { claudeProfileId: 'play' },
+      true,
+      'op-123'
+    )
+    expect(channels()).not.toContain('pty:restart')
+  })
+  it('does not pass a request ID to the legacy IPC restart or invent an echo', async () => {
+    answer({ 'server:endpoint': null, 'pty:restart': { id: 's1', resumed: true } })
+    expect(await api.restartSession('s1', {}, 'op-123')).not.toHaveProperty('requestId')
+    expect(mocks.invoke).toHaveBeenCalledWith('pty:restart', 's1', {})
+  })
+})

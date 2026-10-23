@@ -563,13 +563,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         await b.api.sessions.stop(wireId)
         refresh(parseSessionKey(id).serverId)
       }),
-    restartSession: (id, overrides) =>
+    restartSession: (id, overrides, requestId) =>
       route(
         id,
-        (wireId) => local.restartSession(wireId, overrides),
+        (wireId) => local.restartSession(wireId, overrides, requestId),
         async (b, wireId) => {
           const { resendRejected, ...account } = overrides
-          const result = await b.api.sessions.restart(wireId, account, resendRejected)
+          const result = await b.api.sessions.restart(wireId, account, resendRejected, requestId)
           refresh(parseSessionKey(id).serverId)
           return { ...result, id } as Awaited<ReturnType<ElectronAPI['restartSession']>>
         }

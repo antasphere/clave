@@ -1,9 +1,9 @@
 // Pinned to the in-process server (re-examined by wave 5, lane C,
-// PRDCT-3433): the automatic switch and the Play button restart the tab
-// through `pty:restart`, which main answers from its own PTY manager and
-// cannot restart a session the attached server holds; the spec also reads
-// the session record from the app's folder, which attached is the
-// server's. One of its checks is a known failure of dev (known-failures.json).
+// PRDCT-3433): the spec reads the session record from the app's folder,
+// which attached is the server's, and stubs the quota reads in the shell
+// (below). The restart itself takes the server road in every mode since the
+// fix of the separate-server switch (account-switch-served.spec.mjs proves
+// it there). One of its checks is a known failure of dev (known-failures.json).
 // A chat tab whose account runs out of credits comes back on the next
 // account (ADR 0002). The CLI in `-p` mode does not report that limit as a
 // rate-limit event: it writes a synthetic reply in the model's place ("You're
@@ -39,6 +39,11 @@ import {
 
 const DIR = userDataDir('chat-limit-switch')
 const ROOT = fixturePath('chat-limit-root')
+const PROVIDER_HOMES = {
+  CLAUDE_CONFIG_DIR: path.join(ROOT, 'provider-homes/claude'),
+  CODEX_HOME: path.join(ROOT, 'provider-homes/codex'),
+  PI_CODING_AGENT_DIR: path.join(ROOT, 'provider-homes/pi')
+}
 const TRANSCRIPTS = fixturePath('chat-limit-transcripts')
 const PROCESSES = path.join(ROOT, 'processes.jsonl')
 const INPUTS = path.join(ROOT, 'inputs.jsonl')
@@ -54,6 +59,7 @@ function writeFixtures() {
   rmSync(TRANSCRIPTS, { recursive: true, force: true })
   mkdirSync(`${ROOT}/bin`, { recursive: true })
   mkdirSync(TRANSCRIPTS, { recursive: true })
+  for (const home of Object.values(PROVIDER_HOMES)) mkdirSync(home, { recursive: true })
   seedWorkspaces(DIR, { workspaces: [WS], activeWorkspaceId: WS.id, fresh: true })
   seedTrustedRoots(DIR, [ROOT])
   writeFileSync(
@@ -115,11 +121,24 @@ const lines = (file) =>
 export async function run(t) {
   writeFixtures()
   const env = {
+    ...PROVIDER_HOMES,
     SHELL: `${ROOT}/bin/bash`,
     PATH: `${ROOT}/bin:${process.env.PATH}`,
     CLAVE_TRANSCRIPTS_ROOT: TRANSCRIPTS
   }
-  const { app, win } = await launchApp(DIR, { server: 'in-process', env })
+  const { app, win, fixture } = await launchApp(DIR, {
+    server: 'in-process',
+    args: ['--test-no-machine-usage'],
+    env
+  })
+  t.check(
+    'the actual shell disables machine-login usage',
+    await app.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
+  t.check(
+    'the actual sessions host disables machine-login usage',
+    await fixture.evaluate(() => process.argv.includes('--test-no-machine-usage'))
+  )
   const errors = []
   win.on('pageerror', (e) => errors.push(e.message))
   try {

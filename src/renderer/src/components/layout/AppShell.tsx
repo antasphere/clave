@@ -35,6 +35,8 @@ import { connectUpdaterStore } from '../../store/updater-store'
 import { connectAgentUpdatesStore } from '../../store/agent-updates-store'
 import { MissionControlOverlay } from '../ui/MissionControlOverlay'
 import { SessionHistoryDialog } from '../session/SessionHistoryDialog'
+import { TriageDialog } from '../help/TriageDialog'
+import { useTriageStore } from '../../store/triage-store'
 import { useHistoryStore } from '../../store/history-store'
 import { startSessionHistoryStamping } from '../../lib/session-history'
 import { AgentChatPanel } from '../agents/AgentChatPanel'
@@ -714,6 +716,15 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => connectAgentUpdatesStore(), [])
   useEffect(() => connectKeymapStore(), [])
 
+  // One dialog for both the native Help menu and the in-app Help action.
+  useEffect(
+    () =>
+      window.electronAPI?.onOpenTriage(() => {
+        void useTriageStore.getState().openDialog()
+      }),
+    []
+  )
+
   // Open Settings → Updates when asked from the native menu.
   useEffect(() => {
     if (!window.electronAPI?.onOpenSettingsSection) return
@@ -1070,6 +1081,7 @@ export function AppShell(): React.JSX.Element {
       <UpdateOverlay />
       <MissionControlOverlay />
       <SessionHistoryDialog />
+      <TriageDialog />
       <RestorePromptDialog />
       <KeymapCommandHud hud={commandHud} />
       <ConfirmDialog

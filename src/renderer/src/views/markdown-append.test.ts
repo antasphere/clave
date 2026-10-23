@@ -67,6 +67,8 @@ function equal(input: string, actual: ReturnType<typeof publicStages>): void {
 }
 
 describe('per-entry actual Markdown parser append reuse', () => {
+  // This checks complete pipeline parity and parser-input work, not latency.
+  // Allow a bounded 15-second completion budget for the full-suite CI run.
   it('reduces actual parser input on the original long response without dropping any output', () => {
     const h = harness()
     let input = LONG_RESPONSE
@@ -99,7 +101,7 @@ describe('per-entry actual Markdown parser append reuse', () => {
         Array.from({ length: n + 2 }, (_, i) => streamChunk(i)).join('')
       )
     )
-  })
+  }, 15_000)
 
   it.each(DEPTHS as readonly number[])(
     'retains every original literal/position/stage at depth %s',

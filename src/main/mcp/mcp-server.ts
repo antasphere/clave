@@ -13,6 +13,7 @@ import { callRenderer, callRendererAll, requestView } from './mcp-bridge'
 import { windowRegistry } from '../window-registry'
 import { focusedOrPrimaryWindow, bringForward } from '../window-routing'
 import { workspaceManager } from '../workspace-manager'
+import { windowWorkspaces, initialWindowWorkspace } from '../window-workspaces'
 import { moveSessionsToWindow, awaitRehomed } from '../ipc-handlers/window-handlers'
 import { sidebarLayouts, sidebarTransport } from '../sidebar-layouts'
 import { ptyManager } from '../pty-manager'
@@ -520,34 +521,39 @@ const servedShell: ServedShell<NonNullable<BrowserWindowLike>> = {
 
 /** Main's "open a new window", injected by the entry (index.ts owns
  *  createWindow; importing it here would be a cycle). */
-let windowOpener: ((workspaceId: string | null) => { windowId: number }) | null = null
+let windowOpener: ((workspaceId: string | null) => Promise<{ windowId: number }>) | null = null
 
 export function registerMcpWindowOpener(
-  fn: (workspaceId: string | null) => { windowId: number }
+  fn: (workspaceId: string | null) => Promise<{ windowId: number }>
 ): void {
   windowOpener = fn
 }
 
 /** `clave_open_window`: a new window on the given workspace, else on the
  *  caller's own (the app once more, where you are). */
-function openWindowFromTool(
+async function openWindowFromTool(
   p: Record<string, unknown>,
   callerSessionId: string | undefined
-): { windowId: number; workspaceId: string | null } {
+): Promise<{ windowId: number; workspaceId: string | null }> {
   if (!windowOpener) throw new Error('Clave cannot open windows yet')
+  const state = await windowWorkspaces.load()
   let workspaceId: string | null
   if (typeof p.workspace === 'string' && p.workspace.length > 0) {
-    workspaceId = resolveWorkspaceIdMain(p.workspace)
+    const ref = p.workspace
+    workspaceId =
+      state.workspaces.find((w) => w.id === ref)?.id ??
+      state.workspaces.find((w) => w.name === ref)?.id ??
+      state.workspaces.find((w) => w.name.toLowerCase() === ref.toLowerCase())?.id ??
+      null
     if (!workspaceId) throw new Error(`Unknown workspace "${p.workspace}"`)
   } else {
     const own =
       (callerSessionId ? windowRegistry.getWindowForSession(callerSessionId) : null) ??
       focusedOrPrimaryWindow()
     workspaceId =
-      (own ? windowRegistry.getWorkspaceForWindow(own.id) : null) ??
-      workspaceManager.resolveInitialWorkspaceId()
+      (own ? windowRegistry.getWorkspaceForWindow(own.id) : null) ?? initialWindowWorkspace(state)
   }
-  const { windowId } = windowOpener(workspaceId)
+  const { windowId } = await windowOpener(workspaceId)
   return { windowId, workspaceId }
 }
 
@@ -565,7 +571,7 @@ async function runCommand(command: string, payload: unknown, caller?: string): P
       caller ?? (typeof p.callerSessionId === 'string' ? p.callerSessionId : undefined)
     let result: unknown
     if (command === 'openWindow') {
-      result = openWindowFromTool(p, callerSessionId)
+      result = await openWindowFromTool(p, callerSessionId)
     } else {
       const win = await resolveCommandWindow(command, p, callerSessionId)
       // The road is the boot's decision: a call that lands before it waits for

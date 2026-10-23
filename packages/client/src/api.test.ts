@@ -22,6 +22,18 @@ afterEach(async () => {
 })
 
 describe('the typed request client', () => {
+  it('round-trips optional restart correlation without changing legacy requests', async () => {
+    expect(await api.sessions.restart('s1', {}, false, 'request-123')).toMatchObject({
+      requestId: 'request-123',
+      resumed: true
+    })
+    expect(await api.sessions.restart('s1', {})).not.toHaveProperty('requestId')
+    expect(source.restarts).toEqual([
+      { id: 's1', account: {}, resendRejected: false },
+      { id: 's1', account: {}, resendRejected: false }
+    ])
+  })
+
   it('reads a page of the past under its own deadline, not the ordinary one (PRDCT-3526)', async () => {
     // One millisecond is no deadline at all for a request over loopback: an
     // ordinary call misses it, the history call has a minute.
