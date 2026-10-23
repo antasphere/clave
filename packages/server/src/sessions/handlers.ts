@@ -292,10 +292,14 @@ export const sessionHandlers = [
       yield* events.publish({
         _tag: 'session.restarted',
         id: payload.id,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId }),
         resumed: restarted.resumed,
         account: payload.account
       })
-      return restarted
+      return {
+        ...restarted,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId })
+      }
     })
   )
 ] as const

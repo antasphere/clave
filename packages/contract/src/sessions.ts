@@ -712,7 +712,14 @@ export const AccountOverride = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String)
 })
 export type AccountOverride = typeof AccountOverride.Type
+/** Correlates one caller's answer and event; never a spawn override. */
+export const RestartRequestId = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(128),
+  Schema.pattern(/^[A-Za-z0-9._:-]+$/)
+)
 export const RestartedSession = Schema.Struct({
+  requestId: Schema.optional(RestartRequestId),
   ...SessionInfo.fields,
   /** The conversation came along; false means the tab started fresh. */
   resumed: Schema.Boolean
@@ -727,6 +734,7 @@ export const RestartSession = Command.define('RestartSession', {
   payload: Schema.Struct({
     id: Schema.String,
     account: AccountOverride,
+    requestId: Schema.optional(RestartRequestId),
     resendRejected: Schema.optional(Schema.Boolean)
   }),
   success: RestartedSession,

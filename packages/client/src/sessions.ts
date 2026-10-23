@@ -82,7 +82,8 @@ export interface SessionsClient {
   readonly restart: (
     id: string,
     account: AccountOverride,
-    resendRejected?: boolean
+    resendRejected?: boolean,
+    requestId?: string
   ) => Promise<RestartedSession>
 }
 
@@ -177,13 +178,14 @@ export const sessionsClient = (call: Call, historyCall: Call = call): SessionsCl
     ),
   type: (id, text, from) =>
     call((c) => c.sessions.type({ payload: { id, text, ...(from !== undefined && { from }) } })),
-  restart: (id, account, resendRejected) =>
+  restart: (id, account, resendRejected, requestId) =>
     call((c) =>
       c.sessions.restart({
         payload: {
           id,
           account,
-          ...(resendRejected !== undefined && { resendRejected })
+          ...(resendRejected !== undefined && { resendRejected }),
+          ...(requestId !== undefined && { requestId })
         }
       })
     )

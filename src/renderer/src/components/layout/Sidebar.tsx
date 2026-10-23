@@ -1249,7 +1249,12 @@ export function Sidebar(): React.JSX.Element {
               label: target.label,
               content: <AccountSwitchRow target={target} />,
               preview: <AccountUsagePreview target={target} />,
-              onClick: () => void switchSessionAccount(sessionId, target.id)
+              onClick: () =>
+                void switchSessionAccount(sessionId, target.id).then((result) => {
+                  // A refused move used to vanish here: the menu closed and
+                  // nothing said why the tab stayed where it was.
+                  if (!result.ok) console.error('Account switch failed:', result.error)
+                })
             }))
           })
         }

@@ -785,6 +785,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1064,8 +1065,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
-    }
-  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
+    },
+    requestId?: string
+  ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
