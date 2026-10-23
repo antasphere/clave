@@ -1209,11 +1209,13 @@ const electronAPI = {
   >({
     ipc: (cwd, options) => ipcRenderer.invoke('pty:spawn', cwd, options),
     server: async ({ api }, cwd, options) => {
-      const key = await windowKey()
+      const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
+      const workspaceId = options?.workspaceId ?? identity?.workspaceId
+      const spawnOptions = workspaceId != null ? { ...options, workspaceId } : options
       return (await api.sessions.start({
         cwd,
-        ...(key && { windowKey: key }),
-        ...(options && { options })
+        ...(identity?.windowKey && { windowKey: identity.windowKey }),
+        ...(spawnOptions && { options: spawnOptions })
       })) as SessionInfo
     }
   }),

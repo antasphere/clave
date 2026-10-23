@@ -1,7 +1,7 @@
 import { Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { focusedOrPrimaryWindow, bringForward } from './window-routing'
 import { windowRegistry } from './window-registry'
-import { workspaceManager } from './workspace-manager'
+import { windowWorkspaces, initialWindowWorkspace } from './window-workspaces'
 import { checkForUpdatesNow, openUpdaterLog, RELEASES_URL } from './auto-updater'
 import { getStoredKeymapConfig } from './ipc-handlers/keymap-handlers'
 import { isMouseChord, type KeymapActionId } from '../shared/keymaps'
@@ -51,7 +51,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
  */
 export interface AppMenuDeps {
   /** Open a new window on a workspace (index.ts owns createWindow). */
-  openWindow: (workspaceId: string | null) => { windowId: number }
+  openWindow: (workspaceId: string | null) => Promise<{ windowId: number }>
 }
 
 export function buildAppMenu(deps: AppMenuDeps): void {
@@ -75,12 +75,15 @@ export function buildAppMenu(deps: AppMenuDeps): void {
   // File › New Window: the app once more, on the workspace of the window
   // the user is looking at (else the last-active one). ⌘⇧N is free: ⌘N is
   // the renderer's new-session shortcut.
-  const newWindow = (): void => {
+  const newWindow = async (): Promise<void> => {
     const current = focusedOrPrimaryWindow()
-    const workspaceId =
-      (current ? windowRegistry.getWorkspaceForWindow(current.id) : null) ??
-      workspaceManager.resolveInitialWorkspaceId()
-    deps.openWindow(workspaceId)
+    const currentWorkspace = current ? windowRegistry.getWorkspaceForWindow(current.id) : null
+    try {
+      const state = await windowWorkspaces.load()
+      await deps.openWindow(currentWorkspace ?? initialWindowWorkspace(state))
+    } catch (error) {
+      console.error('[window] could not open:', error)
+    }
   }
   const template: MenuItemConstructorOptions[] = [
     {
