@@ -57,7 +57,7 @@
  * red.
  */
 import {
-  launchApp,
+  launchApp as launchHarnessApp,
   seedWorkspaces,
   seedTrustedRoots,
   userDataDir,
@@ -67,7 +67,7 @@ import {
   serverFixture,
   serverMode,
   separateServerDataDir,
-  startE2eServer,
+  startE2eServer as startHarnessServer,
   freePorts,
   listeningPorts,
   mcpEndpoint,
@@ -85,6 +85,54 @@ import http from 'node:http'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+
+// These boot fixtures never need a machine account or personal history. Keep
+// the actual terminal shell, but opt out before the first renderer mounts.
+const usageIsolation = () => {
+  const root = fixturePath('server-boot-provider-homes')
+  const env = {
+    CLAUDE_CONFIG_DIR: path.join(root, 'claude'),
+    CODEX_HOME: path.join(root, 'codex'),
+    PI_CODING_AGENT_DIR: path.join(root, 'pi'),
+    CLAVE_TRANSCRIPTS_ROOT: path.join(root, 'claude-transcripts'),
+    CLAVE_CODEX_ROOT: path.join(root, 'codex-transcripts'),
+    CLAVE_PI_ROOT: path.join(root, 'pi-transcripts')
+  }
+  for (const dir of Object.values(env)) mkdirSync(dir, { recursive: true })
+  return { ...env, CLAVE_KEYCHAIN_FILE: path.join(root, 'keychain.json') }
+}
+const isolatedOptions = (options = {}) => ({
+  ...options,
+  args: [...(options.args ?? []), '--test-no-activate', '--test-no-machine-usage'],
+  env: { ...options.env, ...usageIsolation() }
+})
+const startE2eServer = async (name, options) => {
+  const server = await startHarnessServer(name, isolatedOptions(options))
+  const isolation = await serverFixture(server.url, server.token).evaluate(() => {
+    const noActivate = process.argv.includes('--test-no-activate')
+    const noMachineUsage = process.argv.includes('--test-no-machine-usage')
+    return { noActivate, noMachineUsage, effectiveNoMachineUsage: noActivate && noMachineUsage }
+  })
+  if (!isolation.noActivate || !isolation.noMachineUsage || !isolation.effectiveNoMachineUsage) {
+    await server.stop()
+    throw new Error('server-boot standalone fixture did not disable machine usage before launch')
+  }
+  console.log('STANDALONE_USAGE_ISOLATION', JSON.stringify({ name, ...isolation }))
+  return server
+}
+const launchApp = async (dir, options) => {
+  const launched = await launchHarnessApp(dir, isolatedOptions(options))
+  const optedOut = await launched.app.evaluate(
+    () =>
+      process.argv.includes('--test-no-activate') &&
+      process.argv.includes('--test-no-machine-usage')
+  )
+  if (!optedOut) {
+    await launched.app.close()
+    throw new Error('server-boot fixture did not disable machine usage before launch')
+  }
+  return launched
+}
 
 const MODE = serverMode()
 const ROOT = fixturePath('root-server-boot')
@@ -163,7 +211,10 @@ async function terminalPrinting(app, win, groupId, marker) {
     cwd: ROOT,
     mode: 'terminal',
     groupId,
-    command: `echo "${marker} $$ END"; sleep 300`,
+    // The terminal retains the user's shell, which may be Nushell or Fish.
+    // Interpret this POSIX fixture program explicitly. Its marker contains
+    // no apostrophes, and the echoed command has $$ rather than output digits.
+    command: `/bin/sh -c 'echo "${marker} $$ END"; sleep 300'`,
     autoRun: true
   })
   const seen = await until(
@@ -652,8 +703,7 @@ export async function run(t) {
           cwd: ROOT,
           mode: 'terminal',
           groupId: g.groupId,
-          command:
-            'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[${#CLAVE_SERVER_TOKEN}] asnode=[$ELECTRON_RUN_AS_NODE] END"',
+          command: `/bin/sh -c 'echo "PROBE url=[$CLAVE_SERVER_URL] tokenlen=[\${#CLAVE_SERVER_TOKEN}] asnode=[$ELECTRON_RUN_AS_NODE] END"'`,
           autoRun: true
         })
         const probe = await until(
@@ -893,7 +943,8 @@ export async function run(t) {
           asNode: process.env.ELECTRON_RUN_AS_NODE ?? null,
           url: process.env.CLAVE_SERVER_URL ?? null,
           token: process.env.CLAVE_SERVER_TOKEN ?? null,
-          testFlag: process.argv.includes('--test-no-activate')
+          testFlag: process.argv.includes('--test-no-activate'),
+          noMachineUsage: process.argv.includes('--test-no-machine-usage')
         }))
         .catch((error) => ({ error: String(error && error.message ? error.message : error) }))
       t.check(
@@ -901,6 +952,7 @@ export async function run(t) {
         childEnv.testFlag === true,
         childEnv
       )
+      t.equal('the child disables machine usage before boot', childEnv.noMachineUsage, true)
       t.equal('the child took ELECTRON_RUN_AS_NODE out of its environment', childEnv.asNode, null)
       t.equal('and holds no CLAVE_SERVER_URL', childEnv.url, null)
       t.equal('nor CLAVE_SERVER_TOKEN', childEnv.token, null)

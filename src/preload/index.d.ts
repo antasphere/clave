@@ -598,6 +598,7 @@ export type {
 } from '../shared/git-batch'
 import type { GitBatchProgress } from '../shared/git-batch'
 import type { MicAccessState } from '../shared/mic'
+import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -784,6 +785,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -926,6 +928,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
   onDownloadError: (callback: (message: string) => void) => () => void
   onUpdaterState: (callback: (state: UpdaterState) => void) => () => void
   onOpenSettingsSection: (callback: (section: string) => void) => () => void
+  /** The menu's "Debug Clave…" asks this window to open its triage. */
+  onOpenTriage: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>
@@ -1061,8 +1065,9 @@ export interface ElectronAPI extends FleetDesktopAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
-    }
-  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
+    },
+    requestId?: string
+  ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
@@ -1256,6 +1261,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+  /** Collect a read-only snapshot of this running app and write the private
+   *  triage bundle (context, playbook, snapshot). Never rejects for a source
+   *  that fails: the failure is in the snapshot and in `warnings`. */
+  triagePrepare: () => Promise<TriagePrepareResult>
+  /** The same snapshot, collected without writing anything. */
+  triageSnapshot: () => Promise<TriageSnapshot>
 
   // ── Lane C: settings behind ports ──
 

@@ -40,9 +40,27 @@ describe('accountTokenForSpawn', () => {
     expect(accountTokenForSpawn('antigravity', 'work', getToken)).toBeUndefined()
     expect(accountTokenForSpawn('pi', 'work', getToken)).toBeUndefined()
   })
-  it('nothing for the Default or an unknown account', () => {
-    expect(accountTokenForSpawn('claude', 'default', getToken)).toBeUndefined()
-    expect(accountTokenForSpawn('claude', undefined, getToken)).toBeUndefined()
+  it.each(['claude', 'claude-agents'] as const)(
+    'keeps machine-login behavior for Default or omitted accounts in %s',
+    (kind) => {
+      expect(accountTokenForSpawn(kind, 'default', getToken)).toBeUndefined()
+      expect(accountTokenForSpawn(kind, undefined, getToken)).toBeUndefined()
+    }
+  )
+  it.each(['claude', 'claude-agents'] as const)(
+    'refuses a missing or cleared non-default token in %s instead of using the machine login',
+    (kind) => {
+      expect(() => accountTokenForSpawn(kind, 'removed-account', () => undefined)).toThrow(
+        'The selected Claude account is no longer available.'
+      )
+    }
+  )
+  it('does not look up Claude tokens for another provider or a plain terminal', () => {
+    const getToken = (): never => {
+      throw new Error('A non-Claude session must not consult Claude tokens')
+    }
+    for (const kind of [null, 'codex', 'antigravity', 'pi'] as const)
+      expect(accountTokenForSpawn(kind, 'removed-account', getToken)).toBeUndefined()
   })
 })
 
@@ -64,6 +82,25 @@ describe('codexHomeForSpawn', () => {
     expect(codexHomeForSpawn(null, 'work', syncHome)).toBeUndefined()
     expect(codexHomeForSpawn('pi', 'work', syncHome)).toBeUndefined()
     expect(synced).toEqual(['work', 'default'])
+  })
+
+  it('refuses an explicitly selected account whose home disappeared instead of using Default', () => {
+    const syncHome = (): undefined => undefined
+    expect(() => codexHomeForSpawn('codex', 'removed-account', syncHome)).toThrow(
+      'The selected Codex account is no longer available.'
+    )
+  })
+
+  it.each([undefined, 'default'])('keeps machine-home behavior for account %s', (id) => {
+    expect(codexHomeForSpawn('codex', id, () => undefined)).toBeUndefined()
+  })
+
+  it('does not resolve Codex homes for other providers or a plain terminal', () => {
+    const syncHome = (): never => {
+      throw new Error('A non-Codex session must not consult Codex accounts')
+    }
+    for (const kind of [null, 'claude', 'claude-agents', 'antigravity', 'pi'] as const)
+      expect(codexHomeForSpawn(kind, 'removed-account', syncHome)).toBeUndefined()
   })
 })
 

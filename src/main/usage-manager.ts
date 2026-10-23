@@ -536,6 +536,7 @@ export class AccountUsageManager {
   private latest = new Map<string, number>()
   private listeners = new Set<UpdateListener>()
   private timer: ReturnType<typeof setInterval> | null = null
+  private initialTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private source: AccountUsageSource,
@@ -620,12 +621,17 @@ export class AccountUsageManager {
     }
     this.timer = setInterval(tick, intervalMs)
     // Off the boot path: the first read waits for the windows to settle.
-    setTimeout(tick, 5_000)
+    this.initialTimer = setTimeout(() => {
+      this.initialTimer = null
+      tick()
+    }, 5_000)
   }
 
   stopPolling(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    if (this.initialTimer) clearTimeout(this.initialTimer)
+    this.initialTimer = null
   }
 }
 

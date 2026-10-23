@@ -139,7 +139,11 @@ function processNextTitle(): void {
   if (activeTitleJobs >= MAX_CONCURRENT_TITLES || titleQueue.length === 0) return
   const job = titleQueue.shift()!
   activeTitleJobs++
-  runTitleGeneration(job.sessionId, job.userMessage, job.launch)
+  // Launch preparation can refuse an account synchronously. Keep it inside
+  // the promise so rejection always releases the slot and drains the queue.
+  new Promise<string>((resolve) => {
+    resolve(runTitleGeneration(job.sessionId, job.userMessage, job.launch))
+  })
     .then(job.resolve)
     .catch(job.reject)
     .finally(() => {

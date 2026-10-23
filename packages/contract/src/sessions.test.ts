@@ -9,6 +9,8 @@ import {
 } from '../../../src/shared/session-model'
 import {
   Attachments,
+  RestartSession,
+  RestartRequestId,
   GetSessionHistory,
   Session,
   SessionControl,
@@ -318,5 +320,27 @@ describe('the sessions’ server events', () => {
   })
   it('refuses a cleared session without its provider session id', () => {
     expect(Either.isLeft(decode(ServerEvent, { _tag: 'session.cleared', id: 's1' }))).toBe(true)
+  })
+})
+
+describe('restart correlation contract', () => {
+  it('accepts legacy and correlated requests, and bounds correlation identifiers', () => {
+    const payload = { id: 's1', account: {} }
+    expect(Schema.decodeUnknownSync(RestartSession.payload)(payload)).toEqual(payload)
+    expect(
+      Schema.decodeUnknownSync(RestartSession.payload)({ ...payload, requestId: 'request-123' })
+    ).toEqual({ ...payload, requestId: 'request-123' })
+    for (const invalid of ['', 'x'.repeat(129), 'with whitespace', '../path'])
+      expect(Either.isLeft(Schema.decodeUnknownEither(RestartRequestId)(invalid))).toBe(true)
+    for (const requestId of [undefined, 'request-123']) {
+      const event = {
+        _tag: 'session.restarted',
+        id: 's1',
+        resumed: true,
+        account: {},
+        ...(requestId && { requestId })
+      }
+      expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
+    }
   })
 })
