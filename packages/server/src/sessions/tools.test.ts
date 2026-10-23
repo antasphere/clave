@@ -160,6 +160,23 @@ describe('a message typed in', () => {
 })
 
 describe('a restart on another account', () => {
+  it('echoes a caller operation on the answer and event, never into host overrides', async () => {
+    const peer = await welcomed()
+    const account = { claudeProfileId: 'play' }
+    const response = await post('/sessions/restart', { id: 's1', account, requestId: 'op-123' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: 's1', requestId: 'op-123' })
+    expect(await eventOf(peer)).toEqual({ _tag: 'session.restarting', id: 's1' })
+    expect(await eventOf(peer)).toMatchObject({
+      _tag: 'session.restarted',
+      id: 's1',
+      requestId: 'op-123',
+      account
+    })
+    expect(source.restarts).toEqual([{ id: 's1', account, resendRejected: false }])
+    peer.ws.close()
+  })
+
   it('restarts through the host, saying restarting first and restarted after', async () => {
     const peer = await welcomed()
     const account = { claudeProfileId: 'acc-2', claudeProfileLabel: 'Second' }

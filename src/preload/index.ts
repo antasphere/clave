@@ -46,6 +46,7 @@ import {
   MIC_OPEN_SOUND_SETTINGS_CHANNEL,
   type MicAccessState
 } from '../shared/mic'
+import { TRIAGE_IPC, type TriagePrepareResult, type TriageSnapshot } from '../shared/triage'
 
 /** Creates a typed IPC event listener with cleanup function. */
 function createIpcListener<T extends unknown[]>(
@@ -1352,6 +1353,7 @@ const electronAPI = {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -1361,7 +1363,12 @@ const electronAPI = {
     }) => void
   ) =>
     onServerEventOf('session.restarted', (event) =>
-      callback({ id: event.id, resumed: event.resumed, account: event.account })
+      callback({
+        id: event.id,
+        resumed: event.resumed,
+        account: event.account,
+        requestId: event.requestId
+      })
     ),
   // The pin's link is published on the server in-process and sent to the
   // window over IPC when the app is attached (main publishes nothing there):
@@ -1670,6 +1677,9 @@ const electronAPI = {
 
   onOpenSettingsSection: (callback: (section: string) => void) =>
     createIpcListener<[string]>('menu:open-settings-section', callback),
+
+  // The menu's "Debug Clave…" (issue #227): the window opens its triage.
+  onOpenTriage: (callback: () => void) => createIpcListener<[]>(TRIAGE_IPC.open, callback),
 
   onMissionControlEntered: (callback: () => void) =>
     createIpcListener<[]>('mission-control:entered', callback),
@@ -2102,18 +2112,42 @@ const electronAPI = {
     async (api) => usageCatchUp(await api.settings.usage.codexSnapshot())
   ),
   // A session moved to another account: the same tab, its process restarted
-  // on the account with the conversation resumed (ADR 0002).
-  restartSession: (
-    id: string,
-    overrides: {
-      claudeProfileId?: string
-      claudeProfileLabel?: string
-      codexAccountId?: string
-      codexAccountLabel?: string
-      /** Send the message the limit rejected again on the new account. */
-      resendRejected?: boolean
-    }
-  ) => ipcRenderer.invoke('pty:restart', id, overrides),
+  // on the account with the conversation resumed (ADR 0002). Routed like
+  // every other session call: the restart is the server's `RestartSession`
+  // once the shell names an endpoint. Main's own PTY manager holds no spawn
+  // for a tab the separate server owns, so over IPC alone every switch on a
+  // packaged app (the Switch account menu, the automatic switch at a limit,
+  // the Play button) answered "cannot be restarted from here" and did
+  // nothing; the agent tools' `clave_switch_account` already went this way.
+  // The server publishes `session.restarted` for the move too; the window
+  // applies one or the other, never both (`lib/restart-ownership.ts`).
+  restartSession: viaServer<
+    [
+      string,
+      {
+        claudeProfileId?: string
+        claudeProfileLabel?: string
+        codexAccountId?: string
+        codexAccountLabel?: string
+        /** Send the message the limit rejected again on the new account. */
+        resendRejected?: boolean
+      },
+      string | undefined
+    ],
+    (SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }
+  >({
+    ipc: (id, overrides) => ipcRenderer.invoke('pty:restart', id, overrides),
+    server: ({ api }, id, { resendRejected, ...account }, requestId) =>
+      api.sessions
+        .restart(
+          id,
+          // The wire's account carries a field only when it is set.
+          Object.fromEntries(Object.entries(account).filter(([, v]) => typeof v === 'string')),
+          resendRejected === true,
+          requestId
+        )
+        .then(loose<SessionInfo & { resumed: boolean; requestId?: string }>)
+  }),
   getPiUsage: viaServer<['today' | '7d' | '30d' | 'all'], PiUsageTotals>({
     ipc: (range) => ipcRenderer.invoke('usage:get-pi', range),
     server: ({ api }, range) => api.settings.usage.readPi(range).then(loose<PiUsageTotals>)
@@ -2126,6 +2160,11 @@ const electronAPI = {
   getGitStatusBatch: (paths: string[]) => ipcRenderer.invoke('git:status-batch', paths),
   gitFetch: (cwd: string) => ipcRenderer.invoke('git:fetch', cwd),
   gitFetchBatch: (paths: string[]) => ipcRenderer.invoke('git:fetch-batch', paths),
+  gitWatchRepos: (subscriberId: string, paths: string[]) =>
+    ipcRenderer.invoke('git:watch-repos', subscriberId, paths),
+  gitUnwatchRepos: (subscriberId: string) => ipcRenderer.invoke('git:unwatch-repos', subscriberId),
+  onGitReposChanged: (callback: (repos: string[]) => void) =>
+    createIpcListener<[string[]]>('git:repos-changed', callback),
   discoverGitRepos: (cwd: string, force?: boolean) =>
     ipcRenderer.invoke('git:discover-repos', cwd, force),
   gitStage: (cwd: string, files: string[]) => ipcRenderer.invoke('git:stage', cwd, files),
@@ -2383,7 +2422,12 @@ const electronAPI = {
   feedbackSubmit: (submission: { email: string; message?: string }) =>
     ipcRenderer.invoke('feedback:submit', submission) as Promise<
       { ok: true } | { ok: false; error: string }
-    >
+    >,
+
+  // ── Triage (issue #227): over IPC only, never routed to the server, whose
+  // failure is one of the things a triage must be able to describe ──
+  triagePrepare: () => ipcRenderer.invoke(TRIAGE_IPC.prepare) as Promise<TriagePrepareResult>,
+  triageSnapshot: () => ipcRenderer.invoke(TRIAGE_IPC.snapshot) as Promise<TriageSnapshot>
 
   // ── Lane D: the settings are served (their methods sit in their sections above) ──
 
