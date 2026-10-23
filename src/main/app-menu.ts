@@ -5,6 +5,7 @@ import { windowWorkspaces, initialWindowWorkspace } from './window-workspaces'
 import { checkForUpdatesNow, openUpdaterLog, RELEASES_URL } from './auto-updater'
 import { getStoredKeymapConfig } from './ipc-handlers/keymap-handlers'
 import { isMouseChord, type KeymapActionId } from '../shared/keymaps'
+import { TRIAGE_IPC } from '../shared/triage'
 
 const REPO_URL = 'https://github.com/antasphere/clave'
 // electron-builder's productName, stated rather than read: `app.name` is the
@@ -18,6 +19,15 @@ function openSettingsSection(section: string): void {
   if (!win) return
   bringForward(win)
   win.webContents.send('menu:open-settings-section', section)
+}
+
+/** "Debug Clave…" (issue #227): the window in front opens its triage, which
+ *  prepares a support conversation about this running app. */
+function openTriage(): void {
+  const win = focusedOrPrimaryWindow()
+  if (!win) return
+  bringForward(win)
+  win.webContents.send(TRIAGE_IPC.open)
 }
 
 /**
@@ -183,6 +193,10 @@ export function buildAppMenu(deps: AppMenuDeps): void {
           }
         },
         { type: 'separator' },
+        {
+          label: 'Debug Clave…',
+          click: openTriage
+        },
         {
           label: 'Open Updater Log',
           click: () => {
