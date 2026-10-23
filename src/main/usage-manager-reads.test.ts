@@ -254,3 +254,18 @@ describe('a forced read after a token paste', () => {
     })
   })
 })
+
+it('cancels the deferred first usage read when stopped before startup settles', async () => {
+  vi.useFakeTimers()
+  const refresh = vi.spyOn(usageManager, 'refreshAll').mockResolvedValue()
+  try {
+    usageManager.startPolling()
+    usageManager.stopPolling()
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(refresh).not.toHaveBeenCalled()
+  } finally {
+    usageManager.stopPolling()
+    refresh.mockRestore()
+    vi.useRealTimers()
+  }
+})
