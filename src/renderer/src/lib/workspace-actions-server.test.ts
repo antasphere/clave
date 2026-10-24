@@ -144,6 +144,38 @@ describe('server workspaces beside the local registry', () => {
     expect(store.useWorkspaceStore.getState().activeWorkspaceId).toBe(added.id)
   })
 
+  it('holds an add until the server’s list carries it, three seconds at most', async () => {
+    vi.useFakeTimers()
+    try {
+      await actions.bootWorkspaces()
+      heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+      let settled = false
+      const adding = actions.addServerWorkspace('srv', '/srv/added').then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(2_900)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(200)
+      await adding
+      expect(settled).toBe(true)
+      // With the list arriving, the add settles at once.
+      settled = false
+      const again = actions.addServerWorkspace('srv', '/srv/second').then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      heardWorkspaces!({
+        serverId: 'srv',
+        workspaces: [serverWs('srv', 'repo'), serverWs('srv', 'added', '/srv/second')]
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await again
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not bring back an added workspace another Mac removed meanwhile', async () => {
     vi.useFakeTimers()
     try {

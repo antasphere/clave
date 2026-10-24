@@ -14,7 +14,11 @@ const mocks = vi.hoisted(() => ({
   interleave: null as null | ((owner: string) => void),
   /** Holds the next registry reads until released, answering as `instance`. */
   held: [] as Array<{ release: () => void }>,
-  hold: null as null | { instance: string; revision: number },
+  hold: null as null | {
+    instance: string
+    revision: number
+    workspaces?: Array<Record<string, unknown>>
+  },
   events: new Map<string, (value: unknown) => void>()
 }))
 vi.mock('electron', () => ({
@@ -62,7 +66,11 @@ vi.mock('@clave/client/node', () => ({
               if (hold) {
                 const snapshot = [...(mocks.registries.get(owner) ?? [])]
                 await new Promise<void>((release) => mocks.held.push({ release }))
-                return { workspaces: snapshot, revision: hold.revision, instance: hold.instance }
+                return {
+                  workspaces: hold.workspaces ?? snapshot,
+                  revision: hold.revision,
+                  instance: hold.instance
+                }
               }
               return {
                 workspaces: mocks.registries.get(owner) ?? [],
@@ -424,6 +432,37 @@ describe('server workspaces', () => {
     await Promise.all([first, second])
     push('b', '/after', 1, 'b-restarted')
     expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/after']])
+  })
+
+  it('takes a newer revision of the same instance from a read sent earlier', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    const at = (rootDir: string): Array<Record<string, unknown>> => [
+      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 1 }
+    ]
+    // Read A goes out first but the server answers it after a change; read B,
+    // sent later, is answered before that change. The change's push is late.
+    mocks.hold = { instance: 'a', revision: 4, workspaces: at('/after-change') }
+    const a = api.fleetWorkspaces('a')
+    await inFlight(1)
+    mocks.hold = { instance: 'a', revision: 3, workspaces: at('/before-change') }
+    const b = api.fleetWorkspaces('a')
+    await inFlight(2)
+    mocks.hold = null
+    const [first, second] = mocks.held.splice(0)
+    second.release()
+    await vi.advanceTimersByTimeAsync(0)
+    first.release()
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.all([a, b])
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([
+      ['/before-change'],
+      ['/after-change']
+    ])
+    // The late push of that same change publishes nothing new.
+    push('a', '/after-change', 4, 'a')
+    expect(heard).toHaveLength(2)
   })
 
   it('drops a write answer when a newer push arrived while it was in flight', async () => {
