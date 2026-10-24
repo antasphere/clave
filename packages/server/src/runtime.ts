@@ -33,7 +33,7 @@ import { PortsLive, type ServerPorts, SessionHost, SettingsSource, Terminals } f
 import { PushHubService, pushRoute } from './push/route'
 import { fixtureRoute } from './fixtures/route'
 import { sessionHandlers } from './sessions'
-import { SettingsEventsLive, settingsHandlers } from './settings'
+import { SettingsEventsLive, WorkspacesWelcomeLive, settingsHandlers } from './settings'
 import { SidebarEventsLive, SidebarLayoutsPort, sidebarHandlers } from './sidebar'
 import {
   ReviewDesk,
@@ -118,6 +118,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const views = ViewRequests.layer.pipe(Layer.provide(hub))
   // ── Wave 5, lane C: the plugins' news goes out as server events ──
   const pluginsEvents = PluginsEventsLive.pipe(Layer.provide(services))
+  // ── Wave wcs1023, lane B: each socket hears the workspace list at its welcome ──
+  const workspacesWelcome = WorkspacesWelcomeLive.pipe(Layer.provide(Layer.merge(services, hub)))
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
@@ -129,7 +131,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     workspaceFilesEvents,
     views,
     // ── Wave 5, lane C: the plugins ──
-    pluginsEvents
+    pluginsEvents,
+    // ── Wave wcs1023, lane B ──
+    workspacesWelcome
   )
 }
 

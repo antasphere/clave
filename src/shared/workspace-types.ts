@@ -23,6 +23,15 @@ export interface Workspace {
   createdAt: number
 }
 
+/** A workspace that lives on a connected Clave server (#241): its id is the
+ *  server's own id wrapped as a remote key, `resourceKey('workspace',
+ *  serverId, id)` in `@clave/contract/fleet`. This Mac's registry never holds
+ *  one, so main takes it on trust for a window to show and persists it on
+ *  the window; the renderer reads the server's registry for everything else. */
+export function isServerWorkspaceId(id: unknown): id is string {
+  return typeof id === 'string' && id.startsWith('clave-owner:workspace:')
+}
+
 /** Everything persisted in <userData>/workspace-state.json. The main process
  *  stores `pins` opaquely (the renderer's pinned-store owns their shape), the
  *  same way the sidebar layouts store groups — main is dumb, crash-safe

@@ -302,10 +302,15 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     },
     workspaces: {
       load: () => m.workspaces.load(),
-      updateRegistry: (workspaces, origin) => {
+      updateRegistry: (workspaces, origin, base) => {
         if (!Array.isArray(workspaces) || !workspaces.every(isWorkspace)) {
           console.error('[workspace] refused: update-registry payload is not a list of workspaces')
           return { ok: false as const, reason: 'invalid' as const }
+        }
+        if (base) {
+          const now = m.workspaces.stamp()
+          if (now.instance !== base.instance || now.revision !== base.revision)
+            return { ok: false as const, reason: 'stale' as const }
         }
         m.workspaces.updateRegistry(mutable<Workspace[]>(workspaces))
         return { ok: true as const, ...workspaceChanged(origin) }

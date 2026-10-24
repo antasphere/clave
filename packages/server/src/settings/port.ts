@@ -35,6 +35,7 @@ export type LaunchProfilePreferences = typeof Settings.LaunchProfilePreferencesV
 export type AppIcon = typeof Settings.AppIconSchema.Type
 export type Workspace = typeof Settings.WorkspaceView.Type
 export type WorkspaceState = typeof Settings.WorkspaceStateView.Type
+export type WorkspaceStamp = typeof Settings.WorkspaceStamp.Type
 export type RegistryWriteResult = typeof Settings.UpdateWorkspaceRegistry.success.Type
 export type PinsWriteResult = typeof Settings.UpdateWorkspacePins.success.Type
 export type AntasphereAccountStatus = typeof Settings.AntasphereAccountStatusView.Type
@@ -111,10 +112,12 @@ export interface SettingsSourceService {
   }
   readonly workspaces: {
     readonly load: () => Awaitable<WorkspaceState>
-    /** `origin` is the writer's window key, carried back on the change event. */
+    /** `origin` is the writer's window key, carried back on the change event;
+     *  `base`, when given, is the stamp the write was made against. */
     readonly updateRegistry: (
       workspaces: ReadonlyArray<Workspace>,
-      origin: string | undefined
+      origin: string | undefined,
+      base?: WorkspaceStamp
     ) => Awaitable<RegistryWriteResult>
     readonly updatePins: (
       scope: string | null,

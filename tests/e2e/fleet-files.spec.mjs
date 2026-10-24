@@ -8,6 +8,8 @@ import {
   owned,
   ownerReady,
   clickReady,
+  showMac,
+  showServer,
   step
 } from './fixtures/fleet-world.mjs'
 import { assertFileEndpoint } from './fixtures/fleet-http-observer.mjs'
@@ -29,6 +31,8 @@ export async function run(t) {
     await connectMac(macB, world.servers, { ui: false })
     const owner = mac.owners[0].id
     const session = owned('session', owner, value.sessionId)
+    // Remote tabs show only in a workspace of their own server (#241).
+    await showServer(mac, 0)
     await ownerReady(mac, owner, session)
     const opening = mark()
     await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
@@ -152,6 +156,11 @@ export async function run(t) {
       peerSession
     )
     assert.ok(JSON.stringify(history).includes('Local image delivered to its remote agent'))
+    await showMac(mac)
+    await eventually(
+      async () => (await mac.win.locator(`[data-sidebar-item-id="${session}"]`).count()) === 0,
+      'the remote session is hidden in the Mac workspace'
+    )
     assert.deepEqual(mac.errors, [])
     assert.deepEqual(macB.errors, [])
     t.check(
