@@ -78,6 +78,8 @@ beforeAll(() => {
       heardConnections = cb
       return () => {}
     },
+    fleetAddWorkspace: async (serverId: string, input: { rootDir: string }) =>
+      serverWs(serverId, 'added', input.rootDir),
     discoverClaveFiles: async () => [],
     trustWorkspaceRoot: async () => undefined,
     setSessionWorkspace: async () => undefined,
@@ -121,6 +123,18 @@ describe('server workspaces beside the local registry', () => {
     expect(store.workspaceServer('ws1')).toBeNull()
     await tick()
     expect(registryWrites).toEqual([])
+  })
+
+  it('shows an added server workspace before the server’s list carrying it arrives', async () => {
+    await actions.bootWorkspaces()
+    heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+    const added = await actions.addServerWorkspace('srv', '/srv/added')
+    expect(store.useWorkspaceStore.getState().serverWorkspaces.srv.map((w) => w.id)).toEqual([
+      resourceKey('workspace', 'srv', 'repo'),
+      added.id
+    ])
+    await actions.setActiveWorkspace(added.id)
+    expect(store.useWorkspaceStore.getState().activeWorkspaceId).toBe(added.id)
   })
 
   it('drops an entry that names another server', async () => {

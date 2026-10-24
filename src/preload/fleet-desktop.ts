@@ -192,17 +192,20 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // ── Server workspaces (#241) ──────────────────────────────────────────────
   // A server keeps its own workspace registry; the desktop reads it per
   // server, wraps each id as a remote key, and hears every change through the
-  // server's `workspaces.state_changed` event. Every read, push and write
-  // answer carries the registry's stamp: an answer older than what was last
-  // published for that server is dropped, so a slow read never rolls back a
-  // newer push, and an answer from an instance the server has since been
-  // restarted out of is dropped too. A write replaces the server's whole list, so it is made
-  // against the stamp it read and the server refuses it as `stale` when
-  // another Mac wrote in between; it is then read and applied again.
+  // server's `workspaces.state_changed` event. What reaches the renderer is
+  // ordered by arrival, since two instances of a restarted server carry no
+  // order between them: a push comes over the one live socket, in order, and
+  // is always taken (unless the same instance already sent a newer one); a
+  // read or a write answer is taken only when nothing was published for that
+  // server after it was sent, so a slow answer, from the same instance or from
+  // one the server has since been restarted out of, never rolls back a newer
+  // list. A write replaces the server's whole list, so it is made against the
+  // stamp it read and the server refuses it as `stale` when another Mac wrote
+  // in between; it is then read and applied again.
   type Stamp = { revision: number; instance: string }
   const stamps = new Map<string, Stamp>()
-  /** Per server, the instances it has been restarted out of. */
-  const retired = new Map<string, Set<string>>()
+  /** Per server, how many lists were published: a read remembers it when sent. */
+  const published = new Map<string, number>()
   const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
     id: resourceKey('workspace', serverId, ws.id),
     name: ws.name,
@@ -210,29 +213,29 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     profileFile: ws.profileFile,
     createdAt: ws.createdAt
   })
+  /** `sentAt` is the publication count when the read or write went out; a push has none. */
   const publishWorkspaces = (
     serverId: string,
     list: readonly Workspace[],
-    stamp: Stamp
+    stamp: Stamp,
+    sentAt?: number
   ): Workspace[] => {
     const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+    const count = published.get(serverId) ?? 0
+    if (sentAt !== undefined && sentAt !== count) return workspaces
     const last = stamps.get(serverId)
     if (last && last.instance === stamp.instance && stamp.revision < last.revision)
       return workspaces
-    if (retired.get(serverId)?.has(stamp.instance)) return workspaces
-    if (last && last.instance !== stamp.instance) {
-      const gone = retired.get(serverId) ?? new Set<string>()
-      gone.add(last.instance)
-      retired.set(serverId, gone)
-    }
     stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
+    published.set(serverId, count + 1)
     for (const listener of workspaceListeners) listener({ serverId, workspaces })
     return workspaces
   }
   const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
     const b = await backing(serverId)
+    const sentAt = published.get(serverId) ?? 0
     const state = await b.api.settings.workspaces.load()
-    return publishWorkspaces(serverId, state.workspaces as Workspace[], state)
+    return publishWorkspaces(serverId, state.workspaces as Workspace[], state, sentAt)
   }
   const registryChains = new Map<string, Promise<unknown>>()
   const STALE_RETRIES = 5
@@ -245,12 +248,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       for (let attempt = 0; ; attempt++) {
         const state = await b.api.settings.workspaces.load()
         const { next, result } = edit([...(state.workspaces as Workspace[])])
+        const sentAt = published.get(serverId) ?? 0
         const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
           revision: state.revision,
           instance: state.instance
         })
         if (written.ok) {
-          publishWorkspaces(serverId, written.workspaces as Workspace[], written)
+          publishWorkspaces(serverId, written.workspaces as Workspace[], written, sentAt)
           return result
         }
         if (written.reason !== 'stale' || attempt >= STALE_RETRIES)

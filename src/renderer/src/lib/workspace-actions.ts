@@ -511,7 +511,16 @@ export async function addServerWorkspace(
 ): Promise<Workspace> {
   const api = window.electronAPI
   if (!api?.fleetAddWorkspace) throw new Error('Clave servers are not available here.')
-  return api.fleetAddWorkspace(serverId, { rootDir, name })
+  const added = await api.fleetAddWorkspace(serverId, { rootDir, name })
+  // Shown at once even when the server's list carrying it is still on its
+  // way; that list replaces this one when it lands.
+  const { serverWorkspaces } = useWorkspaceStore.getState()
+  const list = serverWorkspaces[serverId] ?? []
+  if (!list.some((w) => w.id === added.id))
+    useWorkspaceStore.setState({
+      serverWorkspaces: { ...serverWorkspaces, [serverId]: [...list, added] }
+    })
+  return added
 }
 
 /** Remove a server workspace from its server's registry. This window, when
