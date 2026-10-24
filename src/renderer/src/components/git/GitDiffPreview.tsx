@@ -5,6 +5,7 @@ import { useSessionStore } from '../../store/session-store'
 import { useDiff } from '../../hooks/use-diff'
 import { DiffLinesView } from './DiffLinesView'
 import { CloseIcon, fileActionButtonClass } from '../files/FileActionIcons'
+import { ownedFilePath } from '../../lib/fleet-identity'
 
 function commitFileStatusColor(status: string): string {
   switch (status) {
@@ -164,7 +165,7 @@ export function GitDiffPreview(): React.JSX.Element | null {
     const filename = diffPreview.file.split('/').pop() ?? diffPreview.file
     addFileTab({
       id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      filePath: `${diffPreview.cwd}/${diffPreview.file}`,
+      filePath: ownedFilePath(diffPreview.cwd, diffPreview.file),
       name: filename,
       kind: 'diff',
       diff: {

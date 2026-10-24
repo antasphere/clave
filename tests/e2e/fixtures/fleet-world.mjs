@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { bunBinary } from '../../../scripts/server-process.mjs'
 import { namespaceOf } from '../namespace.mjs'
@@ -84,7 +85,45 @@ export async function request(server, route, body) {
   return response.json()
 }
 
-export async function fleetWorld(label) {
+/**
+ * A server root as a git repository (wave wcs1023, lane C, #242): one commit
+ * on `main`, a bare origin beside it (`server.origin`) the branch tracks, so a
+ * push from the panel lands somewhere the spec can read. `claude` on the
+ * daemon's PATH is a stub that refuses as a signed-out Claude Code does, so a
+ * commit message asked of the server answers the one sentence about its
+ * login, whatever this machine has installed (`server.claudeStub`).
+ */
+const git = (cwd, ...args) =>
+  execFileSync('git', ['-C', cwd, ...args], {
+    stdio: 'ignore',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  })
+function seedGitRepo(server) {
+  const origin = path.join(server.dataDir, 'origin.git')
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { stdio: 'ignore' })
+  const repo = server.root
+  git(repo, 'init', '-q', '-b', 'main')
+  git(repo, 'config', 'user.email', 'e2e@clave')
+  git(repo, 'config', 'user.name', 'e2e')
+  writeFileSync(path.join(repo, 'README.md'), `# ${path.basename(server.dataDir)}\n`)
+  git(repo, 'add', '-A')
+  git(repo, 'commit', '-qm', 'init')
+  git(repo, 'remote', 'add', 'origin', origin)
+  git(repo, 'push', '-q', '-u', 'origin', 'main')
+  server.origin = origin
+}
+function seedClaudeStub(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o755 })
+  const file = path.join(dir, 'claude')
+  writeFileSync(
+    file,
+    '#!/bin/sh\n/bin/cat >/dev/null\necho "Not logged in · Please run /login" >&2\nexit 1\n'
+  )
+  chmodSync(file, 0o755)
+  return dir
+}
+
+export async function fleetWorld(label, { gitRepo = false } = {}) {
   const run = `${label}-${randomUUID()}`
   const servers = []
   const clients = new Set()
@@ -112,8 +151,12 @@ export async function fleetWorld(label) {
   }
   const seed = fixturePath(`${run}-settings`)
   seedProfiles(seed)
+  const claudeStub = gitRepo ? seedClaudeStub(fixturePath(`${run}-claude-stub`)) : null
   const options = {
-    env: { SHELL: '/bin/sh' },
+    env: {
+      SHELL: '/bin/sh',
+      ...(claudeStub && { PATH: `${claudeStub}:${process.env.PATH ?? ''}` })
+    },
     seedFrom: seed,
     args: ['--daemon', '--host', '127.0.0.1', '--test-no-activate', '--dev-echo-adapter']
   }
@@ -242,6 +285,10 @@ export async function fleetWorld(label) {
       servers.push(server)
       server.root = path.join(server.dataDir, 'repo')
       mkdirSync(server.root, { recursive: true })
+      if (gitRepo) {
+        seedGitRepo(server)
+        server.claudeStub = claudeStub
+      }
       server.fixture = serverFixture(server.url, server.token)
     }
     return world

@@ -37,6 +37,10 @@ export { AgentTokens, type AgentTokensService } from './agent-tools/port'
 import { Plugins, type PluginsService } from './plugins/port'
 
 export { Plugins, type PluginsService } from './plugins/port'
+// ── Wave wcs1023, lane C: the git domain ──
+import { GitPort, type GitService } from './git/port'
+
+export { GitPort, type GitService } from './git/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -61,6 +65,9 @@ export interface ServerPorts {
   // ── Wave 5, lane C: the plugins ──
   /** Wave 5, lane C: the installed plugins, their host and the view leases. `Plugins.none` when absent: nothing installed, every call refused as unavailable. */
   readonly plugins?: PluginsService
+  // ── Wave wcs1023, lane C: the git domain ──
+  /** The checkouts on this server's disk, through the app's own git implementation. `GitPort.none` when absent: every call refused as unavailable. */
+  readonly git?: GitService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -77,6 +84,8 @@ export const PortsLive = (
   | AgentTokens
   // ── Wave 5, lane C: the plugins ──
   | Plugins
+  // ── Wave wcs1023, lane C: the git domain ──
+  | GitPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -89,5 +98,7 @@ export const PortsLive = (
     // ── Wave 4, lane C: the agent tools' tokens ──
     AgentTokens.layer(ports.agentTools ?? AgentTokens.none),
     // ── Wave 5, lane C: the plugins ──
-    Plugins.layer(ports.plugins ?? Plugins.none)
+    Plugins.layer(ports.plugins ?? Plugins.none),
+    // ── Wave wcs1023, lane C: the git domain ──
+    GitPort.layer(ports.git ?? GitPort.none)
   )
