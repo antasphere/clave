@@ -21,7 +21,12 @@ const mocks = vi.hoisted(() => ({
   },
   events: new Map<string, (value: unknown) => void>(),
   /** The push event listeners each owner's backing holds, so a test can emit. */
-  pushListeners: new Map<string, Set<(envelope: unknown) => void>>()
+  pushListeners: new Map<string, Set<(envelope: unknown) => void>>(),
+  /** When set, a server batch waits for it before answering: the test emits
+   *  progress while the batch is in flight. */
+  holdBatch: null as Promise<void> | null,
+  /** When set, owner a's watch waits for it before answering. */
+  holdWatchA: null as Promise<void> | null
 }))
 vi.mock('electron', () => ({
   contextBridge: {
@@ -120,25 +125,38 @@ vi.mock('@clave/client/node', () => ({
         requests: { watch: () => () => {}, resolve: call('resolve', { accepted: true }) },
         // ── Wave wcs1023, lane C: the git domain, every path a server path ──
         git: {
-          status: call('git.status', {
-            isRepo: true,
-            branch: 'main',
-            ahead: 0,
-            behind: 0,
-            hasUpstream: true,
-            files: [],
-            repoRoot: '/repo',
-            worktree: {
-              of: '/main',
-              base: null,
-              baseLabel: '',
+          status: async (cwd: string) => {
+            mocks.calls.push({ owner, method: 'git.status', args: [cwd] })
+            if (cwd === '/plain')
+              return {
+                isRepo: false,
+                branch: '',
+                ahead: 0,
+                behind: 0,
+                hasUpstream: false,
+                files: [],
+                repoRoot: ''
+              }
+            return {
+              isRepo: true,
+              branch: 'main',
               ahead: 0,
               behind: 0,
-              merged: false,
-              createdAt: null,
-              lastCommit: null
+              hasUpstream: true,
+              files: [],
+              repoRoot: '/repo',
+              worktree: {
+                of: '/main',
+                base: null,
+                baseLabel: '',
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                createdAt: null,
+                lastCommit: null
+              }
             }
-          }),
+          },
           statusBatch: async (paths: string[]) => {
             mocks.calls.push({ owner, method: 'git.statusBatch', args: [paths] })
             return paths.map((path) => ({
@@ -161,12 +179,14 @@ vi.mock('@clave/client/node', () => ({
           stage: call('git.stage', undefined),
           commit: call('git.commit', { hash: 'abc', branch: 'main' }),
           watch: async (subscriberId: string, paths: string[]) => {
+            if (owner === 'a' && mocks.holdWatchA) await mocks.holdWatchA
             mocks.calls.push({ owner, method: 'git.watch', args: [subscriberId, paths] })
             return paths
           },
           unwatch: call('git.unwatch', undefined),
           magicSync: async (paths: string[]) => {
             mocks.calls.push({ owner, method: 'git.magicSync', args: [paths] })
+            if (mocks.holdBatch) await mocks.holdBatch
             return paths.map((repoPath) => ({ repoPath, actions: ['committed'], error: null }))
           }
         }
@@ -214,6 +234,8 @@ beforeEach(async () => {
     { id: 'ws-a', name: 'Other', rootDir: '/home/b', profileFile: null, createdAt: 2 }
   ])
   mocks.pushListeners.clear()
+  mocks.holdBatch = null
+  mocks.holdWatchA = null
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
       return ['a', 'b'].map((id) => ({
@@ -653,6 +675,11 @@ describe('git routing by the owner of the repository key', () => {
       mocks.invoke.mock.calls.filter(([channel]) => String(channel).startsWith('git:'))
     ).toEqual([])
   })
+  it('answers a server folder that is no repository as it is, with nothing keyed', async () => {
+    const status = await api.getGitStatus(resourceKey('file', 'a', '/plain'))
+    expect(status).toMatchObject({ isRepo: false, repoRoot: '' })
+    expect(status.worktree).toBeUndefined()
+  })
   it('keeps a Mac repository on the Mac, a plain path with no server in it', async () => {
     await api.getGitStatus('/repo')
     await api.gitStage('/repo', ['a.ts'])
@@ -745,6 +772,56 @@ describe('git routing by the owner of the repository key', () => {
     expect(changed).toEqual([
       [resourceKey('file', 'a', '/repo'), resourceKey('file', 'a', '/other')]
     ])
-    expect(progress).toEqual([{ repoPath: resourceKey('file', 'b', '/repo'), op: 'sync' }])
+    expect(progress).toEqual([])
+  })
+  it('takes back a watch installed after the subscriber was unwatched', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    let release = (): void => {}
+    mocks.holdWatchA = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const watching = api.gitWatchRepos('late', [
+      resourceKey('file', 'a', '/repo'),
+      resourceKey('file', 'b', '/other')
+    ])
+    await api.gitUnwatchRepos('late')
+    release()
+    expect(await watching).toEqual([])
+    const remote = mocks.calls.filter((c) => c.method === 'git.watch' || c.method === 'git.unwatch')
+    // Owner a's late watch was installed after the unwatch and taken back; owner
+    // b was never reached by the stale loop, so nothing of `late` remains anywhere.
+    const aCalls = remote.filter((c) => c.owner === 'a').map((c) => c.method)
+    expect(aCalls).toEqual(['git.unwatch', 'git.watch', 'git.unwatch'])
+    expect(remote.filter((c) => c.owner === 'b' && c.method === 'git.watch')).toEqual([])
+  })
+  it('forwards a server’s batch progress only for a batch this Mac is running, while it runs', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    const progress: Array<{ repoPath: string; done: number }> = []
+    api.onGitBatchProgress((p) => progress.push({ repoPath: p.repoPath, done: p.done }))
+    const tick = (owner: string, repoPath: string, done: number): void =>
+      emit(owner, {
+        _tag: 'git.batch_progress',
+        op: 'sync',
+        phase: 'pushing',
+        repoPath,
+        repoName: 'repo',
+        done,
+        total: 1
+      })
+    let release = (): void => {}
+    mocks.holdBatch = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = api.gitMagicSync([resourceKey('file', 'a', '/repo')])
+    await vi.waitFor(() => expect(mocks.calls.some((c) => c.method === 'git.magicSync')).toBe(true))
+    tick('a', '/repo', 1) // this Mac's batch, on its repository
+    tick('a', '/other', 1) // another Mac's batch on the same daemon
+    tick('b', '/repo', 1) // another daemon altogether
+    release()
+    await running
+    tick('a', '/repo', 1) // the batch is over: a late or foreign event
+    expect(progress).toEqual([{ repoPath: resourceKey('file', 'a', '/repo'), done: 1 }])
   })
 })

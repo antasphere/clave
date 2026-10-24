@@ -11,7 +11,17 @@ export type GitClient = GitOperations
 
 const flag = (value: boolean): 'true' | 'false' => (value ? 'true' : 'false')
 
-export const gitClient = (call: Call): GitClient => ({
+/**
+ * `patientCall` is the client's long deadline, for what git or the server's
+ * `claude` may legitimately take minutes over: a fetch, a pull or a push
+ * against a slow remote, the sweep over every remote, a batch across many
+ * repositories, a commit message or a push summary written by the model. The
+ * ordinary ten-second deadline cut a Magic sync off while the server was
+ * still committing (verifier round 1, finding 1). The reads and the local
+ * writes keep the ordinary deadline: a status that takes ten seconds is
+ * already a finding.
+ */
+export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
   status: (cwd) => call((c) => c.git.status({ payload: { cwd } })),
   statusBatch: (paths) => call((c) => c.git.statusBatch({ payload: { paths } })),
   // A GET carries its flags and numbers as strings (the contract decodes them).
@@ -20,10 +30,10 @@ export const gitClient = (call: Call): GitClient => ({
       c.git.discover({ payload: { cwd, ...(force !== undefined && { force: flag(force) }) } })
     ),
   checkIgnored: (cwd, paths) => call((c) => c.git.checkIgnored({ payload: { cwd, paths } })),
-  fetch: (cwd) => call((c) => c.git.fetch({ payload: { cwd } })).then(() => undefined),
+  fetch: (cwd) => patientCall((c) => c.git.fetch({ payload: { cwd } })).then(() => undefined),
   fetchBatch: (paths) =>
-    call((c) => c.git.fetchBatch({ payload: { paths } })).then(() => undefined),
-  refreshRemotes: (paths) => call((c) => c.git.refreshRemotes({ payload: { paths } })),
+    patientCall((c) => c.git.fetchBatch({ payload: { paths } })).then(() => undefined),
+  refreshRemotes: (paths) => patientCall((c) => c.git.refreshRemotes({ payload: { paths } })),
   watch: (subscriberId, paths) => call((c) => c.git.watch({ payload: { subscriberId, paths } })),
   unwatch: (subscriberId) =>
     call((c) => c.git.unwatch({ payload: { subscriberId } })).then(() => undefined),
@@ -34,13 +44,13 @@ export const gitClient = (call: Call): GitClient => ({
   discard: (cwd, files) =>
     call((c) => c.git.discard({ payload: { cwd, files } })).then(() => undefined),
   commit: (cwd, message) => call((c) => c.git.commit({ payload: { cwd, message } })),
-  push: (cwd) => call((c) => c.git.push({ payload: { cwd } })).then(() => undefined),
+  push: (cwd) => patientCall((c) => c.git.push({ payload: { cwd } })).then(() => undefined),
   publishBranch: (cwd) =>
-    call((c) => c.git.publishBranch({ payload: { cwd } })).then(() => undefined),
+    patientCall((c) => c.git.publishBranch({ payload: { cwd } })).then(() => undefined),
   pull: (cwd, strategy) =>
-    call((c) => c.git.pull({ payload: { cwd, ...(strategy !== undefined && { strategy }) } })).then(
-      () => undefined
-    ),
+    patientCall((c) =>
+      c.git.pull({ payload: { cwd, ...(strategy !== undefined && { strategy }) } })
+    ).then(() => undefined),
   diff: (cwd, filePath, staged, isUntracked) =>
     call((c) =>
       c.git.diff({
@@ -65,9 +75,10 @@ export const gitClient = (call: Call): GitClient => ({
         payload: { cwd, ...(maxCount !== undefined && { maxCount: String(maxCount) }) }
       })
     ),
-  generateCommitMessage: (cwd) => call((c) => c.git.generateCommitMessage({ payload: { cwd } })),
+  generateCommitMessage: (cwd) =>
+    patientCall((c) => c.git.generateCommitMessage({ payload: { cwd } })),
   summarizePush: (cwd, commitMessages, diffStats) =>
-    call((c) => c.git.summarizePush({ payload: { cwd, commitMessages, diffStats } })),
-  magicSync: (paths) => call((c) => c.git.magicSync({ payload: { paths } })),
-  magicPull: (paths) => call((c) => c.git.magicPull({ payload: { paths } }))
+    patientCall((c) => c.git.summarizePush({ payload: { cwd, commitMessages, diffStats } })),
+  magicSync: (paths) => patientCall((c) => c.git.magicSync({ payload: { paths } })),
+  magicPull: (paths) => patientCall((c) => c.git.magicPull({ payload: { paths } }))
 })
