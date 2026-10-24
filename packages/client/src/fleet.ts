@@ -11,6 +11,9 @@ import type { Backing, Endpoint } from './router'
 
 export interface FleetClientOptions {
   readonly resolve: (serverId: ServerId) => Promise<Endpoint | null>
+  /** Hands over a backing whose push socket is not open yet: the frames a
+   *  server sends at the welcome (a server's workspace list, #241) reach only
+   *  the listeners attached before it, and the fleet attaches them here. */
   readonly connect: (endpoint: Endpoint, serverId: ServerId) => Backing | Promise<Backing>
   readonly timeoutMs?: number
 }
