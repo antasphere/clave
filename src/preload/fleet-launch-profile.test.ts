@@ -195,4 +195,35 @@ describe('the Mac carries its launch profiles to a server', () => {
       mocks.invoke.mock.calls.filter(([channel]) => channel === 'launch-profiles:list')
     ).toHaveLength(0)
   })
+
+  it.each([
+    { workspaceId: undefined, windowWorkspaceId: 'window-workspace' },
+    { workspaceId: 'selected-workspace', windowWorkspaceId: 'window-workspace' },
+    { workspaceId: undefined, windowWorkspaceId: undefined }
+  ])(
+    'drops a carried definition on a local attached start with %j',
+    async ({ workspaceId, windowWorkspaceId }) => {
+      const invoke = mocks.invoke.getMockImplementation()!
+      mocks.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+        if (channel === 'server:endpoint')
+          return { url: 'http://local-server', token: 'test-only', mode: 'attached' }
+        if (channel === 'window:identity')
+          return { windowKey: 'local-window', workspaceId: windowWorkspaceId }
+        return invoke(channel, ...args)
+      })
+      const profile = { ...mocks.profiles[0], family: 'codex' as const }
+      const options = {
+        codexMode: true,
+        launchProfileId: profile.id,
+        launchProfile: profile,
+        workspaceId
+      }
+      await api.fleetStart(LOCAL_SERVER_ID, '/repo', options)
+      expect(started().options).not.toHaveProperty('launchProfile')
+      expect(started().options?.launchProfileId).toBe(profile.id)
+      expect(started().options?.workspaceId).toBe(workspaceId ?? windowWorkspaceId)
+      expect(options.launchProfile).toEqual(profile)
+      expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'pty:spawn')).toHaveLength(0)
+    }
+  )
 })
