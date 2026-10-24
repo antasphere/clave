@@ -467,36 +467,35 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
   const gitDesired = new Map<string, Map<string, string[]>>()
   const gitGeneration = new Map<string, number>()
-  /** The owners a sync is in flight to: a connection opening while one is
-   *  (the sync that waited for that very connection) sends nothing more. */
-  const gitSyncing = new Set<string>()
+  const gitMapOf = (owner: string): GitWatchSubscription[] =>
+    [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+  const sameMap = (
+    a: ReadonlyArray<GitWatchSubscription>,
+    b: ReadonlyArray<GitWatchSubscription>
+  ): boolean => JSON.stringify(a) === JSON.stringify(b)
   /** Send `owner` this Mac's current complete map. Answers what the server
-   *  watches per subscription when this map was still the newest at its
-   *  answer, null when the answer is stale or the owner unreachable (it hears
-   *  the current map at its next connection). */
+   *  watches per subscription while the map it described is still the
+   *  current one (a later send of the SAME map, a connection's, changes
+   *  nothing about it); null when the map moved on or the owner is
+   *  unreachable (it hears the current map at its next connection). */
   const gitSync = async (owner: string): Promise<ReadonlyArray<GitWatchSubscription> | null> => {
-    const subscriptions = [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+    const subscriptions = gitMapOf(owner)
     const generation = (gitGeneration.get(owner) ?? 0) + 1
     gitGeneration.set(owner, generation)
-    gitSyncing.add(owner)
     try {
       const b = await backing(owner)
       const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
-      return gitGeneration.get(owner) === generation ? answered : null
+      return sameMap(subscriptions, gitMapOf(owner)) ? answered : null
     } catch {
       return null
-    } finally {
-      if (gitGeneration.get(owner) === generation) gitSyncing.delete(owner)
     }
   }
   fleet.onStatus((status) => {
-    // Every connection, the first included: a server that lost its state gets
-    // the map back, one that kept it applies the same map again.
-    if (
-      status.state === 'connected' &&
-      gitDesired.has(status.serverId) &&
-      !gitSyncing.has(status.serverId)
-    )
+    // Every connection, the first included, whatever else is in flight: a
+    // server that lost its state gets the map back, one that kept it applies
+    // the same map again. A sync still in flight may be answered by a daemon
+    // that is gone; this one reaches the daemon that is there.
+    if (status.state === 'connected' && gitDesired.has(status.serverId))
       void gitSync(status.serverId)
   })
   // The batches THIS Mac has in flight on a server, by the id it gave each
@@ -1245,40 +1244,57 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       }
       // The owners whose map this subscriber changes: where it now has paths,
       // and where it had some before (its entry leaves that owner's map).
-      const owners = new Set([
+      // EVERY map is edited now, before anything is awaited: a watch or an
+      // unwatch that runs meanwhile builds on this state, and every sync sent
+      // reads the map as it is then (verifier round 6).
+      const remoteOwners: string[] = []
+      for (const owner of new Set([
         ...byOwner.keys(),
         ...[...gitDesired].filter(([, map]) => map.has(subscriberId)).map(([owner]) => owner)
-      ])
-      const watched: string[] = []
-      const syncs: Promise<void>[] = []
-      for (const owner of owners) {
+      ])) {
+        if (owner === LOCAL_SERVER_ID) continue
         const paths = byOwner.get(owner) ?? []
-        if (owner === LOCAL_SERVER_ID) {
-          watched.push(...(await local.gitWatchRepos(subscriberId, paths)))
-          continue
-        }
         const map = gitDesired.get(owner) ?? new Map<string, string[]>()
         if (paths.length > 0) map.set(subscriberId, paths)
         else map.delete(subscriberId)
         gitDesired.set(owner, map)
-        syncs.push(
+        remoteOwners.push(owner)
+      }
+      const watched: string[] = []
+      const remote = new Map<string, ReadonlyArray<string>>()
+      await Promise.all([
+        // The Mac's own watcher takes the Mac's share as before the lane, the
+        // complete set each time, empty when the subscriber left the Mac.
+        local
+          .gitWatchRepos(subscriberId, byOwner.get(LOCAL_SERVER_ID) ?? [])
+          .then((ok) => watched.push(...ok)),
+        ...remoteOwners.map((owner) =>
           gitSync(owner).then((answered) => {
             const mine = answered?.find((s) => s.id === subscriberId)
-            if (mine) watched.push(...mine.paths.map((path) => ownedPath(owner, path)))
+            if (mine) remote.set(owner, mine.paths)
           })
         )
+      ])
+      // An owner's answer is reported only if this call's entry there is still
+      // the current one when the whole call returns: a newer call for the same
+      // panel may have moved the entry while another owner was still answering.
+      for (const [owner, paths] of remote) {
+        const now = gitDesired.get(owner)?.get(subscriberId) ?? []
+        const asked = byOwner.get(owner) ?? []
+        if (JSON.stringify(now) !== JSON.stringify(asked)) continue
+        watched.push(...paths.map((path) => ownedPath(owner, path)))
       }
-      await Promise.all(syncs)
       return watched
     },
     gitUnwatchRepos: async (subscriberId) => {
-      await local.gitUnwatchRepos(subscriberId)
-      const syncs: Promise<unknown>[] = []
-      for (const [owner, map] of gitDesired) {
-        if (!map.delete(subscriberId)) continue
-        syncs.push(gitSync(owner))
-      }
-      await Promise.all(syncs)
+      // The maps first, synchronously (see gitWatchRepos), then the Mac and
+      // every owner that held the subscriber.
+      const owners: string[] = []
+      for (const [owner, map] of gitDesired) if (map.delete(subscriberId)) owners.push(owner)
+      await Promise.all([
+        local.gitUnwatchRepos(subscriberId),
+        ...owners.map((owner) => gitSync(owner))
+      ])
     },
     onGitReposChanged: (cb) =>
       both(
