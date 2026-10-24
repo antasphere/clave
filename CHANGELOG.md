@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+- **Servers are managed from Settings** — Settings → Servers lists the Clave servers this Mac reaches with their live state, Connect/Disconnect and Remove, adds one from a form whose token field never shows a saved token, shows the add form's and each connection's error on the page, and lists a connected server's own Claude and Codex logins read-only. The sidebar's Servers button and its dialog are gone; agent requests from a server still reach the user. Starting sessions on a server moves to the normal flow in a following change.
 - Launch profiles are the Mac's. A launch on a Clave server carries the chosen profile's definition and the server runs it as given, storing no profile for it. A program missing on the server fails the start by name. Resume and account switch keep the carried profile.
 - **Install a Clave server with one script** — `scripts/install-server.sh` installs the standalone server as a systemd user service (Linux) or a launchd agent (macOS), on the Tailscale address when there is one, and updates it on the next run: the new release is built beside the running one, and when it does not answer the server goes back to the previous release. A run with nothing new leaves the running server alone. Guide: `docs/server-install.md`.
 - Changing the app icon works when sessions run on a separate server. The icon preference and native paint stay with the Electron app that owns the Dock.

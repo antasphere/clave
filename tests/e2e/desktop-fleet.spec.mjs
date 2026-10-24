@@ -14,6 +14,7 @@ import {
   until,
   REPO
 } from './harness.mjs'
+import { openServersPage } from './fixtures/fleet-world.mjs'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const owned = (kind, owner, id) =>
@@ -163,7 +164,7 @@ export async function run(t) {
       ),
       false
     )
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
+    await openServersPage(win)
     await win.getByLabel('Server name', { exact: true }).fill('VPS A')
     await win.getByLabel('Server address', { exact: true }).fill(a.url)
     await win.getByLabel('Server bearer token', { exact: true }).fill(a.token)
@@ -174,7 +175,7 @@ export async function run(t) {
       'UI saves the first server'
     )
     assert.equal(await win.getByLabel('Server bearer token', { exact: true }).inputValue(), '')
-    await win.getByRole('button', { name: 'Close', exact: true }).click()
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     const savedA = (await win.evaluate(() => window.electronAPI.fleetList()))[0]
     const savedB = await win.evaluate(
       ({ name, url, token }) => window.electronAPI.fleetSave({ name, url, token }),
@@ -199,13 +200,11 @@ export async function run(t) {
       'both servers connect'
     )
     // The empty server has an explicit creation path, using its own folder/profile data.
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${savedB.id}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Server folder', { exact: true }).fill(b.cwd)
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
+    const startedTerminal = await win.evaluate(
+      ({ id, cwd }) => window.electronAPI.fleetStart(id, cwd, { claudeMode: false }),
+      { id: savedB.id, cwd: b.cwd }
+    )
+    await win.locator(`[data-sidebar-item-id="${startedTerminal.id}"]`).click()
     await check(
       () =>
         until(async () =>
@@ -664,19 +663,17 @@ export async function run(t) {
         additionalArgs: []
       }
     })
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${savedA.id}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Session provider', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'codex', exact: true }).click()
-    await win.getByLabel('Server launch profile', { exact: true }).click()
-    await win
-      .getByRole('menuitem', { name: 'Desktop protocol fixture (chat)', exact: true })
-      .click()
-    await win.getByLabel('Server folder', { exact: true }).fill(a.cwd)
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
+    const startedProvider = await win.evaluate(
+      ({ id, cwd }) =>
+        window.electronAPI.fleetStart(id, cwd, {
+          claudeMode: false,
+          codexMode: true,
+          launchProfileId: 'chat:codex:desktop-protocol'
+        }),
+      { id: savedA.id, cwd: a.cwd }
+    )
+    // Select the session after its immediate request dialog stops covering the sidebar.
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).waitFor()
     const pendingNative = await until(async () => {
       const response = await fetch(`${a.url}/requests/pending`, {
         headers: { authorization: `Bearer ${a.token}` }
@@ -708,6 +705,7 @@ export async function run(t) {
       })
       .click()
     await privateQuestion.waitFor({ state: 'detached' })
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
     assert.equal((await win.locator('body').innerText()).includes('private fixture answer'), false)
     const replies = () =>
       existsSync(providerReplies)

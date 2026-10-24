@@ -48,29 +48,16 @@ export async function run(t) {
 
     const ownerA = macA.owners[0].id
     const ownerB = macA.owners[1].id
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${ownerA}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Session provider', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'claude', exact: true }).click()
-    await win.getByLabel('Server launch profile', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'Echo (development)', exact: true }).click()
-    assert.equal(
-      await win.getByLabel('Server launch profile', { exact: true }).getAttribute('data-value'),
-      'dev-echo-adapter'
-    )
-    await win.getByLabel('Server folder', { exact: true }).fill(a.root)
-    await win.getByRole('button', { name: 'Browse server folders', exact: true }).click()
-    if (await win.getByLabel('Server account', { exact: true }).count()) {
-      assert.equal(
-        await win.getByLabel('Server account', { exact: true }).getAttribute('data-value'),
-        'default'
-      )
-    }
     const localBefore = await win.evaluate(() => window.electronAPI.listSessions())
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
+    // The launch form's assertions move to lane B's normal-flow spec.
+    await win.evaluate(
+      ({ id, cwd }) =>
+        window.electronAPI.fleetStart(id, cwd, {
+          claudeMode: true,
+          launchProfileId: 'dev-echo-adapter'
+        }),
+      { id: ownerA, cwd: a.root }
+    )
     let created
     await eventually(async () => {
       created = (await request(a, '/sessions')).find((s) => s.adapterId === 'echo')
