@@ -7,20 +7,42 @@ const f = vi.hoisted(() => ({
   remember: vi.fn(),
   list: vi.fn(),
   kill: vi.fn(),
-  fleetLaunch: vi.fn(),
+  fleetStart: vi.fn(),
+  fleetSnapshot: vi.fn(),
+  moveItems: vi.fn(),
+  setState: vi.fn(),
+  pickFolder: vi.fn(),
+  notice: vi.fn(),
   focusedSessionId: null as string | null,
-  accountId: null as string | null
+  accountId: null as string | null,
+  activeWorkspaceId: 'workspace' as string | null,
+  workspaces: new Map<string, { id: string; rootDir: string }>(),
+  statuses: {} as Record<string, { state: string }>
 }))
 vi.mock('../store/session-store', () => ({
   useSessionStore: {
     getState: () => ({
       addSessionInGroup: f.add,
+      moveItems: f.moveItems,
       sessions: [],
       focusedSessionId: f.focusedSessionId
+    }),
+    setState: f.setState
+  }
+}))
+vi.mock('../store/fleet-store', () => ({
+  useFleetStore: {
+    getState: () => ({
+      connections: [{ id: 'fixture-remote', name: 'Studio server' }],
+      statuses: f.statuses
     })
   }
 }))
-vi.mock('../store/fleet-launch-store', () => ({ requestFleetLaunch: f.fleetLaunch }))
+vi.mock('../store/server-folder-store', () => ({ pickServerFolder: f.pickFolder }))
+vi.mock('../store/launch-notice-store', () => ({
+  showLaunchNotice: f.notice,
+  clearLaunchNotice: () => {}
+}))
 vi.mock('../store/claude-profile-store', () => ({
   claudeProfileSpawnFields: (p: { id: string }) => ({ claudeProfileId: p.id })
 }))
@@ -31,8 +53,10 @@ vi.mock('./switch-account', () => ({
   accountForLaunch: (_provider: string, id: string) => ({ id: f.accountId ?? id })
 }))
 vi.mock('../store/workspace-store', () => ({
-  getActiveWorkspaceId: () => 'workspace',
-  getWorkspaceById: () => null
+  getActiveWorkspaceId: () => f.activeWorkspaceId,
+  getWorkspaceById: (id: string) => f.workspaces.get(id) ?? null,
+  workspaceServer: (id: string | null) =>
+    id?.startsWith('clave-owner:workspace:') ? decodeURIComponent(id.split(':')[2]) : null
 }))
 vi.mock('../store/launch-prefs', () => ({
   agentAcceptsPrompt: () => true,
@@ -46,6 +70,9 @@ afterEach(() => {
   vi.unstubAllGlobals()
   f.accountId = null
   f.focusedSessionId = null
+  f.activeWorkspaceId = 'workspace'
+  f.workspaces.clear()
+  f.statuses = {}
 })
 
 describe('launchSession acknowledgement and opt-in errors', () => {
@@ -86,14 +113,13 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     expect(f.add.mock.calls[0][0].workspaceId).toBe('capture-workspace')
     expect(f.remember).not.toHaveBeenCalled()
   })
-  it('keeps an explicitly local capture local while a remote session is focused', async () => {
-    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn } })
+  it('keeps a launch in a Mac workspace on this Mac while a remote session is focused', async () => {
+    vi.stubGlobal('window', { electronAPI: { spawnSession: f.spawn, fleetStart: f.fleetStart } })
     f.focusedSessionId = resourceKey('session', 'fixture-remote', 'working-chat')
-    f.fleetLaunch.mockResolvedValue('remote-new')
     f.spawn.mockResolvedValue({ id: 'local-support' })
     const onCreated = vi.fn()
-    expect(await launchSession({ ...request, serverId: 'local', onCreated })).toBe('local-support')
-    expect(f.fleetLaunch).not.toHaveBeenCalled()
+    expect(await launchSession({ ...request, onCreated })).toBe('local-support')
+    expect(f.fleetStart).not.toHaveBeenCalled()
     expect(f.spawn).toHaveBeenCalledWith(
       '/private/triage',
       expect.objectContaining({
@@ -105,25 +131,24 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     expect(onCreated).toHaveBeenCalledExactlyOnceWith('local-support')
   })
 
-  it('keeps ordinary launches on the focused remote server', async () => {
-    f.focusedSessionId = resourceKey('session', 'fixture-remote', 'working-chat')
-    f.fleetLaunch.mockResolvedValue('remote-new')
-    expect(await launchSession(request)).toBe('remote-new')
-    expect(f.fleetLaunch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        serverId: 'fixture-remote',
-        cwd: '/private/triage'
-      })
-    )
-    expect(f.spawn).not.toHaveBeenCalled()
-  })
-
   it('keeps explicit remote launches remote when a local session is focused', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        spawnSession: f.spawn,
+        fleetStart: f.fleetStart,
+        fleetSnapshot: f.fleetSnapshot
+      }
+    })
+    f.statuses = { 'fixture-remote': { state: 'connected' } }
     f.focusedSessionId = 'local-chat'
-    f.fleetLaunch.mockResolvedValue('remote-new')
-    expect(await launchSession({ ...request, serverId: 'fixture-remote' })).toBe('remote-new')
-    expect(f.fleetLaunch).toHaveBeenCalledWith(
-      expect.objectContaining({ serverId: 'fixture-remote' })
+    f.fleetStart.mockResolvedValue({ id: resourceKey('session', 'fixture-remote', 'new') })
+    expect(
+      await launchSession({ ...request, workspaceId: undefined, serverId: 'fixture-remote' })
+    ).toBe(resourceKey('session', 'fixture-remote', 'new'))
+    expect(f.fleetStart).toHaveBeenCalledWith(
+      'fixture-remote',
+      '/private/triage',
+      expect.anything()
     )
     expect(f.spawn).not.toHaveBeenCalled()
   })
@@ -200,5 +225,121 @@ describe('launchSession acknowledgement and opt-in errors', () => {
     ).rejects.toMatchObject({ code: 'launch-account-unavailable', cleanupSucceeded: true })
     expect(f.spawn).not.toHaveBeenCalled()
     expect(f.kill).not.toHaveBeenCalled()
+  })
+})
+
+describe('launches in a server workspace (#241)', () => {
+  const serverWorkspace = resourceKey('workspace', 'fixture-remote', 'ws-1')
+  const setup = {
+    kind: 'claude' as const,
+    dangerousMode: true,
+    launchProfileId: 'claude-work',
+    claudeProfileId: 'mac-account'
+  }
+  const withServer = (): void => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        spawnSession: f.spawn,
+        fleetStart: f.fleetStart,
+        fleetSnapshot: f.fleetSnapshot,
+        openFolderDialog: vi.fn(),
+        claveFileExists: vi.fn()
+      }
+    })
+    f.activeWorkspaceId = serverWorkspace
+    f.workspaces.set(serverWorkspace, { id: serverWorkspace, rootDir: '/srv/repo' })
+    f.statuses = { 'fixture-remote': { state: 'connected' } }
+    f.fleetStart.mockResolvedValue({ id: resourceKey('session', 'fixture-remote', 'new') })
+    f.fleetSnapshot.mockResolvedValue(undefined)
+  }
+
+  it('starts on the server at the workspace root with the launch profile, never a Mac account', async () => {
+    withServer()
+    const id = await launchSession({ setup, cwd: { kind: 'workspace-root' }, remember: true })
+    expect(id).toBe(resourceKey('session', 'fixture-remote', 'new'))
+    expect(f.fleetStart).toHaveBeenCalledExactlyOnceWith('fixture-remote', '/srv/repo', {
+      codexMode: true,
+      dangerousMode: true,
+      launchProfileId: 'claude-work',
+      workspaceId: serverWorkspace
+    })
+    const options = f.fleetStart.mock.calls[0][2]
+    expect(options).not.toHaveProperty('claudeProfileId')
+    expect(options).not.toHaveProperty('codexAccountId')
+    expect(f.spawn).not.toHaveBeenCalled()
+    expect(f.fleetSnapshot).toHaveBeenCalledWith('fixture-remote')
+    expect(f.setState).toHaveBeenCalledWith(
+      expect.objectContaining({ focusedSessionId: id, selectedSessionIds: [id] })
+    )
+    expect(f.remember).toHaveBeenCalledWith(serverWorkspace, setup)
+  })
+
+  it('asks for a folder on the server, opened at the workspace root, for ⌥', async () => {
+    withServer()
+    f.pickFolder.mockResolvedValue('/srv/repo/sub')
+    await launchSession({ setup: null, cwd: { kind: 'ask' } })
+    expect(f.pickFolder).toHaveBeenCalledWith({
+      serverId: 'fixture-remote',
+      serverName: 'Studio server',
+      startPath: '/srv/repo'
+    })
+    expect(f.fleetStart).toHaveBeenCalledWith(
+      'fixture-remote',
+      '/srv/repo/sub',
+      expect.objectContaining({ claudeMode: false })
+    )
+    expect(window.electronAPI.openFolderDialog).not.toHaveBeenCalled()
+  })
+
+  it('starts nothing when the server folder pick is cancelled', async () => {
+    withServer()
+    f.pickFolder.mockResolvedValue(null)
+    expect(await launchSession({ setup, cwd: { kind: 'ask' } })).toBeNull()
+    expect(f.fleetStart).not.toHaveBeenCalled()
+    expect(f.spawn).not.toHaveBeenCalled()
+  })
+
+  it('places a group + launch in the group of its server', async () => {
+    withServer()
+    const groupId = resourceKey('group', 'fixture-remote', 'g')
+    await launchSession({ setup, cwd: { kind: 'path', path: '/srv/repo/pkg' }, groupId })
+    expect(f.fleetStart).toHaveBeenCalledWith(
+      'fixture-remote',
+      '/srv/repo/pkg',
+      expect.objectContaining({ workspaceId: serverWorkspace })
+    )
+    expect(f.moveItems).toHaveBeenCalledWith(
+      [resourceKey('session', 'fixture-remote', 'new')],
+      groupId,
+      'inside'
+    )
+  })
+
+  it('launches a local group + on this Mac even in a server workspace', async () => {
+    withServer()
+    f.spawn.mockResolvedValue({ id: 'local-new' })
+    await launchSession({ setup, cwd: { kind: 'path', path: '/mac/x' }, groupId: 'local-group' })
+    expect(f.fleetStart).not.toHaveBeenCalled()
+    expect(f.spawn).toHaveBeenCalledWith('/mac/x', expect.anything())
+  })
+
+  it('refuses with a notice when the server is offline', async () => {
+    withServer()
+    f.statuses = { 'fixture-remote': { state: 'disconnected' } }
+    expect(await launchSession({ setup, cwd: { kind: 'workspace-root' } })).toBeNull()
+    expect(f.fleetStart).not.toHaveBeenCalled()
+    expect(f.spawn).not.toHaveBeenCalled()
+    expect(f.notice).toHaveBeenCalledWith(expect.stringContaining('Studio server is offline'))
+    await expect(
+      launchSession({ setup, cwd: { kind: 'workspace-root' }, throwOnError: true })
+    ).rejects.toThrow('offline')
+  })
+
+  it('shows a notice when the server refuses the start', async () => {
+    withServer()
+    f.fleetStart.mockRejectedValue(new Error('no such profile'))
+    expect(await launchSession({ setup, cwd: { kind: 'workspace-root' } })).toBeNull()
+    expect(f.notice).toHaveBeenCalledWith(expect.stringContaining('could not start the session'))
+    expect(f.setState).not.toHaveBeenCalled()
   })
 })

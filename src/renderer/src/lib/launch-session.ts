@@ -1,10 +1,13 @@
-import { requestFleetLaunch } from '../store/fleet-launch-store'
-import { ownerOf, isRemoteKey } from './fleet-identity'
+import { LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { ownerOf } from './fleet-identity'
 import { useSessionStore } from '../store/session-store'
+import { useFleetStore } from '../store/fleet-store'
 import { claudeProfileSpawnFields } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
 import { accountForLaunch } from './switch-account'
-import { getActiveWorkspaceId, getWorkspaceById } from '../store/workspace-store'
+import { getActiveWorkspaceId, getWorkspaceById, workspaceServer } from '../store/workspace-store'
+import { pickServerFolder } from '../store/server-folder-store'
+import { clearLaunchNotice, showLaunchNotice } from '../store/launch-notice-store'
 import {
   agentAcceptsPrompt,
   agentSetupToModes,
@@ -25,7 +28,7 @@ export type LaunchCwd =
   | { kind: 'path'; path: string }
 
 export interface LaunchRequest {
-  /** Explicit owner; omit to follow the targeted group or current tab. */
+  /** Explicit owner; omit to follow the targeted group, else the workspace. */
   serverId?: string
   /** The agent to run, or null for a plain terminal. */
   setup: AgentSetup | null
@@ -77,7 +80,91 @@ async function resolveCwd(cwd: LaunchCwd): Promise<string | null> {
   return (await window.electronAPI.openFolderDialog()) ?? null
 }
 
-/** The single local-session launch path.
+/** The machine a launch runs on (#241): an explicit server, else the
+ *  targeted group's owner, else the workspace's — a server workspace starts
+ *  its sessions on its server, a workspace of this Mac on this Mac. Nothing
+ *  asks: the workspace decides. */
+export function launchServer(
+  req: Pick<LaunchRequest, 'serverId' | 'groupId' | 'workspaceId'>
+): string {
+  if (req.serverId !== undefined) return req.serverId
+  if (req.groupId) return ownerOf(req.groupId)
+  return workspaceServer(req.workspaceId ?? getActiveWorkspaceId()) ?? LOCAL_SERVER_ID
+}
+
+const NO_AGENT = {
+  claudeMode: false,
+  claudeAgentsMode: false,
+  antigravityMode: false,
+  codexMode: false,
+  piMode: false
+}
+
+/** A launch on a connected Clave server, in the normal flow (#241): the
+ *  launcher's setup and launch profile travel, the cwd is the server
+ *  workspace's root (or a folder picked on the server's disk), and the
+ *  server runs it on its own accounts and pool — this Mac's account pick
+ *  never travels. An offline server refuses with a notice. */
+async function launchOnServer(serverId: string, req: LaunchRequest): Promise<string | null> {
+  const fleet = useFleetStore.getState()
+  const serverName = fleet.connections.find((c) => c.id === serverId)?.name ?? 'The server'
+  const refuse = (message: string, cause?: unknown): null => {
+    showLaunchNotice(message)
+    if (req.throwOnError) throw cause ?? new Error(message)
+    return null
+  }
+  if (fleet.statuses[serverId]?.state !== 'connected')
+    return refuse(`${serverName} is offline. Its sessions start again once it reconnects.`)
+
+  const workspaceId = req.workspaceId ?? getActiveWorkspaceId()
+  const workspace =
+    workspaceServer(workspaceId) === serverId ? getWorkspaceById(workspaceId) : undefined
+  const cwd =
+    req.cwd.kind === 'path'
+      ? req.cwd.path
+      : req.cwd.kind === 'workspace-root' && workspace
+        ? workspace.rootDir
+        : await pickServerFolder({ serverId, serverName, startPath: workspace?.rootDir })
+  if (!cwd) return null
+
+  const modes = req.setup ? agentSetupToModes(req.setup) : NO_AGENT
+  const dangerousMode = req.setup?.dangerousMode ?? false
+  const initialPrompt =
+    req.initialPrompt && agentAcceptsPrompt(req.setup) ? req.initialPrompt : undefined
+  let id: string
+  try {
+    const info = await window.electronAPI.fleetStart(serverId, cwd, {
+      ...modes,
+      dangerousMode,
+      ...(initialPrompt ? { initialPrompt } : {}),
+      ...(req.setup?.launchProfileId ? { launchProfileId: req.setup.launchProfileId } : {}),
+      ...(workspace ? { workspaceId: workspace.id } : {})
+    })
+    id = info.id
+  } catch (err) {
+    console.error('Failed to start a session on the server:', err)
+    return refuse(`${serverName} could not start the session in ${cwd}.`, err)
+  }
+  req.onCreated?.(id)
+  try {
+    // The tab arrives with the server's next snapshot; read it now so it is
+    // placed and focused at once rather than on the next push.
+    await window.electronAPI.fleetSnapshot(serverId)
+  } catch {
+    /* the push brings it */
+  }
+  const store = useSessionStore.getState()
+  if (req.groupId && ownerOf(req.groupId) === serverId) store.moveItems([id], req.groupId, 'inside')
+  useSessionStore.setState({
+    selectedSessionIds: [id],
+    focusedSessionId: id,
+    activeView: 'terminals'
+  })
+  if (req.remember && req.setup) rememberAgentSetup(getActiveWorkspaceId(), req.setup)
+  return id
+}
+
+/** The single session launch path.
  *
  *  Both callers used to carry their own copy of this — `handleNewSession` in
  *  Sidebar and `spawnSessionWithOptions` in AppShell — which is how they drifted
@@ -86,31 +173,13 @@ async function resolveCwd(cwd: LaunchCwd): Promise<string | null> {
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
-  // An explicit server must not inherit another server from the focused tab.
-  const target =
-    req.groupId ?? (req.serverId === undefined ? useSessionStore.getState().focusedSessionId : null)
-  const serverId = req.serverId ?? ownerOf(target)
-  if (isRemoteKey(target) || serverId !== 'local') {
-    return requestFleetLaunch({
-      serverId,
-      setup: req.setup,
-      groupId: req.groupId,
-      cwd: req.cwd.kind === 'path' ? req.cwd.path : undefined,
-      initialPrompt: req.initialPrompt
-    })
-  }
+  clearLaunchNotice()
+  const serverId = launchServer(req)
+  if (serverId !== LOCAL_SERVER_ID) return launchOnServer(serverId, req)
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null
 
-  const modes = req.setup
-    ? agentSetupToModes(req.setup)
-    : {
-        claudeMode: false,
-        claudeAgentsMode: false,
-        antigravityMode: false,
-        codexMode: false,
-        piMode: false
-      }
+  const modes = req.setup ? agentSetupToModes(req.setup) : NO_AGENT
   const dangerousMode = req.setup?.dangerousMode ?? false
 
   // The Claude account applies to Claude Code and Claude Agents only — never a
