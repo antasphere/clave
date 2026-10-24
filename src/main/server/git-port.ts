@@ -105,6 +105,8 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
    *  4). The map is bounded by dropping its oldest entries; a subscriber id
    *  is minted per panel mount, so the oldest are long gone. */
   const watchRevisions = new Map<string, number>()
+  /** The subscribers that hold a set now: never evicted from `watchRevisions`. */
+  const liveSubscribers = new Set<string>()
   const MAX_REMEMBERED_SUBSCRIBERS = 10_000
   const advance = (subscriberId: string, revision: number | undefined): boolean => {
     if (revision === undefined) return true
@@ -112,10 +114,12 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     if (applied !== undefined && revision < applied) return false
     watchRevisions.delete(subscriberId)
     watchRevisions.set(subscriberId, revision)
-    while (watchRevisions.size > MAX_REMEMBERED_SUBSCRIBERS) {
-      const oldest = watchRevisions.keys().next().value
-      if (oldest === undefined) break
-      watchRevisions.delete(oldest)
+    // Only tombstones (subscribers that hold nothing) are dropped, oldest first.
+    if (watchRevisions.size > MAX_REMEMBERED_SUBSCRIBERS) {
+      for (const key of watchRevisions.keys()) {
+        if (watchRevisions.size <= MAX_REMEMBERED_SUBSCRIBERS) break
+        if (!liveSubscribers.has(key)) watchRevisions.delete(key)
+      }
     }
     return true
   }
@@ -142,10 +146,13 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     // the one already applied is ignored (verifier round 3).
     watch: (subscriberId, paths, revision) => {
       if (!advance(subscriberId, revision)) return Promise.resolve([])
+      if (paths.length > 0) liveSubscribers.add(subscriberId)
+      else liveSubscribers.delete(subscriberId)
       return watcher.setRepos(subscriberId, [...paths])
     },
     unwatch: async (subscriberId, revision) => {
       if (!advance(subscriberId, revision)) return
+      liveSubscribers.delete(subscriberId)
       watcher.drop(subscriberId)
     },
     stage: (cwd, files) => gitManager.stage(cwd, [...files]),

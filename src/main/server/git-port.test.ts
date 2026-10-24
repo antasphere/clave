@@ -49,7 +49,10 @@ const stub = (dir: string, body: string): void => {
 const withClaude = (dir: string): void => {
   mocks.env = { ...process.env, PATH: dir }
 }
-const until = async (check: () => boolean, ms = 4000): Promise<boolean> => {
+// Ten seconds: a native watch event under a load average above 100 has taken
+// more than four, and an event arriving after a shorter wait leaks into the
+// next test's silence check.
+const until = async (check: () => boolean, ms = 10_000): Promise<boolean> => {
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {
     if (check()) return true
@@ -119,7 +122,7 @@ describe('the daemon’s git port over a real checkout', () => {
       `expected a repos_changed event, got ${JSON.stringify(events)}`
     ).toBe(true)
     await port.unwatch('mac-1:git-status-1')
-  })
+  }, 30_000)
 
   it('applies a subscriber’s requests in the order of their revisions, not of their arrival', async () => {
     // Revision 3 lands first (the current set), then a slow revision 2 (an
@@ -147,8 +150,23 @@ describe('the daemon’s git port over a real checkout', () => {
     // A request without a revision is taken as it comes, as an older Mac sends it.
     expect(await port.watch('mac-1:plain', [repo])).toEqual([repo])
     await port.unwatch('mac-1:plain')
+    // The remembered revisions are bounded by dropping the oldest TOMBSTONES:
+    // a subscriber still holding a set keeps its revision through any number
+    // of newer subscribers, so a stale request for it stays ignored.
+    expect(await port.watch('mac-1:long-lived', [repo], 5)).toEqual([repo])
+    for (let i = 0; i < 10_050; i++) await port.watch(`mac-1:churn-${i}`, [], 1)
+    expect(await port.watch('mac-1:long-lived', [], 2)).toEqual([])
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'eight\n')
+    expect(
+      await until(() =>
+        events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
+      ),
+      'the long-lived subscriber still watches after the churn'
+    ).toBe(true)
+    await port.unwatch('mac-1:long-lived', 6)
     rmSync(path.join(repo, 'ordered.txt'), { force: true })
-  })
+  }, 30_000)
 
   it('writes the commit message with this machine’s claude', async () => {
     withClaude(bins.writing)

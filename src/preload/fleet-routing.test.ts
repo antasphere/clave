@@ -28,7 +28,9 @@ const mocks = vi.hoisted(() => ({
   /** When set, owner a's watch waits for it before answering. */
   holdWatchA: null as Promise<void> | null,
   /** The push status listeners each owner's backing holds, so a test can reopen. */
-  pushStatusListeners: new Map<string, Set<(state: string, detail: unknown) => void>>()
+  pushStatusListeners: new Map<string, Set<(state: string, detail: unknown) => void>>(),
+  /** A third owner, listed only when a test asks for it. */
+  withC: false
 }))
 vi.mock('electron', () => ({
   contextBridge: {
@@ -44,7 +46,11 @@ vi.mock('electron', () => ({
 }))
 vi.mock('@clave/client/node', () => ({
   connectThroughNode: async (endpoint: { url: string }) => {
-    const owner = endpoint.url.includes('owner-a') ? 'a' : 'b'
+    const owner = endpoint.url.includes('owner-a')
+      ? 'a'
+      : endpoint.url.includes('owner-c')
+        ? 'c'
+        : 'b'
     const call =
       (method: string, result: unknown) =>
       async (...args: unknown[]) => {
@@ -251,11 +257,12 @@ beforeEach(async () => {
   ])
   mocks.pushListeners.clear()
   mocks.pushStatusListeners.clear()
+  mocks.withC = false
   mocks.holdBatch = null
   mocks.holdWatchA = null
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
-      return ['a', 'b'].map((id) => ({
+      return ['a', 'b', ...(mocks.withC ? ['c'] : [])].map((id) => ({
         id,
         name: id,
         url: `http://owner-${id}`,
@@ -849,6 +856,25 @@ describe('git routing by the owner of the repository key', () => {
     await vi.advanceTimersByTimeAsync(50)
     // (a reconnection also refreshes the owner's snapshot; only git calls count here)
     expect(mocks.calls.filter((c) => c.owner === 'a' && c.method.startsWith('git.'))).toEqual([])
+  })
+  it('tells an owner, at its first connection, a set asked while it was still unreachable', async () => {
+    // Owner c exists but is disabled: never connected so far.
+    mocks.withC = true
+    mocks.disabled.add('c')
+    await api.fleetList()
+    expect(await api.gitWatchRepos('early-panel', [resourceKey('file', 'c', '/repo')])).toEqual([])
+    expect(mocks.calls.filter((c) => c.owner === 'c')).toEqual([])
+    await api.fleetConnect('c')
+    await vi.waitFor(() =>
+      expect(mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.watch')).toHaveLength(1)
+    )
+    const [sent] = mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.watch')
+    expect(sent.args).toEqual([expect.stringMatching(/:early-panel$/), ['/repo'], 2])
+    // Heard now: a later reopening of the same first connection sends nothing more
+    // (only a RE-connection replays everything).
+    mocks.calls.length = 0
+    await api.gitUnwatchRepos('early-panel')
+    expect(mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.unwatch')).toHaveLength(1)
   })
   it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))

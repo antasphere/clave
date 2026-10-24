@@ -471,11 +471,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     gitWatchRevisions.set(subscriberId, next)
     return next
   }
-  // A server that comes BACK (its push channel reopened after a first
-  // connection: a reconnection, or a daemon restarted with no watch left) is
-  // told every live set this Mac holds for it, each under a fresh revision:
-  // the same set again is nothing to the server, a lost set is restored
-  // (`lane-c/watch-rule.md`). The first connection has nothing to restore.
+  // A server that connects is told what it did not hear; one that comes BACK
+  // (its push channel reopened after a first connection: a reconnection, or a
+  // daemon restarted with no watch left) is told every subscriber's truth,
+  // each under a fresh revision: the same set again is nothing to the
+  // server, a lost set is restored, an unheard removal applied
+  // (`lane-c/watch-rule.md`).
   const gitConnectedOwners = new Set<string>()
   /** Every subscriber this Mac has ever named to an owner and not yet
    *  unwatched there with the owner's acknowledgement: on a reconnection each
@@ -490,24 +491,41 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   const gitForgotten = (owner: string, subscriberId: string): void => {
     gitKnownSubscribers.get(owner)?.delete(subscriberId)
+    gitUnheard.get(owner)?.delete(subscriberId)
   }
-  const restoreGitWatches = (owner: string): void => {
-    for (const subscriberId of [...(gitKnownSubscribers.get(owner) ?? [])]) {
+  /** The subscribers whose latest request an owner did not hear (asked while
+   *  it was unreachable, or the request failed): told again at the owner's
+   *  next connection, its first one included. */
+  const gitUnheard = new Map<string, Set<string>>()
+  const gitMissed = (owner: string, subscriberId: string): void => {
+    const set = gitUnheard.get(owner) ?? new Set<string>()
+    set.add(subscriberId)
+    gitUnheard.set(owner, set)
+  }
+  const gitHeard = (owner: string, subscriberId: string): void => {
+    gitUnheard.get(owner)?.delete(subscriberId)
+  }
+  /** Tell `owner` each subscriber's current truth: the ones it did not hear,
+   *  or, after a reconnection, every one this Mac has named to it (a daemon
+   *  that restarted holds none of them). */
+  const restoreGitWatches = (owner: string, everything: boolean): void => {
+    const which = everything ? gitKnownSubscribers.get(owner) : gitUnheard.get(owner)
+    for (const subscriberId of [...(which ?? [])]) {
       const paths = gitWatchSets.get(subscriberId)?.get(owner) ?? []
       const revision = nextWatchRevision(subscriberId)
       const subscriber = `${gitSubscriberToken}:${subscriberId}`
       void backing(owner)
         .then((b) =>
           paths.length > 0
-            ? b.api.git.watch(subscriber, paths, revision).then(noop)
+            ? b.api.git.watch(subscriber, paths, revision).then(() => gitHeard(owner, subscriberId))
             : b.api.git.unwatch(subscriber, revision).then(() => gitForgotten(owner, subscriberId))
         )
-        .catch(noop)
+        .catch(() => gitMissed(owner, subscriberId))
     }
   }
   fleet.onStatus((status) => {
     if (status.state !== 'connected') return
-    if (gitConnectedOwners.has(status.serverId)) restoreGitWatches(status.serverId)
+    restoreGitWatches(status.serverId, gitConnectedOwners.has(status.serverId))
     gitConnectedOwners.add(status.serverId)
   })
   // The batches THIS Mac has in flight on a server, by the id it gave each
@@ -1270,6 +1288,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           gitKnown(owner, subscriberId)
           const b = await backing(owner)
           const ok = await b.api.git.watch(subscriber, paths, revision)
+          gitHeard(owner, subscriberId)
           // The subscriber moved on while this owner answered (verifier
           // rounds 1 to 3): the server orders a subscriber's requests by their
           // revision, so the newer set or the unwatch stands whatever reached
@@ -1277,7 +1296,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           if (gitWatchSets.get(subscriberId) !== byOwner) return []
           watched.push(...ok.map((path) => ownedPath(owner, path)))
         } catch {
-          /* not connected: its repos are the panel's to poll */
+          // Not connected: its repos are the panel's to poll, and the owner
+          // hears this set when it connects.
+          gitMissed(owner, subscriberId)
         }
       }
       return watched
@@ -1294,7 +1315,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`, revision)
           gitForgotten(owner, subscriberId)
         } catch {
-          /* unreachable now: the owner hears this unwatch when it comes back */
+          // Unreachable now: the owner hears this unwatch when it comes back.
+          gitMissed(owner, subscriberId)
         }
       }
     },
