@@ -7,7 +7,14 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   disabled: new Set<string>(),
   calls: [] as Array<{ owner: string; method: string; args: unknown[] }>,
-  listeners: new Map<string, Set<(...args: unknown[]) => void>>()
+  listeners: new Map<string, Set<(...args: unknown[]) => void>>(),
+  /** The push event listeners each owner's backing holds, so a test can emit. */
+  pushListeners: new Map<string, Set<(envelope: unknown) => void>>(),
+  /** When set, a server batch waits for it before answering: the test emits
+   *  progress while the batch is in flight. */
+  holdBatch: null as Promise<void> | null,
+  /** When set, owner a's watch waits for it before answering. */
+  holdWatchA: null as Promise<void> | null
 }))
 vi.mock('electron', () => ({
   contextBridge: {
@@ -58,14 +65,95 @@ vi.mock('@clave/client/node', () => ({
             delivery: 'image'
           })
         },
-        requests: { watch: () => () => {}, resolve: call('resolve', { accepted: true }) }
+        requests: { watch: () => () => {}, resolve: call('resolve', { accepted: true }) },
+        // ── Wave wcs1023, lane C: the git domain, every path a server path ──
+        git: {
+          status: async (cwd: string) => {
+            mocks.calls.push({ owner, method: 'git.status', args: [cwd] })
+            if (cwd === '/plain')
+              return {
+                isRepo: false,
+                branch: '',
+                ahead: 0,
+                behind: 0,
+                hasUpstream: false,
+                files: [],
+                repoRoot: ''
+              }
+            return {
+              isRepo: true,
+              branch: 'main',
+              ahead: 0,
+              behind: 0,
+              hasUpstream: true,
+              files: [],
+              repoRoot: '/repo',
+              worktree: {
+                of: '/main',
+                base: null,
+                baseLabel: '',
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                createdAt: null,
+                lastCommit: null
+              }
+            }
+          },
+          statusBatch: async (paths: string[]) => {
+            mocks.calls.push({ owner, method: 'git.statusBatch', args: [paths] })
+            return paths.map((path) => ({
+              path,
+              status: {
+                isRepo: true,
+                branch: 'main',
+                ahead: 0,
+                behind: 0,
+                hasUpstream: true,
+                files: [],
+                repoRoot: path
+              }
+            }))
+          },
+          discover: call('git.discover', {
+            repos: [{ name: 'nested', path: '/repo/nested' }],
+            truncated: false
+          }),
+          stage: call('git.stage', undefined),
+          commit: call('git.commit', { hash: 'abc', branch: 'main' }),
+          watch: async (subscriberId: string, paths: string[], revision?: number) => {
+            // One-shot: the first watch of owner a waits, the next ones answer.
+            const hold = owner === 'a' ? mocks.holdWatchA : null
+            if (hold) {
+              mocks.holdWatchA = null
+              await hold
+            }
+            mocks.calls.push({ owner, method: 'git.watch', args: [subscriberId, paths, revision] })
+            return paths
+          },
+          unwatch: async (subscriberId: string, revision?: number) => {
+            mocks.calls.push({ owner, method: 'git.unwatch', args: [subscriberId, revision] })
+          },
+          magicSync: async (paths: string[], batchId?: string) => {
+            mocks.calls.push({ owner, method: 'git.magicSync', args: [paths, batchId] })
+            if (mocks.holdBatch) await mocks.holdBatch
+            return paths.map((repoPath) => ({ repoPath, actions: ['committed'], error: null }))
+          }
+        }
       },
       push: {
         status: 'open',
         connect: () => {},
         close: () => {},
         onStatus: () => () => {},
-        onEvent: () => () => {},
+        onEvent: (listener: (envelope: unknown) => void) => {
+          const set = mocks.pushListeners.get(owner) ?? new Set()
+          set.add(listener)
+          mocks.pushListeners.set(owner, set)
+          return () => {
+            set.delete(listener)
+          }
+        },
         onRequest: () => () => {},
         whenOpen: async () => {},
         subscribe: () => () => {},
@@ -80,6 +168,9 @@ beforeEach(async () => {
   vi.resetModules()
   mocks.calls.length = 0
   mocks.disabled.clear()
+  mocks.pushListeners.clear()
+  mocks.holdBatch = null
+  mocks.holdWatchA = null
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
       return ['a', 'b'].map((id) => ({
@@ -213,4 +304,238 @@ it('treats focus on a remote file as no local plugin session context', async () 
   expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'plugins:context')).toHaveLength(
     0
   )
+})
+
+// ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+describe('git routing by the owner of the repository key', () => {
+  const emit = (owner: string, event: unknown): void => {
+    for (const listener of mocks.pushListeners.get(owner) ?? [])
+      listener({ id: 'e1', seq: 1, at: 1, event })
+  }
+  it('reads a server repository on its owner and keys every path it answers', async () => {
+    const status = await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    expect(mocks.calls.filter((c) => c.method === 'git.status')).toEqual([
+      { owner: 'a', method: 'git.status', args: ['/repo'] }
+    ])
+    expect(status.repoRoot).toBe(resourceKey('file', 'a', '/repo'))
+    expect(status.worktree?.of).toBe(resourceKey('file', 'a', '/main'))
+    const found = await api.discoverGitRepos(resourceKey('file', 'b', '/repo'), true)
+    expect(found.repos.map((r) => r.path)).toEqual([resourceKey('file', 'b', '/repo/nested')])
+    expect(mocks.calls.filter((c) => c.method === 'git.discover')).toEqual([
+      { owner: 'b', method: 'git.discover', args: ['/repo', true] }
+    ])
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => String(channel).startsWith('git:'))
+    ).toEqual([])
+  })
+  it('answers a server folder that is no repository as it is, with nothing keyed', async () => {
+    const status = await api.getGitStatus(resourceKey('file', 'a', '/plain'))
+    expect(status).toMatchObject({ isRepo: false, repoRoot: '' })
+    expect(status.worktree).toBeUndefined()
+  })
+  it('keeps a Mac repository on the Mac, a plain path with no server in it', async () => {
+    await api.getGitStatus('/repo')
+    await api.gitStage('/repo', ['a.ts'])
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => String(channel).startsWith('git:'))
+    ).toEqual([
+      ['git:status', '/repo'],
+      ['git:stage', '/repo', ['a.ts']]
+    ])
+    expect(mocks.calls.filter((c) => c.method.startsWith('git.'))).toEqual([])
+  })
+  it('sends a write to the owning server with the server path, never to the Mac', async () => {
+    await api.gitStage(resourceKey('file', 'a', '/repo'), ['a.ts'])
+    expect(await api.gitCommit(resourceKey('file', 'a', '/repo'), 'feat: x')).toEqual({
+      hash: 'abc',
+      branch: 'main'
+    })
+    expect(mocks.calls.filter((c) => c.method.startsWith('git.'))).toEqual([
+      { owner: 'a', method: 'git.stage', args: ['/repo', ['a.ts']] },
+      { owner: 'a', method: 'git.commit', args: ['/repo', 'feat: x'] }
+    ])
+    expect(
+      mocks.invoke.mock.calls.filter(([channel]) => String(channel).startsWith('git:'))
+    ).toEqual([])
+  })
+  it('runs a batch on its one owner and refuses a batch that spans two servers', async () => {
+    const results = await api.gitMagicSync([resourceKey('file', 'a', '/repo')])
+    expect(results).toEqual([
+      { repoPath: resourceKey('file', 'a', '/repo'), actions: ['committed'], error: null }
+    ])
+    expect(mocks.calls.filter((c) => c.method === 'git.magicSync')).toEqual([
+      { owner: 'a', method: 'git.magicSync', args: [['/repo'], expect.stringMatching(/^mac-/)] }
+    ])
+    await expect(
+      api.gitMagicSync([resourceKey('file', 'a', '/repo'), resourceKey('file', 'b', '/repo')])
+    ).rejects.toThrow(/two servers/)
+    await expect(api.gitMagicSync(['/repo', resourceKey('file', 'b', '/repo')])).rejects.toThrow(
+      /two servers/
+    )
+    expect(mocks.calls.filter((c) => c.method === 'git.magicSync')).toHaveLength(1)
+    expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'git:magic-sync')).toEqual([])
+  })
+  it('splits a watch set between the Mac and each owner, and tells each what it watched', async () => {
+    mocks.invoke.mockImplementationOnce(async (channel: string, ...args: unknown[]) =>
+      channel === 'git:watch-repos' ? args[1] : null
+    )
+    const watched = await api.gitWatchRepos('git-status-1', [
+      '/repo',
+      resourceKey('file', 'a', '/repo'),
+      resourceKey('file', 'b', '/other')
+    ])
+    expect(new Set(watched)).toEqual(
+      new Set(['/repo', resourceKey('file', 'a', '/repo'), resourceKey('file', 'b', '/other')])
+    )
+    const remote = mocks.calls.filter((c) => c.method === 'git.watch')
+    expect(remote.map((c) => c.owner).sort()).toEqual(['a', 'b'])
+    for (const c of remote) expect(c.args[0]).toMatch(/^mac-[a-z0-9]+:git-status-1$/)
+    expect(remote.find((c) => c.owner === 'a')?.args[1]).toEqual(['/repo'])
+    expect(remote.find((c) => c.owner === 'b')?.args[1]).toEqual(['/other'])
+    expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'git:watch-repos')).toEqual([
+      ['git:watch-repos', 'git-status-1', ['/repo']]
+    ])
+    await api.gitUnwatchRepos('git-status-1')
+    expect(
+      mocks.calls
+        .filter((c) => c.method === 'git.unwatch')
+        .map((c) => c.owner)
+        .sort()
+    ).toEqual(['a', 'b'])
+  })
+  it('keys the repositories a server reports changed, and a batch’s progress, by their owner', async () => {
+    // A backing's event listener exists once its owner is connected; a read
+    // on each owner is what waits for that here.
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    const changed: string[][] = []
+    api.onGitReposChanged((repos) => changed.push(repos))
+    const progress: Array<{ repoPath: string; op: string }> = []
+    api.onGitBatchProgress((p) => progress.push({ repoPath: p.repoPath, op: p.op }))
+    emit('a', { _tag: 'git.repos_changed', repos: ['/repo', '/other'] })
+    emit('b', {
+      _tag: 'git.batch_progress',
+      op: 'sync',
+      phase: 'pushing',
+      repoPath: '/repo',
+      repoName: 'repo',
+      done: 1,
+      total: 1
+    })
+    expect(changed).toEqual([
+      [resourceKey('file', 'a', '/repo'), resourceKey('file', 'a', '/other')]
+    ])
+    expect(progress).toEqual([])
+  })
+  it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    let release = (): void => {}
+    mocks.holdWatchA = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const watching = api.gitWatchRepos('late', [
+      resourceKey('file', 'a', '/repo'),
+      resourceKey('file', 'b', '/other')
+    ])
+    await api.gitUnwatchRepos('late')
+    release()
+    expect(await watching).toEqual([])
+    const remote = mocks.calls.filter((c) => c.method === 'git.watch' || c.method === 'git.unwatch')
+    // Owner a's late watch reached it after the unwatch, with an OLDER revision
+    // (1 against the unwatch's 2): the server ignores it, so nothing is sent to
+    // take it back. Owner b was never reached by the stale loop.
+    const aCalls = remote.filter((c) => c.owner === 'a')
+    expect(aCalls.map((c) => [c.method, c.args.at(-1)])).toEqual([
+      ['git.unwatch', 2],
+      ['git.watch', 1]
+    ])
+    expect(remote.filter((c) => c.owner === 'b' && c.method === 'git.watch')).toEqual([])
+  })
+  it('stamps each request with its revision so an older watch answering late changes nothing', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    let release = (): void => {}
+    mocks.holdWatchA = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const older = api.gitWatchRepos('moving', [resourceKey('file', 'a', '/one')])
+    const newer = await api.gitWatchRepos('moving', [resourceKey('file', 'a', '/two')])
+    expect(newer).toEqual([resourceKey('file', 'a', '/two')])
+    release()
+    expect(await older).toEqual([])
+    const aWatches = mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.watch')
+    // The newer set answered first, the older late: each carries its revision,
+    // so the server keeps `/two` (revision 2) and ignores `/one` (revision 1)
+    // whichever reached it last. Nothing is re-sent and nothing unwatched.
+    expect(aWatches.map((c) => [c.args[1], c.args[2]])).toEqual([
+      [['/two'], 2],
+      [['/one'], 1]
+    ])
+    expect(mocks.calls.filter((c) => c.method === 'git.unwatch')).toEqual([])
+  })
+  it('forwards a server’s batch progress only for a batch this Mac started, by its id, while it runs', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    const progress: Array<{ repoPath: string; done: number }> = []
+    api.onGitBatchProgress((p) => progress.push({ repoPath: p.repoPath, done: p.done }))
+    const tick = (owner: string, repoPath: string, done: number, batchId?: string): void =>
+      emit(owner, {
+        _tag: 'git.batch_progress',
+        op: 'sync',
+        phase: 'pushing',
+        repoPath,
+        repoName: 'repo',
+        done,
+        total: 1,
+        ...(batchId !== undefined && { batchId })
+      })
+    let release = (): void => {}
+    mocks.holdBatch = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const first = api.gitMagicSync([resourceKey('file', 'a', '/repo')])
+    const second = api.gitMagicSync([resourceKey('file', 'a', '/repo')])
+    await vi.waitFor(() =>
+      expect(mocks.calls.filter((c) => c.method === 'git.magicSync')).toHaveLength(2)
+    )
+    const ids = mocks.calls.filter((c) => c.method === 'git.magicSync').map((c) => c.args[1])
+    expect(ids[0]).not.toEqual(ids[1])
+    tick('a', '/repo', 1, ids[0] as string) // this Mac's first batch
+    tick('a', '/repo', 1, 'another-mac:7') // another Mac, same op, same repository
+    tick('a', '/repo', 1) // an old server that stamps no id
+    mocks.holdBatch = null
+    release()
+    await first
+    await second
+    tick('a', '/repo', 1, ids[1] as string) // over: a late event
+    expect(progress).toEqual([{ repoPath: resourceKey('file', 'a', '/repo'), done: 1 }])
+  })
+  it('keeps forwarding a batch still in flight when an overlapping one has answered', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    const progress: string[] = []
+    api.onGitBatchProgress((p) => progress.push(p.repoPath))
+    let release = (): void => {}
+    mocks.holdBatch = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const slow = api.gitMagicSync([resourceKey('file', 'a', '/slow')])
+    await vi.waitFor(() =>
+      expect(mocks.calls.filter((c) => c.method === 'git.magicSync')).toHaveLength(1)
+    )
+    mocks.holdBatch = null
+    await api.gitMagicSync([resourceKey('file', 'a', '/quick')])
+    const [slowId] = mocks.calls.filter((c) => c.method === 'git.magicSync').map((c) => c.args[1])
+    emit('a', {
+      _tag: 'git.batch_progress',
+      op: 'sync',
+      phase: 'pushing',
+      repoPath: '/slow',
+      repoName: 'slow',
+      done: 1,
+      total: 1,
+      batchId: slowId
+    })
+    release()
+    await slow
+    expect(progress).toEqual([resourceKey('file', 'a', '/slow')])
+  })
 })

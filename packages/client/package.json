@@ -11,7 +11,8 @@
     "./node": "./src/node.ts",
     "./fleet": "./src/fleet.ts",
     "./requests": "./src/requests.ts",
-    "./files": "./src/files.ts"
+    "./files": "./src/files.ts",
+    "./git": "./src/git.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

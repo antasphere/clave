@@ -31,5 +31,7 @@ export * as Views from './views'
 export * as AgentTools from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
 export * as Plugins from './plugins'
+// ── Wave wcs1023, lane C: the git panel on a server's checkout ──
+export * as Git from './git'
 
 // ── Lane B: terminals · Lane D: settings served ──

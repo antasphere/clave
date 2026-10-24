@@ -1,6 +1,7 @@
 import { FleetFiles } from '../fleet/FleetFiles'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
-import { parseResourceKey } from '@clave/contract/fleet'
+import { parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { repoDisplayName, repoDisplayPath } from '../../lib/git-paths'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { PANEL_ROOTS, panelRootLadder, type PanelScope } from '../../store/session-types'
@@ -152,12 +153,16 @@ function SidePanelBody(): React.JSX.Element {
     focusedSession?.cwd ??
     (remoteFile ? remoteFile.slice(0, remoteFile.lastIndexOf('/')) || '/' : null)
 
-  // Determine if focused session is remote
-  const isRemoteSession =
-    fleetRemote ||
+  // The legacy remote kinds (an SSH location, an OpenClaw agent) have a
+  // files-only panel: their folder is reachable through no git API. A session
+  // on a Clave server (`fleetRemote`) is remote too, but its checkout is
+  // served by that server's git domain (wave wcs1023, lane C, #242), so it
+  // keeps the Git tab; only the two local roots and the plugin tabs stay off.
+  const legacyRemote =
     focusedSession?.sessionType === 'remote-terminal' ||
     focusedSession?.sessionType === 'remote-claude' ||
     focusedSession?.sessionType === 'agent'
+  const isRemoteSession = fleetRemote || legacyRemote
   const remoteLocationId = isRemoteSession ? focusedSession?.locationId : undefined
 
   useLayoutEffect(() => {
@@ -332,16 +337,21 @@ function SidePanelBody(): React.JSX.Element {
 
   const cwd = customCwd ?? rootCwd
   const isCustom = customCwd !== null
+  // The folder the GIT panel is about, as every store keyed by folder holds
+  // it: the path itself on the Mac, the owner's key for a Clave server's
+  // checkout (`lib/git-paths.ts`), so the same path on two machines never
+  // shares a draft, a journey or a status. The path bar keeps showing `cwd`.
+  const gitCwd = fleetRemote && cwd ? resourceKey('file', fleetOwner, cwd) : cwd
 
-  // Force files tab for remote sessions
-  const effectiveTab = isRemoteSession ? 'files' : sidePanelTab
+  // The legacy remote kinds have no git: their panel is the files tab.
+  const effectiveTab = legacyRemote ? 'files' : sidePanelTab
   const pluginTab = isRemoteSession ? null : activePluginPanel
   const isGitTabActive = effectiveTab === 'git'
-  const multiRepo = useMultiRepoStatus(fleetRemote ? null : cwd, isGitTabActive)
+  const multiRepo = useMultiRepoStatus(gitCwd, isGitTabActive)
 
   // Single-repo git status — used for branch badge in path row
-  const isSingleRepo = !fleetRemote && isGitTabActive && multiRepo.result.mode === 'single'
-  const singleRepoGit = useGitStatus(isSingleRepo ? cwd : null, isSingleRepo)
+  const isSingleRepo = isGitTabActive && multiRepo.result.mode === 'single'
+  const singleRepoGit = useGitStatus(isSingleRepo ? gitCwd : null, isSingleRepo)
 
   // Single-repo sections, driven by the toolbar's ↓/↑/+ badge-buttons.
   // Per-repo state: a folder switch resets it (guarded adjust-during-render).
@@ -364,9 +374,9 @@ function SidePanelBody(): React.JSX.Element {
   // pushing is about each repo's own local work.
   const allRepoPaths = useMemo(() => {
     if (multiRepo.result.mode === 'multi') return multiRepo.result.repos.map((r) => r.path)
-    if (isSingleRepo && cwd) return [cwd]
+    if (isSingleRepo && gitCwd) return [gitCwd]
     return []
-  }, [multiRepo.result, isSingleRepo, cwd])
+  }, [multiRepo.result, isSingleRepo, gitCwd])
 
   // Only the repos with incoming commits — what Pull all acts on. The badges in
   // this panel and the button's job are the same list on purpose: the button
@@ -375,9 +385,9 @@ function SidePanelBody(): React.JSX.Element {
     if (multiRepo.result.mode === 'multi') {
       return multiRepo.result.repos.filter((r) => r.status.behind > 0).map((r) => r.path)
     }
-    if (isSingleRepo && cwd && (singleRepoGit.status?.behind ?? 0) > 0) return [cwd]
+    if (isSingleRepo && gitCwd && (singleRepoGit.status?.behind ?? 0) > 0) return [gitCwd]
     return []
-  }, [multiRepo.result, isSingleRepo, cwd, singleRepoGit.status])
+  }, [multiRepo.result, isSingleRepo, gitCwd, singleRepoGit.status])
 
   const gitRefresh = useCallback(() => {
     if (multiRepo.result.mode === 'multi') multiRepo.refresh()
@@ -484,7 +494,7 @@ function SidePanelBody(): React.JSX.Element {
             <DocumentTextIcon className="w-3.5 h-3.5 flex-shrink-0" />
             <span>Files</span>
           </button>
-          {!isRemoteSession && (
+          {!legacyRemote && (
             <button
               onClick={() => {
                 openPluginPanel(null)
@@ -802,7 +812,7 @@ function SidePanelBody(): React.JSX.Element {
           old loose row running toward the edge did not. */}
       {isGitTabActive &&
         !pluginTab &&
-        !isRemoteSession &&
+        !legacyRemote &&
         multiRepo.result.mode !== 'none' &&
         multiRepo.result.mode !== 'loading' && (
           <div className="px-2 pb-1.5 flex-shrink-0">
@@ -884,22 +894,20 @@ function SidePanelBody(): React.JSX.Element {
                 {isSingleRepo &&
                   !isNavigatedSubfolder &&
                   singleRepoGit.status?.repoRoot &&
-                  cwd &&
-                  singleRepoGit.status.repoRoot !== cwd && (
+                  gitCwd &&
+                  singleRepoGit.status.repoRoot !== gitCwd && (
                     <span className="flex items-center gap-1 text-[10px] text-text-tertiary truncate min-w-0">
                       <InformationCircleIcon className="w-3 h-3 flex-shrink-0" />
                       <Tooltip delayDuration={300}>
                         <TooltipTrigger asChild>
                           <span className="truncate cursor-default">
-                            Part of{' '}
-                            {singleRepoGit.status.repoRoot.split(/[\\/]/).pop() ||
-                              singleRepoGit.status.repoRoot}
+                            Part of {repoDisplayName(singleRepoGit.status.repoRoot)}
                           </span>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="font-mono max-w-[300px]">
                           This folder isn’t a git repository. The changes shown belong to the parent
-                          repository {shortenPath(singleRepoGit.status.repoRoot)}, which contains
-                          it.
+                          repository {shortenPath(repoDisplayPath(singleRepoGit.status.repoRoot))},
+                          which contains it.
                         </TooltipContent>
                       </Tooltip>
                     </span>
@@ -918,8 +926,8 @@ function SidePanelBody(): React.JSX.Element {
                 <MagicSyncButton repoPaths={allRepoPaths} onDone={gitRefresh} />
                 <span className="panel-sep" aria-hidden="true" />
                 <CommitBarToggle />
-                {isSingleRepo && cwd && (
-                  <JourneyButton cwd={cwd} repoName={cwd.split('/').pop() ?? cwd} />
+                {isSingleRepo && gitCwd && (
+                  <JourneyButton cwd={gitCwd} repoName={repoDisplayName(gitCwd)} />
                 )}
                 <span className="panel-sep" aria-hidden="true" />
                 <PanelModeToggle />
@@ -947,35 +955,38 @@ function SidePanelBody(): React.JSX.Element {
         </div>
       ) : effectiveTab === 'help' ? (
         <HelpPanel />
-      ) : fleetRemote ? (
+      ) : fleetRemote && !isGitTabActive ? (
         <FleetFiles
           key={`${fleetOwner}:${sessionCwd}`}
           serverId={fleetOwner}
           cwd={sessionCwd ?? '/'}
         />
-      ) : isRemoteSession &&
+      ) : legacyRemote &&
         remoteLocationId &&
         effectiveCwd &&
         effectiveCwd !== '' &&
         effectiveCwd !== '~' &&
         effectiveCwd.startsWith('/') ? (
         <RemoteFileTree locationId={remoteLocationId} cwd={effectiveCwd} />
-      ) : isRemoteSession ? (
+      ) : legacyRemote ? (
         <div className="flex-1 flex items-center justify-center px-3">
           <span className="text-xs text-text-tertiary text-center">No working directory</span>
         </div>
       ) : (
         <>
-          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved */}
-          <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
-            <FileTree cwd={cwd} onNavigateToFolder={handleNavigateToFolder} />
-          </div>
+          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved.
+              A Clave server's files are FleetFiles above; its git tab lands here with no tree. */}
+          {!fleetRemote && (
+            <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
+              <FileTree cwd={cwd} onNavigateToFolder={handleNavigateToFolder} />
+            </div>
+          )}
           {sidePanelTab === 'git' &&
             (multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
                 repos={multiRepo.result.repos}
-                rootPath={multiRepo.hasNestedRepos ? cwd : null}
-                basePath={cwd}
+                rootPath={multiRepo.hasNestedRepos ? gitCwd : null}
+                basePath={gitCwd}
                 refresh={multiRepo.refresh}
                 truncated={multiRepo.result.truncated}
                 live={multiRepo.result.live}
@@ -988,9 +999,9 @@ function SidePanelBody(): React.JSX.Element {
               </div>
             ) : (
               <GitStatusPanel
-                cwd={cwd}
+                cwd={gitCwd}
                 isActive={isGitTabActive}
-                filterPrefix={isNavigatedSubfolder ? cwd : null}
+                filterPrefix={isNavigatedSubfolder ? gitCwd : null}
                 externalStatus={singleRepoGit.status}
                 externalRefresh={singleRepoGit.refresh}
                 showIncoming={showIncomingSingle}

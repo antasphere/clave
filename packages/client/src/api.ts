@@ -25,6 +25,8 @@ import { type AgentToolsClient, agentToolsClient } from './agent-tools'
 import { type PluginsClient, pluginsClient } from './plugins'
 import { filesClient, type FilesClient } from './files'
 import { requestsClient, type RequestsClient } from './requests'
+// ── Wave wcs1023, lane C: the git domain ──
+import { gitClient, type GitClient } from './git'
 
 export interface ApiClientOptions {
   readonly url: string
@@ -73,6 +75,8 @@ export interface ClaveApiClient {
   readonly agentTools: AgentToolsClient
   // ── Wave 5, lane C: the plugins (`./plugins.ts`) ──
   readonly plugins: PluginsClient
+  // ── Wave wcs1023, lane C: the git domain (`./git.ts`) ──
+  readonly git: GitClient
   // ── Lane B: terminals ──
   readonly health: {
     readonly live: () => Promise<boolean>
@@ -147,6 +151,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     agentTools: agentToolsClient(call),
     // ── Wave 5, lane C: the plugins ──
     plugins: pluginsClient(call),
+    // ── Wave wcs1023, lane C: the git domain ──
+    git: gitClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },
