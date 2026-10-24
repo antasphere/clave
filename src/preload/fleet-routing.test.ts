@@ -426,6 +426,17 @@ describe('server workspaces', () => {
     expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/after']])
   })
 
+  it('drops a write answer when a newer push arrived while it was in flight', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    // The server restarts while the write is out; its new instance pushes
+    // before the old write's answer comes back.
+    mocks.interleave = () => push('a', '/restarted', 0, 'a-restarted')
+    await api.fleetAddWorkspace('a', { rootDir: '/srv/mine' })
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted']])
+  })
+
   it('takes the read sent last when two reads answer out of order', async () => {
     await api.fleetWorkspaces('a')
     const heard: Array<Array<{ rootDir: string }>> = []
