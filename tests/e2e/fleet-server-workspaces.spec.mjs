@@ -23,18 +23,31 @@ const item = (win, id) => win.locator(`[data-workspace-id="${id}"]`)
 const sameDir = (a, b) => realpathSync(a) === realpathSync(b)
 
 async function openSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) return
   await win.getByLabel('Switch workspace', { exact: true }).click()
-  await win.getByText('Workspaces', { exact: true }).waitFor()
+  await add.waitFor()
+}
+
+/** Close the switcher and wait until it is gone, so a shortcut pressed next
+ *  reaches the window and not the popover animating out. */
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
 }
 
 async function switchTo(win, id) {
-  await openSwitcher(win)
-  await item(win, id).click()
   await eventually(async () => {
     await openSwitcher(win)
-    const selected = (await item(win, id).getAttribute('data-selected')) === 'true'
-    await win.keyboard.press('Escape')
-    return selected
+    if ((await item(win, id).getAttribute('data-selected')) === 'true') {
+      await closeSwitcher(win)
+      return true
+    }
+    await item(win, id)
+      .click({ timeout: 3_000 })
+      .catch(() => {})
+    return false
   }, `window shows ${id}`)
 }
 
@@ -62,7 +75,7 @@ export async function run(t) {
       const input = win.getByPlaceholder('/path/to/directory')
       await input.fill(server.root)
       await input.press('Enter')
-      await win.getByTitle('sub').first().waitFor()
+      await win.getByRole('button', { name: 'sub', exact: true }).waitFor()
       await win.getByRole('button', { name: 'Open', exact: true }).click()
       let added
       await eventually(async () => {
@@ -74,7 +87,7 @@ export async function run(t) {
       await eventually(async () => {
         await openSwitcher(win)
         const selected = (await item(win, id).getAttribute('data-selected')) === 'true'
-        await win.keyboard.press('Escape')
+        await closeSwitcher(win)
         return selected
       }, 'Mac A shows the server workspace it added')
       return { remote: added.id, id }
@@ -93,7 +106,7 @@ export async function run(t) {
         await openSwitcher(macB.win)
         const count = await item(macB.win, onB).count()
         const text = count ? await item(macB.win, onB).innerText() : ''
-        await macB.win.keyboard.press('Escape')
+        await closeSwitcher(macB.win)
         return count === 1 && text.includes('Personal VPS 1') && !text.includes('offline')
       }, 'the server workspace is listed on Mac B with the server name')
     })
@@ -112,6 +125,7 @@ export async function run(t) {
     }
 
     const claude = await step('Cmd+N starts Claude on the server at the root', async () => {
+      await closeSwitcher(macA.win)
       await macA.win.keyboard.press('Meta+N')
       const session = await created((s) => s.provider === 'claude', 'Cmd+N started on the server')
       assert.ok(sameDir(session.cwd, server.root), 'Cmd+N starts at the workspace root')
@@ -119,6 +133,7 @@ export async function run(t) {
       return session
     })
     await step('Cmd+T starts a terminal on the server at the root', async () => {
+      await closeSwitcher(macA.win)
       await macA.win.keyboard.press('Meta+T')
       const session = await created(
         (s) => s.provider !== 'claude' && s.transport === 'pty',
@@ -127,10 +142,14 @@ export async function run(t) {
       assert.ok(sameDir(session.cwd, server.root), 'Cmd+T starts at the workspace root')
     })
     await step('⌥ picks a folder on the server', async () => {
+      await closeSwitcher(macA.win)
       await macA.win.keyboard.press('Meta+Alt+N')
-      await macA.win.getByTitle('sub').first().click()
+      await macA.win.getByRole('button', { name: 'sub', exact: true }).click()
       await macA.win.getByRole('button', { name: 'Open', exact: true }).click()
-      const session = await created((s) => s.provider === 'claude', '⌥ started on the server')
+      const session = await created(
+        (s) => s.provider === 'claude' && sameDir(s.cwd, sub),
+        '⌥ started on the server in the picked folder'
+      )
       assert.ok(sameDir(session.cwd, sub), '⌥ starts in the folder picked on the server')
     })
     assert.deepEqual(
@@ -165,11 +184,12 @@ export async function run(t) {
         await openSwitcher(macA.win)
         const offline = await item(macA.win, workspaceId.id).getAttribute('data-offline')
         const text = await item(macA.win, workspaceId.id).innerText()
-        await macA.win.keyboard.press('Escape')
+        await closeSwitcher(macA.win)
         return offline === 'true' && text.includes('offline')
       }, 'the server workspace shows offline in the switcher')
       await switchTo(macA.win, workspaceId.id)
       const before = await macA.win.evaluate(() => window.electronAPI.listSessions())
+      await closeSwitcher(macA.win)
       await macA.win.keyboard.press('Meta+N')
       const notice = macA.win.getByTestId('launch-notice')
       await notice.waitFor()

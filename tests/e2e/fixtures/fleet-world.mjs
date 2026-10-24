@@ -296,6 +296,14 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
     }, 'saved owner connects')
 }
 
+/** Close the toolbar switcher and wait until it is gone, so the next key or
+ *  click reaches the window and not the popover animating out. */
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
+}
+
 /** Switch the Mac's window to a workspace through the toolbar switcher. */
 async function switchWorkspace(mac, workspaceId) {
   const { win } = mac
@@ -306,14 +314,16 @@ async function switchWorkspace(mac, workspaceId) {
       await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
     }
     if (!(await item.count())) {
-      await win.keyboard.press('Escape')
+      await closeSwitcher(win)
       return false
     }
     if ((await item.getAttribute('data-selected')) === 'true') {
-      await win.keyboard.press('Escape')
+      await closeSwitcher(win)
       return true
     }
-    await item.click()
+    // A pane mounting after a launch can take focus and close the popover
+    // while it animates in: the click is retried from a fresh open.
+    await item.click({ timeout: 3_000 }).catch(() => {})
     return false
   }, `the window shows workspace ${workspaceId}`)
 }
