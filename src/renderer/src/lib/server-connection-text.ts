@@ -1,5 +1,7 @@
 import type { ServerConnectionStatus } from '@clave/contract/fleet'
 
+type StatusTone = 'connected' | 'connecting' | 'error' | 'idle'
+
 const STATE_LABELS: Record<ServerConnectionStatus['state'], string> = {
   connecting: 'Connecting…',
   reconnecting: 'Reconnecting…',
@@ -7,6 +9,15 @@ const STATE_LABELS: Record<ServerConnectionStatus['state'], string> = {
   disconnected: 'Disconnected',
   offline: 'Unreachable',
   unauthorized: 'Token refused'
+}
+
+const STATE_TONES: Record<ServerConnectionStatus['state'], StatusTone> = {
+  connecting: 'connecting',
+  reconnecting: 'connecting',
+  connected: 'connected',
+  disconnected: 'idle',
+  offline: 'error',
+  unauthorized: 'error'
 }
 
 const CONNECTION_ERRORS: Record<NonNullable<ServerConnectionStatus['error']>, string> = {
@@ -21,17 +32,18 @@ const CONNECTION_ERRORS: Record<NonNullable<ServerConnectionStatus['error']>, st
 export function describeServerState(
   status: ServerConnectionStatus | undefined,
   enabled: boolean
-): { label: string; error: string | null } {
-  if (!enabled) return { label: 'Disconnected', error: null }
+): { label: string; error: string | null; tone: StatusTone } {
+  if (!enabled) return { label: 'Disconnected', error: null, tone: 'idle' }
   return {
     label: status ? STATE_LABELS[status.state] : 'Connecting…',
-    error: status?.error ? CONNECTION_ERRORS[status.error] : null
+    error: status?.error ? CONNECTION_ERRORS[status.error] : null,
+    tone: status ? STATE_TONES[status.state] : 'connecting'
   }
 }
 
 // Only these sentences from ServerConnectionRegistry are safe to show. An
 // unexpected adapter error may carry credentials or private source details.
-const SAVE_ERRORS = new Set([
+export const SAVE_ERRORS: ReadonlySet<string> = new Set([
   'Enter a server name of at most 120 characters.',
   'Enter a valid Clave server address.',
   'Enter a valid Clave server base address without credentials, path, query or fragment.',
@@ -40,8 +52,11 @@ const SAVE_ERRORS = new Set([
   'A bearer token is required.',
   'Secure credential storage is unavailable. The connection was not saved.',
   'Could not allocate a server connection identity.',
+  'This server connection is disconnected.',
+  'The saved server credential is unavailable. Enter its token again.',
   'Unknown server connection.',
   'Could not save server connections. Previous settings were retained.',
+  'Checked reads are required.',
   'Saved server connections could not be read. The document was left unchanged.'
 ])
 

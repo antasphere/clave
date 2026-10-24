@@ -78,7 +78,7 @@ function ServerRow({
   connection: SavedServerConnection
   status: ServerConnectionStatus | undefined
 }): React.JSX.Element {
-  const { label, error } = describeServerState(status, connection.enabled)
+  const { label, error, tone } = describeServerState(status, connection.enabled)
   const connected = connection.enabled && status?.state === 'connected'
   return (
     <div className="settings-row" data-server-id={connection.id}>
@@ -89,10 +89,7 @@ function ServerRow({
             <p className="settings-row-description">{connection.url}</p>
           </div>
           <div className="settings-row-controls">
-            <span
-              className="status-text"
-              data-status={connection.enabled ? (status?.state ?? 'connecting') : 'disconnected'}
-            >
+            <span className="status-text" data-status={tone}>
               {label}
             </span>
             <button

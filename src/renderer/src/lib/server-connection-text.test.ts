@@ -1,23 +1,31 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ServerConnectionStatus } from '@clave/contract/fleet'
-import { describeAddError, describeServerState } from './server-connection-text'
+import { describeAddError, describeServerState, SAVE_ERRORS } from './server-connection-text'
 
 describe('describeServerState', () => {
   it('says Connecting while an enabled connection has no status', () => {
-    expect(describeServerState(undefined, true)).toEqual({ label: 'Connecting…', error: null })
+    expect(describeServerState(undefined, true)).toEqual({
+      label: 'Connecting…',
+      error: null,
+      tone: 'connecting'
+    })
   })
 
-  it.each<[ServerConnectionStatus['state'], string]>([
-    ['connecting', 'Connecting…'],
-    ['reconnecting', 'Reconnecting…'],
-    ['connected', 'Connected'],
-    ['disconnected', 'Disconnected'],
-    ['offline', 'Unreachable'],
-    ['unauthorized', 'Token refused']
-  ])('describes the %s state', (state, label) => {
+  it.each<[ServerConnectionStatus['state'], string, 'connected' | 'connecting' | 'error' | 'idle']>(
+    [
+      ['connecting', 'Connecting…', 'connecting'],
+      ['reconnecting', 'Reconnecting…', 'connecting'],
+      ['connected', 'Connected', 'connected'],
+      ['disconnected', 'Disconnected', 'idle'],
+      ['offline', 'Unreachable', 'error'],
+      ['unauthorized', 'Token refused', 'error']
+    ]
+  )('describes the %s state', (state, label, tone) => {
     expect(describeServerState({ serverId: 'fixture', state }, true)).toEqual({
       label,
-      error: null
+      error: null,
+      tone
     })
   })
 
@@ -37,21 +45,27 @@ describe('describeServerState', () => {
   ])('gives an actionable sentence for %s', (error, sentence) => {
     expect(describeServerState({ serverId: 'fixture', state: 'offline', error }, true)).toEqual({
       label: 'Unreachable',
-      error: sentence
+      error: sentence,
+      tone: 'error'
     })
   })
 
   it('disabling a connection overrides its old status and error', () => {
-    expect(describeServerState(undefined, false)).toEqual({ label: 'Disconnected', error: null })
+    expect(describeServerState(undefined, false)).toEqual({
+      label: 'Disconnected',
+      error: null,
+      tone: 'idle'
+    })
     expect(
       describeServerState(
         { serverId: 'fixture', state: 'unauthorized', error: 'unauthorized' },
         false
       )
-    ).toEqual({ label: 'Disconnected', error: null })
+    ).toEqual({ label: 'Disconnected', error: null, tone: 'idle' })
     expect(describeServerState({ serverId: 'fixture', state: 'connected' }, false)).toEqual({
       label: 'Disconnected',
-      error: null
+      error: null,
+      tone: 'idle'
     })
   })
 })
@@ -60,6 +74,19 @@ describe('describeAddError', () => {
   const addressError =
     'Enter a valid Clave server base address without credentials, path, query or fragment.'
   const fallback = 'The server operation failed. Check its connection and try again.'
+
+  it('keeps the safe sentence allow-list in sync with every registry error sentence', () => {
+    const registry = readFileSync(
+      new URL('../../../main/server-connections/registry.ts', import.meta.url),
+      'utf8'
+    )
+    const sentences = new Set(
+      [...registry.matchAll(/throw new Error\(\s*'([^']+)'\s*\)/g)]
+        .map((match) => match[1])
+        .filter((sentence) => sentence.endsWith('.'))
+    )
+    expect([...SAVE_ERRORS].sort()).toEqual([...sentences].sort())
+  })
 
   it.each([
     'Enter a server name of at most 120 characters.',
