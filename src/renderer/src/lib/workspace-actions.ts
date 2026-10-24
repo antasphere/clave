@@ -512,13 +512,23 @@ export async function addServerWorkspace(
   const api = window.electronAPI
   if (!api?.fleetAddWorkspace) throw new Error('Clave servers are not available here.')
   const added = await api.fleetAddWorkspace(serverId, { rootDir, name })
-  // Shown at once even when the server's list carrying it is still on its
-  // way; that list replaces this one when it lands.
-  const { serverWorkspaces } = useWorkspaceStore.getState()
-  const list = serverWorkspaces[serverId] ?? []
-  if (!list.some((w) => w.id === added.id))
-    useWorkspaceStore.setState({
-      serverWorkspaces: { ...serverWorkspaces, [serverId]: [...list, added] }
+  // The server's list carrying it is published by the write or by its change
+  // event; wait briefly for it so a caller can switch to it at once. It is
+  // never inserted here: the server's list is the only truth (another Mac may
+  // have removed it already).
+  const has = (): boolean =>
+    (useWorkspaceStore.getState().serverWorkspaces[serverId] ?? []).some((w) => w.id === added.id)
+  if (!has())
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, 3_000)
+      const off = useWorkspaceStore.subscribe(() => {
+        if (has()) done()
+      })
+      function done(): void {
+        clearTimeout(timer)
+        off()
+        resolve()
+      }
     })
   return added
 }

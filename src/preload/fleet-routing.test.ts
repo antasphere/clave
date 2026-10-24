@@ -426,6 +426,49 @@ describe('server workspaces', () => {
     expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/after']])
   })
 
+  it('takes the read sent last when two reads answer out of order', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    mocks.hold = { instance: 'a', revision: 1 }
+    const older = api.fleetWorkspaces('a')
+    await inFlight(1)
+    mocks.registries.set('a', [
+      { id: 'n', name: 'N', rootDir: '/new', profileFile: null, createdAt: 4 }
+    ])
+    mocks.hold = { instance: 'a-restarted', revision: 0 }
+    const newer = api.fleetWorkspaces('a')
+    await inFlight(2)
+    mocks.hold = null
+    const [first, second] = mocks.held.splice(0)
+    first.release()
+    await vi.advanceTimersByTimeAsync(0)
+    second.release()
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.all([older, newer])
+    expect(heard.at(-1)?.map((w) => w.rootDir)).toEqual(['/new'])
+    // And the other way round: the older answer, from the instance the
+    // server was restarted out of and at a higher revision, landing last is
+    // dropped.
+    mocks.hold = { instance: 'a', revision: 99 }
+    const third = api.fleetWorkspaces('a')
+    await inFlight(1)
+    mocks.registries.set('a', [
+      { id: 'z', name: 'Z', rootDir: '/newest', profileFile: null, createdAt: 5 }
+    ])
+    mocks.hold = { instance: 'a-restarted', revision: 2 }
+    const fourth = api.fleetWorkspaces('a')
+    await inFlight(2)
+    mocks.hold = null
+    const [late, early] = mocks.held.splice(0)
+    early.release()
+    await vi.advanceTimersByTimeAsync(0)
+    late.release()
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.all([third, fourth])
+    expect(heard.at(-1)?.map((w) => w.rootDir)).toEqual(['/newest'])
+  })
+
   it('takes a list from a restarted server whatever its revision', async () => {
     mocks.revisions.set('a', 9)
     await api.fleetWorkspaces('a')
