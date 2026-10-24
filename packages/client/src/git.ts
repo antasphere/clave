@@ -17,9 +17,9 @@ const flag = (value: boolean): 'true' | 'false' => (value ? 'true' : 'false')
  * against a slow remote, the sweep over every remote, a batch across many
  * repositories, a commit message or a push summary written by the model. The
  * ordinary ten-second deadline cut a Magic sync off while the server was
- * still committing (verifier round 1, finding 1). The reads and the local
- * writes keep the ordinary deadline: a status that takes ten seconds is
- * already a finding.
+ * still committing (verifier round 1, finding 1), and a commit's hooks can be
+ * as slow (round 2). The reads and the index writes keep the ordinary
+ * deadline: a status that takes ten seconds is already a finding.
  */
 export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
   status: (cwd) => call((c) => c.git.status({ payload: { cwd } })),
@@ -33,7 +33,10 @@ export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
   fetch: (cwd) => patientCall((c) => c.git.fetch({ payload: { cwd } })).then(() => undefined),
   fetchBatch: (paths) =>
     patientCall((c) => c.git.fetchBatch({ payload: { paths } })).then(() => undefined),
-  refreshRemotes: (paths) => patientCall((c) => c.git.refreshRemotes({ payload: { paths } })),
+  refreshRemotes: (paths, batchId) =>
+    patientCall((c) =>
+      c.git.refreshRemotes({ payload: { paths, ...(batchId !== undefined && { batchId }) } })
+    ),
   watch: (subscriberId, paths) => call((c) => c.git.watch({ payload: { subscriberId, paths } })),
   unwatch: (subscriberId) =>
     call((c) => c.git.unwatch({ payload: { subscriberId } })).then(() => undefined),
@@ -43,7 +46,8 @@ export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
     call((c) => c.git.unstage({ payload: { cwd, files } })).then(() => undefined),
   discard: (cwd, files) =>
     call((c) => c.git.discard({ payload: { cwd, files } })).then(() => undefined),
-  commit: (cwd, message) => call((c) => c.git.commit({ payload: { cwd, message } })),
+  // A commit runs the repository's hooks, which may take their time too.
+  commit: (cwd, message) => patientCall((c) => c.git.commit({ payload: { cwd, message } })),
   push: (cwd) => patientCall((c) => c.git.push({ payload: { cwd } })).then(() => undefined),
   publishBranch: (cwd) =>
     patientCall((c) => c.git.publishBranch({ payload: { cwd } })).then(() => undefined),
@@ -79,6 +83,12 @@ export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
     patientCall((c) => c.git.generateCommitMessage({ payload: { cwd } })),
   summarizePush: (cwd, commitMessages, diffStats) =>
     patientCall((c) => c.git.summarizePush({ payload: { cwd, commitMessages, diffStats } })),
-  magicSync: (paths) => patientCall((c) => c.git.magicSync({ payload: { paths } })),
-  magicPull: (paths) => patientCall((c) => c.git.magicPull({ payload: { paths } }))
+  magicSync: (paths, batchId) =>
+    patientCall((c) =>
+      c.git.magicSync({ payload: { paths, ...(batchId !== undefined && { batchId }) } })
+    ),
+  magicPull: (paths, batchId) =>
+    patientCall((c) =>
+      c.git.magicPull({ payload: { paths, ...(batchId !== undefined && { batchId }) } })
+    )
 })

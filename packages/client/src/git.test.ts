@@ -47,7 +47,7 @@ describe('the git client’s deadlines', () => {
       discover: 'ordinary',
       log: 'ordinary',
       stage: 'ordinary',
-      commit: 'ordinary',
+      commit: 'patient',
       fetch: 'patient',
       fetchBatch: 'patient',
       refreshRemotes: 'patient',

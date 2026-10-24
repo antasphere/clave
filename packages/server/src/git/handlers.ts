@@ -86,7 +86,7 @@ export const gitHandlers = [
   // The remotes
   CommandHandler.make(GitFetch, (p) => call((g) => g.fetch(p.cwd))),
   CommandHandler.make(GitFetchBatch, (p) => call((g) => g.fetchBatch(p.paths))),
-  CommandHandler.make(GitRefreshRemotes, (p) => call((g) => g.refreshRemotes(p.paths))),
+  CommandHandler.make(GitRefreshRemotes, (p) => call((g) => g.refreshRemotes(p.paths, p.batchId))),
   // Watching
   CommandHandler.make(GitWatchRepos, (p) => call((g) => g.watch(p.subscriberId, p.paths))),
   CommandHandler.make(GitUnwatchRepos, (p) => call((g) => g.unwatch(p.subscriberId))),
@@ -117,6 +117,6 @@ export const gitHandlers = [
     call((g) => g.summarizePush(p.cwd, p.commitMessages, p.diffStats))
   ),
   // Batches
-  CommandHandler.make(GitMagicSync, (p) => call((g) => g.magicSync(p.paths))),
-  CommandHandler.make(GitMagicPull, (p) => call((g) => g.magicPull(p.paths)))
+  CommandHandler.make(GitMagicSync, (p) => call((g) => g.magicSync(p.paths, p.batchId))),
+  CommandHandler.make(GitMagicPull, (p) => call((g) => g.magicPull(p.paths, p.batchId)))
 ] as const

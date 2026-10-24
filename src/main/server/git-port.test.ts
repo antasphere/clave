@@ -144,7 +144,7 @@ describe('the daemon’s git port over a real checkout', () => {
     withClaude(bins.refusing)
     writeFileSync(path.join(repo, 'e.txt'), 'five\n')
     events.length = 0
-    const results = await port.magicSync([repo])
+    const results = await port.magicSync([repo], 'mac-test:1')
     expect(results).toEqual([
       {
         repoPath: repo,
@@ -157,7 +157,13 @@ describe('the daemon’s git port over a real checkout', () => {
     expect(progress.map((e) => (e._tag === 'git.batch_progress' ? e.phase : ''))).toContain(
       'generating'
     )
-    expect(progress.at(-1)).toMatchObject({ op: 'sync', done: 1, total: 1, repoPath: repo })
+    expect(progress.at(-1)).toMatchObject({
+      op: 'sync',
+      done: 1,
+      total: 1,
+      repoPath: repo,
+      batchId: 'mac-test:1'
+    })
     git(repo, 'reset', '-q')
   })
 })

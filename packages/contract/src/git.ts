@@ -151,15 +151,21 @@ export const GitBatchPhase = Schema.Literal(
   'pushing'
 )
 export type GitBatchPhase = typeof GitBatchPhase.Type
+/** The identity a client gives its batch, echoed on every progress event of
+ *  it: a server publishes progress to every attached client, and two clients
+ *  may run the same op on the same repositories at once. */
+export const GitBatchId = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128))
+export type GitBatchId = typeof GitBatchId.Type
 /** One progress event of a batch (`src/shared/git-batch.ts`), published to
- *  every attached client; a client draws only the op it is running. */
+ *  every attached client; a client draws only the batch it started. */
 export const GitBatchProgress = Schema.Struct({
   op: GitBatchOp,
   phase: GitBatchPhase,
   repoPath: Schema.String,
   repoName: Schema.String,
   done: Schema.Number,
-  total: Schema.Number
+  total: Schema.Number,
+  batchId: Schema.optional(GitBatchId)
 })
 export type GitBatchProgress = typeof GitBatchProgress.Type
 
@@ -220,7 +226,7 @@ export const GitFetchBatch = Command.define('GitFetchBatch', {
   failure: Failure
 })
 export const GitRefreshRemotes = Command.define('GitRefreshRemotes', {
-  payload: Schema.Struct({ paths: Paths }),
+  payload: Schema.Struct({ paths: Paths, batchId: Schema.optional(GitBatchId) }),
   success: Schema.Array(GitRefreshResult),
   failure: Failure
 })
@@ -346,12 +352,12 @@ export const GitSummarizePush = Command.define('GitSummarizePush', {
 })
 // ── Batches ──
 export const GitMagicSync = Command.define('GitMagicSync', {
-  payload: Schema.Struct({ paths: Paths }),
+  payload: Schema.Struct({ paths: Paths, batchId: Schema.optional(GitBatchId) }),
   success: Schema.Array(MagicSyncResult),
   failure: Failure
 })
 export const GitMagicPull = Command.define('GitMagicPull', {
-  payload: Schema.Struct({ paths: Paths }),
+  payload: Schema.Struct({ paths: Paths, batchId: Schema.optional(GitBatchId) }),
   success: Schema.Array(MagicPullResult),
   failure: Failure
 })
@@ -405,7 +411,8 @@ export interface GitOperations {
   readonly fetch: (cwd: string) => Promise<void>
   readonly fetchBatch: (paths: ReadonlyArray<string>) => Promise<void>
   readonly refreshRemotes: (
-    paths: ReadonlyArray<string>
+    paths: ReadonlyArray<string>,
+    batchId?: string
   ) => Promise<ReadonlyArray<GitRefreshResult>>
   readonly watch: (
     subscriberId: string,
@@ -446,6 +453,12 @@ export interface GitOperations {
     commitMessages: ReadonlyArray<string>,
     diffStats: string
   ) => Promise<GitPushSummary>
-  readonly magicSync: (paths: ReadonlyArray<string>) => Promise<ReadonlyArray<MagicSyncResult>>
-  readonly magicPull: (paths: ReadonlyArray<string>) => Promise<ReadonlyArray<MagicPullResult>>
+  readonly magicSync: (
+    paths: ReadonlyArray<string>,
+    batchId?: string
+  ) => Promise<ReadonlyArray<MagicSyncResult>>
+  readonly magicPull: (
+    paths: ReadonlyArray<string>,
+    batchId?: string
+  ) => Promise<ReadonlyArray<MagicPullResult>>
 }
