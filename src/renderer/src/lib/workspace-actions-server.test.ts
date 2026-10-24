@@ -29,6 +29,8 @@ let heardWorkspaces: ((u: { serverId: string; workspaces: Workspace[] }) => void
 let heardConnections: ((c: Array<{ id: string }>) => void) | null = null
 let shownAtBoot: string | null = 'ws1'
 let localAtBoot: Workspace[] = [LOCAL]
+/** When set, `fleetAddWorkspace` answers only once the test resolves it. */
+let addGate: Promise<void> | null = null
 
 let actions: typeof import('./workspace-actions')
 let store: typeof import('../store/workspace-store')
@@ -78,8 +80,10 @@ beforeAll(() => {
       heardConnections = cb
       return () => {}
     },
-    fleetAddWorkspace: async (serverId: string, input: { rootDir: string }) =>
-      serverWs(serverId, 'added', input.rootDir),
+    fleetAddWorkspace: async (serverId: string, input: { rootDir: string }) => {
+      if (addGate) await addGate
+      return serverWs(serverId, 'added', input.rootDir)
+    },
     discoverClaveFiles: async () => [],
     trustWorkspaceRoot: async () => undefined,
     setSessionWorkspace: async () => undefined,
@@ -97,6 +101,7 @@ beforeEach(async () => {
   heardConnections = null
   shownAtBoot = 'ws1'
   localAtBoot = [LOCAL]
+  addGate = null
   actions = await import('./workspace-actions')
   store = await import('../store/workspace-store')
 })
@@ -125,16 +130,45 @@ describe('server workspaces beside the local registry', () => {
     expect(registryWrites).toEqual([])
   })
 
-  it('shows an added server workspace before the server’s list carrying it arrives', async () => {
+  it('waits for the server’s list carrying an added workspace, and never invents it', async () => {
     await actions.bootWorkspaces()
     heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
-    const added = await actions.addServerWorkspace('srv', '/srv/added')
-    expect(store.useWorkspaceStore.getState().serverWorkspaces.srv.map((w) => w.id)).toEqual([
-      resourceKey('workspace', 'srv', 'repo'),
-      added.id
-    ])
+    const adding = actions.addServerWorkspace('srv', '/srv/added')
+    await tick()
+    heardWorkspaces!({
+      serverId: 'srv',
+      workspaces: [serverWs('srv', 'repo'), serverWs('srv', 'added', '/srv/added')]
+    })
+    const added = await adding
     await actions.setActiveWorkspace(added.id)
     expect(store.useWorkspaceStore.getState().activeWorkspaceId).toBe(added.id)
+  })
+
+  it('does not bring back an added workspace another Mac removed meanwhile', async () => {
+    vi.useFakeTimers()
+    try {
+      await actions.bootWorkspaces()
+      heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+      let answer = (): void => {}
+      addGate = new Promise((resolve) => (answer = resolve))
+      const adding = actions.addServerWorkspace('srv', '/srv/added')
+      await vi.advanceTimersByTimeAsync(0)
+      // The add's own list is pushed, then another Mac's removal, and only
+      // then does the add's answer arrive.
+      heardWorkspaces!({
+        serverId: 'srv',
+        workspaces: [serverWs('srv', 'repo'), serverWs('srv', 'added', '/srv/added')]
+      })
+      heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+      answer()
+      await vi.advanceTimersByTimeAsync(3_000)
+      await adding
+      expect(store.useWorkspaceStore.getState().serverWorkspaces.srv.map((w) => w.name)).toEqual([
+        'repo'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('drops an entry that names another server', async () => {
