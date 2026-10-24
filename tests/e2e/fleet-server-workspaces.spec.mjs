@@ -205,6 +205,20 @@ export async function run(t) {
       return found
     }
 
+    await step('a profile picked in a server workspace is kept for it on the Mac', async () => {
+      // What the launcher's profile pick and Settings → Agents' "This workspace"
+      // call: the Mac's own preferences, keyed by the server workspace.
+      const kept = await macA.win.evaluate(
+        (id) => window.electronAPI.launchProfileSetWorkspace(id, 'claude', 'builtin-claude'),
+        workspaceId.id
+      )
+      assert.deepEqual(kept.workspaceOverrides[workspaceId.id], { claude: 'builtin-claude' })
+      const cleared = await macA.win.evaluate(
+        (id) => window.electronAPI.launchProfileSetWorkspace(id, 'claude', null),
+        workspaceId.id
+      )
+      assert.deepEqual(cleared.workspaceOverrides[workspaceId.id], {})
+    })
     const claude = await step('Cmd+N starts Claude on the server at the root', async () => {
       await closeSwitcher(macA.win)
       await macA.win.keyboard.press('Meta+N')
