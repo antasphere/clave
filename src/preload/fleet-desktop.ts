@@ -467,6 +467,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
   const gitDesired = new Map<string, Map<string, string[]>>()
   const gitGeneration = new Map<string, number>()
+  /** Counts an owner's connections: an answer that crossed one came from a
+   *  daemon that may be gone and says nothing about the one now there. */
+  const gitEpoch = new Map<string, number>()
   const gitMapOf = (owner: string): GitWatchSubscription[] =>
     [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
   const sameMap = (
@@ -484,7 +487,15 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     gitGeneration.set(owner, generation)
     try {
       const b = await backing(owner)
+      // The connection this sync rides is the one it was made on; only a
+      // connection opening after it makes the answer cross one.
+      const epoch = gitEpoch.get(owner) ?? 0
       const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
+      // An answer that crossed a connection of this owner (the connection
+      // dropped and came back, a daemon restarted) came from a daemon that may
+      // be gone: it says nothing about the one now there, which the
+      // connection's own sync addresses. The panel polls until its next set.
+      if (gitEpoch.get(owner) !== epoch) return null
       return sameMap(subscriptions, gitMapOf(owner)) ? answered : null
     } catch {
       return null
@@ -495,8 +506,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     // server that lost its state gets the map back, one that kept it applies
     // the same map again. A sync still in flight may be answered by a daemon
     // that is gone; this one reaches the daemon that is there.
-    if (status.state === 'connected' && gitDesired.has(status.serverId))
-      void gitSync(status.serverId)
+    if (status.state !== 'connected') return
+    gitEpoch.set(status.serverId, (gitEpoch.get(status.serverId) ?? 0) + 1)
+    if (gitDesired.has(status.serverId)) void gitSync(status.serverId)
   })
   // The batches THIS Mac has in flight on a server, by the id it gave each
   // one: a server publishes a batch's progress to every attached Mac, and two

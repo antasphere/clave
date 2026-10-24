@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   holdBatch: null as Promise<void> | null,
   /** When set, owner a's watch waits for it before answering. */
   holdWatchA: null as Promise<void> | null,
+  /** When set, owner b's next map waits for it before answering. */
+  holdWatchB: null as Promise<void> | null,
   /** The push status listeners each owner's backing holds, so a test can reopen. */
   pushStatusListeners: new Map<string, Set<(state: string, detail: unknown) => void>>(),
   /** A third owner, listed only when a test asks for it. */
@@ -191,10 +193,11 @@ vi.mock('@clave/client/node', () => ({
             generation: number,
             subscriptions: Array<{ id: string; paths: string[] }>
           ) => {
-            // One-shot: the first map of owner a waits, the next ones answer.
-            const hold = owner === 'a' ? mocks.holdWatchA : null
+            // One-shot: the first map of owner a (or b) waits, the next ones answer.
+            const hold = owner === 'a' ? mocks.holdWatchA : owner === 'b' ? mocks.holdWatchB : null
             if (hold) {
-              mocks.holdWatchA = null
+              if (owner === 'a') mocks.holdWatchA = null
+              else mocks.holdWatchB = null
               await hold
             }
             mocks.calls.push({
@@ -265,6 +268,7 @@ beforeEach(async () => {
   mocks.withC = false
   mocks.holdBatch = null
   mocks.holdWatchA = null
+  mocks.holdWatchB = null
   mocks.invoke.mockReset().mockImplementation(defaultInvoke)
 })
 async function defaultInvoke(channel: string, ...args: unknown[]): Promise<unknown> {
@@ -847,7 +851,7 @@ describe('git routing by the owner of the repository key', () => {
       [1, [{ id: 'late', paths: ['/repo'] }]]
     ])
   })
-  it('syncs an owner at a connection even while a sync to it is in flight, and the earlier answer stands', async () => {
+  it('syncs an owner at a connection even while a sync to it is in flight; the crossed answer is nothing', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))
     let release = (): void => {}
     mocks.holdWatchA = new Promise<void>((resolve) => {
@@ -861,12 +865,31 @@ describe('git routing by the owner of the repository key', () => {
     await vi.waitFor(() => expect(maps('a')).toHaveLength(1))
     expect(maps('a')).toEqual([[2, [{ id: 'panel', paths: ['/repo'] }]]])
     release()
-    // The earlier answer describes the same map as the current one: it stands.
-    expect(await watching).toEqual([resourceKey('file', 'a', '/repo')])
+    // The earlier answer crossed that connection: it is reported as nothing
+    // (the daemon that gave it may be gone), the panel polls until its next set.
+    expect(await watching).toEqual([])
     expect(maps('a')).toEqual([
       [2, [{ id: 'panel', paths: ['/repo'] }]],
       [1, [{ id: 'panel', paths: ['/repo'] }]]
     ])
+  })
+  it('reports nothing for an answer that crossed a connection of its owner', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    let release = (): void => {}
+    mocks.holdWatchA = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const watching = api.gitWatchRepos('panel', [resourceKey('file', 'a', '/repo')])
+    await vi.advanceTimersByTimeAsync(10)
+    // Owner a drops and comes back (a daemon restarted) while generation 1 is
+    // still held by the old connection: the new connection gets the map...
+    await api.fleetDisconnect('a')
+    await api.fleetConnect('a')
+    await vi.waitFor(() => expect(maps('a').some(([g]) => g === 2)).toBe(true))
+    release()
+    // ...and the late answer, true of a daemon that may be gone, is reported
+    // as nothing: the panel polls until its next set.
+    expect(await watching).toEqual([])
   })
   it('edits the maps before waiting on the Mac, so an unwatch that runs meanwhile wins', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))
@@ -919,6 +942,32 @@ describe('git routing by the owner of the repository key', () => {
     // one the owner applies.
     expect(maps('a').at(-1)).toEqual([expect.any(Number), [{ id: 'again', paths: ['/new'] }]])
     mocks.invoke.mockImplementation(defaultInvoke)
+  })
+  it('drops an owner’s answer from a multi-owner call when the panel’s entry there moved on', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    let releaseB = (): void => {}
+    mocks.holdWatchB = new Promise<void>((resolve) => {
+      releaseB = resolve
+    })
+    // Owner a answers at once (its `/one` is collected); owner b's answer is
+    // held. Meanwhile the same panel asks a newer set: `/two` on a, `/x` on b.
+    const older = api.gitWatchRepos('multi', [
+      resourceKey('file', 'a', '/one'),
+      resourceKey('file', 'b', '/x')
+    ])
+    await vi.advanceTimersByTimeAsync(10)
+    const newer = await api.gitWatchRepos('multi', [
+      resourceKey('file', 'a', '/two'),
+      resourceKey('file', 'b', '/x')
+    ])
+    expect(new Set(newer)).toEqual(
+      new Set([resourceKey('file', 'a', '/two'), resourceKey('file', 'b', '/x')])
+    )
+    releaseB()
+    // The older call reports b (its entry there is still `/x`) but not a's
+    // `/one`, which the panel no longer asks for (verifier round 7, V7-F2).
+    expect(await older).toEqual([resourceKey('file', 'b', '/x')])
   })
   it('sends an owner the complete map at every connection, the first one included', async () => {
     // Owner c exists but is disabled: never connected so far.
