@@ -85,12 +85,19 @@ export const LoadWorkspaceState = Query.define('LoadWorkspaceState', {
   success: WorkspaceStateView
 })
 
-/** `workspace:update-registry` — the whole list replaces the registry, or nothing does. */
+/** `workspace:update-registry` — the whole list replaces the registry, or nothing does.
+ *  With `base`, only while the registry still stands at that stamp: a writer
+ *  that read, edited and wrote back is refused as `stale` when another wrote
+ *  in between, and reads again (#241, two Macs adding to one server). */
 export const UpdateWorkspaceRegistry = Command.define('UpdateWorkspaceRegistry', {
-  payload: Schema.Struct({ workspaces: Schema.Array(WorkspaceView), origin: Origin }),
+  payload: Schema.Struct({
+    workspaces: Schema.Array(WorkspaceView),
+    origin: Origin,
+    base: Schema.optional(WorkspaceStamp)
+  }),
   success: Schema.Union(
     Written,
-    Schema.Struct({ ok: Schema.Literal(false), reason: Schema.Literal('invalid') })
+    Schema.Struct({ ok: Schema.Literal(false), reason: Schema.Literal('invalid', 'stale') })
   ),
   failure: SettingsRefused
 })

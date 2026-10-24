@@ -28,6 +28,7 @@ const registryWrites: unknown[] = []
 let heardWorkspaces: ((u: { serverId: string; workspaces: Workspace[] }) => void) | null = null
 let heardConnections: ((c: Array<{ id: string }>) => void) | null = null
 let shownAtBoot: string | null = 'ws1'
+let localAtBoot: Workspace[] = [LOCAL]
 
 let actions: typeof import('./workspace-actions')
 let store: typeof import('../store/workspace-store')
@@ -50,7 +51,7 @@ beforeAll(() => {
     }),
     workspaceLoad: async () => ({
       version: 1,
-      workspaces: [LOCAL],
+      workspaces: localAtBoot,
       lastActiveWorkspaceId: null,
       activeWorkspaceId: null,
       pinsMigrated: true,
@@ -78,6 +79,8 @@ beforeAll(() => {
       return () => {}
     },
     discoverClaveFiles: async () => [],
+    trustWorkspaceRoot: async () => undefined,
+    setSessionWorkspace: async () => undefined,
     watchClaveFile: async () => undefined,
     unwatchClaveFile: async () => undefined
   }
@@ -91,6 +94,7 @@ beforeEach(async () => {
   heardWorkspaces = null
   heardConnections = null
   shownAtBoot = 'ws1'
+  localAtBoot = [LOCAL]
   actions = await import('./workspace-actions')
   store = await import('../store/workspace-store')
 })
@@ -190,5 +194,51 @@ describe('server workspaces beside the local registry', () => {
     expect(JSON.parse(mem.get('clave-server-workspaces')!)).toEqual({
       kept: [serverWs('kept', 'k')]
     })
+  })
+})
+
+describe('the first Mac workspace beside server workspaces', () => {
+  const remoteTab = {
+    id: resourceKey('session', 'srv', 'tab'),
+    name: 'Remote',
+    cwd: '/srv/repo',
+    alive: true
+  }
+  const remoteGroup = { id: resourceKey('group', 'srv', 'g'), name: 'G', sessionIds: [] }
+  const localTab = { id: 'local-tab', name: 'Local', cwd: '/w', alive: true, sessionType: 'local' }
+  const seed = async (): Promise<typeof import('../store/session-store')> => {
+    const sessions = await import('../store/session-store')
+    sessions.useSessionStore.setState({
+      sessions: [remoteTab, localTab] as never,
+      groups: [remoteGroup] as never
+    })
+    return sessions
+  }
+
+  it('stamps only this Mac’s unowned tabs when leaving no-workspace mode', async () => {
+    localAtBoot = []
+    shownAtBoot = null
+    await actions.bootWorkspaces()
+    const sessions = await seed()
+    const added = await actions.addWorkspace('/w', null)
+    const state = sessions.useSessionStore.getState()
+    expect(state.sessions.find((x) => x.id === 'local-tab')?.workspaceId).toBe(added!.id)
+    expect(state.sessions.find((x) => x.id === remoteTab.id)?.workspaceId).toBeUndefined()
+    expect(state.groups.find((g) => g.id === remoteGroup.id)?.workspaceId).toBeUndefined()
+    expect(sessions.inActiveWorkspace(remoteTab, added!.id)).toBe(false)
+  })
+
+  it('leaves a window on its server workspace when the first Mac workspace is added', async () => {
+    localAtBoot = []
+    shownAtBoot = resourceKey('workspace', 'srv', 'repo')
+    await actions.bootWorkspaces()
+    heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+    const sessions = await seed()
+    const added = await actions.addWorkspace('/w', null)
+    expect(store.useWorkspaceStore.getState().activeWorkspaceId).toBe(shownAtBoot)
+    expect(store.useWorkspaceStore.getState().workspaces.map((w) => w.id)).toEqual([added!.id])
+    const state = sessions.useSessionStore.getState()
+    expect(state.sessions.find((x) => x.id === remoteTab.id)?.workspaceId).toBeUndefined()
+    expect(switches).toEqual([])
   })
 })
