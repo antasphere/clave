@@ -672,7 +672,8 @@ export async function run(t) {
         }),
       { id: savedA.id, cwd: a.cwd }
     )
-    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
+    // Select the session after its immediate request dialog stops covering the sidebar.
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).waitFor()
     const pendingNative = await until(async () => {
       const response = await fetch(`${a.url}/requests/pending`, {
         headers: { authorization: `Bearer ${a.token}` }
@@ -704,6 +705,7 @@ export async function run(t) {
       })
       .click()
     await privateQuestion.waitFor({ state: 'detached' })
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
     assert.equal((await win.locator('body').innerText()).includes('private fixture answer'), false)
     const replies = () =>
       existsSync(providerReplies)
