@@ -62,6 +62,8 @@ import {
 import { SettingsLive } from './settings/api'
 import { WorkspaceFilesLive } from './workspace-files/api'
 import { FilesLive } from './files/api'
+// ── Wave wcs1023, lane C: the git domain (`git/api.ts`) ──
+import { GitLive } from './git/api'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
@@ -191,6 +193,9 @@ export const PluginsLive = HttpApiBuilder.group(ClaveApi, 'plugins', (handlers) 
     .handle('replySecret', HttpCqrs.command(ReplyPluginSecret))
 )
 
+// ── Wave wcs1023, lane C: the git domain ──
+export { GitLive }
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -211,6 +216,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       AgentToolsLive,
       // ── Wave 5, lane C: the plugins ──
       PluginsLive,
+      // ── Wave wcs1023, lane C: the git domain ──
+      GitLive,
       HealthLive
     )
   )

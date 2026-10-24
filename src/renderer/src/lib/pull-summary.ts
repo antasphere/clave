@@ -8,6 +8,8 @@
  * `GitBatchProvider`).
  */
 
+import { repoDisplayPath } from './git-paths'
+
 export interface PullOutcome {
   repoPath: string
   pulled: boolean
@@ -33,7 +35,8 @@ export interface BatchSummary {
 const NAMED_IN_LINE = 3
 
 export function repoName(repoPath: string): string {
-  return repoPath.split(/[\\/]/).filter(Boolean).pop() ?? repoPath
+  const path = repoDisplayPath(repoPath)
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
 /**
@@ -67,7 +70,7 @@ export function summarizePull(results: PullOutcome[]): BatchSummary {
     counts.set(repoName(r.repoPath), (counts.get(repoName(r.repoPath)) ?? 0) + 1)
   const failures: BatchFailure[] = failed.map((r) => {
     const name = repoName(r.repoPath)
-    const parts = r.repoPath.split(/[\\/]/).filter(Boolean)
+    const parts = repoDisplayPath(r.repoPath).split(/[\\/]/).filter(Boolean)
     const shown = (counts.get(name) ?? 0) > 1 && parts.length > 1 ? parts.slice(-2).join('/') : name
     return { path: r.repoPath, name: shown, reason: shortReason(r.error) }
   })
@@ -75,6 +78,42 @@ export function summarizePull(results: PullOutcome[]): BatchSummary {
   const parts: string[] = []
   if (pulled > 0) parts.push(`${pulled} pulled`)
   if (upToDate > 0) parts.push(`${upToDate} up to date`)
+  if (failures.length > 0) {
+    const named = failures.slice(0, NAMED_IN_LINE).map((f) => f.name)
+    const more = failures.length - named.length
+    parts.push(`${failures.length} failed: ${named.join(', ')}${more > 0 ? ` +${more} more` : ''}`)
+  }
+  return { message: parts.join(', '), failures }
+}
+
+export interface SyncOutcome {
+  repoPath: string
+  actions: string[]
+  error: string | null
+}
+
+/**
+ * What Magic sync says when it is over: the same shape as Pull all's, so a
+ * repo that could not be committed or pushed is named in the line and its
+ * reason (git's, or the server's about its Claude login) travels to the
+ * tooltip, held until dismissed. "1 failed" alone said nothing (#242).
+ */
+export function summarizeSync(results: SyncOutcome[]): BatchSummary {
+  const synced = results.filter((r) => r.actions.length > 0 && !r.error).length
+  const clean = results.filter((r) => r.actions.length === 0 && !r.error).length
+  const failed = results.filter((r): r is SyncOutcome & { error: string } => !!r.error)
+  const counts = new Map<string, number>()
+  for (const r of failed)
+    counts.set(repoName(r.repoPath), (counts.get(repoName(r.repoPath)) ?? 0) + 1)
+  const failures: BatchFailure[] = failed.map((r) => {
+    const name = repoName(r.repoPath)
+    const parts = repoDisplayPath(r.repoPath).split(/[\\/]/).filter(Boolean)
+    const shown = (counts.get(name) ?? 0) > 1 && parts.length > 1 ? parts.slice(-2).join('/') : name
+    return { path: r.repoPath, name: shown, reason: shortReason(r.error) }
+  })
+  const parts: string[] = []
+  if (synced > 0) parts.push(`${synced} synced`)
+  if (clean > 0) parts.push(`${clean} clean`)
   if (failures.length > 0) {
     const named = failures.slice(0, NAMED_IN_LINE).map((f) => f.name)
     const more = failures.length - named.length

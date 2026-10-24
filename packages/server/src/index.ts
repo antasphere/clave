@@ -79,5 +79,7 @@ export {
 } from './plugins'
 
 export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
+// ── Wave wcs1023, lane C: the git domain ──
+export { GitPort, type GitService, type GitEvent, gitHandlers, GitEventsLive } from './git'
 export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
 export { RequestsPort, type RequestsService } from './requests/port'
