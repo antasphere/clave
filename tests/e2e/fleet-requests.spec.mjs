@@ -4,7 +4,15 @@ import path from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { REPO } from './harness.mjs'
-import { fleetWorld, connectMac, eventually, owned, request } from './fixtures/fleet-world.mjs'
+import {
+  fleetWorld,
+  connectMac,
+  eventually,
+  owned,
+  request,
+  showMac,
+  showServer
+} from './fixtures/fleet-world.mjs'
 
 const payload = (result) => {
   assert.notEqual(result.isError, true, 'isolated MCP command is accepted')
@@ -253,6 +261,19 @@ export async function run(t) {
       'explicit secret executes once on the owning server and answers stay out of both clients history and rendered text',
       true
     )
+    // The requests above were answered from the Mac workspace. The provider's
+    // tab itself shows only in a workspace of its server (#241).
+    const providerRow = macA.win.locator(
+      `[data-sidebar-item-id="${owned('session', macA.owners[0].id, provider.id)}"]`
+    )
+    await showServer(macA, 0)
+    await providerRow.waitFor()
+    await showMac(macA)
+    await eventually(
+      async () => (await providerRow.count()) === 0,
+      'the provider tab is hidden in the Mac workspace'
+    )
+    t.check('the provider tab shows in its server workspace and never in the Mac workspace', true)
     assert.ok(report.runId)
   } finally {
     await mcp?.close()
