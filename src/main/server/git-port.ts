@@ -71,7 +71,12 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
       }
     }
   }
-  const progress = (p: GitBatchProgress): void => publish({ _tag: 'git.batch_progress', ...p })
+  // Each batch's events carry the id its client gave it, so that client
+  // draws its own batch and no other Mac's (verifier round 2).
+  const progress =
+    (batchId?: string) =>
+    (p: GitBatchProgress): void =>
+      publish({ _tag: 'git.batch_progress', ...p, ...(batchId !== undefined && { batchId }) })
   const watcher = new GitRepoWatcher({
     watch: (dir, onEvent) => {
       const watch = fs.watch(dir, { recursive: true }, (_type, filename) =>
@@ -110,7 +115,7 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     checkIgnored: (cwd, paths) => gitManager.checkIgnored(cwd, [...paths]),
     fetch: (cwd) => gitManager.fetch(cwd),
     fetchBatch: (paths) => gitManager.fetchBatch([...paths]),
-    refreshRemotes: (paths) => gitManager.refreshRemotes([...paths], progress),
+    refreshRemotes: (paths, batchId) => gitManager.refreshRemotes([...paths], progress(batchId)),
     watch: (subscriberId, paths) => watcher.setRepos(subscriberId, [...paths]),
     unwatch: async (subscriberId) => watcher.drop(subscriberId),
     stage: (cwd, files) => gitManager.stage(cwd, [...files]),
@@ -133,11 +138,12 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     generateCommitMessage: (cwd) => claude(() => gitManager.generateCommitMessage(cwd)),
     summarizePush: (cwd, commitMessages, diffStats) =>
       claude(() => gitManager.summarizePushGroup(cwd, [...commitMessages], diffStats)),
-    magicSync: async (paths) => withClaudeReason(await gitManager.magicSync([...paths], progress)),
+    magicSync: async (paths, batchId) =>
+      withClaudeReason(await gitManager.magicSync([...paths], progress(batchId))),
     // Each repo Pull all could not bring level goes to the server's log with
     // its reason: the bar names them, but only until it is dismissed.
-    magicPull: async (paths) => {
-      const results = await gitManager.magicPull([...paths], progress)
+    magicPull: async (paths, batchId) => {
+      const results = await gitManager.magicPull([...paths], progress(batchId))
       logPullFailures(results, log)
       return results
     },

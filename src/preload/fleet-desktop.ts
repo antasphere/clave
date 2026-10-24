@@ -383,29 +383,28 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // The subscriber ids of this preload on a server are prefixed with a token
   // of its own, so two Macs attached to one server never share a watch.
   const gitSubscriberToken = `mac-${Math.random().toString(36).slice(2, 10)}`
-  const gitWatchOwners = new Map<string, Set<string>>()
-  // The batches THIS Mac is running on a server, by owner and op, with their
-  // repositories: a server publishes a batch's progress to every attached
-  // Mac, and a Mac that did not start it must not see its own bar move
-  // (verifier round 1, two Macs on one daemon). Progress is forwarded only
-  // for a repository of a batch in flight here.
-  const runningBatches = new Map<string, Set<string>>()
+  /** Each subscriber's current watch set, by owner, as last asked. */
+  const gitWatchSets = new Map<string, Map<string, string[]>>()
+  // The batches THIS Mac has in flight on a server, by the id it gave each
+  // one: a server publishes a batch's progress to every attached Mac, and two
+  // Macs may run the same op on the same repositories at once, so neither the
+  // op nor the paths tell a batch apart (verifier rounds 1 and 2). The id
+  // travels with the command and comes back on every event of that batch;
+  // only an event of a batch in flight here reaches the renderer.
+  const runningBatches = new Set<string>()
+  let batchSerial = 0
   const gitBatchOp = async <T>(
-    op: 'pull' | 'sync' | 'fetch',
     keys: string[],
     localCall: () => Promise<T>,
-    call: (b: Backing, paths: string[], owner: string) => Promise<T>
+    call: (b: Backing, paths: string[], owner: string, batchId: string) => Promise<T>
   ): Promise<T> =>
     gitBatch(keys, localCall, async (b, paths, owner) => {
-      const key = `${owner}:${op}`
-      const mine = runningBatches.get(key) ?? new Set<string>()
-      for (const path of paths) mine.add(path)
-      runningBatches.set(key, mine)
+      const batchId = `${gitSubscriberToken}:${++batchSerial}`
+      runningBatches.add(batchId)
       try {
-        return await call(b, paths, owner)
+        return await call(b, paths, owner, batchId)
       } finally {
-        for (const path of paths) mine.delete(path)
-        if (mine.size === 0) runningBatches.delete(key)
+        runningBatches.delete(batchId)
       }
     })
   const scopeEvent = (sessionId: string, event: SessionEvent): SessionEvent => {
@@ -1069,11 +1068,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ),
     gitRefreshRemotes: (keys) =>
       gitBatchOp(
-        'fetch',
         keys,
         () => local.gitRefreshRemotes(keys),
-        async (b, paths, owner) =>
-          (await b.api.git.refreshRemotes(paths)).map((r) => ({
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.refreshRemotes(paths, batchId)).map((r) => ({
             ...r,
             repoPath: ownedPath(owner, r.repoPath)
           }))
@@ -1089,10 +1087,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         list.push(ref.id)
         byOwner.set(ref.serverId, list)
       }
-      const previous = gitWatchOwners.get(subscriberId) ?? new Set<string>()
-      const owners = new Set([...byOwner.keys(), ...previous])
-      const current = new Set(byOwner.keys())
-      gitWatchOwners.set(subscriberId, current)
+      const previous = gitWatchSets.get(subscriberId) ?? new Map<string, string[]>()
+      const owners = new Set([...byOwner.keys(), ...previous.keys()])
+      gitWatchSets.set(subscriberId, byOwner)
+      const subscriber = `${gitSubscriberToken}:${subscriberId}`
       const watched: string[] = []
       for (const owner of owners) {
         const paths = byOwner.get(owner) ?? []
@@ -1102,12 +1100,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         }
         try {
           const b = await backing(owner)
-          const ok = await b.api.git.watch(`${gitSubscriberToken}:${subscriberId}`, paths)
-          // The subscriber moved on (a new set, or an unwatch) while this
-          // owner answered: what was just installed is nobody's, so it is
-          // taken back at once (verifier round 1, finding 4).
-          if (gitWatchOwners.get(subscriberId) !== current) {
-            await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`).catch(noop)
+          const ok = await b.api.git.watch(subscriber, paths)
+          // The subscriber moved on while this owner answered (verifier
+          // round 1, finding 4; round 2): unwatched, what was just installed
+          // is nobody's and is taken back; replaced, the server is told the
+          // replacement's set for this owner once more, so whichever request
+          // it took last, it ends on the current one. This call's answer is
+          // stale either way.
+          const now = gitWatchSets.get(subscriberId)
+          if (now !== byOwner) {
+            if (now === undefined) await b.api.git.unwatch(subscriber).catch(noop)
+            else await b.api.git.watch(subscriber, now.get(owner) ?? []).catch(noop)
             return []
           }
           watched.push(...ok.map((path) => ownedPath(owner, path)))
@@ -1118,8 +1121,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return watched
     },
     gitUnwatchRepos: async (subscriberId) => {
-      const owners = gitWatchOwners.get(subscriberId) ?? new Set<string>()
-      gitWatchOwners.delete(subscriberId)
+      const owners = gitWatchSets.get(subscriberId)?.keys() ?? []
+      gitWatchSets.delete(subscriberId)
       await local.gitUnwatchRepos(subscriberId)
       for (const owner of owners) {
         if (owner === LOCAL_SERVER_ID) continue
@@ -1249,11 +1252,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ),
     gitMagicSync: (keys) =>
       gitBatchOp(
-        'sync',
         keys,
         () => local.gitMagicSync(keys),
-        async (b, paths, owner) =>
-          (await b.api.git.magicSync(paths)).map((r) => ({
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicSync(paths, batchId)).map((r) => ({
             ...r,
             actions: [...r.actions],
             repoPath: ownedPath(owner, r.repoPath)
@@ -1261,11 +1263,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ),
     gitMagicPull: (keys) =>
       gitBatchOp(
-        'pull',
         keys,
         () => local.gitMagicPull(keys),
-        async (b, paths, owner) =>
-          (await b.api.git.magicPull(paths)).map((r) => ({
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicPull(paths, batchId)).map((r) => ({
             ...r,
             repoPath: ownedPath(owner, r.repoPath)
           }))
@@ -1274,7 +1275,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       both(
         local.onGitBatchProgress(cb),
         eventListener('git.batch_progress', (event, owner) => {
-          if (!runningBatches.get(`${owner}:${event.op}`)?.has(event.repoPath)) return
+          if (event.batchId === undefined || !runningBatches.has(event.batchId)) return
           cb({
             op: event.op,
             phase: event.phase,

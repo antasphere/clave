@@ -65,11 +65,12 @@ class FakeGit implements GitService {
     this.record('checkIgnored', [paths[0] ?? ''], cwd, paths)
   fetch: GitOperations['fetch'] = (cwd) => this.record('fetch', undefined, cwd)
   fetchBatch: GitOperations['fetchBatch'] = (paths) => this.record('fetchBatch', undefined, paths)
-  refreshRemotes: GitOperations['refreshRemotes'] = (paths) =>
+  refreshRemotes: GitOperations['refreshRemotes'] = (paths, batchId) =>
     this.record(
       'refreshRemotes',
       paths.map((repoPath) => ({ repoPath, error: null })),
-      paths
+      paths,
+      batchId
     )
   watch: GitOperations['watch'] = (subscriberId, paths) =>
     this.record('watch', [...paths], subscriberId, paths)
@@ -116,17 +117,19 @@ class FakeGit implements GitService {
     this.record('generateCommitMessage', 'feat: generated', cwd)
   summarizePush: GitOperations['summarizePush'] = (cwd, commitMessages, diffStats) =>
     this.record('summarizePush', { title: 't', description: 'd' }, cwd, commitMessages, diffStats)
-  magicSync: GitOperations['magicSync'] = (paths) =>
+  magicSync: GitOperations['magicSync'] = (paths, batchId) =>
     this.record(
       'magicSync',
       paths.map((repoPath) => ({ repoPath, actions: ['committed'], error: null })),
-      paths
+      paths,
+      batchId
     )
-  magicPull: GitOperations['magicPull'] = (paths) =>
+  magicPull: GitOperations['magicPull'] = (paths, batchId) =>
     this.record(
       'magicPull',
       paths.map((repoPath) => ({ repoPath, pulled: true, error: null })),
-      paths
+      paths,
+      batchId
     )
   subscribe = (listener: (event: GitEvent) => void): Unsubscribe => {
     this.listeners.add(listener)
@@ -221,11 +224,12 @@ describe('the git group of the HTTP API', () => {
         .status
     ).toBe(200)
     expect((await post('/git/unwatch', { subscriberId: 'mac-1:git-status-1' })).status).toBe(204)
-    const sync = await post('/git/magic-sync', { paths: ['/srv/repo'] })
+    const sync = await post('/git/magic-sync', { paths: ['/srv/repo'], batchId: 'mac-1:3' })
     expect(sync.status).toBe(200)
     expect(await sync.json()).toEqual([
       { repoPath: '/srv/repo', actions: ['committed'], error: null }
     ])
+    expect(fake.calls.at(-1)).toEqual({ method: 'magicSync', args: [['/srv/repo'], 'mac-1:3'] })
     expect(fake.calls.map((c) => c.method)).toEqual([
       'stage',
       'pull',
@@ -279,11 +283,13 @@ describe('the git group of the HTTP API', () => {
       repoPath: '/srv/repo',
       repoName: 'repo',
       done: 0,
-      total: 1
+      total: 1,
+      batchId: 'mac-1:3'
     })
     const progress = JSON.stringify(await peer.next())
     expect(progress).toContain('"git.batch_progress"')
     expect(progress).toContain('"generating"')
+    expect(progress).toContain('"mac-1:3"')
     peer.ws.close()
   })
 })

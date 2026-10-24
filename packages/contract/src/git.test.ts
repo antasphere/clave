@@ -85,9 +85,15 @@ describe('the git contract', () => {
       repoPath: '/srv/repo',
       repoName: 'repo',
       done: 0,
-      total: 1
+      total: 1,
+      batchId: 'mac-1:3'
     })
-    expect(progress).toMatchObject({ _tag: 'git.batch_progress', op: 'sync', total: 1 })
+    expect(progress).toMatchObject({
+      _tag: 'git.batch_progress',
+      op: 'sync',
+      total: 1,
+      batchId: 'mac-1:3'
+    })
   })
 
   it('declares the failure git’s own sentence travels in', () => {
