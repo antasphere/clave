@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { LaunchProfile } from '../shared/agent-launch'
@@ -183,6 +183,32 @@ describe('a server starts the carried launch profile', () => {
     ).rejects.toThrow('Program "missing-mac-program" was not found on this server')
     expect(mocks.claude.spawn).not.toHaveBeenCalled()
     expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
+  })
+
+  it('checks a relative carried program against the session folder', async () => {
+    const cwd = mkdtempSync(join(dir, 'relative-'))
+    mkdirSync(join(cwd, 'tools'))
+    writeFileSync(join(cwd, 'tools', executable), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+    const profile = { ...carried('codex'), command: ['./tools/mac-wrapper'] }
+    const session = await ptyManager.spawn(cwd, {
+      codexMode: true,
+      launchProfile: profile
+    })
+    expect(mocks.codexConfigure).toHaveBeenCalledWith(
+      session.id,
+      profile,
+      expect.anything(),
+      undefined
+    )
+  })
+
+  it('names the original relative program when the session folder has no executable', async () => {
+    const cwd = mkdtempSync(join(dir, 'missing-relative-'))
+    const profile = { ...carried('codex'), command: ['./tools/mac-wrapper'] }
+    await expect(
+      ptyManager.spawn(cwd, { codexMode: true, launchProfile: profile })
+    ).rejects.toThrow('Program "./tools/mac-wrapper" was not found on this server')
+    expect(mocks.claude.spawn).not.toHaveBeenCalled()
   })
 
   it('refuses a carried family that does not match the start', async () => {

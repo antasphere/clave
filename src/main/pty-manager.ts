@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { sanitizeCarriedLaunchProfile } from '../shared/agent-launch'
 import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
@@ -152,10 +153,15 @@ class PtyManager {
       options?.launchProfileId ??
       (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
     const echo = isEchoLaunchProfile(profileId)
-    if (carried && !echo && !findExecutable(carried.command[0], getLoginShellEnv().PATH))
-      throw new Error(
-        `Program "${carried.command[0]}" was not found on this server (launch profile "${carried.name}")`
-      )
+    if (carried && !echo) {
+      const program = carried.command[0].includes('/')
+        ? path.resolve(cwd, carried.command[0])
+        : carried.command[0]
+      if (!findExecutable(program, getLoginShellEnv().PATH))
+        throw new Error(
+          `Program "${carried.command[0]}" was not found on this server (launch profile "${carried.name}")`
+        )
+    }
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const events = eventsProfile(profileId)
     if (events?.adapterId === 'claude-chat' && process.platform === 'win32')
