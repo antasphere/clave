@@ -6,16 +6,19 @@
  * is the same wiring for the Mac's own windows; this file is the one the
  * standalone entry gives its server, and it imports no Electron.
  *
- * Two things differ from the IPC arm. The repo watcher's bursts and a batch's
+ * Three things differ from the IPC arm. The repo watcher's bursts and a batch's
  * progress go out as server events (`git.repos_changed`, `git.batch_progress`)
  * to every attached client, instead of to one window; the client that runs
- * the batch is the one drawing it. And a commit message or a push summary is
+ * the batch is the one drawing it. A Mac names what it watches as one
+ * complete map per window, replaced as a whole under a generation, never as
+ * single watches and unwatches. And a commit message or a push summary is
  * written by THIS machine's `claude`, on this machine's login: when it has
  * none, the sentence says so, named for the server, rather than git's "spawn
  * claude ENOENT" or the CLI's sign-in refusal reaching the panel as it is.
  */
 import * as fs from 'fs'
 import type { GitEvent, GitService } from '@clave/server'
+import type { GitWatchSubscription } from '@clave/contract/git'
 import type { Unsubscribe } from '@clave/server'
 import { gitManager, type MagicSyncResult } from '../git-manager'
 import { GitRepoWatcher } from '../git-watch'
@@ -59,6 +62,8 @@ export function describeClaudeFailure(message: string): string {
   return message
 }
 
+const noop = (): void => {}
+
 export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort {
   const log = options.log ?? ((line: string) => console.warn(line))
   const listeners = new Set<(event: GitEvent) => void>()
@@ -98,30 +103,35 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     debounceMs: options.debounceMs ?? GIT_WATCH_DEBOUNCE_MS,
     maxWaitMs: options.maxWaitMs ?? GIT_WATCH_MAX_WAIT_MS
   })
-  /** The latest revision applied per subscriber; `advance` says whether a
-   *  request's revision is current (and records it) or stale. An unwatch
-   *  keeps the entry: a watch of that subscriber dispatched before the
-   *  unwatch but arriving after it must still read as older (verifier round
-   *  4). The map is bounded by dropping its oldest entries; a subscriber id
-   *  is minted per panel mount, so the oldest are long gone. */
-  const watchRevisions = new Map<string, number>()
-  /** The subscribers that hold a set now: never evicted from `watchRevisions`. */
-  const liveSubscribers = new Set<string>()
-  const MAX_REMEMBERED_SUBSCRIBERS = 10_000
-  const advance = (subscriberId: string, revision: number | undefined): boolean => {
-    if (revision === undefined) return true
-    const applied = watchRevisions.get(subscriberId)
-    if (applied !== undefined && revision < applied) return false
-    watchRevisions.delete(subscriberId)
-    watchRevisions.set(subscriberId, revision)
-    // Only tombstones (subscribers that hold nothing) are dropped, oldest first.
-    if (watchRevisions.size > MAX_REMEMBERED_SUBSCRIBERS) {
-      for (const key of watchRevisions.keys()) {
-        if (watchRevisions.size <= MAX_REMEMBERED_SUBSCRIBERS) break
-        if (!liveSubscribers.has(key)) watchRevisions.delete(key)
-      }
+  /**
+   * The watch namespaces: one per Mac window, holding the generation of the
+   * last map applied and the subscription ids it named. A map is applied as
+   * a whole (the ids it no longer names dropped, the named ones set to
+   * exactly their paths), only if its generation is not older than the
+   * applied one, and maps of one namespace are applied in the order they
+   * arrive, one at a time, so a slow map can never finish after a newer one
+   * and undo it (`lane-c/watch-rule.md`).
+   */
+  const namespaces = new Map<string, { generation: number; ids: Set<string> }>()
+  const namespaceChains = new Map<string, Promise<unknown>>()
+  const applyMap = async (
+    namespace: string,
+    generation: number,
+    subscriptions: ReadonlyArray<GitWatchSubscription>
+  ): Promise<ReadonlyArray<GitWatchSubscription>> => {
+    const current = namespaces.get(namespace)
+    if (current && generation < current.generation) return []
+    const ids = new Set(subscriptions.map((s) => s.id))
+    namespaces.set(namespace, { generation, ids })
+    for (const id of current?.ids ?? []) if (!ids.has(id)) watcher.drop(`${namespace}:${id}`)
+    const answered: GitWatchSubscription[] = []
+    for (const subscription of subscriptions) {
+      const paths = await watcher.setRepos(`${namespace}:${subscription.id}`, [
+        ...subscription.paths
+      ])
+      answered.push({ id: subscription.id, paths })
     }
-    return true
+    return answered
   }
   const withClaudeReason = (results: MagicSyncResult[]): MagicSyncResult[] =>
     results.map((r) => (r.error ? { ...r, error: describeClaudeFailure(r.error) } : r))
@@ -141,19 +151,17 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     fetch: (cwd) => gitManager.fetch(cwd),
     fetchBatch: (paths) => gitManager.fetchBatch([...paths]),
     refreshRemotes: (paths, batchId) => gitManager.refreshRemotes([...paths], progress(batchId)),
-    // A subscriber's requests are applied in the order of the revisions it
-    // stamped, not the order they arrived: a watch or an unwatch older than
-    // the one already applied is ignored (verifier round 3).
-    watch: (subscriberId, paths, revision) => {
-      if (!advance(subscriberId, revision)) return Promise.resolve([])
-      if (paths.length > 0) liveSubscribers.add(subscriberId)
-      else liveSubscribers.delete(subscriberId)
-      return watcher.setRepos(subscriberId, [...paths])
-    },
-    unwatch: async (subscriberId, revision) => {
-      if (!advance(subscriberId, revision)) return
-      liveSubscribers.delete(subscriberId)
-      watcher.drop(subscriberId)
+    syncWatches: (namespace, generation, subscriptions) => {
+      const run = (namespaceChains.get(namespace) ?? Promise.resolve())
+        .catch(noop)
+        .then(() => applyMap(namespace, generation, subscriptions))
+      namespaceChains.set(namespace, run)
+      void run
+        .finally(() => {
+          if (namespaceChains.get(namespace) === run) namespaceChains.delete(namespace)
+        })
+        .catch(noop)
+      return run
     },
     stage: (cwd, files) => gitManager.stage(cwd, [...files]),
     unstage: (cwd, files) => gitManager.unstage(cwd, [...files]),

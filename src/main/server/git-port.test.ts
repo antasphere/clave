@@ -111,8 +111,10 @@ describe('the daemon’s git port over a real checkout', () => {
     expect(found.repos.map((r) => r.path)).toEqual([repo])
   })
 
-  it('tells a change on the disk as git.repos_changed for the watched repository', async () => {
-    expect(await port.watch('mac-1:git-status-1', [repo])).toEqual([repo])
+  it('tells a change on the disk as git.repos_changed for a repository a Mac’s map names', async () => {
+    expect(await port.syncWatches('mac-1', 1, [{ id: 'git-status-1', paths: [repo] }])).toEqual([
+      { id: 'git-status-1', paths: [repo] }
+    ])
     events.length = 0
     writeFileSync(path.join(repo, 'b.txt'), 'two\n')
     expect(
@@ -121,50 +123,51 @@ describe('the daemon’s git port over a real checkout', () => {
       ),
       `expected a repos_changed event, got ${JSON.stringify(events)}`
     ).toBe(true)
-    await port.unwatch('mac-1:git-status-1')
+    await port.syncWatches('mac-1', 2, [])
   }, 30_000)
 
-  it('applies a subscriber’s requests in the order of their revisions, not of their arrival', async () => {
-    // Revision 3 lands first (the current set), then a slow revision 2 (an
-    // older set) and an even older unwatch: both are ignored, the repo stays
-    // watched. An unwatch with a newer revision then takes.
-    expect(await port.watch('mac-1:ordered', [repo], 3)).toEqual([repo])
-    expect(await port.watch('mac-1:ordered', [], 2)).toEqual([])
-    await port.unwatch('mac-1:ordered', 1)
+  it('applies a namespace’s maps by generation, as a whole, in the order they arrive', async () => {
+    // Generation 3 names the repo; a slower generation 2 (an older map) is
+    // ignored, the repo stays watched.
+    expect(await port.syncWatches('mac-2', 3, [{ id: 'p1', paths: [repo] }])).toEqual([
+      { id: 'p1', paths: [repo] }
+    ])
+    expect(await port.syncWatches('mac-2', 2, [])).toEqual([])
     events.length = 0
     writeFileSync(path.join(repo, 'ordered.txt'), 'six\n')
     expect(
       await until(() =>
         events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
       ),
-      'the repository is still watched after the stale requests'
+      'the repository is still watched after the stale map'
     ).toBe(true)
-    await port.unwatch('mac-1:ordered', 4)
-    // A watch dispatched before that unwatch but arriving after it is older
-    // than the unwatch: ignored, the subscriber stays closed (verifier round 4).
-    expect(await port.watch('mac-1:ordered', [repo], 3)).toEqual([])
+    // Generation 4 names another panel only: p1 is dropped with it, and an
+    // even later generation 1 (a straggler) changes nothing either.
+    expect(await port.syncWatches('mac-2', 4, [{ id: 'p2', paths: [] }])).toEqual([
+      { id: 'p2', paths: [] }
+    ])
+    expect(await port.syncWatches('mac-2', 1, [{ id: 'p1', paths: [repo] }])).toEqual([])
     events.length = 0
     writeFileSync(path.join(repo, 'ordered.txt'), 'seven\n')
     await new Promise((resolve) => setTimeout(resolve, 600))
     expect(events.filter((e) => e._tag === 'git.repos_changed')).toEqual([])
-    // A request without a revision is taken as it comes, as an older Mac sends it.
-    expect(await port.watch('mac-1:plain', [repo])).toEqual([repo])
-    await port.unwatch('mac-1:plain')
-    // The remembered revisions are bounded by dropping the oldest TOMBSTONES:
-    // a subscriber still holding a set keeps its revision through any number
-    // of newer subscribers, so a stale request for it stays ignored.
-    expect(await port.watch('mac-1:long-lived', [repo], 5)).toEqual([repo])
-    for (let i = 0; i < 10_050; i++) await port.watch(`mac-1:churn-${i}`, [], 1)
-    expect(await port.watch('mac-1:long-lived', [], 2)).toEqual([])
+    // Another Mac's namespace is its own: its map does not touch mac-2's.
+    expect(await port.syncWatches('mac-3', 1, [{ id: 'p1', paths: [repo] }])).toEqual([
+      { id: 'p1', paths: [repo] }
+    ])
+    await port.syncWatches('mac-3', 2, [])
+    // Two maps of one namespace sent at once apply in arrival order: the
+    // second, newer one is what stands even though both were in flight.
+    const [first, second] = await Promise.all([
+      port.syncWatches('mac-4', 1, [{ id: 'p1', paths: [repo] }]),
+      port.syncWatches('mac-4', 2, [])
+    ])
+    expect(first).toEqual([{ id: 'p1', paths: [repo] }])
+    expect(second).toEqual([])
     events.length = 0
     writeFileSync(path.join(repo, 'ordered.txt'), 'eight\n')
-    expect(
-      await until(() =>
-        events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
-      ),
-      'the long-lived subscriber still watches after the churn'
-    ).toBe(true)
-    await port.unwatch('mac-1:long-lived', 6)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(events.filter((e) => e._tag === 'git.repos_changed')).toEqual([])
     rmSync(path.join(repo, 'ordered.txt'), { force: true })
   }, 30_000)
 

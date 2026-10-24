@@ -29,8 +29,7 @@ import {
   GitStage,
   GitSummarizePush,
   GitUnstage,
-  GitUnwatchRepos,
-  GitWatchRepos
+  GitSyncWatches
 } from '@clave/contract/git'
 
 export const GitLive = HttpApiBuilder.group(ClaveApi, 'git', (handlers) =>
@@ -42,8 +41,7 @@ export const GitLive = HttpApiBuilder.group(ClaveApi, 'git', (handlers) =>
     .handle('fetch', HttpCqrs.command(GitFetch))
     .handle('fetchBatch', HttpCqrs.command(GitFetchBatch))
     .handle('refreshRemotes', HttpCqrs.command(GitRefreshRemotes))
-    .handle('watch', HttpCqrs.command(GitWatchRepos))
-    .handle('unwatch', HttpCqrs.command(GitUnwatchRepos))
+    .handle('watches', HttpCqrs.command(GitSyncWatches))
     .handle('stage', HttpCqrs.command(GitStage))
     .handle('unstage', HttpCqrs.command(GitUnstage))
     .handle('discard', HttpCqrs.command(GitDiscard))

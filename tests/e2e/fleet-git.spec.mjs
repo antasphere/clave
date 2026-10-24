@@ -95,8 +95,8 @@ export async function run(t) {
     })
     assertFileEndpoint(observers, opening, 0, '/git/status')
     await eventually(
-      () => observers[0].entries.some((e) => e.path === '/git/watch' && e.status === 200),
-      'the panel asked the server to watch the repository'
+      () => observers[0].entries.some((e) => e.path === '/git/watches' && e.status === 200),
+      'the panel sent the server its watch map naming the repository'
     )
     assert.deepEqual(
       observers[1].entries.filter((e) => e.path.startsWith('/git/')),

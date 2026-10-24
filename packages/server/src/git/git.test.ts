@@ -72,10 +72,14 @@ class FakeGit implements GitService {
       paths,
       batchId
     )
-  watch: GitOperations['watch'] = (subscriberId, paths, revision) =>
-    this.record('watch', [...paths], subscriberId, paths, revision)
-  unwatch: GitOperations['unwatch'] = (subscriberId, revision) =>
-    this.record('unwatch', undefined, subscriberId, revision)
+  syncWatches: GitOperations['syncWatches'] = (namespace, generation, subscriptions) =>
+    this.record(
+      'syncWatches',
+      subscriptions.map((s) => ({ id: s.id, paths: [...s.paths] })),
+      namespace,
+      generation,
+      subscriptions
+    )
   stage: GitOperations['stage'] = (cwd, files) => this.record('stage', undefined, cwd, files)
   unstage: GitOperations['unstage'] = (cwd, files) => this.record('unstage', undefined, cwd, files)
   discard: GitOperations['discard'] = (cwd, files: ReadonlyArray<GitDiscardFile>) =>
@@ -215,22 +219,17 @@ describe('the git group of the HTTP API', () => {
     expect(fake.calls).toEqual([{ method: 'commit', args: ['/srv/repo', 'feat: x'] }])
   })
 
-  it('reaches the port for the writes, the watch and the batches with their lists', async () => {
+  it('reaches the port for the writes, the watch map and the batches with their lists', async () => {
     expect((await post('/git/stage', { cwd: '/srv/repo', files: ['a.ts'] })).status).toBe(204)
     expect((await post('/git/pull', { cwd: '/srv/repo', strategy: 'rebase' })).status).toBe(204)
     expect((await post('/git/push', { cwd: '/srv/repo' })).status).toBe(204)
-    expect(
-      (
-        await post('/git/watch', {
-          subscriberId: 'mac-1:git-status-1',
-          paths: ['/srv/repo'],
-          revision: 4
-        })
-      ).status
-    ).toBe(200)
-    expect(
-      (await post('/git/unwatch', { subscriberId: 'mac-1:git-status-1', revision: 5 })).status
-    ).toBe(204)
+    const watches = await post('/git/watches', {
+      namespace: 'mac-1',
+      generation: 4,
+      subscriptions: [{ id: 'git-status-1', paths: ['/srv/repo'] }]
+    })
+    expect(watches.status).toBe(200)
+    expect(await watches.json()).toEqual([{ id: 'git-status-1', paths: ['/srv/repo'] }])
     const sync = await post('/git/magic-sync', { paths: ['/srv/repo'], batchId: 'mac-1:3' })
     expect(sync.status).toBe(200)
     expect(await sync.json()).toEqual([
@@ -241,13 +240,11 @@ describe('the git group of the HTTP API', () => {
       'stage',
       'pull',
       'push',
-      'watch',
-      'unwatch',
+      'syncWatches',
       'magicSync'
     ])
     expect(fake.calls[1].args).toEqual(['/srv/repo', 'rebase'])
-    expect(fake.calls[3].args).toEqual(['mac-1:git-status-1', ['/srv/repo'], 4])
-    expect(fake.calls[4].args).toEqual(['mac-1:git-status-1', 5])
+    expect(fake.calls[3].args).toEqual(['mac-1', 4, [{ id: 'git-status-1', paths: ['/srv/repo'] }]])
   })
 
   it('answers git’s refusal as the declared GitOperationFailed with git’s sentence', async () => {

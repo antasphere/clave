@@ -40,8 +40,7 @@ import {
   GitStage,
   GitSummarizePush,
   GitUnstage,
-  GitUnwatchRepos,
-  GitWatchRepos
+  GitSyncWatches
 } from '@clave/contract/git'
 import { GitPort, type GitService } from './port'
 
@@ -87,11 +86,10 @@ export const gitHandlers = [
   CommandHandler.make(GitFetch, (p) => call((g) => g.fetch(p.cwd))),
   CommandHandler.make(GitFetchBatch, (p) => call((g) => g.fetchBatch(p.paths))),
   CommandHandler.make(GitRefreshRemotes, (p) => call((g) => g.refreshRemotes(p.paths, p.batchId))),
-  // Watching
-  CommandHandler.make(GitWatchRepos, (p) =>
-    call((g) => g.watch(p.subscriberId, p.paths, p.revision))
+  // Watching: a Mac's complete map on this server
+  CommandHandler.make(GitSyncWatches, (p) =>
+    call((g) => g.syncWatches(p.namespace, p.generation, p.subscriptions))
   ),
-  CommandHandler.make(GitUnwatchRepos, (p) => call((g) => g.unwatch(p.subscriberId, p.revision))),
   // Writes
   CommandHandler.make(GitStage, (p) => call((g) => g.stage(p.cwd, p.files))),
   CommandHandler.make(GitUnstage, (p) => call((g) => g.unstage(p.cwd, p.files))),

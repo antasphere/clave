@@ -186,18 +186,23 @@ vi.mock('@clave/client/node', () => ({
           }),
           stage: call('git.stage', undefined),
           commit: call('git.commit', { hash: 'abc', branch: 'main' }),
-          watch: async (subscriberId: string, paths: string[], revision?: number) => {
-            // One-shot: the first watch of owner a waits, the next ones answer.
+          syncWatches: async (
+            namespace: string,
+            generation: number,
+            subscriptions: Array<{ id: string; paths: string[] }>
+          ) => {
+            // One-shot: the first map of owner a waits, the next ones answer.
             const hold = owner === 'a' ? mocks.holdWatchA : null
             if (hold) {
               mocks.holdWatchA = null
               await hold
             }
-            mocks.calls.push({ owner, method: 'git.watch', args: [subscriberId, paths, revision] })
-            return paths
-          },
-          unwatch: async (subscriberId: string, revision?: number) => {
-            mocks.calls.push({ owner, method: 'git.unwatch', args: [subscriberId, revision] })
+            mocks.calls.push({
+              owner,
+              method: 'git.syncWatches',
+              args: [namespace, generation, subscriptions]
+            })
+            return subscriptions
           },
           magicSync: async (paths: string[], batchId?: string) => {
             mocks.calls.push({ owner, method: 'git.magicSync', args: [paths, batchId] })
@@ -752,10 +757,11 @@ describe('git routing by the owner of the repository key', () => {
     expect(mocks.calls.filter((c) => c.method === 'git.magicSync')).toHaveLength(1)
     expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'git:magic-sync')).toEqual([])
   })
-  it('splits a watch set between the Mac and each owner, and tells each what it watched', async () => {
-    mocks.invoke.mockImplementationOnce(async (channel: string, ...args: unknown[]) =>
-      channel === 'git:watch-repos' ? args[1] : null
-    )
+  const maps = (owner: string): unknown[][] =>
+    mocks.calls
+      .filter((c) => c.owner === owner && c.method === 'git.syncWatches')
+      .map((c) => [c.args[1], c.args[2]])
+  it('sends each owner this Mac’s complete map, and tells the asking panel what is watched', async () => {
     const watched = await api.gitWatchRepos('git-status-1', [
       '/repo',
       resourceKey('file', 'a', '/repo'),
@@ -764,144 +770,35 @@ describe('git routing by the owner of the repository key', () => {
     expect(new Set(watched)).toEqual(
       new Set(['/repo', resourceKey('file', 'a', '/repo'), resourceKey('file', 'b', '/other')])
     )
-    const remote = mocks.calls.filter((c) => c.method === 'git.watch')
-    expect(remote.map((c) => c.owner).sort()).toEqual(['a', 'b'])
-    for (const c of remote) expect(c.args[0]).toMatch(/^mac-[a-z0-9]+:git-status-1$/)
-    expect(remote.find((c) => c.owner === 'a')?.args[1]).toEqual(['/repo'])
-    expect(remote.find((c) => c.owner === 'b')?.args[1]).toEqual(['/other'])
     expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'git:watch-repos')).toEqual([
       ['git:watch-repos', 'git-status-1', ['/repo']]
     ])
+    // One namespace for this Mac on every owner, the map of that owner only.
+    const namespaces = new Set(
+      mocks.calls.filter((c) => c.method === 'git.syncWatches').map((c) => c.args[0])
+    )
+    expect(namespaces.size).toBe(1)
+    expect([...namespaces][0]).toMatch(/^mac-[a-z0-9]+$/)
+    expect(maps('a')).toEqual([[1, [{ id: 'git-status-1', paths: ['/repo'] }]]])
+    expect(maps('b')).toEqual([[1, [{ id: 'git-status-1', paths: ['/other'] }]]])
+    // A second panel joins the map; the first panel's entry stays as it was.
+    await api.gitWatchRepos('git-multi-1', [resourceKey('file', 'a', '/two')])
+    expect(maps('a').at(-1)).toEqual([
+      2,
+      [
+        { id: 'git-status-1', paths: ['/repo'] },
+        { id: 'git-multi-1', paths: ['/two'] }
+      ]
+    ])
+    // Unwatching sends the map without the panel, to the owners that held it.
     await api.gitUnwatchRepos('git-status-1')
-    expect(
-      mocks.calls
-        .filter((c) => c.method === 'git.unwatch')
-        .map((c) => c.owner)
-        .sort()
-    ).toEqual(['a', 'b'])
-  })
-  it('keys the repositories a server reports changed, and a batch’s progress, by their owner', async () => {
-    // A backing's event listener exists once its owner is connected; a read
-    // on each owner is what waits for that here.
-    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
-    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
-    const changed: string[][] = []
-    api.onGitReposChanged((repos) => changed.push(repos))
-    const progress: Array<{ repoPath: string; op: string }> = []
-    api.onGitBatchProgress((p) => progress.push({ repoPath: p.repoPath, op: p.op }))
-    emit('a', { _tag: 'git.repos_changed', repos: ['/repo', '/other'] })
-    emit('b', {
-      _tag: 'git.batch_progress',
-      op: 'sync',
-      phase: 'pushing',
-      repoPath: '/repo',
-      repoName: 'repo',
-      done: 1,
-      total: 1
-    })
-    expect(changed).toEqual([
-      [resourceKey('file', 'a', '/repo'), resourceKey('file', 'a', '/other')]
+    expect(maps('a').at(-1)).toEqual([3, [{ id: 'git-multi-1', paths: ['/two'] }]])
+    expect(maps('b').at(-1)).toEqual([2, []])
+    expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'git:unwatch-repos')).toEqual([
+      ['git:unwatch-repos', 'git-status-1']
     ])
-    expect(progress).toEqual([])
   })
-  it('tells a server that comes back every live set it held, under fresh revisions', async () => {
-    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
-    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
-    await api.gitWatchRepos('panel-1', [
-      resourceKey('file', 'a', '/one'),
-      resourceKey('file', 'b', '/two')
-    ])
-    await api.gitWatchRepos('panel-2', [resourceKey('file', 'a', '/three')])
-    await api.gitUnwatchRepos('panel-2')
-    mocks.calls.length = 0
-    // Owner a's push channel reopens (a reconnection, or a daemon restarted).
-    for (const listener of mocks.pushStatusListeners.get('a') ?? []) listener('open', {})
-    await vi.waitFor(() =>
-      expect(mocks.calls.filter((c) => c.method === 'git.watch')).toHaveLength(1)
-    )
-    const [again] = mocks.calls.filter((c) => c.method === 'git.watch')
-    // Only the live set of owner a, under a revision above the one that installed it
-    // (2: the first watch was 1); the unwatched panel sends nothing, owner b is not asked.
-    expect(again.owner).toBe('a')
-    expect(again.args).toEqual([expect.stringMatching(/:panel-1$/), ['/one'], 2])
-    expect(mocks.calls.filter((c) => c.owner === 'b')).toEqual([])
-  })
-  it('tells a server that comes back about an unwatch it never heard, asked while it was unreachable', async () => {
-    await api.gitWatchRepos('offline-panel', [resourceKey('file', 'a', '/repo')])
-    await api.gitWatchRepos('moved-panel', [resourceKey('file', 'a', '/one')])
-    await api.fleetDisconnect('a')
-    // Asked while owner a is unreachable: both removals are swallowed for now.
-    await api.gitUnwatchRepos('offline-panel')
-    await api.gitWatchRepos('moved-panel', ['/mac-only'])
-    mocks.calls.length = 0
-    await api.fleetConnect('a')
-    await vi.waitFor(() =>
-      expect(mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.unwatch')).toHaveLength(
-        2
-      )
-    )
-    const unwatched = mocks.calls
-      .filter((c) => c.owner === 'a' && c.method === 'git.unwatch')
-      .map((c) => [String(c.args[0]).split(':').pop(), c.args[1]])
-    // Each under a revision above its last request's (watch 1, the swallowed
-    // request 2, this one 3); no live set re-sent since neither panel has one here.
-    expect(unwatched.sort()).toEqual([
-      ['moved-panel', 3],
-      ['offline-panel', 3]
-    ])
-    expect(mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.watch')).toEqual([])
-    // Once heard, the owner is not told again on the next reconnection.
-    mocks.calls.length = 0
-    for (const listener of mocks.pushStatusListeners.get('a') ?? []) listener('open', {})
-    await vi.advanceTimersByTimeAsync(50)
-    // (a reconnection also refreshes the owner's snapshot; only git calls count here)
-    expect(mocks.calls.filter((c) => c.owner === 'a' && c.method.startsWith('git.'))).toEqual([])
-  })
-  it('tells an owner, at its first connection, a set asked while it was still unreachable', async () => {
-    // Owner c exists but is disabled: never connected so far.
-    mocks.withC = true
-    mocks.disabled.add('c')
-    await api.fleetList()
-    expect(await api.gitWatchRepos('early-panel', [resourceKey('file', 'c', '/repo')])).toEqual([])
-    expect(mocks.calls.filter((c) => c.owner === 'c')).toEqual([])
-    await api.fleetConnect('c')
-    await vi.waitFor(() =>
-      expect(mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.watch')).toHaveLength(1)
-    )
-    const [sent] = mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.watch')
-    expect(sent.args).toEqual([expect.stringMatching(/:early-panel$/), ['/repo'], 2])
-    // Heard now: a later reopening of the same first connection sends nothing more
-    // (only a RE-connection replays everything).
-    mocks.calls.length = 0
-    await api.gitUnwatchRepos('early-panel')
-    expect(mocks.calls.filter((c) => c.owner === 'c' && c.method === 'git.unwatch')).toHaveLength(1)
-  })
-  it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
-    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
-    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
-    let release = (): void => {}
-    mocks.holdWatchA = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const watching = api.gitWatchRepos('late', [
-      resourceKey('file', 'a', '/repo'),
-      resourceKey('file', 'b', '/other')
-    ])
-    await api.gitUnwatchRepos('late')
-    release()
-    expect(await watching).toEqual([])
-    const remote = mocks.calls.filter((c) => c.method === 'git.watch' || c.method === 'git.unwatch')
-    // Owner a's late watch reached it after the unwatch, with an OLDER revision
-    // (1 against the unwatch's 2): the server ignores it, so nothing is sent to
-    // take it back. Owner b was never reached by the stale loop.
-    const aCalls = remote.filter((c) => c.owner === 'a')
-    expect(aCalls.map((c) => [c.method, c.args.at(-1)])).toEqual([
-      ['git.unwatch', 2],
-      ['git.watch', 1]
-    ])
-    expect(remote.filter((c) => c.owner === 'b' && c.method === 'git.watch')).toEqual([])
-  })
-  it('stamps each request with its revision so an older watch answering late changes nothing', async () => {
+  it('reports a stale answer as nothing when the map moved on while an owner answered', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))
     let release = (): void => {}
     mocks.holdWatchA = new Promise<void>((resolve) => {
@@ -912,15 +809,58 @@ describe('git routing by the owner of the repository key', () => {
     expect(newer).toEqual([resourceKey('file', 'a', '/two')])
     release()
     expect(await older).toEqual([])
-    const aWatches = mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.watch')
-    // The newer set answered first, the older late: each carries its revision,
-    // so the server keeps `/two` (revision 2) and ignores `/one` (revision 1)
-    // whichever reached it last. Nothing is re-sent and nothing unwatched.
-    expect(aWatches.map((c) => [c.args[1], c.args[2]])).toEqual([
-      [['/two'], 2],
-      [['/one'], 1]
+    // Generation 2 named `/two`; the server keeps it whichever map it took
+    // last, since generation 1 is older. Nothing is re-sent.
+    expect(maps('a')).toEqual([
+      [2, [{ id: 'moving', paths: ['/two'] }]],
+      [1, [{ id: 'moving', paths: ['/one'] }]]
     ])
-    expect(mocks.calls.filter((c) => c.method === 'git.unwatch')).toEqual([])
+  })
+  it('sends the map without a panel that closed while its first map was still in flight', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    let release = (): void => {}
+    mocks.holdWatchA = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const watching = api.gitWatchRepos('late', [resourceKey('file', 'a', '/repo')])
+    await api.gitUnwatchRepos('late')
+    release()
+    expect(await watching).toEqual([])
+    expect(maps('a')).toEqual([
+      [2, []],
+      [1, [{ id: 'late', paths: ['/repo'] }]]
+    ])
+  })
+  it('sends an owner the complete map at every connection, the first one included', async () => {
+    // Owner c exists but is disabled: never connected so far.
+    mocks.withC = true
+    mocks.disabled.add('c')
+    await api.fleetList()
+    expect(await api.gitWatchRepos('early-panel', [resourceKey('file', 'c', '/repo')])).toEqual([])
+    expect(maps('c')).toEqual([])
+    await api.fleetConnect('c')
+    await vi.waitFor(() => expect(maps('c')).toHaveLength(1))
+    expect(maps('c')).toEqual([[2, [{ id: 'early-panel', paths: ['/repo'] }]]])
+  })
+  it('sends an owner that comes back the current map: a removal asked while it was unreachable included', async () => {
+    await api.gitWatchRepos('offline-panel', [resourceKey('file', 'a', '/repo')])
+    await api.gitWatchRepos('kept-panel', [resourceKey('file', 'a', '/kept')])
+    await api.fleetDisconnect('a')
+    await api.gitUnwatchRepos('offline-panel')
+    await api.gitWatchRepos('kept-panel', ['/mac-only'])
+    mocks.calls.length = 0
+    await api.fleetConnect('a')
+    await vi.waitFor(() => expect(maps('a').length).toBeGreaterThanOrEqual(1))
+    // The map sent at the reconnection names neither panel: both left owner
+    // a's map while it was unreachable; its generation is above the two that
+    // failed offline (a connection may be reported twice by the fleet client:
+    // then the same map goes twice, which changes nothing).
+    for (const [generation, map] of maps('a')) {
+      expect(generation as number).toBeGreaterThanOrEqual(5)
+      expect(map).toEqual([])
+    }
+    // An owner with nothing of this Mac's in its history is not written to.
+    expect(maps('b')).toEqual([])
   })
   it('forwards a server’s batch progress only for a batch this Mac started, by its id, while it runs', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))

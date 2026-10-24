@@ -231,26 +231,32 @@ export const GitRefreshRemotes = Command.define('GitRefreshRemotes', {
   failure: Failure
 })
 // ── Watching ──
-/** A subscriber's requests are ordered by the revision it stamps on them: a
- *  request that reaches the server after a newer one of the same subscriber
- *  is ignored, whichever travelled faster (a slow owner's late answer, two
- *  connections). A request without a revision is taken as it comes. */
-export const GitWatchRevision = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
-export const GitWatchRepos = Command.define('GitWatchRepos', {
-  payload: Schema.Struct({
-    subscriberId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
-    paths: Paths,
-    revision: Schema.optional(GitWatchRevision)
-  }),
-  success: Schema.Array(Schema.String),
-  failure: Failure
+/** One panel's subscription inside a Mac's namespace: its id and the
+ *  complete set of repositories it wants watched on this server. */
+export const GitWatchSubscription = Schema.Struct({
+  id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  paths: Paths
 })
-export const GitUnwatchRepos = Command.define('GitUnwatchRepos', {
+export type GitWatchSubscription = typeof GitWatchSubscription.Type
+/**
+ * A Mac's COMPLETE map of subscriptions on this server, replaced as a whole:
+ * the server keeps, per namespace (one per Mac window), only the newest
+ * generation it has seen, drops every subscription of that namespace the map
+ * no longer names and sets each named one to exactly its paths. A map older
+ * than the one applied is ignored, whichever travelled faster. There is no
+ * other watch request: a panel closing, a set changing, a connection
+ * opening all send the current complete map (`lane-c/watch-rule.md`).
+ */
+export const GitSyncWatches = Command.define('GitSyncWatches', {
   payload: Schema.Struct({
-    subscriberId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
-    revision: Schema.optional(GitWatchRevision)
+    namespace: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+    generation: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+    subscriptions: Schema.Array(GitWatchSubscription).pipe(Schema.maxItems(1000))
   }),
-  success: Schema.Void,
+  /** Per named subscription, the paths the server watches for it (a path
+   *  missing from the answer is the panel's to poll); empty for an ignored,
+   *  older map. */
+  success: Schema.Array(GitWatchSubscription),
   failure: Failure
 })
 // ── Writes ──
@@ -377,8 +383,7 @@ export const gitGroup = ApiGroup.make('git')
   .add(HttpCqrs.commandEndpoint('fetch', '/git/fetch', GitFetch))
   .add(HttpCqrs.commandEndpoint('fetchBatch', '/git/fetch-batch', GitFetchBatch))
   .add(HttpCqrs.commandEndpoint('refreshRemotes', '/git/refresh-remotes', GitRefreshRemotes))
-  .add(HttpCqrs.commandEndpoint('watch', '/git/watch', GitWatchRepos))
-  .add(HttpCqrs.commandEndpoint('unwatch', '/git/unwatch', GitUnwatchRepos))
+  .add(HttpCqrs.commandEndpoint('watches', '/git/watches', GitSyncWatches))
   .add(HttpCqrs.commandEndpoint('stage', '/git/stage', GitStage))
   .add(HttpCqrs.commandEndpoint('unstage', '/git/unstage', GitUnstage))
   .add(HttpCqrs.commandEndpoint('discard', '/git/discard', GitDiscard))
@@ -421,12 +426,11 @@ export interface GitOperations {
     paths: ReadonlyArray<string>,
     batchId?: string
   ) => Promise<ReadonlyArray<GitRefreshResult>>
-  readonly watch: (
-    subscriberId: string,
-    paths: ReadonlyArray<string>,
-    revision?: number
-  ) => Promise<ReadonlyArray<string>>
-  readonly unwatch: (subscriberId: string, revision?: number) => Promise<void>
+  readonly syncWatches: (
+    namespace: string,
+    generation: number,
+    subscriptions: ReadonlyArray<GitWatchSubscription>
+  ) => Promise<ReadonlyArray<GitWatchSubscription>>
   readonly stage: (cwd: string, files: ReadonlyArray<string>) => Promise<void>
   readonly unstage: (cwd: string, files: ReadonlyArray<string>) => Promise<void>
   readonly discard: (cwd: string, files: ReadonlyArray<GitDiscardFile>) => Promise<void>

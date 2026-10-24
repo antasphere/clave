@@ -13,7 +13,7 @@ import {
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
-import type { GitStatusResult as WireGitStatus } from '@clave/contract/git'
+import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import type { Attachment, AttachmentSource } from '../shared/attachments'
@@ -456,77 +456,48 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           owner
         )
   }
-  // The subscriber ids of this preload on a server are prefixed with a token
-  // of its own, so two Macs attached to one server never share a watch.
-  const gitSubscriberToken = `mac-${Math.random().toString(36).slice(2, 10)}`
-  /** Each subscriber's current watch set, by owner, as last asked. */
-  const gitWatchSets = new Map<string, Map<string, string[]>>()
-  /** Each subscriber's request counter: the server applies a subscriber's
-   *  requests in this order whatever order they reach it (a slow owner's
-   *  answer, two connections), so a late request never overwrites a newer
-   *  set (verifier round 3). */
-  const gitWatchRevisions = new Map<string, number>()
-  const nextWatchRevision = (subscriberId: string): number => {
-    const next = (gitWatchRevisions.get(subscriberId) ?? 0) + 1
-    gitWatchRevisions.set(subscriberId, next)
-    return next
-  }
-  // A server that connects is told what it did not hear; one that comes BACK
-  // (its push channel reopened after a first connection: a reconnection, or a
-  // daemon restarted with no watch left) is told every subscriber's truth,
-  // each under a fresh revision: the same set again is nothing to the
-  // server, a lost set is restored, an unheard removal applied
-  // (`lane-c/watch-rule.md`).
-  const gitConnectedOwners = new Set<string>()
-  /** Every subscriber this Mac has ever named to an owner and not yet
-   *  unwatched there with the owner's acknowledgement: on a reconnection each
-   *  one is told its current truth, its live set or an unwatch, so a removal
-   *  the owner never heard (asked while it was unreachable) reaches it too
-   *  (verifier round 5). */
-  const gitKnownSubscribers = new Map<string, Set<string>>()
-  const gitKnown = (owner: string, subscriberId: string): void => {
-    const set = gitKnownSubscribers.get(owner) ?? new Set<string>()
-    set.add(subscriberId)
-    gitKnownSubscribers.set(owner, set)
-  }
-  const gitForgotten = (owner: string, subscriberId: string): void => {
-    gitKnownSubscribers.get(owner)?.delete(subscriberId)
-    gitUnheard.get(owner)?.delete(subscriberId)
-  }
-  /** The subscribers whose latest request an owner did not hear (asked while
-   *  it was unreachable, or the request failed): told again at the owner's
-   *  next connection, its first one included. */
-  const gitUnheard = new Map<string, Set<string>>()
-  const gitMissed = (owner: string, subscriberId: string): void => {
-    const set = gitUnheard.get(owner) ?? new Set<string>()
-    set.add(subscriberId)
-    gitUnheard.set(owner, set)
-  }
-  const gitHeard = (owner: string, subscriberId: string): void => {
-    gitUnheard.get(owner)?.delete(subscriberId)
-  }
-  /** Tell `owner` each subscriber's current truth: the ones it did not hear,
-   *  or, after a reconnection, every one this Mac has named to it (a daemon
-   *  that restarted holds none of them). */
-  const restoreGitWatches = (owner: string, everything: boolean): void => {
-    const which = everything ? gitKnownSubscribers.get(owner) : gitUnheard.get(owner)
-    for (const subscriberId of [...(which ?? [])]) {
-      const paths = gitWatchSets.get(subscriberId)?.get(owner) ?? []
-      const revision = nextWatchRevision(subscriberId)
-      const subscriber = `${gitSubscriberToken}:${subscriberId}`
-      void backing(owner)
-        .then((b) =>
-          paths.length > 0
-            ? b.api.git.watch(subscriber, paths, revision).then(() => gitHeard(owner, subscriberId))
-            : b.api.git.unwatch(subscriber, revision).then(() => gitForgotten(owner, subscriberId))
-        )
-        .catch(() => gitMissed(owner, subscriberId))
+  // What this Mac watches on each server is ONE complete map per owner (every
+  // panel's subscription with its paths), named by this preload's namespace
+  // (one per Mac window) and replaced as a whole under an increasing
+  // generation: a panel's set changing, a panel closing, a connection
+  // opening all send the current complete map, and the server keeps only the
+  // newest generation it has seen. There are no single watches to order, no
+  // removals to remember, nothing to replay but the map itself
+  // (`lane-c/watch-rule.md`). Two Macs never share a namespace.
+  const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
+  const gitDesired = new Map<string, Map<string, string[]>>()
+  const gitGeneration = new Map<string, number>()
+  /** The owners a sync is in flight to: a connection opening while one is
+   *  (the sync that waited for that very connection) sends nothing more. */
+  const gitSyncing = new Set<string>()
+  /** Send `owner` this Mac's current complete map. Answers what the server
+   *  watches per subscription when this map was still the newest at its
+   *  answer, null when the answer is stale or the owner unreachable (it hears
+   *  the current map at its next connection). */
+  const gitSync = async (owner: string): Promise<ReadonlyArray<GitWatchSubscription> | null> => {
+    const subscriptions = [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+    const generation = (gitGeneration.get(owner) ?? 0) + 1
+    gitGeneration.set(owner, generation)
+    gitSyncing.add(owner)
+    try {
+      const b = await backing(owner)
+      const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
+      return gitGeneration.get(owner) === generation ? answered : null
+    } catch {
+      return null
+    } finally {
+      if (gitGeneration.get(owner) === generation) gitSyncing.delete(owner)
     }
   }
   fleet.onStatus((status) => {
-    if (status.state !== 'connected') return
-    restoreGitWatches(status.serverId, gitConnectedOwners.has(status.serverId))
-    gitConnectedOwners.add(status.serverId)
+    // Every connection, the first included: a server that lost its state gets
+    // the map back, one that kept it applies the same map again.
+    if (
+      status.state === 'connected' &&
+      gitDesired.has(status.serverId) &&
+      !gitSyncing.has(status.serverId)
+    )
+      void gitSync(status.serverId)
   })
   // The batches THIS Mac has in flight on a server, by the id it gave each
   // one: a server publishes a batch's progress to every attached Mac, and two
@@ -542,7 +513,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     call: (b: Backing, paths: string[], owner: string, batchId: string) => Promise<T>
   ): Promise<T> =>
     gitBatch(keys, localCall, async (b, paths, owner) => {
-      const batchId = `${gitSubscriberToken}:${++batchSerial}`
+      const batchId = `${gitNamespace}:${++batchSerial}`
       runningBatches.add(batchId)
       try {
         return await call(b, paths, owner, batchId)
@@ -1272,53 +1243,42 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         list.push(ref.id)
         byOwner.set(ref.serverId, list)
       }
-      const previous = gitWatchSets.get(subscriberId) ?? new Map<string, string[]>()
-      const owners = new Set([...byOwner.keys(), ...previous.keys()])
-      gitWatchSets.set(subscriberId, byOwner)
-      const subscriber = `${gitSubscriberToken}:${subscriberId}`
-      const revision = nextWatchRevision(subscriberId)
+      // The owners whose map this subscriber changes: where it now has paths,
+      // and where it had some before (its entry leaves that owner's map).
+      const owners = new Set([
+        ...byOwner.keys(),
+        ...[...gitDesired].filter(([, map]) => map.has(subscriberId)).map(([owner]) => owner)
+      ])
       const watched: string[] = []
+      const syncs: Promise<void>[] = []
       for (const owner of owners) {
         const paths = byOwner.get(owner) ?? []
         if (owner === LOCAL_SERVER_ID) {
           watched.push(...(await local.gitWatchRepos(subscriberId, paths)))
           continue
         }
-        try {
-          gitKnown(owner, subscriberId)
-          const b = await backing(owner)
-          const ok = await b.api.git.watch(subscriber, paths, revision)
-          gitHeard(owner, subscriberId)
-          // The subscriber moved on while this owner answered (verifier
-          // rounds 1 to 3): the server orders a subscriber's requests by their
-          // revision, so the newer set or the unwatch stands whatever reached
-          // it last; this call's answer is stale and names nothing.
-          if (gitWatchSets.get(subscriberId) !== byOwner) return []
-          watched.push(...ok.map((path) => ownedPath(owner, path)))
-        } catch {
-          // Not connected: its repos are the panel's to poll, and the owner
-          // hears this set when it connects.
-          gitMissed(owner, subscriberId)
-        }
+        const map = gitDesired.get(owner) ?? new Map<string, string[]>()
+        if (paths.length > 0) map.set(subscriberId, paths)
+        else map.delete(subscriberId)
+        gitDesired.set(owner, map)
+        syncs.push(
+          gitSync(owner).then((answered) => {
+            const mine = answered?.find((s) => s.id === subscriberId)
+            if (mine) watched.push(...mine.paths.map((path) => ownedPath(owner, path)))
+          })
+        )
       }
+      await Promise.all(syncs)
       return watched
     },
     gitUnwatchRepos: async (subscriberId) => {
-      const owners = [...(gitWatchSets.get(subscriberId)?.keys() ?? [])]
-      gitWatchSets.delete(subscriberId)
-      const revision = nextWatchRevision(subscriberId)
       await local.gitUnwatchRepos(subscriberId)
-      for (const owner of owners) {
-        if (owner === LOCAL_SERVER_ID) continue
-        try {
-          const b = await backing(owner)
-          await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`, revision)
-          gitForgotten(owner, subscriberId)
-        } catch {
-          // Unreachable now: the owner hears this unwatch when it comes back.
-          gitMissed(owner, subscriberId)
-        }
+      const syncs: Promise<unknown>[] = []
+      for (const [owner, map] of gitDesired) {
+        if (!map.delete(subscriberId)) continue
+        syncs.push(gitSync(owner))
       }
+      await Promise.all(syncs)
     },
     onGitReposChanged: (cb) =>
       both(
