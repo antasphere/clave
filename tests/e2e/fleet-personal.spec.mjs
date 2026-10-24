@@ -37,7 +37,9 @@ async function switchTo(win, id) {
       await closeSwitcher(win)
       return false
     }
-    if ((await item.getAttribute('data-selected')) === 'true') {
+    if (
+      (await item.getAttribute('data-selected', { timeout: 2_000 }).catch(() => null)) === 'true'
+    ) {
       await closeSwitcher(win)
       return true
     }

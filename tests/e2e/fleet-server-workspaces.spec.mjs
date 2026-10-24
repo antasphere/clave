@@ -40,7 +40,11 @@ async function closeSwitcher(win) {
 async function switchTo(win, id) {
   await eventually(async () => {
     await openSwitcher(win)
-    if ((await item(win, id).getAttribute('data-selected')) === 'true') {
+    if (
+      (await item(win, id)
+        .getAttribute('data-selected', { timeout: 2_000 })
+        .catch(() => null)) === 'true'
+    ) {
       await closeSwitcher(win)
       return true
     }
@@ -86,7 +90,10 @@ export async function run(t) {
       const id = owned('workspace', owner, added.id)
       await eventually(async () => {
         await openSwitcher(win)
-        const selected = (await item(win, id).getAttribute('data-selected')) === 'true'
+        const selected =
+          (await item(win, id)
+            .getAttribute('data-selected', { timeout: 2_000 })
+            .catch(() => null)) === 'true'
         await closeSwitcher(win)
         return selected
       }, 'Mac A shows the server workspace it added')
@@ -99,6 +106,35 @@ export async function run(t) {
       'the server workspace is never written to the Mac registry'
     )
     t.check('a workspace added on the server from Mac A lives in the server registry', true)
+
+    await step(
+      'a server workspace opens in a new window without becoming last-active',
+      async () => {
+        const stateFile = path.join(macA.dir, 'workspace-state.json')
+        const lastActive = () => {
+          const state = JSON.parse(readFileSync(stateFile, 'utf8'))
+          return state.lastActiveWorkspaceId ?? state.activeWorkspaceId ?? null
+        }
+        const before = lastActive()
+        assert.ok(!String(before).startsWith('clave-owner:'), 'the Mac starts on a Mac last-active')
+        const opened = await macA.win.evaluate(
+          (id) => window.electronAPI.windowOpen(id),
+          workspaceId.id
+        )
+        assert.ok(Number.isInteger(opened?.windowId), 'the window opened')
+        await eventually(() => {
+          try {
+            const windows = JSON.parse(readFileSync(path.join(macA.dir, 'windows.json'), 'utf8'))
+            const list = Array.isArray(windows) ? windows : (windows.windows ?? [])
+            return list.some((w) => w.workspaceId === workspaceId.id)
+          } catch {
+            return false
+          }
+        }, 'the new window is saved on the server workspace')
+        assert.equal(lastActive(), before, 'opening a server workspace leaves the Mac last-active')
+      }
+    )
+    t.check('a server workspace opens in another window and is never the Mac last-active', true)
 
     const onB = owned('workspace', ownerOnB, workspaceId.remote)
     await step('Mac B sees the workspace, labelled with the server', async () => {
