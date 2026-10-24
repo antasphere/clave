@@ -251,9 +251,18 @@ export async function fleetWorld(label) {
   }
 }
 
+export async function openServersPage(win) {
+  const usageLine = win.locator('.sidebar-footer-line').first()
+  // A focused plain terminal or remote session has no provider usage row.
+  if (await usageLine.count()) await usageLine.click()
+  else await win.getByRole('button', { name: 'Settings', exact: true }).click()
+  await win.locator('[data-settings-nav-row="servers"]').click()
+  await win.locator('[data-settings-page="servers"]').waitFor()
+}
+
 export async function connectMac(mac, servers, { ui = true } = {}) {
   const { win } = mac
-  if (ui) await win.getByLabel('Manage Clave servers', { exact: true }).click()
+  if (ui) await openServersPage(win)
   for (const [index, server] of servers.entries()) {
     const name = `Personal VPS ${index + 1}`
     if (ui) {
@@ -266,6 +275,7 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
         'saved server appears'
       )
       assert.equal(await win.getByLabel('Server bearer token', { exact: true }).inputValue(), '')
+      await win.locator('[data-settings-page="servers"]').getByText(name, { exact: true }).waitFor()
     } else {
       await win.evaluate(
         ({ name, url, token }) => window.electronAPI.fleetSave({ name, url, token }),
@@ -273,7 +283,7 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
       )
     }
   }
-  if (ui) await win.getByRole('button', { name: 'Close', exact: true }).click()
+  if (ui) await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
   mac.owners = await win.evaluate(() => window.electronAPI.fleetList())
   assert.ok(mac.owners.every((o) => !('token' in o)))
   for (const owner of mac.owners)

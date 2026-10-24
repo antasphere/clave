@@ -259,3 +259,13 @@ Decision 6 of the spec kept the plugin host in the Electron shell through the fi
 The Mac's launch profile list is the one list the person chooses from. A server start carries the chosen definition in `SpawnOptions.launchProfile`, including its command, additional arguments, family and agent options. The server sanitizes it, runs it as given and stores no profile in its own list. The session record retains the definition so Resume and account switch use the same command. The server's accounts remain its own. A missing program refuses the start with a message naming that program and profile, before a session is created.
 
 Without a carried definition, the server resolves the id against its own built-ins and list as before. An id the Mac does not know still passes through, until the old server launch form is gone. Claude and Codex chat variants carry their source profile id and keep their chat adapter. A plugin's profile carried to a server without that plugin would run as a terminal. This is accepted for this wave, in which nobody launches plugins on a server.
+
+## Wave wcs1023, lane A: servers managed from Settings (2026-10-24, #239)
+
+Settings → Clave → Servers replaces the sidebar's Servers button and its management dialog.
+Saved servers show their address, live state, Connect/Disconnect and Remove, with connection errors under each row.
+The add form clears the bearer token after every attempt and shows the registry's safe error sentence on failure.
+Connected servers list their own Claude and Codex logins read-only, fetched again on reconnect.
+`FleetRequestHost` stays mounted in the sidebar so server questions, approvals and secrets still reach the user.
+`FleetLaunchHost` and its existing form also stay mounted for callers that still request a remote launch.
+The Settings page starts no sessions. Lane B moves server launches into the normal workspace flow and removes the old launch form.

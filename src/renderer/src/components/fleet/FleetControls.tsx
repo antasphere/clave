@@ -8,7 +8,6 @@ import { useFleetStore, reportFleetError } from '../../store/fleet-store'
 import { useSessionStore } from '../../store/session-store'
 import {
   useFleetLaunchStore,
-  requestFleetLaunch,
   finishFleetLaunch,
   type FleetLaunchRequest
 } from '../../store/fleet-launch-store'
@@ -57,157 +56,7 @@ function FleetDialog({
   )
 }
 
-export function FleetControls(): React.JSX.Element {
-  const connections = useFleetStore((s) => s.connections)
-  const statuses = useFleetStore((s) => s.statuses)
-  const error = useFleetStore((s) => s.error)
-  const [manage, setManage] = useState(false)
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [token, setToken] = useState('')
-  const [busy, setBusy] = useState(false)
-  const add = async (): Promise<void> => {
-    setBusy(true)
-    const value = token
-    setToken('')
-    try {
-      await window.electronAPI.fleetSave({ name, url, token: value })
-      setName('')
-      setUrl('')
-      useFleetStore.setState({ error: null })
-    } catch (error) {
-      reportFleetError(error)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <>
-      <button
-        className="sidebar-item w-full flex items-center gap-2"
-        onClick={() => setManage(true)}
-        aria-label="Manage Clave servers"
-      >
-        <ServerIcon className="w-4 h-4" />
-        <span className="flex-1 text-left">Servers</span>
-        <span>{connections.length}</span>
-      </button>
-      {manage && (
-        <FleetDialog
-          title="Clave servers"
-          close={() => {
-            setManage(false)
-            setToken('')
-          }}
-        >
-          <p className="text-xs text-text-secondary">
-            Disconnect keeps agents running. Remove forgets this device&apos;s connection.
-          </p>
-          {connections.map((connection) => (
-            <div
-              key={connection.id}
-              className="flex items-center gap-2"
-              data-server-id={connection.id}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-sm truncate">{connection.name}</div>
-                <div className="text-xs text-text-secondary">
-                  {statuses[connection.id]?.state ?? 'connecting'}
-                </div>
-              </div>
-              <button
-                className="btn-secondary"
-                disabled={statuses[connection.id]?.state !== 'connected'}
-                onClick={() => {
-                  setManage(false)
-                  void requestFleetLaunch({ serverId: connection.id, setup: null })
-                }}
-              >
-                New session
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={() =>
-                  void (
-                    connection.enabled
-                      ? window.electronAPI.fleetDisconnect(connection.id)
-                      : window.electronAPI.fleetConnect(connection.id)
-                  ).catch(reportFleetError)
-                }
-              >
-                {connection.enabled ? 'Disconnect' : 'Connect'}
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={() =>
-                  void window.electronAPI.fleetRemove(connection.id).catch(reportFleetError)
-                }
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-          <label className="field-label">
-            Server name
-            <input
-              className="input-field w-full"
-              aria-label="Server name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-          <label className="field-label">
-            Tailscale address
-            <input
-              className="input-field w-full"
-              aria-label="Server address"
-              placeholder="http://100.x.y.z:port"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-          </label>
-          <label className="field-label">
-            Bearer token
-            <input
-              className="input-field w-full"
-              aria-label="Server bearer token"
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
-          </label>
-          {error && (
-            <p role="alert" className="text-xs text-text-secondary">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <button
-              className="btn-dialog"
-              onClick={() => {
-                setManage(false)
-                setToken('')
-              }}
-            >
-              Close
-            </button>
-            <button
-              className="btn-primary"
-              disabled={busy || !name.trim() || !url.trim() || !token.trim()}
-              onClick={() => void add()}
-            >
-              Add server
-            </button>
-          </div>
-        </FleetDialog>
-      )}
-      <FleetLaunchHost />
-      <FleetRequestHost />
-    </>
-  )
-}
-function FleetLaunchHost(): React.JSX.Element | null {
+export function FleetLaunchHost(): React.JSX.Element | null {
   const request = useFleetLaunchStore((s) => s.request)
   return request ? (
     <FleetLaunchForm key={`${request.serverId}:${request.groupId ?? ''}`} request={request} />
@@ -406,7 +255,7 @@ function FleetLaunchForm({ request }: { request: FleetLaunchRequest }): React.JS
   )
 }
 
-function FleetRequestHost(): React.JSX.Element | null {
+export function FleetRequestHost(): React.JSX.Element | null {
   const requests = useFleetStore((s) => s.requests)
   const pending = Object.values(requests)
     .flat()

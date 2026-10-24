@@ -48,7 +48,7 @@ Its options (`bash ~/install-server.sh --help` lists them). They are saved once 
 ## Connect your Mac
 
 1. On the server, print the token: `node -p 'require(process.env.HOME + "/.local/share/clave-server/daemon/identity.json").token'`. Treat it like a password: paste it into Clave and nowhere else (not a chat, a ticket or a commit).
-2. In Clave on your Mac, open the sidebar → **Servers** → add the server: a name, the address the script printed (for example `http://100.101.102.103:43127`, or `http://127.0.0.1:43127` through the SSH tunnel), and the token.
+2. In Clave on your Mac, open Settings → **Servers** (the Clave group of the settings sidebar) and add the server: a name, the address the script printed (for example `http://100.101.102.103:43127`, or `http://127.0.0.1:43127` through the SSH tunnel), and the token.
 3. When you open a session, choose that server. The folder picker then browses the server's disk, and the server's sessions show its name in the sidebar.
 
 Keep the desktop app and the server on the same version.

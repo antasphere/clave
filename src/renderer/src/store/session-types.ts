@@ -481,6 +481,7 @@ export interface FileTab {
 export type ActiveView = 'terminals' | 'settings' | 'agents' | 'extensions'
 
 export type SettingsSection =
+  | 'servers'
   | 'plugins'
   | 'general'
   | 'accounts'

@@ -57,6 +57,7 @@ import {
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { AudioSettings } from './AudioSettings'
+import { ServersSettings } from './ServersSettings'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -211,6 +212,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'usage' && <UsageSettings />}
         {settingsSection === 'activity' && <ActivitySettings />}
         {settingsSection === 'accounts' && <AccountsSettings />}
+        {settingsSection === 'servers' && <ServersSettings />}
       </div>
     </div>
   )
