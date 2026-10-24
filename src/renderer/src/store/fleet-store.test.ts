@@ -255,8 +255,11 @@ it('does not discard a remote tab that appears while reset closes earlier tabs',
 })
 
 describe('inActiveWorkspace scopes remote tabs to their server workspace', () => {
-  const serverWs = (server: string, id: string) => resourceKey('workspace', server, id)
-  const remoteTab = (server: string, workspaceId?: string) => ({
+  const serverWs = (server: string, id: string): string => resourceKey('workspace', server, id)
+  const remoteTab = (
+    server: string,
+    workspaceId?: string
+  ): { id: string; workspaceId?: string } => ({
     id: resourceKey('session', server, 'tab'),
     workspaceId
   })
