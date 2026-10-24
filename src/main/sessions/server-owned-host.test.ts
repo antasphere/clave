@@ -34,6 +34,13 @@ const record: SessionRecord = {
   dangerousMode: false,
   model: 'saved-model',
   launchProfileId: 'saved-profile',
+  launchProfile: {
+    id: 'saved-profile',
+    name: 'Mac profile',
+    family: 'codex',
+    command: ['mac-wrapper', 'codex'],
+    additionalArgs: ['--profile', 'mac']
+  },
   codexAccountId: 'saved-account',
   codexThreadId: 'saved-thread',
   windowKey: 'mac-a',
@@ -181,6 +188,7 @@ describe('server-owned stopped recovery', () => {
         model: 'saved-model'
       }
     })
+    expect(input.options?.launchProfile).toEqual(record.launchProfile)
     expect(input.options?.initialCommand).toBeUndefined()
     expect(input.options?.autoExecute).toBeUndefined()
     expect(input.options?.initialPrompt).toBeUndefined()

@@ -1018,11 +1018,9 @@ export class ClaudeAdapter implements SessionAdapter {
     const sessionId = options.resume ?? context.claudeSessionId ?? randomUUID()
     if (!isValidClaudeSessionId(sessionId)) throw new Error('Invalid Claude session id')
     if (options.model && !isValidModelName(options.model)) throw new Error('Invalid model name')
-    const profile = launchProfileManager.resolve(
-      'claude',
-      context.workspaceId,
-      context.launchProfileId
-    )
+    const profile =
+      context.launchProfile ??
+      launchProfileManager.resolve('claude', context.workspaceId, context.launchProfileId)
     // Clave's own launch mode wins (the CLI takes the last --permission-mode);
     // else the profile's, which the CLI obeys all the same.
     const profilePermissions = claudeProfilePermissions(profile)

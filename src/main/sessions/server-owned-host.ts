@@ -57,6 +57,7 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     dangerousMode: record.dangerousMode,
     model: record.model,
     launchProfileId: record.launchProfileId,
+    launchProfile: record.launchProfile,
     piProvider: record.piProvider,
     piThinking: record.piThinking,
     configDir: record.configDir,
