@@ -382,6 +382,28 @@ describe('server workspaces', () => {
     expect(heard).toHaveLength(1)
   })
 
+  it('drops a late answer from the instance a server was restarted out of', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    mocks.events.get('a')!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [
+          { id: 'r', name: 'R', rootDir: '/restarted', profileFile: null, createdAt: 3 }
+        ],
+        pins: [],
+        origin: null,
+        revision: 1,
+        instance: 'a-restarted'
+      }
+    })
+    // A read sent to the old instance answers late, at a higher revision.
+    mocks.revisions.set('a', 50)
+    await api.fleetWorkspaces('a')
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted']])
+  })
+
   it('relays a server registry change with the ids of that server', async () => {
     await api.fleetWorkspaces('a')
     const heard: Array<{ serverId: string; workspaces: Array<{ id: string }> }> = []

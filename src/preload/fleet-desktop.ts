@@ -195,11 +195,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // server's `workspaces.state_changed` event. Every read, push and write
   // answer carries the registry's stamp: an answer older than what was last
   // published for that server is dropped, so a slow read never rolls back a
-  // newer push. A write replaces the server's whole list, so it is made
+  // newer push, and an answer from an instance the server has since been
+  // restarted out of is dropped too. A write replaces the server's whole list, so it is made
   // against the stamp it read and the server refuses it as `stale` when
   // another Mac wrote in between; it is then read and applied again.
   type Stamp = { revision: number; instance: string }
   const stamps = new Map<string, Stamp>()
+  /** Per server, the instances it has been restarted out of. */
+  const retired = new Map<string, Set<string>>()
   const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
     id: resourceKey('workspace', serverId, ws.id),
     name: ws.name,
@@ -216,6 +219,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     const last = stamps.get(serverId)
     if (last && last.instance === stamp.instance && stamp.revision < last.revision)
       return workspaces
+    if (retired.get(serverId)?.has(stamp.instance)) return workspaces
+    if (last && last.instance !== stamp.instance) {
+      const gone = retired.get(serverId) ?? new Set<string>()
+      gone.add(last.instance)
+      retired.set(serverId, gone)
+    }
     stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
     for (const listener of workspaceListeners) listener({ serverId, workspaces })
     return workspaces
