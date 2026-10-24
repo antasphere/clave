@@ -195,13 +195,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // server, wraps each id as a remote key, and hears every change through the
   // server's `workspaces.state_changed` event. What reaches the renderer is
   // ordered by arrival, since two instances of a restarted server carry no
-  // order between them: a push comes over the one live socket, in order, and
-  // is always taken (unless the same instance already sent a newer one); a
-  // read or a write answer is taken only when no push arrived after it was
-  // sent and no answer sent later has been taken already. A slow answer, from
-  // the same instance or from one the server has since been restarted out of,
-  // never rolls back a newer list, and of two answers in flight the one sent
-  // last wins whatever their order. A write replaces the server's whole list, so it is made against the
+  // order between them. Within one instance the revision decides: a list
+  // newer than the last one taken is taken, from a push, a read or a write
+  // answer alike, and an older or equal one never is. Across instances only
+  // arrival orders them: a push, which comes over the one live socket, is
+  // taken; a read or a write answer is taken only when no push arrived after
+  // it was sent and no answer sent later has been taken already. So a slow
+  // answer from an instance the server has been restarted out of never rolls
+  // back the new one, and of two answers in flight the one sent last wins. A write replaces the server's whole list, so it is made against the
   // stamp it read and the server refuses it as `stale` when another Mac wrote
   // in between; it is then read and applied again.
   type Stamp = { revision: number; instance: string }
@@ -232,14 +233,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     sent?: Sent
   ): Workspace[] => {
     const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
-    if (
+    const last = stamps.get(serverId)
+    if (last && last.instance === stamp.instance) {
+      // One instance numbers its own changes: the revision decides alone.
+      if (stamp.revision <= last.revision) return workspaces
+    } else if (
       sent &&
       (sent.pushes !== (pushes.get(serverId) ?? 0) || sent.request < (answered.get(serverId) ?? 0))
-    )
+    ) {
+      // Across instances there is no order but arrival.
       return workspaces
-    const last = stamps.get(serverId)
-    if (last && last.instance === stamp.instance && stamp.revision < last.revision)
-      return workspaces
+    }
     stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
     if (sent) answered.set(serverId, sent.request)
     else pushes.set(serverId, (pushes.get(serverId) ?? 0) + 1)
