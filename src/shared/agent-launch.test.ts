@@ -50,6 +50,18 @@ describe('a carried launch profile', () => {
     )
   })
 
+  it('requires a carried chat variant id to match its family', () => {
+    const codex = {
+      id: 'chat:codex:x',
+      name: 'X',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: []
+    }
+    expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
+    expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
   it.each([
     { command: ['claude', '--model=opus'] },
     { additionalArgs: ['--model', 'opus'] },

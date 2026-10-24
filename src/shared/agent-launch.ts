@@ -157,6 +157,8 @@ function sanitizeProfile(value: unknown, carried = false): LaunchProfile | null 
   ) {
     return null
   }
+  const chat = carried ? chatProfileSource(id) : undefined
+  if (chat && chat.family !== family) return null
   const typedFamily = family as LauncherFamily
   if (hasManagedArg(typedFamily, command) || hasManagedArg(typedFamily, additionalArgs)) return null
   const sourceProfileId = carried ? cleanText(raw.sourceProfileId, 128) : undefined
