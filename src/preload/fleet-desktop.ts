@@ -233,19 +233,27 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   ): Workspace[] => {
     const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
     const last = stamps.get(serverId)
+    // What arrived is evidence of order whether or not its list is taken: a
+    // push counts, and the newest request answered only ever goes up.
+    const note = (): void => {
+      if (sent) answered.set(serverId, Math.max(answered.get(serverId) ?? 0, sent.request))
+      else pushes.set(serverId, (pushes.get(serverId) ?? 0) + 1)
+    }
     if (last && last.instance === stamp.instance) {
       // One instance numbers its own changes: the revision decides alone.
+      note()
       if (stamp.revision <= last.revision) return workspaces
-    } else if (
-      sent &&
-      (sent.pushes !== (pushes.get(serverId) ?? 0) || sent.request < (answered.get(serverId) ?? 0))
-    ) {
+    } else {
       // Across instances there is no order but arrival.
-      return workspaces
+      if (
+        sent &&
+        (sent.pushes !== (pushes.get(serverId) ?? 0) ||
+          sent.request < (answered.get(serverId) ?? 0))
+      )
+        return workspaces
+      note()
     }
     stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
-    if (sent) answered.set(serverId, sent.request)
-    else pushes.set(serverId, (pushes.get(serverId) ?? 0) + 1)
     for (const listener of workspaceListeners) listener({ serverId, workspaces })
     return workspaces
   }
