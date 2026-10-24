@@ -37,9 +37,16 @@ export const gitClient = (call: Call, patientCall: Call = call): GitClient => ({
     patientCall((c) =>
       c.git.refreshRemotes({ payload: { paths, ...(batchId !== undefined && { batchId }) } })
     ),
-  watch: (subscriberId, paths) => call((c) => c.git.watch({ payload: { subscriberId, paths } })),
-  unwatch: (subscriberId) =>
-    call((c) => c.git.unwatch({ payload: { subscriberId } })).then(() => undefined),
+  watch: (subscriberId, paths, revision) =>
+    call((c) =>
+      c.git.watch({
+        payload: { subscriberId, paths, ...(revision !== undefined && { revision }) }
+      })
+    ),
+  unwatch: (subscriberId, revision) =>
+    call((c) =>
+      c.git.unwatch({ payload: { subscriberId, ...(revision !== undefined && { revision }) } })
+    ).then(() => undefined),
   stage: (cwd, files) =>
     call((c) => c.git.stage({ payload: { cwd, files } })).then(() => undefined),
   unstage: (cwd, files) =>

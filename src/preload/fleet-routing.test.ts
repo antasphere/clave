@@ -178,17 +178,19 @@ vi.mock('@clave/client/node', () => ({
           }),
           stage: call('git.stage', undefined),
           commit: call('git.commit', { hash: 'abc', branch: 'main' }),
-          watch: async (subscriberId: string, paths: string[]) => {
+          watch: async (subscriberId: string, paths: string[], revision?: number) => {
             // One-shot: the first watch of owner a waits, the next ones answer.
             const hold = owner === 'a' ? mocks.holdWatchA : null
             if (hold) {
               mocks.holdWatchA = null
               await hold
             }
-            mocks.calls.push({ owner, method: 'git.watch', args: [subscriberId, paths] })
+            mocks.calls.push({ owner, method: 'git.watch', args: [subscriberId, paths, revision] })
             return paths
           },
-          unwatch: call('git.unwatch', undefined),
+          unwatch: async (subscriberId: string, revision?: number) => {
+            mocks.calls.push({ owner, method: 'git.unwatch', args: [subscriberId, revision] })
+          },
           magicSync: async (paths: string[], batchId?: string) => {
             mocks.calls.push({ owner, method: 'git.magicSync', args: [paths, batchId] })
             if (mocks.holdBatch) await mocks.holdBatch
@@ -779,7 +781,7 @@ describe('git routing by the owner of the repository key', () => {
     ])
     expect(progress).toEqual([])
   })
-  it('takes back a watch installed after the subscriber was unwatched', async () => {
+  it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))
     await api.getGitStatus(resourceKey('file', 'b', '/repo'))
     let release = (): void => {}
@@ -794,13 +796,17 @@ describe('git routing by the owner of the repository key', () => {
     release()
     expect(await watching).toEqual([])
     const remote = mocks.calls.filter((c) => c.method === 'git.watch' || c.method === 'git.unwatch')
-    // Owner a's late watch was installed after the unwatch and taken back; owner
-    // b was never reached by the stale loop, so nothing of `late` remains anywhere.
-    const aCalls = remote.filter((c) => c.owner === 'a').map((c) => c.method)
-    expect(aCalls).toEqual(['git.unwatch', 'git.watch', 'git.unwatch'])
+    // Owner a's late watch reached it after the unwatch, with an OLDER revision
+    // (1 against the unwatch's 2): the server ignores it, so nothing is sent to
+    // take it back. Owner b was never reached by the stale loop.
+    const aCalls = remote.filter((c) => c.owner === 'a')
+    expect(aCalls.map((c) => [c.method, c.args.at(-1)])).toEqual([
+      ['git.unwatch', 2],
+      ['git.watch', 1]
+    ])
     expect(remote.filter((c) => c.owner === 'b' && c.method === 'git.watch')).toEqual([])
   })
-  it('tells the owner the replacement set once more when an older watch answers late', async () => {
+  it('stamps each request with its revision so an older watch answering late changes nothing', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))
     let release = (): void => {}
     mocks.holdWatchA = new Promise<void>((resolve) => {
@@ -812,9 +818,13 @@ describe('git routing by the owner of the repository key', () => {
     release()
     expect(await older).toEqual([])
     const aWatches = mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.watch')
-    // The newer set, the older's late answer, then the newer set again: the
-    // server ends on `/two` whichever of the two requests it took last.
-    expect(aWatches.map((c) => c.args[1])).toEqual([['/two'], ['/one'], ['/two']])
+    // The newer set answered first, the older late: each carries its revision,
+    // so the server keeps `/two` (revision 2) and ignores `/one` (revision 1)
+    // whichever reached it last. Nothing is re-sent and nothing unwatched.
+    expect(aWatches.map((c) => [c.args[1], c.args[2]])).toEqual([
+      [['/two'], 2],
+      [['/one'], 1]
+    ])
     expect(mocks.calls.filter((c) => c.method === 'git.unwatch')).toEqual([])
   })
   it('forwards a server’s batch progress only for a batch this Mac started, by its id, while it runs', async () => {
