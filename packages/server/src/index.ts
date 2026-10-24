@@ -69,3 +69,15 @@ export {
 export { ViewRequests, type ViewRequestsService, viewHandlers } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export { AgentTokens, type AgentTokensService, agentToolsHandlers } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export {
+  Plugins,
+  type PluginsService,
+  type PluginsEvent,
+  pluginHandlers,
+  PluginsEventsLive
+} from './plugins'
+
+export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesService } from './files'
+export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
+export { RequestsPort, type RequestsService } from './requests/port'

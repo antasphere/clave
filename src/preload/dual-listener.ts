@@ -60,19 +60,34 @@ export type Unsubscribe = () => void
 
 type WorkspacesStateChanged = Extract<ServerEvent, { _tag: 'workspaces.state_changed' }>
 
+/** What the workspace listener delivers: the registry, the pins and the
+ *  state's stamp (wave 5, lane A, PRDCT-3405), which the renderer compares
+ *  with the last one it loaded, wrote or took in before folding. */
+export interface WorkspaceStateFold {
+  workspaces: unknown[]
+  pins: unknown[]
+  revision: number
+  instance: string
+}
+
 /**
  * What a window takes from a workspace change on the push channel: the
- * registry and the pins, unless the change is its own (the event's `origin`
- * is the key `mine` answers), which it drops the way the IPC handler skips
- * the sender. `mine` is read at each event, since the window's key arrives
- * asynchronously after the listener is bound.
+ * registry, the pins and the stamp, unless the change is its own (the
+ * event's `origin` is the key `mine` answers), which it drops the way the
+ * IPC handler skips the sender. `mine` is read at each event, since the
+ * window's key arrives asynchronously after the listener is bound.
  */
 export const workspaceStatePick =
   (mine: () => string | null) =>
-  (event: WorkspacesStateChanged): { workspaces: unknown[]; pins: unknown[] } | undefined =>
+  (event: WorkspacesStateChanged): WorkspaceStateFold | undefined =>
     event.origin !== null && event.origin === mine()
       ? undefined
-      : { workspaces: [...event.workspaces], pins: [...event.pins] }
+      : {
+          workspaces: [...event.workspaces],
+          pins: [...event.pins],
+          revision: event.revision,
+          instance: event.instance
+        }
 
 /** What the listener needs of a push client: `PushClient` is one. */
 export interface PushLike {

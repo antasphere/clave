@@ -256,6 +256,7 @@ function adapterPlugin(enabled: boolean): PluginRecord {
         toolbar: [],
         sidebarSections: [],
         views: [],
+        marks: [],
         adapters: [
           {
             id: 'acme-agent',

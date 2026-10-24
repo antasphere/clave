@@ -114,7 +114,23 @@ const contributions = z
         })
       )
       .default([]),
-    adapters: z.array(adapterContribution).default([])
+    adapters: z.array(adapterContribution).default([]),
+    // A mark pack: what stands for an agent (its tab, the pane's status, the
+    // transcript's working mark) and for a tool call in flight, drawn by the
+    // pack instead of the provider's logo and the kind's glyph. Chosen in
+    // Appearance → Agent mark, one pack at a time. Native only: the pack is a
+    // component compiled into the renderer, and a plugin that is not bundled
+    // cannot ship code there, so a linked plugin declaring one is listed but
+    // never drawn.
+    marks: z
+      .array(
+        z.strictObject({
+          id: identifier,
+          title,
+          slots: z.array(z.enum(['agent', 'tool'])).min(1)
+        })
+      )
+      .default([])
   })
   .superRefine((value, context) => {
     for (const [key, entries] of Object.entries(value)) {

@@ -16,7 +16,7 @@ type Refusal = typeof MoveRefusal.Type
 export interface SidebarStorage {
   /** The stored layout as it is, unknown shape, or null when there is none. */
   read(windowKey: string): unknown
-  write(windowKey: string, layout: WindowLayout): void
+  write(windowKey: string, layout: WindowLayout, revision?: number): void
   remove(windowKey: string): void
   /** Every window key that has a document. */
   keys(): string[]
@@ -76,22 +76,27 @@ const KEY = /^[A-Za-z0-9_-]{1,128}$/
  * whole rather than half of the new one. A file that cannot be read or
  * parsed reads as no layout: the window starts empty instead of failing.
  */
-export function fileSidebarStorage(dir: string): SidebarStorage {
+export function fileSidebarStorage(dir: string, options?: { strict?: boolean }): SidebarStorage {
   const folder = join(dir, 'sidebar-layouts', 'windows')
   const fileOf = (windowKey: string): string => join(folder, `${windowKey}.json`)
   return {
     read: (windowKey) => {
       try {
         return JSON.parse(readFileSync(fileOf(windowKey), 'utf8')) as unknown
-      } catch {
+      } catch (error) {
+        if (options?.strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
         return null
       }
     },
-    write: (windowKey, layout) => {
-      mkdirSync(folder, { recursive: true })
+    write: (windowKey, layout, revision) => {
+      mkdirSync(folder, { recursive: true, mode: 0o700 })
       const file = fileOf(windowKey)
       const tmp = `${file}.tmp`
-      writeFileSync(tmp, JSON.stringify(layout, null, 2))
+      writeFileSync(
+        tmp,
+        JSON.stringify({ ...layout, ...(revision !== undefined && { revision }) }, null, 2),
+        { mode: 0o600 }
+      )
       renameSync(tmp, file)
     },
     remove: (windowKey) => {

@@ -1,3 +1,4 @@
+import { questionKey, questionIsPrivate } from '../../../src/renderer/src/lib/question-identity'
 import { useEffect, useRef, useState } from 'react'
 import {
   CheckIcon,
@@ -219,14 +220,14 @@ function QuestionPrompt({
      without (a plugin's question) offers its options as the choices, and the
      choice IS the answer. Both read as the same card. */
   const structured = request.questions
-  const questions: AgentQuestion[] = structured ?? [
+  const questions: (AgentQuestion & { id?: string })[] = structured ?? [
     { question: request.description, options: request.options.map((o) => ({ label: o.label })) }
   ]
   const [step, setStep] = useState(0)
   // Which way the page came in: forward swipes from the right, Back from the left.
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [replies, setReplies] = useState<Record<number, Reply>>({})
-  const otherInput = useRef<HTMLTextAreaElement>(null)
+  const otherInput = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
   // The note field to focus once it has rendered, by its option's label.
   const [noteFocus, setNoteFocus] = useState<string | null>(null)
   /* A question the agent asked in words ends on a review of every reply
@@ -234,6 +235,7 @@ function QuestionPrompt({
      question, whose choice IS the answer, is sent on the choice. */
   const reviewing = !!structured && step === questions.length
   const question = questions[Math.min(step, questions.length - 1)]
+  const privateQuestion = questionIsPrivate(question, request.input)
   const reply = replies[step] ?? { picked: [], other: null }
   const notes = reply.notes ?? {}
   const last = step === questions.length - 1
@@ -262,11 +264,12 @@ function QuestionPrompt({
   /** The replies, sent: each question's text → what the reader said to it. */
   const send = (): void => {
     if (busy) return
-    const answers: Record<string, string> = {}
-    questions.forEach((q, i) => {
-      const text = replyText(replies[i])
-      if (text) answers[q.question] = text
-    })
+    const answers: Record<string, string> = Object.fromEntries(
+      questions.flatMap((q, i) => {
+        const text = replyText(replies[i])
+        return text ? [[questionKey(q), text]] : []
+      })
+    )
     onAnswer(request.id, 'answer', answers)
   }
   /* A multi-select toggles and waits for Next; a single choice IS the answer,
@@ -326,7 +329,11 @@ function QuestionPrompt({
       tabIndex={-1}
       className="chat-prompt-body"
       onKeyDown={(event) => {
-        if (busy || event.target instanceof HTMLTextAreaElement) {
+        if (
+          busy ||
+          event.target instanceof HTMLTextAreaElement ||
+          event.target instanceof HTMLInputElement
+        ) {
           // In the reader's own words (Other, or a note), Enter submits the
           // answer and Shift+Enter is a new line in it.
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -368,9 +375,16 @@ function QuestionPrompt({
           </div>
           <dl className="chat-prompt-review">
             {questions.map((q, i) => (
-              <div key={q.question} className="chat-prompt-review-item">
-                <dt>{q.question}</dt>
-                <dd>{replyText(replies[i]) || 'No answer'}</dd>
+              <div key={questionKey(q)} className="chat-prompt-review-item">
+                <dt>
+                  {q.question}
+                  {q.id && q.header && <span className="chat-prompt-hint"> {q.header}</span>}
+                </dt>
+                <dd>
+                  {questionIsPrivate(q, request.input) && replyText(replies[i])
+                    ? '••••••'
+                    : replyText(replies[i]) || 'No answer'}
+                </dd>
               </div>
             ))}
           </dl>
@@ -385,6 +399,9 @@ function QuestionPrompt({
             )}
             <span className="chat-prompt-title">
               {question.question}
+              {question.id && question.header && (
+                <span className="chat-prompt-hint">{question.header}</span>
+              )}
               {question.multiSelect && <span className="chat-prompt-hint">Choose any</span>}
             </span>
             {skip && (
@@ -444,7 +461,7 @@ function QuestionPrompt({
                       <Key>{index + 1}</Key>
                     )}
                   </button>
-                  {structured && note === undefined && (
+                  {structured && !privateQuestion && note === undefined && (
                     <button
                       type="button"
                       className="chat-prompt-note-btn"
@@ -456,7 +473,7 @@ function QuestionPrompt({
                       <PencilSquareIcon />
                     </button>
                   )}
-                  {structured && note !== undefined && (
+                  {structured && !privateQuestion && note !== undefined && (
                     <textarea
                       ref={(el) => {
                         if (el && noteFocus === option.label) {
@@ -486,20 +503,37 @@ function QuestionPrompt({
                   <span className="chat-prompt-option-label">Other</span>
                   {/* A field that grows with the answer and wraps it, never a
                     single line running out of the card. */}
-                  <textarea
-                    ref={otherInput}
-                    rows={1}
-                    className="chat-prompt-other"
-                    placeholder="Type your own answer"
-                    value={reply.other ?? ''}
-                    disabled={busy}
-                    onChange={(event) =>
-                      set({
-                        picked: question.multiSelect ? reply.picked : [],
-                        other: event.target.value
-                      })
-                    }
-                  />
+                  {privateQuestion ? (
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      className="chat-prompt-other"
+                      aria-label={question.header ?? question.question}
+                      ref={(node) => {
+                        otherInput.current = node
+                      }}
+                      value={reply.other ?? ''}
+                      disabled={busy}
+                      onChange={(event) => set({ picked: [], other: event.target.value })}
+                    />
+                  ) : (
+                    <textarea
+                      ref={(node) => {
+                        otherInput.current = node
+                      }}
+                      rows={1}
+                      className="chat-prompt-other"
+                      placeholder="Type your own answer"
+                      value={reply.other ?? ''}
+                      disabled={busy}
+                      onChange={(event) =>
+                        set({
+                          picked: question.multiSelect ? reply.picked : [],
+                          other: event.target.value
+                        })
+                      }
+                    />
+                  )}
                 </span>
                 <Key>{choices + 1}</Key>
               </label>

@@ -4,6 +4,7 @@ import {
   buildAgentArgv,
   codexProfilePolicy,
   resolveLaunchProfile,
+  sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
   type LaunchProfile,
   type LaunchProfilePreferences
@@ -30,6 +31,72 @@ const prefs: LaunchProfilePreferences = {
   globalDefaults: { claude: 'tokenops-claude' },
   workspaceOverrides: { workspace: { claude: 'work-claude' } }
 }
+
+describe('a carried launch profile', () => {
+  const profile: LaunchProfile = {
+    id: 'work',
+    name: 'Work',
+    family: 'claude',
+    command: ['wrapper', 'claude'],
+    additionalArgs: ['--verbose']
+  }
+
+  it('accepts a custom profile and a chat variant with its source', () => {
+    expect(sanitizeCarriedLaunchProfile(profile)).toEqual(profile)
+    const chat = { ...profile, id: 'chat:claude:work', sourceProfileId: 'work' }
+    expect(sanitizeCarriedLaunchProfile(chat)).toEqual(chat)
+    expect(sanitizeCarriedLaunchProfile({ ...profile, id: ' work ', name: ' Work ' })).toEqual(
+      profile
+    )
+  })
+
+  it('requires a carried chat variant id to match its family', () => {
+    const codex = {
+      id: 'chat:codex:x',
+      name: 'X',
+      family: 'codex',
+      command: ['codex'],
+      additionalArgs: []
+    }
+    expect(sanitizeCarriedLaunchProfile(codex)).toEqual(codex)
+    expect(sanitizeCarriedLaunchProfile({ ...codex, id: 'chat:claude:x' })).toBeNull()
+  })
+
+  it.each([
+    { command: ['claude', '--model=opus'] },
+    { additionalArgs: ['--model', 'opus'] },
+    { family: 'other' },
+    { command: [] },
+    { command: ['claude\u0000'] },
+    { name: 'Work\u0001profile' },
+    { command: ['x'.repeat(4097)] }
+  ])('refuses invalid carried data %j', (changes) => {
+    expect(sanitizeCarriedLaunchProfile({ ...profile, ...changes })).toBeNull()
+  })
+
+  it('drops builtIn, invalid sources and Pi options on another family', () => {
+    expect(
+      sanitizeCarriedLaunchProfile({
+        ...profile,
+        builtIn: true,
+        sourceProfileId: '../invalid',
+        pi: { provider: 'anthropic', thinking: 'high' }
+      })
+    ).toEqual(profile)
+  })
+
+  it('keeps Pi options only for Pi and leaves stored-profile rules unchanged', () => {
+    const pi = { ...profile, family: 'pi', pi: { provider: 'anthropic', thinking: 'high' } }
+    expect(sanitizeCarriedLaunchProfile(pi)).toEqual(pi)
+    const parsed = sanitizeLaunchProfilePreferences({
+      customProfiles: [
+        { ...profile, builtIn: true, sourceProfileId: 'work' },
+        { ...profile, id: 'chat:claude:work', sourceProfileId: 'work' }
+      ]
+    })
+    expect(parsed.customProfiles).toEqual([profile])
+  })
+})
 
 describe('launch profile policy', () => {
   it('resolves explicit, workspace, global, then built-in profiles', () => {

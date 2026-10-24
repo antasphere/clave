@@ -11,6 +11,7 @@ import { PushClient, type PushClientOptions } from './push-client'
 export {
   createApiClient,
   PATIENT_TIMEOUT_MS,
+  HISTORY_TIMEOUT_MS,
   type ApiClientOptions,
   type ClaveApiClient
 } from './api'
@@ -27,6 +28,8 @@ export { workspaceFilesClient, type WorkspaceFilesClient } from './workspace-fil
 export { viewsClient, type ViewsClient, type ViewRequestInput } from './views'
 // ── Wave 4, lane C: the agent tools' address and tokens ──
 export { agentToolsClient, type AgentToolsClient } from './agent-tools'
+// ── Wave 5, lane C: the plugins ──
+export { pluginsClient, type PluginsClient } from './plugins'
 // ── Lane B: terminals ──
 export {
   PushClient,
@@ -79,3 +82,6 @@ export function createClaveClient(options: ClaveClientOptions): ClaveClient {
     }
   }
 }
+
+export { filesClient, type FilesClient } from './files'
+export { requestsClient, type RequestsClient } from './requests'

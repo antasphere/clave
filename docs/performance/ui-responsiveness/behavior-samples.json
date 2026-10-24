@@ -1,0 +1,128 @@
+{
+  "in-process": [
+    {
+      "scenario": "chat/hidden-streaming",
+      "runId": "69779e51-16ed-491c-844b-27094f733069",
+      "sessionId": "5d687061-bc85-48fb-8be9-6ee96e4da144"
+    },
+    {
+      "metric": "input-request-to-observed-value",
+      "rawMs": [
+        8.7153330000001, 7.493541999996523, 9.526124999996682, 7.713667000003625, 7.069541999997455,
+        5.876959000001079, 8.469792000003508, 6.25449999999546, 5.743583000003127,
+        7.620125000001281, 5.578625000001921, 8.928249999997206, 6.593250000005355,
+        7.3741660000014235, 7.671791000000667, 5.628292000001238, 8.092249999994237,
+        6.020917000001646, 6.551292000003741, 5.902791000000434, 6.104624999999942,
+        7.976042000002053, 6.820957999996608, 7.330541999996058, 6.890416999995068
+      ],
+      "hiddenProduced": 3,
+      "hiddenObserved": 3
+    },
+    {
+      "scenario": "chat/renderer-responsiveness",
+      "runId": "955e5d18-59e4-496b-8029-56dd726500be"
+    },
+    {
+      "metric": "visible-pending-snapshot-age",
+      "samples": [
+        {
+          "painted": 43,
+          "delivered": 44,
+          "pendingAgeMs": 3.8999998569488525
+        },
+        {
+          "painted": 46,
+          "delivered": 47,
+          "pendingAgeMs": 18.199999809265137
+        },
+        {
+          "painted": 48,
+          "delivered": 50,
+          "pendingAgeMs": 56
+        },
+        {
+          "painted": 51,
+          "delivered": 53,
+          "pendingAgeMs": 77.29999995231628
+        },
+        {
+          "painted": 54,
+          "delivered": 56,
+          "pendingAgeMs": 98.79999995231628
+        },
+        {
+          "painted": 57,
+          "delivered": 60,
+          "pendingAgeMs": 116
+        }
+      ]
+    },
+    {
+      "metric": "permission-stream-to-dom",
+      "ms": 7.800000190734863
+    }
+  ],
+  "separate": [
+    {
+      "scenario": "chat/hidden-streaming",
+      "runId": "76db06e2-1b2d-4e5e-900d-b59ae526949b",
+      "sessionId": "9c022f79-6c6b-46c7-9344-b63f4b2bfc35"
+    },
+    {
+      "metric": "input-request-to-observed-value",
+      "rawMs": [
+        8.681125000002794, 8.539042000003974, 6.086040999987745, 7.468833999999333,
+        5.768125000002328, 6.806416999999783, 10.102958000003127, 6.716082999992068,
+        7.593208999998751, 6.24649999999383, 7.14666600000055, 5.991791999986162, 6.092625000004773,
+        7.135542000003625, 5.718791000006604, 7.358584000001429, 5.820374999995693,
+        5.483000000007451, 5.9612079999933485, 5.467041000010795, 6.287125000002561,
+        6.3877079999947455, 6.069875000001048, 5.526333000001614, 6.369624999992084
+      ],
+      "hiddenProduced": 3,
+      "hiddenObserved": 3
+    },
+    {
+      "scenario": "chat/renderer-responsiveness",
+      "runId": "6d91ba36-d1a8-4887-ab90-8d1a6d20868f"
+    },
+    {
+      "metric": "visible-pending-snapshot-age",
+      "samples": [
+        {
+          "painted": 40,
+          "delivered": 41,
+          "pendingAgeMs": 28.09999990463257
+        },
+        {
+          "painted": 43,
+          "delivered": 44,
+          "pendingAgeMs": 38.90000009536743
+        },
+        {
+          "painted": 46,
+          "delivered": 48,
+          "pendingAgeMs": 65.20000004768372
+        },
+        {
+          "painted": 49,
+          "delivered": 51,
+          "pendingAgeMs": 84
+        },
+        {
+          "painted": 52,
+          "delivered": 55,
+          "pendingAgeMs": 105.60000014305115
+        },
+        {
+          "painted": 58,
+          "delivered": 58,
+          "pendingAgeMs": 0
+        }
+      ]
+    },
+    {
+      "metric": "permission-stream-to-dom",
+      "ms": 7.299999952316284
+    }
+  ]
+}

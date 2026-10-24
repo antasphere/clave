@@ -370,7 +370,10 @@ function alignSessionToGroupWorkspace(sessionId: string, group: SessionGroup): v
     )
   })
   if (session.sessionType === 'local') {
-    void window.electronAPI?.setSessionWorkspace(sessionId, group.workspaceId ?? null)
+    // Non-fatal, like the name: the stamp applies for this run either way.
+    void window.electronAPI
+      ?.setSessionWorkspace(sessionId, group.workspaceId ?? null)
+      .catch(() => {})
   }
 }
 

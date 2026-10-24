@@ -11,10 +11,12 @@ import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
   ReadSessionScreen,
   RenameSession,
+  KeepOnSessionRecord,
   RestartSession,
   SessionScreenUnavailable,
   SetSessionPage,
   TypeIntoSession,
+  ControlSession,
   GetSession,
   GetSessionCapabilities,
   GetSessionCommands,
@@ -141,6 +143,18 @@ export const sessionHandlers = [
       )
     )
   ),
+  CommandHandler.make(ControlSession, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      known(host, payload.id).pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: () => host.control(payload.id, payload.request),
+            catch: (error) => new SessionWriteRefused({ id: payload.id, message: messageOf(error) })
+          })
+        )
+      )
+    )
+  ),
   QueryHandler.make(GetSessionCapabilities, (payload) =>
     Effect.flatMap(SessionHost, (host) =>
       known(host, payload.id).pipe(Effect.map(() => host.capabilities(payload.id)))
@@ -203,6 +217,21 @@ export const sessionHandlers = [
       return session
     })
   ),
+  // ── Wave 6, lane A: the window's name and page, on the record only ──
+  CommandHandler.make(KeepOnSessionRecord, (payload) =>
+    Effect.flatMap(SessionHost, (host) =>
+      Effect.try({
+        try: () => {
+          const { id, ...fields } = payload
+          host.keepOnRecord(id, fields)
+        },
+        catch: (error) =>
+          error instanceof CapabilityUnavailable
+            ? error
+            : new CapabilityUnavailable({ capability: 'sessions', message: messageOf(error) })
+      })
+    )
+  ),
   CommandHandler.make(SetSessionPage, (payload) =>
     Effect.gen(function* () {
       const host = yield* SessionHost
@@ -263,10 +292,14 @@ export const sessionHandlers = [
       yield* events.publish({
         _tag: 'session.restarted',
         id: payload.id,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId }),
         resumed: restarted.resumed,
         account: payload.account
       })
-      return restarted
+      return {
+        ...restarted,
+        ...(payload.requestId !== undefined && { requestId: payload.requestId })
+      }
     })
   )
 ] as const

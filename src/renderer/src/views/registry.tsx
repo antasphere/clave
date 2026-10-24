@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { isRemoteKey } from '../lib/fleet-identity'
+import { reportFleetError } from '../store/fleet-store'
+import { FleetResume } from '../components/fleet/FleetControls'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { useRegistry } from './store'
 import { implemented, nativeViews } from './native-views'
 import { paneIsTerminal } from './pane-kind'
@@ -19,6 +22,8 @@ import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
 import { AccountProposal } from '../components/terminal/AccountProposal'
 import { useBackgroundTasks } from './background-tasks'
 import { BackgroundTasksChip } from './BackgroundTasksChip'
+import { useMarkPack } from '../components/plugins/native-marks'
+import { tokenColor } from '../lib/marks'
 
 type DotStatus = 'working' | 'waiting' | 'background' | 'ready' | 'inactive'
 /** `background`: the turn is over but work it started still runs. */
@@ -28,6 +33,29 @@ function dotStatus(state: string, background = 0): DotStatus {
   if (state === 'ended') return 'inactive'
   if (background > 0) return 'background'
   return 'ready'
+}
+/** The pane's status before its title: the dot, or — Appearance → Agent mark —
+ *  the chosen pack's mark, moving while the agent works and tinted the dot's
+ *  colour when it is waiting on the reader or finished with work still running. */
+function PaneStatus({ status }: { status: DotStatus }): React.JSX.Element {
+  const pack = useMarkPack()
+  if (!pack) return <span className="pane-status-dot" data-status={status} />
+  const ink =
+    status === 'waiting'
+      ? tokenColor('--color-status-waiting')
+      : status === 'background'
+        ? tokenColor('--color-status-working')
+        : undefined
+  return (
+    <span className="pane-status-mark" data-status={status}>
+      <pack.Agent
+        working={status === 'working' || status === 'background'}
+        status={status}
+        color={ink}
+        slot="pane"
+      />
+    </span>
+  )
 }
 /** The pane's view picker: every view that renders this session, the current
  *  one checked. Hidden when a session has only one view to be read in — a menu
@@ -95,12 +123,14 @@ function ViewPicker({
     </DropdownMenu.Root>
   )
 }
-export function RegisteredSessionView({
+function RegisteredSessionView({
   sessionId,
-  terminalSessionId
+  terminalSessionId,
+  visible = true
 }: {
   sessionId: string
   terminalSessionId?: string
+  visible?: boolean
 }): React.JSX.Element {
   const registry = useRegistry()
   const session = registry.sessions.find((s) => s.id === sessionId)
@@ -194,6 +224,10 @@ export function RegisteredSessionView({
     try {
       await window.electronAPI.killSession(sessionId)
     } catch {
+      if (isRemoteKey(sessionId)) {
+        reportFleetError(new Error('close failed'))
+        return
+      }
       // The provider may already have exited, as in the terminal header.
     }
     useViewSessionStore.getState().removeSession(sessionId)
@@ -218,10 +252,7 @@ export function RegisteredSessionView({
     >
       <header className="pane-header chat-header">
         <div className="pane-header-lead">
-          <span
-            className="pane-status-dot"
-            data-status={dotStatus(meta.state, backgroundTasks.length)}
-          />
+          <PaneStatus status={dotStatus(meta.state, backgroundTasks.length)} />
           <span className="pane-header-title" title={session.cwd}>
             {name ?? session.title}
           </span>
@@ -233,6 +264,7 @@ export function RegisteredSessionView({
           <AccountProposal sessionId={sessionId} />
         </div>
         <div className="pane-header-actions">
+          <FleetResume sessionId={sessionId} />
           <LinkedDocumentReopen sessionId={sessionId} />
           <BackgroundTasksChip tasks={backgroundTasks} />
           <span className="chat-state" data-state={meta.state}>
@@ -294,7 +326,11 @@ export function RegisteredSessionView({
                 onState={reporters.get(view.id)!}
               />
             ) : Mounted ? (
-              <Mounted session={session} onState={reporters.get(view.id)!} />
+              <Mounted
+                session={session}
+                onState={reporters.get(view.id)!}
+                visible={visible && !hidden}
+              />
             ) : null}
           </div>
         )
@@ -310,3 +346,6 @@ export function RegisteredSessionView({
     </section>
   )
 }
+
+const MemoizedRegisteredSessionView = memo(RegisteredSessionView)
+export { MemoizedRegisteredSessionView as RegisteredSessionView }

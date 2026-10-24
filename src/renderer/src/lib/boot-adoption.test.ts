@@ -145,4 +145,13 @@ describe('resolveHiddenOwner — an ownerless hidden half is discarded, never su
   it('a toolbar link is never a sidebar owner here', () => {
     expect(resolveHiddenOwner({ kind: 'toolbar', key: 'pin:0' }, state)).toBe('discard')
   })
+  it('brings a chat back without the prompt, live or not: restoring it starts no agent (PRDCT-3527)', () => {
+    const plan = planBootAdoption([
+      { id: 'chat', transport: 'events' as const },
+      { id: 'shell', transport: 'pty' as const },
+      { id: 'old' }
+    ])
+    expect(plan.liveTabs.map((r) => r.id)).toEqual(['chat'])
+    expect(plan.deadTabs.map((r) => r.id)).toEqual(['shell', 'old'])
+  })
 })

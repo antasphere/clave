@@ -1,8 +1,8 @@
-// Pinned to the in-process server (wave 3 of the server/client split,
-// PRDCT-3293): this spec opens a session through the agent tools, which main
-// still answers from its own session host; attached, that host is not the
-// server's, so the pin goes when the tools answer from the server (lane D,
-// PRDCT-3294). Not a known failure.
+// Pinned to the in-process server by design (re-examined by wave 5, lane C,
+// PRDCT-3433): it proves the in-process server's sidebar API, which an
+// attached server does not host (the sidebar stays the shell's there); its
+// second block already runs attached, and its third needs the shell's tmux
+// preference, which the standalone server ignores. Not a known failure.
 /**
  * The sidebar lives on the server (PRDCT-3241). What this proves, on the real
  * app, that no other spec does: a caller that is NOT a window changes a

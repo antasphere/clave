@@ -1,6 +1,15 @@
+import { publicQuestionAnswers } from '../../../src/renderer/src/lib/question-identity'
+import { bindFleetCatchup } from './fleet-sync'
+import { useFleetStore } from '../../../src/renderer/src/store/fleet-store'
+import { parseResourceKey } from '@clave/contract/fleet'
+import {
+  isRemoteKey,
+  ownerOf,
+  canOpenRemotePage
+} from '../../../src/renderer/src/lib/fleet-identity'
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import { createEntryMarkdownPlugins } from './markdown-append'
 import {
   ArrowUpIcon,
   ChatBubbleLeftRightIcon,
@@ -30,6 +39,9 @@ import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
+import { McpPanel } from './McpPanel'
+import { PluginPanel } from './PluginPanel'
+import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
 import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
@@ -44,10 +56,12 @@ import { Attachments } from './Attachments'
 import { useComposerFocus } from './focus'
 import { useMessageHistory } from './history'
 import { useTranscriptEnd } from './transcript'
+import { usePresentation } from './presentation'
 import { TranscriptRows } from './rows'
 import { JumpToEnd } from './JumpToEnd'
 import { useEarlier, type EarlierPage } from './earlier'
-import { EarlierLoading } from './EarlierLoading'
+import { EarlierLoading, PastFailed } from './EarlierLoading'
+import { pastHead, pastStep, readPast, type PastReader, type PastState } from './past'
 import {
   attachmentIssue,
   MAX_ATTACHMENTS,
@@ -59,10 +73,12 @@ import {
 import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
+import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 
 export interface ChatViewProps {
   session: Session
   onState: (state: AgentState, model: string | null) => void
+  visible?: boolean
 }
 /** A file on its way into the composer: named at once, a chip once main has
  *  prepared it, an error in its place when main refused it. */
@@ -74,7 +90,9 @@ interface Preparation {
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
-  dt.types.includes('Files') || dt.types.includes('text/uri-list')
+  dt.types.includes('Files') ||
+  dt.types.includes('text/uri-list') ||
+  dt.types.includes('application/x-clave-files')
 const pathsDrag = (dt: DataTransfer): boolean => dt.types.includes('text/plain')
 /** When a turn happened, the way a reader wants it: relative while fresh,
  *  clock time today, the date once it is older. */
@@ -120,6 +138,9 @@ function TurnMeta({ at, text }: { at: number; text: string }): React.JSX.Element
  *  moment it stops. A finished answer stands on its own; a logo resting under
  *  every reply read as the transcript's own decoration rather than a sign. */
 function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
+  // Appearance → Agent mark: the chosen pack's mark, moving, in place of the
+  // breathing logo. Same slot, same arrival and departure.
+  const pack = useMarkPack()
   const Logo =
     provider === 'claude'
       ? ClaudeLogo
@@ -133,10 +154,17 @@ function ProviderMark({ provider }: { provider: string }): React.JSX.Element {
       className="chat-provider-mark"
       data-provider={provider}
       data-state="working"
+      data-mark={pack ? 'pack' : undefined}
       role="status"
       aria-label={`${provider} is working`}
     >
-      {Logo ? <Logo /> : <span className="chat-provider-mark-dot" />}
+      {pack ? (
+        <pack.Agent working status="working" slot="transcript" />
+      ) : Logo ? (
+        <Logo />
+      ) : (
+        <span className="chat-provider-mark-dot" />
+      )}
     </div>
   )
 }
@@ -252,6 +280,34 @@ const EntryRow = memo(function EntryRow({
   entry: Entry
   onError: (error: unknown) => void
 }): React.JSX.Element | null {
+  const streaming = entry.kind === 'assistant' && !entry.final
+  const remarkPlugins = useMemo(() => createEntryMarkdownPlugins(streaming), [streaming])
+  // Stable component types retain existing links/tables while text grows.
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      code: ChatCode,
+      table: ({ children }) => (
+        <div className="chat-table-scroll">
+          <table>{children}</table>
+        </div>
+      ),
+      a: ({ href, children }) =>
+        href && /^(https?:|mailto:)/i.test(href) ? (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault()
+              void openLink(href, { external: wantsExternal(event) }).catch(onError)
+            }}
+          >
+            {children}
+          </a>
+        ) : (
+          <span>{children}</span>
+        )
+    }),
+    [onError]
+  )
   if (entry.kind === 'user') {
     // A message another tab sent: its sender in a chip, its words without
     // the bracketed header, in the delivery's own tint.
@@ -284,31 +340,7 @@ const EntryRow = memo(function EntryRow({
     return (
       <div className="chat-turn-wrap" data-side="start">
         <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code: ChatCode,
-              table: ({ children }) => (
-                <div className="chat-table-scroll">
-                  <table>{children}</table>
-                </div>
-              ),
-              a: ({ href, children }) =>
-                href && /^(https?:|mailto:)/i.test(href) ? (
-                  <a
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void openLink(href, { external: wantsExternal(event) }).catch(onError)
-                    }}
-                  >
-                    {children}
-                  </a>
-                ) : (
-                  <span>{children}</span>
-                )
-            }}
-          >
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
             {entry.text}
           </ReactMarkdown>
         </article>
@@ -363,11 +395,12 @@ function TranscriptRow({
     </div>
   )
 }
-export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element {
+export function ChatView({ session, onState, visible = true }: ChatViewProps): React.JSX.Element {
   const [conversation, dispatch] = useReducer(reduceConversation, {
     ...emptyConversation,
     state: session.state
   })
+  const presentation = usePresentation(conversation, visible)
   // The footer's context meter reads the same stream the terminal's status line does.
   const [status, dispatchStatus] = useReducer(
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
@@ -379,7 +412,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // older; `pastRead` holds the empty state back until the first answer, so a
   // long conversation never flashes "Start a conversation" on its way in.
   const [before, setBefore] = useState<number | null>(null)
-  const [pastRead, setPastRead] = useState(false)
+  // `reading` until the first answer; `failed` when a round of asking found
+  // none (`readPast`): the pane says so instead of showing an empty
+  // conversation, and offers to ask again (`pastHead`).
+  const [past, setPast] = useState<PastState>('reading')
+  const pastRead = past !== 'reading'
+  const pastReader = useRef<PastReader | null>(null)
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
@@ -393,8 +431,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // Preparations the reader removed before main answered; their file is dropped on arrival.
   const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
-  // The /resume picker, open in the dock above the composer.
-  const [resuming, setResuming] = useState(false)
+  // The host's own panel, open in the dock above the composer: the /resume
+  // picker, or the /mcp and /plugin panels headless Claude has no menu for.
+  const [panel, setPanel] = useState<HostPanel | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   // The last message sent, so Escape can hand it back to the composer.
   const lastSent = useRef<{ text: string; attachments: Attachment[] } | null>(null)
@@ -409,6 +448,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    const catchup = bindFleetCatchup(session.id, (page) => {
+      if (!live) return
+      dispatch({ sync: page.items })
+      setBefore(page.before)
+      setReady(true)
+    })
     // An end is taken only once the record confirms it: after a move to
     // another account the old process's end can arrive after this pane has
     // remounted on the new one, and closed it over a live agent.
@@ -419,6 +464,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         })
         .catch(console.error)
     const stop = window.electronAPI.onSessionStream(session.id, (value) => {
+      catchup.changed()
       if (value.kind !== 'event') return
       const event = value.event
       const take = (): void => {
@@ -431,27 +477,44 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     const stopExit = window.electronAPI.onSessionStreamExit(session.id, (code) =>
       confirmed(() => dispatch({ exit: code }))
     )
+    let stopConnected: () => void = () => {}
     void window.electronAPI
       .sessionsSubscribe(session.id)
       .then(() => {
-        if (live) setReady(true)
+        if (!live) return
+        setReady(true)
         // Asked once subscribed, when the adapter has read the transcript;
-        // whatever streamed meanwhile is newer and stays after it. A host
-        // without the call rejects inside the chain and shows no past.
-        return Promise.resolve()
-          .then(() => window.electronAPI.sessionsHistory(session.id))
-          .then((page) => {
-            if (!live) return
+        // whatever streamed meanwhile is newer and stays after it. A read
+        // that is lost (a server busy restoring every tab after an update
+        // answered it too late) is asked again until it lands, and again
+        // whenever the server connection comes back (PRDCT-3526): asked once
+        // and dropped, it left a resumed chat empty for good while its live
+        // turns kept arriving.
+        pastReader.current = readPast(() => window.electronAPI.sessionsHistory(session.id), {
+          read: (page) => {
             dispatch({ prepend: page.items })
             setBefore(page.before)
             // The newest page holds the context as the conversation left it.
             const usage = page.items.findLast((item) => item.event.type === 'context_usage')
             if (usage) dispatchStatus(usage.event)
-          })
-          .catch(() => {})
-          .finally(() => {
-            if (live) setPastRead(true)
-          })
+            setPast((now) => pastStep(now, 'read'))
+          },
+          failed: (error) => {
+            console.error(`[chat-view] the past of ${session.id} could not be read`, error)
+            setPast((now) => pastStep(now, 'failed'))
+          }
+        })
+        const localOff = window.electronAPI.onServerConnected(() => {
+          if (!isRemoteKey(session.id)) pastReader.current?.retry()
+        })
+        const fleetOff = window.electronAPI.onFleetStatus?.((status) => {
+          if (status.serverId === ownerOf(session.id) && status.state === 'connected')
+            pastReader.current?.retry()
+        })
+        stopConnected = () => {
+          localOff()
+          fleetOff?.()
+        }
       })
       .catch((error) => dispatch({ event: { type: 'error', message: String(error), fatal: true } }))
     // Whether an attached image can go as image content is the adapter's
@@ -465,6 +528,10 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       .catch(() => {})
     return () => {
       live = false
+      catchup.close()
+      pastReader.current?.stop()
+      pastReader.current = null
+      stopConnected()
       stop()
       stopExit()
       void window.electronAPI.sessionsUnsubscribe(session.id)
@@ -478,9 +545,9 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
      blocked with live buttons the adapter would refuse (PRDCT-2549). */
   const state = conversation.state
   const closed = !ready || state === 'ended'
-  useComposerFocus(session.id, !closed, textarea)
+  useComposerFocus(session.id, visible && !closed, textarea)
   useEffect(() => onState(state, conversation.model), [state, conversation.model, onState])
-  const transcript = useTranscriptEnd(conversation.entries, stickSlack)
+  const transcript = useTranscriptEnd(presentation.entries, stickSlack, visible)
   const fetchEarlier = useCallback<EarlierPage>(async () => {
     if (before === null) return null
     const page = await window.electronAPI.sessionsHistory(session.id, before)
@@ -489,7 +556,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       setBefore(page.before)
     }
   }, [session.id, before])
-  const earlier = useEarlier(transcript, before !== null, fetchEarlier, conversation.entries)
+  const earlier = useEarlier(
+    transcript,
+    visible && before !== null,
+    fetchEarlier,
+    presentation.entries
+  )
   const write = async (input: SessionInput): Promise<void> => {
     await window.electronAPI.sessionsWrite(session.id, input)
   }
@@ -498,12 +570,12 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       dispatch({ event: { type: 'error', message: String(error), fatal: false } }),
     []
   )
-  // /resume is the host's, as in the TUI: it opens the picker rather than
-  // reaching the agent, typed whole or taken from the slash menu.
-  const canResume = session.provider === 'claude'
-  const openResume = (): void => {
+  // /resume, /mcp and /plugin are the local host's. Remote commands stay
+  // with their owning agent; the native panels use this desktop's APIs.
+  const hostPanels = session.provider === 'claude' && !isRemoteKey(session.id)
+  const openPanel = (which: HostPanel): void => {
     setDraft('')
-    setResuming(true)
+    setPanel(which)
   }
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
@@ -512,7 +584,8 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const hasDraft = !!draft.trim() || attachments.length > 0
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
-    if (canResume && /^\/resume\s*$/.test(draft.trim())) return openResume()
+    const typedPanel = hostPanels ? hostPanelFor(draft) : null
+    if (typedPanel) return openPanel(typedPanel)
     const imageBytes = attachments
       .filter((file) => file.delivery === 'image')
       .reduce((sum, file) => sum + file.size, 0)
@@ -546,7 +619,14 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
     setPending((current) => [...current, id])
     try {
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      dispatch({ answer: id, optionId, answers })
+      const permission = conversation.entries.find(
+        (entry) => entry.kind === 'permission' && entry.request.id === id
+      )
+      const shown =
+        permission?.kind === 'permission'
+          ? publicQuestionAnswers(permission.request.questions, permission.request.input, answers)
+          : undefined
+      dispatch({ answer: id, optionId, answers: shown })
       textarea.current?.focus()
     } catch (error) {
       report(error)
@@ -641,7 +721,22 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
     const stable = (
-      await Promise.all(paths.map((p) => window.electronAPI.persistDroppedFile(p)))
+      await Promise.all(
+        paths.map(async (p) => {
+          if (!isRemoteKey(session.id)) {
+            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+            return window.electronAPI.persistDroppedFile(p)
+          }
+          if (isRemoteKey(p)) {
+            const file = parseResourceKey('file', p)
+            if (file.serverId !== ownerOf(session.id))
+              throw new Error('This file belongs to another server.')
+            return file.id
+          }
+          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+          return parseResourceKey('file', file.path).id
+        })
+      )
     ).filter((p): p is string => Boolean(p))
     if (!stable.length) return
     const insert = stable.map(pathForMessage).join(' ') + ' '
@@ -662,17 +757,18 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
     (command: CommandOption): void => {
-      if (canResume && command.name === 'resume') {
+      const picked = hostPanels ? hostPanelOf(command.name) : null
+      if (picked) {
         setSlashDismissed('')
         setDraft('')
-        setResuming(true)
+        setPanel(picked)
         return
       }
       setDraft(command.insert)
       setSlashDismissed(command.insert)
       textarea.current?.focus()
     },
-    [canResume, setDraft]
+    [hostPanels, setDraft]
   )
   /* A picked conversation opens as a chat tab of its own, on this tab's launch
      profile and beside it; a tab that has said nothing yet gives its place to
@@ -687,7 +783,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       dangerousMode: me?.dangerousMode ?? false,
       launchProfileId: me?.launchProfileId
     })
-    setResuming(false)
+    setPanel(null)
     if (!opened) return report('Could not resume that conversation')
     if (opened === session.id || conversation.entries.length > 0) return
     const current = useViewSessionStore.getState()
@@ -704,22 +800,43 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const blocks = useMemo(() => {
+    const entries = remotePending
+      ? presentation.entries.map((entry) =>
+          entry.kind === 'permission' && !entry.answer
+            ? {
+                ...entry,
+                answeredElsewhere: !remotePending.some(
+                  (r) => r.sessionId === session.id && r.providerRequestId === entry.request.id
+                )
+              }
+            : entry
+        )
+      : presentation.entries
     const ordinal = new Map<Entry, number>()
-    conversation.entries.forEach((entry, i) => ordinal.set(entry, conversation.first + i))
-    return groupEntries(visibleEntries(conversation.entries)).map((block) => ({
+    entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
+    return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
       key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
     }))
-  }, [conversation.entries, conversation.first])
+  }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
   const [disclosure] = useState(() => new Map<string, boolean>())
   // The mark is the agent at work, nothing else: it leaves with the state.
+  const head = pastHead(past, conversation.entries.length, state === 'ended')
   const showMark = state === 'working'
   return (
     <div
       className="chat-view"
       data-testid="chat-view"
+      onClickCapture={(event) => {
+        const href = (event.target as Element).closest('a')?.getAttribute('href')
+        if (isRemoteKey(session.id) && href && /^https?:/i.test(href) && !canOpenRemotePage(href)) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && state === 'working') {
           event.preventDefault()
@@ -758,7 +875,17 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
       <div className="chat-transcript">
         <div ref={transcript.scroll} className="chat-scroll">
           <div className="chat-column" role="log" aria-label="Conversation">
-            {pastRead && conversation.entries.length === 0 && state !== 'ended' && (
+            {head === 'failed' && (
+              <PastFailed
+                onRetry={() => {
+                  // Back to reading: neither the failure nor the empty state
+                  // until the new round answers.
+                  setPast((now) => pastStep(now, 'retry'))
+                  pastReader.current?.retry()
+                }}
+              />
+            )}
+            {head === 'empty' && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
                   <ChatBubbleLeftRightIcon />
@@ -794,7 +921,7 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
         {transcript.away && <JumpToEnd onClick={transcript.jump} />}
       </div>
       <div className="chat-composer-wrap">
-        {resuming && (
+        {panel === 'resume' && (
           <ResumePicker
             cwd={session.cwd}
             exclude={
@@ -803,13 +930,33 @@ export function ChatView({ session, onState }: ChatViewProps): React.JSX.Element
             }
             onPick={(entry) => void resumeConversation(entry)}
             onClose={() => {
-              setResuming(false)
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'mcp' && (
+          <McpPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
+              textarea.current?.focus()
+            }}
+          />
+        )}
+        {panel === 'plugin' && (
+          <PluginPanel
+            sessionId={session.id}
+            onClose={() => {
+              setPanel(null)
               textarea.current?.focus()
             }}
           />
         )}
         <PromptDock
-          requests={resuming ? [] : waitingOn}
+          // Remote requests stay with their owner. Locally, only /resume
+          // hides the dock; MCP and plugin panels keep pending prompts in sight.
+          requests={panel === 'resume' || isRemoteKey(session.id) ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

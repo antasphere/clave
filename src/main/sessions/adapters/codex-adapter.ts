@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { z } from 'zod'
+import { isQuestionAnswerKey } from '../../../../packages/server/src/requests/question-key'
 import { codexRoot, findCodexRollout } from '../../session-history/codex'
 import { replayCodexHistory } from './codex-history'
 import { codexProfilePolicy, type LaunchProfile } from '../../../shared/agent-launch'
@@ -8,6 +10,7 @@ import {
   SessionInputSchema,
   userMessageEvent,
   providerPrompt,
+  type BackgroundTask,
   type PreparedPrompt,
   type SessionInput,
   type SessionEvent,
@@ -61,6 +64,57 @@ interface Approval {
   rpcId: RpcId
   turnId: string
   responses: Map<string, unknown>
+  questions?: Array<{ id: string; question: string }>
+}
+// Installed Codex 0.163.0 ToolRequestUserInputParams. The provider's question
+// IDs identify answers across the connection, shared form and replay boundary.
+const nativeQuestions = z.object({
+  isBlocking: z.boolean(),
+  itemId: z.string(),
+  threadId: z.string(),
+  turnId: z.string(),
+  questions: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        question: z.string().min(1),
+        header: z.string(),
+        isOther: z.boolean().default(false),
+        isSecret: z.boolean().default(false),
+        options: z.array(z.object({ label: z.string(), description: z.string() })).nullish()
+      })
+    )
+    .min(1)
+    .max(20)
+})
+/** How full a thread's context is after its last call, off a tokenUsage frame:
+ *  what that call read and wrote, less the reasoning, which the next call does
+ *  not carry. Raw tokens, like the Claude meter: Codex's own status line also
+ *  drops a fixed baseline, so its percentage reads a few points apart by
+ *  design. Null when the frame names no usable count. */
+const contextOf = (p: Record<string, unknown>): { used: number; window: number | null } | null => {
+  const usage = object(p.tokenUsage)
+  const last = object(usage.last)
+  const reasoning = last.reasoningOutputTokens
+  const used =
+    typeof last.totalTokens === 'number'
+      ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
+      : NaN
+  if (!Number.isFinite(used) || used <= 0) return null
+  const window = usage.modelContextWindow
+  return { used, window: typeof window === 'number' && window > 0 ? window : null }
+}
+/** The states in which a v1 collaboration agent no longer runs, and those in
+ *  which it runs (again). */
+const AGENT_ENDED = new Set(['completed', 'errored', 'shutdown', 'notFound', 'interrupted'])
+const AGENT_RUNNING = new Set(['pendingInit', 'running'])
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && v !== '') : []
+/** A command as Codex parsed it ("sleep 30 && echo done"), else as it ran
+ *  (the login-shell wrapper included). */
+const commandOf = (item: Record<string, unknown>): string => {
+  const actions = Array.isArray(item.commandActions) ? item.commandActions.map(object) : []
+  return (actions.length === 1 && text(actions[0].command)) || text(item.command)
 }
 
 /** State belongs to this connection, never to terminal titles or body heuristics. */
@@ -74,7 +128,102 @@ export class CodexTranslator {
   readonly approvals = new Map<string, Approval>()
   private metadataEmitted = false
   private streamed = new Map<string, string>()
+  /** What runs past the turn, by id: a subagent by its own thread, a command
+   *  by its item. A subagent's thread is listed here, which is how its frames
+   *  are told from a stranger's; both kinds stay off the transcript. */
+  private readonly background = new Map<string, BackgroundTask>()
+  /** The main thread's commands running now, by item id. Codex says nothing
+   *  when a command is left running mid-turn; a turn that completes while one
+   *  is still in progress is its word that the command outlives the turn. */
+  private readonly running = new Map<string, BackgroundTask>()
+  /** Every subagent this connection has seen, by thread, listed or not: an
+   *  agent given more work after it finished runs again on the same thread,
+   *  and Codex's follow-up names neither its path nor its model. */
+  private readonly agents = new Map<string, Pick<BackgroundTask, 'description' | 'model'>>()
   constructor(private emit: (event: SessionEvent) => void) {}
+
+  /** Publish the background list whole; a snapshot replaces the last. */
+  private publishBackground(): void {
+    this.emit({ type: 'background_tasks', tasks: [...this.background.values()] })
+  }
+  /** Nothing outlives the app-server: its exit empties the list, once. */
+  clearBackground(): void {
+    this.running.clear()
+    this.agents.clear()
+    if (!this.background.size) return
+    this.background.clear()
+    this.publishBackground()
+  }
+  private listAgent(thread: string, description: string, model: string): boolean {
+    if (!thread || this.background.has(thread)) return false
+    this.agents.set(thread, { description, ...(model ? { model } : {}) })
+    return this.relist(thread)
+  }
+  /** List a known subagent for a run of its own, as it was first named. */
+  private relist(thread: string): boolean {
+    const known = this.agents.get(thread)
+    if (!known || this.background.has(thread)) return false
+    this.background.set(thread, { id: thread, kind: 'agent', ...known, startedAt: Date.now() })
+    return true
+  }
+  /** A frame of a subagent's own thread. Its usage reads under its row; its
+   *  text, tools and turns are its own and never the conversation's, so they
+   *  stay provider events. False for a thread no listed subagent runs on. */
+  private childFrame(frame: RpcNotification, thread: string): boolean {
+    // A known agent's thread starting a turn is its next run: work sent to
+    // it after it finished (Codex 0.162.1 says `interacted`, then this).
+    if (frame.method === 'turn/started' && this.relist(thread)) {
+      this.publishBackground()
+      return true
+    }
+    const task = this.background.get(thread)
+    if (task?.kind !== 'agent') return false
+    const p = object(frame.params)
+    if (frame.method === 'thread/tokenUsage/updated') {
+      const context = contextOf(p)
+      if (!context) return false
+      this.emit({ type: 'context_usage', used: context.used, window: null, parent: thread })
+      return true
+    }
+    if (frame.method === 'thread/closed') {
+      this.background.delete(thread)
+      this.publishBackground()
+      return true
+    }
+    return false
+  }
+  /** The v2 multi-agent lifecycle: Codex's own record of a subagent starting
+   *  and ending, on the parent thread. False when it changes nothing. */
+  private subAgentActivity(item: Record<string, unknown>): boolean {
+    const thread = text(item.agentThreadId)
+    const kind = text(item.kind)
+    if (kind === 'started') {
+      const name = text(item.agentPath).split('/').filter(Boolean).at(-1) ?? ''
+      return this.listAgent(thread, name || thread, text(item.model))
+    }
+    if (kind === 'completed' || kind === 'interrupted') return this.background.delete(thread)
+    return false
+  }
+  /** The v1 collaboration tools: a completed spawn lists its agents, a
+   *  completed close ends them, and any call's last known states end those
+   *  no longer running and list again a known one running anew (a resumed
+   *  or re-tasked agent). False when it changes nothing. */
+  private collabCall(item: Record<string, unknown>, completed: boolean): boolean {
+    let changed = false
+    const done = completed && text(item.status) === 'completed'
+    const receivers = strings(item.receiverThreadIds)
+    if (done && text(item.tool) === 'spawnAgent')
+      for (const thread of receivers)
+        changed = this.listAgent(thread, text(item.prompt) || thread, text(item.model)) || changed
+    if (done && text(item.tool) === 'closeAgent')
+      for (const thread of receivers) changed = this.background.delete(thread) || changed
+    for (const [thread, state] of Object.entries(object(item.agentsStates))) {
+      const status = text(object(state).status)
+      if (AGENT_ENDED.has(status)) changed = this.background.delete(thread) || changed
+      else if (AGENT_RUNNING.has(status)) changed = this.relist(thread) || changed
+    }
+    return changed
+  }
 
   metadata(result: unknown): void {
     const r = object(result)
@@ -98,7 +247,7 @@ export class CodexTranslator {
       this.emit({ type: 'provider_event', provider: 'codex', payload: frame })
     const threadId = text(p.threadId) || text(object(p.thread).id)
     if (this.threadId && threadId && threadId !== this.threadId) {
-      fallback()
+      if (!this.childFrame(frame, threadId)) fallback()
       return
     }
     switch (frame.method) {
@@ -140,6 +289,31 @@ export class CodexTranslator {
           this.emit({ type: 'assistant_text', delta, final: true })
           return
         }
+        if (item.type === 'subAgentActivity' || item.type === 'collabAgentToolCall') {
+          const changed =
+            item.type === 'subAgentActivity'
+              ? this.subAgentActivity(item)
+              : this.collabCall(item, completed)
+          if (changed) this.publishBackground()
+          else fallback()
+          return
+        }
+        if (item.type === 'commandExecution') {
+          // A poll of a running process is not a process of its own: the
+          // command that started it is the one listed.
+          if (!completed && item.source !== 'unifiedExecInteraction')
+            this.running.set(id, {
+              id,
+              kind: 'shell',
+              description: commandOf(item),
+              toolUseId: id,
+              startedAt: Date.now()
+            })
+          if (completed) {
+            this.running.delete(id)
+            if (this.background.delete(id)) this.publishBackground()
+          }
+        }
         if (['commandExecution', 'fileChange', 'mcpToolCall'].includes(text(item.type))) {
           if (!completed)
             this.emit({
@@ -172,6 +346,13 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
+        // What the turn left running is listed before the turn says it ended,
+        // so the view never shows a moment with the work unlisted.
+        if (this.running.size) {
+          for (const task of this.running.values()) this.background.set(task.id, task)
+          this.running.clear()
+          this.publishBackground()
+        }
         if (turn.status === 'interrupted') this.emit({ type: 'turn_interrupted' })
         else if (turn.error)
           this.emit({
@@ -189,27 +370,12 @@ export class CodexTranslator {
       }
       case 'thread/tokenUsage/updated': {
         // After every call: `last` is that call, `total` the thread's sum.
-        // Its context is what it read and wrote, less the reasoning, which
-        // the next call does not carry. Raw tokens, like the Claude meter:
-        // Codex's own status line also drops a fixed baseline, so its
-        // percentage reads a few points apart by design.
-        const usage = object(p.tokenUsage)
-        const last = object(usage.last)
-        const reasoning = last.reasoningOutputTokens
-        const used =
-          typeof last.totalTokens === 'number'
-            ? last.totalTokens - (typeof reasoning === 'number' ? reasoning : 0)
-            : NaN
-        const window = usage.modelContextWindow
-        if (!Number.isFinite(used) || used <= 0) {
+        const context = contextOf(p)
+        if (!context) {
           fallback()
           return
         }
-        this.emit({
-          type: 'context_usage',
-          used,
-          window: typeof window === 'number' && window > 0 ? window : null
-        })
+        this.emit({ type: 'context_usage', used: context.used, window: context.window })
         return
       }
       case 'serverRequest/resolved': {
@@ -234,6 +400,7 @@ export class CodexTranslator {
   request(frame: RpcRequest): boolean {
     const p = object(frame.params)
     const responses = new Map<string, unknown>()
+    let questions: z.infer<typeof nativeQuestions>['questions'] | undefined
     if (
       frame.method === 'item/commandExecution/requestApproval' ||
       frame.method === 'item/fileChange/requestApproval'
@@ -260,6 +427,14 @@ export class CodexTranslator {
         }
       ])
         responses.set(JSON.stringify(response), response)
+    } else if (frame.method === 'item/tool/requestUserInput') {
+      const decoded = nativeQuestions.safeParse(frame.params)
+      if (!decoded.success) return false
+      questions = decoded.data.questions
+      if (questions.some((q) => !isQuestionAnswerKey(q.id))) return false
+      if (new Set(questions.map((q) => q.id)).size !== questions.length) return false
+      responses.set('answer', undefined)
+      responses.set('deny', { answers: {} })
     } else if (frame.method === 'mcpServer/elicitation/request') {
       // v1 has choices, not a form editor: decline/cancel are always valid.
       for (const action of ['decline', 'cancel'])
@@ -274,31 +449,76 @@ export class CodexTranslator {
       return false
     }
     const id = JSON.stringify(frame.id)
-    this.approvals.set(id, { rpcId: frame.id, turnId: text(p.turnId) || this.turnId, responses })
+    this.approvals.set(id, {
+      rpcId: frame.id,
+      turnId: text(p.turnId) || this.turnId,
+      responses,
+      ...(questions && { questions })
+    })
     this.emit({
       type: 'permission_request',
       id,
-      description: text(p.reason) || text(p.message) || text(p.command) || frame.method,
+      description:
+        questions?.length === 1
+          ? questions[0].question
+          : questions
+            ? `Codex asks ${questions.length} questions`
+            : text(p.reason) || text(p.message) || text(p.command) || frame.method,
       options: [...responses.keys()].map((id, index) => ({
         id,
-        label:
-          frame.method === 'item/permissions/requestApproval'
+        label: questions
+          ? id === 'answer'
+            ? 'Submit'
+            : 'Skip'
+          : frame.method === 'item/permissions/requestApproval'
             ? index === 0
               ? 'Deny extra permissions'
               : 'Allow for this turn'
             : id
       })),
       toolName: frame.method,
-      input: frame.params
+      input: frame.params,
+      ...(questions && {
+        questions: questions.map((q) => ({
+          id: q.id,
+          question: q.question,
+          header: q.header,
+          options: q.options ?? []
+        }))
+      })
     })
     this.emit({ type: 'state_change', state: 'blocked' })
     return true
   }
-  answer(id: string, optionId: string, connection: CodexConnection): void {
+  answer(
+    id: string,
+    optionId: string,
+    connection: CodexConnection,
+    answers?: Record<string, string>
+  ): void {
     const approval = this.approvals.get(id)
     if (!approval || !approval.responses.has(optionId))
       throw new Error('Unknown or expired Codex approval option')
-    connection.respond(approval.rpcId, approval.responses.get(optionId))
+    let response = approval.responses.get(optionId)
+    if (approval.questions && optionId === 'answer') {
+      if (
+        !answers ||
+        Object.keys(answers).length !== approval.questions.length ||
+        approval.questions.some(
+          (q) =>
+            !Object.hasOwn(answers, q.id) ||
+            typeof answers[q.id] !== 'string' ||
+            !answers[q.id].trim()
+        )
+      )
+        throw new Error('An answer is required for each Codex question')
+      response = {
+        answers: Object.fromEntries(
+          approval.questions.map((q) => [q.id, { answers: [answers[q.id]] }])
+        )
+      }
+    }
+    connection.respond(approval.rpcId, response)
     this.approvals.delete(id)
     if (!this.approvals.size && this.turnId) this.emit({ type: 'state_change', state: 'working' })
   }
@@ -307,6 +527,8 @@ export class CodexTranslator {
 interface HandleState {
   spec: SpawnSpec
   history: HistoryItem[]
+  /** The thread a resumed session replays, until `replayPast` has read it. */
+  pastOf?: { thread: string; root: string }
   historyError?: unknown
   profile?: LaunchProfile
   env?: Record<string, string>
@@ -343,6 +565,11 @@ export class CodexAdapter implements SessionAdapter {
   readonly transports = ['events'] as const
   readonly images = true
   private handles = new Map<string, HandleState>()
+  /** The past of a session whose app-server ended, kept until its tab is
+   *  closed (`kill`): the tab stays open on an ended chat, and asking for its
+   *  past answered an unknown session, a 500 the pane read as no past at all
+   *  (PRDCT-3526). */
+  private pasts = new Map<string, HistoryItem[]>()
   private profiles = new Map<
     string,
     { profile: LaunchProfile; env?: Record<string, string>; initialPrompt?: string }
@@ -371,6 +598,7 @@ export class CodexAdapter implements SessionAdapter {
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
     if (this.handles.has(spec.id)) throw new Error(`Codex session already exists: ${spec.id}`)
+    this.pasts.delete(spec.id)
     const emitter = new EventEmitter()
     const context = this.profiles.get(spec.id)
     const launchEffort = text(object(spec.options).effort)
@@ -390,17 +618,13 @@ export class CodexAdapter implements SessionAdapter {
       ended: false,
       closing: false
     }
-    // Snapshot before the process can append new turns. The views page this
-    // past separately from the live stream, including after switching views.
+    // The past is replayed at the first read of the history or before the
+    // process starts, whichever comes first: never inside the spawn, which a
+    // launch restoring a hundred chats runs a hundred times while most of
+    // them are never looked at (PRDCT-3527: a long thread cost up to 0.9 s of
+    // the server's time at every restore).
     const resume = text(object(spec.options).resume)
-    if (resume) {
-      try {
-        const path = findCodexRollout(resume, codexRoot(context?.env))
-        if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
-      } catch (error) {
-        state.historyError = error
-      }
-    }
+    if (resume) state.pastOf = { thread: resume, root: codexRoot(context?.env) }
     this.profiles.delete(spec.id)
     this.handles.set(spec.id, state)
     return { id: spec.id }
@@ -410,8 +634,26 @@ export class CodexAdapter implements SessionAdapter {
     return { id }
   }
 
+  /** Snapshot the conversation before the process can append new turns. The
+   *  views page this past separately from the live stream, including after
+   *  switching views, so it must hold only what was there at launch. */
+  private replayPast(state: HandleState): void {
+    const past = state.pastOf
+    if (!past) return
+    state.pastOf = undefined
+    try {
+      const path = findCodexRollout(past.thread, past.root)
+      if (path) state.history = replayCodexHistory(readFileSync(path, 'utf8').split('\n'))
+    } catch (error) {
+      state.historyError = error
+    }
+  }
+
   history(handle: SessionHandle): HistoryItem[] {
+    const past = this.handles.has(handle.id) ? undefined : this.pasts.get(handle.id)
+    if (past) return past
     const state = this.require(handle)
+    this.replayPast(state)
     if (state.historyError) {
       this.error(
         state,
@@ -431,7 +673,7 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended || state.closing) throw new Error('Codex session has ended')
     if (value.type === 'permission_response') {
       if (!state.connection) throw new Error('Codex has no pending approval')
-      state.translator.answer(value.id, value.optionId, state.connection)
+      state.translator.answer(value.id, value.optionId, state.connection, value.answers)
       return
     }
     if (value.type === 'interrupt') {
@@ -631,6 +873,7 @@ export class CodexAdapter implements SessionAdapter {
   }
   private start(state: HandleState): Promise<void> {
     if (state.ready) return state.ready
+    this.replayPast(state)
     state.ready = (async () => {
       const options = object(state.spec.options)
       // The launch's own choice (Clave's dangerous mode) first, then what the
@@ -757,11 +1000,15 @@ export class CodexAdapter implements SessionAdapter {
   }
   async kill(handle: SessionHandle): Promise<void> {
     const state = this.handles.get(handle.id)
-    if (!state) return
+    if (!state) {
+      this.pasts.delete(handle.id)
+      return
+    }
     state.closing = true
     if (state.connection) await state.connection.close()
     else this.finish(state, 0)
     this.handles.delete(handle.id)
+    this.pasts.delete(handle.id)
     state.emitter.removeAllListeners()
   }
   on<K extends keyof SessionAdapterEvents>(
@@ -786,10 +1033,16 @@ export class CodexAdapter implements SessionAdapter {
     if (state.ended) return
     state.ended = true
     state.translator.approvals.clear()
+    state.translator.clearBackground()
     state.mcpConfig?.remove(state.spec.id)
     state.emitter.emit('stream', { kind: 'event', event: { type: 'state_change', state: 'ended' } })
     state.emitter.emit('exit', code)
-    if (this.handles.get(state.spec.id) === state) this.handles.delete(state.spec.id)
+    if (this.handles.get(state.spec.id) === state) {
+      this.handles.delete(state.spec.id)
+      // A kill in progress takes the past with the tab; an end on its own
+      // leaves the tab open on it.
+      if (!state.closing) this.pasts.set(state.spec.id, state.history)
+    }
     state.emitter.removeAllListeners()
   }
   private error(state: HandleState, error: unknown, fatal: boolean): void {

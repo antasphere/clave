@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   ModelOption,
   CommandOption,
+  SessionControl,
   HistoryPage
 } from '../shared/session-model'
 import type { DayActivity } from '../shared/activity-fold'
@@ -43,9 +44,15 @@ export interface SessionIPCEvents {
   [channel: `sessions:exit:${string}`]: number
 }
 
+import type { FleetDesktopAPI } from './fleet-types'
 import type { LinkedDocumentsAPI } from '../shared/linked-documents'
 import type { ExtensionsInventory, MutationResult, MutationScope } from '../shared/extensions-types'
-import type { WindowIdentity, Workspace, WorkspaceStateFile } from '../shared/workspace-types'
+import type {
+  WindowIdentity,
+  Workspace,
+  WorkspaceStamp,
+  WorkspaceState
+} from '../shared/workspace-types'
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
 import type { GitRangeDirection } from '../shared/git-range'
@@ -66,7 +73,15 @@ export type SetWorkspaceResult =
   | { ok: false; reason: 'unknown-workspace' | 'no-window' }
 
 /** Main's answer to a state write (layout, pins). */
-export type WriteResult = { ok: true } | { ok: false; reason: 'invalid-key' | 'no-window' }
+/** A registry or pins write that landed: the state as the write left it,
+ *  with its stamp; the writer folds it like a change (PRDCT-3405). */
+export type WorkspaceWritten = {
+  ok: true
+  workspaces: Workspace[]
+  pins: unknown[]
+} & WorkspaceStamp
+/** A pins write: landed, or refused. */
+export type WriteResult = WorkspaceWritten | { ok: false; reason: 'invalid-key' | 'no-window' }
 
 export interface HistoryLedgerRow {
   v: 1
@@ -350,6 +365,9 @@ export type SessionLink =
   | { kind: 'toolbar'; key: string }
 
 export interface SessionRecord {
+  /** How the session's process talks: a terminal (`pty`) or a chat's
+   *  structured events (`events`). Absent on a record older than the field. */
+  transport?: 'pty' | 'events'
   /** The session is one this process already runs (wave 3): a window asking
    *  for it by id takes it in from the record alone, with no spawn. Absent on
    *  an adoptable record, whose process the window reattaches itself. */
@@ -374,6 +392,7 @@ export interface SessionRecord {
   /** Model the session was launched on (claude/codex); re-applied on re-spawn. */
   model?: string
   launchProfileId?: string
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   configDir?: string
@@ -579,6 +598,8 @@ export type {
   GitBatchProgressFn
 } from '../shared/git-batch'
 import type { GitBatchProgress } from '../shared/git-batch'
+import type { MicAccessState } from '../shared/mic'
+import type { TriagePrepareResult, TriageSnapshot } from '../shared/triage'
 
 export interface MagicSyncResult {
   repoPath: string
@@ -598,13 +619,17 @@ export interface PluginSecretPrompt {
   title: string
   description?: string
 }
-export interface ElectronAPI {
+export interface ElectronAPI extends FleetDesktopAPI {
   /** What the server said it cannot do (a declared CapabilityUnavailable on a
    *  routed call), or null once a routed call succeeds again. The page shows
    *  it where the sessions would be (ServerNotice). */
   onServerRefusal: (
     callback: (refusal: { capability: string; message: string } | null) => void
   ) => () => void
+  /** The window's server connection opened, or came back after a loss: the
+   *  moment to ask again for a read that was lost (PRDCT-3526). Never heard
+   *  by a window on IPC for good. */
+  onServerConnected: (callback: () => void) => () => void
   sessionsList: () => Promise<Session[]>
   /** Register stream/exit listeners first, then await this before writing. */
   sessionsSubscribe: (id: string) => Promise<Session>
@@ -616,6 +641,10 @@ export interface ElectronAPI {
   sessionsSetView: (id: string, viewId: string | null) => Promise<Session>
   sessionsModels: (id: string) => Promise<ModelOption[]>
   sessionsCommands: (id: string) => Promise<CommandOption[]>
+  /** One control request to the session's provider, from the closed set the
+   *  native panels send (the MCP servers, the plugins); answers the provider's
+   *  own response. */
+  sessionsControl: (id: string, request: SessionControl) => Promise<Record<string, unknown>>
   sessionsCapabilities: (id: string) => Promise<{ images: boolean }>
   /** A resumed conversation's past: the page ending at `before` (the end when
    *  absent), oldest first, with what to ask for the page older than it. */
@@ -688,6 +717,7 @@ export interface ElectronAPI {
       claudeSessionId?: string
       piSessionId?: string
       launchProfileId?: string
+      launchProfile?: LaunchProfile
       piProvider?: string
       piThinking?: PiThinkingLevel
       initialCommand?: string
@@ -728,6 +758,9 @@ export interface ElectronAPI {
   /** The attached server's surviving records for this window (restore top-up);
    *  empty in-process. */
   listServerRestoreRecords: () => Promise<SessionRecord[]>
+  /** Whether the server holds a record this window would bring back, asked
+   *  through main so the window does not connect to find out (PRDCT-3527). */
+  serverHasRestoreRecords: () => Promise<boolean>
   /** Whether the boot's `listSessionRecords()` read is every adoptable record
    *  (inside the app) or the server's come after it through the top-up
    *  (attached, or while main has named no server yet). The boot's layout
@@ -754,6 +787,7 @@ export interface ElectronAPI {
     callback: (payload: {
       id: string
       resumed: boolean
+      requestId?: string
       account: {
         claudeProfileId?: string
         claudeProfileLabel?: string
@@ -896,6 +930,8 @@ export interface ElectronAPI {
   onDownloadError: (callback: (message: string) => void) => () => void
   onUpdaterState: (callback: (state: UpdaterState) => void) => () => void
   onOpenSettingsSection: (callback: (section: string) => void) => () => void
+  /** The menu's "Debug Clave…" asks this window to open its triage. */
+  onOpenTriage: (callback: () => void) => () => void
   onMissionControlEntered: (callback: () => void) => () => void
   onMissionControlExited: (callback: () => void) => () => void
   missionControlGetEnabled: () => Promise<boolean>
@@ -949,14 +985,17 @@ export interface ElectronAPI {
     baseRevision?: number
   ) => Promise<SidebarSaveResult>
   onSidebarLayoutChanged: (callback: (event: SidebarLayoutChanged) => void) => () => void
-  workspaceLoad: () => Promise<WorkspaceStateFile>
+  // The state and every write result carry the state's stamp (wave 5,
+  // lane A, PRDCT-3405): the window drops a fold that is not newer than the
+  // last stamp it loaded, wrote or took in.
+  workspaceLoad: () => Promise<WorkspaceState>
   workspaceUpdateRegistry: (
     workspaces: Workspace[]
-  ) => Promise<{ ok: true } | { ok: false; reason: 'invalid' }>
+  ) => Promise<WorkspaceWritten | { ok: false; reason: 'invalid' }>
   workspaceUpdatePins: (scope: string | null | 'all', pins: unknown[]) => Promise<WriteResult>
   workspaceSetLastActive: (workspaceId: string | null) => Promise<{ ok: true }>
   onWorkspaceStateChanged: (
-    callback: (state: { workspaces: Workspace[]; pins: unknown[] }) => void
+    callback: (state: { workspaces: Workspace[]; pins: unknown[] } & WorkspaceStamp) => void
   ) => () => void
   windowIdentity: () => Promise<WindowIdentity | null>
   onWindowIdentityChanged: (callback: (identity: WindowIdentity) => void) => () => void
@@ -1028,14 +1067,22 @@ export interface ElectronAPI {
       codexAccountLabel?: string
       /** Send the message the limit rejected again on the new account. */
       resendRejected?: boolean
-    }
-  ) => Promise<(SessionInfo & { resumed: boolean }) | { error: string }>
+    },
+    requestId?: string
+  ) => Promise<(SessionInfo & { resumed: boolean; requestId?: string }) | { error: string }>
   getPiUsage: (range: PiUsageTotals['range']) => Promise<PiUsageTotals>
   gitCheckIgnored: (cwd: string, paths: string[]) => Promise<string[]>
   getGitStatus: (cwd: string) => Promise<GitStatusResult>
   getGitStatusBatch: (paths: string[]) => Promise<Array<{ path: string; status: GitStatusResult }>>
   gitFetch: (cwd: string) => Promise<void>
   gitFetchBatch: (paths: string[]) => Promise<void>
+  /** Watch the repos a panel shows (PRDCT-3775); resolves with the ones that
+   *  are watched — the rest are the panel's to poll. The set replaces the
+   *  subscriber's previous one. */
+  gitWatchRepos: (subscriberId: string, paths: string[]) => Promise<string[]>
+  gitUnwatchRepos: (subscriberId: string) => Promise<void>
+  /** A burst of changes in watched repos, one entry per repo that changed. */
+  onGitReposChanged: (callback: (repos: string[]) => void) => () => void
   discoverGitRepos: (
     cwd: string,
     force?: boolean
@@ -1171,6 +1218,10 @@ export interface ElectronAPI {
   onSkinsChanged: (callback: (state: import('@clave/skins/types').SkinState) => void) => () => void
   preferencesGet: (key: string) => Promise<unknown>
   preferencesSet: (key: string, value: unknown) => Promise<void>
+  getMicAccess: () => Promise<MicAccessState>
+  requestMicAccess: () => Promise<MicAccessState>
+  openMicPrivacySettings: () => Promise<void>
+  openSoundSettings: () => Promise<void>
   keymapsLoad: () => Promise<unknown>
   keymapsSave: (value: unknown) => Promise<unknown>
   keymapsImport: () => Promise<string | null>
@@ -1212,6 +1263,12 @@ export interface ElectronAPI {
     email: string
     message?: string
   }) => Promise<{ ok: true } | { ok: false; error: string }>
+  /** Collect a read-only snapshot of this running app and write the private
+   *  triage bundle (context, playbook, snapshot). Never rejects for a source
+   *  that fails: the failure is in the snapshot and in `warnings`. */
+  triagePrepare: () => Promise<TriagePrepareResult>
+  /** The same snapshot, collected without writing anything. */
+  triageSnapshot: () => Promise<TriageSnapshot>
 
   // ── Lane C: settings behind ports ──
 

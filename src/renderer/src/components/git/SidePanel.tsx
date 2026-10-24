@@ -1,3 +1,6 @@
+import { FleetFiles } from '../fleet/FleetFiles'
+import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
+import { parseResourceKey } from '@clave/contract/fleet'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { PANEL_ROOTS, panelRootLadder, type PanelScope } from '../../store/session-types'
@@ -137,10 +140,21 @@ function SidePanelBody(): React.JSX.Element {
     ) ?? null
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
-  const sessionCwd = focusedSession?.cwd ?? null
+  const focusedFile = useSessionStore((s) => s.fileTabs.find((f) => f.id === s.focusedSessionId))
+  const focusedOwnerKey = focusedSession?.id ?? focusedFile?.filePath
+  const fleetOwner = ownerOf(focusedOwnerKey)
+  const fleetRemote = isRemoteKey(focusedOwnerKey)
+  const remoteFile =
+    focusedFile && isRemoteKey(focusedFile.filePath)
+      ? parseResourceKey('file', focusedFile.filePath).id
+      : null
+  const sessionCwd =
+    focusedSession?.cwd ??
+    (remoteFile ? remoteFile.slice(0, remoteFile.lastIndexOf('/')) || '/' : null)
 
   // Determine if focused session is remote
   const isRemoteSession =
+    fleetRemote ||
     focusedSession?.sessionType === 'remote-terminal' ||
     focusedSession?.sessionType === 'remote-claude' ||
     focusedSession?.sessionType === 'agent'
@@ -208,8 +222,8 @@ function SidePanelBody(): React.JSX.Element {
   // not it, so the chip stays hidden there and the panel follows the session.
   const scopeRoots: Record<PanelScope, string | null> = {
     session: sessionCwd,
-    group: isRemoteSession ? null : (focusedGroup?.cwd ?? null),
-    workspace: isRemoteSession ? null : workspaceRoot
+    group: isRemoteSession || fleetRemote ? null : (focusedGroup?.cwd ?? null),
+    workspace: isRemoteSession || fleetRemote ? null : workspaceRoot
   }
 
   // The choice is remembered per session; another session takes its own, or
@@ -323,10 +337,10 @@ function SidePanelBody(): React.JSX.Element {
   const effectiveTab = isRemoteSession ? 'files' : sidePanelTab
   const pluginTab = isRemoteSession ? null : activePluginPanel
   const isGitTabActive = effectiveTab === 'git'
-  const multiRepo = useMultiRepoStatus(cwd, isGitTabActive)
+  const multiRepo = useMultiRepoStatus(fleetRemote ? null : cwd, isGitTabActive)
 
   // Single-repo git status — used for branch badge in path row
-  const isSingleRepo = isGitTabActive && multiRepo.result.mode === 'single'
+  const isSingleRepo = !fleetRemote && isGitTabActive && multiRepo.result.mode === 'single'
   const singleRepoGit = useGitStatus(isSingleRepo ? cwd : null, isSingleRepo)
 
   // Single-repo sections, driven by the toolbar's ↓/↑/+ badge-buttons.
@@ -933,6 +947,12 @@ function SidePanelBody(): React.JSX.Element {
         </div>
       ) : effectiveTab === 'help' ? (
         <HelpPanel />
+      ) : fleetRemote ? (
+        <FleetFiles
+          key={`${fleetOwner}:${sessionCwd}`}
+          serverId={fleetOwner}
+          cwd={sessionCwd ?? '/'}
+        />
       ) : isRemoteSession &&
         remoteLocationId &&
         effectiveCwd &&

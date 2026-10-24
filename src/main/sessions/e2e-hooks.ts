@@ -9,8 +9,9 @@
  * when absent and extended in place, never replaced, so whichever domain
  * installs first, the others' hooks stay.
  */
-import type { SessionHostService, SettingsSourceService } from '@clave/server'
+import type { PluginsService, SessionHostService, SettingsSourceService } from '@clave/server'
 import type { SessionStream } from '../../shared/session-model'
+import type { AccountUsageManager } from '../usage-manager'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 
 export interface E2eHooks {
@@ -29,6 +30,15 @@ export interface E2eHooks {
   echo: { inject: (sessionId: string, stream: SessionStream) => void }
   // ── Lane D (wave 3): which road each agent tool took (`src/main/mcp/roads.ts`) ──
   mcpRoads: { command: string; road: 'server' | 'window' }[]
+  // ── Wave 5, lane C: the plugin service the server answers from (`plugins/plugin-service.ts`),
+  // wrapped by the specs that watch a view's lease, in whichever process hosts it ──
+  plugins: PluginsService
+  /** Recording-provider fixture access. Never installed outside hidden test mode. */
+  usageClock: {
+    claude: AccountUsageManager
+    codex: AccountUsageManager
+    start: (intervalMs?: number) => void
+  }
   // ── later lanes add theirs here ──
 }
 

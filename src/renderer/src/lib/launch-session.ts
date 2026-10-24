@@ -1,3 +1,5 @@
+import { requestFleetLaunch } from '../store/fleet-launch-store'
+import { ownerOf, isRemoteKey } from './fleet-identity'
 import { useSessionStore } from '../store/session-store'
 import { claudeProfileSpawnFields } from '../store/claude-profile-store'
 import { codexAccountSpawnFields } from '../store/codex-account-store'
@@ -23,6 +25,8 @@ export type LaunchCwd =
   | { kind: 'path'; path: string }
 
 export interface LaunchRequest {
+  /** Explicit owner; omit to follow the targeted group or current tab. */
+  serverId?: string
   /** The agent to run, or null for a plain terminal. */
   setup: AgentSetup | null
   cwd: LaunchCwd
@@ -38,6 +42,19 @@ export interface LaunchRequest {
    *  own agent launches (a caret pick is what makes an agent the remembered
    *  one); off for launches that shouldn't redefine the default. */
   remember?: boolean
+  /** Opt-in error propagation for callers that must preserve a failed launch. */
+  throwOnError?: boolean
+  /** Called as soon as main acknowledges creation, before renderer placement. */
+  onCreated?: (id: string) => void
+  /** Refuse a resolved profile different from the explicit selection. */
+  exactProfile?: boolean
+  /** Explicit home for a capture-bound launch; ordinary launchers use their current workspace. */
+  workspaceId?: string
+}
+
+export interface LaunchSelectionError extends Error {
+  code: 'launch-profile-mismatch' | 'launch-account-unavailable'
+  cleanupSucceeded: boolean
 }
 
 /** Resolve a LaunchCwd to an absolute path, opening the native folder picker
@@ -69,6 +86,19 @@ async function resolveCwd(cwd: LaunchCwd): Promise<string | null> {
  *
  *  Returns the new session id, or null when the launch was cancelled or failed. */
 export async function launchSession(req: LaunchRequest): Promise<string | null> {
+  // An explicit server must not inherit another server from the focused tab.
+  const target =
+    req.groupId ?? (req.serverId === undefined ? useSessionStore.getState().focusedSessionId : null)
+  const serverId = req.serverId ?? ownerOf(target)
+  if (isRemoteKey(target) || serverId !== 'local') {
+    return requestFleetLaunch({
+      serverId,
+      setup: req.setup,
+      groupId: req.groupId,
+      cwd: req.cwd.kind === 'path' ? req.cwd.path : undefined,
+      initialPrompt: req.initialPrompt
+    })
+  }
   const folderPath = await resolveCwd(req.cwd)
   if (!folderPath) return null
 
@@ -101,10 +131,24 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
   const isClaudeSession = modes.claudeMode || modes.claudeAgentsMode
   const profile = isClaudeSession ? accountForLaunch('claude', req.setup?.claudeProfileId) : null
   const codexAccount = modes.codexMode ? accountForLaunch('codex', req.setup?.codexAccountId) : null
+  if (
+    req.exactProfile &&
+    ((profile && profile.id !== req.setup?.claudeProfileId) ||
+      (codexAccount && codexAccount.id !== req.setup?.codexAccountId))
+  ) {
+    throw Object.assign(new Error('The selected account is no longer available.'), {
+      code: 'launch-account-unavailable' as const,
+      cleanupSucceeded: true
+    }) satisfies LaunchSelectionError
+  }
   const profileFields = {
     ...(profile ? claudeProfileSpawnFields(profile) : {}),
     ...(codexAccount ? codexAccountSpawnFields(codexAccount) : {})
   }
+
+  const previousIds = req.exactProfile
+    ? new Set((await window.electronAPI.sessionsList()).map((session) => session.id))
+    : null
 
   try {
     const sessionInfo = await window.electronAPI.spawnSession(folderPath, {
@@ -112,8 +156,39 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
       dangerousMode,
       initialPrompt,
       launchProfileId: req.setup?.launchProfileId,
+      ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       ...profileFields
     })
+    if (req.exactProfile && sessionInfo.launchProfileId !== req.setup?.launchProfileId) {
+      let cleanupSucceeded = false
+      try {
+        const created = (await window.electronAPI.sessionsList()).find(
+          (s) => s.id === sessionInfo.id
+        )
+        // A terminal is prepared without a process until its pane sends a
+        // size. We have not placed this handle, and it was absent before our
+        // request. Never clean up an existing tab or an events provider here.
+        if (
+          !previousIds!.has(sessionInfo.id) &&
+          created?.transport === 'pty' &&
+          created.state === 'idle' &&
+          !useSessionStore.getState().sessions.some((s) => s.id === sessionInfo.id)
+        ) {
+          await window.electronAPI.killSession(sessionInfo.id)
+          cleanupSucceeded = !(await window.electronAPI.sessionsList()).some(
+            (s) => s.id === sessionInfo.id
+          )
+        }
+      } catch {
+        /* Keep an uncertain handle; never retry or touch another session. */
+      }
+      if (!cleanupSucceeded && !previousIds!.has(sessionInfo.id)) req.onCreated?.(sessionInfo.id)
+      throw Object.assign(new Error('The selected launch profile changed before startup.'), {
+        code: 'launch-profile-mismatch' as const,
+        cleanupSucceeded
+      }) satisfies LaunchSelectionError
+    }
+    req.onCreated?.(sessionInfo.id)
     // One placement, not a placement and then a correction: the group's `+`
     // has already said where this goes, so it goes there — as the group's
     // first row, the same "newest at the top" the sidebar itself follows.
@@ -140,7 +215,8 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
         codexAccountLabel: codexAccount?.label,
         // Persisted so Duplicate re-primes the clone with the same prompt.
         initialPrompt,
-        sessionType: 'local'
+        sessionType: 'local',
+        ...(req.workspaceId ? { workspaceId: req.workspaceId } : {})
       },
       req.groupId ?? null
     )
@@ -149,6 +225,7 @@ export async function launchSession(req: LaunchRequest): Promise<string | null> 
     if (req.remember && req.setup) rememberAgentSetup(getActiveWorkspaceId(), req.setup)
     return sessionInfo.id
   } catch (err) {
+    if (req.throwOnError) throw err
     console.error('Failed to create session:', err)
     return null
   }

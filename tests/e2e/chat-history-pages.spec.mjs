@@ -186,10 +186,7 @@ export async function run(t) {
     launched = await launchApp(DIR, { server: 'in-process', env, settleMs: 3000 })
     app = launched.app
     win = launched.win
-    const restore = win.getByRole('button', { name: 'Restore', exact: true })
-    if (!(await until(() => restore.isVisible().catch(() => false))))
-      throw new Error('no restore prompt at launch 2')
-    await restore.click()
+    // A chat comes back without the prompt (PRDCT-3527).
     await until(async () => (await callMcp(app, 'list', {})).sessions.some((s) => s.id === chat.id))
 
     const view = win.locator('[data-testid="chat-view"]')

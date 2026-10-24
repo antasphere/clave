@@ -19,6 +19,7 @@ import type { AccountOverride, Session } from '@clave/contract/sessions'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
 import { pickAccount, type PoolAccount } from '../../shared/account-pool'
+import { usageSummaryForModel } from '../../shared/usage-summary'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
@@ -334,8 +335,13 @@ async function sendToSession(ctx: Ctx, key: string, p: Payload): Promise<unknown
 
 const poolOf = (accounts: ServedPoolAccount[]): PoolAccount[] =>
   accounts.map((a) => ({ id: a.id, usable: a.usable, ...(a.fallback ? { fallback: true } : {}) }))
-const usageOf = (accounts: ServedPoolAccount[]): Record<string, ServedPoolAccount['usage']> =>
-  Object.fromEntries(accounts.map((a) => [a.id, a.usage]))
+const usageOf = (
+  accounts: ServedPoolAccount[],
+  context?: { model?: string }
+): Record<string, ServedPoolAccount['usage']> =>
+  Object.fromEntries(
+    accounts.map((a) => [a.id, context ? usageSummaryForModel(a.usage, context.model) : a.usage])
+  )
 
 /** The renderer's `accountForLaunch`: a named account is honoured; with none
  *  named, the selected one while it has headroom, else the next along. */
@@ -402,7 +408,7 @@ async function switchAccount(ctx: Ctx, _key: string, p: Payload): Promise<unknow
     const accounts = ctx.shell.accounts(provider)
     const next = pickAccount({
       accounts: poolOf(accounts),
-      usage: usageOf(accounts),
+      usage: usageOf(accounts, provider === 'claude' ? { model: record?.model } : undefined),
       preferredId: current,
       leavingId: current,
       preferSessionHeadroom: true

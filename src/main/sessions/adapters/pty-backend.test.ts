@@ -211,6 +211,41 @@ describe('a Claude session', () => {
   })
 })
 
+describe('a carried launch profile', () => {
+  it('runs the Mac command and keeps its definition in the record', () => {
+    const profile = {
+      id: 'mac-only',
+      name: 'Mac only',
+      family: 'codex' as const,
+      command: ['/opt/tools/codex-wrapper', 'codex'],
+      additionalArgs: ['--profile', 'mac']
+    }
+    const session = backend.spawn(cwd, {
+      codexMode: true,
+      tmuxMode: false,
+      launchProfileId: profile.id,
+      launchProfile: profile
+    })
+    backend.start(session.id, 80, 24)
+    const args = terminals.processes[0].spec.args
+    expect(args[args.indexOf('-c') + 1]).toContain(
+      "'/opt/tools/codex-wrapper' 'codex' '--profile' 'mac'"
+    )
+    expect(readRecord(session.id)).toMatchObject({ launchProfileId: profile.id })
+    expect(readRecord(session.id).launchProfile).toEqual(profile)
+  })
+
+  it('keeps the built-in fallback for an unknown id without a carried definition', () => {
+    const session = backend.spawn(cwd, {
+      codexMode: true,
+      tmuxMode: false,
+      launchProfileId: 'server-unknown'
+    })
+    expect(readRecord(session.id).launchProfileId).toBe('builtin-codex')
+    expect(readRecord(session.id)).not.toHaveProperty('launchProfile')
+  })
+})
+
 describe('the session records', () => {
   it('are rewritten on a rename, a view, a workspace and a window re-stamp, and read back as persisted', () => {
     const session = backend.spawn(cwd, { claudeMode: false, tmuxMode: false, workspaceId: 'ws-1' })
@@ -295,5 +330,26 @@ describe('the session records', () => {
     expect(fresh.listAdoptableSessions().map((r) => r.id)).toEqual([id])
     expect(fs.existsSync(legacy)).toBe(false)
     expect(fs.existsSync(recordFile(id))).toBe(true)
+  })
+
+  it('lists a record older than a mode with that mode off, so the contract takes it (PRDCT-3527)', async () => {
+    const { SessionRecord } = await import('@clave/contract/sessions')
+    const { Schema } = await import('effect')
+    const id = '44444444-4444-4444-8444-444444444444'
+    fs.mkdirSync(path.join(dir, SESSION_RECORDS_FOLDER), { recursive: true })
+    // As a build before Pi and the agents mode wrote it: no piMode, no
+    // claudeAgentsMode, no dangerousMode, and claudeMode absent.
+    fs.writeFileSync(recordFile(id), JSON.stringify({ id, cwd, folderName: 'x', codexMode: false }))
+    const [listed] = new PtyBackend().listAdoptableSessions()
+    expect(listed).toMatchObject({
+      id,
+      claudeMode: true,
+      codexMode: false,
+      piMode: false,
+      claudeAgentsMode: false,
+      dangerousMode: false,
+      antigravityMode: false
+    })
+    expect(() => Schema.decodeUnknownSync(SessionRecord)(listed)).not.toThrow()
   })
 })

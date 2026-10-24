@@ -20,7 +20,12 @@
     "./workspace-files": "./src/workspace-files/index.ts",
     "./views": "./src/views.ts",
     "./view-deadlines": "./src/view-deadlines.ts",
-    "./agent-tools": "./src/agent-tools.ts"
+    "./agent-tools": "./src/agent-tools.ts",
+    "./plugins": "./src/plugins.ts",
+    "./files": "./src/files.ts",
+    "./fleet": "./src/fleet.ts",
+    "./requests": "./src/requests.ts",
+    "./sidebar/layout": "./src/sidebar/layout.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
