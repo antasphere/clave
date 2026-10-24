@@ -95,15 +95,34 @@ export {
 
 /** THE visibility predicate — single source of truth for workspace scoping.
  *  activeId null → no-workspace mode, everything visible (today's app).
- *  x.workspaceId null/undefined → unstamped safety net: nothing can ever
- *  disappear because it predates the workspace model. */
+ *
+ *  A SERVER workspace is a workspace whose id is a remote key
+ *  (`clave-owner:workspace:<serverId>:…`), so `activeId` can itself be remote.
+ *  A remote tab belongs to exactly one server workspace and shows ONLY there —
+ *  the inversion of the old rule, under which every remote tab appeared in
+ *  every workspace (PRDCT #241). A remote record's `workspaceId` is already
+ *  namespaced to its server (preload `scopeRecord`), so it matches `activeId`
+ *  when that server workspace is the one shown; a remote tab the daemon left
+ *  unstamped has no server workspace of its own, so it shows in any workspace
+ *  of the same server (never in a local one).
+ *
+ *  A LOCAL item keeps the unstamped safety net: a null `workspaceId` predates
+ *  the workspace model and must never disappear. */
 export function inActiveWorkspace(
   x: { id?: string; workspaceId?: string | null },
   activeId: string | null
 ): boolean {
   if (activeId === null) return true
-  if (isRemoteKey(x.id) || x.workspaceId == null || isRemoteKey(x.workspaceId)) return true
-  return x.workspaceId === activeId
+  // Stamped — the uniform rule for local and server workspaces alike: an item
+  // shows only in the workspace it carries. A remote record's workspaceId is
+  // namespaced to its server, so it matches its server workspace and nothing
+  // else (never a local one).
+  if (x.workspaceId != null) return x.workspaceId === activeId
+  // Unstamped. A local item keeps the safety net (it predates the model). A
+  // remote tab the daemon left without a server workspace shows in any
+  // workspace of its own server, so it is never lost and never leaks local.
+  if (isRemoteKey(x.id)) return ownerOf(x.id) === ownerOf(activeId)
+  return true
 }
 
 interface SessionState {
