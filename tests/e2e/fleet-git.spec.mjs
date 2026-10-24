@@ -191,7 +191,16 @@ export async function run(t) {
       )
       const held = progress.getByRole('button', { name: /1 failed/ })
       await held.hover()
-      await win.getByText(NOT_SIGNED_IN, { exact: false }).first().waitFor({ state: 'visible' })
+      // The reason must be in the bar's OWN tooltip: the commit bar above
+      // still shows the same sentence from the generate step, and a search of
+      // the whole window would pass with the tooltip's reason removed
+      // (verifier round 1, finding 6).
+      const tooltip = win.locator('.panel-progress-failures')
+      await tooltip.waitFor({ state: 'visible' })
+      assert.ok(
+        (await tooltip.innerText()).includes(NOT_SIGNED_IN),
+        `the sync failure tooltip names the reason: ${await tooltip.innerText()}`
+      )
     })
     await recorded('/git/magic-sync', syncing)
     assertFileEndpoint(observers, syncing, 0, '/git/magic-sync')

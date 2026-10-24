@@ -152,7 +152,7 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     // ── Wave 5, lane C: the plugins ──
     plugins: pluginsClient(call),
     // ── Wave wcs1023, lane C: the git domain ──
-    git: gitClient(call),
+    git: gitClient(call, patientCall),
     health: {
       live: () => call((c) => c.health.live()).then((answer) => answer.status === 'live')
     },
