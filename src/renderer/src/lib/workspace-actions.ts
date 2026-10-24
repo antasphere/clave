@@ -512,8 +512,8 @@ export async function addServerWorkspace(
   const api = window.electronAPI
   if (!api?.fleetAddWorkspace) throw new Error('Clave servers are not available here.')
   const added = await api.fleetAddWorkspace(serverId, { rootDir, name })
-  // The server's list carrying it is published by the write or by its change
-  // event; wait briefly for it so a caller can switch to it at once. It is
+  // The server's list carrying it arrives as the change event on its live
+  // socket; wait briefly for it so a caller can switch to it at once. It is
   // never inserted here: the server's list is the only truth (another Mac may
   // have removed it already).
   const has = (): boolean =>

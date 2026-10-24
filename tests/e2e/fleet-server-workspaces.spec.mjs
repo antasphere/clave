@@ -61,6 +61,9 @@ export async function run(t) {
     const [server] = world.servers
     const sub = path.join(server.root, 'sub')
     mkdirSync(sub, { recursive: true })
+    // A second folder on the server's disk, beside the first: Settings adds it.
+    const other = path.join(path.dirname(server.root), `other-${path.basename(server.root)}`)
+    mkdirSync(other, { recursive: true })
     const macA = await world.mac('a')
     const macB = await world.mac('b')
     await connectMac(macA, [server], { ui: false })
@@ -148,6 +151,48 @@ export async function run(t) {
     })
     t.check('the workspace added on Mac A appears on Mac B, connected to the same server', true)
 
+    await step('Settings on Mac B lists, adds and removes a server workspace', async () => {
+      const win = macB.win
+      await win.click('.sidebar-footer-btn[aria-label="Settings"]')
+      await win.click('[data-settings-nav-row="general"]')
+      const listed = win.locator(`[data-workspace-row="${onB}"]`)
+      await listed.waitFor()
+      const text = await listed.innerText()
+      assert.ok(text.includes('Personal VPS 1'), 'the row names its server')
+      assert.ok(text.includes(server.root), 'the row shows the folder on the server')
+      assert.equal(await listed.getAttribute('data-offline'), null)
+      // Add: the machine first, then a folder on the server's disk.
+      await win.getByRole('button', { name: 'Add workspace', exact: true }).click()
+      const machine = win.getByTestId('add-workspace-machine')
+      await machine.getByRole('button', { name: 'Personal VPS 1', exact: true }).click()
+      await win.getByTitle('Edit path', { exact: true }).first().click()
+      const input = win.getByPlaceholder('/path/to/directory')
+      await input.fill(other)
+      await input.press('Enter')
+      await win.getByRole('button', { name: 'Open', exact: true }).click()
+      let added
+      await eventually(async () => {
+        const state = await request(server, '/workspaces')
+        added = state.workspaces.find((w) => sameDir(w.rootDir, other))
+        return !!added
+      }, 'the server registry holds the workspace added from Settings')
+      const addedRow = win.locator(
+        `[data-workspace-row="${owned('workspace', ownerOnB, added.id)}"]`
+      )
+      await addedRow.waitFor()
+      // Remove it again, from the server, after the confirmation.
+      await addedRow.getByRole('button', { name: 'Remove workspace', exact: true }).click()
+      await win.getByRole('button', { name: 'Remove', exact: true }).click()
+      await eventually(async () => {
+        const state = await request(server, '/workspaces')
+        return !state.workspaces.some((w) => w.id === added.id)
+      }, 'the server registry no longer holds it')
+      await addedRow.waitFor({ state: 'detached' })
+      await listed.waitFor()
+      await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
+    })
+    t.check('Settings lists a server workspace with its server, and adds and removes one', true)
+
     const localBefore = await macA.win.evaluate(() => window.electronAPI.listSessions())
     const known = new Set((await request(server, '/sessions')).map((s) => s.id))
     const created = async (match, message) => {
@@ -223,6 +268,15 @@ export async function run(t) {
         await closeSwitcher(macA.win)
         return offline === 'true' && text.includes('offline')
       }, 'the server workspace shows offline in the switcher')
+      await macA.win.click('.sidebar-footer-btn[aria-label="Settings"]')
+      await macA.win.click('[data-settings-nav-row="general"]')
+      const settingsRow = macA.win.locator(`[data-workspace-row="${workspaceId.id}"]`)
+      await eventually(
+        async () => (await settingsRow.getAttribute('data-offline')) === 'true',
+        'Settings shows the server workspace offline'
+      )
+      assert.match(await settingsRow.innerText(), /Offline/)
+      await macA.win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
       await switchTo(macA.win, workspaceId.id)
       const before = await macA.win.evaluate(() => window.electronAPI.listSessions())
       await closeSwitcher(macA.win)
