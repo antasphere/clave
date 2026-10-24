@@ -11,6 +11,7 @@
 import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
+import { LaunchProfileView } from './settings/launch-profiles'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -326,6 +327,10 @@ export const SpawnOptions = Schema.Struct({
   claudeSessionId: Schema.optional(Schema.String),
   piSessionId: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** The definition named by launchProfileId in the asking Mac's list. The
+   * server runs it as given and stores none. Absent, the server resolves the
+   * id against its own built-ins and list as before. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   /** A level as Pi spells it (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). */
   piThinking: Schema.optional(Schema.String),
@@ -540,6 +545,8 @@ export const SessionRecord = Schema.Struct({
   dangerousMode: Schema.Boolean,
   model: Schema.optional(Schema.String),
   launchProfileId: Schema.optional(Schema.String),
+  /** What a stopped session's Resume relaunches with. */
+  launchProfile: Schema.optional(LaunchProfileView),
   piProvider: Schema.optional(Schema.String),
   piThinking: Schema.optional(Schema.String),
   configDir: Schema.optional(Schema.String),
