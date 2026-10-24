@@ -385,6 +385,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const gitSubscriberToken = `mac-${Math.random().toString(36).slice(2, 10)}`
   /** Each subscriber's current watch set, by owner, as last asked. */
   const gitWatchSets = new Map<string, Map<string, string[]>>()
+  /** Each subscriber's request counter: the server applies a subscriber's
+   *  requests in this order whatever order they reach it (a slow owner's
+   *  answer, two connections), so a late request never overwrites a newer
+   *  set (verifier round 3). */
+  const gitWatchRevisions = new Map<string, number>()
+  const nextWatchRevision = (subscriberId: string): number => {
+    const next = (gitWatchRevisions.get(subscriberId) ?? 0) + 1
+    gitWatchRevisions.set(subscriberId, next)
+    return next
+  }
   // The batches THIS Mac has in flight on a server, by the id it gave each
   // one: a server publishes a batch's progress to every attached Mac, and two
   // Macs may run the same op on the same repositories at once, so neither the
@@ -1091,6 +1101,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const owners = new Set([...byOwner.keys(), ...previous.keys()])
       gitWatchSets.set(subscriberId, byOwner)
       const subscriber = `${gitSubscriberToken}:${subscriberId}`
+      const revision = nextWatchRevision(subscriberId)
       const watched: string[] = []
       for (const owner of owners) {
         const paths = byOwner.get(owner) ?? []
@@ -1100,19 +1111,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         }
         try {
           const b = await backing(owner)
-          const ok = await b.api.git.watch(subscriber, paths)
+          const ok = await b.api.git.watch(subscriber, paths, revision)
           // The subscriber moved on while this owner answered (verifier
-          // round 1, finding 4; round 2): unwatched, what was just installed
-          // is nobody's and is taken back; replaced, the server is told the
-          // replacement's set for this owner once more, so whichever request
-          // it took last, it ends on the current one. This call's answer is
-          // stale either way.
-          const now = gitWatchSets.get(subscriberId)
-          if (now !== byOwner) {
-            if (now === undefined) await b.api.git.unwatch(subscriber).catch(noop)
-            else await b.api.git.watch(subscriber, now.get(owner) ?? []).catch(noop)
-            return []
-          }
+          // rounds 1 to 3): the server orders a subscriber's requests by their
+          // revision, so the newer set or the unwatch stands whatever reached
+          // it last; this call's answer is stale and names nothing.
+          if (gitWatchSets.get(subscriberId) !== byOwner) return []
           watched.push(...ok.map((path) => ownedPath(owner, path)))
         } catch {
           /* not connected: its repos are the panel's to poll */
@@ -1121,14 +1125,15 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return watched
     },
     gitUnwatchRepos: async (subscriberId) => {
-      const owners = gitWatchSets.get(subscriberId)?.keys() ?? []
+      const owners = [...(gitWatchSets.get(subscriberId)?.keys() ?? [])]
       gitWatchSets.delete(subscriberId)
+      const revision = nextWatchRevision(subscriberId)
       await local.gitUnwatchRepos(subscriberId)
       for (const owner of owners) {
         if (owner === LOCAL_SERVER_ID) continue
         try {
           const b = await backing(owner)
-          await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`)
+          await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`, revision)
         } catch {
           /* gone with its connection */
         }

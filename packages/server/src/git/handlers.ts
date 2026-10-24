@@ -88,8 +88,10 @@ export const gitHandlers = [
   CommandHandler.make(GitFetchBatch, (p) => call((g) => g.fetchBatch(p.paths))),
   CommandHandler.make(GitRefreshRemotes, (p) => call((g) => g.refreshRemotes(p.paths, p.batchId))),
   // Watching
-  CommandHandler.make(GitWatchRepos, (p) => call((g) => g.watch(p.subscriberId, p.paths))),
-  CommandHandler.make(GitUnwatchRepos, (p) => call((g) => g.unwatch(p.subscriberId))),
+  CommandHandler.make(GitWatchRepos, (p) =>
+    call((g) => g.watch(p.subscriberId, p.paths, p.revision))
+  ),
+  CommandHandler.make(GitUnwatchRepos, (p) => call((g) => g.unwatch(p.subscriberId, p.revision))),
   // Writes
   CommandHandler.make(GitStage, (p) => call((g) => g.stage(p.cwd, p.files))),
   CommandHandler.make(GitUnstage, (p) => call((g) => g.unstage(p.cwd, p.files))),

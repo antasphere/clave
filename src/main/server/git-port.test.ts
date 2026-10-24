@@ -121,6 +121,32 @@ describe('the daemon’s git port over a real checkout', () => {
     await port.unwatch('mac-1:git-status-1')
   })
 
+  it('applies a subscriber’s requests in the order of their revisions, not of their arrival', async () => {
+    // Revision 3 lands first (the current set), then a slow revision 2 (an
+    // older set) and an even older unwatch: both are ignored, the repo stays
+    // watched. An unwatch with a newer revision then takes.
+    expect(await port.watch('mac-1:ordered', [repo], 3)).toEqual([repo])
+    expect(await port.watch('mac-1:ordered', [], 2)).toEqual([])
+    await port.unwatch('mac-1:ordered', 1)
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'six\n')
+    expect(
+      await until(() =>
+        events.some((e) => e._tag === 'git.repos_changed' && e.repos.includes(repo))
+      ),
+      'the repository is still watched after the stale requests'
+    ).toBe(true)
+    await port.unwatch('mac-1:ordered', 4)
+    events.length = 0
+    writeFileSync(path.join(repo, 'ordered.txt'), 'seven\n')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(events.filter((e) => e._tag === 'git.repos_changed')).toEqual([])
+    // A request without a revision is taken as it comes, as an older Mac sends it.
+    expect(await port.watch('mac-1:plain', [repo])).toEqual([repo])
+    await port.unwatch('mac-1:plain')
+    rmSync(path.join(repo, 'ordered.txt'), { force: true })
+  })
+
   it('writes the commit message with this machine’s claude', async () => {
     withClaude(bins.writing)
     writeFileSync(path.join(repo, 'c.txt'), 'three\n')

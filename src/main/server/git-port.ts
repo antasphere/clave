@@ -98,6 +98,16 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     debounceMs: options.debounceMs ?? GIT_WATCH_DEBOUNCE_MS,
     maxWaitMs: options.maxWaitMs ?? GIT_WATCH_MAX_WAIT_MS
   })
+  /** The latest revision applied per subscriber; `advance` says whether a
+   *  request's revision is current (and records it) or stale. */
+  const watchRevisions = new Map<string, number>()
+  const advance = (subscriberId: string, revision: number | undefined): boolean => {
+    if (revision === undefined) return true
+    const applied = watchRevisions.get(subscriberId)
+    if (applied !== undefined && revision < applied) return false
+    watchRevisions.set(subscriberId, revision)
+    return true
+  }
   const withClaudeReason = (results: MagicSyncResult[]): MagicSyncResult[] =>
     results.map((r) => (r.error ? { ...r, error: describeClaudeFailure(r.error) } : r))
   const claude = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -116,8 +126,18 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     fetch: (cwd) => gitManager.fetch(cwd),
     fetchBatch: (paths) => gitManager.fetchBatch([...paths]),
     refreshRemotes: (paths, batchId) => gitManager.refreshRemotes([...paths], progress(batchId)),
-    watch: (subscriberId, paths) => watcher.setRepos(subscriberId, [...paths]),
-    unwatch: async (subscriberId) => watcher.drop(subscriberId),
+    // A subscriber's requests are applied in the order of the revisions it
+    // stamped, not the order they arrived: a watch or an unwatch older than
+    // the one already applied is ignored (verifier round 3).
+    watch: (subscriberId, paths, revision) => {
+      if (!advance(subscriberId, revision)) return Promise.resolve([])
+      return watcher.setRepos(subscriberId, [...paths])
+    },
+    unwatch: async (subscriberId, revision) => {
+      if (!advance(subscriberId, revision)) return
+      watcher.drop(subscriberId)
+      watchRevisions.delete(subscriberId)
+    },
     stage: (cwd, files) => gitManager.stage(cwd, [...files]),
     unstage: (cwd, files) => gitManager.unstage(cwd, [...files]),
     discard: (cwd, files) => gitManager.discard(cwd, [...files]),

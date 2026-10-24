@@ -231,17 +231,24 @@ export const GitRefreshRemotes = Command.define('GitRefreshRemotes', {
   failure: Failure
 })
 // ── Watching ──
+/** A subscriber's requests are ordered by the revision it stamps on them: a
+ *  request that reaches the server after a newer one of the same subscriber
+ *  is ignored, whichever travelled faster (a slow owner's late answer, two
+ *  connections). A request without a revision is taken as it comes. */
+export const GitWatchRevision = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
 export const GitWatchRepos = Command.define('GitWatchRepos', {
   payload: Schema.Struct({
     subscriberId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
-    paths: Paths
+    paths: Paths,
+    revision: Schema.optional(GitWatchRevision)
   }),
   success: Schema.Array(Schema.String),
   failure: Failure
 })
 export const GitUnwatchRepos = Command.define('GitUnwatchRepos', {
   payload: Schema.Struct({
-    subscriberId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256))
+    subscriberId: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+    revision: Schema.optional(GitWatchRevision)
   }),
   success: Schema.Void,
   failure: Failure
@@ -416,9 +423,10 @@ export interface GitOperations {
   ) => Promise<ReadonlyArray<GitRefreshResult>>
   readonly watch: (
     subscriberId: string,
-    paths: ReadonlyArray<string>
+    paths: ReadonlyArray<string>,
+    revision?: number
   ) => Promise<ReadonlyArray<string>>
-  readonly unwatch: (subscriberId: string) => Promise<void>
+  readonly unwatch: (subscriberId: string, revision?: number) => Promise<void>
   readonly stage: (cwd: string, files: ReadonlyArray<string>) => Promise<void>
   readonly unstage: (cwd: string, files: ReadonlyArray<string>) => Promise<void>
   readonly discard: (cwd: string, files: ReadonlyArray<GitDiscardFile>) => Promise<void>

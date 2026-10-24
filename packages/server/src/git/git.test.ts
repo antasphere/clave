@@ -72,10 +72,10 @@ class FakeGit implements GitService {
       paths,
       batchId
     )
-  watch: GitOperations['watch'] = (subscriberId, paths) =>
-    this.record('watch', [...paths], subscriberId, paths)
-  unwatch: GitOperations['unwatch'] = (subscriberId) =>
-    this.record('unwatch', undefined, subscriberId)
+  watch: GitOperations['watch'] = (subscriberId, paths, revision) =>
+    this.record('watch', [...paths], subscriberId, paths, revision)
+  unwatch: GitOperations['unwatch'] = (subscriberId, revision) =>
+    this.record('unwatch', undefined, subscriberId, revision)
   stage: GitOperations['stage'] = (cwd, files) => this.record('stage', undefined, cwd, files)
   unstage: GitOperations['unstage'] = (cwd, files) => this.record('unstage', undefined, cwd, files)
   discard: GitOperations['discard'] = (cwd, files: ReadonlyArray<GitDiscardFile>) =>
@@ -220,10 +220,17 @@ describe('the git group of the HTTP API', () => {
     expect((await post('/git/pull', { cwd: '/srv/repo', strategy: 'rebase' })).status).toBe(204)
     expect((await post('/git/push', { cwd: '/srv/repo' })).status).toBe(204)
     expect(
-      (await post('/git/watch', { subscriberId: 'mac-1:git-status-1', paths: ['/srv/repo'] }))
-        .status
+      (
+        await post('/git/watch', {
+          subscriberId: 'mac-1:git-status-1',
+          paths: ['/srv/repo'],
+          revision: 4
+        })
+      ).status
     ).toBe(200)
-    expect((await post('/git/unwatch', { subscriberId: 'mac-1:git-status-1' })).status).toBe(204)
+    expect(
+      (await post('/git/unwatch', { subscriberId: 'mac-1:git-status-1', revision: 5 })).status
+    ).toBe(204)
     const sync = await post('/git/magic-sync', { paths: ['/srv/repo'], batchId: 'mac-1:3' })
     expect(sync.status).toBe(200)
     expect(await sync.json()).toEqual([
@@ -239,7 +246,8 @@ describe('the git group of the HTTP API', () => {
       'magicSync'
     ])
     expect(fake.calls[1].args).toEqual(['/srv/repo', 'rebase'])
-    expect(fake.calls[3].args).toEqual(['mac-1:git-status-1', ['/srv/repo']])
+    expect(fake.calls[3].args).toEqual(['mac-1:git-status-1', ['/srv/repo'], 4])
+    expect(fake.calls[4].args).toEqual(['mac-1:git-status-1', 5])
   })
 
   it('answers git’s refusal as the declared GitOperationFailed with git’s sentence', async () => {
