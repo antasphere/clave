@@ -567,3 +567,104 @@ describe('server workspaces', () => {
     ])
   })
 })
+
+// Round 6 of verification (B6-F1, B6-F2): the verifier's own reproductions, kept as regression tests.
+
+describe('verifier request counter after accepting a higher revision', () => {
+  it('does not reopen an intermediate retired-instance reply after an earlier current reply', async () => {
+    await api.fleetWorkspaces('a')
+    const seen: string[][] = []
+    api.onFleetWorkspaces((u) => {
+      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
+    })
+    const row = (rootDir: string): Array<Record<string, unknown>> => [
+      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
+    ]
+    // A was sent first but reaches the new process last; B overtook it and
+    // read the retired process; C reads the new process before A does.
+    mocks.hold = { instance: 'a-new', revision: 2, workspaces: row('/current-newer') }
+    const a = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
+    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
+    const b = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
+    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
+    const c = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 3; n++) await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.held).toHaveLength(3)
+    mocks.held[2].release()
+    await c
+    mocks.held[0].release()
+    await a
+    expect(seen.at(-1)).toEqual(['/current-newer'])
+    mocks.held[1].release()
+    await b
+    expect(seen.at(-1)).toEqual(['/current-newer'])
+  })
+})
+
+describe('verifier equal live push after an HTTP answer', () => {
+  it('keeps the live instance when its equal push precedes a retired reply', async () => {
+    await api.fleetWorkspaces('a')
+    const seen: string[][] = []
+    api.onFleetWorkspaces((u) => {
+      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
+    })
+    const row = (rootDir: string): Array<Record<string, unknown>> => [
+      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
+    ]
+    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
+    const a = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
+    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
+    const b = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.held).toHaveLength(2)
+    mocks.held[0].release()
+    await a
+    mocks.events.get('a')!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: row('/current'),
+        pins: [],
+        origin: null,
+        revision: 1,
+        instance: 'a-new'
+      }
+    })
+    mocks.held[1].release()
+    await b
+    expect(seen.at(-1)).toEqual(['/current'])
+  })
+})
+
+describe('verifier equal current answer before a retired reply', () => {
+  it('keeps the live instance after a later equal-revision read confirms it', async () => {
+    await api.fleetWorkspaces('a')
+    const seen: string[][] = []
+    api.onFleetWorkspaces((u) => {
+      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
+    })
+    const row = (rootDir: string): Array<Record<string, unknown>> => [
+      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
+    ]
+    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
+    const a = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
+    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
+    const b = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
+    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
+    const c = api.fleetWorkspaces('a')
+    for (let n = 0; n < 50 && mocks.held.length < 3; n++) await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.held).toHaveLength(3)
+    mocks.held[0].release()
+    await a
+    mocks.held[2].release()
+    await c
+    expect(seen).toEqual([['/current']])
+    mocks.held[1].release()
+    await b
+    expect(seen.at(-1)).toEqual(['/current'])
+  })
+})
