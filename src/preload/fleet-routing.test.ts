@@ -26,7 +26,9 @@ const mocks = vi.hoisted(() => ({
    *  progress while the batch is in flight. */
   holdBatch: null as Promise<void> | null,
   /** When set, owner a's watch waits for it before answering. */
-  holdWatchA: null as Promise<void> | null
+  holdWatchA: null as Promise<void> | null,
+  /** The push status listeners each owner's backing holds, so a test can reopen. */
+  pushStatusListeners: new Map<string, Set<(state: string, detail: unknown) => void>>()
 }))
 vi.mock('electron', () => ({
   contextBridge: {
@@ -202,7 +204,14 @@ vi.mock('@clave/client/node', () => ({
         status: 'open',
         connect: () => {},
         close: () => {},
-        onStatus: () => () => {},
+        onStatus: (listener: (state: string, detail: unknown) => void) => {
+          const set = mocks.pushStatusListeners.get(owner) ?? new Set()
+          set.add(listener)
+          mocks.pushStatusListeners.set(owner, set)
+          return () => {
+            set.delete(listener)
+          }
+        },
         onEvent: (listener: (envelope: unknown) => void) => {
           // Lane B's tests push through the one callback per owner; lane C's
           // through the set, so both lanes' emitters reach the fleet client.
@@ -241,6 +250,7 @@ beforeEach(async () => {
     { id: 'ws-a', name: 'Other', rootDir: '/home/b', profileFile: null, createdAt: 2 }
   ])
   mocks.pushListeners.clear()
+  mocks.pushStatusListeners.clear()
   mocks.holdBatch = null
   mocks.holdWatchA = null
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
@@ -780,6 +790,28 @@ describe('git routing by the owner of the repository key', () => {
       [resourceKey('file', 'a', '/repo'), resourceKey('file', 'a', '/other')]
     ])
     expect(progress).toEqual([])
+  })
+  it('tells a server that comes back every live set it held, under fresh revisions', async () => {
+    await api.getGitStatus(resourceKey('file', 'a', '/repo'))
+    await api.getGitStatus(resourceKey('file', 'b', '/repo'))
+    await api.gitWatchRepos('panel-1', [
+      resourceKey('file', 'a', '/one'),
+      resourceKey('file', 'b', '/two')
+    ])
+    await api.gitWatchRepos('panel-2', [resourceKey('file', 'a', '/three')])
+    await api.gitUnwatchRepos('panel-2')
+    mocks.calls.length = 0
+    // Owner a's push channel reopens (a reconnection, or a daemon restarted).
+    for (const listener of mocks.pushStatusListeners.get('a') ?? []) listener('open', {})
+    await vi.waitFor(() =>
+      expect(mocks.calls.filter((c) => c.method === 'git.watch')).toHaveLength(1)
+    )
+    const [again] = mocks.calls.filter((c) => c.method === 'git.watch')
+    // Only the live set of owner a, under a revision above the one that installed it
+    // (2: the first watch was 1); the unwatched panel sends nothing, owner b is not asked.
+    expect(again.owner).toBe('a')
+    expect(again.args).toEqual([expect.stringMatching(/:panel-1$/), ['/one'], 2])
+    expect(mocks.calls.filter((c) => c.owner === 'b')).toEqual([])
   })
   it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))

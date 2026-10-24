@@ -471,6 +471,27 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     gitWatchRevisions.set(subscriberId, next)
     return next
   }
+  // A server that comes BACK (its push channel reopened after a first
+  // connection: a reconnection, or a daemon restarted with no watch left) is
+  // told every live set this Mac holds for it, each under a fresh revision:
+  // the same set again is nothing to the server, a lost set is restored
+  // (`lane-c/watch-rule.md`). The first connection has nothing to restore.
+  const gitConnectedOwners = new Set<string>()
+  const restoreGitWatches = (owner: string): void => {
+    for (const [subscriberId, sets] of gitWatchSets) {
+      const paths = sets.get(owner)
+      if (!paths || paths.length === 0) continue
+      const revision = nextWatchRevision(subscriberId)
+      void backing(owner)
+        .then((b) => b.api.git.watch(`${gitSubscriberToken}:${subscriberId}`, paths, revision))
+        .catch(noop)
+    }
+  }
+  fleet.onStatus((status) => {
+    if (status.state !== 'connected') return
+    if (gitConnectedOwners.has(status.serverId)) restoreGitWatches(status.serverId)
+    gitConnectedOwners.add(status.serverId)
+  })
   // The batches THIS Mac has in flight on a server, by the id it gave each
   // one: a server publishes a batch's progress to every attached Mac, and two
   // Macs may run the same op on the same repositories at once, so neither the
