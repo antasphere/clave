@@ -193,8 +193,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // ── Server workspaces (#241) ──────────────────────────────────────────────
   // A server keeps its own workspace registry; the desktop reads it per
   // server, wraps each id as a remote key, and hears every change through the
-  // server's `workspaces.state_changed` event. Writes replace the server's
-  // whole list, so they run one at a time per server against a fresh read.
+  // server's `workspaces.state_changed` event. Every read, push and write
+  // answer carries the registry's stamp: an answer older than what was last
+  // published for that server is dropped, so a slow read never rolls back a
+  // newer push. A write replaces the server's whole list, so it is made
+  // against the stamp it read and the server refuses it as `stale` when
+  // another Mac wrote in between; it is then read and applied again.
+  type Stamp = { revision: number; instance: string }
+  const stamps = new Map<string, Stamp>()
   const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
     id: resourceKey('workspace', serverId, ws.id),
     name: ws.name,
@@ -202,29 +208,46 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     profileFile: ws.profileFile,
     createdAt: ws.createdAt
   })
-  const publishWorkspaces = (serverId: string, list: readonly Workspace[]): Workspace[] => {
+  const publishWorkspaces = (
+    serverId: string,
+    list: readonly Workspace[],
+    stamp: Stamp
+  ): Workspace[] => {
     const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+    const last = stamps.get(serverId)
+    if (last && last.instance === stamp.instance && stamp.revision < last.revision)
+      return workspaces
+    stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
     for (const listener of workspaceListeners) listener({ serverId, workspaces })
     return workspaces
   }
   const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
     const b = await backing(serverId)
     const state = await b.api.settings.workspaces.load()
-    return publishWorkspaces(serverId, state.workspaces as Workspace[])
+    return publishWorkspaces(serverId, state.workspaces as Workspace[], state)
   }
   const registryChains = new Map<string, Promise<unknown>>()
+  const STALE_RETRIES = 5
   const editRegistry = <T>(
     serverId: string,
     edit: (current: Workspace[]) => { next: Workspace[]; result: T }
   ): Promise<T> => {
     const run = (registryChains.get(serverId) ?? Promise.resolve()).catch(noop).then(async () => {
       const b = await backing(serverId)
-      const state = await b.api.settings.workspaces.load()
-      const { next, result } = edit([...(state.workspaces as Workspace[])])
-      const written = await b.api.settings.workspaces.updateRegistry(next)
-      if (!written.ok) throw new Error('The server refused the workspace list.')
-      publishWorkspaces(serverId, written.workspaces as Workspace[])
-      return result
+      for (let attempt = 0; ; attempt++) {
+        const state = await b.api.settings.workspaces.load()
+        const { next, result } = edit([...(state.workspaces as Workspace[])])
+        const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
+          revision: state.revision,
+          instance: state.instance
+        })
+        if (written.ok) {
+          publishWorkspaces(serverId, written.workspaces as Workspace[], written)
+          return result
+        }
+        if (written.reason !== 'stale' || attempt >= STALE_RETRIES)
+          throw new Error('The server refused the workspace list.')
+      }
     })
     registryChains.set(serverId, run)
     return run
@@ -243,7 +266,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     const tag = value.event._tag
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
     if (value.event._tag === 'workspaces.state_changed')
-      publishWorkspaces(serverId, value.event.workspaces as Workspace[])
+      publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
   })
   let savedRead: Promise<SavedServerConnection[]> | null = null
   let watchingChanges = false

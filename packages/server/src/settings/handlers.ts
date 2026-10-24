@@ -198,7 +198,7 @@ export const settingsHandlers = [
   // Workspaces
   QueryHandler.make(LoadWorkspaceState, () => ask((s) => s.workspaces.load())),
   CommandHandler.make(UpdateWorkspaceRegistry, (p) =>
-    must((s) => s.workspaces.updateRegistry(p.workspaces, p.origin))
+    must((s) => s.workspaces.updateRegistry(p.workspaces, p.origin, p.base))
   ),
   CommandHandler.make(UpdateWorkspacePins, (p) =>
     must((s) => s.workspaces.updatePins(p.scope, p.pins, p.origin))

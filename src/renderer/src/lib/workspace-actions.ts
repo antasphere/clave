@@ -20,6 +20,7 @@ import {
   type PinnedGroupBlueprint
 } from '../store/pinned-store'
 import { useSessionStore } from '../store/session-store'
+import { isRemoteKey } from './fleet-identity'
 
 /** Orchestration layer above the stores. The stores stay import-acyclic
  *  (session→workspace, pinned→workspace); everything that has to touch several
@@ -730,7 +731,9 @@ export async function addWorkspace(
     createdAt: Date.now()
   }
 
-  const isFirst = workspaces.length === 0
+  // Leaving no-workspace mode only: a window already on a server workspace
+  // (#241) stays there, and nothing is stamped behind its back.
+  const isFirst = workspaces.length === 0 && useWorkspaceStore.getState().activeWorkspaceId === null
   useWorkspaceStore.setState((s) => ({ workspaces: [...s.workspaces, ws] }))
 
   if (isFirst) {
@@ -750,16 +753,20 @@ export async function addWorkspace(
   return ws
 }
 
-/** Stamp every unowned session/group/pin with the given workspace. Used when
- *  the FIRST workspace is created (no-workspace mode ends). */
+/** Stamp every unowned session/group/pin of this Mac with the given
+ *  workspace. Used when the FIRST workspace is created (no-workspace mode
+ *  ends). A server's tab or group is never stamped with a Mac workspace: it
+ *  belongs to its server's workspaces (#241). */
 function stampUnowned(workspaceId: string): void {
   const sessionState = useSessionStore.getState()
+  const unowned = (x: { id: string; workspaceId?: string | null }): boolean =>
+    x.workspaceId == null && !isRemoteKey(x.id)
   useSessionStore.setState({
-    sessions: sessionState.sessions.map((s) => (s.workspaceId == null ? { ...s, workspaceId } : s)),
-    groups: sessionState.groups.map((g) => (g.workspaceId == null ? { ...g, workspaceId } : g))
+    sessions: sessionState.sessions.map((s) => (unowned(s) ? { ...s, workspaceId } : s)),
+    groups: sessionState.groups.map((g) => (unowned(g) ? { ...g, workspaceId } : g))
   })
   for (const s of sessionState.sessions) {
-    if (s.workspaceId == null && s.sessionType === 'local') {
+    if (unowned(s) && s.sessionType === 'local') {
       // Non-fatal, like the name: the stamp applies for this run either way.
       void window.electronAPI?.setSessionWorkspace(s.id, workspaceId).catch(() => {})
     }

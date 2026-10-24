@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   calls: [] as Array<{ owner: string; method: string; args: unknown[] }>,
   listeners: new Map<string, Set<(...args: unknown[]) => void>>(),
   registries: new Map<string, Array<Record<string, unknown>>>(),
+  revisions: new Map<string, number>(),
+  /** Runs once before the next registry write lands: another Mac writing in between. */
+  interleave: null as null | ((owner: string) => void),
   events: new Map<string, (value: unknown) => void>()
 }))
 vi.mock('electron', () => ({
@@ -51,11 +54,26 @@ vi.mock('@clave/client/node', () => ({
         },
         settings: {
           workspaces: {
-            load: async () => ({ workspaces: mocks.registries.get(owner) ?? [] }),
-            updateRegistry: async (workspaces: Array<Record<string, unknown>>) => {
+            load: async () => ({
+              workspaces: mocks.registries.get(owner) ?? [],
+              revision: mocks.revisions.get(owner) ?? 0,
+              instance: owner
+            }),
+            updateRegistry: async (
+              workspaces: Array<Record<string, unknown>>,
+              _origin?: string,
+              base?: { revision: number; instance: string }
+            ) => {
+              const hook = mocks.interleave
+              mocks.interleave = null
+              hook?.(owner)
               mocks.calls.push({ owner, method: 'update-registry', args: [workspaces] })
+              const revision = mocks.revisions.get(owner) ?? 0
+              if (base && (base.instance !== owner || base.revision !== revision))
+                return { ok: false, reason: 'stale' }
               mocks.registries.set(owner, [...workspaces])
-              return { ok: true, workspaces, pins: [], revision: 1, instance: owner }
+              mocks.revisions.set(owner, revision + 1)
+              return { ok: true, workspaces, pins: [], revision: revision + 1, instance: owner }
             }
           }
         },
@@ -105,6 +123,8 @@ beforeEach(async () => {
   mocks.disabled.clear()
   mocks.events.clear()
   mocks.registries.clear()
+  mocks.revisions.clear()
+  mocks.interleave = null
   mocks.registries.set('a', [
     { id: 'ws-a', name: 'Repo', rootDir: '/srv/repo', profileFile: null, createdAt: 1 }
   ])
@@ -304,6 +324,62 @@ describe('server workspaces', () => {
     await expect(api.fleetRemoveWorkspace('local-workspace')).rejects.toThrow(
       'Not a server workspace'
     )
+  })
+
+  it('keeps an addition another Mac made between this read and this write', async () => {
+    mocks.interleave = (owner) => {
+      // Mac B adds its own workspace on the same server meanwhile.
+      mocks.registries.set(owner, [
+        ...(mocks.registries.get(owner) ?? []),
+        { id: 'from-b', name: 'B', rootDir: '/srv/b', profileFile: null, createdAt: 9 }
+      ])
+      mocks.revisions.set(owner, (mocks.revisions.get(owner) ?? 0) + 1)
+    }
+    await api.fleetAddWorkspace('a', { rootDir: '/srv/mine' })
+    expect(mocks.registries.get('a')!.map((w) => w.rootDir)).toEqual([
+      '/srv/repo',
+      '/srv/b',
+      '/srv/mine'
+    ])
+    expect(mocks.calls.filter((c) => c.method === 'update-registry')).toHaveLength(2)
+  })
+
+  it('never rolls a newer pushed list back with an older read', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    mocks.events.get('a')!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [{ id: 'new', name: 'New', rootDir: '/new', profileFile: null, createdAt: 3 }],
+        pins: [],
+        origin: null,
+        revision: 7,
+        instance: 'a'
+      }
+    })
+    // A read that went out before the push answers with the older revision.
+    mocks.revisions.set('a', 2)
+    await api.fleetWorkspaces('a')
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/new']])
+  })
+
+  it('takes a list from a restarted server whatever its revision', async () => {
+    mocks.revisions.set('a', 9)
+    await api.fleetWorkspaces('a')
+    const heard: unknown[] = []
+    api.onFleetWorkspaces((update) => heard.push(update))
+    mocks.events.get('a')!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [],
+        pins: [],
+        origin: null,
+        revision: 1,
+        instance: 'a-restarted'
+      }
+    })
+    expect(heard).toHaveLength(1)
   })
 
   it('relays a server registry change with the ids of that server', async () => {
