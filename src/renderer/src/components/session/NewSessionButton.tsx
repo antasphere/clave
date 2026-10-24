@@ -1,5 +1,8 @@
 import { useCallback, useState } from 'react'
 import { useSessionStore } from '../../store/session-store'
+import { getActiveWorkspaceId, workspaceServer } from '../../store/workspace-store'
+import { getLastAgentSetup } from '../../store/launch-prefs'
+import { launchSession } from '../../lib/launch-session'
 
 export function NewSessionButton(): React.JSX.Element {
   const addSession = useSessionStore((s) => s.addSession)
@@ -8,6 +11,16 @@ export function NewSessionButton(): React.JSX.Element {
   const handleNewSession = useCallback(async () => {
     setLoading(true)
     try {
+      // In a server workspace the empty state starts where the workspace
+      // lives: on its server, at its root, through the normal launch (#241).
+      const workspaceId = getActiveWorkspaceId()
+      if (workspaceServer(workspaceId)) {
+        await launchSession({
+          setup: getLastAgentSetup(workspaceId),
+          cwd: { kind: 'workspace-root' }
+        })
+        return
+      }
       const folderPath = await window.electronAPI.openFolderDialog()
       if (!folderPath) return
 
