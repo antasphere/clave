@@ -322,3 +322,18 @@ describe('the first Mac workspace beside server workspaces', () => {
     expect(switches).toEqual([])
   })
 })
+
+// Round 9 of verification (B9-F2): a transport failure is told in plain words.
+describe('what a failed add or removal of a server workspace says', () => {
+  it('passes a refusal through and words a transport failure plainly', () => {
+    const refusal = new Error('That folder overlaps a workspace already on this server.')
+    expect(actions.serverWorkspaceError(refusal, 'VPS', 'add')).toBe(refusal.message)
+    const transport = new Error('Decode error (502 GET http://127.0.0.1:1/files/stat)')
+    expect(actions.serverWorkspaceError(transport, 'VPS', 'add')).toBe(
+      'VPS could not add the workspace. Check that it is connected, then try again.'
+    )
+    expect(actions.serverWorkspaceError('gone', 'VPS', 'remove')).toBe(
+      'VPS could not remove the workspace. Check that it is connected, then try again.'
+    )
+  })
+})

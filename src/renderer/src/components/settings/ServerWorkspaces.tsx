@@ -6,6 +6,7 @@ import { pickServerFolder } from '../../store/server-folder-store'
 import {
   addServerWorkspace,
   removeServerWorkspace,
+  serverWorkspaceError,
   setActiveWorkspace
 } from '../../lib/workspace-actions'
 import { SettingsCallout } from './primitives'
@@ -50,12 +51,12 @@ export function ServerWorkspaceRows(): React.JSX.Element | null {
   )
   if (rows.length === 0 && !error) return null
 
-  const remove = async (id: string): Promise<void> => {
+  const remove = async (target: { id: string; server: string }): Promise<void> => {
     setConfirmRemove(null)
     try {
-      await removeServerWorkspace(id)
+      await removeServerWorkspace(target.id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The server could not remove that workspace.')
+      setError(serverWorkspaceError(err, target.server, 'remove'))
     }
   }
 
@@ -125,7 +126,7 @@ export function ServerWorkspaceRows(): React.JSX.Element | null {
               <button onClick={() => setConfirmRemove(null)} className="btn-secondary">
                 Cancel
               </button>
-              <button onClick={() => void remove(confirmRemove.id)} className="btn-primary">
+              <button onClick={() => void remove(confirmRemove)} className="btn-primary">
                 Remove
               </button>
             </>
@@ -155,7 +156,7 @@ export function AddWorkspaceAction({
     try {
       await addServerWorkspace(serverId, folder)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The server could not add that workspace.')
+      setError(serverWorkspaceError(err, nameOf(serverId), 'add'))
     }
   }
 

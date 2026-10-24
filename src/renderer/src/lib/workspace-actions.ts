@@ -533,6 +533,28 @@ export async function addServerWorkspace(
   return added
 }
 
+/** The sentences an add or a removal of a server workspace refuses with, as
+ *  the preload and this file word them: shown as they are. */
+const SERVER_WORKSPACE_REFUSALS = new Set([
+  'Clave servers are not available here.',
+  'Choose an absolute folder on the server.',
+  'That path on the server is not a folder.',
+  'That folder overlaps a workspace already on this server.',
+  'The server refused the workspace list.'
+])
+
+/** What to tell the person when adding or removing a server workspace
+ *  failed: a refusal as worded, anything else (the server went away, a
+ *  transport error) in plain words rather than the transport's. */
+export function serverWorkspaceError(
+  err: unknown,
+  serverName: string,
+  action: 'add' | 'remove'
+): string {
+  if (err instanceof Error && SERVER_WORKSPACE_REFUSALS.has(err.message)) return err.message
+  return `${serverName} could not ${action} the workspace. Check that it is connected, then try again.`
+}
+
 /** Remove a server workspace from its server's registry. This window, when
  *  it shows it, lands on another workspace once the server's list arrives. */
 export async function removeServerWorkspace(id: string): Promise<void> {

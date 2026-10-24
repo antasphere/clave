@@ -14,7 +14,12 @@ import { allWorkspaces, useWorkspaceStore, workspaceServer } from '../../store/w
 import { useSessionStore } from '../../store/session-store'
 import { useFleetStore } from '../../store/fleet-store'
 import { pickServerFolder } from '../../store/server-folder-store'
-import { setActiveWorkspace, addWorkspace, addServerWorkspace } from '../../lib/workspace-actions'
+import {
+  setActiveWorkspace,
+  addWorkspace,
+  addServerWorkspace,
+  serverWorkspaceError
+} from '../../lib/workspace-actions'
 import { shortenPath } from '../../lib/utils'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
@@ -120,7 +125,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
       await setActiveWorkspace(added.id)
     } catch (err) {
       setOpen(true)
-      setError(err instanceof Error ? err.message : 'The server could not add that workspace.')
+      setError(serverWorkspaceError(err, serverName(serverId), 'add'))
     }
   }
 
