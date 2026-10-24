@@ -91,7 +91,8 @@ export function registerPtyHandlers(): void {
     spawnForWindow(
       BrowserWindow.fromWebContents(_event.sender),
       cwd,
-      options && { ...options, initialInput: undefined }
+      // A carried definition crosses to a server; a Mac-local start resolves its own ids.
+      options && { ...options, initialInput: undefined, launchProfile: undefined }
     )
   )
 

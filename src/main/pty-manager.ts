@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { sanitizeCarriedLaunchProfile } from '../shared/agent-launch'
+import { findExecutable } from './shell-launch'
 import { accountOverrides } from './restart-overrides'
 import { dismissSessionOffers } from './copy-offer-manager'
 import { terminalJournal } from './terminal-journal'
@@ -136,10 +139,29 @@ class PtyManager {
           : options?.claudeAgentsMode || options?.claudeMode !== false
             ? 'claude'
             : null
+    const carried =
+      family && options?.launchProfile
+        ? sanitizeCarriedLaunchProfile(options.launchProfile)
+        : undefined
+    if (options?.launchProfile && family && !carried)
+      throw new Error('The carried launch profile is not valid')
+    if (carried && carried.family !== family)
+      throw new Error(`Launch profile "${carried.name}" is for ${carried.family}, not ${family}`)
+    options = { ...options, launchProfile: carried ?? undefined }
     const profileId =
+      carried?.id ??
       options?.launchProfileId ??
       (family ? launchProfileManager.resolve(family, options?.workspaceId).id : undefined)
     const echo = isEchoLaunchProfile(profileId)
+    if (carried && !echo) {
+      const program = carried.command[0].includes('/')
+        ? path.resolve(cwd, carried.command[0])
+        : carried.command[0]
+      if (!findExecutable(program, getLoginShellEnv().PATH))
+        throw new Error(
+          `Program "${carried.command[0]}" was not found on this server (launch profile "${carried.name}")`
+        )
+    }
     if (profileId === 'dev-echo-adapter' && !echo) throw new Error('Echo adapter is disabled')
     const events = eventsProfile(profileId)
     if (events?.adapterId === 'claude-chat' && process.platform === 'win32')
@@ -242,7 +264,7 @@ class PtyManager {
       // session's prompt used to reach a Claude tab and never a Codex one.
       codexAdapter.configure(
         session.id,
-        launchProfileManager.resolve('codex', options?.workspaceId, profileId),
+        carried ?? launchProfileManager.resolve('codex', options?.workspaceId, profileId),
         buildSpawnEnv(getLoginShellEnv(), {
           codexHome: codexHomeForSpawn('codex', options?.codexAccountId)
         }),
@@ -336,6 +358,7 @@ class PtyManager {
       dangerousMode: options?.dangerousMode === true,
       model: options?.model,
       launchProfileId: profileId,
+      launchProfile: options?.launchProfile,
       configDir: codex ? undefined : options?.configDir,
       claudeProfileId: codex ? undefined : options?.claudeProfileId,
       claudeProfileLabel: codex ? undefined : options?.claudeProfileLabel,

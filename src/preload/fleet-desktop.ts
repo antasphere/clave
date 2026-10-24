@@ -16,6 +16,7 @@ import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/f
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import type { Attachment, AttachmentSource } from '../shared/attachments'
+import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type { FleetDesktopAPI, FleetSnapshot, FleetRequests } from './fleet-types'
 
@@ -341,10 +342,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       })
     }
   }
-  const wireOptions = (
+  const wireOptions = async (
     serverId: string,
     options: Parameters<ElectronAPI['spawnSession']>[1]
-  ): Parameters<ElectronAPI['spawnSession']>[1] => {
+  ): Promise<Parameters<ElectronAPI['spawnSession']>[1]> => {
     if (!options) return options
     if (options.adoptSessionId)
       throw new Error('Remote recovered sessions require explicit Resume.')
@@ -353,7 +354,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (ref.serverId !== serverId) throw new Error('Launch context belongs to another server.')
       return ref.id
     }
-    return {
+    const decoded = {
       ...options,
       workspaceId: options.workspaceId ? decode('workspace', options.workspaceId) : undefined,
       link:
@@ -363,6 +364,23 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
             ? { ...options.link, ownerId: decode('session', options.link.ownerId) }
             : options.link
     }
+    if (options.launchProfileId && !options.launchProfile) {
+      const prefs = await local.launchProfilesList()
+      const profile = [...BUILT_IN_LAUNCH_PROFILES, ...prefs.customProfiles].find(
+        (profile) => profile.id === options.launchProfileId
+      )
+      if (profile)
+        decoded.launchProfile = {
+          id: profile.id,
+          name: profile.name,
+          family: profile.family,
+          command: [...profile.command],
+          additionalArgs: [...profile.additionalArgs],
+          ...(profile.sourceProfileId ? { sourceProfileId: profile.sourceProfileId } : {}),
+          ...(profile.pi ? { pi: profile.pi } : {})
+        }
+    }
+    return decoded
   }
   const eventListener = <T extends ServerEvent['_tag']>(
     tag: T,
@@ -417,7 +435,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     fleetStart: async (serverId, cwd, options) => {
       if (serverId === LOCAL_SERVER_ID) return local.spawnSession(cwd, options)
       const b = await backing(serverId)
-      const info = await b.api.sessions.start({ cwd, options: wireOptions(serverId, options) })
+      const info = await b.api.sessions.start({
+        cwd,
+        options: await wireOptions(serverId, options)
+      })
       refresh(serverId)
       return { ...info, id: key(serverId, info.id) } as SessionInfo
     },

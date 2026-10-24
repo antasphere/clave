@@ -500,6 +500,8 @@ export interface SessionRecord {
    *  re-spawn after a reboot relaunches the CLI on the same model. */
   model?: string
   launchProfileId?: string
+  /** Keeps Resume on the carried command; absent when this server resolved its own list. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   /** Claude account/profile this session runs under, so the badge + config dir
@@ -752,6 +754,9 @@ export interface PtySpawnOptions {
   claudeSessionId?: string
   piSessionId?: string
   launchProfileId?: string
+  /** The Mac's definition, sanitized by the manager, wins over this server's
+   * resolution. Server-resolved profiles are never put here. */
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   initialCommand?: string
@@ -969,11 +974,12 @@ export class PtyBackend {
               ? 'claude'
               : null
     const launchProfile: LaunchProfile | undefined = kind
-      ? launchProfileManager.resolve(
+      ? (options?.launchProfile ??
+        launchProfileManager.resolve(
           kind === 'claude-agents' ? 'claude' : kind,
           options?.workspaceId,
           options?.launchProfileId
-        )
+        ))
       : undefined
     // The Codex account's home, synced now so the process starts on a home
     // that carries every entry of the machine's own (ADR 0002).
@@ -1157,6 +1163,7 @@ export class PtyBackend {
       dangerousMode: options?.dangerousMode === true,
       model,
       launchProfileId: launchProfile?.id,
+      launchProfile: options?.launchProfile,
       piProvider,
       piThinking,
       configDir: options?.configDir,
