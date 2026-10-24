@@ -99,13 +99,24 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     maxWaitMs: options.maxWaitMs ?? GIT_WATCH_MAX_WAIT_MS
   })
   /** The latest revision applied per subscriber; `advance` says whether a
-   *  request's revision is current (and records it) or stale. */
+   *  request's revision is current (and records it) or stale. An unwatch
+   *  keeps the entry: a watch of that subscriber dispatched before the
+   *  unwatch but arriving after it must still read as older (verifier round
+   *  4). The map is bounded by dropping its oldest entries; a subscriber id
+   *  is minted per panel mount, so the oldest are long gone. */
   const watchRevisions = new Map<string, number>()
+  const MAX_REMEMBERED_SUBSCRIBERS = 10_000
   const advance = (subscriberId: string, revision: number | undefined): boolean => {
     if (revision === undefined) return true
     const applied = watchRevisions.get(subscriberId)
     if (applied !== undefined && revision < applied) return false
+    watchRevisions.delete(subscriberId)
     watchRevisions.set(subscriberId, revision)
+    while (watchRevisions.size > MAX_REMEMBERED_SUBSCRIBERS) {
+      const oldest = watchRevisions.keys().next().value
+      if (oldest === undefined) break
+      watchRevisions.delete(oldest)
+    }
     return true
   }
   const withClaudeReason = (results: MagicSyncResult[]): MagicSyncResult[] =>
@@ -136,7 +147,6 @@ export function serverGitPort(options: ServerGitPortOptions = {}): ServerGitPort
     unwatch: async (subscriberId, revision) => {
       if (!advance(subscriberId, revision)) return
       watcher.drop(subscriberId)
-      watchRevisions.delete(subscriberId)
     },
     stage: (cwd, files) => gitManager.stage(cwd, [...files]),
     unstage: (cwd, files) => gitManager.unstage(cwd, [...files]),

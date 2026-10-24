@@ -137,6 +137,9 @@ describe('the daemon’s git port over a real checkout', () => {
       'the repository is still watched after the stale requests'
     ).toBe(true)
     await port.unwatch('mac-1:ordered', 4)
+    // A watch dispatched before that unwatch but arriving after it is older
+    // than the unwatch: ignored, the subscriber stays closed (verifier round 4).
+    expect(await port.watch('mac-1:ordered', [repo], 3)).toEqual([])
     events.length = 0
     writeFileSync(path.join(repo, 'ordered.txt'), 'seven\n')
     await new Promise((resolve) => setTimeout(resolve, 600))
