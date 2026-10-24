@@ -288,6 +288,12 @@ it('treats focus on a remote file as no local plugin session context', async () 
 })
 
 describe('server workspaces', () => {
+  beforeEach(async () => {
+    // Opens each server's backing, and with it the socket the lists come over.
+    await api.fleetWorkspaces('a')
+    await api.fleetWorkspaces('b')
+  })
+
   it('reads each server registry with ids wrapped to their owner', async () => {
     const heard: Array<{ serverId: string }> = []
     api.onFleetWorkspaces((update) => heard.push(update))
@@ -303,8 +309,8 @@ describe('server workspaces', () => {
     expect((await api.fleetWorkspaces('b')).map((w) => w.id)).toEqual([
       resourceKey('workspace', 'b', 'ws-a')
     ])
-    // Read at each connect, and at each explicit read.
-    expect(new Set(heard.map((h) => h.serverId))).toEqual(new Set(['a', 'b']))
+    // A read answers its caller alone: the renderer's list comes from the socket.
+    expect(heard).toEqual([])
   })
 
   it('adds a folder checked on its own server and writes only that registry', async () => {
@@ -321,8 +327,8 @@ describe('server workspaces', () => {
     const written = writes[0].args[0] as Array<{ id: string; rootDir: string }>
     expect(written.map((w) => w.rootDir)).toEqual(['/srv/repo', '/srv/other'])
     expect(written.every((w) => !w.id.startsWith('clave-owner:'))).toBe(true)
-    expect(heard.at(-1)?.serverId).toBe('a')
-    expect(heard.at(-1)?.workspaces.map((w) => w.id)).toContain(added.id)
+    // The write's answer is not published; the change it made comes as a push.
+    expect(heard).toEqual([])
   })
 
   it('refuses a file, a relative path and a folder overlapping a server workspace', async () => {
@@ -334,7 +340,26 @@ describe('server workspaces', () => {
       'overlaps'
     )
     await expect(api.fleetAddWorkspace('a', { rootDir: '/srv' })).rejects.toThrow('overlaps')
+    // Round 7 (B7-F2): another spelling of the same folder overlaps it.
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv/./repo' })).rejects.toThrow('overlaps')
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv//x/../repo/' })).rejects.toThrow(
+      'overlaps'
+    )
     expect(mocks.calls.filter((c) => c.method === 'update-registry')).toEqual([])
+  })
+
+  it('stores and checks a folder in one spelling', async () => {
+    mocks.registries.set('a', [
+      { id: 'odd', name: 'Odd', rootDir: '/srv/./old/', profileFile: null, createdAt: 1 }
+    ])
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv/old/sub' })).rejects.toThrow(
+      'overlaps'
+    )
+    const added = await api.fleetAddWorkspace('a', { rootDir: '/srv//x/./y/../z/' })
+    expect(added.rootDir).toBe('/srv/x/z')
+    expect(mocks.calls.filter((c) => c.method === 'stat').at(-1)?.args).toEqual([
+      { root: '/', path: '/srv/x/z' }
+    ])
   })
 
   it('removes a workspace from its owner only', async () => {
@@ -376,169 +401,87 @@ describe('server workspaces', () => {
         instance
       }
     })
-  const inFlight = async (count: number): Promise<void> => {
-    // At least `count`: the reads made at connect may still be in flight too.
-    for (let i = 0; i < 50 && mocks.held.length < count; i++) await vi.advanceTimersByTimeAsync(1)
-    expect(mocks.held.length).toBeGreaterThanOrEqual(count)
+  const listen = (owner: string): string[][] => {
+    const seen: string[][] = []
+    api.onFleetWorkspaces((u) => {
+      if (u.serverId === owner) seen.push(u.workspaces.map((w) => w.rootDir))
+    })
+    return seen
   }
-  const release = async (): Promise<void> => {
-    for (const held of mocks.held.splice(0)) held.release()
-    await vi.advanceTimersByTimeAsync(0)
+  const row = (rootDir: string): Array<Record<string, unknown>> => [
+    { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
+  ]
+  /** Holds `answers.length` reads, each answered by the instance and list given. */
+  const holdReads = async (
+    answers: Array<{ instance: string; revision: number; rootDir?: string }>
+  ): Promise<Array<Promise<unknown>>> => {
+    const reads: Array<Promise<unknown>> = []
+    for (const answer of answers) {
+      mocks.hold = {
+        instance: answer.instance,
+        revision: answer.revision,
+        workspaces: answer.rootDir ? row(answer.rootDir) : []
+      }
+      reads.push(api.fleetWorkspaces('a'))
+      for (let n = 0; n < 50 && mocks.held.length < reads.length; n++)
+        await vi.advanceTimersByTimeAsync(1)
+    }
+    mocks.hold = null
+    expect(mocks.held).toHaveLength(answers.length)
+    return reads
   }
 
-  it('never rolls a newer pushed list back with an older read', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    mocks.hold = { instance: 'a', revision: 0 }
-    const slow = api.fleetWorkspaces('a')
-    await inFlight(1)
-    mocks.hold = null
-    push('a', '/new', 7, 'a')
-    await release()
-    await slow
-    // Same instance, and an older revision even when answered before the push.
-    push('a', '/older', 3, 'a')
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/new']])
-  })
-
-  it('drops a late answer from the instance a server was restarted out of', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    mocks.hold = { instance: 'a', revision: 50 }
-    const slow = api.fleetWorkspaces('a')
-    await inFlight(1)
-    mocks.hold = null
-    push('a', '/restarted', 1, 'a-restarted')
-    await release()
-    await slow
-    push('a', '/later', 2, 'a-restarted')
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/later']])
-  })
-
-  it('keeps the restarted instance when old reads land after its first push', async () => {
-    // Nothing published yet for owner b in this test's own listener: two reads
-    // to the old instance are held, the restarted instance pushes, they land.
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => update.serverId === 'b' && heard.push(update.workspaces))
-    mocks.hold = { instance: 'b', revision: 40 }
-    const first = api.fleetWorkspaces('b')
-    const second = api.fleetWorkspaces('b')
-    await inFlight(2)
-    mocks.hold = null
-    push('b', '/restarted', 0, 'b-restarted')
-    await release()
-    await Promise.all([first, second])
-    push('b', '/after', 1, 'b-restarted')
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/after']])
-  })
-
-  it('takes a newer revision of the same instance from a read sent earlier', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    const at = (rootDir: string): Array<Record<string, unknown>> => [
-      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 1 }
-    ]
-    // Read A goes out first but the server answers it after a change; read B,
-    // sent later, is answered before that change. The change's push is late.
-    mocks.hold = { instance: 'a', revision: 4, workspaces: at('/after-change') }
-    const a = api.fleetWorkspaces('a')
-    await inFlight(1)
-    mocks.hold = { instance: 'a', revision: 3, workspaces: at('/before-change') }
-    const b = api.fleetWorkspaces('a')
-    await inFlight(2)
-    mocks.hold = null
-    const [first, second] = mocks.held.splice(0)
-    second.release()
-    await vi.advanceTimersByTimeAsync(0)
-    first.release()
-    await vi.advanceTimersByTimeAsync(0)
-    await Promise.all([a, b])
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([
-      ['/before-change'],
-      ['/after-change']
-    ])
-    // The late push of that same change publishes nothing new.
-    push('a', '/after-change', 4, 'a')
-    expect(heard).toHaveLength(2)
-  })
-
-  it('drops a write answer when a newer push arrived while it was in flight', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    // The server restarts while the write is out; its new instance pushes
-    // before the old write's answer comes back.
-    mocks.interleave = () => push('a', '/restarted', 0, 'a-restarted')
-    await api.fleetAddWorkspace('a', { rootDir: '/srv/mine' })
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted']])
-  })
-
-  it('takes the read sent last when two reads answer out of order', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    mocks.hold = { instance: 'a', revision: 1 }
-    const older = api.fleetWorkspaces('a')
-    await inFlight(1)
-    mocks.registries.set('a', [
-      { id: 'n', name: 'N', rootDir: '/new', profileFile: null, createdAt: 4 }
-    ])
-    mocks.hold = { instance: 'a-restarted', revision: 0 }
-    const newer = api.fleetWorkspaces('a')
-    await inFlight(2)
-    mocks.hold = null
-    const [first, second] = mocks.held.splice(0)
-    first.release()
-    await vi.advanceTimersByTimeAsync(0)
-    second.release()
-    await vi.advanceTimersByTimeAsync(0)
-    await Promise.all([older, newer])
-    expect(heard.at(-1)?.map((w) => w.rootDir)).toEqual(['/new'])
-    // And the other way round: the older answer, from the instance the
-    // server was restarted out of and at a higher revision, landing last is
-    // dropped.
-    mocks.hold = { instance: 'a', revision: 99 }
-    const third = api.fleetWorkspaces('a')
-    await inFlight(1)
-    mocks.registries.set('a', [
-      { id: 'z', name: 'Z', rootDir: '/newest', profileFile: null, createdAt: 5 }
-    ])
-    mocks.hold = { instance: 'a-restarted', revision: 2 }
-    const fourth = api.fleetWorkspaces('a')
-    await inFlight(2)
-    mocks.hold = null
-    const [late, early] = mocks.held.splice(0)
-    early.release()
-    await vi.advanceTimersByTimeAsync(0)
-    late.release()
-    await vi.advanceTimersByTimeAsync(0)
-    await Promise.all([third, fourth])
-    expect(heard.at(-1)?.map((w) => w.rootDir)).toEqual(['/newest'])
+  it('takes each newer change of one process and drops an equal or older one', async () => {
+    const seen = listen('a')
+    push('a', '/welcome', 5, 'a')
+    // A change that crossed the welcome list: already in it.
+    push('a', '/crossed', 5, 'a')
+    push('a', '/older', 4, 'a')
+    push('a', '/next', 6, 'a')
+    expect(seen).toEqual([['/welcome'], ['/next']])
   })
 
   it('takes a list from a restarted server whatever its revision', async () => {
-    mocks.revisions.set('a', 9)
-    await api.fleetWorkspaces('a')
-    const heard: unknown[] = []
-    api.onFleetWorkspaces((update) => heard.push(update))
-    mocks.events.get('a')!({
-      event: {
-        _tag: 'workspaces.state_changed',
-        workspaces: [],
-        pins: [],
-        origin: null,
-        revision: 1,
-        instance: 'a-restarted'
+    const seen = listen('a')
+    push('a', '/before', 9, 'a')
+    push('a', '/restarted', 1, 'a-restarted')
+    push('a', '/after', 2, 'a-restarted')
+    expect(seen).toEqual([['/before'], ['/restarted'], ['/after']])
+  })
+
+  it('publishes no read answer, whatever process answers and in whatever order', async () => {
+    // The sequences of rounds 2 to 7: reads answered by the process the
+    // server was restarted out of and by the new one, sent after the live
+    // list came, answered in either order. Only the socket's list stays.
+    const orders = [
+      [0, 1],
+      [1, 0]
+    ]
+    for (const order of orders) {
+      const seen = listen('a')
+      push('a', '/pushed', 2, `a-new-${order.join('')}`)
+      const reads = await holdReads([
+        { instance: 'a', revision: 50, rootDir: '/retired' },
+        { instance: `a-new-${order.join('')}`, revision: 3, rootDir: '/answered' }
+      ])
+      for (const i of order) {
+        mocks.held[i].release()
+        await reads[i]
       }
-    })
-    expect(heard).toHaveLength(1)
+      mocks.held.length = 0
+      expect(seen).toEqual([['/pushed']])
+    }
+  })
+
+  it('publishes no write answer: the change it made comes as a push', async () => {
+    const seen = listen('a')
+    await api.fleetAddWorkspace('a', { rootDir: '/srv/mine' })
+    expect(seen).toEqual([])
+    push('a', '/srv/mine', 1, 'a')
+    expect(seen).toEqual([['/srv/mine']])
   })
 
   it('relays a server registry change with the ids of that server', async () => {
-    await api.fleetWorkspaces('a')
     const heard: Array<{ serverId: string; workspaces: Array<{ id: string }> }> = []
     api.onFleetWorkspaces((update) => heard.push(update))
     mocks.events.get('a')!({
@@ -566,105 +509,62 @@ describe('server workspaces', () => {
       }
     ])
   })
-})
 
-// Round 6 of verification (B6-F1, B6-F2): the verifier's own reproductions, kept as regression tests.
+  // Round 7 of verification (B7-F1): the verifier's own reproductions, kept as regression tests.
 
-describe('verifier request counter after accepting a higher revision', () => {
-  it('does not reopen an intermediate retired-instance reply after an earlier current reply', async () => {
-    await api.fleetWorkspaces('a')
-    const seen: string[][] = []
-    api.onFleetWorkspaces((u) => {
-      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
+  describe('verifier whole-rule retired instance', () => {
+    it('does not resurrect a removed workspace from a later-sent retired reply', async () => {
+      const seen = listen('a')
+      // The old process's list, then the new process's socket: its registry is empty.
+      push('a', '/srv/repo', 0, 'a')
+      mocks.events.get('a')!({
+        event: {
+          _tag: 'workspaces.state_changed',
+          workspaces: [],
+          pins: [],
+          origin: null,
+          revision: 1,
+          instance: 'a-new'
+        }
+      })
+      expect(seen.at(-1)).toEqual([])
+      // A read sent before the live list, and one sent after it that the
+      // retired process answers last.
+      const [earlier, later] = await holdReads([
+        { instance: 'a-new', revision: 1 },
+        { instance: 'a', revision: 0, rootDir: '/srv/repo' }
+      ])
+      mocks.held[0].release()
+      await earlier
+      expect(seen.at(-1)).toEqual([])
+      mocks.held[1].release()
+      await later
+      expect(seen.at(-1)).toEqual([])
     })
-    const row = (rootDir: string): Array<Record<string, unknown>> => [
-      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
-    ]
-    // A was sent first but reaches the new process last; B overtook it and
-    // read the retired process; C reads the new process before A does.
-    mocks.hold = { instance: 'a-new', revision: 2, workspaces: row('/current-newer') }
-    const a = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
-    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
-    const b = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
-    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
-    const c = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 3; n++) await vi.advanceTimersByTimeAsync(1)
-    expect(mocks.held).toHaveLength(3)
-    mocks.held[2].release()
-    await c
-    mocks.held[0].release()
-    await a
-    expect(seen.at(-1)).toEqual(['/current-newer'])
-    mocks.held[1].release()
-    await b
-    expect(seen.at(-1)).toEqual(['/current-newer'])
-  })
-})
 
-describe('verifier equal live push after an HTTP answer', () => {
-  it('keeps the live instance when its equal push precedes a retired reply', async () => {
-    await api.fleetWorkspaces('a')
-    const seen: string[][] = []
-    api.onFleetWorkspaces((u) => {
-      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
+    it('does not resurrect it on first connect either', async () => {
+      const seen = listen('a')
+      const [earlier, later] = await holdReads([
+        { instance: 'a-new', revision: 1 },
+        { instance: 'a', revision: 0, rootDir: '/srv/repo' }
+      ])
+      mocks.held[0].release()
+      await earlier
+      mocks.held[1].release()
+      await later
+      expect(seen).toEqual([])
+      // The welcome list of the live process is what the renderer gets.
+      mocks.events.get('a')!({
+        event: {
+          _tag: 'workspaces.state_changed',
+          workspaces: [],
+          pins: [],
+          origin: null,
+          revision: 1,
+          instance: 'a-new'
+        }
+      })
+      expect(seen).toEqual([[]])
     })
-    const row = (rootDir: string): Array<Record<string, unknown>> => [
-      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
-    ]
-    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
-    const a = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
-    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
-    const b = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
-    expect(mocks.held).toHaveLength(2)
-    mocks.held[0].release()
-    await a
-    mocks.events.get('a')!({
-      event: {
-        _tag: 'workspaces.state_changed',
-        workspaces: row('/current'),
-        pins: [],
-        origin: null,
-        revision: 1,
-        instance: 'a-new'
-      }
-    })
-    mocks.held[1].release()
-    await b
-    expect(seen.at(-1)).toEqual(['/current'])
-  })
-})
-
-describe('verifier equal current answer before a retired reply', () => {
-  it('keeps the live instance after a later equal-revision read confirms it', async () => {
-    await api.fleetWorkspaces('a')
-    const seen: string[][] = []
-    api.onFleetWorkspaces((u) => {
-      if (u.serverId === 'a') seen.push(u.workspaces.map((w) => w.rootDir))
-    })
-    const row = (rootDir: string): Array<Record<string, unknown>> => [
-      { id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 2 }
-    ]
-    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
-    const a = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 1; n++) await vi.advanceTimersByTimeAsync(1)
-    mocks.hold = { instance: 'a', revision: 50, workspaces: row('/retired') }
-    const b = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 2; n++) await vi.advanceTimersByTimeAsync(1)
-    mocks.hold = { instance: 'a-new', revision: 1, workspaces: row('/current') }
-    const c = api.fleetWorkspaces('a')
-    for (let n = 0; n < 50 && mocks.held.length < 3; n++) await vi.advanceTimersByTimeAsync(1)
-    expect(mocks.held).toHaveLength(3)
-    mocks.held[0].release()
-    await a
-    mocks.held[2].release()
-    await c
-    expect(seen).toEqual([['/current']])
-    mocks.held[1].release()
-    await b
-    expect(seen.at(-1)).toEqual(['/current'])
   })
 })
