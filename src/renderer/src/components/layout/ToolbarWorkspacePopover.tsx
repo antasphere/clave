@@ -239,6 +239,7 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
                       key={ws.id}
                       className="menu-item group"
                       data-selected={isActive}
+                      data-workspace-id={ws.id}
                       data-server={server ?? undefined}
                       data-offline={offline || undefined}
                       onClick={() => {

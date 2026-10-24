@@ -209,7 +209,7 @@ export async function fleetWorld(label) {
         env: { SHELL: '/bin/sh' },
         args: ['--dev-echo-adapter']
       })
-      const mac = { ...launched, dir, root, owners: [], errors: [] }
+      const mac = { ...launched, label, dir, root, servers, owners: [], errors: [] }
       launched.win.on('pageerror', (error) => mac.errors.push(error.message))
       clients.add(mac)
       mac.close = async () => {
@@ -284,4 +284,59 @@ export async function connectMac(mac, servers, { ui = true } = {}) {
         return false
       }
     }, 'saved owner connects')
+}
+
+/** Switch the Mac's window to a workspace through the toolbar switcher. */
+async function switchWorkspace(mac, workspaceId) {
+  const { win } = mac
+  const item = win.locator(`[data-workspace-id="${workspaceId}"]`)
+  await eventually(async () => {
+    if (!(await item.count())) {
+      await win.getByLabel('Switch workspace', { exact: true }).click()
+      await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
+    }
+    if (!(await item.count())) {
+      await win.keyboard.press('Escape')
+      return false
+    }
+    if ((await item.getAttribute('data-selected')) === 'true') {
+      await win.keyboard.press('Escape')
+      return true
+    }
+    await item.click()
+    return false
+  }, `the window shows workspace ${workspaceId}`)
+}
+
+/**
+ * Show the Mac the sessions of one fleet server (#241). Remote tabs appear
+ * only in a workspace of their own server, never in a Mac workspace, so a
+ * spec that reads a server's rows first puts the window on a workspace of
+ * that server. Contract: `mac` comes from `world.mac()` and was connected
+ * with `connectMac` (so `mac.owners[index]` is the saved server); the helper
+ * registers the server's repo root (`world.servers[index].root`) as one of
+ * that server's workspaces through the app (`fleetAddWorkspace`), unless a
+ * workspace at that root already exists there, then switches the window to
+ * it through the toolbar switcher. Returns the workspace id (a remote key).
+ */
+export async function showServer(mac, index) {
+  const owner = mac.owners[index]?.id
+  assert.ok(owner, 'connect the Mac with connectMac before showServer')
+  const root = mac.servers[index].root
+  const id = await mac.win.evaluate(
+    async ({ owner, root }) => {
+      const existing = (await window.electronAPI.fleetWorkspaces(owner)).find(
+        (w) => w.rootDir === root
+      )
+      return (existing ?? (await window.electronAPI.fleetAddWorkspace(owner, { rootDir: root }))).id
+    },
+    { owner, root }
+  )
+  await switchWorkspace(mac, id)
+  return id
+}
+
+/** Put the Mac's window back on its own seeded workspace (`Mac <label>`). */
+export async function showMac(mac) {
+  await switchWorkspace(mac, `mac-${mac.label}`)
 }
