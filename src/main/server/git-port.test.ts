@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 // The manager reaches into pty-manager for the login shell's env, which pulls
@@ -28,9 +29,11 @@ const git = (cwd: string, ...args: string[]): string =>
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
   })
 
-// /private/tmp, not /tmp: git resolves the symlink, and a repo root that
-// disagrees with the asked path makes every reading look nested.
-const SCRATCH = '/private/tmp/clave-wcs-c-unit'
+// The temp dir resolved through its symlinks (`/private/tmp` on macOS, where
+// `/tmp` is a link): git names a repo root resolved, and a root that disagrees
+// with the asked path makes every reading look nested. The CI runner's temp
+// dir is wherever the platform puts it.
+const SCRATCH = path.join(realpathSync(tmpdir()), 'clave-wcs-c-unit')
 let root: string
 let repo: string
 let bins: { writing: string; refusing: string; none: string }
@@ -78,8 +81,8 @@ beforeAll(() => {
   port.subscribe((event) => events.push(event))
 })
 afterAll(() => {
-  port.dispose()
-  rmSync(root, { recursive: true, force: true })
+  port?.dispose()
+  if (root) rmSync(root, { recursive: true, force: true })
 })
 
 describe('the daemon’s git port over a real checkout', () => {
