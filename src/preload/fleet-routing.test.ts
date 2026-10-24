@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   disabled: new Set<string>(),
   calls: [] as Array<{ owner: string; method: string; args: unknown[] }>,
-  listeners: new Map<string, Set<(...args: unknown[]) => void>>()
+  listeners: new Map<string, Set<(...args: unknown[]) => void>>(),
+  registries: new Map<string, Array<Record<string, unknown>>>(),
+  events: new Map<string, (value: unknown) => void>()
 }))
 vi.mock('electron', () => ({
   contextBridge: {
@@ -47,7 +49,25 @@ vi.mock('@clave/client/node', () => ({
             displayOrder: []
           })
         },
+        settings: {
+          workspaces: {
+            load: async () => ({ workspaces: mocks.registries.get(owner) ?? [] }),
+            updateRegistry: async (workspaces: Array<Record<string, unknown>>) => {
+              mocks.calls.push({ owner, method: 'update-registry', args: [workspaces] })
+              mocks.registries.set(owner, [...workspaces])
+              return { ok: true, workspaces, pins: [], revision: 1, instance: owner }
+            }
+          }
+        },
         files: {
+          stat: async (location: { path: string }) => {
+            mocks.calls.push({ owner, method: 'stat', args: [location] })
+            return {
+              type: location.path.endsWith('.txt') ? 'file' : 'directory',
+              size: 0,
+              modified: 0
+            }
+          },
           read: call('file-read', { content: owner, binary: false, truncated: false, size: 1 }),
           prepareAttachment: call('prepare', {
             id: 'file',
@@ -65,7 +85,10 @@ vi.mock('@clave/client/node', () => ({
         connect: () => {},
         close: () => {},
         onStatus: () => () => {},
-        onEvent: () => () => {},
+        onEvent: (callback: (value: unknown) => void) => {
+          mocks.events.set(owner, callback)
+          return () => {}
+        },
         onRequest: () => () => {},
         whenOpen: async () => {},
         subscribe: () => () => {},
@@ -80,6 +103,14 @@ beforeEach(async () => {
   vi.resetModules()
   mocks.calls.length = 0
   mocks.disabled.clear()
+  mocks.events.clear()
+  mocks.registries.clear()
+  mocks.registries.set('a', [
+    { id: 'ws-a', name: 'Repo', rootDir: '/srv/repo', profileFile: null, createdAt: 1 }
+  ])
+  mocks.registries.set('b', [
+    { id: 'ws-a', name: 'Other', rootDir: '/home/b', profileFile: null, createdAt: 2 }
+  ])
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
       return ['a', 'b'].map((id) => ({
@@ -213,4 +244,95 @@ it('treats focus on a remote file as no local plugin session context', async () 
   expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'plugins:context')).toHaveLength(
     0
   )
+})
+
+describe('server workspaces', () => {
+  it('reads each server registry with ids wrapped to their owner', async () => {
+    const heard: Array<{ serverId: string }> = []
+    api.onFleetWorkspaces((update) => heard.push(update))
+    expect(await api.fleetWorkspaces('a')).toEqual([
+      {
+        id: resourceKey('workspace', 'a', 'ws-a'),
+        name: 'Repo',
+        rootDir: '/srv/repo',
+        profileFile: null,
+        createdAt: 1
+      }
+    ])
+    expect((await api.fleetWorkspaces('b')).map((w) => w.id)).toEqual([
+      resourceKey('workspace', 'b', 'ws-a')
+    ])
+    // Read at each connect, and at each explicit read.
+    expect(new Set(heard.map((h) => h.serverId))).toEqual(new Set(['a', 'b']))
+  })
+
+  it('adds a folder checked on its own server and writes only that registry', async () => {
+    const heard: Array<{ serverId: string; workspaces: Array<{ id: string }> }> = []
+    api.onFleetWorkspaces((update) => heard.push(update))
+    const added = await api.fleetAddWorkspace('a', { rootDir: '/srv/other/' })
+    expect(added).toMatchObject({ name: 'Other', rootDir: '/srv/other', profileFile: null })
+    expect(added.id.startsWith(resourceKey('workspace', 'a', 'x').slice(0, -1))).toBe(true)
+    expect(mocks.calls.filter((c) => c.method === 'stat')).toEqual([
+      { owner: 'a', method: 'stat', args: [{ root: '/', path: '/srv/other' }] }
+    ])
+    const writes = mocks.calls.filter((c) => c.method === 'update-registry')
+    expect(writes.map((w) => w.owner)).toEqual(['a'])
+    const written = writes[0].args[0] as Array<{ id: string; rootDir: string }>
+    expect(written.map((w) => w.rootDir)).toEqual(['/srv/repo', '/srv/other'])
+    expect(written.every((w) => !w.id.startsWith('clave-owner:'))).toBe(true)
+    expect(heard.at(-1)?.serverId).toBe('a')
+    expect(heard.at(-1)?.workspaces.map((w) => w.id)).toContain(added.id)
+  })
+
+  it('refuses a file, a relative path and a folder overlapping a server workspace', async () => {
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv/notes.txt' })).rejects.toThrow(
+      'not a folder'
+    )
+    await expect(api.fleetAddWorkspace('a', { rootDir: 'srv/x' })).rejects.toThrow('absolute')
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv/repo/sub' })).rejects.toThrow(
+      'overlaps'
+    )
+    await expect(api.fleetAddWorkspace('a', { rootDir: '/srv' })).rejects.toThrow('overlaps')
+    expect(mocks.calls.filter((c) => c.method === 'update-registry')).toEqual([])
+  })
+
+  it('removes a workspace from its owner only', async () => {
+    await api.fleetRemoveWorkspace(resourceKey('workspace', 'b', 'ws-a'))
+    const writes = mocks.calls.filter((c) => c.method === 'update-registry')
+    expect(writes).toEqual([{ owner: 'b', method: 'update-registry', args: [[]] }])
+    expect(mocks.registries.get('a')).toHaveLength(1)
+    await expect(api.fleetRemoveWorkspace('local-workspace')).rejects.toThrow(
+      'Not a server workspace'
+    )
+  })
+
+  it('relays a server registry change with the ids of that server', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<{ serverId: string; workspaces: Array<{ id: string }> }> = []
+    api.onFleetWorkspaces((update) => heard.push(update))
+    mocks.events.get('a')!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [{ id: 'new', name: 'New', rootDir: '/n', profileFile: null, createdAt: 3 }],
+        pins: [],
+        origin: null,
+        revision: 2,
+        instance: 'a'
+      }
+    })
+    expect(heard).toEqual([
+      {
+        serverId: 'a',
+        workspaces: [
+          {
+            id: resourceKey('workspace', 'a', 'new'),
+            name: 'New',
+            rootDir: '/n',
+            profileFile: null,
+            createdAt: 3
+          }
+        ]
+      }
+    ])
+  })
 })

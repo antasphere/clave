@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { Workspace } from '../../../shared/workspace-types'
+import { LOCAL_SERVER_ID as LOCAL_OWNER } from '@clave/contract/fleet'
+import { ownerOf } from '../lib/fleet-identity'
 
 export type { Workspace }
 
@@ -21,9 +23,20 @@ export type { Workspace }
  *  While workspaces exist, exactly one is always active in a window — there
  *  is no "deactivated" state. With zero workspaces the app runs unscoped and
  *  behaves as if the workspace feature didn't exist.
+ *
+ *  Server workspaces (#241): a connected Clave server keeps its own registry,
+ *  and its workspaces sit in `serverWorkspaces`, per server, beside the local
+ *  ones. Their id is the server's id wrapped as a remote key
+ *  (`resourceKey('workspace', serverId, id)`), so `ownerOf(ws.id)` names the
+ *  server and `rootDir` is a path on the server's disk. They are never
+ *  written to this Mac's registry: `workspaces` stays the local list, the
+ *  one persisted, and `allWorkspaces` is what lists and switches read.
  */
 interface WorkspaceState {
+  /** This Mac's registry — the list persisted to main. */
   workspaces: Workspace[]
+  /** Each connected server's own registry, keyed by server id; ids are remote keys. */
+  serverWorkspaces: Record<string, Workspace[]>
   activeWorkspaceId: string | null
   /** True once boot hydration (workspace:load + pin import) has run. */
   loaded: boolean
@@ -36,6 +49,7 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>(() => ({
   workspaces: [],
+  serverWorkspaces: {},
   activeWorkspaceId: null,
   loaded: false,
   windowId: null,
@@ -49,7 +63,31 @@ export function getActiveWorkspaceId(): string | null {
   return useWorkspaceStore.getState().activeWorkspaceId
 }
 
-export function getWorkspaceById(id: string | null | undefined): Workspace | undefined {
+type WorkspaceLists = Pick<WorkspaceState, 'workspaces' | 'serverWorkspaces'>
+
+/** The local workspaces, then every server's, in the order servers were heard. */
+export function allWorkspaces(state: WorkspaceLists): Workspace[] {
+  const servers = Object.values(state.serverWorkspaces)
+  return servers.length === 0 ? state.workspaces : [...state.workspaces, ...servers.flat()]
+}
+
+/** A workspace by id, local or on a server. */
+export function findWorkspace(
+  state: WorkspaceLists,
+  id: string | null | undefined
+): Workspace | undefined {
   if (!id) return undefined
-  return useWorkspaceStore.getState().workspaces.find((w) => w.id === id)
+  const owner = ownerOf(id)
+  const list = owner === LOCAL_OWNER ? state.workspaces : state.serverWorkspaces[owner]
+  return list?.find((w) => w.id === id)
+}
+
+export function getWorkspaceById(id: string | null | undefined): Workspace | undefined {
+  return findWorkspace(useWorkspaceStore.getState(), id)
+}
+
+/** The server a workspace lives on, or null for a workspace of this Mac. */
+export function workspaceServer(id: string | null | undefined): string | null {
+  const owner = ownerOf(id)
+  return owner === LOCAL_OWNER ? null : owner
 }
