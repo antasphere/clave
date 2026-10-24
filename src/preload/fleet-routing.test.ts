@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   revisions: new Map<string, number>(),
   /** Runs once before the next registry write lands: another Mac writing in between. */
   interleave: null as null | ((owner: string) => void),
+  /** Holds the next registry reads until released, answering as `instance`. */
+  held: [] as Array<{ release: () => void }>,
+  hold: null as null | { instance: string; revision: number },
   events: new Map<string, (value: unknown) => void>()
 }))
 vi.mock('electron', () => ({
@@ -54,11 +57,19 @@ vi.mock('@clave/client/node', () => ({
         },
         settings: {
           workspaces: {
-            load: async () => ({
-              workspaces: mocks.registries.get(owner) ?? [],
-              revision: mocks.revisions.get(owner) ?? 0,
-              instance: owner
-            }),
+            load: async () => {
+              const hold = mocks.hold
+              if (hold) {
+                const snapshot = [...(mocks.registries.get(owner) ?? [])]
+                await new Promise<void>((release) => mocks.held.push({ release }))
+                return { workspaces: snapshot, revision: hold.revision, instance: hold.instance }
+              }
+              return {
+                workspaces: mocks.registries.get(owner) ?? [],
+                revision: mocks.revisions.get(owner) ?? 0,
+                instance: owner
+              }
+            },
             updateRegistry: async (
               workspaces: Array<Record<string, unknown>>,
               _origin?: string,
@@ -125,6 +136,8 @@ beforeEach(async () => {
   mocks.registries.clear()
   mocks.revisions.clear()
   mocks.interleave = null
+  mocks.hold = null
+  mocks.held.length = 0
   mocks.registries.set('a', [
     { id: 'ws-a', name: 'Repo', rootDir: '/srv/repo', profileFile: null, createdAt: 1 }
   ])
@@ -344,24 +357,73 @@ describe('server workspaces', () => {
     expect(mocks.calls.filter((c) => c.method === 'update-registry')).toHaveLength(2)
   })
 
+  const push = (owner: string, rootDir: string, revision: number, instance: string): void =>
+    mocks.events.get(owner)!({
+      event: {
+        _tag: 'workspaces.state_changed',
+        workspaces: [{ id: rootDir, name: rootDir, rootDir, profileFile: null, createdAt: 3 }],
+        pins: [],
+        origin: null,
+        revision,
+        instance
+      }
+    })
+  const inFlight = async (count: number): Promise<void> => {
+    // At least `count`: the reads made at connect may still be in flight too.
+    for (let i = 0; i < 50 && mocks.held.length < count; i++) await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.held.length).toBeGreaterThanOrEqual(count)
+  }
+  const release = async (): Promise<void> => {
+    for (const held of mocks.held.splice(0)) held.release()
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
   it('never rolls a newer pushed list back with an older read', async () => {
     await api.fleetWorkspaces('a')
     const heard: Array<Array<{ rootDir: string }>> = []
     api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    mocks.events.get('a')!({
-      event: {
-        _tag: 'workspaces.state_changed',
-        workspaces: [{ id: 'new', name: 'New', rootDir: '/new', profileFile: null, createdAt: 3 }],
-        pins: [],
-        origin: null,
-        revision: 7,
-        instance: 'a'
-      }
-    })
-    // A read that went out before the push answers with the older revision.
-    mocks.revisions.set('a', 2)
-    await api.fleetWorkspaces('a')
+    mocks.hold = { instance: 'a', revision: 0 }
+    const slow = api.fleetWorkspaces('a')
+    await inFlight(1)
+    mocks.hold = null
+    push('a', '/new', 7, 'a')
+    await release()
+    await slow
+    // Same instance, and an older revision even when answered before the push.
+    push('a', '/older', 3, 'a')
     expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/new']])
+  })
+
+  it('drops a late answer from the instance a server was restarted out of', async () => {
+    await api.fleetWorkspaces('a')
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
+    mocks.hold = { instance: 'a', revision: 50 }
+    const slow = api.fleetWorkspaces('a')
+    await inFlight(1)
+    mocks.hold = null
+    push('a', '/restarted', 1, 'a-restarted')
+    await release()
+    await slow
+    push('a', '/later', 2, 'a-restarted')
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/later']])
+  })
+
+  it('keeps the restarted instance when old reads land after its first push', async () => {
+    // Nothing published yet for owner b in this test's own listener: two reads
+    // to the old instance are held, the restarted instance pushes, they land.
+    const heard: Array<Array<{ rootDir: string }>> = []
+    api.onFleetWorkspaces((update) => update.serverId === 'b' && heard.push(update.workspaces))
+    mocks.hold = { instance: 'b', revision: 40 }
+    const first = api.fleetWorkspaces('b')
+    const second = api.fleetWorkspaces('b')
+    await inFlight(2)
+    mocks.hold = null
+    push('b', '/restarted', 0, 'b-restarted')
+    await release()
+    await Promise.all([first, second])
+    push('b', '/after', 1, 'b-restarted')
+    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted'], ['/after']])
   })
 
   it('takes a list from a restarted server whatever its revision', async () => {
@@ -380,28 +442,6 @@ describe('server workspaces', () => {
       }
     })
     expect(heard).toHaveLength(1)
-  })
-
-  it('drops a late answer from the instance a server was restarted out of', async () => {
-    await api.fleetWorkspaces('a')
-    const heard: Array<Array<{ rootDir: string }>> = []
-    api.onFleetWorkspaces((update) => heard.push(update.workspaces))
-    mocks.events.get('a')!({
-      event: {
-        _tag: 'workspaces.state_changed',
-        workspaces: [
-          { id: 'r', name: 'R', rootDir: '/restarted', profileFile: null, createdAt: 3 }
-        ],
-        pins: [],
-        origin: null,
-        revision: 1,
-        instance: 'a-restarted'
-      }
-    })
-    // A read sent to the old instance answers late, at a higher revision.
-    mocks.revisions.set('a', 50)
-    await api.fleetWorkspaces('a')
-    expect(heard.map((list) => list.map((w) => w.rootDir))).toEqual([['/restarted']])
   })
 
   it('relays a server registry change with the ids of that server', async () => {
