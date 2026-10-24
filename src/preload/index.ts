@@ -1187,6 +1187,7 @@ const electronAPI = {
         claudeSessionId?: string
         piSessionId?: string
         launchProfileId?: string
+        launchProfile?: LaunchProfile
         piProvider?: string
         piThinking?: import('../shared/agent-launch').PiThinkingLevel
         initialCommand?: string

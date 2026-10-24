@@ -392,6 +392,7 @@ export interface SessionRecord {
   /** Model the session was launched on (claude/codex); re-applied on re-spawn. */
   model?: string
   launchProfileId?: string
+  launchProfile?: LaunchProfile
   piProvider?: string
   piThinking?: PiThinkingLevel
   configDir?: string
@@ -716,6 +717,7 @@ export interface ElectronAPI extends FleetDesktopAPI {
       claudeSessionId?: string
       piSessionId?: string
       launchProfileId?: string
+      launchProfile?: LaunchProfile
       piProvider?: string
       piThinking?: PiThinkingLevel
       initialCommand?: string
