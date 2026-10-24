@@ -1,4 +1,4 @@
-import { FleetLaunchHost, FleetRequestHost } from '../fleet/FleetControls'
+import { FleetRequestHost } from '../fleet/FleetControls'
 import { reportFleetError } from '../../store/fleet-store'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
 import { emitTabClosed } from '../../lib/exchange-capture'
@@ -1603,7 +1603,6 @@ export function Sidebar(): React.JSX.Element {
           it lives in the toolbar now, behind the workspace name.) */}
       <div className="px-2 flex-shrink-0">
         <SessionLauncher onRemoteLaunch={setRemotePickerState} />
-        <FleetLaunchHost />
         <FleetRequestHost />
       </div>
 

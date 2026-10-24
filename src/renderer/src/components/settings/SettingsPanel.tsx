@@ -31,7 +31,6 @@ import { UserIconDisplay, ICON_MAP } from '../ui/UserIconDisplay'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import {
   TrashIcon,
-  PlusIcon,
   PencilIcon,
   FolderIcon,
   ShieldCheckIcon,
@@ -58,6 +57,7 @@ import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
+import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -1007,11 +1007,9 @@ function WorkspacesSection(): React.JSX.Element {
               </div>
             )
           })}
+          <ServerWorkspaceRows />
 
-          <button onClick={handleAddWorkspace} className="settings-row-action">
-            <PlusIcon className="w-4 h-4" />
-            Add workspace
-          </button>
+          <AddWorkspaceAction onThisMac={handleAddWorkspace} />
         </SettingsCard>
 
         {/* Removal confirmation — spells out the cascade before anything happens */}

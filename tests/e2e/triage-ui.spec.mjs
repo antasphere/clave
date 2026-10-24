@@ -268,6 +268,40 @@ async function choose(win, label, value) {
   await win.getByRole('menuitem', { name: value, exact: true }).click()
 }
 
+// Close the switcher and wait until its popover is gone, so a shortcut
+// pressed next reaches the window.
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
+}
+/** Switch a window to a workspace through the toolbar switcher. */
+async function switchWorkspace(win, workspaceId) {
+  const item = win.locator(`[data-workspace-id="${workspaceId}"]`)
+  const shown = await until(
+    async () => {
+      if (!(await item.count())) {
+        await win.getByLabel('Switch workspace', { exact: true }).click()
+        await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
+      }
+      if (!(await item.count())) {
+        await closeSwitcher(win)
+        return false
+      }
+      if (
+        (await item.getAttribute('data-selected', { timeout: 2_000 }).catch(() => null)) === 'true'
+      ) {
+        await closeSwitcher(win)
+        return true
+      }
+      await item.click({ timeout: 3_000 }).catch(() => {})
+      return false
+    },
+    { tries: 120, gapMs: 100 }
+  )
+  assert.ok(shown, `the window shows workspace ${workspaceId}`)
+}
+
 async function closeFixtureApps(app, remoteServer) {
   const closed = await Promise.allSettled([app?.close(), remoteServer?.stop()])
   const errors = closed
@@ -295,6 +329,7 @@ export async function run(t) {
   let remoteServer
   let remoteBefore
   let focusedRemoteKey
+  let remoteWorkspaceId
   try {
     const receipt = await loadTriageScenario(async ({ runId, id }) => {
       const root = fixturePath(`triage-${runId}`)
@@ -492,12 +527,36 @@ export async function run(t) {
       const client = { win: second, owners: [] }
       await connectMac(client, [remoteServer])
       focusedRemoteKey = owned('session', client.owners[0].id, f.remoteSessionId)
+      // Remote tabs show only in a workspace of their own server (#241): put
+      // the window on one, rooted where the fixture started the remote chat.
+      remoteWorkspaceId = await second.evaluate(
+        async ({ owner, rootDir }) =>
+          (await window.electronAPI.fleetAddWorkspace(owner, { rootDir })).id,
+        { owner: client.owners[0].id, rootDir: path.join(remoteServer.dataDir, 'remote-root') }
+      )
+      await switchWorkspace(second, remoteWorkspaceId)
       await second.locator(`[data-sidebar-item-id="${focusedRemoteKey}"]`).click()
       await second
         .locator(`[data-session-id="${focusedRemoteKey}"] [data-testid="chat-view"]`)
         .waitFor()
       remoteBefore = await request(remoteServer, '/sessions')
       assert.ok(remoteBefore.length > 0, 'the focused remote fixture contains real sessions')
+      // The first window stays on the local workspace: it reads the same
+      // remote session and shows no row of it.
+      assert.ok(
+        (
+          await win.evaluate(
+            (owner) => window.electronAPI.fleetSnapshot(owner),
+            client.owners[0].id
+          )
+        ).sessions.some((s) => s.id === focusedRemoteKey),
+        'the local-workspace window reads the remote session'
+      )
+      assert.equal(
+        await win.locator(`[data-sidebar-item-id="${focusedRemoteKey}"]`).count(),
+        0,
+        'the remote session has no row in a local workspace'
+      )
     }
     const dialog = await openTriage(app, second)
     await dialog.getByText('Preview context', { exact: true }).click()
@@ -582,9 +641,11 @@ export async function run(t) {
       const supportListing = after.windowListings.find(
         (s) => s.windowId === after.origin.windowId && s.status === 'ok'
       )
+      // Captured with the window on the remote server's workspace, the local
+      // support tab carries that captured workspace.
       assert.equal(
         supportListing.value.sessions.find((s) => s.id === support[0].id).workspaceId,
-        f.workspace.id,
+        remoteWorkspaceId,
         'support retains the captured workspace'
       )
       assert.ok(

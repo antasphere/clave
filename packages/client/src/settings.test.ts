@@ -81,6 +81,19 @@ describe('the typed settings calls', () => {
     expect(fake.state.lastActiveWorkspaceId).toBe('ws1')
   })
 
+  it('carries the base stamp of a registry write to the server, which refuses a stale one (#241)', async () => {
+    const { revision, instance } = await api.settings.workspaces.load()
+    expect(
+      await api.settings.workspaces.updateRegistry([], undefined, { revision, instance })
+    ).toMatchObject({ ok: true, revision: revision + 1 })
+    expect(last('workspaces.updateRegistry')).toEqual([[], undefined, { revision, instance }])
+    // The same base again: the registry has moved on since.
+    expect(
+      await api.settings.workspaces.updateRegistry([], undefined, { revision, instance })
+    ).toEqual({ ok: false, reason: 'stale' })
+    expect(fake.state.revision).toBe(revision + 1)
+  })
+
   it('upserts a launch profile', async () => {
     const profile = {
       id: 'p',

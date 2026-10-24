@@ -17,8 +17,9 @@ import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import type { Attachment, AttachmentSource } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
+import type { Workspace } from '../shared/workspace-types'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
-import type { FleetDesktopAPI, FleetSnapshot, FleetRequests } from './fleet-types'
+import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -81,6 +82,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const requestListeners = new Set<(snapshot: FleetRequests) => void>()
   const statusListeners = new Set<(status: ServerConnectionStatus) => void>()
   const connectionListeners = new Set<(connections: SavedServerConnection[]) => void>()
+  const workspaceListeners = new Set<(update: FleetWorkspaces) => void>()
   let connections: SavedServerConnection[] = []
   const watched = new Map<string, { backing: Backing; off: () => void }>()
   const pendingSnapshots = new Map<string, Promise<FleetSnapshot>>()
@@ -188,6 +190,78 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     }
     void snapshot(serverId).catch(noop)
   }
+  // ── Server workspaces (#241) ──────────────────────────────────────────────
+  // A server keeps its own workspace registry; the desktop wraps each id as a
+  // remote key. What reaches the renderer comes over the server's live push
+  // socket only: the list the server sends each socket at its welcome, then
+  // every change. One socket is one connection to one process, and the
+  // client drops the frames of a socket it replaced, so these lists arrive
+  // in the order that process sent them; an HTTP answer carries no order
+  // against them (a late one may come from a process since restarted) and is
+  // never published. Within one process the revision decides, since the
+  // welcome list and a change can cross; a list from another process means
+  // the server restarted, and is taken.
+  type Stamp = { revision: number; instance: string }
+  const stamps = new Map<string, Stamp>()
+  const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
+    id: resourceKey('workspace', serverId, ws.id),
+    name: ws.name,
+    rootDir: ws.rootDir,
+    profileFile: ws.profileFile,
+    createdAt: ws.createdAt
+  })
+  const publishWorkspaces = (serverId: string, list: readonly Workspace[], stamp: Stamp): void => {
+    const last = stamps.get(serverId)
+    if (last && last.instance === stamp.instance && stamp.revision <= last.revision) return
+    stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
+    const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+    for (const listener of workspaceListeners) listener({ serverId, workspaces })
+  }
+  const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
+    const b = await backing(serverId)
+    const state = await b.api.settings.workspaces.load()
+    return (state.workspaces as Workspace[]).map((ws) => scopeWorkspace(serverId, ws))
+  }
+  // A write replaces the server's whole list, so it is made against the
+  // stamp it read, and the server refuses it as `stale` when another writer
+  // got in between; it is then read and applied again. Its answer goes back
+  // to the caller; the list it made reaches the renderer as the change.
+  const registryChains = new Map<string, Promise<unknown>>()
+  const STALE_RETRIES = 5
+  const editRegistry = <T>(
+    serverId: string,
+    edit: (current: Workspace[]) => { next: Workspace[]; result: T }
+  ): Promise<T> => {
+    const run = (registryChains.get(serverId) ?? Promise.resolve()).catch(noop).then(async () => {
+      const b = await backing(serverId)
+      for (let attempt = 0; ; attempt++) {
+        const state = await b.api.settings.workspaces.load()
+        const { next, result } = edit([...(state.workspaces as Workspace[])])
+        const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
+          revision: state.revision,
+          instance: state.instance
+        })
+        if (written.ok) return result
+        if (written.reason !== 'stale' || attempt >= STALE_RETRIES)
+          throw new Error('The server refused the workspace list.')
+      }
+    })
+    registryChains.set(serverId, run)
+    return run
+  }
+  // One folder, one spelling: `.` and `..` resolved, `//` collapsed, no
+  // trailing slash, so two spellings of a folder overlap as they should.
+  const normalFolder = (path: string): string => {
+    const parts: string[] = []
+    for (const part of path.split('/')) {
+      if (part === '' || part === '.') continue
+      if (part === '..') parts.pop()
+      else parts.push(part)
+    }
+    return `/${parts.join('/')}`
+  }
+  const insideRoot = (root: string, p: string): boolean =>
+    p === root || p.startsWith(root === '/' ? root : `${root}/`)
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
@@ -198,6 +272,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
+    if (value.event._tag === 'workspaces.state_changed')
+      publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
   })
   let savedRead: Promise<SavedServerConnection[]> | null = null
   let watchingChanges = false
@@ -464,6 +540,42 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       })
       return ownedLayout(serverId, result)
     },
+    fleetWorkspaces: loadWorkspaces,
+    fleetAddWorkspace: async (serverId, input) => {
+      const typed = input.rootDir.trim()
+      if (!typed.startsWith('/')) throw new Error('Choose an absolute folder on the server.')
+      const rootDir = normalFolder(typed)
+      const b = await backing(serverId)
+      const info = await b.api.files.stat({ root: '/', path: rootDir })
+      if (info.type !== 'directory') throw new Error('That path on the server is not a folder.')
+      return editRegistry(serverId, (current) => {
+        if (
+          current.some((ws) => {
+            const root = normalFolder(ws.rootDir)
+            return insideRoot(root, rootDir) || insideRoot(rootDir, root)
+          })
+        )
+          throw new Error('That folder overlaps a workspace already on this server.')
+        const base = rootDir.split('/').pop()?.replace(/^\.+/, '') ?? ''
+        const ws: Workspace = {
+          id: crypto.randomUUID(),
+          name:
+            input.name?.trim() || (base ? base.charAt(0).toUpperCase() + base.slice(1) : rootDir),
+          rootDir,
+          profileFile: input.profileFile ?? null,
+          createdAt: Date.now()
+        }
+        return { next: [...current, ws], result: scopeWorkspace(serverId, ws) }
+      })
+    },
+    fleetRemoveWorkspace: async (workspaceId) => {
+      const ref = parseResourceKey('workspace', workspaceId)
+      if (ref.serverId === LOCAL_SERVER_ID) throw new Error('Not a server workspace.')
+      await editRegistry(ref.serverId, (current) => ({
+        next: current.filter((ws) => ws.id !== ref.id),
+        result: undefined
+      }))
+    },
     fleetResolve: async (requestKey, response) => {
       const ref = parseResourceKey('request', requestKey)
       const b = await backing(ref.serverId)
@@ -519,6 +631,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       connectionListeners.add(callback)
       return () => {
         connectionListeners.delete(callback)
+      }
+    },
+    onFleetWorkspaces: (callback) => {
+      workspaceListeners.add(callback)
+      return () => {
+        workspaceListeners.delete(callback)
       }
     }
   }

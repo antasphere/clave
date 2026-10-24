@@ -8,7 +8,8 @@ import {
   eventually,
   request,
   ownerReady,
-  clickReady
+  clickReady,
+  showServer
 } from './fixtures/fleet-world.mjs'
 
 export async function run(t) {
@@ -20,6 +21,8 @@ export async function run(t) {
     const win = mac.win
     await connectMac(mac, world.servers, { ui: false })
     const owner = mac.owners[0].id
+    // A server's sessions show in that server's workspaces only (#241).
+    await showServer(mac, 0)
     const profile = {
       id: 'mac-argv-recorder',
       name: 'Mac argv recorder',
@@ -119,6 +122,14 @@ export async function run(t) {
     await world.restart(0)
     const returned = await world.mac('a', { reuse: mac.dir })
     returned.owners = await returned.win.evaluate(() => window.electronAPI.fleetList())
+    await eventually(async () => {
+      try {
+        return !!(await returned.win.evaluate((id) => window.electronAPI.fleetSnapshot(id), owner))
+      } catch {
+        return false
+      }
+    }, 'the reopened Mac reaches the restarted server')
+    await showServer(returned, 0)
     await ownerReady(returned, owner, info.id)
     await clickReady(returned.win.locator(`[data-sidebar-item-id="${info.id}"]`))
     const returnedTile = returned.win.locator(`[data-terminal-tile="${info.id}"]`)
