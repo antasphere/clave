@@ -191,33 +191,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     void snapshot(serverId).catch(noop)
   }
   // ── Server workspaces (#241) ──────────────────────────────────────────────
-  // A server keeps its own workspace registry; the desktop reads it per
-  // server, wraps each id as a remote key, and hears every change through the
-  // server's `workspaces.state_changed` event. What reaches the renderer is
-  // ordered by arrival, since two instances of a restarted server carry no
-  // order between them. Within one instance the revision decides: a list
-  // newer than the last one taken is taken, from a push, a read or a write
-  // answer alike, and an older or equal one never is. Across instances only
-  // arrival orders them: a push, which comes over the one live socket, is
-  // taken; a read or a write answer is taken only when no push arrived after
-  // it was sent and no answer sent later has been taken already. So a slow
-  // answer from an instance the server has been restarted out of never rolls
-  // back the new one, and of two answers in flight the one sent last wins. A write replaces the server's whole list, so it is made against the
-  // stamp it read and the server refuses it as `stale` when another Mac wrote
-  // in between; it is then read and applied again.
+  // A server keeps its own workspace registry; the desktop wraps each id as a
+  // remote key. What reaches the renderer comes over the server's live push
+  // socket only: the list the server sends each socket at its welcome, then
+  // every change. One socket is one connection to one process, and the
+  // client drops the frames of a socket it replaced, so these lists arrive
+  // in the order that process sent them; an HTTP answer carries no order
+  // against them (a late one may come from a process since restarted) and is
+  // never published. Within one process the revision decides, since the
+  // welcome list and a change can cross; a list from another process means
+  // the server restarted, and is taken.
   type Stamp = { revision: number; instance: string }
   const stamps = new Map<string, Stamp>()
-  /** Per server: how many pushes were taken, the last request number handed
-   *  out, and the request number of the last answer taken. */
-  const pushes = new Map<string, number>()
-  const requests = new Map<string, number>()
-  const answered = new Map<string, number>()
-  type Sent = { pushes: number; request: number }
-  const sending = (serverId: string): Sent => {
-    const request = (requests.get(serverId) ?? 0) + 1
-    requests.set(serverId, request)
-    return { pushes: pushes.get(serverId) ?? 0, request }
-  }
   const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
     id: resourceKey('workspace', serverId, ws.id),
     name: ws.name,
@@ -225,45 +210,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     profileFile: ws.profileFile,
     createdAt: ws.createdAt
   })
-  /** `sent` is what a read or a write noted when it went out; a push has none. */
-  const publishWorkspaces = (
-    serverId: string,
-    list: readonly Workspace[],
-    stamp: Stamp,
-    sent?: Sent
-  ): Workspace[] => {
-    const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+  const publishWorkspaces = (serverId: string, list: readonly Workspace[], stamp: Stamp): void => {
     const last = stamps.get(serverId)
-    // What arrived is evidence of order whether or not its list is taken: a
-    // push counts, and the newest request answered only ever goes up.
-    const note = (): void => {
-      if (sent) answered.set(serverId, Math.max(answered.get(serverId) ?? 0, sent.request))
-      else pushes.set(serverId, (pushes.get(serverId) ?? 0) + 1)
-    }
-    if (last && last.instance === stamp.instance) {
-      // One instance numbers its own changes: the revision decides alone.
-      note()
-      if (stamp.revision <= last.revision) return workspaces
-    } else {
-      // Across instances there is no order but arrival.
-      if (
-        sent &&
-        (sent.pushes !== (pushes.get(serverId) ?? 0) ||
-          sent.request < (answered.get(serverId) ?? 0))
-      )
-        return workspaces
-      note()
-    }
+    if (last && last.instance === stamp.instance && stamp.revision <= last.revision) return
     stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
+    const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
     for (const listener of workspaceListeners) listener({ serverId, workspaces })
-    return workspaces
   }
   const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
     const b = await backing(serverId)
-    const sent = sending(serverId)
     const state = await b.api.settings.workspaces.load()
-    return publishWorkspaces(serverId, state.workspaces as Workspace[], state, sent)
+    return (state.workspaces as Workspace[]).map((ws) => scopeWorkspace(serverId, ws))
   }
+  // A write replaces the server's whole list, so it is made against the
+  // stamp it read, and the server refuses it as `stale` when another writer
+  // got in between; it is then read and applied again. Its answer goes back
+  // to the caller; the list it made reaches the renderer as the change.
   const registryChains = new Map<string, Promise<unknown>>()
   const STALE_RETRIES = 5
   const editRegistry = <T>(
@@ -275,15 +237,11 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       for (let attempt = 0; ; attempt++) {
         const state = await b.api.settings.workspaces.load()
         const { next, result } = edit([...(state.workspaces as Workspace[])])
-        const sent = sending(serverId)
         const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
           revision: state.revision,
           instance: state.instance
         })
-        if (written.ok) {
-          publishWorkspaces(serverId, written.workspaces as Workspace[], written, sent)
-          return result
-        }
+        if (written.ok) return result
         if (written.reason !== 'stale' || attempt >= STALE_RETRIES)
           throw new Error('The server refused the workspace list.')
       }
@@ -291,14 +249,24 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     registryChains.set(serverId, run)
     return run
   }
+  // One folder, one spelling: `.` and `..` resolved, `//` collapsed, no
+  // trailing slash, so two spellings of a folder overlap as they should.
+  const normalFolder = (path: string): string => {
+    const parts: string[] = []
+    for (const part of path.split('/')) {
+      if (part === '' || part === '.') continue
+      if (part === '..') parts.pop()
+      else parts.push(part)
+    }
+    return `/${parts.join('/')}`
+  }
   const insideRoot = (root: string, p: string): boolean =>
-    p === root || p.startsWith(root.endsWith('/') ? root : `${root}/`)
+    p === root || p.startsWith(root === '/' ? root : `${root}/`)
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
       invalidate(status.serverId)
       refresh(status.serverId)
-      void loadWorkspaces(status.serverId).catch(noop)
     }
   })
   fleet.onEvent(({ serverId, value }) => {
@@ -574,14 +542,18 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     },
     fleetWorkspaces: loadWorkspaces,
     fleetAddWorkspace: async (serverId, input) => {
-      const rootDir = input.rootDir.trim().replace(/(.)\/+$/, '$1')
-      if (!rootDir.startsWith('/')) throw new Error('Choose an absolute folder on the server.')
+      const typed = input.rootDir.trim()
+      if (!typed.startsWith('/')) throw new Error('Choose an absolute folder on the server.')
+      const rootDir = normalFolder(typed)
       const b = await backing(serverId)
       const info = await b.api.files.stat({ root: '/', path: rootDir })
       if (info.type !== 'directory') throw new Error('That path on the server is not a folder.')
       return editRegistry(serverId, (current) => {
         if (
-          current.some((ws) => insideRoot(ws.rootDir, rootDir) || insideRoot(rootDir, ws.rootDir))
+          current.some((ws) => {
+            const root = normalFolder(ws.rootDir)
+            return insideRoot(root, rootDir) || insideRoot(rootDir, root)
+          })
         )
           throw new Error('That folder overlaps a workspace already on this server.')
         const base = rootDir.split('/').pop()?.replace(/^\.+/, '') ?? ''

@@ -46,7 +46,8 @@ export interface FleetDesktopAPI {
     layout: WindowLayout,
     baseRevision: number
   ): Promise<LayoutSnapshot>
-  /** The server's workspaces, read now; also pushed to `onFleetWorkspaces`. */
+  /** The server's workspaces, read now, for the caller alone: the list the
+   *  renderer shows comes from `onFleetWorkspaces`. */
   fleetWorkspaces(serverId: string): Promise<Workspace[]>
   /** Register a folder on the server's disk as one of its workspaces. */
   fleetAddWorkspace(
@@ -62,7 +63,8 @@ export interface FleetDesktopAPI {
   onFleetRequests(callback: (requests: FleetRequests) => void): () => void
   onFleetStatus(callback: (status: ServerConnectionStatus) => void): () => void
   onFleetConnectionsChanged(callback: (connections: SavedServerConnection[]) => void): () => void
-  /** Each time a server's workspace list is read or changes. */
+  /** A server's workspace list, from its live socket: at each connect, then
+   *  at each change. */
   onFleetWorkspaces(callback: (update: FleetWorkspaces) => void): () => void
 }
 
