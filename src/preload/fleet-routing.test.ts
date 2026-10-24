@@ -265,9 +265,15 @@ beforeEach(async () => {
       mocks.disabled.add(String(args[0]))
       return null
     }
+    if (channel === 'server:fleet:connect') {
+      mocks.disabled.delete(String(args[0]))
+      return null
+    }
     if (channel === 'server:fleet:endpoint')
       return { url: `http://owner-${args[0]}`, token: 'test-only' }
     if (channel === 'sessions:history') return { owner: 'local', items: [] }
+    // The Mac's own repo watcher answers the paths it was given.
+    if (channel === 'git:watch-repos') return args[1]
     if (channel === 'sessions:files')
       return { kind: 'upload', name: 'image.png', base64: 'aW1hZ2U=', image: false }
     return null
@@ -812,6 +818,37 @@ describe('git routing by the owner of the repository key', () => {
     expect(again.owner).toBe('a')
     expect(again.args).toEqual([expect.stringMatching(/:panel-1$/), ['/one'], 2])
     expect(mocks.calls.filter((c) => c.owner === 'b')).toEqual([])
+  })
+  it('tells a server that comes back about an unwatch it never heard, asked while it was unreachable', async () => {
+    await api.gitWatchRepos('offline-panel', [resourceKey('file', 'a', '/repo')])
+    await api.gitWatchRepos('moved-panel', [resourceKey('file', 'a', '/one')])
+    await api.fleetDisconnect('a')
+    // Asked while owner a is unreachable: both removals are swallowed for now.
+    await api.gitUnwatchRepos('offline-panel')
+    await api.gitWatchRepos('moved-panel', ['/mac-only'])
+    mocks.calls.length = 0
+    await api.fleetConnect('a')
+    await vi.waitFor(() =>
+      expect(mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.unwatch')).toHaveLength(
+        2
+      )
+    )
+    const unwatched = mocks.calls
+      .filter((c) => c.owner === 'a' && c.method === 'git.unwatch')
+      .map((c) => [String(c.args[0]).split(':').pop(), c.args[1]])
+    // Each under a revision above its last request's (watch 1, the swallowed
+    // request 2, this one 3); no live set re-sent since neither panel has one here.
+    expect(unwatched.sort()).toEqual([
+      ['moved-panel', 3],
+      ['offline-panel', 3]
+    ])
+    expect(mocks.calls.filter((c) => c.owner === 'a' && c.method === 'git.watch')).toEqual([])
+    // Once heard, the owner is not told again on the next reconnection.
+    mocks.calls.length = 0
+    for (const listener of mocks.pushStatusListeners.get('a') ?? []) listener('open', {})
+    await vi.advanceTimersByTimeAsync(50)
+    // (a reconnection also refreshes the owner's snapshot; only git calls count here)
+    expect(mocks.calls.filter((c) => c.owner === 'a' && c.method.startsWith('git.'))).toEqual([])
   })
   it('lets the server ignore a watch answering after its subscriber was unwatched', async () => {
     await api.getGitStatus(resourceKey('file', 'a', '/repo'))

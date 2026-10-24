@@ -477,13 +477,31 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   // the same set again is nothing to the server, a lost set is restored
   // (`lane-c/watch-rule.md`). The first connection has nothing to restore.
   const gitConnectedOwners = new Set<string>()
+  /** Every subscriber this Mac has ever named to an owner and not yet
+   *  unwatched there with the owner's acknowledgement: on a reconnection each
+   *  one is told its current truth, its live set or an unwatch, so a removal
+   *  the owner never heard (asked while it was unreachable) reaches it too
+   *  (verifier round 5). */
+  const gitKnownSubscribers = new Map<string, Set<string>>()
+  const gitKnown = (owner: string, subscriberId: string): void => {
+    const set = gitKnownSubscribers.get(owner) ?? new Set<string>()
+    set.add(subscriberId)
+    gitKnownSubscribers.set(owner, set)
+  }
+  const gitForgotten = (owner: string, subscriberId: string): void => {
+    gitKnownSubscribers.get(owner)?.delete(subscriberId)
+  }
   const restoreGitWatches = (owner: string): void => {
-    for (const [subscriberId, sets] of gitWatchSets) {
-      const paths = sets.get(owner)
-      if (!paths || paths.length === 0) continue
+    for (const subscriberId of [...(gitKnownSubscribers.get(owner) ?? [])]) {
+      const paths = gitWatchSets.get(subscriberId)?.get(owner) ?? []
       const revision = nextWatchRevision(subscriberId)
+      const subscriber = `${gitSubscriberToken}:${subscriberId}`
       void backing(owner)
-        .then((b) => b.api.git.watch(`${gitSubscriberToken}:${subscriberId}`, paths, revision))
+        .then((b) =>
+          paths.length > 0
+            ? b.api.git.watch(subscriber, paths, revision).then(noop)
+            : b.api.git.unwatch(subscriber, revision).then(() => gitForgotten(owner, subscriberId))
+        )
         .catch(noop)
     }
   }
@@ -1249,6 +1267,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           continue
         }
         try {
+          gitKnown(owner, subscriberId)
           const b = await backing(owner)
           const ok = await b.api.git.watch(subscriber, paths, revision)
           // The subscriber moved on while this owner answered (verifier
@@ -1273,8 +1292,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         try {
           const b = await backing(owner)
           await b.api.git.unwatch(`${gitSubscriberToken}:${subscriberId}`, revision)
+          gitForgotten(owner, subscriberId)
         } catch {
-          /* gone with its connection */
+          /* unreachable now: the owner hears this unwatch when it comes back */
         }
       }
     },
