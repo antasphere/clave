@@ -160,7 +160,37 @@ it('launches each server session through launchSession with no account fields or
   )
 })
 it('does not pin a live server group', () => {
-  pinned.pinGroupFromCurrent(resourceKey('group', 'vps', 'group'))
+  const groupId = resourceKey('group', 'vps', 'group')
+  mocks.state.sessions = pin().sessions.map(
+    (s, index): Session => ({
+      ...s,
+      id: resourceKey('session', 'vps', String(index)),
+      folderName: 'project',
+      alive: true,
+      activityStatus: 'idle',
+      promptWaiting: null,
+      claudeSessionId: null,
+      sessionType: 'local',
+      detectedUrl: null,
+      serverStatus: null,
+      serverCommand: null,
+      hasUnseenActivity: false,
+      userRenamed: false,
+      planFilePath: null
+    })
+  )
+  mocks.state.groups = [
+    {
+      id: groupId,
+      name: 'Live server group',
+      sessionIds: mocks.state.sessions.map((s) => s.id),
+      collapsed: false,
+      cwd: '/repo/project',
+      terminals: [],
+      workspaceId
+    }
+  ]
+  pinned.pinGroupFromCurrent(groupId)
   expect(pinned.usePinnedStore.getState().pinnedGroups).toEqual([])
 })
 it('discovers default on the server, stamps keyed roots and prunes vanished files', async () => {

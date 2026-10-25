@@ -9,6 +9,7 @@ import { FileTreeWatcher, FILE_WATCH_LEASE_MS } from './watch'
 let root: string
 let watcher: FileTreeWatcher
 let events: FilesDirsChanged[]
+let deliverDebounce: () => void
 let handles: Array<{
   path: string
   closed: boolean
@@ -24,6 +25,15 @@ beforeEach(async () => {
   handles = []
   watcher = new FileTreeWatcher({
     now: () => Date.now(),
+    setTimeout: ((callback: () => void, delay: number) => {
+      const timer = setTimeout(callback, delay)
+      if (delay === 300)
+        deliverDebounce = () => {
+          clearTimeout(timer)
+          callback()
+        }
+      return timer
+    }) as typeof setTimeout,
     watch: (path, change) => {
       const emitter = new EventEmitter()
       const handle = {
@@ -93,6 +103,25 @@ describe('whole tree watches', () => {
     watcher.dispose()
     expect(handles.every((h) => h.closed)).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
+  })
+  it('keeps one namespace alive when another changes roots and unwatches', async () => {
+    await sync(1)
+    const one = [...handles]
+    await sync(1, ['b'], 'two')
+    expect(one.every((h) => !h.closed)).toBe(true)
+    await watcher.sync({
+      namespace: 'two',
+      generation: 2,
+      tree: { root: join(root, 'b'), dirs: [] }
+    })
+    expect(one.every((h) => !h.closed)).toBe(true)
+    await watcher.sync({ namespace: 'two', generation: 3, tree: null })
+    expect(one.every((h) => !h.closed)).toBe(true)
+    expect(handles.filter((h) => !h.closed)).toEqual(one)
+    // No lease time has passed. The surviving namespace must still deliver.
+    one[0].emit('still-watched.txt')
+    deliverDebounce()
+    expect(events).toEqual([{ _tag: 'files.dirs_changed', namespace: 'one', root, dirs: ['.'] }])
   })
   it('expires a lease fifteen minutes after its renewal, between sweep boundaries', async () => {
     await sync(1)
