@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
-- Server workspaces load their `.clave` pins from the server, launch their groups there, and review elevated content with the server named. Trusted folders stay with their owner. The file tree supports server paths, folder watches and bounded server searches (#243).
+- Server workspaces load their `.clave` pins from the server, launch their groups there, and review elevated content with the server named. Trusted folders stay with their owner. The side panel shows the server's file tree, including without a focused tab, with live folder watches and bounded server searches (#243).
 
 - **Servers are managed from Settings** — Settings → Servers lists the Clave servers this Mac reaches with their live state, Connect/Disconnect and Remove, adds one from a form whose token field never shows a saved token, shows the add form's and each connection's error on the page, and lists a connected server's own Claude and Codex logins read-only. The sidebar's Servers button and its dialog are gone; agent requests from a server still reach the user. Starting sessions on a server moves to the normal flow in a following change.
 - Launch profiles are the Mac's. A launch on a Clave server carries the chosen profile's definition and the server runs it as given, storing no profile for it. A program missing on the server fails the start by name. Resume and account switch keep the carried profile.

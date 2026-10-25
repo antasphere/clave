@@ -574,7 +574,7 @@ export function FileTree({
   ])
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0" data-file-tree-root={cwd}>
       {/* The tab's own bar — the same field the sidebar searches groups with,
           so "narrow a list" looks the same on both edges of the window. The
           folder picker, the way home and collapse-all are NOT here: they belong

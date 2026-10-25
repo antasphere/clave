@@ -1,6 +1,6 @@
 // Server-owned workspace pins and trust, through the real desktop preload.
 import assert from 'node:assert/strict'
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   fleetWorld,
@@ -10,8 +10,11 @@ import {
   request,
   owned,
   eventually,
+  clickReady,
+  ownerReady,
   step
 } from './fixtures/fleet-world.mjs'
+import { assertFileEndpoint } from './fixtures/fleet-http-observer.mjs'
 import { spawnJournal, stubReviewDialog } from './harness.mjs'
 
 const blueprint = (name) => ({
@@ -60,17 +63,107 @@ export async function run(t) {
   const world = await fleetWorld('workspace-files')
   try {
     // Reuse the named @structure-ai fixture scenario and its owned command rail.
-    world.load()
+    const fixture = world.load()
     const [server, peer] = world.servers
+    const observers = await world.observeFiles()
+    const mark = () => observers.map((observer) => observer.entries.length)
+    writeFileSync(path.join(server.root, 'server-only.txt'), 'Only on the server')
+    mkdirSync(path.join(server.root, 'watched-folder'))
     const profile = path.join(server.root, '.clave', 'workspaces', 'default.clave')
     mkdirSync(path.dirname(profile), { recursive: true })
     writeFileSync(profile, JSON.stringify(blueprint('Server file pin')))
     const mac = await world.mac('files')
+    writeFileSync(path.join(mac.root, 'mac-only.txt'), 'Only on the Mac')
     await connectMac(mac, world.servers, { ui: false })
     const spawns = spawnJournal(mac.dir)
     const before = new Set((await request(server, '/sessions')).map((s) => s.id))
     const peerBefore = (await request(peer, '/sessions')).map((s) => s.id).sort()
+    const opening = mark()
     const workspaceId = await showServer(mac, 0)
+    const fixtureSession = owned('session', mac.owners[0].id, fixture.values.first.sessionId)
+    await ownerReady(mac, mac.owners[0].id, fixtureSession)
+    const fixtureRow = mac.win.locator(`[data-sidebar-item-id="${fixtureSession}"] .sidebar-item`)
+    await clickReady(fixtureRow)
+    await fixtureRow.click({ modifiers: ['Meta'] })
+    await mac.win.getByText('Select a session', { exact: true }).waitFor({ state: 'visible' })
+    const tree = mac.win.locator(
+      `[data-file-tree-root="${owned('file', mac.owners[0].id, server.root)}"]`
+    )
+    await step('the empty server workspace shows its live file tree', async () => {
+      // The fixture's tab was deselected through the sidebar. The workspace
+      // itself owns the panel, with no session or file tab focused.
+      assert.equal(
+        await mac.win.locator('[data-sidebar-item-id] [data-selected="true"]').count(),
+        0
+      )
+      if (!(await tree.isVisible())) await clickReady(mac.win.getByTitle(/^File tree/))
+      await tree.locator('[data-tree-name="server-only.txt"]').waitFor({ state: 'visible' })
+      assert.equal(await tree.locator('[data-tree-name="mac-only.txt"]').count(), 0)
+      assert.equal(await mac.win.locator(`[data-file-tree-root="${mac.root}"]`).count(), 0)
+      assert.equal(
+        await mac.win.locator('[data-panel-scope]').getAttribute('data-panel-scope'),
+        'workspace'
+      )
+      assert.equal(await mac.win.locator('.panel-path').getAttribute('title'), server.root)
+      assertFileEndpoint(observers, opening, 0, '/files/list')
+
+      const watching = mark()
+      const folder = tree.locator('[data-tree-name="watched-folder"]')
+      await clickReady(folder)
+      // Wait for the real watch request before creating either file. No UI
+      // action follows these disk writes until both new rows have appeared.
+      await eventually(
+        () =>
+          observers[0].entries
+            .slice(watching[0])
+            .some((e) => e.path === '/files/watch' && e.status === 200),
+        'the expanded folder watch reaches its owner'
+      )
+      const changes = mark()
+      writeFileSync(path.join(server.root, 'appeared-at-root.txt'), 'root watch sentinel')
+      writeFileSync(
+        path.join(server.root, 'watched-folder', 'appeared-in-folder.txt'),
+        'folder watch sentinel'
+      )
+      await tree
+        .locator('[data-tree-name="appeared-at-root.txt"]')
+        .waitFor({ state: 'visible', timeout: 5000 })
+      await tree
+        .locator('[data-tree-name="appeared-in-folder.txt"]')
+        .waitFor({ state: 'visible', timeout: 5000 })
+      assert.equal(await folder.getAttribute('data-tree-expanded'), 'true')
+      assertFileEndpoint(observers, changes, 0, '/files/list')
+      t.check(
+        'an unfocused server workspace shows its own tree and refreshes root and expanded folders from disk',
+        true
+      )
+    })
+    await step('a file opened from the workspace tree saves on its server', async () => {
+      const reading = mark()
+      await tree.locator('[data-tree-name="server-only.txt"]').click({ button: 'right' })
+      await clickReady(mac.win.getByRole('menuitem', { name: 'Open in Tab', exact: true }))
+      const editor = mac.win.locator('.cm-content[contenteditable="true"]:visible')
+      await editor.waitFor()
+      assertFileEndpoint(observers, reading, 0, '/files/read')
+      const editing = mark()
+      await editor.fill('Saved through the workspace file tree')
+      await editor.press('Meta+s')
+      await eventually(
+        () =>
+          readFileSync(path.join(server.root, 'server-only.txt'), 'utf8') ===
+          'Saved through the workspace file tree',
+        'the workspace tree editor saves real server bytes'
+      )
+      assertFileEndpoint(observers, editing, 0, '/files/write')
+      await showMac(mac)
+      const macTree = mac.win.locator(`[data-file-tree-root="${mac.root}"]`)
+      await macTree.locator('[data-tree-name="mac-only.txt"]').waitFor({ state: 'visible' })
+      assert.equal(await macTree.locator('[data-tree-name="server-only.txt"]').count(), 0)
+      assert.equal(await tree.count(), 0)
+      assert.deepEqual(mac.errors, [], 'watch changes never reject into the renderer')
+      t.check('workspace tree edits save on the server and showMac restores the Mac root', true)
+      await showServer(mac, 0)
+    })
     await step('server file pins are listed and launch on their owner', async () => {
       await listed(mac, 'Server file pin', true)
       let started

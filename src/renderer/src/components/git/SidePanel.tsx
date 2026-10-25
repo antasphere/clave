@@ -1,6 +1,6 @@
-import { FleetFiles } from '../fleet/FleetFiles'
-import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
-import { parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { isRemoteKey } from '../../lib/fleet-identity'
+import { LOCAL_SERVER_ID, parseResourceKey, resourceKey } from '@clave/contract/fleet'
+import { panelRoots } from '../../lib/panel-roots'
 import { repoDisplayName, repoDisplayPath } from '../../lib/git-paths'
 import { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react'
 import { useSessionStore } from '../../store/session-store'
@@ -142,9 +142,18 @@ function SidePanelBody(): React.JSX.Element {
 
   const focusedSession = sessions.find((s) => s.id === focusedSessionId)
   const focusedFile = useSessionStore((s) => s.fileTabs.find((f) => f.id === s.focusedSessionId))
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const focusedOwnerKey = focusedSession?.id ?? focusedFile?.filePath
-  const fleetOwner = ownerOf(focusedOwnerKey)
-  const fleetRemote = isRemoteKey(focusedOwnerKey)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const serverWorkspaces = useWorkspaceStore((s) => s.serverWorkspaces)
+  const groups = useSessionStore((s) => s.groups)
+  const focusedGroup = useMemo(
+    () =>
+      focusedSessionId
+        ? (groups.find((g) => g.sessionIds.includes(focusedSessionId)) ?? null)
+        : null,
+    [groups, focusedSessionId]
+  )
   const remoteFile =
     focusedFile && isRemoteKey(focusedFile.filePath)
       ? parseResourceKey('file', focusedFile.filePath).id
@@ -157,11 +166,22 @@ function SidePanelBody(): React.JSX.Element {
   // files-only panel: their folder is reachable through no git API. A session
   // on a Clave server (`fleetRemote`) is remote too, but its checkout is
   // served by that server's git domain (wave wcs1023, lane C, #242), so it
-  // keeps the Git tab; only the two local roots and the plugin tabs stay off.
+  // keeps the Git tab and its own workspace/group roots; plugin tabs stay off.
   const legacyRemote =
     focusedSession?.sessionType === 'remote-terminal' ||
     focusedSession?.sessionType === 'remote-claude' ||
     focusedSession?.sessionType === 'agent'
+  const { panelOwner, scopeRoots } = panelRoots({
+    focusedOwnerKey,
+    activeWorkspaceId,
+    focusedSession,
+    focusedGroup,
+    workspaces: { workspaces, serverWorkspaces },
+    sessionCwd,
+    legacyRemote
+  })
+  const fleetOwner = panelOwner
+  const fleetRemote = panelOwner !== LOCAL_SERVER_ID
   const isRemoteSession = fleetRemote || legacyRemote
   const remoteLocationId = isRemoteSession ? focusedSession?.locationId : undefined
 
@@ -205,31 +225,6 @@ function SidePanelBody(): React.JSX.Element {
       useLocationStore.getState().locations.find((l) => l.id === remoteLocationId)?.name ?? null
     )
   }, [remoteLocationId])
-
-  // ── The root: which of the three folders the panel hangs from ──────────
-  const groups = useSessionStore((s) => s.groups)
-  const workspaces = useWorkspaceStore((s) => s.workspaces)
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
-
-  const focusedGroup = useMemo(
-    () =>
-      focusedSessionId
-        ? (groups.find((g) => g.sessionIds.includes(focusedSessionId)) ?? null)
-        : null,
-    [groups, focusedSessionId]
-  )
-  const workspaceRoot = useMemo(() => {
-    const id = focusedSession?.workspaceId ?? activeWorkspaceId
-    return (id ? workspaces.find((w) => w.id === id)?.rootDir : null) ?? null
-  }, [focusedSession?.workspaceId, activeWorkspaceId, workspaces])
-
-  // A remote session's folder is on another machine: the two local roots are
-  // not it, so the chip stays hidden there and the panel follows the session.
-  const scopeRoots: Record<PanelScope, string | null> = {
-    session: sessionCwd,
-    group: isRemoteSession || fleetRemote ? null : (focusedGroup?.cwd ?? null),
-    workspace: isRemoteSession || fleetRemote ? null : workspaceRoot
-  }
 
   // The choice is remembered per session; another session takes its own, or
   // the default. The default is a ladder, not a fixed rung: the root chosen in
@@ -571,7 +566,7 @@ function SidePanelBody(): React.JSX.Element {
                 "workspace" against "group" at 12px, and three letters do. The
                 old folder-picker icon folded into its menu, so the row lost a
                 control here rather than gaining one. */}
-            {!isRemoteSession && (
+            {!legacyRemote && (
               <IconButton
                 ref={scopeButtonRef}
                 onClick={() => setScopeMenuOpen((v) => !v)}
@@ -955,12 +950,6 @@ function SidePanelBody(): React.JSX.Element {
         </div>
       ) : effectiveTab === 'help' ? (
         <HelpPanel />
-      ) : fleetRemote && !isGitTabActive ? (
-        <FleetFiles
-          key={`${fleetOwner}:${sessionCwd}`}
-          serverId={fleetOwner}
-          cwd={sessionCwd ?? '/'}
-        />
       ) : legacyRemote &&
         remoteLocationId &&
         effectiveCwd &&
@@ -974,13 +963,10 @@ function SidePanelBody(): React.JSX.Element {
         </div>
       ) : (
         <>
-          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved.
-              A Clave server's files are FleetFiles above; its git tab lands here with no tree. */}
-          {!fleetRemote && (
-            <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
-              <FileTree cwd={cwd} onNavigateToFolder={handleNavigateToFolder} />
-            </div>
-          )}
+          {/* Keep FileTree mounted across tab switches so folder expansion state is preserved. */}
+          <div className={sidePanelTab === 'files' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
+            <FileTree cwd={gitCwd} onNavigateToFolder={handleNavigateToFolder} />
+          </div>
           {sidePanelTab === 'git' &&
             (multiRepo.result.mode === 'multi' ? (
               <MultiRepoGitPanel
