@@ -113,7 +113,11 @@ export async function run(t) {
     // A change on the server's disk: the server's watch tells the panel.
     writeFileSync(path.join(a.root, 'from-server.txt'), 'written on the server\n')
     await step('server-side change reaches the panel', async () => {
-      await win.getByText('from-server.txt', { exact: true }).first().waitFor({ state: 'visible' })
+      await win
+        .locator('[data-git-row="file"]:visible')
+        .getByText('from-server.txt', { exact: true })
+        .first()
+        .waitFor({ state: 'visible' })
     })
     t.check('a file written on the server’s disk appears in the panel', true)
 
@@ -168,7 +172,11 @@ export async function run(t) {
     writeFileSync(path.join(a.root, 'second.txt'), 'a second change\n')
     const generating = mark()
     await step('the server names its missing Claude login', async () => {
-      await win.getByText('second.txt', { exact: true }).first().waitFor({ state: 'visible' })
+      await win
+        .locator('[data-git-row="file"]:visible')
+        .getByText('second.txt', { exact: true })
+        .first()
+        .waitFor({ state: 'visible' })
       await clickReady(win.locator('textarea[placeholder="Commit message..."] ~ button').first())
       await win.getByText(NOT_SIGNED_IN, { exact: false }).first().waitFor({ state: 'visible' })
     })

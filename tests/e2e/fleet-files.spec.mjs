@@ -36,18 +36,18 @@ export async function run(t) {
     await ownerReady(mac, owner, session)
     const opening = mark()
     await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
-    const tree = mac.win.locator(`[data-fleet-files="${owner}"]`)
+    const tree = mac.win.locator(`[data-file-tree-root="${owned('file', owner, a.root)}"]`)
     if (!(await tree.isVisible())) await clickReady(mac.win.getByTitle(/^File tree/))
-    await step('files navigate owning directory', async () => {
-      await tree.getByTitle(a.root, { exact: true }).waitFor({ state: 'visible' })
-      await clickReady(tree.getByRole('button', { name: value.directory, exact: true }))
-      await tree
-        .getByTitle(path.join(a.root, value.directory), { exact: true })
-        .waitFor({ state: 'visible' })
+    const folder = tree.locator(`[data-tree-name="${value.directory}"]`)
+    const notes = tree.locator('[data-tree-name="notes.txt"]')
+    await step('files expand owning directory', async () => {
+      await clickReady(folder)
+      await notes.waitFor({ state: 'visible' })
     })
     assertFileEndpoint(observers, opening, 0, '/files/list')
     const reading = mark()
-    await clickReady(tree.getByRole('button', { name: 'notes.txt', exact: true }))
+    await notes.click({ button: 'right' })
+    await clickReady(mac.win.getByRole('menuitem', { name: 'Open in Tab', exact: true }))
     const editor = mac.win.locator('.cm-content[contenteditable="true"]:visible')
     await editor.waitFor()
     assertFileEndpoint(observers, reading, 0, '/files/read')
@@ -73,12 +73,13 @@ export async function run(t) {
 
     await clickReady(mac.win.locator(`[data-sidebar-item-id="${session}"]`))
     if (!(await tree.isVisible())) await clickReady(mac.win.getByTitle(/^File tree/))
-    await step('files restore directory after editor', async () => {
-      await tree.getByTitle(a.root, { exact: true }).waitFor({ state: 'visible' })
-      await clickReady(tree.getByRole('button', { name: value.directory, exact: true }))
-      await tree
-        .getByTitle(path.join(a.root, value.directory), { exact: true })
-        .waitFor({ state: 'visible' })
+    await step('files retain the expanded directory after editor and Git', async () => {
+      await notes.waitFor({ state: 'visible' })
+      await clickReady(mac.win.getByRole('button', { name: 'Git', exact: true }))
+      await tree.waitFor({ state: 'hidden' })
+      await clickReady(mac.win.getByRole('button', { name: 'Files', exact: true }))
+      await notes.waitFor({ state: 'visible' })
+      assert.equal(await folder.getAttribute('data-tree-expanded'), 'true')
     })
 
     const source = path.join(mac.root, 'mac-upload.txt')
@@ -89,7 +90,8 @@ export async function run(t) {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
     }, source)
     const uploading = mark()
-    await clickReady(tree.getByRole('button', { name: 'Upload', exact: true }))
+    await folder.click({ button: 'right' })
+    await clickReady(mac.win.getByRole('menuitem', { name: 'Upload files here…', exact: true }))
     const uploaded = `${value.directory}/mac-upload.txt`
     let uploadComplete = false
     try {
@@ -113,7 +115,8 @@ export async function run(t) {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: target })
     }, downloaded)
     const downloading = mark()
-    await clickReady(tree.getByLabel('Download notes.txt', { exact: true }))
+    await notes.click({ button: 'right' })
+    await clickReady(mac.win.getByRole('menuitem', { name: 'Download', exact: true }))
     await eventually(() => existsSync(downloaded), 'remote download reaches selected Mac path')
     assert.equal(readFileSync(downloaded, 'utf8'), 'Edited on owner one through the desktop')
     assertFileEndpoint(observers, downloading, 0, '/files/download')

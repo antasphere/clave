@@ -1,3 +1,4 @@
+import { createReviewRelay, type ReviewAnswer } from './workspace-files-relay'
 import { createFleetClient } from '@clave/client/fleet'
 import type { Backing, Endpoint } from '@clave/client/router'
 import {
@@ -598,6 +599,263 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       a()
       b()
     }
+  // Files and workspace files (#243): the window sends whole tree state,
+  // while each server owns its watches, files, and trust decisions.
+  const namespace = crypto.randomUUID()
+  type Tree = { owner: string; root: string; dirs: string[] }
+  let tree: Tree | null = null
+  let treeGeneration = 0
+  const treeOwners = new Set<string>()
+  const treeChains = new Map<string, Promise<unknown>>()
+  const fsListeners = new Set<Parameters<ElectronAPI['onFsChanged']>[0]>()
+  let renewTree: ReturnType<typeof setInterval> | undefined
+  const sendTree = (owner: string): Promise<void> => {
+    treeOwners.add(owner)
+    const next = (treeChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => {
+        const b = await backing(owner)
+        await b.api.files.syncWatch({
+          namespace,
+          generation: treeGeneration,
+          tree: tree?.owner === owner ? { root: tree.root, dirs: [...tree.dirs] } : null
+        })
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          '[clave] folder watch not sent to the server',
+          error instanceof Error ? error.message : 'The server could not accept the folder watch.'
+        )
+      })
+    treeChains.set(owner, next)
+    return next
+  }
+  const changeTree = (next: Tree | null): Promise<void> => {
+    const previous = tree
+    tree = next
+    treeGeneration += 1
+    if (renewTree !== undefined) clearInterval(renewTree)
+    renewTree = undefined
+    const tasks: Promise<unknown>[] = []
+    if (previous && previous.owner !== LOCAL_SERVER_ID && previous.owner !== next?.owner)
+      tasks.push(sendTree(previous.owner))
+    if (next?.owner === LOCAL_SERVER_ID) tasks.push(local.watchDir(next.root, next.dirs))
+    else {
+      if (previous?.owner === LOCAL_SERVER_ID) tasks.push(local.unwatchDir())
+      if (next) {
+        tasks.push(sendTree(next.owner))
+        renewTree = setInterval(() => {
+          if (tree && tree.owner !== LOCAL_SERVER_ID) void sendTree(tree.owner).catch(noop)
+        }, 5 * 60_000)
+        renewTree.unref?.()
+      }
+    }
+    return Promise.all(tasks).then(() => undefined)
+  }
+  const claveWatches = new Map<string, Set<string>>()
+  const claveChains = new Map<string, Promise<unknown>>()
+  const claveQueue = (owner: string, run: (b: Backing) => Promise<void>): Promise<void> => {
+    const next = (claveChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => run(await backing(owner)))
+    claveChains.set(owner, next)
+    return next
+  }
+  const relays = new Map<string, ReturnType<typeof createReviewRelay>>()
+  const reviewRelay = (owner: string): ReturnType<typeof createReviewRelay> => {
+    let relay = relays.get(owner)
+    if (!relay) {
+      relay = createReviewRelay({
+        showDialog: (review) =>
+          ports.invoke('clave:review-dialog', {
+            ...review,
+            server: connections.find((c) => c.id === owner)?.name ?? owner
+          }) as Promise<ReviewAnswer>,
+        answer: async (reviewId, answer) =>
+          (await backing(owner)).api.workspaceFiles.answerReview(reviewId, answer)
+      })
+      relays.set(owner, relay)
+    }
+    return relay
+  }
+  const pushOpenOrFail = (b: Backing): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('The server’s push channel did not open in time.')),
+        15_000
+      )
+      b.push.whenOpen().then(
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
+  fleet.onEvent(({ serverId, value }) => {
+    relays.get(serverId)?.onEvent(value)
+    const event = value.event
+    if (
+      event._tag === 'files.dirs_changed' &&
+      event.namespace === namespace &&
+      tree?.owner === serverId &&
+      tree.root === event.root
+    )
+      for (const cb of fsListeners) cb(resourceKey('file', serverId, event.root), [...event.dirs])
+  })
+  fleet.onStatus((status) => {
+    if (status.state !== 'connected') return
+    const owner = status.serverId
+    if (treeOwners.has(owner)) {
+      void sendTree(owner).catch(noop)
+      if (tree?.owner === owner)
+        for (const cb of fsListeners) cb(resourceKey('file', owner, tree.root), ['.', ...tree.dirs])
+    }
+    for (const path of claveWatches.get(owner) ?? [])
+      void claveQueue(owner, (b) => b.api.workspaceFiles.watch(path, `fleet:${namespace}`)).catch(
+        noop
+      )
+  })
+  const claveLocation = (
+    path: string,
+    root?: string
+  ): { owner: string; path: string; root?: string } => {
+    const file = parseResourceKey('file', path)
+    const base = root === undefined ? undefined : parseResourceKey('file', root)
+    if (base && file.serverId !== base.serverId)
+      throw new Error('Workspace file and root have different server owners.')
+    return { owner: file.serverId, path: file.id, ...(base ? { root: base.id } : {}) }
+  }
+  const workspaceFiles: Pick<
+    ElectronAPI,
+    | 'readClaveFile'
+    | 'writeClaveFile'
+    | 'claveFileExists'
+    | 'discoverClaveFiles'
+    | 'discoverClaveFilesRecursive'
+    | 'readAutoDiscoverConfig'
+    | 'watchClaveFile'
+    | 'unwatchClaveFile'
+    | 'onClaveFileChanged'
+    | 'trustWorkspaceRoot'
+    | 'untrustWorkspaceRoot'
+    | 'listTrustedRoots'
+  > = {
+    readClaveFile: async (path, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.readClaveFile(path, root)
+      const relay = reviewRelay(ref.owner)
+      const b = await backing(ref.owner)
+      await pushOpenOrFail(b)
+      const read = relay.begin()
+      try {
+        return (await b.api.workspaceFiles.read(ref.path, {
+          rootDir: ref.root,
+          requestId: read.requestId
+        })) as Awaited<ReturnType<ElectronAPI['readClaveFile']>>
+      } finally {
+        read.done()
+      }
+    },
+    writeClaveFile: async (path, data, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.writeClaveFile(path, data, root)
+      return (await backing(ref.owner)).api.workspaceFiles.write(ref.path, data, ref.root)
+    },
+    claveFileExists: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.claveFileExists(path)
+        : (await backing(ref.owner)).api.workspaceFiles.exists(ref.path)
+    },
+    discoverClaveFiles: async (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFiles(path)
+      return (await (await backing(ref.owner)).api.workspaceFiles.discover(ref.path)).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: f.rootDir === null ? null : resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    discoverClaveFilesRecursive: async (path, config) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFilesRecursive(path, config)
+      return (
+        await (await backing(ref.owner)).api.workspaceFiles.discoverRecursive(ref.path, config)
+      ).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    readAutoDiscoverConfig: async (path) => {
+      const ref = claveLocation(path)
+      return (
+        ref.owner === LOCAL_SERVER_ID
+          ? await local.readAutoDiscoverConfig(path)
+          : await (await backing(ref.owner)).api.workspaceFiles.autoDiscover(ref.path)
+      ) as Awaited<ReturnType<ElectronAPI['readAutoDiscoverConfig']>>
+    },
+    watchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.watchClaveFile(path)
+      let paths = claveWatches.get(ref.owner)
+      if (!paths) claveWatches.set(ref.owner, (paths = new Set()))
+      paths.add(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.watch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    unwatchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.unwatchClaveFile(path)
+      claveWatches.get(ref.owner)?.delete(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.unwatch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    onClaveFileChanged: (cb) =>
+      both(
+        local.onClaveFileChanged(cb),
+        eventListener('workspace_files.changed', (event, owner) =>
+          cb(resourceKey('file', owner, event.path))
+        )
+      ),
+    trustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.trustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.trustRoot(ref.path)
+    },
+    untrustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.untrustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.untrustRoot(ref.path)
+    },
+    listTrustedRoots: async () => {
+      const roots = await local.listTrustedRoots()
+      const lists = await Promise.all(
+        fleet
+          .list()
+          .filter((s) => s.state === 'connected')
+          .map(async ({ serverId }) => {
+            try {
+              return (await (await backing(serverId)).api.workspaceFiles.trustedRoots()).map((p) =>
+                resourceKey('file', serverId, p)
+              )
+            } catch {
+              return []
+            }
+          })
+      )
+      return [...roots, ...lists.flat()]
+    }
+  }
+
   const shared: FleetDesktopAPI = {
     fleetList: sync,
     fleetSave: async (input) => {
@@ -1096,24 +1354,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const ref = parseResourceKey('file', root)
       if (ref.serverId === LOCAL_SERVER_ID) return local.listFiles(root)
       const b = await backing(ref.serverId)
-      const queue = ['.']
-      const files: string[] = []
-      let index = 0
-      let scanned = 0
-      let truncated = false
-      while (index < queue.length && index < 100 && scanned < 5000) {
-        const listing = await b.api.files.list({ root: ref.id, path: queue[index++] })
-        truncated ||= listing.truncated
-        for (const entry of listing.entries) {
-          if (++scanned > 5000) {
-            truncated = true
-            break
-          }
-          if (entry.type === 'file') files.push(entry.path)
-          else if (!['.git', 'node_modules'].includes(entry.name)) queue.push(entry.path)
-        }
-      }
-      return { files, truncated: truncated || index < queue.length }
+      const result = await b.api.files.listAll({ root: ref.id })
+      return { files: [...result.files], truncated: result.truncated }
     },
     pluginsViewLease: (pluginId, viewId, id) =>
       remote(id)
@@ -1130,10 +1372,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         root,
         path,
         () => local.readDir(root, path),
-        async (b, location) =>
-          [...(await b.api.files.list(location)).entries] as Awaited<
-            ReturnType<ElectronAPI['readDir']>
-          >
+        async (b, location) => {
+          const { FILE_TREE_IGNORED } = await import('@clave/contract/files')
+          const ignored = new Set<string>(FILE_TREE_IGNORED)
+          return [...(await b.api.files.list(location)).entries].filter(
+            (e) => !ignored.has(e.name)
+          ) as Awaited<ReturnType<ElectronAPI['readDir']>>
+        }
       ),
     readFile: (root, path) =>
       fileRoute(
@@ -1170,9 +1415,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         () => local.createDirectory(root, path),
         (b, location) => b.api.files.createDirectory(location)
       ),
-    watchDir: async (root, dirs) => {
-      if (parseResourceKey('file', root).serverId === LOCAL_SERVER_ID)
-        await local.watchDir(root, dirs)
+    ...workspaceFiles,
+    watchDir: (root, dirs) => {
+      const ref = parseResourceKey('file', root)
+      return changeTree({ owner: ref.serverId, root: ref.id, dirs: [...(dirs ?? [])] })
+    },
+    unwatchDir: () => changeTree(null),
+    onFsChanged: (cb) => {
+      fsListeners.add(cb)
+      return both(local.onFsChanged(cb), () => {
+        fsListeners.delete(cb)
+      })
     },
     showItemInFolder: async (path) => {
       if (parseResourceKey('file', path).serverId !== LOCAL_SERVER_ID)
@@ -1180,8 +1433,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       await local.showItemInFolder(path)
     },
     existsSync: (root, path) => {
-      if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID)
-        throw new Error('Remote filesystem checks are asynchronous.')
+      if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID) return false
       return local.existsSync(root, path)
     },
     // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──

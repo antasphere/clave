@@ -1,3 +1,5 @@
+import { parseResourceKey } from '@clave/contract/fleet'
+import { ownedFilePath, isRemoteKey } from '../../lib/fleet-identity'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useSessionStore } from '../../store/session-store'
 import { openSessionProgrammatically } from '../../lib/mcp-dispatcher'
@@ -6,6 +8,8 @@ import { FileTreeItem } from './FileTreeItem'
 import { TREE_INDENT_PX, TREE_ROW_PAD_PX } from './tree-metrics'
 import { ContextMenu } from '../ui/ContextMenu'
 import {
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon,
   EyeIcon,
   WindowIcon,
   PencilSquareIcon,
@@ -209,6 +213,34 @@ export function FileTree({
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [inlineCreate, setInlineCreate] = useState<InlineCreateState | null>(null)
+  const [notice, setNotice] = useState('')
+  const serverRoot = isRemoteKey(cwd)
+  const plainPath = useCallback(
+    (rel: string): string => `${parseResourceKey('file', cwd!).id}/${rel}`,
+    [cwd]
+  )
+  const upload = useCallback(
+    async (folder: string): Promise<void> => {
+      if (!cwd) return
+      setNotice('')
+      try {
+        const files = await window.electronAPI.sessionsFiles.pick()
+        for (const source of files) {
+          const name = source.split('/').pop()!
+          await window.electronAPI.fleetUpload(
+            cwd,
+            folder === '.' ? name : `${folder}/${name}`,
+            source
+          )
+        }
+      } catch {
+        setNotice('Upload failed. Existing files are never overwritten.')
+      } finally {
+        await refreshDir(folder)
+      }
+    },
+    [cwd, refreshDir]
+  )
 
   const handleClickFile = useCallback(() => {
     // Plain click on file — no-op here, selection handled by handleSelect
@@ -248,17 +280,17 @@ export function FileTree({
   const handleDragStart = useCallback(
     (e: React.DragEvent, node: FlatTreeNode) => {
       if (!cwd) return
-      if (selectedPaths.size > 1 && selectedPaths.has(node.path)) {
-        const paths = Array.from(selectedPaths)
-          .map((p) => `${cwd}/${p}`)
-          .join('\n')
-        e.dataTransfer.setData('text/plain', paths)
-      } else {
-        e.dataTransfer.setData('text/plain', `${cwd}/${node.path}`)
-      }
+      const selected =
+        selectedPaths.size > 1 && selectedPaths.has(node.path) ? [...selectedPaths] : [node.path]
+      e.dataTransfer.setData('text/plain', selected.map(plainPath).join('\n'))
+      if (serverRoot)
+        e.dataTransfer.setData(
+          'application/x-clave-files',
+          JSON.stringify(selected.map((p) => ownedFilePath(cwd, p)))
+        )
       e.dataTransfer.effectAllowed = 'copy'
     },
-    [cwd, selectedPaths]
+    [cwd, selectedPaths, plainPath, serverRoot]
   )
 
   const handleInlineCreated = useCallback(
@@ -276,7 +308,7 @@ export function FileTree({
         const filename = relativePath.split('/').pop() ?? relativePath
         addFileTab({
           id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          filePath: `${cwd}/${relativePath}`,
+          filePath: ownedFilePath(cwd, relativePath),
           name: filename
         })
       }
@@ -287,7 +319,7 @@ export function FileTree({
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, node: FlatTreeNode) => {
       if (!cwd) return
-      const absPath = `${cwd}/${node.path}`
+      const absPath = plainPath(node.path)
       const items: ContextMenuState['items'] = []
 
       if (node.type === 'file') {
@@ -303,7 +335,7 @@ export function FileTree({
             const filename = node.path.split('/').pop() ?? node.path
             addFileTab({
               id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              filePath: `${cwd}/${node.path}`,
+              filePath: ownedFilePath(cwd, node.path),
               name: filename
             })
           }
@@ -330,7 +362,7 @@ export function FileTree({
             label: 'Open Externally',
             icon: <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />,
             onClick: () => {
-              window.electronAPI?.openPath(absPath)
+              window.electronAPI?.openPath(ownedFilePath(cwd, node.path))
             }
           })
         }
@@ -343,7 +375,7 @@ export function FileTree({
         })
         // A Slideless deck directly contains slideless.json. Synchronous check so
         // the menu opens instantly with the right item (no async flicker).
-        if (window.electronAPI?.existsSync(cwd, `${node.path}/slideless.json`)) {
+        if (!serverRoot && window.electronAPI?.existsSync(cwd, `${node.path}/slideless.json`)) {
           items.push({
             label: 'Run Slideless',
             icon: <PlayIcon className="w-3.5 h-3.5" />,
@@ -364,7 +396,9 @@ export function FileTree({
           icon: <MapIcon className="w-3.5 h-3.5" />,
           onClick: () => {
             const folderName = node.path.split('/').pop() ?? node.path
-            useSessionStore.getState().openJourneyPanel(absPath, folderName)
+            useSessionStore
+              .getState()
+              .openJourneyPanel(serverRoot ? ownedFilePath(cwd, node.path) : absPath, folderName)
           }
         })
         items.push({
@@ -388,16 +422,37 @@ export function FileTree({
         icon: <ClipboardDocumentIcon className="w-3.5 h-3.5" />,
         onClick: () => navigator.clipboard.writeText(absPath)
       })
-      items.push({
-        label: 'Reveal in Finder',
-        icon: <MagnifyingGlassIcon className="w-3.5 h-3.5" />,
-        onClick: () => {
-          window.electronAPI?.showItemInFolder(absPath)
-        }
-      })
+      if (!serverRoot)
+        items.push({
+          label: 'Reveal in Finder',
+          icon: <MagnifyingGlassIcon className="w-3.5 h-3.5" />,
+          onClick: () => {
+            window.electronAPI?.showItemInFolder(absPath)
+          }
+        })
+      if (serverRoot) {
+        if (node.type === 'file')
+          items.push({
+            label: 'Download',
+            icon: <ArrowDownTrayIcon className="w-3.5 h-3.5" />,
+            onClick: () => {
+              void window.electronAPI
+                .fleetDownload(cwd, node.path)
+                .catch(() => setNotice('Download failed.'))
+            }
+          })
+        else
+          items.push({
+            label: 'Upload files here…',
+            icon: <ArrowUpTrayIcon className="w-3.5 h-3.5" />,
+            onClick: () => {
+              void upload(node.path)
+            }
+          })
+      }
       setContextMenu({ x: e.clientX, y: e.clientY, items })
     },
-    [cwd, setPreviewFile, onNavigateToFolder, addFileTab]
+    [cwd, setPreviewFile, onNavigateToFolder, addFileTab, plainPath, serverRoot, upload]
   )
 
   // Context menu on empty area — allow creating at root
@@ -411,6 +466,17 @@ export function FileTree({
         x: e.clientX,
         y: e.clientY,
         items: [
+          ...(serverRoot
+            ? [
+                {
+                  label: 'Upload files here…',
+                  icon: <ArrowUpTrayIcon className="w-3.5 h-3.5" />,
+                  onClick: () => {
+                    void upload('.')
+                  }
+                }
+              ]
+            : []),
           {
             label: 'New File...',
             icon: <DocumentPlusIcon className="w-3.5 h-3.5" />,
@@ -424,7 +490,7 @@ export function FileTree({
         ]
       })
     },
-    [cwd]
+    [cwd, serverRoot, upload]
   )
 
   // Build flat list with inline create input inserted at the right position
@@ -508,7 +574,7 @@ export function FileTree({
   ])
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0" data-file-tree-root={cwd}>
       {/* The tab's own bar — the same field the sidebar searches groups with,
           so "narrow a list" looks the same on both edges of the window. The
           folder picker, the way home and collapse-all are NOT here: they belong
@@ -549,6 +615,11 @@ export function FileTree({
         </div>
       </div>
 
+      {notice && (
+        <p role="alert" className="text-xs text-text-secondary px-2">
+          {notice}
+        </p>
+      )}
       {/* Tree list */}
       <div className="flex-1 overflow-y-auto" onContextMenu={handleEmptyContextMenu}>
         {!cwd ? (

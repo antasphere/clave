@@ -3,13 +3,25 @@
  * user; `root` additionally bounds each operation, including symlinks. */
 import { Schema } from 'effect'
 import { Command, Query } from '@structure-ai/cqrs'
-import { ApiGroup, HttpCqrs } from '@structure-ai/http'
+import { ApiEndpoint, ApiGroup, HttpCqrs, withDefaultErrors } from '@structure-ai/http'
 import { CapabilityUnavailable } from './errors'
 
 export const MAX_TRANSFER_BYTES = 5 * 1024 * 1024
 export const MAX_TEXT_BYTES = 1024 * 1024
 export const MAX_PREVIEW_BYTES = 16 * 1024
 export const MAX_FILE_ENTRIES = 5000
+export const FILE_TREE_IGNORED = [
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '__pycache__',
+  '.next',
+  '.svelte-kit',
+  '.DS_Store',
+  'coverage',
+  '.cache'
+] as const
 export const MAX_BASE64_LENGTH = 4 * Math.ceil(MAX_TRANSFER_BYTES / 3)
 const Path = Schema.String.pipe(
   Schema.minLength(1),
@@ -109,7 +121,41 @@ export class FileOperationFailed extends Schema.TaggedError<FileOperationFailed>
     message: Schema.String
   }
 ) {}
+export const FilesWatchInput = Schema.Struct({
+  namespace: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
+  generation: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  tree: Schema.NullOr(
+    Schema.Struct({
+      root: Path,
+      dirs: Schema.Array(Path).pipe(Schema.maxItems(1000))
+    })
+  )
+})
+export type FilesWatchInput = typeof FilesWatchInput.Type
+export const FilesWatchResult = Schema.Struct({ watched: Schema.Array(Schema.String) })
+export type FilesWatchResult = typeof FilesWatchResult.Type
+export const FilesAll = Schema.Struct({
+  files: Schema.Array(Schema.String),
+  truncated: Schema.Boolean
+})
+export type FilesAll = typeof FilesAll.Type
+export const FilesDirsChanged = Schema.TaggedStruct('files.dirs_changed', {
+  namespace: Schema.String,
+  root: Schema.String,
+  dirs: Schema.Array(Schema.String)
+})
+export type FilesDirsChanged = typeof FilesDirsChanged.Type
 const Failure = Schema.Union(FileOperationFailed, CapabilityUnavailable)
+export const FilesSyncWatch = Command.define('FilesSyncWatch', {
+  payload: FilesWatchInput,
+  success: FilesWatchResult,
+  failure: Failure
+})
+export const FilesListAll = Query.define('FilesListAll', {
+  payload: Schema.Struct({ root: Path }),
+  success: FilesAll,
+  failure: Failure
+})
 export const ListFiles = Query.define('ListFiles', {
   payload: FileLocation,
   success: FileListing,
@@ -162,6 +208,16 @@ export const PreviewFileAttachment = Query.define('PreviewFileAttachment', {
 })
 
 export const filesGroup = ApiGroup.make('files')
+  .add(HttpCqrs.commandEndpoint('syncWatch', '/files/watch', FilesSyncWatch))
+  .add(
+    withDefaultErrors(
+      ApiEndpoint.post('listAll', '/files/list-all')
+        .setPayload(Schema.encodedSchema(FilesListAll.payload))
+        .addSuccess(FilesListAll.success)
+        .addError(FileOperationFailed, { status: 422 })
+        .addError(CapabilityUnavailable, { status: 422 })
+    )
+  )
   .add(HttpCqrs.queryEndpoint('list', '/files/list', ListFiles))
   .add(HttpCqrs.queryEndpoint('read', '/files/read', ReadFile))
   .add(HttpCqrs.queryEndpoint('stat', '/files/stat', StatFile))
@@ -183,6 +239,8 @@ export const filesGroup = ApiGroup.make('files')
 
 /** The promise-facing port and client share DTOs, independently of transport. */
 export interface FilesOperations {
+  readonly syncWatch: (input: FilesWatchInput) => Promise<FilesWatchResult>
+  readonly listAll: (input: { readonly root: string }) => Promise<FilesAll>
   readonly list: (input: FileLocation) => Promise<FileListing>
   readonly read: (input: FileLocation) => Promise<FileText>
   readonly stat: (input: FileLocation) => Promise<FileInfo>

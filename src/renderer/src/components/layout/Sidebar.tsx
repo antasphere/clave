@@ -303,6 +303,7 @@ export function Sidebar(): React.JSX.Element {
 
   // Handle drop on pinned zone
   const handlePinnedDrop = useCallback((groupId: string) => {
+    if (isRemoteKey(groupId)) return
     const existing = findPinnedByGroupId(groupId)
     if (!existing) {
       pinGroupFromCurrent(groupId)
@@ -1360,11 +1361,13 @@ export function Sidebar(): React.JSX.Element {
                   onClick: () => resyncPinnedGroup(groupId)
                 }
               : null
-            : {
-                label: 'Pin group',
-                icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                onClick: () => pinGroupFromCurrent(groupId)
-              },
+            : isRemoteKey(groupId)
+              ? null
+              : {
+                  label: 'Pin group',
+                  icon: <BookmarkIcon className="w-3.5 h-3.5" />,
+                  onClick: () => pinGroupFromCurrent(groupId)
+                },
           {
             label: 'Rename',
             icon: <PencilSquareIcon className="w-3.5 h-3.5" />,

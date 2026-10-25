@@ -42,7 +42,7 @@ import {
   workspaceFilesHandlers
 } from './workspace-files'
 import { ViewRequests, viewHandlers } from './views'
-import { FilesPort, fileHandlers } from './files'
+import { FilesPort, FilesEventsLive, fileHandlers } from './files'
 import { RequestsPort } from './requests/port'
 import { RequestEventsLive, requestHandlers } from './requests/handlers'
 // ── Wave 4, lane C: the agent tools' tokens ──
@@ -126,10 +126,13 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const workspacesWelcome = WorkspacesWelcomeLive.pipe(Layer.provide(Layer.merge(services, hub)))
   // ── Wave wcs1023, lane C: a watched repository's changes and a batch's progress told to the clients ──
   const gitEvents = GitEventsLive.pipe(Layer.provide(services))
+  // ── Wave wcs1023, lane D: a watched folder's changes told to the clients ──
+  const filesEvents = FilesEventsLive.pipe(Layer.provide(services))
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
+    filesEvents,
     hub,
     settingsEvents,
     sidebarEvents,
