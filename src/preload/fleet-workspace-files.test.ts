@@ -16,6 +16,7 @@ interface Fixture {
   calls: Array<{ owner: string; method: string; args: unknown[] }>
   invoke: Mock<(channel: string, ...args: unknown[]) => Promise<unknown>>
   pendingReads: Map<string, (value: null) => void>
+  failures: Map<string, Error>
   holds: Map<string, Promise<void>>
   welcomes: Map<string, Promise<void>>
   emit: (owner: string, event: ServerEvent) => void
@@ -26,6 +27,7 @@ function fixture(): Fixture {
   const pendingReads = new Map<string, (value: null) => void>()
   const statuses = new Map<string, (s: string, d: object) => void>()
   const events = new Map<string, (e: ServerEventEnvelope) => void>()
+  const failures = new Map<string, Error>()
   const holds = new Map<string, Promise<void>>()
   const welcomes = new Map<string, Promise<void>>()
   const local = {
@@ -63,6 +65,7 @@ function fixture(): Fixture {
     async (...args: unknown[]) => {
       calls.push({ owner, method, args })
       await holds.get(`${owner}:${method}`)
+      if (failures.has(`${owner}:${method}`)) throw failures.get(`${owner}:${method}`)
       return result
     }
   const api = createFleetDesktop(local as unknown as ElectronAPI, {
@@ -149,6 +152,7 @@ function fixture(): Fixture {
     invoke,
     pendingReads,
     holds,
+    failures,
     welcomes,
     emit,
     reconnect
@@ -170,6 +174,36 @@ afterEach(async () => {
 const syncs = (): Fixture['calls'] => h.calls.filter((c) => c.method === 'sync')
 
 describe('the window tree watch', () => {
+  it('logs each failed server watch send and keeps watch/unwatch and later Mac watches usable', async () => {
+    const error = Object.assign(new Error('server unreachable'), {
+      detail: 'PRIVATE SERVER DETAIL',
+      stack: 'PRIVATE STACK'
+    })
+    h.failures.set('x:sync', error)
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await expect(h.api.watchDir(file('x'), ['a'])).resolves.toBeUndefined()
+      await expect(h.api.unwatchDir()).resolves.toBeUndefined()
+      await h.api.watchDir('/mac', ['src'])
+      expect(h.local.watchDir).toHaveBeenCalledWith('/mac', ['src'])
+      expect(log.mock.calls).toEqual([
+        ['[clave] folder watch not sent to the server', 'server unreachable'],
+        ['[clave] folder watch not sent to the server', 'server unreachable']
+      ])
+      expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE')
+    } finally {
+      h.failures.delete('x:sync')
+      await h.api.unwatchDir()
+      log.mockRestore()
+    }
+  })
+  it('preserves the rejection of a Mac watch and unwatch', async () => {
+    const error = new Error('local watch failed')
+    vi.mocked(h.local.watchDir).mockRejectedValueOnce(error)
+    await expect(h.api.watchDir('/mac', ['src'])).rejects.toBe(error)
+    vi.mocked(h.local.unwatchDir).mockRejectedValueOnce(error)
+    await expect(h.api.unwatchDir()).rejects.toBe(error)
+  })
   it('moves Mac → X → Y → Mac with whole state and rising generations', async () => {
     await h.api.watchDir('/mac', ['src'])
     await h.api.watchDir(file('x'), ['a'])

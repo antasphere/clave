@@ -611,14 +611,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   let renewTree: ReturnType<typeof setInterval> | undefined
   const sendTree = (owner: string): Promise<void> => {
     treeOwners.add(owner)
-    const next = (treeChains.get(owner) ?? Promise.resolve()).catch(noop).then(async () => {
-      const b = await backing(owner)
-      await b.api.files.syncWatch({
-        namespace,
-        generation: treeGeneration,
-        tree: tree?.owner === owner ? { root: tree.root, dirs: [...tree.dirs] } : null
+    const next = (treeChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => {
+        const b = await backing(owner)
+        await b.api.files.syncWatch({
+          namespace,
+          generation: treeGeneration,
+          tree: tree?.owner === owner ? { root: tree.root, dirs: [...tree.dirs] } : null
+        })
       })
-    })
+      .catch((error: unknown) => {
+        console.warn(
+          '[clave] folder watch not sent to the server',
+          error instanceof Error ? error.message : 'The server could not accept the folder watch.'
+        )
+      })
     treeChains.set(owner, next)
     return next
   }
