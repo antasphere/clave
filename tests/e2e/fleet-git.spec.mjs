@@ -24,6 +24,8 @@ import {
   owned,
   ownerReady,
   clickReady,
+  showMac,
+  showServer,
   step
 } from './fixtures/fleet-world.mjs'
 import { assertFileEndpoint } from './fixtures/fleet-http-observer.mjs'
@@ -58,6 +60,9 @@ export async function run(t) {
     const value = report.values.first
     const mac = await world.mac('a')
     await connectMac(mac, world.servers)
+    // A server's tabs show in that server's workspace (lane B): the window
+    // moves to owner one's before its session row is read.
+    await showServer(mac, 0)
     const { win } = mac
     const owner = mac.owners[0].id
     const session = owned('session', owner, value.sessionId)
@@ -215,6 +220,9 @@ export async function run(t) {
     const serverDraft = win.locator('textarea[placeholder="Commit message..."]')
     const draftText = 'draft kept for the server checkout'
     await serverDraft.fill(draftText)
+    // Back on the Mac's own workspace, a Mac terminal on the very same path
+    // (one host plays both machines here) gets the Mac's repository.
+    await showMac(mac)
     const local = await callMcp(mac.app, 'openSession', { cwd: a.root, mode: 'terminal' })
     assert.ok(local?.sessionId, 'a Mac terminal opened on the same path')
     await callMcp(mac.app, 'focus', { sessionId: local.sessionId })
@@ -234,6 +242,7 @@ export async function run(t) {
         'no draft of the server’s reaches the Mac repository'
       )
     })
+    await showServer(mac, 0)
     await clickReady(win.locator(`[data-sidebar-item-id="${session}"]`))
     await eventually(
       async () =>
