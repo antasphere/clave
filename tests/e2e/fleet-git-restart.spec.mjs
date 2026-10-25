@@ -59,8 +59,9 @@ export async function run(t) {
     if (!(await tabs.isVisible())) await clickReady(win.getByTitle(/^File tree/))
     await step('a file of the server checkout opens as a tab', async () => {
       await clickReady(tabs.getByRole('button', { name: 'Files', exact: true }))
-      const tree = win.locator(`[data-fleet-files="${owner}"]`)
-      await clickReady(tree.getByRole('button', { name: 'README.md', exact: true }))
+      const tree = win.locator(`[data-file-tree-root="${owned('file', owner, a.root)}"]`)
+      await tree.locator('[data-tree-name="README.md"]').click({ button: 'right' })
+      await clickReady(win.getByRole('menuitem', { name: 'Open in Tab', exact: true }))
       await win.locator('.cm-content[contenteditable="true"]:visible').waitFor()
     })
 

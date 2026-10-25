@@ -537,17 +537,15 @@ export async function run(t) {
     await win.evaluate((root) => window.electronAPI.writeFile(root, 'notes.txt', 'A edited'), fileA)
     assert.equal(readFileSync(path.join(a.cwd, 'notes.txt'), 'utf8'), 'A edited')
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
-    const tree = win.locator(`[data-fleet-files="${savedA.id}"]`)
+    const panelCwd = a.cwd.replace(/^\/private\/tmp\//, '/tmp/')
+    const tree = win.locator(`[data-file-tree-root="${owned('file', savedA.id, panelCwd)}"]`)
     if (!(await tree.count())) await win.getByTitle(/^File tree/).click()
-    await tree.getByRole('button', { name: 'notes.txt', exact: true }).click()
+    await tree.locator('[data-tree-name="notes.txt"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open in Tab', exact: true }).click()
     const editor = win.locator('.cm-content[contenteditable="true"]:visible')
     await editor.waitFor()
     assert.deepEqual(rendererErrors, [], 'remote file focus keeps the renderer alive')
-    assert.equal(
-      await win.locator(`[data-fleet-files="${savedA.id}"]`).count(),
-      1,
-      'remote file focus keeps the file panel on its owner'
-    )
+    assert.equal(await tree.count(), 1, 'remote file focus keeps the file panel on its owner')
     await editor.fill('A edited in desktop')
     await editor.press('Meta+s')
     await check(
@@ -557,10 +555,8 @@ export async function run(t) {
     )
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
-    await win
-      .locator(`[data-fleet-files="${savedA.id}"]`)
-      .getByRole('button', { name: 'remote.md', exact: true })
-      .click()
+    await tree.locator('[data-tree-name="remote.md"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open in Tab', exact: true }).click()
     await sleep(400)
     assert.deepEqual(
       documentImageRequests.filter((url) => url.startsWith('file:')),
@@ -578,10 +574,11 @@ export async function run(t) {
     )
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     // Normal Upload from a navigated /tmp alias must use the visible owner root.
-    await win
-      .locator(`[data-fleet-files="${savedA.id}"]`)
-      .getByRole('button', { name: 'uploads', exact: true })
-      .click()
+    await tree.locator('[data-tree-name="uploads"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open as Root', exact: true }).click()
+    const uploadsTree = win.locator(
+      `[data-file-tree-root="${owned('file', savedA.id, path.join(panelCwd, 'uploads'))}"]`
+    )
     const macUpload = path.join(root, 'mac-upload.txt')
     writeFileSync(macUpload, 'Mac upload owning-server byte sentinel')
     await app.evaluate(({ dialog }, source) => {
@@ -589,13 +586,11 @@ export async function run(t) {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
     }, macUpload)
     try {
-      await win
-        .locator(`[data-fleet-files="${savedA.id}"]`)
-        .getByRole('button', { name: 'Upload', exact: true })
-        .click()
+      await uploadsTree.getByText('Empty directory', { exact: true }).click({ button: 'right' })
+      await win.getByRole('menuitem', { name: 'Upload files here…', exact: true }).click()
       assert.ok(
         await until(() => existsSync(path.join(a.cwd, 'uploads', 'mac-upload.txt'))),
-        `normal UI upload must complete: ${await win.locator(`[data-fleet-files="${savedA.id}"]`).innerText()}`
+        `normal UI upload must complete: ${await uploadsTree.innerText()}`
       )
       assert.equal(
         readFileSync(path.join(a.cwd, 'uploads', 'mac-upload.txt'), 'utf8'),
