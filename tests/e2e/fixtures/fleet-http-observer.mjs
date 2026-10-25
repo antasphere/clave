@@ -13,25 +13,62 @@ export async function observeDaemon(url) {
     socket.once('close', () => sockets.delete(socket))
     return socket
   }
+  // Holds (lane C, #242): a spec may park the next matching request before it
+  // reaches the daemon (`holdRequest`), or the daemon's reply to the next
+  // matching request before it reaches the Mac (`holdReply`), to put the Mac
+  // and the daemon in an order the network would only produce by accident.
+  // Each hold takes exactly one exchange; `release()` lets it through. The
+  // record keeps the request's actual status either way.
+  const holds = []
+  const takeHold = (kind, incoming, pathname) =>
+    holds.find((hold) => hold.kind === kind && !hold.taken && hold.match(incoming.method, pathname))
   const server = createServer((incoming, outgoing) => {
     const target = new URL(incoming.url, url)
-    const upstream = request(
-      target,
-      { method: incoming.method, headers: incoming.headers },
-      (reply) => {
-        entries.push({ method: incoming.method, path: target.pathname, status: reply.statusCode })
-        outgoing.writeHead(reply.statusCode, reply.headers)
-        reply.pipe(outgoing)
-        reply.on('error', () => outgoing.destroy())
-      }
-    )
-    upstream.on('error', () => {
-      if (!outgoing.headersSent) outgoing.writeHead(502)
-      outgoing.end()
+    const forward = () => {
+      const upstream = request(
+        target,
+        { method: incoming.method, headers: incoming.headers },
+        (reply) => {
+          entries.push({ method: incoming.method, path: target.pathname, status: reply.statusCode })
+          const held = takeHold('reply', incoming, target.pathname)
+          if (!held) {
+            outgoing.writeHead(reply.statusCode, reply.headers)
+            reply.pipe(outgoing)
+            reply.on('error', () => outgoing.destroy())
+            return
+          }
+          held.taken = true
+          const chunks = []
+          reply.on('data', (chunk) => chunks.push(chunk))
+          reply.on('error', () => outgoing.destroy())
+          reply.on('end', () => {
+            const body = Buffer.concat(chunks)
+            held.released.then(() => {
+              if (outgoing.destroyed) return
+              outgoing.writeHead(reply.statusCode, reply.headers)
+              outgoing.end(body)
+            })
+          })
+        }
+      )
+      upstream.on('error', () => {
+        if (!outgoing.headersSent) outgoing.writeHead(502)
+        outgoing.end()
+      })
+      incoming.on('aborted', () => upstream.destroy())
+      outgoing.on('close', () => upstream.destroy())
+      incoming.pipe(upstream)
+    }
+    const held = takeHold('request', incoming, target.pathname)
+    if (!held) return forward()
+    held.taken = true
+    // The body is kept flowing into memory while the request waits.
+    incoming.pause()
+    held.released.then(() => {
+      if (outgoing.destroyed) return
+      incoming.resume()
+      forward()
     })
-    incoming.on('aborted', () => upstream.destroy())
-    outgoing.on('close', () => upstream.destroy())
-    incoming.pipe(upstream)
   })
   server.on('connection', track)
   // The real push protocol upgrades to WebSocket. Tunnel the original
@@ -62,9 +99,28 @@ export async function observeDaemon(url) {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
+  const hold = (kind, match) => {
+    let release = () => {}
+    const released = new Promise((resolve) => {
+      release = resolve
+    })
+    const entry = { kind, match, taken: false, released }
+    holds.push(entry)
+    return {
+      release,
+      /** Whether the exchange this hold waits for has arrived. */
+      get taken() {
+        return entry.taken
+      }
+    }
+  }
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     entries,
+    /** Park the next request matching `match(method, pathname)` before the daemon sees it. */
+    holdRequest: (match) => hold('request', match),
+    /** Park the daemon's reply to the next request matching `match` before the Mac sees it. */
+    holdReply: (match) => hold('reply', match),
     async close() {
       const closed = new Promise((resolve) => server.close(resolve))
       server.closeAllConnections()

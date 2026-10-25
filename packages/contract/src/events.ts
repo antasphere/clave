@@ -14,6 +14,8 @@ import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './se
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
+// ── Wave wcs1023, lane C: the git domain ──
+import { GitEvent } from './git'
 
 export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
@@ -81,7 +83,9 @@ export const ServerEvent = Schema.Union(
     name: Schema.String,
     title: Schema.String,
     body: Schema.optional(Schema.String)
-  })
+  }),
+  // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
+  ...GitEvent.members
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

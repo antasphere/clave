@@ -3,6 +3,7 @@ import type { GitStatusResult } from '../../../preload/index.d'
 import { useSessionStore } from '../store/session-store'
 import { useGitBatch } from '../components/git/git-batch-context'
 import { startPollLoop } from '../lib/poll-loop'
+import { repoDisplayName } from '../lib/git-paths'
 import {
   GIT_FETCH_JITTER_MS,
   GIT_FETCH_POLL_MS,
@@ -120,7 +121,7 @@ export function useMultiRepoStatus(
         }
 
         // Root + nested repos. Reuse the status we already have for the root.
-        const rootName = cwd.split(/[\\/]/).pop() ?? cwd
+        const rootName = repoDisplayName(cwd)
         const nameByPath = new Map<string, string>([[cwd, rootName]])
         for (const r of nested) nameByPath.set(r.path, r.name)
 

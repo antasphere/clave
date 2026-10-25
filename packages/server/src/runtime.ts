@@ -49,6 +49,8 @@ import { RequestEventsLive, requestHandlers } from './requests/handlers'
 import { AgentTokens, agentToolsHandlers } from './agent-tools'
 // ── Wave 5, lane C: the plugins ──
 import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
+// ── Wave wcs1023, lane C: the git domain ──
+import { GitEventsLive, GitPort, gitHandlers } from './git'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -88,6 +90,8 @@ export type ServerServices =
   | AgentTokens
   // ── Wave 5, lane C: the plugins ──
   | Plugins
+  // ── Wave wcs1023, lane C: the git domain ──
+  | GitPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -120,6 +124,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const pluginsEvents = PluginsEventsLive.pipe(Layer.provide(services))
   // ── Wave wcs1023, lane B: each socket hears the workspace list at its welcome ──
   const workspacesWelcome = WorkspacesWelcomeLive.pipe(Layer.provide(Layer.merge(services, hub)))
+  // ── Wave wcs1023, lane C: a watched repository's changes and a batch's progress told to the clients ──
+  const gitEvents = GitEventsLive.pipe(Layer.provide(services))
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
@@ -133,7 +139,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave 5, lane C: the plugins ──
     pluginsEvents,
     // ── Wave wcs1023, lane B ──
-    workspacesWelcome
+    workspacesWelcome,
+    // ── Wave wcs1023, lane C: the git domain ──
+    gitEvents
   )
 }
 
@@ -169,7 +177,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Wave 4, lane C: the agent tools' tokens ──
       ...agentToolsHandlers,
       // ── Wave 5, lane C: the plugins ──
-      ...pluginHandlers
+      ...pluginHandlers,
+      // ── Wave wcs1023, lane C: the git domain ──
+      ...gitHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

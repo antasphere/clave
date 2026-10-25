@@ -25,7 +25,8 @@
     "./files": "./src/files.ts",
     "./fleet": "./src/fleet.ts",
     "./requests": "./src/requests.ts",
-    "./sidebar/layout": "./src/sidebar/layout.ts"
+    "./sidebar/layout": "./src/sidebar/layout.ts",
+    "./git": "./src/git.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

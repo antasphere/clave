@@ -13,6 +13,7 @@ import {
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
+import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import type { Attachment, AttachmentSource } from '../shared/attachments'
@@ -406,6 +407,131 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ? localCall()
       : call(await backing(location.serverId), location)
   }
+  // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+  // A repository is named by the key of its folder: `resourceKey('file',
+  // serverId, path)` for a server's, the plain path for the Mac's own. The
+  // owner of the key answers, and every path the server answers (a repo
+  // root, a worktree's source, a discovered repo, a batch's repo) comes back
+  // under that owner's key, so the renderer never holds a server path that
+  // reads like a Mac one: the same folder on two machines is two repositories
+  // to every store keyed by folder.
+  const gitRef = (key: string): { serverId: string; id: string } => parseResourceKey('file', key)
+  const ownedPath = (owner: string, path: string): string => resourceKey('file', owner, path)
+  // A folder that is no repository answers an empty `repoRoot`: nothing to
+  // key, and `resourceKey` refuses an empty id (verifier round 1, finding 2).
+  const ownedStatus = (owner: string, status: WireGitStatus): WireGitStatus => ({
+    ...status,
+    repoRoot: status.repoRoot ? ownedPath(owner, status.repoRoot) : status.repoRoot,
+    ...(status.worktree && {
+      worktree: { ...status.worktree, of: ownedPath(owner, status.worktree.of) }
+    })
+  })
+  const loose = <T>(value: unknown): T => value as T
+  const gitRoute = async <T>(
+    cwd: string,
+    localCall: () => Promise<T>,
+    call: (b: Backing, path: string, owner: string) => Promise<T>
+  ): Promise<T> => {
+    const ref = gitRef(cwd)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? localCall()
+      : call(await backing(ref.serverId), ref.id, ref.serverId)
+  }
+  /** A batch names repositories of ONE owner: a list that spans two servers
+   *  is refused before anything runs anywhere. An empty list is the Mac's. */
+  const gitBatch = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string) => Promise<T>
+  ): Promise<T> => {
+    const refs = keys.map(gitRef)
+    const owner = refs[0]?.serverId ?? LOCAL_SERVER_ID
+    if (refs.some((ref) => ref.serverId !== owner))
+      throw new Error('A git batch cannot span two servers.')
+    return owner === LOCAL_SERVER_ID
+      ? localCall()
+      : call(
+          await backing(owner),
+          refs.map((ref) => ref.id),
+          owner
+        )
+  }
+  // What this Mac watches on each server is ONE complete map per owner (every
+  // panel's subscription with its paths), named by this preload's namespace
+  // (one per Mac window) and replaced as a whole under an increasing
+  // generation: a panel's set changing, a panel closing, a connection
+  // opening all send the current complete map, and the server keeps only the
+  // newest generation it has seen. There are no single watches to order, no
+  // removals to remember, nothing to replay but the map itself
+  // (`lane-c/watch-rule.md`). Two Macs never share a namespace.
+  const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
+  const gitDesired = new Map<string, Map<string, string[]>>()
+  const gitGeneration = new Map<string, number>()
+  /** Counts an owner's connections: an answer that crossed one came from a
+   *  daemon that may be gone and says nothing about the one now there. */
+  const gitEpoch = new Map<string, number>()
+  const gitMapOf = (owner: string): GitWatchSubscription[] =>
+    [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+  const sameMap = (
+    a: ReadonlyArray<GitWatchSubscription>,
+    b: ReadonlyArray<GitWatchSubscription>
+  ): boolean => JSON.stringify(a) === JSON.stringify(b)
+  /** Send `owner` this Mac's current complete map. Answers what the server
+   *  watches per subscription while the map it described is still the
+   *  current one (a later send of the SAME map, a connection's, changes
+   *  nothing about it); null when the map moved on or the owner is
+   *  unreachable (it hears the current map at its next connection). */
+  const gitSync = async (owner: string): Promise<ReadonlyArray<GitWatchSubscription> | null> => {
+    const subscriptions = gitMapOf(owner)
+    const generation = (gitGeneration.get(owner) ?? 0) + 1
+    gitGeneration.set(owner, generation)
+    try {
+      const b = await backing(owner)
+      // The connection this sync rides is the one it was made on; only a
+      // connection opening after it makes the answer cross one.
+      const epoch = gitEpoch.get(owner) ?? 0
+      const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
+      // An answer that crossed a connection of this owner (the connection
+      // dropped and came back, a daemon restarted) came from a daemon that may
+      // be gone: it says nothing about the one now there, which the
+      // connection's own sync addresses. The panel polls until its next set.
+      if (gitEpoch.get(owner) !== epoch) return null
+      return sameMap(subscriptions, gitMapOf(owner)) ? answered : null
+    } catch {
+      return null
+    }
+  }
+  fleet.onStatus((status) => {
+    // Every connection, the first included, whatever else is in flight: a
+    // server that lost its state gets the map back, one that kept it applies
+    // the same map again. A sync still in flight may be answered by a daemon
+    // that is gone; this one reaches the daemon that is there.
+    if (status.state !== 'connected') return
+    gitEpoch.set(status.serverId, (gitEpoch.get(status.serverId) ?? 0) + 1)
+    if (gitDesired.has(status.serverId)) void gitSync(status.serverId)
+  })
+  // The batches THIS Mac has in flight on a server, by the id it gave each
+  // one: a server publishes a batch's progress to every attached Mac, and two
+  // Macs may run the same op on the same repositories at once, so neither the
+  // op nor the paths tell a batch apart (verifier rounds 1 and 2). The id
+  // travels with the command and comes back on every event of that batch;
+  // only an event of a batch in flight here reaches the renderer.
+  const runningBatches = new Set<string>()
+  let batchSerial = 0
+  const gitBatchOp = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string, batchId: string) => Promise<T>
+  ): Promise<T> =>
+    gitBatch(keys, localCall, async (b, paths, owner) => {
+      const batchId = `${gitNamespace}:${++batchSerial}`
+      runningBatches.add(batchId)
+      try {
+        return await call(b, paths, owner, batchId)
+      } finally {
+        runningBatches.delete(batchId)
+      }
+    })
   const scopeEvent = (sessionId: string, event: SessionEvent): SessionEvent => {
     if (event.type !== 'user_message' || !event.attachments) return event
     const ref = parseSessionKey(sessionId)
@@ -1057,7 +1183,283 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID)
         throw new Error('Remote filesystem checks are asynchronous.')
       return local.existsSync(root, path)
-    }
+    },
+    // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+    gitCheckIgnored: (cwd, paths) =>
+      gitRoute(
+        cwd,
+        () => local.gitCheckIgnored(cwd, paths),
+        async (b, path) => [...(await b.api.git.checkIgnored(path, paths))]
+      ),
+    getGitStatus: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.getGitStatus(cwd),
+        async (b, path, owner) => loose(ownedStatus(owner, await b.api.git.status(path)))
+      ),
+    getGitStatusBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.getGitStatusBatch(keys),
+        async (b, paths, owner) =>
+          (await b.api.git.statusBatch(paths)).map((entry) => ({
+            path: ownedPath(owner, entry.path),
+            status: loose<Awaited<ReturnType<ElectronAPI['getGitStatus']>>>(
+              ownedStatus(owner, entry.status)
+            )
+          }))
+      ),
+    discoverGitRepos: (cwd, force) =>
+      gitRoute(
+        cwd,
+        () => local.discoverGitRepos(cwd, force),
+        async (b, path, owner) => {
+          const found = await b.api.git.discover(path, force)
+          return {
+            repos: found.repos.map((repo) => ({ ...repo, path: ownedPath(owner, repo.path) })),
+            truncated: found.truncated
+          }
+        }
+      ),
+    gitFetch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitFetch(cwd),
+        (b, path) => b.api.git.fetch(path)
+      ),
+    gitFetchBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.gitFetchBatch(keys),
+        (b, paths) => b.api.git.fetchBatch(paths)
+      ),
+    gitRefreshRemotes: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitRefreshRemotes(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.refreshRemotes(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    // A watch set may name the Mac's repos and several servers' at once: each
+    // owner gets its own share, and an owner that is not connected simply
+    // watches nothing, which the panel reads as "poll these yourself".
+    gitWatchRepos: async (subscriberId, keys) => {
+      const byOwner = new Map<string, string[]>()
+      for (const key of keys) {
+        const ref = gitRef(key)
+        const list = byOwner.get(ref.serverId) ?? []
+        list.push(ref.id)
+        byOwner.set(ref.serverId, list)
+      }
+      // The owners whose map this subscriber changes: where it now has paths,
+      // and where it had some before (its entry leaves that owner's map).
+      // EVERY map is edited now, before anything is awaited: a watch or an
+      // unwatch that runs meanwhile builds on this state, and every sync sent
+      // reads the map as it is then (verifier round 6).
+      const remoteOwners: string[] = []
+      for (const owner of new Set([
+        ...byOwner.keys(),
+        ...[...gitDesired].filter(([, map]) => map.has(subscriberId)).map(([owner]) => owner)
+      ])) {
+        if (owner === LOCAL_SERVER_ID) continue
+        const paths = byOwner.get(owner) ?? []
+        const map = gitDesired.get(owner) ?? new Map<string, string[]>()
+        if (paths.length > 0) map.set(subscriberId, paths)
+        else map.delete(subscriberId)
+        gitDesired.set(owner, map)
+        remoteOwners.push(owner)
+      }
+      const watched: string[] = []
+      const remote = new Map<string, ReadonlyArray<string>>()
+      await Promise.all([
+        // The Mac's own watcher takes the Mac's share as before the lane, the
+        // complete set each time, empty when the subscriber left the Mac.
+        local
+          .gitWatchRepos(subscriberId, byOwner.get(LOCAL_SERVER_ID) ?? [])
+          .then((ok) => watched.push(...ok)),
+        ...remoteOwners.map((owner) =>
+          gitSync(owner).then((answered) => {
+            const mine = answered?.find((s) => s.id === subscriberId)
+            if (mine) remote.set(owner, mine.paths)
+          })
+        )
+      ])
+      // An owner's answer is reported only if this call's entry there is still
+      // the current one when the whole call returns: a newer call for the same
+      // panel may have moved the entry while another owner was still answering.
+      for (const [owner, paths] of remote) {
+        const now = gitDesired.get(owner)?.get(subscriberId) ?? []
+        const asked = byOwner.get(owner) ?? []
+        if (JSON.stringify(now) !== JSON.stringify(asked)) continue
+        watched.push(...paths.map((path) => ownedPath(owner, path)))
+      }
+      return watched
+    },
+    gitUnwatchRepos: async (subscriberId) => {
+      // The maps first, synchronously (see gitWatchRepos), then the Mac and
+      // every owner that held the subscriber.
+      const owners: string[] = []
+      for (const [owner, map] of gitDesired) if (map.delete(subscriberId)) owners.push(owner)
+      await Promise.all([
+        local.gitUnwatchRepos(subscriberId),
+        ...owners.map((owner) => gitSync(owner))
+      ])
+    },
+    onGitReposChanged: (cb) =>
+      both(
+        local.onGitReposChanged(cb),
+        eventListener('git.repos_changed', (event, owner) =>
+          cb(event.repos.map((repo) => ownedPath(owner, repo)))
+        )
+      ),
+    gitStage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitStage(cwd, files),
+        (b, path) => b.api.git.stage(path, files)
+      ),
+    gitUnstage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitUnstage(cwd, files),
+        (b, path) => b.api.git.unstage(path, files)
+      ),
+    gitDiscard: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiscard(cwd, files),
+        (b, path) => b.api.git.discard(path, files)
+      ),
+    gitCommit: (cwd, message) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommit(cwd, message),
+        (b, path) => b.api.git.commit(path, message)
+      ),
+    gitPush: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPush(cwd),
+        (b, path) => b.api.git.push(path)
+      ),
+    gitPublishBranch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPublishBranch(cwd),
+        (b, path) => b.api.git.publishBranch(path)
+      ),
+    gitPull: (cwd, strategy) =>
+      gitRoute(
+        cwd,
+        () => local.gitPull(cwd, strategy),
+        (b, path) => b.api.git.pull(path, strategy)
+      ),
+    gitDiff: (cwd, filePath, staged, isUntracked) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiff(cwd, filePath, staged, isUntracked),
+        (b, path) => b.api.git.diff(path, filePath, staged, isUntracked)
+      ),
+    gitLog: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitLog(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.log(path, maxCount))
+      ),
+    gitOutgoingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitOutgoingCommits(cwd),
+        async (b, path) => loose(await b.api.git.outgoing(path))
+      ),
+    gitIncomingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitIncomingCommits(cwd),
+        async (b, path) => loose(await b.api.git.incoming(path))
+      ),
+    gitRangeFiles: (cwd, direction) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeFiles(cwd, direction),
+        async (b, path) => loose(await b.api.git.rangeFiles(path, direction))
+      ),
+    gitRangeDiff: (cwd, direction, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeDiff(cwd, direction, filePath),
+        (b, path) => b.api.git.rangeDiff(path, direction, filePath)
+      ),
+    gitCommitFiles: (cwd, hash) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitFiles(cwd, hash),
+        async (b, path) => loose(await b.api.git.commitFiles(path, hash))
+      ),
+    gitCommitDiff: (cwd, hash, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitDiff(cwd, hash, filePath),
+        (b, path) => b.api.git.commitDiff(path, hash, filePath)
+      ),
+    gitJourney: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitJourney(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.journey(path, maxCount))
+      ),
+    // The message is written by the server's own `claude`, on its login.
+    gitGenerateCommitMessage: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitGenerateCommitMessage(cwd),
+        (b, path) => b.api.git.generateCommitMessage(path)
+      ),
+    gitSummarizePush: (cwd, commitMessages, diffStats) =>
+      gitRoute(
+        cwd,
+        () => local.gitSummarizePush(cwd, commitMessages, diffStats),
+        async (b, path) => ({ ...(await b.api.git.summarizePush(path, commitMessages, diffStats)) })
+      ),
+    gitMagicSync: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicSync(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicSync(paths, batchId)).map((r) => ({
+            ...r,
+            actions: [...r.actions],
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    gitMagicPull: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicPull(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicPull(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    onGitBatchProgress: (cb) =>
+      both(
+        local.onGitBatchProgress(cb),
+        eventListener('git.batch_progress', (event, owner) => {
+          if (event.batchId === undefined || !runningBatches.has(event.batchId)) return
+          cb({
+            op: event.op,
+            phase: event.phase,
+            repoPath: ownedPath(owner, event.repoPath),
+            repoName: event.repoName,
+            done: event.done,
+            total: event.total
+          })
+        })
+      )
   }
   const prepare = api.sessionsFiles.prepare
   api.sessionsFiles.prepare = async (id, source) => {

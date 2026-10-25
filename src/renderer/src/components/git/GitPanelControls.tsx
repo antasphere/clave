@@ -13,7 +13,7 @@ import {
   QueueListIcon
 } from '@heroicons/react/24/outline'
 import { IconButton } from '@clave/ui/components'
-import { summarizePull } from '../../lib/pull-summary'
+import { summarizePull, summarizeSync } from '../../lib/pull-summary'
 import { useGitBatch } from './git-batch-context'
 
 // ---------------------------------------------------------------------------
@@ -342,16 +342,9 @@ export function MagicSyncButton({
   const handleSync = useCallback(() => {
     void run('sync', async () => {
       try {
-        const results = await window.electronAPI.gitMagicSync(repoPaths)
-        const synced = results.filter((r) => r.actions.length > 0 && !r.error)
-        const errors = results.filter((r) => r.error)
-        const skipped = results.filter((r) => r.actions.length === 0 && !r.error)
-
-        const parts: string[] = []
-        if (synced.length > 0) parts.push(`${synced.length} synced`)
-        if (skipped.length > 0) parts.push(`${skipped.length} clean`)
-        if (errors.length > 0) parts.push(`${errors.length} failed`)
-        return parts.join(', ')
+        // A failed repo is named with its reason, as Pull all names its own:
+        // on a server checkout the reason may be the server's Claude login.
+        return summarizeSync(await window.electronAPI.gitMagicSync(repoPaths))
       } finally {
         // Refresh even when the batch threw: a partial run still moved repos.
         onDone?.()
