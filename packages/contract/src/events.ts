@@ -10,6 +10,7 @@
  */
 import { Schema } from 'effect'
 import { Client } from './clients'
+import { FilesDirsChanged } from './files'
 import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
 import { SettingsEvent } from './settings'
 import { SidebarEvent } from './sidebar/layout'
@@ -18,6 +19,7 @@ import { WorkspaceFilesEvent } from './workspace-files/model'
 import { GitEvent } from './git'
 
 export const ServerEvent = Schema.Union(
+  FilesDirsChanged,
   Schema.TaggedStruct('requests.changed', { revision: Schema.Number }),
   // ── Clients ──
   Schema.TaggedStruct('client.registered', { client: Client }),

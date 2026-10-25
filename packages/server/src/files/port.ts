@@ -1,10 +1,13 @@
 import { Context, Layer } from 'effect'
-import type { FilesOperations } from '@clave/contract/files'
+import type { FilesOperations, FilesDirsChanged } from '@clave/contract/files'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 
 /** Node operations with the same DTOs as the wire; each server supplies its
  * own storage. No attachment or filesystem state belongs to an Electron window. */
-export type FilesService = FilesOperations
+export interface FilesService extends FilesOperations {
+  readonly onEvent: (listener: (event: FilesDirsChanged) => void) => () => void
+  readonly dispose: () => void
+}
 const missing = async (): Promise<never> => {
   throw new CapabilityUnavailable({
     capability: 'files',
@@ -16,6 +19,10 @@ export class FilesPort extends Context.Tag('@clave/server/Files')<FilesPort, Fil
     return Layer.succeed(FilesPort, service)
   }
   static readonly none: FilesService = {
+    syncWatch: missing,
+    listAll: missing,
+    onEvent: () => () => {},
+    dispose: () => {},
     list: missing,
     read: missing,
     stat: missing,

@@ -27,6 +27,7 @@
  * the test names what else landed there).
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resourceKey } from '@clave/contract/fleet'
 import type { PinnedGroup } from '../store/session-types'
 
 // The pinned store resolves a pin's account through the usage store, which
@@ -703,4 +704,50 @@ describe('a window keeps the pins it just loaded (PRDCT-3405)', () => {
     expect(actions.knownWorkspaceStamp()).toEqual({ revision: 1, instance: 'server' })
     expect(writes).toHaveLength(0)
   })
+})
+
+describe('server pin copies stay in this window', () => {
+  it('never persists a server partition, even when its pins change', async () => {
+    await actions.bootWorkspaces()
+    const workspace = resourceKey('workspace', 'vps', 'w')
+    usePinnedStore.getState().addPinnedGroup(pin('server-pin', 'Server pin', workspace))
+    expect(writes).toHaveLength(0)
+    usePinnedStore.getState().renamePinnedGroup('server-pin', 'Changed')
+    expect(writes).toHaveLength(0)
+  })
+  it('keeps the exact server pins through an external copy and refuses server pins in that copy', async () => {
+    await actions.bootWorkspaces()
+    const workspace = resourceKey('workspace', 'vps', 'w')
+    const own = pin('server-pin', 'Our server pin', workspace)
+    usePinnedStore.setState({ pinnedGroups: [own] })
+    fold!(fromServer(1, [pin('local'), pin('foreign-server', 'Foreign', workspace)]))
+    expect(usePinnedStore.getState().pinnedGroups).toHaveLength(2)
+    expect(usePinnedStore.getState().pinnedGroups.find((p) => p.id === own.id)).toBe(own)
+    expect(usePinnedStore.getState().pinnedGroups.some((p) => p.id === 'foreign-server')).toBe(
+      false
+    )
+    expect(writes).toHaveLength(0)
+  })
+})
+
+it('an offline server does not reject the window pin refresh', async () => {
+  await actions.bootWorkspaces()
+  const id = resourceKey('workspace', 'vps', 'offline')
+  useWorkspaceStore.setState({
+    activeWorkspaceId: id,
+    serverWorkspaces: {
+      vps: [{ id, name: 'Offline', rootDir: '/repo', profileFile: null, createdAt: 1 }]
+    }
+  })
+  window.electronAPI.discoverClaveFiles = vi.fn(async () => {
+    throw new Error('server did not answer')
+  })
+  const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    await expect(actions.refreshActiveWorkspacePins()).resolves.toBeUndefined()
+    expect(log).toHaveBeenCalledOnce()
+    expect(writes).toHaveLength(0)
+  } finally {
+    log.mockRestore()
+  }
 })

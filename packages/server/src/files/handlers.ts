@@ -1,6 +1,8 @@
 import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import {
+  FilesSyncWatch,
+  FilesListAll,
   CreateDirectory,
   CreateFile,
   DownloadFile,
@@ -22,6 +24,16 @@ const failure = (error: unknown): FileOperationFailed | CapabilityUnavailable =>
   return new FileOperationFailed({ code: 'io', message: 'The file operation failed.' })
 }
 export const fileHandlers = [
+  CommandHandler.make(FilesSyncWatch, (input) =>
+    Effect.flatMap(FilesPort, (files) =>
+      Effect.tryPromise({ try: () => files.syncWatch(input), catch: failure })
+    )
+  ),
+  QueryHandler.make(FilesListAll, (input) =>
+    Effect.flatMap(FilesPort, (files) =>
+      Effect.tryPromise({ try: () => files.listAll(input), catch: failure })
+    )
+  ),
   QueryHandler.make(ListFiles, (input) =>
     Effect.flatMap(FilesPort, (files) =>
       Effect.tryPromise({ try: () => files.list(input), catch: failure })

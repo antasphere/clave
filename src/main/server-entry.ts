@@ -60,6 +60,7 @@ import {
   type TerminalsService,
   WorkspaceFiles,
   fileWorkspaceFilesStorage,
+  FileTreeWatcher,
   createServerFiles,
   PendingRequests
 } from '@clave/server'
@@ -271,7 +272,10 @@ async function main(): Promise<void> {
     ports: {
       sessions,
       requests,
-      files: createServerFiles({ attachmentsRoot: path.join(dataDir, 'session-attachments') }),
+      files: createServerFiles({
+        attachmentsRoot: path.join(dataDir, 'session-attachments'),
+        watcher: new FileTreeWatcher()
+      }),
       terminals,
       ...(sidebar && { sidebar }),
       settings: standalone.settings,

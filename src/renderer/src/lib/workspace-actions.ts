@@ -21,6 +21,8 @@ import {
 } from '../store/pinned-store'
 import { useSessionStore } from '../store/session-store'
 import { isRemoteKey } from './fleet-identity'
+import { useFleetStore } from '../store/fleet-store'
+import type { ServerConnectionStatus } from '@clave/contract/fleet'
 
 /** Orchestration layer above the stores. The stores stay import-acyclic
  *  (session→workspace, pinned→workspace); everything that has to touch several
@@ -166,6 +168,7 @@ function persistPins(): void {
   // not seen it yet (the adoption below): it is among the written ones.
   for (const key of writtenPartitions) keys.add(key)
   for (const key of keys) {
+    if (isServerWorkspaceId(key)) continue
     const partition = serializePinnedGroups(groups.filter((pg) => pinPartition(pg) === key))
     const json = JSON.stringify(partition)
     if (lastPersistedPins.get(key) === json) continue
@@ -350,7 +353,7 @@ function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] })
   // pin it did not touch is the copy's, so another window's edit of it
   // stands. A partition the copy already holds as this window changed it is
   // settled; any other is sent again (round 2 of the verifier, F7, F7b, F8).
-  const copied = blueprintsOf(state.pins)
+  const copied = blueprintsOf(state.pins).filter((bp) => !isServerWorkspaceId(bp.workspaceId))
   const copiedById = new Map(
     serializePinnedGroups(copied as PinnedGroup[]).map((bp) => [bp.id, JSON.stringify(bp)])
   )
@@ -394,6 +397,9 @@ function applyExternalState(state: { workspaces: Workspace[]; pins: unknown[] })
       visible: prev?.visible ?? false
     }
   })
+  next.push(
+    ...usePinnedStore.getState().pinnedGroups.filter((pg) => isServerWorkspaceId(pg.workspaceId))
+  )
   // Recorded as persisted BEFORE the store is set (PRDCT-3264): the
   // persistence subscriber runs on the set and compares each partition with
   // this record. Seeded after the set, it found every folded partition
@@ -425,6 +431,12 @@ function subscribeToMain(): void {
   window.electronAPI?.onFleetWorkspaces?.(({ serverId, workspaces }) =>
     applyServerWorkspaces(serverId, workspaces)
   )
+  window.electronAPI?.onFleetStatus?.((status) => {
+    if (status.state !== 'connected') return
+    const state = useWorkspaceStore.getState()
+    const shown = findWorkspace(state, state.activeWorkspaceId)
+    if (shown && workspaceServer(shown.id) === status.serverId) refreshServerPins(shown, status)
+  })
   window.electronAPI?.onFleetConnectionsChanged?.((connections) =>
     retainServerWorkspaces(new Set(connections.map((c) => c.id)))
   )
@@ -470,11 +482,33 @@ function cachedServerWorkspaces(): Record<string, Workspace[]> {
 /** One server's list, as its server holds it now. When the workspace this
  *  window shows is gone from it (removed from another Mac), the window lands
  *  on the first workspace left. Exported for the unit test. */
+const pinRefreshStatus = new Map<string, { status: unknown; workspace: string }>()
+
+function refreshPinsForWindow(ws: Workspace): Promise<void> {
+  const refresh = refreshWorkspacePins(ws)
+  if (!workspaceServer(ws.id)) return refresh
+  return refresh.catch((error) => {
+    console.warn('[workspace] Server pins could not be refreshed:', error)
+  })
+}
+
+function refreshServerPins(ws: Workspace, status: ServerConnectionStatus | undefined): void {
+  const owner = workspaceServer(ws.id)!
+  const workspace = JSON.stringify([ws.id, ws.rootDir, ws.profileFile])
+  const last = pinRefreshStatus.get(owner)
+  if (last && last.status === status && last.workspace === workspace) return
+  pinRefreshStatus.set(owner, { status, workspace })
+  void refreshPinsForWindow(ws)
+}
+
 export function applyServerWorkspaces(serverId: string, workspaces: Workspace[]): void {
   const { activeWorkspaceId, serverWorkspaces } = useWorkspaceStore.getState()
   const owned = workspaces.filter((w) => workspaceServer(w.id) === serverId)
   useWorkspaceStore.setState({ serverWorkspaces: { ...serverWorkspaces, [serverId]: owned } })
   cacheServerWorkspaces()
+  const shown = owned.find((w) => w.id === activeWorkspaceId)
+  const status = useFleetStore.getState().statuses[serverId]
+  if (shown) refreshServerPins(shown, status)
   if (
     workspaceServer(activeWorkspaceId) === serverId &&
     !owned.some((w) => w.id === activeWorkspaceId)
@@ -699,10 +733,9 @@ export async function bootWorkspaces(): Promise<void> {
 /** Post-adoption boot tail: refresh the active workspace's pins from its
  *  files. Separate from bootWorkspaces so adoption doesn't wait on file IO. */
 export async function refreshActiveWorkspacePins(): Promise<void> {
-  const { workspaces, activeWorkspaceId } = useWorkspaceStore.getState()
-  // A server workspace's pins live on the server's disk: not read from here.
-  const active = workspaces.find((w) => w.id === activeWorkspaceId)
-  if (active) await refreshWorkspacePins(active)
+  const state = useWorkspaceStore.getState()
+  const active = findWorkspace(state, state.activeWorkspaceId)
+  if (active) await refreshPinsForWindow(active)
 }
 
 // ── Workspace mutations ──────────────────────────────────────────────────────
@@ -732,8 +765,7 @@ export async function setActiveWorkspace(id: string): Promise<void> {
   // slice untested. `setActiveWorkspace` is the only switch entry (the UI and
   // clave_switch_workspace both call it), so this note governs both.
   // Refresh from files in the background — the switch itself must be instant.
-  // A server workspace's `.clave` files are on the server, not read here.
-  if (!isServerWorkspaceId(target.id)) void refreshWorkspacePins(target)
+  void refreshPinsForWindow(target)
 }
 
 export function cycleWorkspace(dir: 1 | -1): void {

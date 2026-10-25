@@ -83,3 +83,5 @@ export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesServic
 export { GitPort, type GitService, type GitEvent, gitHandlers, GitEventsLive } from './git'
 export { PendingRequests, type RequestInput, type RequestResult } from './requests/service'
 export { RequestsPort, type RequestsService } from './requests/port'
+
+export { FileTreeWatcher } from './files/watch'

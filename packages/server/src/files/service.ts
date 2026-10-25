@@ -1,8 +1,11 @@
-import { realpath } from 'node:fs/promises'
+import { realpath, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Schema } from 'effect'
 import {
+  FILE_TREE_IGNORED,
+  MAX_FILE_ENTRIES,
+  FilesWatchInput,
   FileAttachment,
   FileLocation,
   FileOperationFailed,
@@ -17,8 +20,10 @@ import {
 import type { FilesService } from './port'
 import { imageMime } from './binary'
 import { secureFiles } from './platform'
+import type { FileTreeWatcher } from './watch'
 
 export interface ServerFilesOptions {
+  readonly watcher?: FileTreeWatcher
   /** Private durable storage, shared with the session host, independent of clients. */
   readonly attachmentsRoot: string
   /** Optional server-enforced allowlist. Absent means the authenticated user's
@@ -157,6 +162,45 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
     })
   }
   const service: FilesService = {
+    onEvent: (listener) => options.watcher?.onEvent(listener) ?? (() => {}),
+    dispose: () => options.watcher?.dispose(),
+    async syncWatch(input) {
+      Schema.decodeUnknownSync(FilesWatchInput)(input)
+      if (!options.watcher) return { watched: [] }
+      return options.watcher.sync(input, checkedRoot)
+    },
+    async listAll({ root }) {
+      const canonical = await checkedRoot(root)
+      const files: string[] = []
+      const ignored = new Set<string>(FILE_TREE_IGNORED)
+      let truncated = false
+      const walk = async (dir: string, prefix: string): Promise<void> => {
+        const entries = await readdir(dir, { withFileTypes: true })
+        entries.sort((a, b) => a.name.localeCompare(b.name))
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || ignored.has(entry.name)) continue
+          const path = join(dir, entry.name)
+          const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+          if (entry.isDirectory()) {
+            // Check the canonical path before descending into a folder.
+            if ((await realpath(path)) !== path) continue
+            await walk(path, rel)
+          } else if (
+            entry.isFile() ||
+            (entry.isSymbolicLink() && (await stat(path).catch(() => null))?.isFile())
+          ) {
+            files.push(rel)
+            if (files.length >= MAX_FILE_ENTRIES) {
+              truncated = true
+              return
+            }
+          }
+          if (truncated) return
+        }
+      }
+      await walk(canonical, '')
+      return { files: files.sort(), truncated }
+    },
     async list(input) {
       const listing = await secureFiles.list(await locate(input))
       const entries = listing.entries.map((entry) => ({
@@ -299,6 +343,10 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
       }
     }
   return {
+    onEvent: service.onEvent,
+    dispose: service.dispose,
+    syncWatch: protect(service.syncWatch),
+    listAll: protect(service.listAll),
     list: protect(service.list),
     read: protect(service.read),
     stat: protect(service.stat),
