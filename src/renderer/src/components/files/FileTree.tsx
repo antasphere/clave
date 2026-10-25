@@ -233,12 +233,8 @@ export function FileTree({
             source
           )
         }
-      } catch (error) {
-        setNotice(
-          error instanceof Error
-            ? error.message
-            : 'Upload failed. Existing files are never overwritten.'
-        )
+      } catch {
+        setNotice('Upload failed. Existing files are never overwritten.')
       } finally {
         await refreshDir(folder)
       }
@@ -400,7 +396,9 @@ export function FileTree({
           icon: <MapIcon className="w-3.5 h-3.5" />,
           onClick: () => {
             const folderName = node.path.split('/').pop() ?? node.path
-            useSessionStore.getState().openJourneyPanel(absPath, folderName)
+            useSessionStore
+              .getState()
+              .openJourneyPanel(serverRoot ? ownedFilePath(cwd, node.path) : absPath, folderName)
           }
         })
         items.push({
@@ -440,9 +438,7 @@ export function FileTree({
             onClick: () => {
               void window.electronAPI
                 .fleetDownload(cwd, node.path)
-                .catch((error) =>
-                  setNotice(error instanceof Error ? error.message : 'Download failed.')
-                )
+                .catch(() => setNotice('Download failed.'))
             }
           })
         else

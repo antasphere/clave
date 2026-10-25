@@ -9,7 +9,15 @@ export const FilesEventsLive: Layer.Layer<never, never, FilesPort | ServerEvents
       const events = yield* ServerEvents
       const runtime = yield* Effect.runtime<never>()
       const off = files.onEvent((event) => {
-        Runtime.runFork(runtime)(events.publish(event))
+        Runtime.runFork(runtime)(
+          events
+            .publish(event)
+            .pipe(
+              Effect.catchAllCause((cause) =>
+                Effect.sync(() => console.error('[clave-server] file event not published', cause))
+              )
+            )
+        )
       })
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {

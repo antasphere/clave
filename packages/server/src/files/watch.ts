@@ -123,18 +123,20 @@ export class FileTreeWatcher {
       if (old && input.generation < old.generation) return { watched: [] }
       const desired = new Map<string, string>()
       if (input.tree) {
-        const root = await checkedRoot(input.tree.root)
-        desired.set('.', root)
-        for (const dir of input.tree.dirs.slice(0, 1000)) {
-          if (isAbsolute(dir) || dir.includes('\0') || dir.split(/[\\/]/).includes('..')) continue
-          try {
-            const canonical = await realpath(resolve(root, dir))
-            const rel = relative(root, canonical)
-            if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) continue
-            if (!(await stat(canonical)).isDirectory()) continue
-            desired.set(dir === '' ? '.' : dir, canonical)
-          } catch {
-            /* A folder deleted since the listing is not watched. */
+        const root = await checkedRoot(input.tree.root).catch(() => null)
+        if (root !== null) {
+          desired.set('.', root)
+          for (const dir of input.tree.dirs.slice(0, 1000)) {
+            if (isAbsolute(dir) || dir.includes('\0') || dir.split(/[\\/]/).includes('..')) continue
+            try {
+              const canonical = await realpath(resolve(root, dir))
+              const rel = relative(root, canonical)
+              if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) continue
+              if (!(await stat(canonical)).isDirectory()) continue
+              desired.set(dir === '' ? '.' : dir, canonical)
+            } catch {
+              /* A folder deleted since the listing is not watched. */
+            }
           }
         }
       }
@@ -147,7 +149,7 @@ export class FileTreeWatcher {
         changed: new Set()
       }
       const sameRoot = state.tree?.root === input.tree?.root
-      if (!sameRoot) this.close(state)
+      if (!sameRoot || desired.size === 0) this.close(state)
       state.generation = input.generation
       state.tree = input.tree
       state.renewedAt = this.options.now()

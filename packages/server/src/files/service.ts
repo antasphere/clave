@@ -175,7 +175,10 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
       const ignored = new Set<string>(FILE_TREE_IGNORED)
       let truncated = false
       const walk = async (dir: string, prefix: string): Promise<void> => {
-        const entries = await readdir(dir, { withFileTypes: true })
+        const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
+          if (!prefix) throw error
+          return []
+        })
         entries.sort((a, b) => a.name.localeCompare(b.name))
         for (const entry of entries) {
           if (entry.name.startsWith('.') || ignored.has(entry.name)) continue
@@ -183,7 +186,7 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
           const rel = prefix ? `${prefix}/${entry.name}` : entry.name
           if (entry.isDirectory()) {
             // Check the canonical path before descending into a folder.
-            if ((await realpath(path)) !== path) continue
+            if ((await realpath(path).catch(() => null)) !== path) continue
             await walk(path, rel)
           } else if (
             entry.isFile() ||

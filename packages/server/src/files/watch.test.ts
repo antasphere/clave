@@ -111,14 +111,14 @@ describe('whole tree watches', () => {
     ).toEqual(['.', 'a'])
     await expect(
       watcher.sync({ namespace: 'bad', generation: 1, tree: { root: 'relative', dirs: [] } })
-    ).rejects.toThrow()
+    ).resolves.toEqual({ watched: [] })
     await expect(
       watcher.sync({
         namespace: 'bad',
         generation: 1,
         tree: { root: join(root, 'file'), dirs: [] }
       })
-    ).rejects.toThrow()
+    ).resolves.toEqual({ watched: [] })
   })
   it('ignores noisy basenames and debounces a burst of changed folders', async () => {
     await sync(1)
@@ -143,4 +143,21 @@ describe('whole tree watches', () => {
     expect((await sync(1)).watched).toEqual(['.', 'a'])
     expect(handles).toHaveLength(3)
   })
+})
+
+it('applies a bad root as empty whole state and records its generation and renewal', async () => {
+  await sync(1)
+  handles[0].emit('pending.txt')
+  await vi.advanceTimersByTimeAsync(1234)
+  const bad = { namespace: 'one', generation: 2, tree: { root: join(root, 'missing'), dirs: [] } }
+  await expect(watcher.sync(bad)).resolves.toEqual({ watched: [] })
+  expect(handles.every((h) => h.closed)).toBe(true)
+  events.length = 0
+  handles[0].emit('after-close.txt')
+  await vi.advanceTimersByTimeAsync(FILE_WATCH_LEASE_MS - 1)
+  expect(events).toEqual([])
+  expect(await sync(1)).toEqual({ watched: [] })
+  expect(handles).toHaveLength(2)
+  await vi.advanceTimersByTimeAsync(1)
+  expect((await sync(1)).watched).toEqual(['.', 'a'])
 })

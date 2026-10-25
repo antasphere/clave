@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
@@ -76,5 +76,24 @@ it('reports both capabilities as unavailable without a files port', async () => 
   } finally {
     await api.dispose()
     await server.stop()
+  }
+})
+
+it('skips an unreadable subfolder but refuses an unreadable root', async () => {
+  const blocked = join(root, 'blocked')
+  await mkdir(blocked)
+  await writeFile(join(blocked, 'hidden.txt'), 'unreadable')
+  await writeFile(join(root, 'visible.txt'), 'visible')
+  await chmod(blocked, 0)
+  try {
+    expect(await files().listAll({ root })).toEqual({ files: ['visible.txt'], truncated: false })
+  } finally {
+    await chmod(blocked, 0o700)
+  }
+  await chmod(root, 0)
+  try {
+    await expect(files().listAll({ root })).rejects.toMatchObject({ _tag: 'FileOperationFailed' })
+  } finally {
+    await chmod(root, 0o700)
   }
 })
