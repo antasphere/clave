@@ -247,6 +247,73 @@ export async function run(t) {
         true
       )
     })
+    await step(
+      'an unreachable workspace owner shows a Git error without a renderer rejection',
+      async () => {
+        await showServer(mac, 0)
+        await clickReady(fixtureRow)
+        await fixtureRow.click({ modifiers: ['Meta'] })
+        await mac.win.getByText('Select a session', { exact: true }).waitFor({ state: 'visible' })
+        await clickReady(mac.win.getByRole('button', { name: 'Files', exact: true }))
+        const folder = tree.locator('[data-tree-name="watched-folder"]')
+        await folder.waitFor({ state: 'visible' })
+        const owner = mac.owners[0].id
+        const connected = () =>
+          mac.win.evaluate(
+            (id) =>
+              window.electronAPI.fleetSnapshot(id).then(
+                () => true,
+                () => false
+              ),
+            owner
+          )
+        await server.stop()
+        // world.restart and world.close both stop their owned daemon again.
+        server.stop = async () => {}
+        await eventually(async () => !(await connected()), 'the workspace owner is unreachable')
+        await clickReady(folder)
+        // The observer does not record its own 502 when no daemon answers.
+        // Observe the outgoing request before releasing it to the stopped owner.
+        const offlineRead = observers[0].holdRequest((_method, route) => route === '/git/status')
+        try {
+          await clickReady(mac.win.getByRole('button', { name: 'Git', exact: true }))
+          await eventually(() => offlineRead.taken, 'the Git read is sent to the unreachable owner')
+        } finally {
+          offlineRead.release()
+        }
+        await mac.win
+          .getByText("Could not read this folder's git status.", { exact: true })
+          .waitFor({ state: 'visible' })
+        await mac.win.waitForTimeout(4000)
+        assert.deepEqual(
+          mac.errors,
+          [],
+          'offline tree and Git reads never reject into the renderer'
+        )
+        t.check(
+          'an unfocused offline workspace shows the Git error banner without an uncaught rejection',
+          true
+        )
+
+        const reconnecting = mark()
+        await world.restart(0)
+        await eventually(connected, 'the workspace owner is connected again')
+        await clickReady(mac.win.getByRole('button', { name: 'Files', exact: true }))
+        await eventually(
+          () =>
+            observers[0].entries
+              .slice(reconnecting[0])
+              .some((e) => e.path === '/files/watch' && e.status === 200),
+          'the tree watch is resent after the outage'
+        )
+        writeFileSync(path.join(server.root, 'after-outage.txt'), 'watch restored')
+        await tree
+          .locator('[data-tree-name="after-outage.txt"]')
+          .waitFor({ state: 'visible', timeout: 5000 })
+        assert.deepEqual(mac.errors, [])
+        t.check('the tree resumes its live watch when the workspace owner restarts', true)
+      }
+    )
     assert.deepEqual(mac.errors, [], 'the desktop reports no uncaught renderer errors')
   } finally {
     await world.close()

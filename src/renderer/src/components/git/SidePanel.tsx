@@ -19,7 +19,8 @@ import {
   CollapseAllButton,
   CommitBarToggle,
   JourneyButton,
-  GitSyncBadge
+  GitSyncBadge,
+  ErrorBanner
 } from './GitPanelControls'
 import { GitBatchProvider, GitBatchProgressBar } from './GitBatchProgress'
 import { useMultiRepoStatus } from '../../hooks/use-multi-repo-status'
@@ -983,6 +984,8 @@ function SidePanelBody(): React.JSX.Element {
               <div className="flex-1 flex items-center justify-center px-3">
                 <span className="text-xs text-text-tertiary text-center">Not a git repository</span>
               </div>
+            ) : singleRepoGit.error && !singleRepoGit.status ? (
+              <ErrorBanner message="Could not read this folder's git status." />
             ) : (
               <GitStatusPanel
                 cwd={gitCwd}

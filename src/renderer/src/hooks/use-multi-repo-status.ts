@@ -106,68 +106,85 @@ export function useMultiRepoStatus(
     async (force = false) => {
       if (!cwd || !window.electronAPI) return
 
-      const status = await window.electronAPI.getGitStatus(cwd)
-      if (cwdRef.current !== cwd) return
-
-      if (status.isRepo) {
-        const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+      try {
+        const status = await window.electronAPI.getGitStatus(cwd)
         if (cwdRef.current !== cwd) return
 
-        setHasNestedRepos(nested.length > 0)
+        if (status.isRepo) {
+          const { repos: nested } = await window.electronAPI.discoverGitRepos(cwd, force)
+          if (cwdRef.current !== cwd) return
 
-        if (nested.length === 0) {
-          setResult({ mode: 'single' })
+          setHasNestedRepos(nested.length > 0)
+
+          if (nested.length === 0) {
+            setResult({ mode: 'single' })
+            return
+          }
+
+          // Root + nested repos. Reuse the status we already have for the root.
+          const rootName = repoDisplayName(cwd)
+          const nameByPath = new Map<string, string>([[cwd, rootName]])
+          for (const r of nested) nameByPath.set(r.path, r.name)
+
+          const allPaths = [cwd, ...nested.map((r) => r.path)]
+          const live = isLive(allPaths.length)
+          const statuses = await window.electronAPI.getGitStatusBatch(nested.map((r) => r.path))
+          if (cwdRef.current !== cwd) return
+
+          const repos: RepoEntry[] = [
+            { name: rootName, path: cwd, status },
+            ...statuses.map((s) => ({
+              name: nameByPath.get(s.path) ?? s.path,
+              path: s.path,
+              status: s.status
+            }))
+          ]
+          setResult({ mode: 'multi', repos, truncated: false, live })
+          setLastUpdated(Date.now())
           return
         }
 
-        // Root + nested repos. Reuse the status we already have for the root.
-        const rootName = repoDisplayName(cwd)
-        const nameByPath = new Map<string, string>([[cwd, rootName]])
-        for (const r of nested) nameByPath.set(r.path, r.name)
+        // CWD is not a repo — discover repos in children
+        setHasNestedRepos(false)
 
-        const allPaths = [cwd, ...nested.map((r) => r.path)]
-        const live = isLive(allPaths.length)
-        const statuses = await window.electronAPI.getGitStatusBatch(nested.map((r) => r.path))
+        const { repos: discovered, truncated } = await window.electronAPI.discoverGitRepos(
+          cwd,
+          force
+        )
         if (cwdRef.current !== cwd) return
 
-        const repos: RepoEntry[] = [
-          { name: rootName, path: cwd, status },
-          ...statuses.map((s) => ({
-            name: nameByPath.get(s.path) ?? s.path,
-            path: s.path,
-            status: s.status
-          }))
-        ]
-        setResult({ mode: 'multi', repos, truncated: false, live })
+        if (discovered.length === 0) {
+          setResult({ mode: 'none' })
+          return
+        }
+
+        const live = isLive(discovered.length)
+        const nameByPath = new Map(discovered.map((r) => [r.path, r.name]))
+        const statuses = await window.electronAPI.getGitStatusBatch(discovered.map((r) => r.path))
+        if (cwdRef.current !== cwd) return
+
+        const repos: RepoEntry[] = statuses.map((s) => ({
+          name: nameByPath.get(s.path) ?? s.path,
+          path: s.path,
+          status: s.status
+        }))
+        setResult({ mode: 'multi', repos, truncated, live })
         setLastUpdated(Date.now())
-        return
+      } catch (error) {
+        if (cwdRef.current !== cwd) return
+        console.warn(
+          '[clave] git panel read failed',
+          error instanceof Error ? error.message : 'Failed to get git status'
+        )
+        setResultState((prev) => {
+          if (prev.mode !== 'loading') return prev
+          const next: MultiRepoMode = { mode: 'single' }
+          remember(cwd, { result: next })
+          return next
+        })
       }
-
-      // CWD is not a repo — discover repos in children
-      setHasNestedRepos(false)
-
-      const { repos: discovered, truncated } = await window.electronAPI.discoverGitRepos(cwd, force)
-      if (cwdRef.current !== cwd) return
-
-      if (discovered.length === 0) {
-        setResult({ mode: 'none' })
-        return
-      }
-
-      const live = isLive(discovered.length)
-      const nameByPath = new Map(discovered.map((r) => [r.path, r.name]))
-      const statuses = await window.electronAPI.getGitStatusBatch(discovered.map((r) => r.path))
-      if (cwdRef.current !== cwd) return
-
-      const repos: RepoEntry[] = statuses.map((s) => ({
-        name: nameByPath.get(s.path) ?? s.path,
-        path: s.path,
-        status: s.status
-      }))
-      setResult({ mode: 'multi', repos, truncated, live })
-      setLastUpdated(Date.now())
     },
-    [cwd, isLive, setResult, setHasNestedRepos, setLastUpdated]
+    [cwd, isLive, setResult, setHasNestedRepos, setLastUpdated, remember]
   )
 
   // On a folder change or a return to the git tab: show the folder's last
