@@ -12,7 +12,7 @@ import {
   eventually,
   step
 } from './fixtures/fleet-world.mjs'
-import { callMcp, spawnJournal, stubReviewDialog } from './harness.mjs'
+import { spawnJournal, stubReviewDialog } from './harness.mjs'
 
 const blueprint = (name) => ({
   $schema: 'clave/1.0',
@@ -30,7 +30,7 @@ const blueprint = (name) => ({
   })),
   terminals: []
 })
-async function listed(mac, name) {
+async function listed(mac, name, launch = false) {
   const add = mac.win.getByRole('button', { name: 'Add a group', exact: true })
   await add.click()
   try {
@@ -41,10 +41,18 @@ async function listed(mac, name) {
         ),
       `pin ${name} is listed in the window`
     )
+    if (launch) {
+      await mac.win.locator('.group-picker-card').filter({ hasText: name }).click()
+      await mac.win
+        .getByRole('dialog', { name: 'Add a group', exact: true })
+        .waitFor({ state: 'hidden' })
+    }
   } finally {
     const dialog = mac.win.getByRole('dialog', { name: 'Add a group', exact: true })
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-    await dialog.waitFor({ state: 'hidden' })
+    if (await dialog.isVisible()) {
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+      await dialog.waitFor({ state: 'hidden' })
+    }
   }
 }
 
@@ -64,11 +72,7 @@ export async function run(t) {
     const peerBefore = (await request(peer, '/sessions')).map((s) => s.id).sort()
     const workspaceId = await showServer(mac, 0)
     await step('server file pins are listed and launch on their owner', async () => {
-      await listed(mac, 'Server file pin')
-      const result = await callMcp(mac.app, 'launchGroup', {
-        group: 'Server file pin'
-      })
-      assert.equal(result.status, 'launched')
+      await listed(mac, 'Server file pin', true)
       let started
       await eventually(async () => {
         started = (await request(server, '/sessions')).filter((s) => !before.has(s.id))
