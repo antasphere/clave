@@ -121,7 +121,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         ? { ...record.link, groupId: resourceKey('group', serverId, record.link.groupId) }
         : record.link?.kind === 'session-view'
           ? { ...record.link, ownerId: key(serverId, record.link.ownerId) }
-          : record.link
+          : record.link,
+    spawnedBy: record.spawnedBy ? key(serverId, record.spawnedBy) : undefined
   })
   const watchRequests = (serverId: string, b: Backing): void => {
     if (watched.get(serverId)?.backing === b) return
@@ -557,6 +558,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (ref.serverId !== serverId) throw new Error('Launch context belongs to another server.')
       return ref.id
     }
+    const sameServerParent = (id: string): string | undefined => {
+      try {
+        const ref = parseResourceKey('session', id)
+        return ref.serverId === serverId ? ref.id : undefined
+      } catch {
+        return undefined
+      }
+    }
     const decoded = {
       ...options,
       workspaceId: options.workspaceId ? decode('workspace', options.workspaceId) : undefined,
@@ -565,7 +574,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           ? { ...options.link, groupId: decode('group', options.link.groupId) }
           : options.link?.kind === 'session-view'
             ? { ...options.link, ownerId: decode('session', options.link.ownerId) }
-            : options.link
+            : options.link,
+      // A parent on another server (a local agent opening a remote tab) is
+      // no parent there: the tab opens all the same, unfolded.
+      spawnedBy: options.spawnedBy ? sameServerParent(options.spawnedBy) : undefined
     }
     if (options.launchProfileId && !options.launchProfile) {
       const prefs = await local.launchProfilesList()

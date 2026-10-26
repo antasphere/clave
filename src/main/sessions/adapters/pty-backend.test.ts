@@ -12,6 +12,7 @@ import {
   sessionRecordsDir,
   type SessionRecord
 } from './pty-backend'
+import { lineageOf } from '../lineage'
 
 /**
  * The terminal backend over its ports: a fake process behind the terminal
@@ -293,6 +294,32 @@ describe('the session records', () => {
     expect(back.id).toBe(session.id)
     expect(readRecord(session.id).displayName).toBe('Kept')
     expect(backend.listAdoptableSessions()).toEqual([])
+  })
+
+  it('keep the tab that opened a session across a quit and an adoption, and only a session id (#259)', () => {
+    const parent = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
+    const child = backend.spawn(cwd, { claudeMode: false, tmuxMode: false, spawnedBy: parent.id })
+    expect(readRecord(child.id).spawnedBy).toBe(parent.id)
+    // Every setter rewrites the record from itself: the parent stays.
+    backend.setSessionDisplayName(child.id, 'Worker', true)
+    backend.setSessionWindowKey(child.id, 'win-b')
+    expect(readRecord(child.id).spawnedBy).toBe(parent.id)
+
+    backend.kill(child.id, false)
+    expect(backend.listAdoptableSessions().find((r) => r.id === child.id)?.spawnedBy).toBe(
+      parent.id
+    )
+    // An adoption names no parent of its own: the record's is carried.
+    backend.spawn(cwd, { claudeMode: false, tmuxMode: false, adoptSessionId: child.id })
+    expect(readRecord(child.id).spawnedBy).toBe(parent.id)
+
+    // What is not a session id is dropped, never coerced; a session is never its own parent.
+    const odd = backend.spawn(cwd, { claudeMode: false, tmuxMode: false, spawnedBy: '../x' })
+    expect(readRecord(odd.id).spawnedBy).toBeUndefined()
+    const mine = backend.spawn(cwd, { claudeMode: false, tmuxMode: false })
+    expect(readRecord(mine.id).spawnedBy).toBeUndefined()
+    expect(lineageOf(mine.id, mine.id, undefined)).toBeUndefined()
+    expect(lineageOf(mine.id, undefined, parent.id)).toBe(parent.id)
   })
 
   it('a chat tab’s record is written through the same port and discarded by key', () => {

@@ -414,6 +414,9 @@ export interface SessionRecord {
    *  view's server, a toolbar button). Absent = a tab. The boot restore puts
    *  a linked session back where it belongs instead of in the sidebar. */
   link?: SessionLink
+  /** The tab whose agent opened this one: the boot restore folds it under
+   *  that parent again and `"parent"` still reaches it. Absent = a user's tab. */
+  spawnedBy?: string
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean
@@ -736,6 +739,8 @@ export interface ElectronAPI extends FleetDesktopAPI {
       /** Spawning the hidden half of something else — persisted on the record
        *  so the next launch restores it as that half, not as a tab. */
       link?: SessionLink
+      /** The tab whose agent opened this one — persisted on the record. */
+      spawnedBy?: string
     }
   ) => Promise<SessionInfo>
   writeSession: (id: string, data: string) => void

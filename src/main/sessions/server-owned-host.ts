@@ -66,7 +66,8 @@ export function resumeOptions(record: SessionRecord): SpawnOptions {
     codexAccountId: record.codexAccountId,
     codexAccountLabel: record.codexAccountLabel,
     workspaceId: record.workspaceId,
-    link: record.link
+    link: record.link,
+    spawnedBy: record.spawnedBy
   }
 }
 

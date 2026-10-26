@@ -14,6 +14,7 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
+import { lineageOf } from './sessions/lineage'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -365,7 +366,8 @@ class PtyManager {
       codexAccountId: codex ? options?.codexAccountId : undefined,
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
-      windowKey: options?.windowKey
+      windowKey: options?.windowKey,
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy)
     })
   }
 

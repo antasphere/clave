@@ -3,7 +3,8 @@
  *
  * The parent link is what folds a delegated agent under the tab that opened
  * it (the sidebar's subagent selector, #216) and what `"parent"` resolves to
- * in `clave_send_to_session` / `clave_read_session`. This drives the road real
+ * in `clave_send_to_session` / `clave_read_session` (checked here with a
+ * message, the report back a delegated agent sends). This drives the road real
  * agents take — `clave_open_session` over the MCP endpoint with the parent
  * tab's own token, served by main — never the window's dispatcher
  * (`callMcp`), which is a road no agent uses.
@@ -37,6 +38,7 @@ import {
   until,
   userDataDir,
   fixturePath,
+  serverDataDirOf,
   killLeakedE2eTmux
 } from './harness.mjs'
 
@@ -73,9 +75,10 @@ exec /bin/sh "$@"
 }
 const ENV = { SHELL: path.join(ROOT, 'bin', 'sh'), PATH: `${ROOT}/bin:${process.env.PATH}` }
 
-/** The token of a tab: its own mcp-config, as the agent inside it reads it. */
+/** The token of a tab: its own mcp-config, as the agent inside it reads it,
+ *  minted where the terminal manager runs (the server's folder). */
 const tokenOf = (sessionId) => {
-  const file = path.join(DIR, 'mcp-configs', `${sessionId}.json`)
+  const file = path.join(serverDataDirOf(DIR), 'mcp-configs', `${sessionId}.json`)
   if (!existsSync(file)) return null
   return (
     JSON.parse(readFileSync(file, 'utf-8')).mcpServers?.clave?.headers?.Authorization?.replace(
@@ -93,17 +96,13 @@ const clientOf = async (sessionId) => {
 }
 const recordOf = async (win, id) =>
   (
-    await win.evaluate(
-      (wanted) => window.electronAPI.listSessionRecords({ ids: [wanted] }),
-      id
-    )
+    await win.evaluate((wanted) => window.electronAPI.listSessionRecords({ ids: [wanted] }), id)
   )?.[0] ?? null
 const rows = (win, id) =>
   win.evaluate((sid) => document.querySelectorAll(`[data-sidebar-item-id="${sid}"]`).length, id)
 const triggers = (win, id) =>
   win.evaluate(
-    (sid) =>
-      document.querySelectorAll(`[data-sidebar-item-id="${sid}"] .subagent-trigger`).length,
+    (sid) => document.querySelectorAll(`[data-sidebar-item-id="${sid}"] .subagent-trigger`).length,
     id
   )
 
@@ -134,10 +133,21 @@ async function checkLineage(t, label, app, win, parent, child) {
     parentTriggers: await triggers(win, parent)
   })
 
+  // A report back, as a delegated agent sends one. Not a screen read: after a
+  // relaunch the parent's pane is not mounted until shown, and has no buffer.
   const client = await clientOf(child)
   t.check(`${label}: the child holds an MCP token`, !!client)
-  const read = client ? await client.call('clave_read_session', { sessionId: 'parent', lines: 5 }) : null
-  t.check(`${label}: the child reaches "parent"`, !!read && !toolErrored(read), read)
+  const sent = client
+    ? await client.call('clave_send_to_session', {
+        sessionId: 'parent',
+        message: `STATUS · lineage check · ${label}`
+      })
+    : null
+  t.check(
+    `${label}: the child reaches "parent"`,
+    !!sent && !toolErrored(sent) && toolPayload(sent)?.delivered === true,
+    sent
+  )
 }
 
 export async function run(t) {
@@ -155,7 +165,7 @@ export async function run(t) {
     // ── 1. Opened by an agent, on the agents' own road ──
     const first = await launchApp(DIR, { env: ENV })
     app = first.app
-    const agent = await spawnAgentTabIn(app, first.win, DIR)
+    const agent = await spawnAgentTabIn(app, first.win, serverDataDirOf(DIR))
     t.check('a parent agent tab holds an MCP token', !!agent?.token, agent)
     parent = agent.sessionId
     const client = mcpHttpClient(mcpEndpoint(DIR), agent.token)

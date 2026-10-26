@@ -215,6 +215,9 @@ function sessionFromRecord(
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
+    // The tab whose agent opened this one: folded under it again, and its
+    // "parent" still answers (#259).
+    spawnedBy: s.spawnedBy,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
     ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
@@ -456,6 +459,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
+    spawnedBy: s.spawnedBy,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

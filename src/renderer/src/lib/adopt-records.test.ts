@@ -329,6 +329,25 @@ describe('a record the host already runs', () => {
     expect(byId('claude-started')?.dormant).toBeUndefined()
   })
 
+  it('keeps the tab that opened it, on both paths, so it folds under that parent (#259)', async () => {
+    const parentId = '44444444-4444-4444-8444-444444444444'
+    // A tab the server opened for an agent: taken in from its record alone.
+    byIdRecords = [chat('delegated', { live: true, spawnedBy: parentId })]
+    await adoptServerStartedSessions(['delegated'])
+    expect(byId('delegated')?.spawnedBy).toBe(parentId)
+    // A record the restore spawns: its placeholder and its settled tab alike.
+    const { attached } = placeRecords([{ ...record('restored'), spawnedBy: parentId }], null)
+    expect(byId('restored')?.spawnedBy).toBe(parentId)
+    await flush()
+    for (const answer of [...pending.values()]) answer(true)
+    await attached
+    expect(byId('restored')?.spawnedBy).toBe(parentId)
+    // A record without one opens as the user's own tab.
+    byIdRecords = [chat('mine', { live: true })]
+    await adoptServerStartedSessions(['mine'])
+    expect(byId('mine')?.spawnedBy).toBeUndefined()
+  })
+
   it('a terminal the host runs is placed live, in its group, without a spawn', async () => {
     useSessionStore.setState({ groups: [group(['term'])] })
     const term = {
