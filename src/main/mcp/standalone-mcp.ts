@@ -10,7 +10,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { AgentTokensService, SessionHostService } from '@clave/server'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
-import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
+import type { LauncherFamily } from '../../shared/agent-launch'
+import {
+  CHAT_PROFILE_IDS,
+  resolveProfileRef,
+  resolveSpawnModes
+} from '../../shared/open-session-modes'
 import type { SecretAction } from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
 
@@ -22,7 +27,15 @@ export interface StandaloneMcpOptions {
   /** The daemon's one sidebar, where the groups live; absent, the group tools
    *  say this server keeps none. */
   readonly sidebar?: SidebarLayouts | undefined
+  /** The family a launch profile id belongs to, or undefined when this
+   *  server offers no such profile. Absent, only the built-in chat
+   *  profiles are known. */
+  readonly profileFamily?: ((id: string) => LauncherFamily | undefined) | undefined
 }
+const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
+  (Object.entries(CHAT_PROFILE_IDS).find(([, profile]) => profile === id)?.[0] as
+    | LauncherFamily
+    | undefined) ?? undefined
 /** Who opened which tab through `clave_open_session`, kept as long as this
  *  listener lives: the desktop's parent link does not survive a restart
  *  either. */
@@ -64,6 +77,7 @@ function buildServer(
   parents: Parents
 ): McpServer {
   const { sessions, requests, sidebar } = options
+  const profileFamily = options.profileFamily ?? builtInProfileFamily
   const own = (id: string): string => (id === 'mine' ? sessionId : id)
   const known = (id: string): string => {
     const resolved = own(id)
@@ -83,6 +97,11 @@ function buildServer(
       throw new Error(`Unknown group "${groupId}".`)
     return groupId
   }
+  const holds = (groupId: string, id: string): boolean =>
+    groups()
+      .get(SERVER_LAYOUT_KEY)
+      .groups.some((g) => g.id === groupId && g.sessionIds.includes(id))
+  const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
   const server = new McpServer(
     { name: 'clave-server', version: '1' },
     {
@@ -219,7 +238,7 @@ function buildServer(
       if (!directory?.isDirectory()) throw new Error(`no such directory: ${args.cwd}`)
       const groupId = args.groupId === undefined ? null : knownGroup(args.groupId)
       const mode = args.mode ?? 'claude'
-      const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model } =
+      const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
         resolveSpawnModes({
           mode,
           ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
@@ -231,6 +250,16 @@ function buildServer(
         chat: args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
         ...(args.profile !== undefined ? { profile: args.profile } : {})
       })
+      // A profile picks the adapter, so one from another family would start
+      // another agent than the mode names: refuse it before anything starts.
+      if (launchProfileId !== undefined) {
+        if (family === null)
+          throw new Error(`The profile argument applies to agent modes only (got mode "${mode}")`)
+        const owner = profileFamily(launchProfileId)
+        if (!owner) throw new Error(`Unknown ${family} launch profile "${launchProfileId}"`)
+        if (owner !== family)
+          throw new Error(`Launch profile "${launchProfileId}" belongs to ${owner}, not ${family}`)
+      }
       const terminal = mode === 'terminal'
       const info = await sessions.start({
         cwd: args.cwd,
@@ -248,17 +277,39 @@ function buildServer(
         }
       })
       parents.set(info.id, sessionId)
-      if (args.name) sessions.rename(info.id, args.name)
-      if (groupId) groups().moveItems(SERVER_LAYOUT_KEY, [info.id], groupId, 'inside')
+      // The tab exists from here on: what follows is best effort, and the
+      // answer always names the tab so the caller can find or close it.
+      const warnings: string[] = []
+      if (args.name) {
+        try {
+          sessions.rename(info.id, args.name)
+        } catch (err) {
+          warnings.push(`The tab started but was not renamed: ${message(err)}`)
+        }
+      }
+      let placed: string | null = null
+      if (groupId) {
+        try {
+          groups().moveItems(SERVER_LAYOUT_KEY, [info.id], groupId, 'inside')
+        } catch {
+          // Reported below from the layout itself.
+        }
+        if (holds(groupId, info.id)) placed = groupId
+        else warnings.push(`Group "${groupId}" no longer exists; the tab is at the top level.`)
+      }
       // A terminal starts its process at its first size; no window gives it one here.
       if (sessions.get(info.id)?.transport === 'pty') {
         try {
           sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
-        } catch {
-          // A terminal that cannot be sized stays listed; its read says why.
+        } catch (err) {
+          warnings.push(`The terminal could not be sized to start: ${message(err)}`)
         }
       }
-      return text({ sessionId: info.id, groupId })
+      return text({
+        sessionId: info.id,
+        groupId: placed,
+        ...(warnings.length > 0 ? { warnings } : {})
+      })
     }
   )
   server.registerTool(
@@ -322,6 +373,7 @@ function buildServer(
       const id = known(args.sessionId)
       const groupId = knownGroup(args.groupId)
       groups().moveItems(SERVER_LAYOUT_KEY, [id], groupId, 'inside')
+      if (!holds(groupId, id)) throw new Error(`Unknown group "${groupId}".`)
       return text({ sessionId: id, groupId })
     }
   )

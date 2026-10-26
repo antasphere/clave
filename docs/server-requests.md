@@ -52,7 +52,16 @@ id and links it to the caller, which `clave_list` reports as `parentId` while th
 daemon runs. `clave_close_session`, `clave_rename`, `clave_create_group` and
 `clave_move_session` act on the daemon's own tabs and sidebar groups. Desktop
 window, workspace, account and editor tools remain desktop operations; a call
-naming `window`, `workspace` or `account` is refused rather than ignored.
+naming `window`, `workspace` or `account` is refused rather than ignored. A `profile` must
+belong to the mode's family (`codex-chat` only with `codex`, none on a terminal)
+and is refused before anything starts. Once a tab has started, the answer
+always carries its `sessionId`; a name or group that could not be applied, such
+as a group deleted while the tab was starting, comes back in `warnings` with
+`groupId: null` instead of being claimed. The reproducible
+`agent-sessions/delegation-group` fixture creates a run-scoped group and tab
+through `CreateGroup` and `StartSession`; `npx vitest run
+src/main/mcp/standalone-mcp.test.ts` loads it, has an agent move, rename and
+delegate into it, writes a receipt beside its run data and closes its tabs.
 
 Pending records are in memory for the daemon's lifetime, capped at 1000 records
 including recent outcomes and at 128 KiB of metadata per request. Pending work has

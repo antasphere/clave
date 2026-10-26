@@ -69,6 +69,7 @@ import { standaloneSessionHost } from './sessions/standalone-host'
 import { installE2eHooks } from './sessions/e2e-hooks'
 import { publishSessionStates, setServerEventPublisher } from './server/session-events'
 import { sessionManager } from './sessions/session-manager'
+import { eventsProfile, launchProfileManager } from './launch-profile-manager'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
@@ -312,6 +313,11 @@ async function main(): Promise<void> {
         agentTools,
         requests,
         ...(sidebar && { sidebar }),
+        // An agent's profile must belong to the mode it opens (a chat or
+        // plugin profile, or one of this server's custom profiles).
+        profileFamily: (id) =>
+          eventsProfile(id)?.family ??
+          launchProfileManager.getPreferences().customProfiles.find((p) => p.id === id)?.family,
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,
