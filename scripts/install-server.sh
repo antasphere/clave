@@ -132,6 +132,24 @@ node_major="$("$NODE" -p 'process.versions.node.split(".")[0]')"
 # resolve for the service whatever the saved PATH holds.
 SERVICE_PATH="$(dirname "$NODE"):$CLAVE_PATH"
 
+# The agents start from the environment `$SHELL -lic` gives the service, which
+# reads the login profile only: a PATH line in ~/.bashrc never reaches them, and
+# the session ends with "claude: command not found". Ask that same shell, under
+# the service's PATH and nothing else, which agent it cannot find.
+warn_missing_agents() {
+  local agent here
+  for agent in claude codex; do
+    env -i HOME="$HOME" USER="$USER" SHELL="$SHELL" PATH="$SERVICE_PATH" \
+      "${SHELL:-/bin/sh}" -lic "command -v $agent" </dev/null >/dev/null 2>&1 && continue
+    here="$(command -v "$agent" 2>/dev/null || true)"
+    if [[ -n "$here" ]]; then
+      warn "$agent is not on the PATH the server's agents get, so its sessions end with \"command not found\". Run again with: --path \"$(dirname "$here"):$CLAVE_PATH\""
+    else
+      warn "$agent is not on the PATH the server's agents get, so its sessions end with \"command not found\". Install it, then run again with --path naming its folder"
+    fi
+  done
+}
+
 # ── Host ───────────────────────────────────────────────────────────
 tailscale_ip() {
   command -v tailscale >/dev/null 2>&1 || return 1
@@ -468,6 +486,7 @@ service_active && RUNNING=1
 if [[ $UPDATED -eq 0 && $RUNNING -eq 1 && "$SERVICE_TEXT" == "$OLD_SERVICE_TEXT" ]] && wait_healthy 2; then
   save_options
   info "Clave server $REF is up to date and running on $SERVER_URL"
+  warn_missing_agents
   exit 0
 fi
 
@@ -517,4 +536,5 @@ if [[ $FIRST_INSTALL -eq 1 ]]; then
   echo "  node -p 'require(\"$IDENTITY\").token'"
   info "Update it later by running this script again."
 fi
+warn_missing_agents
 info "Logs: $(logs_hint)"

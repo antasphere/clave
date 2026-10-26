@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions use [Se
 
 ## [Unreleased]
 
+- `install-server.sh` warns when `claude` or `codex` is not on the PATH the server's agents get (a PATH set in `~/.bashrc` only), naming the `--path` to run again with, instead of leaving every session to end with "command not found".
 - Server workspaces load their `.clave` pins from the server, launch their groups there, and review elevated content with the server named. Trusted folders stay with their owner. The side panel shows the server's file tree, including without a focused tab, with live folder watches and bounded server searches (#243). Opening the Git tab while its server cannot be reached shows a failure message without an unhandled error in the window.
 
 - **Servers are managed from Settings** — Settings → Servers lists the Clave servers this Mac reaches with their live state, Connect/Disconnect and Remove, adds one from a form whose token field never shows a saved token, shows the add form's and each connection's error on the page, and lists a connected server's own Claude and Codex logins read-only. The sidebar's Servers button and its dialog are gone; agent requests from a server still reach the user. Starting sessions on a server moves to the normal flow in a following change.
