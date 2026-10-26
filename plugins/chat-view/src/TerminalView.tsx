@@ -36,7 +36,13 @@ import { SenderChip } from './Delivery'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { claudeContextWindow } from '../../../src/shared/claude-models'
 import { nextPermissionMode } from './permission-mode'
-import { emptyStatus, reduceStatus, relaunchRequest, type TerminalStatus } from './terminal-status'
+import {
+  emptyStatus,
+  reduceStatus,
+  relaunchRequest,
+  shownWork,
+  type TerminalStatus
+} from './terminal-status'
 import { ContextMeter, SubAgentStack } from './TerminalStatus'
 import { AccountChip } from './AccountChip'
 import { useQuestionHeight } from './question-height'
@@ -432,6 +438,8 @@ export function TerminalView({
     (current: TerminalStatus, event: SessionEvent) => reduceStatus(current, event),
     emptyStatus
   )
+  // Held by identity: the stack folds a row away when its list changes.
+  const work = useMemo(() => shownWork(status.agents), [status.agents])
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -1173,9 +1181,9 @@ export function TerminalView({
             }
           />
           <AccountChip sessionId={session.id} />
-          {status.agents.length > 0 && (
+          {work.length > 0 && (
             <span className="term-dim">
-              · {status.agents.length} agent{status.agents.length === 1 ? '' : 's'}
+              · {work.length} agent{work.length === 1 ? '' : 's'}
             </span>
           )}
           <span className="term-status-end">
@@ -1208,7 +1216,7 @@ export function TerminalView({
           </span>
         </div>
         <SubAgentStack
-          agents={status.agents}
+          agents={work}
           // A relaunch asks for Claude's Agent tool on a Claude model: only an
           // agent that tool started (a pane remounted since never saw the call,
           // hence the session's provider) can be launched again that way.
