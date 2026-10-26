@@ -105,11 +105,21 @@ async function stream(win, fixture, id, action) {
   }
 }
 
+/** Ten quick setups are required, and every attempt, quick or slow, must paint
+ *  the latest text. Quickness is the harness's own setup timing, which a busy
+ *  CI runner can miss on most attempts, so the budget leaves room for slow
+ *  setups (on 25 Oct one runner reached 7 quick reveals in 25 attempts, each
+ *  attempt painting correctly). The loop stops on the same count the
+ *  assertion checks. */
+const QUICK_REVEALS = 10
+const REVEAL_ATTEMPTS = 60
+const quickReveals = (samples) => samples.filter((s) => s.quick && s.marker).length
+
 export async function checkImmediateReveal({ win, fixture, id, other, t }) {
   await stream(win, fixture, id, async (selector) => {
     const samples = []
     try {
-      for (let i = 0; i < 25 && samples.filter((s) => s.quick).length < 10; i++) {
+      for (let i = 0; i < REVEAL_ATTEMPTS && quickReveals(samples) < QUICK_REVEALS; i++) {
         // One page-local orchestration owns paint -> hide -> hidden delivery -> click ->
         // second-frame observation. Automation only retrieves the result.
         const sample = await win.evaluate(
@@ -243,7 +253,7 @@ export async function checkImmediateReveal({ win, fixture, id, other, t }) {
       console.log(JSON.stringify({ metric: 'quick-reveal-second-frame', samples }))
     }
     assert.ok(
-      samples.filter((s) => s.quick && s.marker).length === 10,
+      quickReveals(samples) === QUICK_REVEALS,
       'obtain ten quick reveals while the text deadline is still pending; retain slower setup attempts'
     )
     assert.ok(
