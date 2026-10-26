@@ -263,6 +263,43 @@ describe('conversation stream', () => {
     expect(merged.first).toBe(live.first - 3)
     expect(reduceConversation(merged, { prepend: [] })).toBe(merged)
   })
+  it('keeps one row for a request a server replayed before its past arrived', () => {
+    const request: ChatEvent = {
+      type: 'permission_request',
+      id: '"7"',
+      description: 'Run the build',
+      toolName: 'item/commandExecution/requestApproval',
+      options: [{ id: 'accept', label: 'Accept' }]
+    }
+    // The server replays the pending request on subscribe; the reader answers
+    // it; then the past, which first asked it, lands in front.
+    const live = reduceConversation(run([request]), { answer: '"7"', optionId: 'accept' })
+    const merged = reduceConversation(live, {
+      prepend: [
+        { event: { type: 'user_message', text: 'build it' }, at: 100 },
+        { event: request, at: 101 }
+      ]
+    })
+    const rows = merged.entries.filter((e) => e.kind === 'permission')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ answer: 'accept' })
+    expect(merged.entries.map((e) => e.kind)).toEqual(['user', 'permission'])
+    expect(merged.first).toBe(live.first - 1)
+  })
+  it('keeps an older request that only shares a live one’s id', () => {
+    // A Codex process numbers its requests from zero: a restarted session's
+    // past can hold another request under the id a live one carries.
+    const older: ChatEvent = {
+      type: 'permission_request',
+      id: '0',
+      description: 'Read the old file',
+      toolName: 'item/fileChange/requestApproval',
+      options: [{ id: 'accept', label: 'Accept' }]
+    }
+    const live = run([{ ...older, description: 'Run the new command' }])
+    const merged = reduceConversation(live, { prepend: [{ event: older, at: 100 }] })
+    expect(merged.entries.filter((e) => e.kind === 'permission')).toHaveLength(2)
+  })
 })
 
 describe('taking a message back', () => {

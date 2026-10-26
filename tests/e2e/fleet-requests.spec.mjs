@@ -7,8 +7,10 @@ import { REPO } from './harness.mjs'
 import {
   fleetWorld,
   connectMac,
+  clickReady,
   eventually,
   owned,
+  ownerReady,
   request,
   showMac,
   showServer
@@ -128,22 +130,82 @@ export async function run(t) {
       )
       return outcomes.findIndex((o) => o.accepted)
     }
-    for (const mac of clients)
-      await mac.win.getByText(nativeApproval.description, { exact: true }).waitFor()
-    const approvalWinner = await race(nativeApproval, [
-      { type: 'permission', optionId: 'accept' },
-      { type: 'permission', optionId: 'decline' }
-    ])
+    // The Clave-tool requests (the MCP clarification and secret) still open
+    // the request dialog on each Mac; native agent requests never do (#261).
+    for (const mac of clients) {
+      const dialog = mac.win.getByRole('dialog')
+      await dialog.waitFor()
+      const text = await dialog.innerText()
+      assert.ok(text.includes('Fleet explicit MCP clarification'), 'the oldest Clave-tool request')
+      assert.equal(text.includes(nativeApproval.description), false)
+      // Set it aside, as a person reading their session does.
+      await mac.win.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'detached' })
+      await mac.win.getByRole('button', { name: 'Requests waiting (2)', exact: true }).waitFor()
+    }
+    // Native requests dock in their own session's pane, on each Mac, in the
+    // dock a local session uses.
+    const providerKey = (mac) => owned('session', mac.owners[0].id, provider.id)
+    const dockOf = (mac) =>
+      mac.win.locator(`.chat-host[data-session-id="${providerKey(mac)}"] .chat-prompt:visible`)
+    const approvalRowOf = (mac) =>
+      mac.win.locator(
+        `.chat-host[data-session-id="${providerKey(mac)}"] .chat-permission-row[data-kind="permission"]:visible`
+      )
+    for (const mac of clients) {
+      await showServer(mac, 0)
+      await ownerReady(mac, mac.owners[0].id, providerKey(mac))
+      await clickReady(mac.win.locator(`[data-sidebar-item-id="${providerKey(mac)}"]`))
+      await dockOf(mac).getByText(nativeApproval.description, { exact: true }).waitFor()
+      assert.equal(await mac.win.getByRole('dialog').count(), 0)
+    }
+    const accept = nativeApproval.options.find((o) => o.id === 'accept')
+    assert.ok(accept, 'the approval offers its accept decision')
+    await clickReady(dockOf(macA).getByRole('button', { name: accept.label, exact: true }))
     await eventually(
       () => replies().filter((r) => r.id === 'fleet-native-approval').length === 1,
       'provider receives one approval answer'
     )
-    assert.equal(
-      replies().find((r) => r.id === 'fleet-native-approval').result.decision,
-      approvalWinner ? 'decline' : 'accept'
+    assert.equal(replies().find((r) => r.id === 'fleet-native-approval').result.decision, 'accept')
+    // Mac B's dock moves on to the next request without being touched, and
+    // its record of the approval says it was answered elsewhere.
+    let macBDock = ''
+    await eventually(async () => {
+      macBDock = (await dockOf(macB).count()) ? await dockOf(macB).innerText() : ''
+      return (
+        macBDock.includes('Fleet public answer') && !macBDock.includes(nativeApproval.description)
+      )
+    }, 'the other Mac docks the question next').catch((error) => {
+      throw new Error(`${error.message}; Mac B dock: ${JSON.stringify(macBDock)}`)
+    })
+    // One record per request, as in a local session: the server's replay of
+    // a pending request and the history that first asked it are one row.
+    const rowStates = (mac) =>
+      approvalRowOf(mac).evaluateAll((rows) => rows.map((row) => row.getAttribute('data-state')))
+    await eventually(
+      async () => JSON.stringify(await rowStates(macB)) === '["elsewhere"]',
+      'the other Mac records the approval once, as answered elsewhere'
     )
+    assert.deepEqual(await rowStates(macA), ['answered'])
+    // A late answer from Mac B's view is refused by the server, never recorded.
+    const lateApproval = await macB.win.evaluate(
+      ({ id, providerRequestId }) =>
+        window.electronAPI
+          .sessionsWrite(id, {
+            type: 'permission_response',
+            id: providerRequestId,
+            optionId: 'decline'
+          })
+          .then(
+            () => 'accepted',
+            () => 'refused'
+          ),
+      { id: providerKey(macB), providerRequestId: nativeApproval.providerRequestId }
+    )
+    assert.equal(lateApproval, 'refused')
+    assert.equal(replies().filter((r) => r.id === 'fleet-native-approval').length, 1)
     t.check(
-      'native approval replays to both Macs and exactly one provider response settles everywhere',
+      'native approval docks in its session on both Macs, one answer settles it everywhere and a late one is refused',
       true
     )
 
@@ -159,31 +221,36 @@ export async function run(t) {
     const publicValues = ['Public answer from Mac A', 'Different public answer from Mac B']
     const privateValues = ['123-fleet-private-input', '456-fleet-other-answer']
     for (const [index, mac] of clients.entries()) {
-      const publicInput = mac.win.getByLabel('Fleet public answer', { exact: true })
-      const privateInput = mac.win.getByLabel('Fleet private answer', { exact: true })
-      await publicInput.waitFor()
-      await privateInput.waitFor()
-      assert.equal(await publicInput.getAttribute('type'), 'text')
-      assert.equal(await privateInput.getAttribute('type'), 'password')
+      const dock = dockOf(mac)
+      assert.ok((await dock.innerText()).includes('Fleet public answer'))
+      const publicInput = dock.locator('textarea.chat-prompt-other')
       await publicInput.fill(publicValues[index])
-      // Real key events pin the numeric-key handler as well as input state.
+      await dock.getByRole('button', { name: 'Next', exact: true }).click()
+      const privateInput = dock.locator('input.chat-prompt-other')
+      await privateInput.waitFor()
+      assert.equal(await privateInput.getAttribute('type'), 'password')
+      assert.equal(await privateInput.getAttribute('aria-label'), 'Fleet private answer')
+      // Real key events pin the dock's number-key handler as well as input state.
       await privateInput.pressSequentially(privateValues[index])
-      assert.equal(await publicInput.inputValue(), publicValues[index])
       assert.equal(await privateInput.inputValue(), privateValues[index])
+      await dock.getByRole('button', { name: 'Review', exact: true }).click()
+      const review = await dock.innerText()
+      assert.ok(review.includes(publicValues[index]))
+      assert.equal(review.includes(privateValues[index]), false)
     }
-    // Exercise the consumer's actual answer-key mapping. A bridge-only race
-    // could pass even if the renderer overwrote one same-label answer.
-    const submit = nativeQuestion.options.find((option) => option.id === 'answer')
-    assert.ok(submit, 'native clarification advertises its submission action')
-    await macA.win.getByRole('button', { name: submit.label, exact: true }).click()
+    // Exercise the dock's actual answer-key mapping. A bridge-only race could
+    // pass even if the view overwrote one same-label answer.
+    await dockOf(macA).getByRole('button', { name: 'Send', exact: true }).click()
     await eventually(
       () => replies().filter((r) => r.id === 'fleet-native-question').length === 1,
-      'provider receives the UI submission once'
+      'provider receives the dock submission once'
     )
     assert.deepEqual(replies().find((r) => r.id === 'fleet-native-question').result.answers, {
       'fleet-public-id': { answers: [publicValues[0]] },
       'fleet-private-id': { answers: [privateValues[0]] }
     })
+    for (const mac of clients)
+      await eventually(async () => (await dockOf(mac).count()) === 0, 'the dock settles')
     const stale = await macB.win.evaluate(
       ({ key, response }) => window.electronAPI.fleetResolve(key, response),
       {
@@ -200,18 +267,15 @@ export async function run(t) {
     )
     assert.equal(stale.accepted, false)
     assert.equal(replies().filter((r) => r.id === 'fleet-native-question').length, 1)
-    for (const mac of clients) {
-      await mac.win
-        .getByLabel('Fleet public answer', { exact: true })
-        .waitFor({ state: 'detached' })
-      await mac.win
-        .getByLabel('Fleet private answer', { exact: true })
-        .waitFor({ state: 'detached' })
-    }
     t.check(
-      'same-label native public/private questions keep distinct IDs, masking and typed answers through UI submission and stale-client settlement',
+      'same-label native public/private questions keep distinct IDs, masking and typed answers through the session dock and stale-client settlement',
       true
     )
+    // The Clave-tool requests are still waiting in the dialog.
+    for (const mac of clients) {
+      await showMac(mac)
+      await clickReady(mac.win.getByRole('button', { name: 'Requests waiting (2)', exact: true }))
+    }
 
     const explicit = pending.find((p) => p.id === question.requestId)
     for (const mac of clients) await mac.win.getByLabel('Fleet branch?', { exact: true }).waitFor()
@@ -261,8 +325,8 @@ export async function run(t) {
       'explicit secret executes once on the owning server and answers stay out of both clients history and rendered text',
       true
     )
-    // The requests above were answered from the Mac workspace. The provider's
-    // tab itself shows only in a workspace of its server (#241).
+    // The Clave-tool requests above were answered from the Mac workspace. The
+    // provider's tab itself shows only in a workspace of its server (#241).
     const providerRow = macA.win.locator(
       `[data-sidebar-item-id="${owned('session', macA.owners[0].id, provider.id)}"]`
     )

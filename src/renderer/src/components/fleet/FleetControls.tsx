@@ -47,10 +47,16 @@ function FleetDialog({
   )
 }
 
+/** A request an agent raised through its provider (a tool to allow, questions
+ *  to answer) is answered in its own session's pane, in the dock a local
+ *  session uses; only what an agent asked through Clave's tools waits here. */
+const answeredInPane = (request: PendingRequest): boolean => request.providerRequestId !== undefined
+
 export function FleetRequestHost(): React.JSX.Element | null {
   const requests = useFleetStore((s) => s.requests)
   const pending = Object.values(requests)
     .flat()
+    .filter((request) => !answeredInPane(request))
     .sort((a, b) => a.createdAt - b.createdAt)
   const [hiddenId, setHiddenId] = useState<string | null>(null)
   const request = pending[0]

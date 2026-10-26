@@ -119,7 +119,18 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
-    const past = action.prepend.reduce(reduceConversation, emptyConversation).entries
+    // A server replays each request it still holds to every subscriber, so a
+    // pending request can be in the live entries already when the past that
+    // first asked it arrives. The live copy is the one answers are written
+    // on; the past one would be the same question twice. Matched on what was
+    // asked as well as the id: a Codex process numbers its requests from zero,
+    // so an older process's request can carry a live one's id.
+    const same = (a: Permission, b: Permission): boolean =>
+      a.id === b.id && a.description === b.description && a.toolName === b.toolName
+    const live = state.entries.flatMap((e) => (e.kind === 'permission' ? [e.request] : []))
+    const past = action.prepend
+      .reduce(reduceConversation, emptyConversation)
+      .entries.filter((e) => e.kind !== 'permission' || !live.some((r) => same(r, e.request)))
     return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
   }
   if ('answer' in action) {

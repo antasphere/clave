@@ -37,6 +37,7 @@ import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
+import { openRequests, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -749,10 +750,10 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       el?.setSelectionRange(start + insert.length, start + insert.length)
     })
   }
+  // A server's session reads what is open off the server (server-requests.ts).
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   // What the agent waits on, oldest first: the dock shows the head of it.
-  const waitingOn = conversation.entries.flatMap((e) =>
-    e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request] : []
-  )
+  const waitingOn = openRequests(conversation.entries, remotePending, session.id)
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -800,20 +801,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   // a page of the past arriving in front must not shift a key, or every turn
   // below it would render as another and the column's arrival would replay on
   // the ones at the end. Memoised, so a keystroke rebuilds none of it.
-  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const blocks = useMemo(() => {
-    const entries = remotePending
-      ? presentation.entries.map((entry) =>
-          entry.kind === 'permission' && !entry.answer
-            ? {
-                ...entry,
-                answeredElsewhere: !remotePending.some(
-                  (r) => r.sessionId === session.id && r.providerRequestId === entry.request.id
-                )
-              }
-            : entry
-        )
-      : presentation.entries
+    const entries = withServerPending(presentation.entries, remotePending, session.id)
     const ordinal = new Map<Entry, number>()
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
@@ -954,9 +943,11 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
           />
         )}
         <PromptDock
-          // Remote requests stay with their owner. Locally, only /resume
-          // hides the dock; MCP and plugin panels keep pending prompts in sight.
-          requests={panel === 'resume' || isRemoteKey(session.id) ? [] : waitingOn}
+          // Only /resume hides the dock; MCP and plugin panels keep pending
+          // prompts in sight. A server's session answers in this same dock: its
+          // write reaches the server, which settles the request once for every
+          // client attached to it.
+          requests={panel === 'resume' ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
           onAnswer={(id, optionId, answers) => void answer(id, optionId, answers)}

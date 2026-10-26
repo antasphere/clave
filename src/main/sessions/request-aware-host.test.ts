@@ -94,11 +94,15 @@ describe('server native requests without clients', () => {
     const late = vi.fn()
     f.host.subscribe(session.id, late)
     expect(late).not.toHaveBeenCalled()
-    await f.host.write(session.id, {
-      type: 'permission_response',
-      id: permission.id,
-      optionId: 'allow-once'
-    })
+    // The answer reaches no provider and is refused, so the client that sent
+    // it does not record it as given.
+    await expect(
+      f.host.write(session.id, {
+        type: 'permission_response',
+        id: permission.id,
+        optionId: 'allow-once'
+      })
+    ).rejects.toMatchObject({ _tag: 'RequestRejected', code: 'closed' })
     expect(f.write).not.toHaveBeenCalled()
   })
   it('preserves structured provider decisions larger than a short identifier', async () => {
@@ -143,7 +147,8 @@ describe('server native requests without clients', () => {
       })
     ).rejects.toThrow()
     expect(f.write).not.toHaveBeenCalled()
-    await Promise.all(
+    // Two clients answer at once: one wins, the other is told it lost.
+    const outcomes = await Promise.allSettled(
       [0, 1].map(() =>
         f.host.write(session.id, {
           type: 'permission_response',
@@ -152,6 +157,10 @@ describe('server native requests without clients', () => {
         })
       )
     )
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(outcomes.find((o) => o.status === 'rejected')).toMatchObject({
+      reason: { _tag: 'RequestRejected', code: 'closed' }
+    })
     expect(f.write).toHaveBeenCalledTimes(1)
   })
 

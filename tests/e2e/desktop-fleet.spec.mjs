@@ -649,17 +649,18 @@ export async function run(t) {
         }),
       collision
     )
-    const privateInput = win.locator('input[aria-label="Private answer"]')
+    // The server's question docks in its own session's pane, the dock a local
+    // session uses (#261), and no separate dialog opens for it.
+    const nativeDock = win.locator(`.chat-host[data-session-id="${ka}"] .chat-prompt:visible`)
+    const privateInput = nativeDock.locator('input.chat-prompt-other')
     await privateInput.waitFor()
     assert.equal(await privateInput.getAttribute('type'), 'password')
-    assert.equal(
-      await win.locator('.chat-prompt-options[aria-label="Private answer"]').count(),
-      0,
-      'all native views defer to the shared masked request UI'
-    )
+    assert.equal(await win.getByRole('dialog').count(), 0, 'no separate request dialog')
     await privateInput.fill('test-only-private-answer')
-    await win.getByRole('button', { name: 'Answer', exact: true }).click()
-    await privateInput.waitFor({ state: 'detached' })
+    await nativeDock.getByRole('button', { name: 'Review', exact: true }).click()
+    assert.equal((await nativeDock.innerText()).includes('test-only-private-answer'), false)
+    await nativeDock.getByRole('button', { name: 'Send', exact: true }).click()
+    assert.ok(await until(async () => (await nativeDock.count()) === 0), 'the dock settles')
     assert.equal(
       await win
         .locator('body')
@@ -668,7 +669,7 @@ export async function run(t) {
       false
     )
     t.check(
-      'native clarification replays through the common request UI with masked answers and settles',
+      'native clarification replays into the session dock with masked answers and settles',
       true
     )
 
@@ -745,8 +746,8 @@ export async function run(t) {
         }),
       { owner: savedA.id, cwd: a.cwd }
     )
-    // Select the session after its immediate request dialog stops covering the sidebar.
-    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).waitFor()
+    // Its question docks in its own pane: open its tab.
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
     const pendingNative = await until(async () => {
       const response = await fetch(`${a.url}/requests/pending`, {
         headers: { authorization: `Bearer ${a.token}` }
@@ -761,24 +762,28 @@ export async function run(t) {
     )
     assert.deepEqual(pendingNative.secretQuestions, ['private-question-id'])
     const providerKey = owned('session', savedA.id, pendingNative.sessionId)
-    const publicQuestion = win.getByLabel('Public value', { exact: true })
-    const privateQuestion = win.getByLabel('Private value', { exact: true })
+    // One question at a time, then a review, as in a local session's dock.
+    const dock = win.locator(`.chat-host[data-session-id="${providerKey}"] .chat-prompt:visible`)
+    const publicQuestion = dock.locator('textarea.chat-prompt-other')
     await publicQuestion.waitFor()
-    assert.equal(await publicQuestion.getAttribute('type'), 'text')
-    assert.equal(await privateQuestion.getAttribute('type'), 'password')
+    assert.equal(await win.getByRole('dialog').count(), 0, 'no separate request dialog')
+    assert.ok((await dock.innerText()).includes('Public value'))
     await publicQuestion.fill('public fixture answer')
-    await privateQuestion.fill('private fixture answer')
     assert.equal(await publicQuestion.inputValue(), 'public fixture answer')
+    await dock.getByRole('button', { name: 'Next', exact: true }).click()
+    const privateQuestion = dock.locator('input.chat-prompt-other')
+    await privateQuestion.waitFor()
+    assert.equal(await privateQuestion.getAttribute('type'), 'password')
+    assert.equal(await privateQuestion.getAttribute('aria-label'), 'Private value')
+    await privateQuestion.fill('private fixture answer')
     assert.equal(await privateQuestion.inputValue(), 'private fixture answer')
     assert.equal((await win.locator('body').innerText()).includes('private-question-id'), false)
-    await win
-      .getByRole('button', {
-        name: pendingNative.options.find((option) => option.id === 'answer').label,
-        exact: true
-      })
-      .click()
-    await privateQuestion.waitFor({ state: 'detached' })
-    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
+    await dock.getByRole('button', { name: 'Review', exact: true }).click()
+    const review = await dock.innerText()
+    assert.ok(review.includes('public fixture answer'))
+    assert.equal(review.includes('private fixture answer'), false)
+    await dock.getByRole('button', { name: 'Send', exact: true }).click()
+    assert.ok(await until(async () => (await dock.count()) === 0), 'the dock settles')
     assert.equal((await win.locator('body').innerText()).includes('private fixture answer'), false)
     const replies = () =>
       existsSync(providerReplies)
