@@ -266,6 +266,39 @@ export async function run(t) {
       JSON.stringify(settled)
     )
 
+    // A drag whose release never arrives (the window lost focus mid-drag and
+    // the button came up elsewhere) must not eat the next click, even one on a
+    // control inside a row. The lost release cannot be produced natively in a
+    // hidden window, so the drag is dispatched and its pointerup withheld.
+    const lostDragStarted = await win.evaluate(async (id) => {
+      const row = document.querySelector(`[data-workspace-row="${id}"]`)
+      const box = row.getBoundingClientRect()
+      const at = (dy) => ({
+        bubbles: true,
+        button: 0,
+        pointerId: 1,
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2 + dy
+      })
+      row.dispatchEvent(new PointerEvent('pointerdown', at(0)))
+      for (let dy = 2; dy <= 20; dy += 2)
+        window.dispatchEvent(new PointerEvent('pointermove', at(dy)))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const started = row.hasAttribute('data-dragging')
+      window.dispatchEvent(new Event('blur'))
+      return started
+    }, CHARLIE.id)
+    t.check('the withheld-release drag started', lostDragStarted)
+    await settingsRow(BRAVO.id)
+      .getByRole('button', { name: 'Rename workspace', exact: true })
+      .click()
+    t.equal(
+      'after a drag whose release was lost, the next click on a row control works',
+      await win.getByRole('textbox', { name: 'Workspace name', exact: true }).count(),
+      1
+    )
+    await win.keyboard.press('Escape')
+
     // ── The next boot ──
     await app.close()
     app = null

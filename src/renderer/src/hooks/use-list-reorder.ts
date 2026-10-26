@@ -180,12 +180,13 @@ export function useListReorder(
       ...(indicator?.targetId === id ? { 'data-drop': indicator.position } : {}),
       onPointerDown: (e) => {
         if (e.button !== 0 || press.current) return
+        // A new press is never the leftover of an earlier drag, even one on a
+        // control inside the row that starts no drag of its own.
+        awaitRelease.current?.()
+        swallowClick.current = false
         const from = e.target as HTMLElement
         const within = from.closest(NO_DRAG)
         if (within && within !== e.currentTarget && e.currentTarget.contains(within)) return
-        // A new press is never the leftover of an earlier drag.
-        awaitRelease.current?.()
-        swallowClick.current = false
         press.current = {
           id,
           scope,
