@@ -10,7 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { AgentTokensService, SessionHostService } from '@clave/server'
 import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
 import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
-import type { LauncherFamily } from '../../shared/agent-launch'
+import { BUILT_IN_LAUNCH_PROFILES, type LauncherFamily } from '../../shared/agent-launch'
 import {
   CHAT_PROFILE_IDS,
   resolveProfileRef,
@@ -28,14 +28,16 @@ export interface StandaloneMcpOptions {
    *  say this server keeps none. */
   readonly sidebar?: SidebarLayouts | undefined
   /** The family a launch profile id belongs to, or undefined when this
-   *  server offers no such profile. Absent, only the built-in chat
-   *  profiles are known. */
+   *  server offers no such profile. Absent, only the built-in terminal and
+   *  chat profiles are known. */
   readonly profileFamily?: ((id: string) => LauncherFamily | undefined) | undefined
 }
-const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
+/** The profiles every server offers: the terminal built-ins and the chat views. */
+export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
+  BUILT_IN_LAUNCH_PROFILES.find((p) => p.id === id)?.family ??
   (Object.entries(CHAT_PROFILE_IDS).find(([, profile]) => profile === id)?.[0] as
     | LauncherFamily
-    | undefined) ?? undefined
+    | undefined)
 /** Who opened which tab through `clave_open_session`, kept as long as this
  *  listener lives: the desktop's parent link does not survive a restart
  *  either. */

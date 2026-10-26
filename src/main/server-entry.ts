@@ -51,7 +51,7 @@ import { acquireDaemonLease, daemonConfig, daemonIdentity } from './server/daemo
 import { standaloneSidebar } from './server/standalone-sidebar'
 import { serverOwnedSessionHost } from './sessions/server-owned-host'
 import { requestAwareSessionHost } from './sessions/request-aware-host'
-import { startStandaloneMcp } from './mcp/standalone-mcp'
+import { builtInProfileFamily, startStandaloneMcp } from './mcp/standalone-mcp'
 import { executeSecretAction } from './secret-actions'
 import {
   startEmbedded,
@@ -316,6 +316,7 @@ async function main(): Promise<void> {
         // An agent's profile must belong to the mode it opens (a chat or
         // plugin profile, or one of this server's custom profiles).
         profileFamily: (id) =>
+          builtInProfileFamily(id) ??
           eventsProfile(id)?.family ??
           launchProfileManager.getPreferences().customProfiles.find((p) => p.id === id)?.family,
         executeSecret: async (action, value) => {

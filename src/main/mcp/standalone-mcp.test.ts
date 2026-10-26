@@ -583,6 +583,27 @@ describe('standalone MCP session tools: boundaries', () => {
       })
     )
     expect(started[0].options).toMatchObject({ claudeMode: true, launchProfileId: 'claude-chat' })
+    for (const [mode, profile] of [
+      ['claude', 'builtin-claude'],
+      ['codex', 'builtin-codex'],
+      ['pi', 'builtin-pi']
+    ]) {
+      payload(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, mode, profile, chat: false }
+        })
+      )
+      expect(started.at(-1)?.options?.launchProfileId).toBe(profile)
+    }
+    expect(
+      errorText(
+        await client.callTool({
+          name: 'clave_open_session',
+          arguments: { cwd: directory, mode: 'claude', profile: 'builtin-codex', chat: false }
+        })
+      )
+    ).toContain('belongs to codex, not claude')
   }, 15_000)
 
   it('reports a group deleted while the tab starts instead of claiming the placement', async () => {
@@ -688,7 +709,9 @@ describe('agent-sessions/delegation-group fixture', () => {
       ].sort()
     ).toEqual([tabId, delegated.sessionId].sort())
 
-    const data = await mkdtemp(join(directory, 'fixture-'))
+    // The receipt outlives the test's scratch data, as the other fixtures' do.
+    const scratch = join('/tmp', process.env.CLAVE_E2E_NS ?? 'clave-vps-d-impl')
+    const data = await mkdtemp(join(scratch, 'fixture-sessions-'))
     const receipt = {
       scenario: 'agent-sessions/delegation-group',
       runId: report.runId,
