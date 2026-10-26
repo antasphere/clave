@@ -43,6 +43,8 @@ Its options (`bash ~/install-server.sh --help` lists them). They are saved once 
 | `--force`      |                                           | Rebuild and restart even when nothing changed                                                                                          |
 | `--no-service` |                                           | Build only, and print the command to run under your own supervisor                                                                     |
 
+The agents get that PATH through a login shell, which reads `~/.profile` (or `~/.zprofile`) and never `~/.bashrc`, so a `claude` or `codex` added to PATH only in `~/.bashrc` is not found and its sessions end with "command not found". Every run checks this and names the agent it cannot find, with the `--path` to run again with.
+
 `auto` is decided once and saved as what it found (`tailscale` or `loopback`). A later run on a machine whose Tailscale is down then fails, rather than moving the server to loopback without telling you.
 
 ## Connect your Mac
