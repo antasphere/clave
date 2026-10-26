@@ -17,8 +17,8 @@ import {
    turn waits on; then agent-tasks-followup.ndjson, a finished subagent given
    more work. The stub pauses the replay at gates so the spec can look
    mid-turn. What this spec holds in the real app:
-   - mid-turn, every running command shows behind the terminal glyph beside
-     the subagent, and neither command counts as background work;
+   - mid-turn, only the subagent shows: Codex does not say yet which command
+     is left running, and a command shows only as background work;
    - when the turn ends, the subagent and the command left running stay,
      the command as background work; the waited-on command is gone;
    - the agent's row names the model Codex resolved and offers no relaunch;
@@ -187,30 +187,24 @@ export async function run(t) {
         return seen
       }, id)
 
-    /* 1. Mid-turn: both commands run beside the subagent, neither yet
-       background work. */
+    /* 1. Mid-turn: both commands have started (the transcript's group counts
+       two), and only the subagent shows. */
     const mid = await until(
       async () => {
+        const text = await view.innerText()
         const rows = await readRows(view)
-        return rows.length === 3 ? rows : null
+        return /\b2 commands\b/.test(text) && rows.length ? rows : null
       },
       { tries: 60 }
     )
     const midState = await state()
     const midHeld = (await heldList())[0] ?? []
     t.check(
-      'mid-turn, the subagent and both running commands show, the commands behind the glyph',
+      'mid-turn, the subagent alone shows: neither running command has a row before it is background work',
       midState === 'working' &&
-        mid?.map((row) => `${row.kind}:${row.description}`).join('|') ===
-          'agent:sleep_test|shell:sleep 30 && echo bg2|shell:echo fg' &&
-        mid.slice(1).every((row) => row.icon && !row.dot && row.model === null && !row.relaunch),
-      { midState, mid }
-    )
-    t.check(
-      'mid-turn, neither command is called background work, and the background list has the agent alone',
-      mid?.slice(1).every((row) => !row.background) &&
+        mid?.map((row) => `${row.kind}:${row.description}`).join('|') === 'agent:sleep_test' &&
         midHeld.map((task) => task.id).join(',') === 'thread-child',
-      { mid, midHeld }
+      { midState, mid, midHeld }
     )
     gate('mid')
 
