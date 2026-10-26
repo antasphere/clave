@@ -311,6 +311,7 @@ async function main(): Promise<void> {
         sessions,
         agentTools,
         requests,
+        ...(sidebar && { sidebar }),
         executeSecret: async (action, value) => {
           const outcome = await executeSecretAction(
             action,
