@@ -41,31 +41,49 @@ async function openSwitcher(page) {
   await page.locator(SWITCHER_ROWS).first().waitFor({ timeout: 5000 })
 }
 
+const centre = async (loc) => {
+  const b = await loc.boundingBox()
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+}
+
+async function glide(page, from, to, steps = 12) {
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(
+      from.x + ((to.x - from.x) * i) / steps,
+      from.y + ((to.y - from.y) * i) / steps
+    )
+  }
+  await page.waitForTimeout(80)
+}
+
 /** Press on `from`, travel in steps to the top or bottom quarter of `to`, and
- *  report the drop line shown there before releasing. */
-async function drag(page, from, to, half) {
-  const a = await from.boundingBox()
+ *  report the drop line shown there. Then, before releasing: `escape` presses
+ *  Escape with the button still held, and `then` (a point, or a function
+ *  answering one) travels on to it, counting the lines left on the page. */
+async function drag(page, from, to, half, { escape = false, then = null } = {}) {
   const b = await to.boundingBox()
-  const start = { x: a.x + a.width / 2, y: a.y + a.height / 2 }
+  const start = await centre(from)
   const end = {
     x: b.x + b.width / 2,
     y: half === 'before' ? b.y + b.height / 4 : b.y + (b.height * 3) / 4
   }
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
-  const steps = 12
-  for (let i = 1; i <= steps; i++) {
-    await page.mouse.move(
-      start.x + ((end.x - start.x) * i) / steps,
-      start.y + ((end.y - start.y) * i) / steps
-    )
-  }
-  await page.waitForTimeout(80)
+  await glide(page, start, end)
   const line = await to.getAttribute('data-drop')
   const faded = await from.getAttribute('data-dragging')
+  if (escape) {
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(100)
+  }
+  let linesAfter = null
+  if (then) {
+    await glide(page, end, typeof then === 'function' ? await then() : then)
+    linesAfter = await page.locator('[data-drop]').count()
+  }
   await page.mouse.up()
   await page.waitForTimeout(150)
-  return { line, faded }
+  return { line, faded, linesAfter }
 }
 
 export async function run(t) {
@@ -134,7 +152,58 @@ export async function run(t) {
       JSON.stringify(afterDrag)
     )
 
+    // A drag that comes back onto its own row and is released there clicks
+    // nothing: the release is the drag's, not a click on the row.
+    const back = await drag(win, row(CHARLIE.id), row(BRAVO.id), 'after', {
+      then: () => centre(row(CHARLIE.id))
+    })
+    t.equal('a drag that travels shows its line', back.line, 'after')
+    t.equal('back on its own row, no line is left', back.linesAfter, 0)
+    t.equal(
+      'releasing a drag on its own row switches nothing',
+      (await identityOf(win)).workspaceId,
+      ALPHA.id
+    )
+    t.equal(
+      'releasing a drag on its own row leaves the switcher open and the order as it was',
+      JSON.stringify(await rowOrder(win, SWITCHER_ROWS)),
+      JSON.stringify(afterDrag)
+    )
+
+    // Escape cancels the drag: the line goes, the switcher stays open, and the
+    // release that follows, back on the dragged row, clicks nothing.
+    const escaped = await drag(win, row(CHARLIE.id), row(BRAVO.id), 'after', {
+      escape: true,
+      then: () => centre(row(CHARLIE.id))
+    })
+    t.equal('Escape withdraws the drop line', escaped.linesAfter, 0)
+    t.equal(
+      'the release after Escape switches nothing',
+      (await identityOf(win)).workspaceId,
+      ALPHA.id
+    )
+    t.equal(
+      'Escape leaves the switcher open and the order as it was',
+      JSON.stringify(await rowOrder(win, SWITCHER_ROWS)),
+      JSON.stringify(afterDrag)
+    )
+
+    // Released outside the list, the drag changes nothing.
+    const outside = await drag(win, row(CHARLIE.id), row(BRAVO.id), 'after', {
+      then: async () => {
+        const list = await win.locator(SWITCHER_ROWS).first().locator('..').boundingBox()
+        return { x: list.x + list.width + 60, y: list.y + list.height / 2 }
+      }
+    })
+    t.equal('outside the list the drop line is withdrawn', outside.linesAfter, 0)
+    t.equal(
+      'a drag released outside the list keeps the order',
+      JSON.stringify(await registryOrder(win)),
+      JSON.stringify(afterDrag)
+    )
+
     // A press that does not travel is still a click: it switches.
+    await openSwitcher(win)
     await row(BRAVO.id).click()
     t.equal(
       'a plain click on a row still switches workspace',
@@ -174,6 +243,27 @@ export async function run(t) {
       'the click a Settings drag ends on switches nothing',
       (await identityOf(win)).workspaceId,
       BRAVO.id
+    )
+    const settingsEscape = await drag(
+      win,
+      settingsRow(ALPHA.id),
+      settingsRow(CHARLIE.id),
+      'after',
+      {
+        escape: true,
+        then: () => centre(settingsRow(ALPHA.id))
+      }
+    )
+    t.equal('in Settings, Escape withdraws the drop line', settingsEscape.linesAfter, 0)
+    t.equal(
+      'in Settings, the release after Escape switches nothing',
+      (await identityOf(win)).workspaceId,
+      BRAVO.id
+    )
+    t.equal(
+      'in Settings, Escape keeps the order and the page',
+      JSON.stringify(await rowOrder(win, SETTINGS_ROWS)),
+      JSON.stringify(settled)
     )
 
     // ── The next boot ──

@@ -10,7 +10,9 @@ import type { DropPosition } from '../../../shared/workspace-order'
  *
  * Each row spreads `rowProps(id, scope)`. A row only takes a drop from a row
  * of the same scope (a workspace never crosses from one machine's list into
- * another's), and a drop that would leave the list as it is shows nothing.
+ * another's), a drop that would leave the list as it is shows nothing, and
+ * the line is withdrawn once the pointer leaves the list: released there, or
+ * after Escape, the drag changes nothing and its release clicks nothing.
  * Controls inside a row (inputs, selects, buttons, `[data-no-drag]`) never
  * start a drag. The nearest scrolling ancestor scrolls while the pointer
  * rests near its top or bottom edge.
@@ -108,8 +110,12 @@ export function useListReorder(
     onMoveRef.current = onMove
   })
   const detach = useRef<(() => void) | null>(null)
+  const awaitRelease = useRef<(() => void) | null>(null)
 
-  const end = useCallback((commit: boolean) => {
+  /** End the press. `released` says the button is already up; otherwise
+   *  (Escape, the window losing focus) the click its later release produces
+   *  is still the drag's, and is swallowed when it comes. */
+  const end = useCallback((commit: boolean, released = true) => {
     const p = press.current
     press.current = null
     detach.current?.()
@@ -119,24 +125,47 @@ export function useListReorder(
     if (p.started) {
       document.body.classList.remove('reorder-dragging')
       swallowClick.current = true
-      // The click this release produces (if any) arrives before this fires.
-      setTimeout(() => {
-        swallowClick.current = false
-      }, 0)
+      // The click a release produces (if any) arrives before this fires.
+      const clearAfterClick = (): void => {
+        setTimeout(() => {
+          swallowClick.current = false
+        }, 0)
+      }
+      if (released) clearAfterClick()
+      else {
+        const onRelease = (): void => {
+          awaitRelease.current?.()
+          clearAfterClick()
+        }
+        window.addEventListener('pointerup', onRelease, true)
+        awaitRelease.current = () => {
+          window.removeEventListener('pointerup', onRelease, true)
+          awaitRelease.current = null
+        }
+      }
       setDraggingId(null)
       setIndicator(null)
       if (commit && p.indicator) onMoveRef.current(p.id, p.indicator.targetId, p.indicator.position)
     }
   }, [])
 
-  useEffect(() => () => end(false), [end])
+  useEffect(
+    () => () => {
+      end(false)
+      awaitRelease.current?.()
+    },
+    [end]
+  )
 
   const track = useCallback((x: number, y: number) => {
     const p = press.current
     if (!p) return
     p.lastY = y
     const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-reorder-id]')
-    const next = hit ? indicatorAt(p, hit, y) : p.indicator
+    // Between two rows the line stays; outside the list it is withdrawn.
+    const list = p.row.parentElement?.getBoundingClientRect()
+    const inList = !!list && x >= list.left && x <= list.right && y >= list.top && y <= list.bottom
+    const next = hit ? indicatorAt(p, hit, y) : inList ? p.indicator : null
     if (next?.targetId !== p.indicator?.targetId || next?.position !== p.indicator?.position) {
       p.indicator = next
       setIndicator(next)
@@ -154,6 +183,9 @@ export function useListReorder(
         const from = e.target as HTMLElement
         const within = from.closest(NO_DRAG)
         if (within && within !== e.currentTarget && e.currentTarget.contains(within)) return
+        // A new press is never the leftover of an earlier drag.
+        awaitRelease.current?.()
+        swallowClick.current = false
         press.current = {
           id,
           scope,
@@ -185,23 +217,24 @@ export function useListReorder(
           if (ev.pointerId === press.current?.pointerId) end(true)
         }
         const cancel = (): void => end(false)
+        const lost = (): void => end(false, false)
         const key = (ev: KeyboardEvent): void => {
           if (ev.key !== 'Escape' || !press.current?.started) return
           // Escape ends the drag, not the popover or dialog holding the list.
           ev.preventDefault()
           ev.stopPropagation()
-          end(false)
+          end(false, false)
         }
         window.addEventListener('pointermove', move)
         window.addEventListener('pointerup', up)
         window.addEventListener('pointercancel', cancel)
-        window.addEventListener('blur', cancel)
+        window.addEventListener('blur', lost)
         window.addEventListener('keydown', key, true)
         detach.current = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
           window.removeEventListener('pointercancel', cancel)
-          window.removeEventListener('blur', cancel)
+          window.removeEventListener('blur', lost)
           window.removeEventListener('keydown', key, true)
         }
       },
