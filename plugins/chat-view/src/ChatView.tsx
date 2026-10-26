@@ -1119,7 +1119,6 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                 claudeContextWindow(conversation.model)
               }
             />
-            {state === 'working' && <span>Esc to interrupt and take the message back</span>}
           </span>
           <div className="chat-composer-controls">
             {conversation.permissionMode && (
