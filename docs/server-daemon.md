@@ -2,6 +2,8 @@
 
 A Clave daemon owns its sessions, sidebar and history. Desktop clients can attach and leave without stopping it. The machine must already have Node, Clave's installed dependencies, the built server and terminal-process bundles, and the coding tools/accounts you intend to use. Run it as the user who owns the repositories and credentials.
 
+To install it as a service and keep it updated, use `scripts/install-server.sh`: see [server-install.md](server-install.md). The rest of this page is what that script runs, by hand.
+
 Build the checkout with `npm run build`. Start the same build on the server with an explicit data directory and the machine's own Tailscale IP or hostname:
 
 ```sh

@@ -9,11 +9,46 @@ import {
   request,
   ownerReady,
   clickReady,
+  showMac,
+  showServer,
   step
 } from './fixtures/fleet-world.mjs'
 
 const row = (win, id) => win.locator(`[data-sidebar-item-id="${id}"]`)
 const chat = (win, id) => win.locator(`[data-session-id="${id}"] [data-testid="chat-view"]`)
+// Close the switcher and wait until its popover is gone, so a shortcut
+// pressed next reaches the window.
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
+}
+// Put a window on a workspace it already knows by id through the toolbar
+// switcher. showServer needs its server reachable to look the workspace up;
+// this reaches the workspace of a server that is offline now (#241).
+async function switchTo(win, id) {
+  const item = win.locator(`[data-workspace-id="${id}"]`)
+  await eventually(async () => {
+    if (!(await item.count())) {
+      await win.getByLabel('Switch workspace', { exact: true }).click()
+      await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
+    }
+    if (!(await item.count())) {
+      await closeSwitcher(win)
+      return false
+    }
+    if (
+      (await item.getAttribute('data-selected', { timeout: 2_000 }).catch(() => null)) === 'true'
+    ) {
+      await closeSwitcher(win)
+      return true
+    }
+    // A pane mounting after a launch can take focus and close the popover
+    // while it animates in: the click is retried from a fresh open.
+    await item.click({ timeout: 3_000 }).catch(() => {})
+    return false
+  }, `the window shows workspace ${id}`)
+}
 async function send(win, id, text, expected = text) {
   await row(win, id).click()
   await chat(win, id).locator('textarea:not(:disabled)').fill(text)
@@ -48,29 +83,32 @@ export async function run(t) {
 
     const ownerA = macA.owners[0].id
     const ownerB = macA.owners[1].id
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${ownerA}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Session provider', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'claude', exact: true }).click()
-    await win.getByLabel('Server launch profile', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'Echo (development)', exact: true }).click()
-    assert.equal(
-      await win.getByLabel('Server launch profile', { exact: true }).getAttribute('data-value'),
-      'dev-echo-adapter'
-    )
-    await win.getByLabel('Server folder', { exact: true }).fill(a.root)
-    await win.getByRole('button', { name: 'Browse server folders', exact: true }).click()
-    if (await win.getByLabel('Server account', { exact: true }).count()) {
-      assert.equal(
-        await win.getByLabel('Server account', { exact: true }).getAttribute('data-value'),
-        'default'
-      )
-    }
+    // Remote tabs show only in a workspace of their own server (#241): the
+    // normal launch flow starts a session on the server of the workspace.
+    await showServer(macA, 0)
     const localBefore = await win.evaluate(() => window.electronAPI.listSessions())
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
+    await win.keyboard.press('Meta+N')
+    let launched
+    await eventually(async () => {
+      launched = (await request(a, '/sessions')).find((s) => s.provider === 'claude')
+      return !!launched
+    }, 'Cmd+N in the server workspace starts the first agent on the empty owner')
+    assert.equal(
+      realpathSync(launched.cwd),
+      realpathSync(a.root),
+      'the launched agent uses the server workspace root'
+    )
+    await row(win, owned('session', ownerA, launched.id)).waitFor()
+    // The launch carries no server profile pick any more; the echo adapter the
+    // chat turn below needs is chosen explicitly on the owner.
+    await win.evaluate(
+      ({ owner, cwd }) =>
+        window.electronAPI.fleetStart(owner, cwd, {
+          claudeMode: true,
+          launchProfileId: 'dev-echo-adapter'
+        }),
+      { owner: ownerA, cwd: a.root }
+    )
     let created
     await eventually(async () => {
       created = (await request(a, '/sessions')).find((s) => s.adapterId === 'echo')
@@ -94,8 +132,14 @@ export async function run(t) {
     ).sessions.find((s) => s.adapterId === 'echo')
     assert.equal(firstAgent.id, owned('session', ownerA, created.id))
     await send(win, firstAgent.id, 'Created on the empty remote through Mac A')
+    await showMac(macA)
+    await row(win, localId).waitFor()
+    await eventually(
+      async () => (await row(win, firstAgent.id).count()) === 0,
+      'the remote agent is hidden in the Mac workspace'
+    )
     t.check(
-      'Mac UI creates the first remote agent using owning cwd, profile and default account choice',
+      'Mac UI creates the first remote agent at the server workspace root, only on its owner',
       true
     )
 
@@ -104,7 +148,10 @@ export async function run(t) {
     const groupId = report.values.first.groupId
     const ka = owned('session', ownerA, id)
     const kb = owned('session', ownerB, id)
-    for (const key of [ka, kb]) await row(win, key).waitFor()
+    await showServer(macA, 1)
+    await row(win, kb).waitFor()
+    await showServer(macA, 0)
+    await row(win, ka).waitFor()
     const macB = await world.mac('b')
     await macB.win.getByTitle(/^New terminal .*workspace root/).click()
     const localB = macB.win.locator('[data-terminal-tile]').first()
@@ -113,7 +160,10 @@ export async function run(t) {
     await connectMac(macB, world.servers)
     const ba = owned('session', macB.owners[0].id, id)
     const bb = owned('session', macB.owners[1].id, id)
-    for (const key of [ba, bb]) await row(macB.win, key).waitFor()
+    await showServer(macB, 1)
+    await row(macB.win, bb).waitFor()
+    const macBOnA = await showServer(macB, 0)
+    await row(macB.win, ba).waitFor()
     assert.notEqual(ka, kb)
     await send(win, ka, 'Mac A writes only to owner one')
     await row(macB.win, ba).click()
@@ -138,7 +188,9 @@ export async function run(t) {
       '```text\n' +
       Array.from({ length: 100 }, (_, i) => `Personal fleet history line ${i}`).join('\n') +
       '\n```'
+    await showServer(macA, 1)
     await send(win, kb, longTurn, 'Personal fleet history line 99')
+    await showServer(macB, 1)
     await row(macB.win, bb).click()
     const scrollB = chat(macB.win, bb).locator('.chat-scroll')
     await eventually(
@@ -168,16 +220,16 @@ export async function run(t) {
           owner,
           {
             groups: snapshot.layout.groups.map((g) =>
-              g.id === group ? { ...g, name: 'Shared owner one name' } : g
+              g.id === group ? { ...g, name: 'Shared owner two name' } : g
             ),
             displayOrder: [...snapshot.layout.displayOrder].reverse()
           },
           snapshot.layout.revision
         )
       },
-      { owner: ownerA, group: owned('group', ownerA, groupId) }
+      { owner: ownerB, group: owned('group', ownerB, groupId) }
     )
-    await macB.win.getByRole('button', { name: 'Shared owner one name', exact: true }).waitFor()
+    await macB.win.getByRole('button', { name: 'Shared owner two name', exact: true }).waitFor()
     assert.equal(await draft.inputValue(), 'Mac B local draft')
     assert.equal(await draft.evaluate((element) => element === document.activeElement), true)
     assert.equal(
@@ -198,7 +250,7 @@ export async function run(t) {
       [win, macB.win].map((page, i) =>
         page.evaluate(
           (owner) => window.electronAPI.fleetSnapshot(owner),
-          i ? macB.owners[0].id : ownerA
+          i ? macB.owners[1].id : ownerB
         )
       )
     )
@@ -213,6 +265,7 @@ export async function run(t) {
 
     // Both desktops stop consuming A. The process and history belong to A.
     await step('personal detach Mac B from owner one', async () => {
+      await showServer(macB, 0)
       await macB.win.evaluate(
         (owner) => window.electronAPI.fleetDisconnect(owner),
         macB.owners[0].id
@@ -250,6 +303,17 @@ export async function run(t) {
     )
     returned.owners = await returned.win.evaluate(() => window.electronAPI.fleetList())
     await step('personal startup reconnect Mac A and catch up', async () => {
+      await eventually(async () => {
+        try {
+          return !!(await returned.win.evaluate(
+            (id) => window.electronAPI.fleetSnapshot(id),
+            ownerA
+          ))
+        } catch {
+          return false
+        }
+      }, 'returned Mac A reaches owner one')
+      await showServer(returned, 0)
       await ownerReady(returned, ownerA, ka)
       await clickReady(row(returned.win, ka))
       await chat(returned.win, ka)
@@ -263,9 +327,18 @@ export async function run(t) {
     )
 
     // One live owner and the local shell stay usable while A is unavailable.
+    await switchTo(macB.win, macBOnA)
+    await row(macB.win, ba).waitFor()
     await a.stop()
-    await send(macB.win, bb, 'Owner two remains usable while owner one is offline')
+    await eventually(
+      async () =>
+        (await row(macB.win, ba).locator('[data-fleet-owner]').getAttribute('data-fleet-state')) !==
+        'connected',
+      'Mac B sees owner one go offline'
+    )
     assert.equal(await row(macB.win, ba).count(), 1)
+    await showServer(macB, 1)
+    await send(macB.win, bb, 'Owner two remains usable while owner one is offline')
     await macB.win.evaluate(
       (id) => window.electronAPI.writeSession(id, "printf 'STILL_LOCAL\\n' > offline-local.txt\r"),
       localBId
@@ -278,6 +351,9 @@ export async function run(t) {
     await assert.rejects(macB.win.evaluate((key) => window.electronAPI.sessionsHistory(key), ba))
     t.check('one offline owner retains its rows while another owner remains usable', true)
 
+    await showServer(returned, 1)
+    await row(returned.win, kb).waitFor()
+    await row(macB.win, bb).waitFor()
     await macB.win.evaluate((key) => window.electronAPI.killSession(key), bb)
     await eventually(
       async () => (await row(macB.win, bb).count()) === 0,
@@ -287,6 +363,7 @@ export async function run(t) {
       async () => (await row(returned.win, kb).count()) === 0,
       'close propagates on returned Mac A'
     )
+    await switchTo(macB.win, macBOnA)
     assert.equal(await row(macB.win, ba).count(), 1)
     assert.deepEqual(macB.errors, [])
     assert.deepEqual(returned.errors, [])

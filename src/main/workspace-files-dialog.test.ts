@@ -10,6 +10,15 @@ const review = {
 }
 
 describe('the review dialog text', () => {
+  it('names the server in the message and the folder grant', () => {
+    const text = reviewDialogText({ ...review, server: 'Build server' })
+    expect(text.message).toBe(
+      '“untrusted.clave” on “Build server” wants to run content automatically.'
+    )
+    expect(text.checkboxLabel).toBe('Trust all workspace files in “lanes” on “Build server”')
+    expect(text.detail).toBe(reviewDialogText(review).detail)
+  })
+
   it('names the file and the folder, and discloses everything that would act', () => {
     const text = reviewDialogText(review)
     expect(text.message).toBe('“untrusted.clave” wants to run content automatically.')

@@ -60,6 +60,7 @@ import {
   type TerminalsService,
   WorkspaceFiles,
   fileWorkspaceFilesStorage,
+  FileTreeWatcher,
   createServerFiles,
   PendingRequests
 } from '@clave/server'
@@ -72,6 +73,8 @@ import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from '
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 5, lane C: the plugins, this server's own service (plugins/standalone-plugins.ts) ──
 import { standalonePlugins } from './plugins/standalone-plugins'
+// ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
+import { serverGitPort } from './server/git-port'
 import { RUN_AS_NODE_ENV, TOKEN_ENV } from './terminal-process/token-env'
 import {
   spawnTerminalProcess,
@@ -269,7 +272,10 @@ async function main(): Promise<void> {
     ports: {
       sessions,
       requests,
-      files: createServerFiles({ attachmentsRoot: path.join(dataDir, 'session-attachments') }),
+      files: createServerFiles({
+        attachmentsRoot: path.join(dataDir, 'session-attachments'),
+        watcher: new FileTreeWatcher()
+      }),
       terminals,
       ...(sidebar && { sidebar }),
       settings: standalone.settings,
@@ -284,7 +290,11 @@ async function main(): Promise<void> {
         ? { announce: () => {}, resolve: (token) => agentTools.resolve(token) }
         : agentTools,
       // ── Wave 5, lane C: the plugins ──
-      plugins
+      plugins,
+      // ── Wave wcs1023, lane C: the git panel on this server's checkouts: the
+      // app's own git implementation, its repo watcher's bursts and a batch's
+      // progress published to every attached client (server/git-port.ts).
+      git: serverGitPort()
     },
     port,
     host: config.host,

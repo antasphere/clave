@@ -4,6 +4,7 @@ import path from 'path'
 import { Effect } from 'effect'
 import { loadUsageClockScenario } from './usage-clock.fixtures'
 import type { SettingsEvent } from '@clave/contract/settings'
+import type { Workspace } from '../../shared/workspace-types'
 import { ClaudeAccountsManager } from '../claude-accounts'
 import { CodexAccountsManager } from '../codex-accounts'
 import { AccountUsageManager } from '../usage-manager'
@@ -249,6 +250,41 @@ describe('the settings source over the real managers', () => {
     expect((await source.workspaces.load()).revision).toBe(2)
     await source.workspaces.setLastActive('bad key')
     expect((await source.workspaces.load()).lastActiveWorkspaceId).toBeNull()
+  })
+
+  it('refuses a registry write made against a stamp that has moved on (#241)', async () => {
+    const source = settingsSourceFromManagers(managers)
+    const ws = (id: string): Workspace => ({
+      id,
+      name: id,
+      rootDir: `/srv/${id}`,
+      profileFile: null,
+      createdAt: 1
+    })
+    const read = await source.workspaces.load()
+    const base = { revision: read.revision, instance: read.instance }
+    // Another writer lands first.
+    expect(await source.workspaces.updateRegistry([ws('other')], undefined)).toMatchObject({
+      ok: true
+    })
+    expect(await source.workspaces.updateRegistry([ws('mine')], undefined, base)).toEqual({
+      ok: false,
+      reason: 'stale'
+    })
+    expect((await source.workspaces.load()).workspaces.map((w) => w.id)).toEqual(['other'])
+    const now = await source.workspaces.load()
+    expect(
+      await source.workspaces.updateRegistry([ws('other'), ws('mine')], undefined, {
+        revision: now.revision,
+        instance: now.instance
+      })
+    ).toMatchObject({ ok: true, revision: now.revision + 1 })
+    expect(
+      await source.workspaces.updateRegistry([], undefined, {
+        revision: now.revision + 1,
+        instance: 'gone'
+      })
+    ).toEqual({ ok: false, reason: 'stale' })
   })
 
   it('reads the machine login when the usage read names no account', async () => {

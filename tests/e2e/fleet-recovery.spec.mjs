@@ -2,7 +2,15 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { REPO } from './harness.mjs'
-import { fleetWorld, connectMac, eventually, owned, request } from './fixtures/fleet-world.mjs'
+import {
+  fleetWorld,
+  connectMac,
+  eventually,
+  owned,
+  request,
+  showMac,
+  showServer
+} from './fixtures/fleet-world.mjs'
 
 export async function run(t) {
   const world = await fleetWorld('recovery')
@@ -99,12 +107,19 @@ export async function run(t) {
       { owner, cwd: a.root }
     )
     const rawId = decodeURIComponent(terminal.id.split(':').at(-1))
+    // Remote tabs show only in a workspace of their own server (#241).
+    await showServer(macA, 0)
     await macA.win.locator(`[data-sidebar-item-id="${terminal.id}"]`).click()
     await macA.win.locator(`[data-terminal-tile="${terminal.id}"] .xterm`).waitFor()
     await eventually(() => existsSync(path.join(a.root, 'ticks.txt')), 'actual remote shell starts')
     const startCount = readFileSync(path.join(a.root, 'start-count.txt'), 'utf8')
     assert.equal(startCount, 'ONCE\n')
     const before = readFileSync(path.join(a.root, 'ticks.txt'), 'utf8').length
+    await showMac(macA)
+    await eventually(
+      async () => (await macA.win.locator(`[data-sidebar-item-id="${terminal.id}"]`).count()) === 0,
+      'the remote shell is hidden in the Mac workspace'
+    )
     await macB.win.evaluate((id) => window.electronAPI.fleetDisconnect(id), wrong.id)
     await macA.close()
     await eventually(
@@ -127,6 +142,18 @@ export async function run(t) {
     assert.equal((await request(a, '/sessions')).find((s) => s.id === rawId)?.state, 'ended')
     assert.equal(readFileSync(path.join(a.root, 'start-count.txt'), 'utf8'), startCount)
     await macB.win.evaluate((id) => window.electronAPI.fleetConnect(id), wrong.id)
+    await eventually(
+      () => macB.win.evaluate((id) => globalThis.fleetStates[id] === 'connected', wrong.id),
+      'Mac B reconnects to the restarted owner'
+    )
+    // Mac B saved its servers through the bridge; showServer reads them here,
+    // the corrected owner first, as world.servers lists server A first.
+    macB.owners = await macB.win.evaluate(() => window.electronAPI.fleetList())
+    assert.deepEqual(
+      macB.owners.map((o) => o.id),
+      [wrong.id, second.id]
+    )
+    await showServer(macB, 0)
     const key = owned('session', wrong.id, rawId)
     await macB.win.locator(`[data-sidebar-item-id="${key}"]`).waitFor()
     await macB.win.locator(`[data-sidebar-item-id="${key}"]`).click()

@@ -1,4 +1,4 @@
-import { FleetControls } from '../fleet/FleetControls'
+import { FleetRequestHost } from '../fleet/FleetControls'
 import { reportFleetError } from '../../store/fleet-store'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
 import { emitTabClosed } from '../../lib/exchange-capture'
@@ -303,6 +303,7 @@ export function Sidebar(): React.JSX.Element {
 
   // Handle drop on pinned zone
   const handlePinnedDrop = useCallback((groupId: string) => {
+    if (isRemoteKey(groupId)) return
     const existing = findPinnedByGroupId(groupId)
     if (!existing) {
       pinGroupFromCurrent(groupId)
@@ -1360,11 +1361,13 @@ export function Sidebar(): React.JSX.Element {
                   onClick: () => resyncPinnedGroup(groupId)
                 }
               : null
-            : {
-                label: 'Pin group',
-                icon: <BookmarkIcon className="w-3.5 h-3.5" />,
-                onClick: () => pinGroupFromCurrent(groupId)
-              },
+            : isRemoteKey(groupId)
+              ? null
+              : {
+                  label: 'Pin group',
+                  icon: <BookmarkIcon className="w-3.5 h-3.5" />,
+                  onClick: () => pinGroupFromCurrent(groupId)
+                },
           {
             label: 'Rename',
             icon: <PencilSquareIcon className="w-3.5 h-3.5" />,
@@ -1603,7 +1606,7 @@ export function Sidebar(): React.JSX.Element {
           it lives in the toolbar now, behind the workspace name.) */}
       <div className="px-2 flex-shrink-0">
         <SessionLauncher onRemoteLaunch={setRemotePickerState} />
-        <FleetControls />
+        <FleetRequestHost />
       </div>
 
       {/* Group switcher — pinned under the launcher for the same reason: the way to

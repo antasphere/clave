@@ -1,3 +1,5 @@
+import { parseResourceKey, LOCAL_SERVER_ID } from '@clave/contract/fleet'
+import { useFleetStore } from '../../store/fleet-store'
 import { PluginsTab } from './PluginsTab'
 import { useSkinStore, skinAction } from '../../lib/skin'
 import { useState, useEffect, type ReactNode } from 'react'
@@ -31,7 +33,6 @@ import { UserIconDisplay, ICON_MAP } from '../ui/UserIconDisplay'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import {
   TrashIcon,
-  PlusIcon,
   PencilIcon,
   FolderIcon,
   ShieldCheckIcon,
@@ -57,6 +58,8 @@ import {
 import { KeymapSettings } from './KeymapSettings'
 import { AgentsSettings } from './AgentsSettings'
 import { AudioSettings } from './AudioSettings'
+import { ServersSettings } from './ServersSettings'
+import { AddWorkspaceAction, ServerWorkspaceRows } from './ServerWorkspaces'
 
 /** One seed for every swatch in the field picker: the row is a comparison of
  *  palettes, and twelve different draws would compare the draws instead. */
@@ -211,6 +214,7 @@ export function SettingsPanel(): React.JSX.Element {
         {settingsSection === 'usage' && <UsageSettings />}
         {settingsSection === 'activity' && <ActivitySettings />}
         {settingsSection === 'accounts' && <AccountsSettings />}
+        {settingsSection === 'servers' && <ServersSettings />}
       </div>
     </div>
   )
@@ -1005,11 +1009,9 @@ function WorkspacesSection(): React.JSX.Element {
               </div>
             )
           })}
+          <ServerWorkspaceRows />
 
-          <button onClick={handleAddWorkspace} className="settings-row-action">
-            <PlusIcon className="w-4 h-4" />
-            Add workspace
-          </button>
+          <AddWorkspaceAction onThisMac={handleAddWorkspace} />
         </SettingsCard>
 
         {/* Removal confirmation — spells out the cascade before anything happens */}
@@ -1110,6 +1112,13 @@ function TrustedFoldersSection({
   roots: string[]
   onRevoke: (root: string) => void
 }): React.JSX.Element | null {
+  const connections = useFleetStore((s) => s.connections)
+  const label = (root: string): string => {
+    const ref = parseResourceKey('file', root)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? root
+      : `${ref.id} on ${connections.find((c) => c.id === ref.serverId)?.name ?? ref.serverId}`
+  }
   if (roots.length === 0) return null
   return (
     <SettingsSection
@@ -1126,8 +1135,8 @@ function TrustedFoldersSection({
           <div key={root} className="settings-row">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <FolderIcon className="w-4 h-4 flex-shrink-0 text-text-tertiary" />
-              <p className="settings-row-title truncate" title={root}>
-                {root}
+              <p className="settings-row-title truncate" title={label(root)}>
+                {label(root)}
               </p>
             </div>
             <div className="settings-row-controls">

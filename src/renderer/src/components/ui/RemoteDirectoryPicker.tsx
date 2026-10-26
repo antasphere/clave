@@ -12,17 +12,42 @@ import {
 } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 
-interface RemoteDirectoryPickerProps {
-  locationId: string
-  locationName: string
-  onSelect: (path: string) => void
-  onCancel: () => void
-}
-
 interface DirEntry {
   name: string
   path: string
   type: 'file' | 'directory'
+}
+
+/** What the picker browses: an SSH Location, or a connected Clave server's
+ *  disk (#241). `id` names it; a change re-lists from its home. */
+export interface DirectorySource {
+  id: string
+  home(): Promise<string>
+  list(path: string): Promise<DirEntry[]>
+}
+
+function sshSource(locationId: string): DirectorySource {
+  return {
+    id: `ssh:${locationId}`,
+    home: async () => {
+      try {
+        const result = await window.electronAPI.sshExec(locationId, 'echo $HOME')
+        return result.stdout.trim() || '/home'
+      } catch {
+        return '/home'
+      }
+    },
+    list: async (path) => (await window.electronAPI.sftpReadDir(locationId, path)) as DirEntry[]
+  }
+}
+
+interface RemoteDirectoryPickerProps {
+  /** An SSH Location to browse, when no `source` is given. */
+  locationId?: string
+  source?: DirectorySource
+  locationName: string
+  onSelect: (path: string) => void
+  onCancel: () => void
 }
 
 interface NavItem {
@@ -37,10 +62,13 @@ function parentOf(path: string): string {
 
 export function RemoteDirectoryPicker({
   locationId,
+  source: given,
   locationName,
   onSelect,
   onCancel
 }: RemoteDirectoryPickerProps): React.ReactPortal {
+  const source = useMemo(() => given ?? sshSource(locationId ?? ''), [given, locationId])
+  const sourceId = source.id
   const [currentPath, setCurrentPath] = useState('')
   const [homePath, setHomePath] = useState('')
   const [entries, setEntries] = useState<DirEntry[]>([])
@@ -63,32 +91,23 @@ export function RemoteDirectoryPicker({
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      try {
-        const result = await window.electronAPI.sshExec(locationId, 'echo $HOME')
-        const home = result.stdout.trim() || '/home'
-        if (!cancelled) {
-          setHomePath(home)
-          setCurrentPath(home)
-          setPathInput(home)
-        }
-      } catch {
-        if (!cancelled) {
-          setHomePath('/home')
-          setCurrentPath('/home')
-          setPathInput('/home')
-        }
+      const home = await source.home().catch(() => '/')
+      if (!cancelled) {
+        setHomePath(home)
+        setCurrentPath(home)
+        setPathInput(home)
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [locationId])
+  }, [source])
 
   // Load directory contents when path changes. The listing's state resets while
   // rendering, against the path the last render saw; the effect fetches.
-  const [listedPath, setListedPath] = useState<{ locationId: string; path: string } | null>(null)
-  if (currentPath && (listedPath?.locationId !== locationId || listedPath.path !== currentPath)) {
-    setListedPath({ locationId, path: currentPath })
+  const [listedPath, setListedPath] = useState<{ sourceId: string; path: string } | null>(null)
+  if (currentPath && (listedPath?.sourceId !== sourceId || listedPath.path !== currentPath)) {
+    setListedPath({ sourceId, path: currentPath })
     setLoading(true)
     setError(null)
     setHighlight(-1)
@@ -99,12 +118,10 @@ export function RemoteDirectoryPicker({
     let cancelled = false
     ;(async () => {
       try {
-        const items = await window.electronAPI.sftpReadDir(locationId, currentPath)
+        const items = await source.list(currentPath)
         if (!cancelled) {
           setEntries(
-            (items as DirEntry[])
-              .filter((e) => e.type === 'directory')
-              .sort((a, b) => a.name.localeCompare(b.name))
+            items.filter((e) => e.type === 'directory').sort((a, b) => a.name.localeCompare(b.name))
           )
           setLoading(false)
         }
@@ -118,7 +135,7 @@ export function RemoteDirectoryPicker({
     return () => {
       cancelled = true
     }
-  }, [locationId, currentPath])
+  }, [source, currentPath])
 
   const navigateTo = useCallback((path: string) => {
     setCurrentPath(path)

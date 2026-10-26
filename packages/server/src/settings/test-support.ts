@@ -326,8 +326,10 @@ export class FakeSettingsSource implements SettingsSourceService {
   }
   readonly workspaces: SettingsSourceService['workspaces'] = {
     load: () => this.state,
-    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin) => {
-      this.record('workspaces.updateRegistry', [...workspaces], origin)
+    updateRegistry: (workspaces: ReadonlyArray<Workspace>, origin, base) => {
+      this.record('workspaces.updateRegistry', [...workspaces], origin, ...(base ? [base] : []))
+      if (base && (base.instance !== this.state.instance || base.revision !== this.state.revision))
+        return { ok: false as const, reason: 'stale' as const }
       this.state = { ...this.state, workspaces: [...workspaces], revision: this.state.revision + 1 }
       this.emit({
         _tag: 'workspaces.state_changed',

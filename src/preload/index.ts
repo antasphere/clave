@@ -1187,6 +1187,7 @@ const electronAPI = {
         claudeSessionId?: string
         piSessionId?: string
         launchProfileId?: string
+        launchProfile?: LaunchProfile
         piProvider?: string
         piThinking?: import('../shared/agent-launch').PiThinkingLevel
         initialCommand?: string
@@ -1211,7 +1212,10 @@ const electronAPI = {
     server: async ({ api }, cwd, options) => {
       const identity: WindowIdentity | null = await ipcRenderer.invoke('window:identity')
       const workspaceId = options?.workspaceId ?? identity?.workspaceId
-      const spawnOptions = workspaceId != null ? { ...options, workspaceId } : options
+      const spawnOptions =
+        workspaceId != null ? { ...options, workspaceId } : options && { ...options }
+      // A Mac-local start resolves its own profile ids on both transports.
+      if (spawnOptions) delete spawnOptions.launchProfile
       return (await api.sessions.start({
         cwd,
         ...(identity?.windowKey && { windowKey: identity.windowKey }),

@@ -3,6 +3,7 @@ import type { MoveResult } from '@clave/contract/sidebar'
 import { windowRegistry, type WindowIdentity } from '../window-registry'
 import { windowWorkspaces, initialWindowWorkspace } from '../window-workspaces'
 import { windowState } from '../window-state'
+import { isServerWorkspaceId } from '../../shared/workspace-types'
 import { rehomeAck } from '../rehome-ack'
 import {
   rehomeSessions,
@@ -105,9 +106,10 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
       const state = await windowWorkspaces.load()
       if (win.isDestroyed()) return null
       if (windowRegistry.getWorkspaceForWindow(win.id) === before) {
-        const target = state.workspaces.some((w) => w.id === before)
-          ? before
-          : initialWindowWorkspace(state)
+        const target =
+          isServerWorkspaceId(before) || state.workspaces.some((w) => w.id === before)
+            ? before
+            : initialWindowWorkspace(state)
         if (target !== before) {
           windowRegistry.setWindowWorkspace(win.id, target)
           const key = windowRegistry.getKeyForWindow(win.id)
@@ -137,16 +139,21 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
   // A window switching its workspace tells main FIRST, so the registry is
   // current when the next pty:spawn stamps its record (IPC is FIFO). Any
   // window may show any workspace; the switch is persisted so the window
-  // comes back on it, and becomes the last-active default.
+  // comes back on it, and becomes the last-active default. A server
+  // workspace (#241) is in that server's registry, not this one: it is taken
+  // as given and persisted on the window, but never made the last-active
+  // default, which a windowless spawn here would be stamped with.
   ipcMain.handle('window:set-workspace', async (event, workspaceId: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return { ok: false as const, reason: 'no-window' as const }
     const target = typeof workspaceId === 'string' ? workspaceId : null
-    const state = await windowWorkspaces.load()
-    if (target !== null && !state.workspaces.some((w) => w.id === target)) {
-      return { ok: false as const, reason: 'unknown-workspace' as const }
+    if (!isServerWorkspaceId(target)) {
+      const state = await windowWorkspaces.load()
+      if (target !== null && !state.workspaces.some((w) => w.id === target)) {
+        return { ok: false as const, reason: 'unknown-workspace' as const }
+      }
+      await windowWorkspaces.setLastActive(target)
     }
-    await windowWorkspaces.setLastActive(target)
     if (win.isDestroyed()) return { ok: false as const, reason: 'no-window' as const }
     windowRegistry.setWindowWorkspace(win.id, target)
     const key = windowRegistry.getKeyForWindow(win.id)
@@ -158,9 +165,11 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
   // clave_open_window tool and the end-to-end harness all come through here.
   // No workspace → the asking window's own (the app once more, where you are).
   ipcMain.handle('window:open', async (event, workspaceId?: unknown) => {
-    const state = await windowWorkspaces.load()
     let target: string | null
-    if (typeof workspaceId === 'string') {
+    if (isServerWorkspaceId(workspaceId)) {
+      target = workspaceId
+    } else if (typeof workspaceId === 'string') {
+      const state = await windowWorkspaces.load()
       if (!state.workspaces.some((w) => w.id === workspaceId)) {
         throw new Error(`No registered workspace with id "${workspaceId}"`)
       }
@@ -168,7 +177,8 @@ export function registerWindowHandlers(deps: WindowHandlerDeps): void {
     } else {
       const win = BrowserWindow.fromWebContents(event.sender)
       target =
-        (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ?? initialWindowWorkspace(state)
+        (win ? windowRegistry.getWorkspaceForWindow(win.id) : null) ??
+        initialWindowWorkspace(await windowWorkspaces.load())
     }
     return deps.openWindow(target)
   })

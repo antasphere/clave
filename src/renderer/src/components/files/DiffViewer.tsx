@@ -6,6 +6,8 @@ import { cn } from '@clave/ui/components'
 import { CheckIcon } from '@heroicons/react/24/outline'
 import { DiffLinesView } from '../git/DiffLinesView'
 import { CopyIcon, FolderIcon, CloseIcon, fileActionButtonClass } from './FileActionIcons'
+import { isRemoteKey } from '../../lib/fleet-identity'
+import { repoDisplayPath } from '../../lib/git-paths'
 
 function statusDisplayLetter(status: string): string {
   switch (status) {
@@ -76,15 +78,20 @@ export function DiffViewer({ fileTab }: DiffViewerProps): React.JSX.Element {
     refreshKey: gitRefreshTrigger
   })
 
-  const filename = fileTab.filePath.split('/').pop() ?? ''
+  // A diff of a Clave server's repository is keyed by its owner: the path to
+  // read is the decoded one, and the Mac's Finder has nothing to reveal.
+  const remote = isRemoteKey(fileTab.filePath)
+  const shownPath = repoDisplayPath(fileTab.filePath)
+  const filename = shownPath.split('/').pop() ?? ''
 
   const { copied, copy } = useCopyFeedback()
   // What you are looking at here is the patch, so that is what the button hands over.
   const canCopyPatch = !loading && !error && raw.length > 0
 
   const handleRevealInFinder = useCallback(() => {
+    if (remote) return
     window.electronAPI?.showItemInFolder(fileTab.filePath)
-  }, [fileTab.filePath])
+  }, [fileTab.filePath, remote])
 
   const handleStageToggle = useCallback(async () => {
     if (!liveDiff || liveDiff.type !== 'working' || operating) return
@@ -154,13 +161,15 @@ export function DiffViewer({ fileTab }: DiffViewerProps): React.JSX.Element {
           >
             {copied ? <CheckIcon className="w-3 h-3" /> : <CopyIcon />}
           </button>
-          <button
-            onClick={handleRevealInFinder}
-            className={fileActionButtonClass}
-            title="Reveal in Finder"
-          >
-            <FolderIcon />
-          </button>
+          {!remote && (
+            <button
+              onClick={handleRevealInFinder}
+              className={fileActionButtonClass}
+              title="Reveal in Finder"
+            >
+              <FolderIcon />
+            </button>
+          )}
           <button
             onClick={() => removeFileTab(fileTab.id)}
             className={fileActionButtonClass}
@@ -174,7 +183,7 @@ export function DiffViewer({ fileTab }: DiffViewerProps): React.JSX.Element {
       {/* Full path breadcrumb */}
       <div className="px-4 py-1 border-b border-border-subtle flex-shrink-0">
         <span className="text-[10px] text-text-tertiary truncate block">
-          {fileTab.filePath.replace(/^\/Users\/[^/]+/, '~')}
+          {remote ? shownPath : shownPath.replace(/^\/Users\/[^/]+/, '~')}
         </span>
       </div>
 

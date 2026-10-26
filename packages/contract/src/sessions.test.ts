@@ -16,6 +16,7 @@ import {
   SessionControl,
   SessionEvent,
   SessionInfo,
+  SessionRecord,
   SessionInput,
   SessionStream,
   SessionWrite,
@@ -229,6 +230,15 @@ describe('starting a session on the wire', () => {
     claudeSessionId: 'c1',
     piSessionId: 'p1',
     launchProfileId: 'lp1',
+    launchProfile: {
+      id: 'lp1',
+      name: 'Mac profile',
+      family: 'pi',
+      command: ['pi-wrapper', 'pi'],
+      additionalArgs: ['--color'],
+      sourceProfileId: 'lp1',
+      pi: { provider: 'anthropic', model: 'sonnet', thinking: 'high' }
+    },
     piProvider: 'anthropic',
     piThinking: 'high',
     initialCommand: 'ls',
@@ -262,6 +272,31 @@ describe('starting a session on the wire', () => {
   )
   it('refuses a link of a kind it does not know', () => {
     expect(Either.isLeft(decode(SpawnOptions, { link: { kind: 'sidebar', key: 'k' } }))).toBe(true)
+  })
+  it('refuses a carried launch profile with an unknown family', () => {
+    expect(
+      Either.isLeft(
+        decode(SpawnOptions, { launchProfile: { ...full.launchProfile, family: 'other' } })
+      )
+    ).toBe(true)
+  })
+  it('round-trips a stopped record with and without a carried launch profile', () => {
+    const bare = {
+      id: 'stopped-1',
+      cwd: '/work/app',
+      folderName: 'app',
+      claudeMode: false,
+      antigravityMode: false,
+      codexMode: false,
+      piMode: true,
+      claudeAgentsMode: false,
+      dangerousMode: false
+    }
+    for (const record of [bare, { ...bare, launchProfile: full.launchProfile }]) {
+      expect(decode(SessionRecord, record)).toEqual(Either.right(record))
+      const decoded = Schema.decodeUnknownSync(SessionRecord)(record)
+      expect(Schema.encodeSync(SessionRecord)(decoded)).toEqual(record)
+    }
   })
   it('round-trips the started session’s record, with and without its optional fields', () => {
     const bare = {

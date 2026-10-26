@@ -1,3 +1,4 @@
+import { createReviewRelay, type ReviewAnswer } from './workspace-files-relay'
 import { createFleetClient } from '@clave/client/fleet'
 import type { Backing, Endpoint } from '@clave/client/router'
 import {
@@ -13,11 +14,14 @@ import {
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
 import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/files'
+import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
 import type { Attachment, AttachmentSource } from '../shared/attachments'
+import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
+import type { Workspace } from '../shared/workspace-types'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
-import type { FleetDesktopAPI, FleetSnapshot, FleetRequests } from './fleet-types'
+import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
 
 interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
@@ -80,6 +84,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const requestListeners = new Set<(snapshot: FleetRequests) => void>()
   const statusListeners = new Set<(status: ServerConnectionStatus) => void>()
   const connectionListeners = new Set<(connections: SavedServerConnection[]) => void>()
+  const workspaceListeners = new Set<(update: FleetWorkspaces) => void>()
   let connections: SavedServerConnection[] = []
   const watched = new Map<string, { backing: Backing; off: () => void }>()
   const pendingSnapshots = new Map<string, Promise<FleetSnapshot>>()
@@ -187,6 +192,78 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     }
     void snapshot(serverId).catch(noop)
   }
+  // ── Server workspaces (#241) ──────────────────────────────────────────────
+  // A server keeps its own workspace registry; the desktop wraps each id as a
+  // remote key. What reaches the renderer comes over the server's live push
+  // socket only: the list the server sends each socket at its welcome, then
+  // every change. One socket is one connection to one process, and the
+  // client drops the frames of a socket it replaced, so these lists arrive
+  // in the order that process sent them; an HTTP answer carries no order
+  // against them (a late one may come from a process since restarted) and is
+  // never published. Within one process the revision decides, since the
+  // welcome list and a change can cross; a list from another process means
+  // the server restarted, and is taken.
+  type Stamp = { revision: number; instance: string }
+  const stamps = new Map<string, Stamp>()
+  const scopeWorkspace = (serverId: string, ws: Workspace): Workspace => ({
+    id: resourceKey('workspace', serverId, ws.id),
+    name: ws.name,
+    rootDir: ws.rootDir,
+    profileFile: ws.profileFile,
+    createdAt: ws.createdAt
+  })
+  const publishWorkspaces = (serverId: string, list: readonly Workspace[], stamp: Stamp): void => {
+    const last = stamps.get(serverId)
+    if (last && last.instance === stamp.instance && stamp.revision <= last.revision) return
+    stamps.set(serverId, { revision: stamp.revision, instance: stamp.instance })
+    const workspaces = list.map((ws) => scopeWorkspace(serverId, ws))
+    for (const listener of workspaceListeners) listener({ serverId, workspaces })
+  }
+  const loadWorkspaces = async (serverId: string): Promise<Workspace[]> => {
+    const b = await backing(serverId)
+    const state = await b.api.settings.workspaces.load()
+    return (state.workspaces as Workspace[]).map((ws) => scopeWorkspace(serverId, ws))
+  }
+  // A write replaces the server's whole list, so it is made against the
+  // stamp it read, and the server refuses it as `stale` when another writer
+  // got in between; it is then read and applied again. Its answer goes back
+  // to the caller; the list it made reaches the renderer as the change.
+  const registryChains = new Map<string, Promise<unknown>>()
+  const STALE_RETRIES = 5
+  const editRegistry = <T>(
+    serverId: string,
+    edit: (current: Workspace[]) => { next: Workspace[]; result: T }
+  ): Promise<T> => {
+    const run = (registryChains.get(serverId) ?? Promise.resolve()).catch(noop).then(async () => {
+      const b = await backing(serverId)
+      for (let attempt = 0; ; attempt++) {
+        const state = await b.api.settings.workspaces.load()
+        const { next, result } = edit([...(state.workspaces as Workspace[])])
+        const written = await b.api.settings.workspaces.updateRegistry(next, undefined, {
+          revision: state.revision,
+          instance: state.instance
+        })
+        if (written.ok) return result
+        if (written.reason !== 'stale' || attempt >= STALE_RETRIES)
+          throw new Error('The server refused the workspace list.')
+      }
+    })
+    registryChains.set(serverId, run)
+    return run
+  }
+  // One folder, one spelling: `.` and `..` resolved, `//` collapsed, no
+  // trailing slash, so two spellings of a folder overlap as they should.
+  const normalFolder = (path: string): string => {
+    const parts: string[] = []
+    for (const part of path.split('/')) {
+      if (part === '' || part === '.') continue
+      if (part === '..') parts.pop()
+      else parts.push(part)
+    }
+    return `/${parts.join('/')}`
+  }
+  const insideRoot = (root: string, p: string): boolean =>
+    p === root || p.startsWith(root === '/' ? root : `${root}/`)
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
@@ -197,6 +274,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
+    if (value.event._tag === 'workspaces.state_changed')
+      publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
   })
   let savedRead: Promise<SavedServerConnection[]> | null = null
   let watchingChanges = false
@@ -329,6 +408,131 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       ? localCall()
       : call(await backing(location.serverId), location)
   }
+  // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+  // A repository is named by the key of its folder: `resourceKey('file',
+  // serverId, path)` for a server's, the plain path for the Mac's own. The
+  // owner of the key answers, and every path the server answers (a repo
+  // root, a worktree's source, a discovered repo, a batch's repo) comes back
+  // under that owner's key, so the renderer never holds a server path that
+  // reads like a Mac one: the same folder on two machines is two repositories
+  // to every store keyed by folder.
+  const gitRef = (key: string): { serverId: string; id: string } => parseResourceKey('file', key)
+  const ownedPath = (owner: string, path: string): string => resourceKey('file', owner, path)
+  // A folder that is no repository answers an empty `repoRoot`: nothing to
+  // key, and `resourceKey` refuses an empty id (verifier round 1, finding 2).
+  const ownedStatus = (owner: string, status: WireGitStatus): WireGitStatus => ({
+    ...status,
+    repoRoot: status.repoRoot ? ownedPath(owner, status.repoRoot) : status.repoRoot,
+    ...(status.worktree && {
+      worktree: { ...status.worktree, of: ownedPath(owner, status.worktree.of) }
+    })
+  })
+  const loose = <T>(value: unknown): T => value as T
+  const gitRoute = async <T>(
+    cwd: string,
+    localCall: () => Promise<T>,
+    call: (b: Backing, path: string, owner: string) => Promise<T>
+  ): Promise<T> => {
+    const ref = gitRef(cwd)
+    return ref.serverId === LOCAL_SERVER_ID
+      ? localCall()
+      : call(await backing(ref.serverId), ref.id, ref.serverId)
+  }
+  /** A batch names repositories of ONE owner: a list that spans two servers
+   *  is refused before anything runs anywhere. An empty list is the Mac's. */
+  const gitBatch = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string) => Promise<T>
+  ): Promise<T> => {
+    const refs = keys.map(gitRef)
+    const owner = refs[0]?.serverId ?? LOCAL_SERVER_ID
+    if (refs.some((ref) => ref.serverId !== owner))
+      throw new Error('A git batch cannot span two servers.')
+    return owner === LOCAL_SERVER_ID
+      ? localCall()
+      : call(
+          await backing(owner),
+          refs.map((ref) => ref.id),
+          owner
+        )
+  }
+  // What this Mac watches on each server is ONE complete map per owner (every
+  // panel's subscription with its paths), named by this preload's namespace
+  // (one per Mac window) and replaced as a whole under an increasing
+  // generation: a panel's set changing, a panel closing, a connection
+  // opening all send the current complete map, and the server keeps only the
+  // newest generation it has seen. There are no single watches to order, no
+  // removals to remember, nothing to replay but the map itself
+  // (`lane-c/watch-rule.md`). Two Macs never share a namespace.
+  const gitNamespace = `mac-${Math.random().toString(36).slice(2, 10)}`
+  const gitDesired = new Map<string, Map<string, string[]>>()
+  const gitGeneration = new Map<string, number>()
+  /** Counts an owner's connections: an answer that crossed one came from a
+   *  daemon that may be gone and says nothing about the one now there. */
+  const gitEpoch = new Map<string, number>()
+  const gitMapOf = (owner: string): GitWatchSubscription[] =>
+    [...(gitDesired.get(owner) ?? [])].map(([id, paths]) => ({ id, paths }))
+  const sameMap = (
+    a: ReadonlyArray<GitWatchSubscription>,
+    b: ReadonlyArray<GitWatchSubscription>
+  ): boolean => JSON.stringify(a) === JSON.stringify(b)
+  /** Send `owner` this Mac's current complete map. Answers what the server
+   *  watches per subscription while the map it described is still the
+   *  current one (a later send of the SAME map, a connection's, changes
+   *  nothing about it); null when the map moved on or the owner is
+   *  unreachable (it hears the current map at its next connection). */
+  const gitSync = async (owner: string): Promise<ReadonlyArray<GitWatchSubscription> | null> => {
+    const subscriptions = gitMapOf(owner)
+    const generation = (gitGeneration.get(owner) ?? 0) + 1
+    gitGeneration.set(owner, generation)
+    try {
+      const b = await backing(owner)
+      // The connection this sync rides is the one it was made on; only a
+      // connection opening after it makes the answer cross one.
+      const epoch = gitEpoch.get(owner) ?? 0
+      const answered = await b.api.git.syncWatches(gitNamespace, generation, subscriptions)
+      // An answer that crossed a connection of this owner (the connection
+      // dropped and came back, a daemon restarted) came from a daemon that may
+      // be gone: it says nothing about the one now there, which the
+      // connection's own sync addresses. The panel polls until its next set.
+      if (gitEpoch.get(owner) !== epoch) return null
+      return sameMap(subscriptions, gitMapOf(owner)) ? answered : null
+    } catch {
+      return null
+    }
+  }
+  fleet.onStatus((status) => {
+    // Every connection, the first included, whatever else is in flight: a
+    // server that lost its state gets the map back, one that kept it applies
+    // the same map again. A sync still in flight may be answered by a daemon
+    // that is gone; this one reaches the daemon that is there.
+    if (status.state !== 'connected') return
+    gitEpoch.set(status.serverId, (gitEpoch.get(status.serverId) ?? 0) + 1)
+    if (gitDesired.has(status.serverId)) void gitSync(status.serverId)
+  })
+  // The batches THIS Mac has in flight on a server, by the id it gave each
+  // one: a server publishes a batch's progress to every attached Mac, and two
+  // Macs may run the same op on the same repositories at once, so neither the
+  // op nor the paths tell a batch apart (verifier rounds 1 and 2). The id
+  // travels with the command and comes back on every event of that batch;
+  // only an event of a batch in flight here reaches the renderer.
+  const runningBatches = new Set<string>()
+  let batchSerial = 0
+  const gitBatchOp = async <T>(
+    keys: string[],
+    localCall: () => Promise<T>,
+    call: (b: Backing, paths: string[], owner: string, batchId: string) => Promise<T>
+  ): Promise<T> =>
+    gitBatch(keys, localCall, async (b, paths, owner) => {
+      const batchId = `${gitNamespace}:${++batchSerial}`
+      runningBatches.add(batchId)
+      try {
+        return await call(b, paths, owner, batchId)
+      } finally {
+        runningBatches.delete(batchId)
+      }
+    })
   const scopeEvent = (sessionId: string, event: SessionEvent): SessionEvent => {
     if (event.type !== 'user_message' || !event.attachments) return event
     const ref = parseSessionKey(sessionId)
@@ -341,10 +545,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       })
     }
   }
-  const wireOptions = (
+  const wireOptions = async (
     serverId: string,
     options: Parameters<ElectronAPI['spawnSession']>[1]
-  ): Parameters<ElectronAPI['spawnSession']>[1] => {
+  ): Promise<Parameters<ElectronAPI['spawnSession']>[1]> => {
     if (!options) return options
     if (options.adoptSessionId)
       throw new Error('Remote recovered sessions require explicit Resume.')
@@ -353,7 +557,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (ref.serverId !== serverId) throw new Error('Launch context belongs to another server.')
       return ref.id
     }
-    return {
+    const decoded = {
       ...options,
       workspaceId: options.workspaceId ? decode('workspace', options.workspaceId) : undefined,
       link:
@@ -363,6 +567,23 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
             ? { ...options.link, ownerId: decode('session', options.link.ownerId) }
             : options.link
     }
+    if (options.launchProfileId && !options.launchProfile) {
+      const prefs = await local.launchProfilesList()
+      const profile = [...BUILT_IN_LAUNCH_PROFILES, ...prefs.customProfiles].find(
+        (profile) => profile.id === options.launchProfileId
+      )
+      if (profile)
+        decoded.launchProfile = {
+          id: profile.id,
+          name: profile.name,
+          family: profile.family,
+          command: [...profile.command],
+          additionalArgs: [...profile.additionalArgs],
+          ...(profile.sourceProfileId ? { sourceProfileId: profile.sourceProfileId } : {}),
+          ...(profile.pi ? { pi: profile.pi } : {})
+        }
+    }
+    return decoded
   }
   const eventListener = <T extends ServerEvent['_tag']>(
     tag: T,
@@ -378,6 +599,263 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       a()
       b()
     }
+  // Files and workspace files (#243): the window sends whole tree state,
+  // while each server owns its watches, files, and trust decisions.
+  const namespace = crypto.randomUUID()
+  type Tree = { owner: string; root: string; dirs: string[] }
+  let tree: Tree | null = null
+  let treeGeneration = 0
+  const treeOwners = new Set<string>()
+  const treeChains = new Map<string, Promise<unknown>>()
+  const fsListeners = new Set<Parameters<ElectronAPI['onFsChanged']>[0]>()
+  let renewTree: ReturnType<typeof setInterval> | undefined
+  const sendTree = (owner: string): Promise<void> => {
+    treeOwners.add(owner)
+    const next = (treeChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => {
+        const b = await backing(owner)
+        await b.api.files.syncWatch({
+          namespace,
+          generation: treeGeneration,
+          tree: tree?.owner === owner ? { root: tree.root, dirs: [...tree.dirs] } : null
+        })
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          '[clave] folder watch not sent to the server',
+          error instanceof Error ? error.message : 'The server could not accept the folder watch.'
+        )
+      })
+    treeChains.set(owner, next)
+    return next
+  }
+  const changeTree = (next: Tree | null): Promise<void> => {
+    const previous = tree
+    tree = next
+    treeGeneration += 1
+    if (renewTree !== undefined) clearInterval(renewTree)
+    renewTree = undefined
+    const tasks: Promise<unknown>[] = []
+    if (previous && previous.owner !== LOCAL_SERVER_ID && previous.owner !== next?.owner)
+      tasks.push(sendTree(previous.owner))
+    if (next?.owner === LOCAL_SERVER_ID) tasks.push(local.watchDir(next.root, next.dirs))
+    else {
+      if (previous?.owner === LOCAL_SERVER_ID) tasks.push(local.unwatchDir())
+      if (next) {
+        tasks.push(sendTree(next.owner))
+        renewTree = setInterval(() => {
+          if (tree && tree.owner !== LOCAL_SERVER_ID) void sendTree(tree.owner).catch(noop)
+        }, 5 * 60_000)
+        renewTree.unref?.()
+      }
+    }
+    return Promise.all(tasks).then(() => undefined)
+  }
+  const claveWatches = new Map<string, Set<string>>()
+  const claveChains = new Map<string, Promise<unknown>>()
+  const claveQueue = (owner: string, run: (b: Backing) => Promise<void>): Promise<void> => {
+    const next = (claveChains.get(owner) ?? Promise.resolve())
+      .catch(noop)
+      .then(async () => run(await backing(owner)))
+    claveChains.set(owner, next)
+    return next
+  }
+  const relays = new Map<string, ReturnType<typeof createReviewRelay>>()
+  const reviewRelay = (owner: string): ReturnType<typeof createReviewRelay> => {
+    let relay = relays.get(owner)
+    if (!relay) {
+      relay = createReviewRelay({
+        showDialog: (review) =>
+          ports.invoke('clave:review-dialog', {
+            ...review,
+            server: connections.find((c) => c.id === owner)?.name ?? owner
+          }) as Promise<ReviewAnswer>,
+        answer: async (reviewId, answer) =>
+          (await backing(owner)).api.workspaceFiles.answerReview(reviewId, answer)
+      })
+      relays.set(owner, relay)
+    }
+    return relay
+  }
+  const pushOpenOrFail = (b: Backing): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('The server’s push channel did not open in time.')),
+        15_000
+      )
+      b.push.whenOpen().then(
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
+  fleet.onEvent(({ serverId, value }) => {
+    relays.get(serverId)?.onEvent(value)
+    const event = value.event
+    if (
+      event._tag === 'files.dirs_changed' &&
+      event.namespace === namespace &&
+      tree?.owner === serverId &&
+      tree.root === event.root
+    )
+      for (const cb of fsListeners) cb(resourceKey('file', serverId, event.root), [...event.dirs])
+  })
+  fleet.onStatus((status) => {
+    if (status.state !== 'connected') return
+    const owner = status.serverId
+    if (treeOwners.has(owner)) {
+      void sendTree(owner).catch(noop)
+      if (tree?.owner === owner)
+        for (const cb of fsListeners) cb(resourceKey('file', owner, tree.root), ['.', ...tree.dirs])
+    }
+    for (const path of claveWatches.get(owner) ?? [])
+      void claveQueue(owner, (b) => b.api.workspaceFiles.watch(path, `fleet:${namespace}`)).catch(
+        noop
+      )
+  })
+  const claveLocation = (
+    path: string,
+    root?: string
+  ): { owner: string; path: string; root?: string } => {
+    const file = parseResourceKey('file', path)
+    const base = root === undefined ? undefined : parseResourceKey('file', root)
+    if (base && file.serverId !== base.serverId)
+      throw new Error('Workspace file and root have different server owners.')
+    return { owner: file.serverId, path: file.id, ...(base ? { root: base.id } : {}) }
+  }
+  const workspaceFiles: Pick<
+    ElectronAPI,
+    | 'readClaveFile'
+    | 'writeClaveFile'
+    | 'claveFileExists'
+    | 'discoverClaveFiles'
+    | 'discoverClaveFilesRecursive'
+    | 'readAutoDiscoverConfig'
+    | 'watchClaveFile'
+    | 'unwatchClaveFile'
+    | 'onClaveFileChanged'
+    | 'trustWorkspaceRoot'
+    | 'untrustWorkspaceRoot'
+    | 'listTrustedRoots'
+  > = {
+    readClaveFile: async (path, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.readClaveFile(path, root)
+      const relay = reviewRelay(ref.owner)
+      const b = await backing(ref.owner)
+      await pushOpenOrFail(b)
+      const read = relay.begin()
+      try {
+        return (await b.api.workspaceFiles.read(ref.path, {
+          rootDir: ref.root,
+          requestId: read.requestId
+        })) as Awaited<ReturnType<ElectronAPI['readClaveFile']>>
+      } finally {
+        read.done()
+      }
+    },
+    writeClaveFile: async (path, data, root) => {
+      const ref = claveLocation(path, root)
+      if (ref.owner === LOCAL_SERVER_ID) return local.writeClaveFile(path, data, root)
+      return (await backing(ref.owner)).api.workspaceFiles.write(ref.path, data, ref.root)
+    },
+    claveFileExists: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.claveFileExists(path)
+        : (await backing(ref.owner)).api.workspaceFiles.exists(ref.path)
+    },
+    discoverClaveFiles: async (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFiles(path)
+      return (await (await backing(ref.owner)).api.workspaceFiles.discover(ref.path)).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: f.rootDir === null ? null : resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    discoverClaveFilesRecursive: async (path, config) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.discoverClaveFilesRecursive(path, config)
+      return (
+        await (await backing(ref.owner)).api.workspaceFiles.discoverRecursive(ref.path, config)
+      ).map((f) => ({
+        ...f,
+        path: resourceKey('file', ref.owner, f.path),
+        rootDir: resourceKey('file', ref.owner, f.rootDir)
+      }))
+    },
+    readAutoDiscoverConfig: async (path) => {
+      const ref = claveLocation(path)
+      return (
+        ref.owner === LOCAL_SERVER_ID
+          ? await local.readAutoDiscoverConfig(path)
+          : await (await backing(ref.owner)).api.workspaceFiles.autoDiscover(ref.path)
+      ) as Awaited<ReturnType<ElectronAPI['readAutoDiscoverConfig']>>
+    },
+    watchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.watchClaveFile(path)
+      let paths = claveWatches.get(ref.owner)
+      if (!paths) claveWatches.set(ref.owner, (paths = new Set()))
+      paths.add(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.watch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    unwatchClaveFile: (path) => {
+      const ref = claveLocation(path)
+      if (ref.owner === LOCAL_SERVER_ID) return local.unwatchClaveFile(path)
+      claveWatches.get(ref.owner)?.delete(ref.path)
+      return claveQueue(ref.owner, (b) =>
+        b.api.workspaceFiles.unwatch(ref.path, `fleet:${namespace}`)
+      )
+    },
+    onClaveFileChanged: (cb) =>
+      both(
+        local.onClaveFileChanged(cb),
+        eventListener('workspace_files.changed', (event, owner) =>
+          cb(resourceKey('file', owner, event.path))
+        )
+      ),
+    trustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.trustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.trustRoot(ref.path)
+    },
+    untrustWorkspaceRoot: async (path) => {
+      const ref = claveLocation(path)
+      return ref.owner === LOCAL_SERVER_ID
+        ? local.untrustWorkspaceRoot(path)
+        : (await backing(ref.owner)).api.workspaceFiles.untrustRoot(ref.path)
+    },
+    listTrustedRoots: async () => {
+      const roots = await local.listTrustedRoots()
+      const lists = await Promise.all(
+        fleet
+          .list()
+          .filter((s) => s.state === 'connected')
+          .map(async ({ serverId }) => {
+            try {
+              return (await (await backing(serverId)).api.workspaceFiles.trustedRoots()).map((p) =>
+                resourceKey('file', serverId, p)
+              )
+            } catch {
+              return []
+            }
+          })
+      )
+      return [...roots, ...lists.flat()]
+    }
+  }
+
   const shared: FleetDesktopAPI = {
     fleetList: sync,
     fleetSave: async (input) => {
@@ -417,7 +895,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     fleetStart: async (serverId, cwd, options) => {
       if (serverId === LOCAL_SERVER_ID) return local.spawnSession(cwd, options)
       const b = await backing(serverId)
-      const info = await b.api.sessions.start({ cwd, options: wireOptions(serverId, options) })
+      const info = await b.api.sessions.start({
+        cwd,
+        options: await wireOptions(serverId, options)
+      })
       refresh(serverId)
       return { ...info, id: key(serverId, info.id) } as SessionInfo
     },
@@ -442,6 +923,42 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         ...wireLayout(serverId, layout)
       })
       return ownedLayout(serverId, result)
+    },
+    fleetWorkspaces: loadWorkspaces,
+    fleetAddWorkspace: async (serverId, input) => {
+      const typed = input.rootDir.trim()
+      if (!typed.startsWith('/')) throw new Error('Choose an absolute folder on the server.')
+      const rootDir = normalFolder(typed)
+      const b = await backing(serverId)
+      const info = await b.api.files.stat({ root: '/', path: rootDir })
+      if (info.type !== 'directory') throw new Error('That path on the server is not a folder.')
+      return editRegistry(serverId, (current) => {
+        if (
+          current.some((ws) => {
+            const root = normalFolder(ws.rootDir)
+            return insideRoot(root, rootDir) || insideRoot(rootDir, root)
+          })
+        )
+          throw new Error('That folder overlaps a workspace already on this server.')
+        const base = rootDir.split('/').pop()?.replace(/^\.+/, '') ?? ''
+        const ws: Workspace = {
+          id: crypto.randomUUID(),
+          name:
+            input.name?.trim() || (base ? base.charAt(0).toUpperCase() + base.slice(1) : rootDir),
+          rootDir,
+          profileFile: input.profileFile ?? null,
+          createdAt: Date.now()
+        }
+        return { next: [...current, ws], result: scopeWorkspace(serverId, ws) }
+      })
+    },
+    fleetRemoveWorkspace: async (workspaceId) => {
+      const ref = parseResourceKey('workspace', workspaceId)
+      if (ref.serverId === LOCAL_SERVER_ID) throw new Error('Not a server workspace.')
+      await editRegistry(ref.serverId, (current) => ({
+        next: current.filter((ws) => ws.id !== ref.id),
+        result: undefined
+      }))
     },
     fleetResolve: async (requestKey, response) => {
       const ref = parseResourceKey('request', requestKey)
@@ -498,6 +1015,12 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       connectionListeners.add(callback)
       return () => {
         connectionListeners.delete(callback)
+      }
+    },
+    onFleetWorkspaces: (callback) => {
+      workspaceListeners.add(callback)
+      return () => {
+        workspaceListeners.delete(callback)
       }
     }
   }
@@ -831,24 +1354,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const ref = parseResourceKey('file', root)
       if (ref.serverId === LOCAL_SERVER_ID) return local.listFiles(root)
       const b = await backing(ref.serverId)
-      const queue = ['.']
-      const files: string[] = []
-      let index = 0
-      let scanned = 0
-      let truncated = false
-      while (index < queue.length && index < 100 && scanned < 5000) {
-        const listing = await b.api.files.list({ root: ref.id, path: queue[index++] })
-        truncated ||= listing.truncated
-        for (const entry of listing.entries) {
-          if (++scanned > 5000) {
-            truncated = true
-            break
-          }
-          if (entry.type === 'file') files.push(entry.path)
-          else if (!['.git', 'node_modules'].includes(entry.name)) queue.push(entry.path)
-        }
-      }
-      return { files, truncated: truncated || index < queue.length }
+      const result = await b.api.files.listAll({ root: ref.id })
+      return { files: [...result.files], truncated: result.truncated }
     },
     pluginsViewLease: (pluginId, viewId, id) =>
       remote(id)
@@ -865,10 +1372,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         root,
         path,
         () => local.readDir(root, path),
-        async (b, location) =>
-          [...(await b.api.files.list(location)).entries] as Awaited<
-            ReturnType<ElectronAPI['readDir']>
-          >
+        async (b, location) => {
+          const { FILE_TREE_IGNORED } = await import('@clave/contract/files')
+          const ignored = new Set<string>(FILE_TREE_IGNORED)
+          return [...(await b.api.files.list(location)).entries].filter(
+            (e) => !ignored.has(e.name)
+          ) as Awaited<ReturnType<ElectronAPI['readDir']>>
+        }
       ),
     readFile: (root, path) =>
       fileRoute(
@@ -905,9 +1415,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         () => local.createDirectory(root, path),
         (b, location) => b.api.files.createDirectory(location)
       ),
-    watchDir: async (root, dirs) => {
-      if (parseResourceKey('file', root).serverId === LOCAL_SERVER_ID)
-        await local.watchDir(root, dirs)
+    ...workspaceFiles,
+    watchDir: (root, dirs) => {
+      const ref = parseResourceKey('file', root)
+      return changeTree({ owner: ref.serverId, root: ref.id, dirs: [...(dirs ?? [])] })
+    },
+    unwatchDir: () => changeTree(null),
+    onFsChanged: (cb) => {
+      fsListeners.add(cb)
+      return both(local.onFsChanged(cb), () => {
+        fsListeners.delete(cb)
+      })
     },
     showItemInFolder: async (path) => {
       if (parseResourceKey('file', path).serverId !== LOCAL_SERVER_ID)
@@ -915,10 +1433,285 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       await local.showItemInFolder(path)
     },
     existsSync: (root, path) => {
-      if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID)
-        throw new Error('Remote filesystem checks are asynchronous.')
+      if (parseResourceKey('file', root).serverId !== LOCAL_SERVER_ID) return false
       return local.existsSync(root, path)
-    }
+    },
+    // ── Wave wcs1023, lane C: the git panel on a server's checkout (#242) ──
+    gitCheckIgnored: (cwd, paths) =>
+      gitRoute(
+        cwd,
+        () => local.gitCheckIgnored(cwd, paths),
+        async (b, path) => [...(await b.api.git.checkIgnored(path, paths))]
+      ),
+    getGitStatus: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.getGitStatus(cwd),
+        async (b, path, owner) => loose(ownedStatus(owner, await b.api.git.status(path)))
+      ),
+    getGitStatusBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.getGitStatusBatch(keys),
+        async (b, paths, owner) =>
+          (await b.api.git.statusBatch(paths)).map((entry) => ({
+            path: ownedPath(owner, entry.path),
+            status: loose<Awaited<ReturnType<ElectronAPI['getGitStatus']>>>(
+              ownedStatus(owner, entry.status)
+            )
+          }))
+      ),
+    discoverGitRepos: (cwd, force) =>
+      gitRoute(
+        cwd,
+        () => local.discoverGitRepos(cwd, force),
+        async (b, path, owner) => {
+          const found = await b.api.git.discover(path, force)
+          return {
+            repos: found.repos.map((repo) => ({ ...repo, path: ownedPath(owner, repo.path) })),
+            truncated: found.truncated
+          }
+        }
+      ),
+    gitFetch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitFetch(cwd),
+        (b, path) => b.api.git.fetch(path)
+      ),
+    gitFetchBatch: (keys) =>
+      gitBatch(
+        keys,
+        () => local.gitFetchBatch(keys),
+        (b, paths) => b.api.git.fetchBatch(paths)
+      ),
+    gitRefreshRemotes: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitRefreshRemotes(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.refreshRemotes(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    // A watch set may name the Mac's repos and several servers' at once: each
+    // owner gets its own share, and an owner that is not connected simply
+    // watches nothing, which the panel reads as "poll these yourself".
+    gitWatchRepos: async (subscriberId, keys) => {
+      const byOwner = new Map<string, string[]>()
+      for (const key of keys) {
+        const ref = gitRef(key)
+        const list = byOwner.get(ref.serverId) ?? []
+        list.push(ref.id)
+        byOwner.set(ref.serverId, list)
+      }
+      // The owners whose map this subscriber changes: where it now has paths,
+      // and where it had some before (its entry leaves that owner's map).
+      // EVERY map is edited now, before anything is awaited: a watch or an
+      // unwatch that runs meanwhile builds on this state, and every sync sent
+      // reads the map as it is then (verifier round 6).
+      const remoteOwners: string[] = []
+      for (const owner of new Set([
+        ...byOwner.keys(),
+        ...[...gitDesired].filter(([, map]) => map.has(subscriberId)).map(([owner]) => owner)
+      ])) {
+        if (owner === LOCAL_SERVER_ID) continue
+        const paths = byOwner.get(owner) ?? []
+        const map = gitDesired.get(owner) ?? new Map<string, string[]>()
+        if (paths.length > 0) map.set(subscriberId, paths)
+        else map.delete(subscriberId)
+        gitDesired.set(owner, map)
+        remoteOwners.push(owner)
+      }
+      const watched: string[] = []
+      const remote = new Map<string, ReadonlyArray<string>>()
+      await Promise.all([
+        // The Mac's own watcher takes the Mac's share as before the lane, the
+        // complete set each time, empty when the subscriber left the Mac.
+        local
+          .gitWatchRepos(subscriberId, byOwner.get(LOCAL_SERVER_ID) ?? [])
+          .then((ok) => watched.push(...ok)),
+        ...remoteOwners.map((owner) =>
+          gitSync(owner).then((answered) => {
+            const mine = answered?.find((s) => s.id === subscriberId)
+            if (mine) remote.set(owner, mine.paths)
+          })
+        )
+      ])
+      // An owner's answer is reported only if this call's entry there is still
+      // the current one when the whole call returns: a newer call for the same
+      // panel may have moved the entry while another owner was still answering.
+      for (const [owner, paths] of remote) {
+        const now = gitDesired.get(owner)?.get(subscriberId) ?? []
+        const asked = byOwner.get(owner) ?? []
+        if (JSON.stringify(now) !== JSON.stringify(asked)) continue
+        watched.push(...paths.map((path) => ownedPath(owner, path)))
+      }
+      return watched
+    },
+    gitUnwatchRepos: async (subscriberId) => {
+      // The maps first, synchronously (see gitWatchRepos), then the Mac and
+      // every owner that held the subscriber.
+      const owners: string[] = []
+      for (const [owner, map] of gitDesired) if (map.delete(subscriberId)) owners.push(owner)
+      await Promise.all([
+        local.gitUnwatchRepos(subscriberId),
+        ...owners.map((owner) => gitSync(owner))
+      ])
+    },
+    onGitReposChanged: (cb) =>
+      both(
+        local.onGitReposChanged(cb),
+        eventListener('git.repos_changed', (event, owner) =>
+          cb(event.repos.map((repo) => ownedPath(owner, repo)))
+        )
+      ),
+    gitStage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitStage(cwd, files),
+        (b, path) => b.api.git.stage(path, files)
+      ),
+    gitUnstage: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitUnstage(cwd, files),
+        (b, path) => b.api.git.unstage(path, files)
+      ),
+    gitDiscard: (cwd, files) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiscard(cwd, files),
+        (b, path) => b.api.git.discard(path, files)
+      ),
+    gitCommit: (cwd, message) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommit(cwd, message),
+        (b, path) => b.api.git.commit(path, message)
+      ),
+    gitPush: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPush(cwd),
+        (b, path) => b.api.git.push(path)
+      ),
+    gitPublishBranch: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitPublishBranch(cwd),
+        (b, path) => b.api.git.publishBranch(path)
+      ),
+    gitPull: (cwd, strategy) =>
+      gitRoute(
+        cwd,
+        () => local.gitPull(cwd, strategy),
+        (b, path) => b.api.git.pull(path, strategy)
+      ),
+    gitDiff: (cwd, filePath, staged, isUntracked) =>
+      gitRoute(
+        cwd,
+        () => local.gitDiff(cwd, filePath, staged, isUntracked),
+        (b, path) => b.api.git.diff(path, filePath, staged, isUntracked)
+      ),
+    gitLog: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitLog(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.log(path, maxCount))
+      ),
+    gitOutgoingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitOutgoingCommits(cwd),
+        async (b, path) => loose(await b.api.git.outgoing(path))
+      ),
+    gitIncomingCommits: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitIncomingCommits(cwd),
+        async (b, path) => loose(await b.api.git.incoming(path))
+      ),
+    gitRangeFiles: (cwd, direction) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeFiles(cwd, direction),
+        async (b, path) => loose(await b.api.git.rangeFiles(path, direction))
+      ),
+    gitRangeDiff: (cwd, direction, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitRangeDiff(cwd, direction, filePath),
+        (b, path) => b.api.git.rangeDiff(path, direction, filePath)
+      ),
+    gitCommitFiles: (cwd, hash) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitFiles(cwd, hash),
+        async (b, path) => loose(await b.api.git.commitFiles(path, hash))
+      ),
+    gitCommitDiff: (cwd, hash, filePath) =>
+      gitRoute(
+        cwd,
+        () => local.gitCommitDiff(cwd, hash, filePath),
+        (b, path) => b.api.git.commitDiff(path, hash, filePath)
+      ),
+    gitJourney: (cwd, maxCount) =>
+      gitRoute(
+        cwd,
+        () => local.gitJourney(cwd, maxCount),
+        async (b, path) => loose(await b.api.git.journey(path, maxCount))
+      ),
+    // The message is written by the server's own `claude`, on its login.
+    gitGenerateCommitMessage: (cwd) =>
+      gitRoute(
+        cwd,
+        () => local.gitGenerateCommitMessage(cwd),
+        (b, path) => b.api.git.generateCommitMessage(path)
+      ),
+    gitSummarizePush: (cwd, commitMessages, diffStats) =>
+      gitRoute(
+        cwd,
+        () => local.gitSummarizePush(cwd, commitMessages, diffStats),
+        async (b, path) => ({ ...(await b.api.git.summarizePush(path, commitMessages, diffStats)) })
+      ),
+    gitMagicSync: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicSync(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicSync(paths, batchId)).map((r) => ({
+            ...r,
+            actions: [...r.actions],
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    gitMagicPull: (keys) =>
+      gitBatchOp(
+        keys,
+        () => local.gitMagicPull(keys),
+        async (b, paths, owner, batchId) =>
+          (await b.api.git.magicPull(paths, batchId)).map((r) => ({
+            ...r,
+            repoPath: ownedPath(owner, r.repoPath)
+          }))
+      ),
+    onGitBatchProgress: (cb) =>
+      both(
+        local.onGitBatchProgress(cb),
+        eventListener('git.batch_progress', (event, owner) => {
+          if (event.batchId === undefined || !runningBatches.has(event.batchId)) return
+          cb({
+            op: event.op,
+            phase: event.phase,
+            repoPath: ownedPath(owner, event.repoPath),
+            repoName: event.repoName,
+            done: event.done,
+            total: event.total
+          })
+        })
+      )
   }
   const prepare = api.sessionsFiles.prepare
   api.sessionsFiles.prepare = async (id, source) => {

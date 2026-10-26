@@ -171,9 +171,9 @@ export async function run(t) {
     const sizesBefore = await groupsByName(win)
     const orderBefore = await topLevel(win)
     t.equal(
-      'the Servers control remains outside the session/group sequence',
+      'the sidebar has no Servers control any more',
       await win.getByLabel('Manage Clave servers', { exact: true }).count(),
-      1
+      0
     )
     await win.click('.launcher-row button')
     await win.waitForTimeout(6000)

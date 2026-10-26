@@ -8,6 +8,7 @@
 import * as path from 'path'
 
 export interface ReviewDisclosure {
+  readonly server?: string
   readonly path: string
   readonly folder: string
   readonly autoCommands: ReadonlyArray<string>
@@ -47,11 +48,11 @@ export function reviewDialogText(review: ReviewDisclosure): ReviewDialogText {
   }
   return {
     title: 'Review workspace file',
-    message: `“${path.basename(review.path)}” wants to run content automatically.`,
+    message: `“${path.basename(review.path)}”${review.server ? ` on “${review.server}”` : ''} wants to run content automatically.`,
     detail:
       detailLines.join('\n') +
       '\n\nOnly trust this file if you recognise and understand what it would run.',
     buttons: ['Open safely', 'Trust and run', 'Cancel'],
-    checkboxLabel: `Trust all workspace files in “${path.basename(review.folder)}”`
+    checkboxLabel: `Trust all workspace files in “${path.basename(review.folder)}”${review.server ? ` on “${review.server}”` : ''}`
   }
 }

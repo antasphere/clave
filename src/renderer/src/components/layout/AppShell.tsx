@@ -21,6 +21,8 @@ import { loadUiFont } from '../../lib/ui-font'
 import { useAgentStore } from '../../store/agent-store'
 import { Sidebar } from './Sidebar'
 import { ServerNotice } from './ServerNotice'
+import { LaunchNotice } from './LaunchNotice'
+import { ServerFolderPickerHost } from '../fleet/ServerFolderPickerHost'
 import { useTrafficLights } from '../../hooks/use-traffic-lights'
 import { launchSession } from '../../lib/launch-session'
 import { loadLaunchPrefs } from '../../store/launch-prefs'
@@ -49,7 +51,7 @@ import { GitJourneyPanel } from '../git/GitJourneyPanel'
 import { Bars3BottomLeftIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { cn } from '@clave/ui/components'
 import { usePinnedStore, initClaveFileWatchers } from '../../store/pinned-store'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { allWorkspaces, findWorkspace, useWorkspaceStore } from '../../store/workspace-store'
 import {
   bootWorkspaces,
   refreshActiveWorkspacePins,
@@ -146,7 +148,7 @@ export function AppShell(): React.JSX.Element {
   // The window's title names its workspace — what tells windows apart in
   // Mission Control and the Window menu (the title bar itself is hidden).
   const activeWorkspaceName = useWorkspaceStore(
-    (s) => s.workspaces.find((w) => w.id === s.activeWorkspaceId)?.name ?? null
+    (s) => findWorkspace(s, s.activeWorkspaceId)?.name ?? null
   )
   useEffect(() => {
     document.title = activeWorkspaceName ? `${activeWorkspaceName} — Clave` : 'Clave'
@@ -318,7 +320,7 @@ export function AppShell(): React.JSX.Element {
         // server runs, and persistence wrote that back before the tabs came.
         const keys: (string | null)[] = [
           null,
-          ...useWorkspaceStore.getState().workspaces.map((w) => w.id)
+          ...allWorkspaces(useWorkspaceStore.getState()).map((w) => w.id)
         ]
         // A tab placed by the restore survives unless its spawn has already
         // failed and taken it out (round 1 of the verifier, F3): a failure
@@ -995,6 +997,8 @@ export function AppShell(): React.JSX.Element {
             its box, so coming back also resizes no terminal and no PTY. */}
         <div className="relative flex-1 min-h-0 flex">
           <ServerNotice />
+          <LaunchNotice />
+          <ServerFolderPickerHost />
           {/* Terminal grid — each terminal is its own floating card */}
           <div
             className="flex-1 flex min-h-0"

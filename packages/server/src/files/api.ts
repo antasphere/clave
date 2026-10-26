@@ -2,6 +2,8 @@ import * as HttpApiBuilder from '@effect/platform/HttpApiBuilder'
 import { HttpCqrs } from '@structure-ai/http'
 import { ClaveApi } from '@clave/contract/api'
 import {
+  FilesSyncWatch,
+  FilesListAll,
   CreateDirectory,
   CreateFile,
   DownloadFile,
@@ -16,6 +18,8 @@ import {
 
 export const FilesLive = HttpApiBuilder.group(ClaveApi, 'files', (handlers) =>
   handlers
+    .handle('syncWatch', HttpCqrs.command(FilesSyncWatch))
+    .handle('listAll', HttpCqrs.query(FilesListAll))
     .handle('list', HttpCqrs.query(ListFiles))
     .handle('read', HttpCqrs.query(ReadFile))
     .handle('stat', HttpCqrs.query(StatFile))

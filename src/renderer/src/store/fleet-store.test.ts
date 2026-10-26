@@ -96,12 +96,9 @@ describe('desktop fleet adoption and shared-layout boundaries', () => {
     })
     expect(state.focusedSessionId).toBe('same')
     expect(spawn).not.toHaveBeenCalled()
-    expect(
-      store.inActiveWorkspace(
-        { workspaceId: resourceKey('workspace', a.serverId, 'server-ws') },
-        'mac-workspace'
-      )
-    ).toBe(true)
+    const serverWorkspace = resourceKey('workspace', a.serverId, 'server-ws')
+    expect(store.inActiveWorkspace({ workspaceId: serverWorkspace }, 'mac-workspace')).toBe(false)
+    expect(store.inActiveWorkspace({ workspaceId: serverWorkspace }, serverWorkspace)).toBe(true)
   })
   it('preserves client collapse and selection when another client renames the shared group', () => {
     const a = snapshot(`a-${serial}`)
@@ -172,7 +169,7 @@ it('retains a remote group when its owning server refuses the close', async () =
   }
 })
 
-it('does not assign a directly added remote tab to the active Mac workspace', async () => {
+it('does not bind a directly added remote tab to a Mac workspace', async () => {
   const { useWorkspaceStore } = await import('./workspace-store')
   const previous = useWorkspaceStore.getState().activeWorkspaceId
   useWorkspaceStore.setState({ activeWorkspaceId: 'mac-home' })
@@ -182,7 +179,11 @@ it('does not assign a directly added remote tab to the active Mac workspace', as
       .getState()
       .addSession({ id, name: 'Remote', cwd: '/server/repo', alive: true } as Session)
     const tab = store.useSessionStore.getState().sessions.find((s) => s.id === id)!
-    expect(store.inActiveWorkspace(tab, 'another-mac-workspace')).toBe(true)
+    expect(tab.workspaceId).toBeUndefined()
+    expect(store.inActiveWorkspace(tab, 'another-mac-workspace')).toBe(false)
+    expect(
+      store.inActiveWorkspace(tab, resourceKey('workspace', `direct-${serial}`, 'any-ws'))
+    ).toBe(true)
   } finally {
     useWorkspaceStore.setState({ activeWorkspaceId: previous })
   }
@@ -251,4 +252,42 @@ it('does not discard a remote tab that appears while reset closes earlier tabs',
   } finally {
     bridge.killSession = original
   }
+})
+
+describe('inActiveWorkspace scopes remote tabs to their server workspace', () => {
+  const serverWs = (server: string, id: string): string => resourceKey('workspace', server, id)
+  const remoteTab = (
+    server: string,
+    workspaceId?: string
+  ): { id: string; workspaceId?: string } => ({
+    id: resourceKey('session', server, 'tab'),
+    workspaceId
+  })
+
+  it('shows everything when no workspace is active', () => {
+    expect(store.inActiveWorkspace(remoteTab('srv', serverWs('srv', 'ws')), null)).toBe(true)
+    expect(store.inActiveWorkspace({ id: 'local', workspaceId: 'mac-ws' }, null)).toBe(true)
+  })
+
+  it('matches a stamped item to its own workspace only, local or server', () => {
+    const ws = serverWs('srv', 'ws')
+    expect(store.inActiveWorkspace(remoteTab('srv', ws), ws)).toBe(true)
+    expect(store.inActiveWorkspace(remoteTab('srv', ws), serverWs('srv', 'other'))).toBe(false)
+    expect(store.inActiveWorkspace(remoteTab('srv', ws), 'mac-ws')).toBe(false)
+    expect(store.inActiveWorkspace({ id: 'local', workspaceId: 'mac-ws' }, 'mac-ws')).toBe(true)
+    expect(store.inActiveWorkspace({ id: 'local', workspaceId: 'mac-ws' }, ws)).toBe(false)
+  })
+
+  it('shows an unstamped remote tab in any workspace of its own server and nowhere else', () => {
+    expect(store.inActiveWorkspace(remoteTab('srv'), serverWs('srv', 'ws'))).toBe(true)
+    expect(store.inActiveWorkspace(remoteTab('srv'), serverWs('other-srv', 'ws'))).toBe(false)
+    expect(store.inActiveWorkspace(remoteTab('srv'), 'mac-ws')).toBe(false)
+  })
+
+  it('keeps the safety net for an unstamped local item', () => {
+    expect(store.inActiveWorkspace({ id: 'local' }, 'mac-ws')).toBe(true)
+    expect(store.inActiveWorkspace({ id: 'local', workspaceId: null }, serverWs('srv', 'ws'))).toBe(
+      true
+    )
+  })
 })

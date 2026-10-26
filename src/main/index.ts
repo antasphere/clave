@@ -48,7 +48,7 @@ import {
 } from './sidebar-layouts'
 import { serverClient, preloadServerClientModules } from './mcp/server-client'
 import { sessionWorkspaceResolver } from './session-records-index'
-import type { PersistedWindow } from '../shared/workspace-types'
+import { isServerWorkspaceId, type PersistedWindow } from '../shared/workspace-types'
 import {
   initMissionControl,
   cleanupMissionControl,
@@ -427,7 +427,7 @@ function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | nul
   const workspaceId =
     resolvedWorkspaceId !== undefined
       ? resolvedWorkspaceId
-      : isServerExternal()
+      : isServerExternal() || isServerWorkspaceId(entry.workspaceId)
         ? entry.workspaceId
         : entry.workspaceId && workspaceManager.isRegistered(entry.workspaceId)
           ? entry.workspaceId
@@ -547,11 +547,14 @@ function createWindow(entry: PersistedWindow, resolvedWorkspaceId?: string | nul
 /** A new window, the app once more, on `workspaceId` (null = the
  *  no-workspace state). Persisted at once so it comes back at the next boot. */
 export async function openWindow(workspaceId: string | null): Promise<{ windowId: number }> {
-  const state = await windowWorkspaces.load()
-  if (workspaceId !== null && !state.workspaces.some((w) => w.id === workspaceId)) {
-    throw new Error(`No registered workspace with id "${workspaceId}"`)
+  // A server workspace (#241) is held by its server, not this registry.
+  if (!isServerWorkspaceId(workspaceId)) {
+    const state = await windowWorkspaces.load()
+    if (workspaceId !== null && !state.workspaces.some((w) => w.id === workspaceId)) {
+      throw new Error(`No registered workspace with id "${workspaceId}"`)
+    }
+    await windowWorkspaces.setLastActive(workspaceId)
   }
-  await windowWorkspaces.setLastActive(workspaceId)
   const key = windowState.mintKey()
   // The runtime command validated against the authoritative registry. The
   // boot fallback in createWindow must not replace it with a local default.

@@ -183,3 +183,42 @@ describe('restored window identity', () => {
     expect(mocks.setWindowWorkspace).not.toHaveBeenCalled()
   })
 })
+
+describe('a workspace on a connected Clave server', () => {
+  const fleetWorkspace = 'clave-owner:workspace:srv-1:ws-1'
+
+  it.each([true, false])(
+    'is shown without the registry check or a last-active write (attached %s)',
+    async (attached) => {
+      mocks.attached = attached
+      expect(await invoke('window:set-workspace', fleetWorkspace)).toEqual({ ok: true })
+      expect(mocks.setWindowWorkspace).toHaveBeenCalledWith(1, fleetWorkspace)
+      expect(mocks.upsert).toHaveBeenCalledWith('window-one', { workspaceId: fleetWorkspace })
+      expect(mocks.localLoad).not.toHaveBeenCalled()
+      expect(mocks.remoteLoad).not.toHaveBeenCalled()
+      expect(mocks.localLastActive).not.toHaveBeenCalled()
+      expect(mocks.remoteLastActive).not.toHaveBeenCalled()
+    }
+  )
+
+  it('opens in a new window without the registry check', async () => {
+    mocks.attached = false
+    expect(await invoke('window:open', fleetWorkspace)).toEqual({ windowId: 2 })
+    expect(mocks.openWindow).toHaveBeenCalledWith(fleetWorkspace)
+    expect(mocks.localLoad).not.toHaveBeenCalled()
+  })
+
+  it('stays the saved workspace of a restored window', async () => {
+    mocks.getWorkspaceForWindow.mockReturnValue(fleetWorkspace)
+    expect(await invoke('window:identity')).toEqual({ workspaceId: fleetWorkspace })
+    expect(mocks.setWindowWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('still refuses an unknown local workspace', async () => {
+    mocks.attached = false
+    expect(await invoke('window:set-workspace', 'clave-owner:group:srv-1:g')).toEqual({
+      ok: false,
+      reason: 'unknown-workspace'
+    })
+  })
+})

@@ -5,6 +5,7 @@ import type {
 } from '@clave/contract/fleet'
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar/layout'
 import type { Session } from '../shared/session-model'
+import type { Workspace } from '../shared/workspace-types'
 import type { SessionRecord, SessionInfo, LaunchProfilePreferences } from './index.d'
 
 export interface FleetSnapshot {
@@ -17,6 +18,11 @@ export interface FleetRequests {
   serverId: string
   revision: number
   pending: FleetPendingRequest[]
+}
+/** A server's own workspace registry, each id a remote key (#241). */
+export interface FleetWorkspaces {
+  serverId: string
+  workspaces: Workspace[]
 }
 export interface FleetDesktopAPI {
   fleetList(): Promise<SavedServerConnection[]>
@@ -40,6 +46,16 @@ export interface FleetDesktopAPI {
     layout: WindowLayout,
     baseRevision: number
   ): Promise<LayoutSnapshot>
+  /** The server's workspaces, read now, for the caller alone: the list the
+   *  renderer shows comes from `onFleetWorkspaces`. */
+  fleetWorkspaces(serverId: string): Promise<Workspace[]>
+  /** Register a folder on the server's disk as one of its workspaces. */
+  fleetAddWorkspace(
+    serverId: string,
+    input: { rootDir: string; name?: string; profileFile?: string | null }
+  ): Promise<Workspace>
+  /** Drop a server workspace (by its remote key) from that server's registry. */
+  fleetRemoveWorkspace(workspaceId: string): Promise<void>
   fleetResolve(requestKey: string, response: FleetRequestResponse): Promise<{ accepted: boolean }>
   fleetDownload(root: string, path: string, open?: boolean): Promise<void>
   fleetUpload(root: string, path: string, sourcePath: string): Promise<void>
@@ -47,6 +63,9 @@ export interface FleetDesktopAPI {
   onFleetRequests(callback: (requests: FleetRequests) => void): () => void
   onFleetStatus(callback: (status: ServerConnectionStatus) => void): () => void
   onFleetConnectionsChanged(callback: (connections: SavedServerConnection[]) => void): () => void
+  /** A server's workspace list, from its live socket: at each connect, then
+   *  at each change. */
+  onFleetWorkspaces(callback: (update: FleetWorkspaces) => void): () => void
 }
 
 /** Secret-free request projection for contextBridge; no server runtime dependencies. */

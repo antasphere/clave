@@ -14,6 +14,7 @@ import {
   until,
   REPO
 } from './harness.mjs'
+import { openServersPage } from './fixtures/fleet-world.mjs'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const owned = (kind, owner, id) =>
@@ -126,6 +127,58 @@ async function post(server, route, body) {
 async function check(condition, message) {
   assert.ok(await condition(), message)
 }
+// Close the switcher and wait until its popover is gone, so a shortcut
+// pressed next reaches the window.
+async function closeSwitcher(win) {
+  const add = win.getByRole('button', { name: 'Add workspace…', exact: true })
+  if (await add.isVisible()) await win.keyboard.press('Escape')
+  await add.waitFor({ state: 'hidden' })
+}
+/** Switch the window to a workspace through the toolbar switcher. */
+async function switchWorkspace(win, workspaceId) {
+  const item = win.locator(`[data-workspace-id="${workspaceId}"]`)
+  await check(
+    () =>
+      until(async () => {
+        if (!(await item.count())) {
+          await win.getByLabel('Switch workspace', { exact: true }).click()
+          await item.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {})
+        }
+        if (!(await item.count())) {
+          await closeSwitcher(win)
+          return false
+        }
+        if (
+          (await item.getAttribute('data-selected', { timeout: 2_000 }).catch(() => null)) ===
+          'true'
+        ) {
+          await closeSwitcher(win)
+          return true
+        }
+        // A pane mounting after a launch can take focus and close the popover
+        // while it animates in: the click is retried from a fresh open.
+        await item.click({ timeout: 3_000 }).catch(() => {})
+        return false
+      }),
+    `the window shows workspace ${workspaceId}`
+  )
+}
+/** Remote tabs show only in a workspace of their own server (#241): register
+ *  the server's repo folder as one of its workspaces (once) and switch to it. */
+async function showServer(win, owner, rootDir) {
+  const id = await win.evaluate(
+    async ({ owner, rootDir }) => {
+      const existing = (await window.electronAPI.fleetWorkspaces(owner)).find(
+        (w) => w.rootDir === rootDir
+      )
+      return (existing ?? (await window.electronAPI.fleetAddWorkspace(owner, { rootDir }))).id
+    },
+    { owner, rootDir }
+  )
+  await switchWorkspace(win, id)
+  return id
+}
+const showMac = (win) => switchWorkspace(win, 'mac-only')
 export async function run(t) {
   const servers = []
   let app
@@ -163,7 +216,7 @@ export async function run(t) {
       ),
       false
     )
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
+    await openServersPage(win)
     await win.getByLabel('Server name', { exact: true }).fill('VPS A')
     await win.getByLabel('Server address', { exact: true }).fill(a.url)
     await win.getByLabel('Server bearer token', { exact: true }).fill(a.token)
@@ -174,7 +227,7 @@ export async function run(t) {
       'UI saves the first server'
     )
     assert.equal(await win.getByLabel('Server bearer token', { exact: true }).inputValue(), '')
-    await win.getByRole('button', { name: 'Close', exact: true }).click()
+    await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     const savedA = (await win.evaluate(() => window.electronAPI.fleetList()))[0]
     const savedB = await win.evaluate(
       ({ name, url, token }) => window.electronAPI.fleetSave({ name, url, token }),
@@ -198,27 +251,39 @@ export async function run(t) {
         ),
       'both servers connect'
     )
-    // The empty server has an explicit creation path, using its own folder/profile data.
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${savedB.id}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Server folder', { exact: true }).fill(b.cwd)
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
-    await check(
-      () =>
-        until(async () =>
-          (
-            await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), savedB.id)
-          ).sessions.some((s) => s.provider === 'terminal')
-        ),
-      'first session starts on empty owner'
+    // The empty server starts a session through the normal launch flow: in a
+    // workspace of that server, Cmd+T opens a terminal at its root.
+    await showServer(win, savedB.id, b.cwd)
+    await win.keyboard.press('Meta+T')
+    const firstStarted = await until(async () =>
+      (await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), savedB.id)).sessions.some(
+        (s) => s.provider === 'terminal'
+      )
     )
+    if (!firstStarted) {
+      const listed = await fetch(`${b.url}/sessions`, {
+        headers: { authorization: `Bearer ${b.token}` }
+      }).then((r) => r.json())
+      const notice = await win.getByTestId('launch-notice').allInnerTexts()
+      assert.fail(
+        `first session starts on empty owner: server B lists ${JSON.stringify(listed)}, notice ${JSON.stringify(notice)}`
+      )
+    }
     const terminal = (
       await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), savedB.id)
     ).sessions.find((s) => s.provider === 'terminal')
     const terminalWire = decodeURIComponent(terminal.id.split(':').at(-1))
+    const onB = await fetch(`${b.url}/sessions`, {
+      headers: { authorization: `Bearer ${b.token}` }
+    })
+    assert.equal(onB.status, 200)
+    const started = (await onB.json()).find((s) => s.id === terminalWire)
+    assert.ok(started, 'the owning server lists the started terminal')
+    assert.equal(
+      realpathSync(started.cwd),
+      b.cwd,
+      'the terminal starts at the server workspace root'
+    )
     await win.locator(`[data-terminal-tile="${terminal.id}"] .xterm`).waitFor()
     await win.evaluate((id) => {
       globalThis.remoteTerminalBytes = ''
@@ -276,8 +341,9 @@ export async function run(t) {
       (ids) => Promise.all(ids.map((id) => window.electronAPI.fleetSnapshot(id))),
       [savedA.id, savedB.id]
     )
-    await win.locator(`[data-sidebar-item-id="${ka}"]`).waitFor()
     await win.locator(`[data-sidebar-item-id="${kb}"]`).waitFor()
+    await showServer(win, savedA.id, a.cwd)
+    await win.locator(`[data-sidebar-item-id="${ka}"]`).waitFor()
     assert.equal(
       await win.locator(`[data-sidebar-item-id="${ka}"] [data-fleet-owner="${savedA.id}"]`).count(),
       1
@@ -348,6 +414,13 @@ export async function run(t) {
         if (accountId !== 'default') throw new Error('Unexpected Mac quota account')
       }
     })
+    // The local control row lives in the Mac workspace, which shows no tab
+    // of a server.
+    await showMac(win)
+    await check(
+      () => until(async () => (await win.locator(`[data-sidebar-item-id="${ka}"]`).count()) === 0),
+      'the remote tab is hidden in the Mac workspace'
+    )
     const localQuota = await callMcp(app, 'openSession', {
       cwd: root,
       mode: 'claude',
@@ -361,6 +434,7 @@ export async function run(t) {
     await win.getByRole('button', { name: 'Refresh usage' }).click()
     await win.getByRole('button', { name: 'Back to sessions', exact: true }).click()
     await localRow.locator('[data-account-limit="default"]').waitFor()
+    await showServer(win, savedA.id, a.cwd)
     const remoteRecord = (
       await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), savedA.id)
     ).records.find((record) => record.id === quotaKey)
@@ -463,17 +537,15 @@ export async function run(t) {
     await win.evaluate((root) => window.electronAPI.writeFile(root, 'notes.txt', 'A edited'), fileA)
     assert.equal(readFileSync(path.join(a.cwd, 'notes.txt'), 'utf8'), 'A edited')
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
-    const tree = win.locator(`[data-fleet-files="${savedA.id}"]`)
+    const panelCwd = a.cwd.replace(/^\/private\/tmp\//, '/tmp/')
+    const tree = win.locator(`[data-file-tree-root="${owned('file', savedA.id, panelCwd)}"]`)
     if (!(await tree.count())) await win.getByTitle(/^File tree/).click()
-    await tree.getByRole('button', { name: 'notes.txt', exact: true }).click()
+    await tree.locator('[data-tree-name="notes.txt"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open in Tab', exact: true }).click()
     const editor = win.locator('.cm-content[contenteditable="true"]:visible')
     await editor.waitFor()
     assert.deepEqual(rendererErrors, [], 'remote file focus keeps the renderer alive')
-    assert.equal(
-      await win.locator(`[data-fleet-files="${savedA.id}"]`).count(),
-      1,
-      'remote file focus keeps the file panel on its owner'
-    )
+    assert.equal(await tree.count(), 1, 'remote file focus keeps the file panel on its owner')
     await editor.fill('A edited in desktop')
     await editor.press('Meta+s')
     await check(
@@ -483,10 +555,8 @@ export async function run(t) {
     )
     assert.equal(readFileSync(path.join(b.cwd, 'notes.txt'), 'utf8'), 'B initial')
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
-    await win
-      .locator(`[data-fleet-files="${savedA.id}"]`)
-      .getByRole('button', { name: 'remote.md', exact: true })
-      .click()
+    await tree.locator('[data-tree-name="remote.md"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open in Tab', exact: true }).click()
     await sleep(400)
     assert.deepEqual(
       documentImageRequests.filter((url) => url.startsWith('file:')),
@@ -504,10 +574,11 @@ export async function run(t) {
     )
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     // Normal Upload from a navigated /tmp alias must use the visible owner root.
-    await win
-      .locator(`[data-fleet-files="${savedA.id}"]`)
-      .getByRole('button', { name: 'uploads', exact: true })
-      .click()
+    await tree.locator('[data-tree-name="uploads"]').click({ button: 'right' })
+    await win.getByRole('menuitem', { name: 'Open as Root', exact: true }).click()
+    const uploadsTree = win.locator(
+      `[data-file-tree-root="${owned('file', savedA.id, path.join(panelCwd, 'uploads'))}"]`
+    )
     const macUpload = path.join(root, 'mac-upload.txt')
     writeFileSync(macUpload, 'Mac upload owning-server byte sentinel')
     await app.evaluate(({ dialog }, source) => {
@@ -515,13 +586,11 @@ export async function run(t) {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
     }, macUpload)
     try {
-      await win
-        .locator(`[data-fleet-files="${savedA.id}"]`)
-        .getByRole('button', { name: 'Upload', exact: true })
-        .click()
+      await uploadsTree.getByText('Empty directory', { exact: true }).click({ button: 'right' })
+      await win.getByRole('menuitem', { name: 'Upload files here…', exact: true }).click()
       assert.ok(
         await until(() => existsSync(path.join(a.cwd, 'uploads', 'mac-upload.txt'))),
-        `normal UI upload must complete: ${await win.locator(`[data-fleet-files="${savedA.id}"]`).innerText()}`
+        `normal UI upload must complete: ${await uploadsTree.innerText()}`
       )
       assert.equal(
         readFileSync(path.join(a.cwd, 'uploads', 'mac-upload.txt'), 'utf8'),
@@ -664,19 +733,20 @@ export async function run(t) {
         additionalArgs: []
       }
     })
-    await win.getByLabel('Manage Clave servers', { exact: true }).click()
-    await win
-      .locator(`[data-server-id="${savedA.id}"]`)
-      .getByRole('button', { name: 'New session', exact: true })
-      .click()
-    await win.getByLabel('Session provider', { exact: true }).click()
-    await win.getByRole('menuitem', { name: 'codex', exact: true }).click()
-    await win.getByLabel('Server launch profile', { exact: true }).click()
-    await win
-      .getByRole('menuitem', { name: 'Desktop protocol fixture (chat)', exact: true })
-      .click()
-    await win.getByLabel('Server folder', { exact: true }).fill(a.cwd)
-    await win.getByRole('button', { name: 'Start session', exact: true }).click()
+    // The launch flow carries no server profile pick, so this session names
+    // the server's protocol profile explicitly; the window is already on the
+    // workspace of server A, rooted at a.cwd.
+    const startedProvider = await win.evaluate(
+      ({ owner, cwd }) =>
+        window.electronAPI.fleetStart(owner, cwd, {
+          claudeMode: false,
+          codexMode: true,
+          launchProfileId: 'chat:codex:desktop-protocol'
+        }),
+      { owner: savedA.id, cwd: a.cwd }
+    )
+    // Select the session after its immediate request dialog stops covering the sidebar.
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).waitFor()
     const pendingNative = await until(async () => {
       const response = await fetch(`${a.url}/requests/pending`, {
         headers: { authorization: `Bearer ${a.token}` }
@@ -708,6 +778,7 @@ export async function run(t) {
       })
       .click()
     await privateQuestion.waitFor({ state: 'detached' })
+    await win.locator(`[data-sidebar-item-id="${startedProvider.id}"]`).click()
     assert.equal((await win.locator('body').innerText()).includes('private fixture answer'), false)
     const replies = () =>
       existsSync(providerReplies)
@@ -751,9 +822,13 @@ export async function run(t) {
       'selected folder reaches the actual provider on its server'
     )
     t.check(
-      'server profile UI and same-label public/private inputs map to exact provider IDs once',
+      'server launch profile and same-label public/private inputs map to exact provider IDs once',
       true
     )
+    // Started outside the launcher, the session is not focused on its own:
+    // open its tab so its transcript is on screen.
+    await win.locator(`[data-sidebar-item-id="${providerKey}"]`).click()
+    await win.locator(`[data-session-id="${providerKey}"]`).waitFor()
     await win.evaluate(
       (id) =>
         window.electronAPI.sessionsWrite(id, {
@@ -815,6 +890,8 @@ export async function run(t) {
       true
     )
 
+    await showServer(win, savedB.id, b.cwd)
+    await win.locator(`[data-sidebar-item-id="${kb}"]`).waitFor()
     await win.evaluate((id) => window.electronAPI.killSession(id), kb)
     await check(
       () => until(async () => (await win.locator(`[data-sidebar-item-id="${kb}"]`).count()) === 0),
@@ -830,6 +907,7 @@ export async function run(t) {
     assert.deepEqual(rendererErrors, [], 'desktop has no uncaught renderer errors')
     t.check('closing one colliding tab removes only its owning server tab', true)
     assert.ok(reconnectHistory.items.length > 0, 'owning live history survives reconnect')
+    await showServer(win, savedA.id, a.cwd)
     await win.locator(`[data-sidebar-item-id="${ka}"]`).click()
     await win
       .locator(
@@ -879,6 +957,7 @@ export async function run(t) {
       'persisted native provider is visible as stopped after server restart'
     )
     assert.equal(launches().length, 1, 'desktop did not implicitly restart the stopped provider')
+    await showServer(win, savedA.id, a.cwd)
     await win.locator(`[data-sidebar-item-id="${providerKey}"]`).click()
     await win
       .locator(`[data-session-id="${providerKey}"]`)

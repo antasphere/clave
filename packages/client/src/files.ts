@@ -5,6 +5,8 @@ import type { Call } from './call'
 export type FilesClient = FilesOperations
 
 export const filesClient = (call: Call): FilesClient => ({
+  syncWatch: (payload) => call((c) => c.files.syncWatch({ payload })),
+  listAll: (payload) => call((c) => c.files.listAll({ payload })),
   list: (payload) => call((c) => c.files.list({ payload })),
   read: (payload) => call((c) => c.files.read({ payload })),
   stat: (payload) => call((c) => c.files.stat({ payload })),
