@@ -45,8 +45,23 @@ immediately. Poll `clave_request_result` or `clave_secret_result` from the same
 session. These tools keep working when no Mac is attached. An attached desktop's
 MCP announcement cannot replace this endpoint. The legacy app-child mode retains
 its desktop announcement behavior. The daemon also exposes server-owned list,
-session read and session messaging tools; desktop window/editor tools remain
-desktop operations.
+session read and session messaging tools, and lets an agent delegate:
+`clave_open_session` starts a Claude or Codex tab (the chat view by default),
+an Antigravity or Pi agent or a terminal in an absolute directory, returns its
+id and links it to the caller, which `clave_list` reports as `parentId` while the
+daemon runs. `clave_close_session`, `clave_rename`, `clave_create_group` and
+`clave_move_session` act on the daemon's own tabs and sidebar groups. Desktop
+window, workspace, account and editor tools remain desktop operations; a call
+naming `window`, `workspace` or `account` is refused rather than ignored. A `profile` must
+belong to the mode's family (`codex-chat` only with `codex`, none on a terminal)
+and is refused before anything starts. Once a tab has started, the answer
+always carries its `sessionId`; a name or group that could not be applied, such
+as a group deleted while the tab was starting, comes back in `warnings` with
+`groupId: null` instead of being claimed. The reproducible
+`agent-sessions/delegation-group` fixture creates a run-scoped group and tab
+through `CreateGroup` and `StartSession`; `npx vitest run
+src/main/mcp/standalone-mcp.test.ts` loads it, has an agent move, rename and
+delegate into it, writes a receipt beside its run data and closes its tabs.
 
 Pending records are in memory for the daemon's lifetime, capped at 1000 records
 including recent outcomes and at 128 KiB of metadata per request. Pending work has
