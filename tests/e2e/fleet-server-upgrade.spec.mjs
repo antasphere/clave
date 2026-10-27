@@ -29,7 +29,9 @@ import {
 
 const IDLE_MS = 4_000
 const APP_VERSION = '3.0.0-beta.9'
-const FREE_TEXT = 'stand-in free text r1026 https://user:synthetic-secret@invalid.local/x.git'
+// The stand-in's own payload, a canary no namespace or path carries.
+const CANARY = 'standin-canary-q7v3k'
+const FREE_TEXT = `${CANARY} free text https://user:${CANARY}-pw@invalid.local/x.git`
 
 function standIn(dir) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -192,10 +194,19 @@ export async function run(t) {
       await state.innerText(),
       `Upgrade to ${APP_VERSION} failed: The build of ${APP_VERSION} did not produce the server.\nExit 3. Full log on the server: ${log}`
     )
+    const { failure } = (await info()).upgrade
+    t.equal(
+      "the published failure is the script's code and phase, its exit and the server's own log path",
+      JSON.stringify(failure, Object.keys(failure ?? {}).sort()),
+      JSON.stringify({ code: 'build-incomplete', exitCode: 3, logPath: log, phase: 'build' })
+    )
+    // The log path is the one text allowed: everything else is searched for the payload.
+    const beyondLog = (text) => text.split(log).join('<log>')
     t.check(
       'nothing the script wrote beside its code reaches the server or the page',
-      !JSON.stringify(await info()).includes('r1026') && !(await row.innerText()).includes('r1026'),
-      JSON.stringify((await info()).upgrade)
+      !beyondLog(JSON.stringify(await info())).includes(CANARY) &&
+        !beyondLog(await row.innerText()).includes(CANARY),
+      beyondLog(JSON.stringify((await info()).upgrade))
     )
     const upgradeNow = version.getByRole('button', { name: 'Upgrade now', exact: true })
     await eventually(async () => (await upgradeNow.count()) === 1, 'Upgrade now is offered')
