@@ -11,7 +11,7 @@ export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
 /** A request as it was asked, comparable across the copies a server keeps:
  *  every field that says what it asks, keys in a fixed order (a server's copy
  *  is rebuilt from its record, not passed through), absent and undefined one. */
-function askedAs(request: Permission): string {
+export function askedAs(request: Permission): string {
   const { id, description, toolName, detail, input, options, questions } = request
   return stableJson({ id, description, toolName, detail, input, options, questions })
 }

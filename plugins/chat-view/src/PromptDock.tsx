@@ -9,7 +9,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import type { AgentQuestion } from '../../../src/shared/session-model'
-import type { Entry, Permission } from './reducer'
+import { askedAs, type Entry, type Permission } from './reducer'
 import { describeTool, safeJson, type ToolKind } from './tools'
 import { ChatCode } from './code'
 
@@ -601,16 +601,19 @@ export function PromptDock({
       {requests.length > 1 && (
         <div className="chat-prompt-queue">1 of {requests.length} waiting</div>
       )}
+      {/* Keyed by the whole request, never its id alone: a restarted provider
+          reuses ids, and a prompt keyed by one would hand the next request
+          the replies typed for the last, private ones included. */}
       {question ? (
         <QuestionPrompt
-          key={request.id}
+          key={askedAs(request)}
           request={request}
           busy={busy(request.id)}
           onAnswer={onAnswer}
         />
       ) : (
         <PermissionPrompt
-          key={request.id}
+          key={askedAs(request)}
           request={request}
           agent={agent}
           busy={busy(request.id)}
