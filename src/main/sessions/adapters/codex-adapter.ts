@@ -554,8 +554,9 @@ interface HandleState {
    *  then, the way the Claude adapter does it: a restart or an account move
    *  never resends it. */
   initialPrompt?: string
+  /** Serializes delivery requests, not whole turns: a follow-up waits for a
+   *  pending start/steer reply, then targets whichever turn is still active. */
   turnRequest?: Promise<void>
-  sending: boolean
   ended: boolean
   closing: boolean
 }
@@ -614,7 +615,6 @@ export class CodexAdapter implements SessionAdapter {
         if (event.type === 'effort') state.announced = event.effort
         emitter.emit('stream', { kind: 'event', event })
       }),
-      sending: false,
       ended: false,
       closing: false
     }
@@ -709,15 +709,11 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
-    if (state.sending || state.translator.turnId)
-      throw new Error('Codex already has an active turn')
-    state.sending = true
+    const prompt = providerPrompt(value)
     state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
-    state.turnRequest = this.sendTurn(state, providerPrompt(value))
+    state.turnRequest = (state.turnRequest ?? Promise.resolve())
+      .then(() => this.sendTurn(state, prompt))
       .catch((error) => this.error(state, error, !state.translator.threadId))
-      .finally(() => {
-        state.sending = false
-      })
   }
   /** Bring the thread up as soon as the view is looking, so thread/start's
    *  reply names the model before the first message rather than after it,
@@ -733,8 +729,7 @@ export class CodexAdapter implements SessionAdapter {
       })
     const prompt = state.initialPrompt
     if (prompt === undefined) return
-    // A write that throws (a turn already running) leaves the prompt for the
-    // manager's retry: only a readiness that succeeded consumes the one-shot.
+    // Only a write that accepted the prompt consumes the one-shot.
     this.write(handle, { type: 'user_message', text: prompt })
     state.initialPrompt = undefined
   }
@@ -847,19 +842,32 @@ export class CodexAdapter implements SessionAdapter {
   }
   private async sendTurn(state: HandleState, prompt: PreparedPrompt): Promise<void> {
     await this.start(state)
-    if (state.ended) return
-    const effort = await this.turnEffort(state)
+    if (state.ended || state.closing) return
+    const effort = state.translator.turnId ? undefined : await this.turnEffort(state)
+    if (state.ended || state.closing) return
     // Images are input items of their own, as a data URL, the way the
-    // app-server's turn/start takes them.
+    // app-server's turn/start and turn/steer take them.
+    const input = [
+      ...(prompt.text ? [{ type: 'text', text: prompt.text, text_elements: [] }] : []),
+      ...prompt.images.map((image) => ({
+        type: 'image',
+        url: `data:${image.mimeType};base64,${image.data}`
+      }))
+    ]
+    const turnId = state.translator.turnId
+    if (turnId) {
+      // A rejected or timed-out steer may already have been consumed. Report
+      // it rather than replaying the message as a second turn automatically.
+      await state.connection!.request('turn/steer', {
+        threadId: state.translator.threadId,
+        expectedTurnId: turnId,
+        input
+      })
+      return
+    }
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
-      input: [
-        ...(prompt.text ? [{ type: 'text', text: prompt.text, text_elements: [] }] : []),
-        ...prompt.images.map((image) => ({
-          type: 'image',
-          url: `data:${image.mimeType};base64,${image.data}`
-        }))
-      ],
+      input,
       ...(state.model ? { model: state.model } : {}),
       ...(effort ? { effort } : {})
     })
