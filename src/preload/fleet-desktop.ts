@@ -20,6 +20,7 @@ import type { SessionEvent, SessionStream, SessionInput } from '../shared/sessio
 import type { Attachment, AttachmentSource } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import type { Workspace } from '../shared/workspace-types'
+import { orderByIds } from '../shared/workspace-order'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
 
@@ -957,6 +958,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (ref.serverId === LOCAL_SERVER_ID) throw new Error('Not a server workspace.')
       await editRegistry(ref.serverId, (current) => ({
         next: current.filter((ws) => ws.id !== ref.id),
+        result: undefined
+      }))
+    },
+    fleetReorderWorkspaces: async (serverId, workspaceIds) => {
+      const ids = workspaceIds.map((key) => {
+        const ref = parseResourceKey('workspace', key)
+        if (ref.serverId !== serverId) throw new Error('Not a workspace of this server.')
+        return ref.id
+      })
+      await editRegistry(serverId, (current) => ({
+        next: orderByIds(current, ids),
         result: undefined
       }))
     },

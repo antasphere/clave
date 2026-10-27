@@ -37,6 +37,28 @@ async function closeSwitcher(win) {
   await add.waitFor({ state: 'hidden' })
 }
 
+/** Press on `from`, travel to the top quarter of `to`, and report the drop
+ *  line shown there before releasing (#257). */
+async function dragAbove(win, from, to) {
+  const a = await from.boundingBox()
+  const b = await to.boundingBox()
+  const start = { x: a.x + a.width / 2, y: a.y + a.height / 2 }
+  const end = { x: b.x + b.width / 2, y: b.y + b.height / 4 }
+  await win.mouse.move(start.x, start.y)
+  await win.mouse.down()
+  for (let i = 1; i <= 12; i++) {
+    await win.mouse.move(
+      start.x + ((end.x - start.x) * i) / 12,
+      start.y + ((end.y - start.y) * i) / 12
+    )
+  }
+  await win.waitForTimeout(80)
+  const line = await to.getAttribute('data-drop')
+  await win.mouse.up()
+  await win.waitForTimeout(150)
+  return line
+}
+
 async function switchTo(win, id) {
   await eventually(async () => {
     await openSwitcher(win)
@@ -180,6 +202,35 @@ export async function run(t) {
         `[data-workspace-row="${owned('workspace', ownerOnB, added.id)}"]`
       )
       await addedRow.waitFor()
+      // Reorder (#257): the added workspace dragged above the first is
+      // written to the server's own registry, and Mac A hears the order.
+      assert.equal(await dragAbove(win, addedRow, listed), 'before', 'the drop line shows')
+      await eventually(async () => {
+        const state = await request(server, '/workspaces')
+        return state.workspaces.map((w) => w.id).join() === [added.id, workspaceId.remote].join()
+      }, 'the server registry holds the dragged order')
+      await eventually(async () => {
+        await openSwitcher(macA.win)
+        const ids = await macA.win.$$eval('[data-workspace-id]', (rows) =>
+          rows.map((r) => r.getAttribute('data-workspace-id'))
+        )
+        await closeSwitcher(macA.win)
+        return ids.join() === ['mac-a', owned('workspace', owner, added.id), workspaceId.id].join()
+      }, 'Mac A lists the server workspaces in the order Mac B gave them')
+      // A server workspace never drops into this Mac's list.
+      const macRow = win.locator('[data-workspace-row="mac-b"]')
+      assert.equal(await dragAbove(win, addedRow, macRow), null, 'no line across machines')
+      const after = await request(server, '/workspaces')
+      assert.equal(after.workspaces.map((w) => w.id).join(), [added.id, workspaceId.remote].join())
+      const macB_local = JSON.parse(
+        readFileSync(path.join(macB.dir, 'workspace-state.json'), 'utf8')
+      )
+      assert.deepEqual(
+        macB_local.workspaces.map((w) => w.id),
+        ['mac-b'],
+        'a drop across machines writes nothing to the Mac registry'
+      )
+      t.check('a server workspace reorders within its server’s list, on every Mac', true)
       // Remove it again, from the server, after the confirmation.
       await addedRow.getByRole('button', { name: 'Remove workspace', exact: true }).click()
       await win.getByRole('button', { name: 'Remove', exact: true }).click()
