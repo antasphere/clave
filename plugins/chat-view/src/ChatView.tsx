@@ -583,6 +583,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   const filesBlocked =
     preparations.length > 0 || attachments.some((file) => attachmentIssue(file, imagesSupported))
   const hasDraft = !!draft.trim() || attachments.length > 0
+  const showInterrupt = state === 'working' && !(session.provider === 'codex' && hasDraft)
   const send = async (): Promise<void> => {
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const typedPanel = hostPanels ? hostPanelFor(draft) : null
@@ -1092,16 +1093,14 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               so the change of kind is a crossfade, not a pop. Both glyphs are
               in it; the stylesheet shows the one the kind calls for. */}
           <button
-            type={state === 'working' ? 'button' : 'submit'}
+            type={showInterrupt ? 'button' : 'submit'}
             className="chat-send"
-            data-kind={state === 'working' ? 'stop' : 'send'}
-            aria-label={state === 'working' ? 'Interrupt' : 'Send message'}
-            title={state === 'working' ? 'Interrupt' : 'Send (Enter)'}
-            disabled={state !== 'working' && (closed || sending || !hasDraft || filesBlocked)}
+            data-kind={showInterrupt ? 'stop' : 'send'}
+            aria-label={showInterrupt ? 'Interrupt' : 'Send message'}
+            title={showInterrupt ? 'Interrupt' : 'Send (Enter)'}
+            disabled={!showInterrupt && (closed || sending || !hasDraft || filesBlocked)}
             onClick={
-              state === 'working'
-                ? () => void write({ type: 'interrupt' }).catch(report)
-                : undefined
+              showInterrupt ? () => void write({ type: 'interrupt' }).catch(report) : undefined
             }
           >
             <ArrowUpIcon data-glyph="send" />

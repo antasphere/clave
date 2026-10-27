@@ -26,6 +26,7 @@ import type {
   Unsubscribe
 } from '../adapter'
 import {
+  CodexRpcError,
   object,
   spawnCodexAppServer,
   type CodexCallbacks,
@@ -135,7 +136,7 @@ export class CodexTranslator {
   /** The main thread's commands running now, by item id. Codex says nothing
    *  when a command is left running mid-turn; a turn that completes while one
    *  is still in progress is its word that the command outlives the turn. */
-  private readonly running = new Map<string, BackgroundTask>()
+  private readonly running = new Map<string, { turnId: string; task: BackgroundTask }>()
   /** Every subagent this connection has seen, by thread, listed or not: an
    *  agent given more work after it finished runs again on the same thread,
    *  and Codex's follow-up names neither its path nor its model. */
@@ -303,11 +304,14 @@ export class CodexTranslator {
           // command that started it is the one listed.
           if (!completed && item.source !== 'unifiedExecInteraction')
             this.running.set(id, {
-              id,
-              kind: 'shell',
-              description: commandOf(item),
-              toolUseId: id,
-              startedAt: Date.now()
+              turnId: text(p.turnId) || this.turnId,
+              task: {
+                id,
+                kind: 'shell',
+                description: commandOf(item),
+                toolUseId: id,
+                startedAt: Date.now()
+              }
             })
           if (completed) {
             this.running.delete(id)
@@ -346,15 +350,22 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
+        const stale = !!(this.turnId && text(turn.id) && text(turn.id) !== this.turnId)
         // What the turn left running is listed before the turn says it ended,
         // so the view never shows a moment with the work unlisted.
-        if (this.running.size) {
-          for (const task of this.running.values()) this.background.set(task.id, task)
-          this.running.clear()
-          this.publishBackground()
+        let promoted = false
+        for (const [id, work] of this.running) {
+          if (stale && work.turnId !== text(turn.id)) continue
+          this.background.set(id, work.task)
+          this.running.delete(id)
+          promoted = true
         }
-        if (turn.status === 'interrupted') this.emit({ type: 'turn_interrupted' })
-        else if (turn.error)
+        if (promoted) this.publishBackground()
+        if (turn.status === 'interrupted') {
+          // An interruption marker belongs to the current transcript turn.
+          if (stale) fallback()
+          else this.emit({ type: 'turn_interrupted' })
+        } else if (turn.error)
           this.emit({
             type: 'error',
             message: text(object(turn.error).message) || 'Codex turn failed',
@@ -363,6 +374,9 @@ export class CodexTranslator {
         for (const [id, approval] of this.approvals)
           if (approval.turnId === text(turn.id)) this.approvals.delete(id)
         this.completedTurnId = text(turn.id)
+        // Keep the old turn's outcome and cleanup without resetting the new
+        // active turn or clearing its streamed text.
+        if (stale) return
         this.turnId = ''
         this.streamed.clear()
         this.emit({ type: 'state_change', state: 'done' })
@@ -554,8 +568,9 @@ interface HandleState {
    *  then, the way the Claude adapter does it: a restart or an account move
    *  never resends it. */
   initialPrompt?: string
+  /** Serializes delivery requests, not whole turns: a follow-up waits for a
+   *  pending start/steer reply, then targets whichever turn is still active. */
   turnRequest?: Promise<void>
-  sending: boolean
   ended: boolean
   closing: boolean
 }
@@ -614,7 +629,6 @@ export class CodexAdapter implements SessionAdapter {
         if (event.type === 'effort') state.announced = event.effort
         emitter.emit('stream', { kind: 'event', event })
       }),
-      sending: false,
       ended: false,
       closing: false
     }
@@ -709,15 +723,11 @@ export class CodexAdapter implements SessionAdapter {
     if (value.type === 'set_permission_mode')
       throw new Error('Codex chat does not offer permission modes')
     if (value.type === 'stop_task') throw new Error('Codex chat cannot stop one background task')
-    if (state.sending || state.translator.turnId)
-      throw new Error('Codex already has an active turn')
-    state.sending = true
+    const prompt = providerPrompt(value)
     state.emitter.emit('stream', { kind: 'event', event: userMessageEvent(value) })
-    state.turnRequest = this.sendTurn(state, providerPrompt(value))
+    state.turnRequest = (state.turnRequest ?? Promise.resolve())
+      .then(() => this.sendTurn(state, prompt))
       .catch((error) => this.error(state, error, !state.translator.threadId))
-      .finally(() => {
-        state.sending = false
-      })
   }
   /** Bring the thread up as soon as the view is looking, so thread/start's
    *  reply names the model before the first message rather than after it,
@@ -733,8 +743,7 @@ export class CodexAdapter implements SessionAdapter {
       })
     const prompt = state.initialPrompt
     if (prompt === undefined) return
-    // A write that throws (a turn already running) leaves the prompt for the
-    // manager's retry: only a readiness that succeeded consumes the one-shot.
+    // Only a write that accepted the prompt consumes the one-shot.
     this.write(handle, { type: 'user_message', text: prompt })
     state.initialPrompt = undefined
   }
@@ -845,21 +854,52 @@ export class CodexAdapter implements SessionAdapter {
       })
     })
   }
-  private async sendTurn(state: HandleState, prompt: PreparedPrompt): Promise<void> {
+  private async sendTurn(
+    state: HandleState,
+    prompt: PreparedPrompt,
+    recoverCompleted = true
+  ): Promise<void> {
     await this.start(state)
-    if (state.ended) return
-    const effort = await this.turnEffort(state)
+    if (state.ended || state.closing) return
+    const effort = state.translator.turnId ? undefined : await this.turnEffort(state)
+    if (state.ended || state.closing) return
     // Images are input items of their own, as a data URL, the way the
-    // app-server's turn/start takes them.
+    // app-server's turn/start and turn/steer take them.
+    const input = [
+      ...(prompt.text ? [{ type: 'text', text: prompt.text, text_elements: [] }] : []),
+      ...prompt.images.map((image) => ({
+        type: 'image',
+        url: `data:${image.mimeType};base64,${image.data}`
+      }))
+    ]
+    const turnId = state.translator.turnId
+    if (turnId) {
+      try {
+        await state.connection!.request('turn/steer', {
+          threadId: state.translator.threadId,
+          expectedTurnId: turnId,
+          input
+        })
+      } catch (error) {
+        // Codex can finish before its completion notification reaches us.
+        // This explicit precondition refusal confirms input was not consumed.
+        // Unknown errors and timeouts remain visible, without replay.
+        if (
+          !recoverCompleted ||
+          !(error instanceof CodexRpcError) ||
+          error.code !== -32600 ||
+          error.message !== 'no active turn to steer' ||
+          (state.translator.turnId && state.translator.turnId !== turnId)
+        )
+          throw error
+        state.translator.turnId = ''
+        await this.sendTurn(state, prompt, false)
+      }
+      return
+    }
     const result = await state.connection!.request('turn/start', {
       threadId: state.translator.threadId,
-      input: [
-        ...(prompt.text ? [{ type: 'text', text: prompt.text, text_elements: [] }] : []),
-        ...prompt.images.map((image) => ({
-          type: 'image',
-          url: `data:${image.mimeType};base64,${image.data}`
-        }))
-      ],
+      input,
       ...(state.model ? { model: state.model } : {}),
       ...(effort ? { effort } : {})
     })

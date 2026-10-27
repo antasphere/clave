@@ -413,14 +413,11 @@ describe('Codex adapter lifecycle', () => {
     expect(connect).not.toHaveBeenCalled()
     expect(() => adapter.write(handle, { type: 'user_message', text: 'hello' })).toThrow('Unknown')
   })
-  it('routes permission replies and rejects concurrent turns and unsupported requests', async () => {
+  it('routes permission replies and rejects unsupported requests', async () => {
     const { adapter, connection, callback } = fake()
     const handle = await adapter.spawn(spec)
     adapter.write(handle, { type: 'user_message', text: 'hello' })
     await tick()
-    expect(() => adapter.write(handle, { type: 'user_message', text: 'second' })).toThrow(
-      'active turn'
-    )
     callback().request({
       id: 'approval',
       method: 'item/fileChange/requestApproval',
