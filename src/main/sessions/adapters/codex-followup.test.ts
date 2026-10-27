@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { CodexAdapter } from './codex-adapter'
+import { CodexAdapter, CodexTranslator } from './codex-adapter'
 import { createAgentTokenStore } from '../agent-tokens'
 import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
-import type { CodexCallbacks } from './codex-app-server'
+import type { CodexCallbacks, RpcNotification } from './codex-app-server'
 import { CodexRpcError } from './codex-app-server'
 import type { SessionHandle } from '../adapter'
 import type { SessionEvent } from '../../../shared/session-model'
@@ -34,6 +34,7 @@ async function setup(): Promise<{
   events: SessionEvent[]
   send(text: string): void
   complete(): void
+  notify(frame: RpcNotification): void
 }> {
   let callbacks!: CodexCallbacks
   let turn = 0
@@ -74,7 +75,15 @@ async function setup(): Promise<{
       method: 'turn/completed',
       params: { threadId: 'thread', turn: { id: 'turn-1', status: 'completed' } }
     })
-  return { adapter, handle, request, events, send, complete }
+  return {
+    adapter,
+    handle,
+    request,
+    events,
+    send,
+    complete,
+    notify: (frame) => callbacks.notification(frame)
+  }
 }
 
 it('steers the active turn and emits each follow-up once, without interrupting', async () => {
@@ -312,3 +321,113 @@ it.each([
     await s.adapter.kill(s.handle)
   }
 })
+
+it('does not recover onto a different turn that became active while the steer was pending', async () => {
+  const s = await setup()
+  const pending = deferred()
+  const original = s.request.getMockImplementation()!
+  let refused = false
+  s.request.mockImplementation((method, params) => {
+    if (method === 'turn/steer' && !refused) {
+      refused = true
+      return pending.promise
+    }
+    return original(method, params)
+  })
+  try {
+    s.send('first')
+    await tick()
+    s.send('during switch')
+    await tick()
+    s.complete()
+    s.notify({ method: 'turn/started', params: { threadId: 'thread', turn: { id: 'turn-9' } } })
+    pending.resolve(Promise.reject(new CodexRpcError(-32600, 'no active turn to steer')))
+    await tick()
+    expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(1)
+    expect(s.events).toContainEqual({
+      type: 'error',
+      message: 'no active turn to steer',
+      fatal: false
+    })
+    s.send('after switch')
+    await tick()
+    expect(s.request).toHaveBeenLastCalledWith(
+      'turn/steer',
+      expect.objectContaining({ expectedTurnId: 'turn-9' })
+    )
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+
+it.each(['failed', 'interrupted'])(
+  'preserves late old-turn %s cleanup without resetting the new turn',
+  (status) => {
+    const events: SessionEvent[] = []
+    const translator = new CodexTranslator((event) => events.push(event))
+    translator.threadId = 'thread'
+    const start = (id: string): void =>
+      translator.notification({
+        method: 'turn/started',
+        params: { threadId: 'thread', turn: { id } }
+      })
+    const command = (id: string, turnId: string): void =>
+      translator.notification({
+        method: 'item/started',
+        params: {
+          threadId: 'thread',
+          turnId,
+          item: { id, type: 'commandExecution', command: `sleep ${id}` }
+        }
+      })
+    start('old')
+    command('old-command', 'old')
+    translator.request({
+      id: 1,
+      method: 'item/fileChange/requestApproval',
+      params: { threadId: 'thread', turnId: 'old' }
+    })
+    start('new')
+    command('new-command', 'new')
+    translator.request({
+      id: 2,
+      method: 'item/fileChange/requestApproval',
+      params: { threadId: 'thread', turnId: 'new' }
+    })
+    const before = events.length
+    translator.notification({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread',
+        turn: {
+          id: 'old',
+          status,
+          ...(status === 'failed' ? { error: { message: 'old turn failed late' } } : {})
+        }
+      }
+    })
+    const late = events.slice(before)
+    if (status === 'failed')
+      expect(late).toContainEqual({ type: 'error', message: 'old turn failed late', fatal: false })
+    else {
+      expect(late.some((event) => event.type === 'provider_event')).toBe(true)
+      expect(late.some((event) => event.type === 'turn_interrupted')).toBe(false)
+    }
+    expect(late.some((e) => e.type === 'state_change')).toBe(false)
+    expect(translator.turnId).toBe('new')
+    expect([...translator.approvals.values()].map((approval) => approval.turnId)).toEqual(['new'])
+    const tasks = late.find((e) => e.type === 'background_tasks')
+    expect(tasks?.type === 'background_tasks' && tasks.tasks.map((task) => task.id)).toEqual([
+      'old-command'
+    ])
+    translator.notification({
+      method: 'turn/completed',
+      params: { threadId: 'thread', turn: { id: 'new', status: 'completed' } }
+    })
+    const finalTasks = events.findLast((e) => e.type === 'background_tasks')
+    expect(
+      finalTasks?.type === 'background_tasks' && finalTasks.tasks.map((task) => task.id)
+    ).toEqual(['old-command', 'new-command'])
+    expect(translator.turnId).toBe('')
+  }
+)

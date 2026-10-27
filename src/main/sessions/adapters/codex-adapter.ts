@@ -136,7 +136,7 @@ export class CodexTranslator {
   /** The main thread's commands running now, by item id. Codex says nothing
    *  when a command is left running mid-turn; a turn that completes while one
    *  is still in progress is its word that the command outlives the turn. */
-  private readonly running = new Map<string, BackgroundTask>()
+  private readonly running = new Map<string, { turnId: string; task: BackgroundTask }>()
   /** Every subagent this connection has seen, by thread, listed or not: an
    *  agent given more work after it finished runs again on the same thread,
    *  and Codex's follow-up names neither its path nor its model. */
@@ -304,11 +304,14 @@ export class CodexTranslator {
           // command that started it is the one listed.
           if (!completed && item.source !== 'unifiedExecInteraction')
             this.running.set(id, {
-              id,
-              kind: 'shell',
-              description: commandOf(item),
-              toolUseId: id,
-              startedAt: Date.now()
+              turnId: text(p.turnId) || this.turnId,
+              task: {
+                id,
+                kind: 'shell',
+                description: commandOf(item),
+                toolUseId: id,
+                startedAt: Date.now()
+              }
             })
           if (completed) {
             this.running.delete(id)
@@ -347,18 +350,22 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
-        // Recovery may start the next turn before the previous completion
-        // reaches us. That late frame must not clear the new active turn.
-        if (this.turnId && text(turn.id) && text(turn.id) !== this.turnId) return
+        const stale = !!(this.turnId && text(turn.id) && text(turn.id) !== this.turnId)
         // What the turn left running is listed before the turn says it ended,
         // so the view never shows a moment with the work unlisted.
-        if (this.running.size) {
-          for (const task of this.running.values()) this.background.set(task.id, task)
-          this.running.clear()
-          this.publishBackground()
+        let promoted = false
+        for (const [id, work] of this.running) {
+          if (stale && work.turnId !== text(turn.id)) continue
+          this.background.set(id, work.task)
+          this.running.delete(id)
+          promoted = true
         }
-        if (turn.status === 'interrupted') this.emit({ type: 'turn_interrupted' })
-        else if (turn.error)
+        if (promoted) this.publishBackground()
+        if (turn.status === 'interrupted') {
+          // An interruption marker belongs to the current transcript turn.
+          if (stale) fallback()
+          else this.emit({ type: 'turn_interrupted' })
+        } else if (turn.error)
           this.emit({
             type: 'error',
             message: text(object(turn.error).message) || 'Codex turn failed',
@@ -367,6 +374,9 @@ export class CodexTranslator {
         for (const [id, approval] of this.approvals)
           if (approval.turnId === text(turn.id)) this.approvals.delete(id)
         this.completedTurnId = text(turn.id)
+        // Keep the old turn's outcome and cleanup without resetting the new
+        // active turn or clearing its streamed text.
+        if (stale) return
         this.turnId = ''
         this.streamed.clear()
         this.emit({ type: 'state_change', state: 'done' })
