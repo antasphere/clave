@@ -4,8 +4,17 @@
 // installed, so a Mac can ask it to upgrade itself. The ARGS block of the
 // script itself runs in bash with the variables set, paths with spaces
 // included; nothing is installed and no service is touched.
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -89,5 +98,92 @@ describe('the service command line install-server.sh writes', () => {
       '--install-ref',
       'v3.0.0'
     ])
+  })
+})
+
+// The messages a Mac publishes when an upgrade fails (issue #266): the script
+// appends its own info/warn/error messages to the file CLAVE_INSTALL_STATUS_FILE
+// names, plain and one per line, and never hands that path to a command it
+// runs, so nothing git, npm or node prints can land there.
+describe('the status file install-server.sh writes its own messages to', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567'
+  /** The real script up to its clone, under a home of its own, with a `git` that
+   *  prints its own [clave-server] line and tries the status file itself. */
+  function install({ status = true, lsRemote = true, repo } = {}) {
+    const home = mkdtempSync(path.join(tmpdir(), 'clave-install-status-'))
+    try {
+      mkdirSync(path.join(home, 'bin'))
+      const git = path.join(home, 'bin', 'git')
+      writeFileSync(
+        git,
+        [
+          '#!/bin/bash',
+          'printf \'%s\\n\' "${CLAVE_INSTALL_STATUS_FILE-unset}" >> "$HOME/git-saw"',
+          "printf '[clave-server] git child output\\n' >&2",
+          '[[ -n "${CLAVE_INSTALL_STATUS_FILE:-}" ]] && printf \'child wrote here\\n\' >> "$CLAVE_INSTALL_STATUS_FILE"',
+          lsRemote
+            ? `case " $* " in *" ls-remote "*) printf '${SHA}\\trefs/tags/v9.9.9\\n'; exit 0 ;; esac`
+            : '',
+          'exit 1',
+          ''
+        ].join('\n')
+      )
+      chmodSync(git, 0o700)
+      mkdirSync(path.join(home, '.config', 'e2e'), { recursive: true })
+      writeFileSync(path.join(home, '.config', 'e2e', 'install.env'), 'CLAVE_HOST=loopback\n')
+      const file = path.join(home, 'status')
+      const result = spawnSync(
+        '/bin/bash',
+        [SCRIPT, '--name', 'e2e', '--ref', 'v9.9.9', ...(repo ? ['--repo', repo] : [])],
+        {
+          encoding: 'utf8',
+          env: {
+            HOME: home,
+            USER: 'e2e',
+            SHELL: '/bin/sh',
+            PATH: `${path.join(home, 'bin')}:${path.dirname(process.execPath)}:${process.env.PATH}`,
+            ...(status ? { CLAVE_INSTALL_STATUS_FILE: file } : {})
+          }
+        }
+      )
+      const read = (name) =>
+        existsSync(path.join(home, name)) ? readFileSync(path.join(home, name), 'utf8') : null
+      return {
+        code: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        status: read('status'),
+        gitSaw: read('git-saw')
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  }
+
+  it('holds its info messages, plain and one per line', () => {
+    const run = install()
+    expect(run.code).not.toBe(0)
+    expect(run.status).toBe('v9.9.9 is 0123456789ab\nCloning v9.9.9\n')
+    expect(run.stdout).toContain('[clave-server]')
+  })
+
+  it('holds its error message, a newline inside it written as a space', () => {
+    const run = install({ lsRemote: false, repo: 'https://example.invalid/a\nb.git' })
+    expect(run.code).toBe(1)
+    expect(run.status).toBe('Could not reach https://example.invalid/a b.git\n')
+  })
+
+  it('never hands the path to a command it runs, so their output never lands there', () => {
+    const run = install()
+    expect(run.gitSaw?.trim().split('\n')).toEqual(['unset', 'unset'])
+    expect(run.status).not.toContain('child')
+    expect(run.stderr).toContain('[clave-server] git child output')
+  })
+
+  it('changes nothing else when the variable is unset', () => {
+    const withFile = install()
+    const without = install({ status: false })
+    expect(without.status).toBeNull()
+    expect({ ...without, status: null }).toEqual({ ...withFile, status: null })
   })
 })

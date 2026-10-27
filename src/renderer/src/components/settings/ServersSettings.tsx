@@ -107,7 +107,7 @@ function ServerVersion({ id }: { id: string }): React.JSX.Element | null {
       <div className="flex items-center justify-between gap-4">
         <p className="settings-row-description">
           {text.version && <span data-server-version-number>{text.version} · </span>}
-          <span data-server-version-state data-status={text.tone}>
+          <span data-server-version-state data-status={text.tone} className="whitespace-pre-line">
             {text.state}
           </span>
         </p>

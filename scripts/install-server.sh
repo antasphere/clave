@@ -11,9 +11,23 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[clave-server]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[clave-server]${NC} $*" >&2; }
-error() { echo -e "${RED}[clave-server]${NC} $*" >&2; exit 1; }
+# A Mac that asked for this run (an upgrade from Settings → Servers) shows only
+# the messages below when it fails, read from the file CLAVE_INSTALL_STATUS_FILE
+# names: never what git, npm or any other command prints, which can carry
+# credentials. The path leaves the environment at once, so no command this
+# script runs is ever handed it.
+STATUS_FILE="${CLAVE_INSTALL_STATUS_FILE:-}"
+unset CLAVE_INSTALL_STATUS_FILE
+status_message() {
+  [[ -n "$STATUS_FILE" ]] || return 0
+  local message="$*"
+  message="${message//$'\r'/ }"
+  { printf '%s\n' "${message//$'\n'/ }" >> "$STATUS_FILE"; } 2>/dev/null || true
+}
+
+info()  { status_message "$*"; echo -e "${GREEN}[clave-server]${NC} $*"; }
+warn()  { status_message "$*"; echo -e "${YELLOW}[clave-server]${NC} $*" >&2; }
+error() { status_message "$*"; echo -e "${RED}[clave-server]${NC} $*" >&2; exit 1; }
 
 usage() {
   cat <<EOF

@@ -36,7 +36,9 @@ function standIn(dir) {
   // written into the script rather than found beside it.
   writeFileSync(
     script,
-    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\nprintf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'stand-in build failed' >&2\nexit 3\n`
+    // Its failure goes where install-server.sh's own error() puts it: the log,
+    // and the status file the daemon names, which is all a Mac is shown.
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\nprintf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'stand-in build failed' >&2\nprintf '%s\\n' 'stand-in build failed' >> "$CLAVE_INSTALL_STATUS_FILE"\nexit 3\n`
   )
   chmodSync(script, 0o755)
   return { script, record }
@@ -175,8 +177,11 @@ export async function run(t) {
       `${Date.now() - failedAt} ms: ${await state.innerText()}`
     )
     t.check(
-      'the failure carries the end of the install log',
-      (await state.innerText()).includes('stand-in build failed')
+      "the failure carries the script's own message, its exit and where the log is",
+      (await state.innerText()).includes(
+        `stand-in build failed\nExit 3. Full log on the server: ${log}`
+      ),
+      await state.innerText()
     )
     const upgradeNow = version.getByRole('button', { name: 'Upgrade now', exact: true })
     await eventually(async () => (await upgradeNow.count()) === 1, 'Upgrade now is offered')
