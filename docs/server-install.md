@@ -68,7 +68,7 @@ When the app on your Mac updates (Settings → Software Update), every connected
 - the saved `--ref` becomes the version the Mac asked for, so a later plain run stays on it;
 - a server is never downgraded: one newer than the app says "Newer than this app" and is left as it is. One installed from a branch or a custom ref (`--ref dev`) is left alone too ("Installed from dev; upgrade it on the server"). A development build of the app never asks a server to upgrade.
 
-**Servers from before this** (3.0.0-beta.6 and 3.0.0-beta.7) cannot be asked. The Servers page shows "Older Clave server: run this on the server" with the command to run there once, for example `bash ~/install-server.sh --ref v3.0.0-beta.8`. From then on the server follows the app on its own. The first run of a newer script also rewrites the service once (it now passes the release's version and how it was installed), so that run restarts the server even when the release has not changed.
+**Servers from before this** (3.0.0-beta.6 and 3.0.0-beta.7) cannot be asked. The Servers page shows "Older Clave server: run this on the server" with the command to run there once, for example `bash ~/install-server.sh --ref v3.0.0-beta.8`. From then on the server follows the app on its own. A server started some other way than by this script shows the same command, which installs it with the script so the Mac can keep it on its version. The first run of a newer script also rewrites the service once (it now passes the release's version and how it was installed), so that run restarts the server even when the release has not changed.
 
 ### By hand
 
