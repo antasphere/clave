@@ -24,15 +24,16 @@ import {
   NOT_SCRIPT_INSTALLED,
   UPGRADE_IDLE_MS,
   createSelfUpgrade,
-  publishedFailure,
-  redactSecrets,
   readInstallFacts,
+  readRunStatus,
+  runFailure,
   scriptRunner,
   serverVersion,
   sessionActivity,
   upgradeArgs,
   upgradeIdleMs,
   upgradeLaunch,
+  UpgradeLaunchFailure,
   type AgentActivity,
   type Clock,
   type RunResult,
@@ -145,9 +146,9 @@ function world(
 
 const settle = (): Promise<unknown> => new Promise((resolve) => setTimeout(resolve, 0))
 
-/** install-server.sh's own message functions (info, warn, error and the
- *  status file they write), as the first lines of a stand-in script. */
-function scriptMessages(): string {
+/** install-server.sh's own prologue (info, warn, fail, phase and the status
+ *  file the last two write), as the first lines of a stand-in script. */
+function scriptPrologue(): string {
   const source = readFileSync(resolve('scripts/install-server.sh'), 'utf8')
   const start = source.indexOf("RED='")
   const end = source.indexOf('usage() {')
@@ -461,35 +462,54 @@ describe('the self-upgrade', () => {
     expect(runs).toHaveLength(1)
   })
 
-  it('reports a failed run with the end of its log, and keeps serving', async () => {
+  it('reports a failed run with its failure, and keeps serving', async () => {
     const { upgrade, runs } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 1, summary: 'npm ERR! build failed' })
+    const failure = {
+      code: 'build-incomplete',
+      phase: 'build',
+      exitCode: 1,
+      logPath: '/l'
+    } as const
+    runs[0].end({ code: 1, failure })
     await settle()
-    expect(upgrade.info().upgrade).toMatchObject({
+    expect(upgrade.info().upgrade).toEqual({
+      supported: true,
       state: 'failed',
       target: '3.0.0',
-      error: 'npm ERR! build failed'
+      mode: 'now',
+      failure,
+      since: 1_000
     })
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
     expect(runs).toHaveLength(2)
   })
 
-  it('reports a run that could not start as failed', async () => {
+  it('reports a run that could not start with its code, never the error text', async () => {
     const { upgrade, runs } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].fail(new Error('systemd-run is not available on this server'))
+    runs[0].fail(
+      new UpgradeLaunchFailure(
+        { code: 'launcher-missing', logPath: '/l' },
+        'systemd-run is not available on this server'
+      )
+    )
     await settle()
     expect(upgrade.info().upgrade).toMatchObject({
       state: 'failed',
-      error: 'systemd-run is not available on this server'
+      failure: { code: 'launcher-missing', logPath: '/l' }
     })
+    upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
+    runs[1].fail(new Error('spawn failed near the-server-bearer-token-0123456789'))
+    await settle()
+    expect(upgrade.info().upgrade.failure).toEqual({ code: 'launch-failed' })
+    expect(JSON.stringify(upgrade.info())).not.toContain('bearer-token')
   })
 
   it('goes back to idle when the script exits 0 with the server still up', async () => {
     const { upgrade, runs } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 0, summary: 'Already on v3.0.0' })
+    runs[0].end({ code: 0, failure: { code: 'unknown', exitCode: 0 } })
     await settle()
     expect(upgrade.info().upgrade).toEqual({ supported: true, state: 'idle', since: 1_000 })
   })
@@ -498,7 +518,7 @@ describe('the self-upgrade', () => {
     const { upgrade, runs, clock, statuses } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'idle' })
     clock.advance(UPGRADE_IDLE_MS)
-    runs[0].end({ code: 2, summary: 'boom' })
+    runs[0].end({ code: 2, failure: { code: 'unknown', exitCode: 2 } })
     await settle()
     expect(statuses.map((s) => s.state)).toEqual(['waiting-for-idle', 'running', 'failed'])
   })
@@ -560,10 +580,12 @@ describe('the script runner', () => {
     const runner = scriptRunner({ dataDir, name: 'e2e', platform: 'darwin' })
     const result = await runner.start({ script, args: ['--name', 'e2e', '--ref', 'v3.0.0'] })
     expect(result.code).toBe(3)
-    // Nothing the script wrote through info/warn/error: only the exit and where the log is.
-    expect(result.summary).toBe(
-      `The install script failed (exit 3). Full log on the server: ${join(dataDir, 'upgrade', 'upgrade.log')}`
-    )
+    // No code in its status file: `unknown`, its exit and where the log is.
+    expect(result.failure).toEqual({
+      code: 'unknown',
+      exitCode: 3,
+      logPath: join(dataDir, 'upgrade', 'upgrade.log')
+    })
     const copy = join(dataDir, 'upgrade', 'install-server.sh')
     expect(readFileSync(copy, 'utf8')).toBe(readFileSync(script, 'utf8'))
     expect(statSync(join(dataDir, 'upgrade')).mode & 0o777).toBe(0o700)
@@ -579,7 +601,7 @@ describe('the script runner', () => {
         'printf "%s\\n" "$CLAVE_INSTALL_STATUS_FILE" > "$here/told"',
         '[ -e "$here/once" ] && exit 2',
         'touch "$here/once"',
-        'printf "%s\\n" "first run" >> "$CLAVE_INSTALL_STATUS_FILE"',
+        'printf "phase=clone\\ncode=no-such-release\\n" >> "$CLAVE_INSTALL_STATUS_FILE"',
         'exit 1'
       ].join('\n')
     )
@@ -592,22 +614,32 @@ describe('the script runner', () => {
       platform: 'darwin',
       env: { HOME: dir, PATH: '/usr/bin:/bin' }
     })
-    expect((await runner.start({ script, args: [] })).summary).toBe(
-      `first run\nExit 1. Full log on the server: ${log}`
-    )
+    expect((await runner.start({ script, args: [] })).failure).toEqual({
+      code: 'no-such-release',
+      phase: 'clone',
+      exitCode: 1,
+      logPath: log
+    })
     const status = join(upgradeDir, 'install-status')
     expect(readFileSync(join(upgradeDir, 'told'), 'utf8')).toBe(`${status}\n`)
     expect(statSync(status).mode & 0o777).toBe(0o600)
-    expect((await runner.start({ script, args: [] })).summary).toBe(
-      `The install script failed (exit 2). Full log on the server: ${log}`
-    )
+    expect((await runner.start({ script, args: [] })).failure).toEqual({
+      code: 'unknown',
+      exitCode: 2,
+      logPath: log
+    })
   })
 
   it('refuses to start on Linux without systemd-run', async () => {
     const script = standIn('touch "$(dirname "$0")/ran"; exit 0')
     const dataDir = join(dir, 'data')
     const runner = scriptRunner({ dataDir, name: 'e2e', platform: 'linux', systemdRun: () => null })
-    await expect(runner.start({ script, args: [] })).rejects.toThrow(/systemd-run/)
+    const refused = await runner.start({ script, args: [] }).catch((error: unknown) => error)
+    expect(refused).toBeInstanceOf(UpgradeLaunchFailure)
+    expect((refused as UpgradeLaunchFailure).failure).toEqual({
+      code: 'launcher-missing',
+      logPath: join(dataDir, 'upgrade', 'upgrade.log')
+    })
     expect(existsSync(join(dataDir, 'upgrade', 'ran'))).toBe(false)
   })
 })
@@ -659,544 +691,51 @@ describe('the gate over the real session manager (V1-F4)', () => {
   })
 })
 
-describe('what a failed upgrade says on the wire (V1-F3)', () => {
-  it.each<[string, string, string]>([
-    [
-      'a repository URL with a password',
-      'Could not reach https://test-user:synthetic-saved-repo-secret@invalid.local/clave.git',
-      'Could not reach https://***@invalid.local/clave.git'
-    ],
-    [
-      'an ssh URL with a user',
-      'git clone ssh://deploy:pw123@host/x.git',
-      'git clone ssh://***@host/x.git'
-    ],
-    ['NAME=value', 'NPM_TOKEN=abc123def and GH_PASSWORD="two words"', 'NPM_TOKEN=***'],
-    ['NAME: value', 'api_key: s3cr3t-value', 'api_key: ***'],
-    ['a bearer', 'curl -H Bearer abcdef0123456789', 'curl -H Bearer ***'],
-    ['an authorization header', 'Authorization: token abc def', 'Authorization: ***'],
-    ['a GitHub token', 'token ghp_0123456789abcdefABCDEF0123 refused', 'token *** refused'],
-    ['a fine-grained GitHub token', 'github_pat_11ABCDEFG0123456789_abcdefXYZ', '***'],
-    ['an OpenAI-style key', 'key sk-proj-0123456789abcdefghij', 'key ***'],
-    ['a Slack token', 'xoxb-1234567890-abcdefghij', '***'],
-    ['an npm token', 'npm_0123456789abcdefghijABCDEFGHIJ', '***']
-  ])('redacts %s', (_name, input, expected) => {
-    expect(redactSecrets(input)).toBe(expected)
+describe('what a run tells of its failure: codes and phases from closed lists (V6)', () => {
+  it('keeps the last known code and the last known phase, and nothing else', () => {
+    expect(
+      readRunStatus(
+        [
+          'code=no-such-release',
+          'phase=resolve',
+          'Could not reach https://user:synthetic-secret-r1026@invalid.local/clave.git',
+          'code=repository-unreachable',
+          'phase=clone',
+          'code=no-such-thing',
+          'phase=compile',
+          'code=Rolled-Back',
+          'code=rolled-back trailing',
+          ' code=rolled-back',
+          'code=rolled-back\r',
+          'code==rolled-back',
+          'phase=build=x',
+          'npm ERR! token=synthetic-secret-r1026',
+          ''
+        ].join('\n')
+      )
+    ).toEqual({ code: 'repository-unreachable', phase: 'clone' })
   })
 
-  it('keeps commit SHAs and ordinary log lines readable', () => {
-    const line =
-      'v3.0.0-beta.9 is 4f1c9a2b7e3d5f6a8b9c0d1e2f3a4b5c6d7e8f90 · npm ERR! code ELIFECYCLE · Restarting the server'
-    expect(redactSecrets(line)).toBe(line)
+  it('reads nothing from no file, an empty one, or one with no known line', () => {
+    expect(readRunStatus(null)).toEqual({})
+    expect(readRunStatus('')).toEqual({})
+    expect(readRunStatus('child wrote here\ncode=\nphase=\n')).toEqual({})
   })
 
-  it('redacts the literal secrets it is told, the server token among them', () => {
-    expect(redactSecrets('echo 9f2c-literal-token-0001 >> log', ['9f2c-literal-token-0001'])).toBe(
-      'echo *** >> log'
-    )
-    expect(redactSecrets('nothing to see', ['', 'short'])).toBe('nothing to see')
-  })
-
-  it("passes a run's published failure on as its runner wrote it, and redacts a start error", async () => {
-    const clock = fakeClock()
-    const { runner, runs } = recordingRunner()
-    const upgrade = createSelfUpgrade({
-      version: '3.0.0-beta.6',
-      facts: FACTS,
-      runner,
-      activity: fakeActivity(),
-      clock,
-      secrets: () => ['the-server-bearer-token-0123456789']
+  it('names a failure unknown when the script wrote no code, with its exit and log', () => {
+    expect(runFailure('phase=dependencies\nnpm ERR!\n', 1, '/l')).toEqual({
+      code: 'unknown',
+      phase: 'dependencies',
+      exitCode: 1,
+      logPath: '/l'
     })
-    // The runner redacts the messages before it adds the exit and the log
-    // path, which are never redacted after (V5-F3).
-    const summary =
-      'NPM_TOKEN=***\nExit 1. Full log on the server: /srv/api_key=x/upgrade/upgrade.log'
-    upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 1, summary })
-    await settle()
-    expect(upgrade.info().upgrade.error).toBe(summary)
-    upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[1].fail(new Error('spawn failed near the-server-bearer-token-0123456789'))
-    await settle()
-    expect(upgrade.info().upgrade.error).toBe('spawn failed near ***')
-  })
-
-  it('never publishes the server token the script wrote in a message', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-token-message-'))
-    try {
-      const script = join(dir, 'install-server.sh')
-      writeFileSync(
-        script,
-        `#!/bin/bash\n${scriptMessages()}\ninfo 'curl answered for the-server-bearer-token-0123456789'\nexit 1\n`
-      )
-      const result = await scriptRunner({
-        dataDir: join(dir, 'data'),
-        name: 'e2e',
-        platform: 'darwin',
-        env: { HOME: dir, PATH: '/usr/bin:/bin' },
-        secrets: () => ['the-server-bearer-token-0123456789']
-      }).start({ script, args: [] })
-      expect(result.summary).toBe(
-        `curl answered for ***\nExit 1. Full log on the server: ${join(dir, 'data', 'upgrade', 'upgrade.log')}`
-      )
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  it('redacts a credential the installer environment carries, and keeps the log as written', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-env-secret-'))
-    try {
-      const script = join(dir, 'install-server.sh')
-      writeFileSync(
-        script,
-        '#!/bin/bash\nprintf "npm ERR! registry auth failed: %s\\n" "$NPM_TOKEN"\nexit 7\n'
-      )
-      const runner = scriptRunner({
-        dataDir: join(dir, 'data'),
-        name: 'e2e',
-        platform: 'darwin',
-        env: { HOME: dir, PATH: '/usr/bin:/bin', NPM_TOKEN: 'synthetic-secret-canary-r1026' }
-      })
-      const result = await runner.start({ script, args: [] })
-      expect(result.code).toBe(7)
-      expect(result.summary).toMatch(/^The install script failed \(exit 7\)\./)
-      expect(result.summary).not.toContain('synthetic-secret-canary-r1026')
-      // The log itself is private (0600) under the data directory, kept whole.
-      const log = join(dir, 'data', 'upgrade', 'upgrade.log')
-      expect(readFileSync(log, 'utf8')).toContain('synthetic-secret-canary-r1026')
-      expect(statSync(log).mode & 0o777).toBe(0o600)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  it('redacts the saved repository credential the real installer prints when git fails', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-real-installer-'))
-    let upgrade: SelfUpgrade | undefined
-    try {
-      mkdirSync(join(dir, 'bin'))
-      const git = join(dir, 'bin', 'git')
-      writeFileSync(git, '#!/bin/bash\nexit 1\n')
-      chmodSync(git, 0o700)
-      mkdirSync(join(dir, '.config', 'e2e'), { recursive: true })
-      writeFileSync(
-        join(dir, '.config', 'e2e', 'install.env'),
-        "CLAVE_HOST=loopback\nCLAVE_REPO='https://test-user:synthetic-saved-repo-secret@invalid.local/clave.git'\n"
-      )
-      const runner = scriptRunner({
-        dataDir: join(dir, 'data'),
-        name: 'e2e',
-        platform: 'darwin',
-        env: {
-          HOME: dir,
-          USER: 'e2e',
-          SHELL: '/bin/sh',
-          PATH: `${join(dir, 'bin')}:${dirname(process.execPath)}:${process.env.PATH}`
-        }
-      })
-      upgrade = createSelfUpgrade({
-        version: '3.0.0-beta.6',
-        facts: { name: 'e2e', script: resolve('scripts/install-server.sh'), ref: 'v3.0.0-beta.6' },
-        runner,
-        activity: { busy: () => false, subscribe: () => () => {} }
-      })
-      const failed = new Promise<void>((done) =>
-        upgrade!.subscribe((status) => {
-          if (status.state === 'failed') done()
-        })
-      )
-      upgrade.requestUpgrade({ version: '3.0.0-beta.9', when: 'now' })
-      await failed
-      const error = upgrade.info().upgrade.error ?? ''
-      expect(error).toContain('Could not reach https://***@invalid.local/clave.git')
-      expect(error).not.toContain('synthetic-saved-repo-secret')
-    } finally {
-      upgrade?.close()
-      rmSync(dir, { recursive: true, force: true })
-    }
-  }, 15_000)
-})
-
-describe('credentials in quoted and structured forms (V2-F1)', () => {
-  const secret = 'synthetic-json-config-credential-r1026'
-  it.each<[string, string, string]>([
-    ['a JSON key', `{"api_key":"${secret}"}`, '{"api_key":***'],
-    ['a JSON key with a space', `{"NPM_TOKEN": "${secret}"}`, '{"NPM_TOKEN": ***'],
-    ['a single-quoted key', `{'password': '${secret}'}`, "{'password': ***"],
-    ['a JSON authorization', `{"authorization":"Basic ${secret}"}`, '{"authorization":***'],
-    [
-      'a JSON bearer authorization',
-      `{"Authorization": "Bearer ${secret}"}`,
-      '{"Authorization": ***'
-    ],
-    ['a YAML key', `api_key: ${secret}`, 'api_key: ***'],
-    ['a quoted YAML key', `"api_key": ${secret}`, '"api_key": ***'],
-    ['a quoted YAML key and value', `"api_key": "${secret}"`, '"api_key": ***'],
-    ['a YAML authorization', `authorization: Basic ${secret}`, 'authorization: ***'],
-    ['a JSON value among others', `{"a":1,"secret":"${secret}","b":2}`, '{"a":1,"secret":***'],
-    ['a quoted shell assignment', `API_KEY="two ${secret}"`, 'API_KEY=***']
-  ])('masks %s, from its value to the end of the line', (_name, input, expected) => {
-    expect(redactSecrets(input)).toBe(expected)
-  })
-
-  it('keeps versions, commits, npm codes and permission errors readable', () => {
-    const text =
-      'npm ERR! code ELIFECYCLE\nVersion 3.0.0-beta.9, commit 4f1c9a2b7e3d5f6a8b9c0d1e2f3a4b5c6d7e8f90\nCould not prepare the upgrade: permission denied'
-    expect(redactSecrets(text)).toBe(text)
-  })
-
-  it('never answers a JSON credential an installer printed over authenticated HTTP', async () => {
-    const { startEmbedded } = await import('@clave/server')
-    const { FakeSource } = await import('@clave/server/test-support')
-    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-json-secret-'))
-    let upgrade: SelfUpgrade | undefined
-    let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
-    try {
-      const script = join(dir, 'install-server.sh')
-      writeFileSync(script, `#!/bin/bash\nprintf '%s\\n' '{"api_key":"${secret}"}'\nexit 7\n`)
-      upgrade = createSelfUpgrade({
-        version: '3.0.0-beta.6',
-        facts: { name: 'e2e', script, ref: 'v3.0.0-beta.6' },
-        runner: scriptRunner({
-          dataDir: join(dir, 'data'),
-          name: 'e2e',
-          platform: 'darwin',
-          env: { HOME: dir, PATH: '/usr/bin:/bin' }
-        }),
-        activity: { busy: () => false, subscribe: () => () => {} }
-      })
-      server = await startEmbedded({ ports: { sessions: new FakeSource(), serverInfo: upgrade } })
-      const failed = new Promise<void>((done) =>
-        upgrade!.subscribe((status) => {
-          if (status.state === 'failed') done()
-        })
-      )
-      const auth = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }
-      const asked = await fetch(`${server.url}/server/upgrade`, {
-        method: 'POST',
-        headers: auth,
-        body: JSON.stringify({ version: '3.0.0-beta.9', when: 'now' })
-      })
-      expect(asked.status).toBe(200)
-      await failed
-      const text = await (await fetch(`${server.url}/server/info`, { headers: auth })).text()
-      expect(text).toContain('failed')
-      // npm-like output never leaves the server; the reason is the exit and the log.
-      expect(text).toContain('The install script failed (exit 7)')
-      expect(text).not.toContain('api_key')
-      expect(text).not.toContain(secret)
-      expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
-    } finally {
-      upgrade?.close()
-      await server?.stop()
-      rmSync(dir, { recursive: true, force: true })
-    }
+    expect(runFailure(null, 7, '/l')).toEqual({ code: 'unknown', exitCode: 7, logPath: '/l' })
   })
 })
 
-describe('a credential masked to the end of its line (V3-F1)', () => {
-  const marker = 'synthetic-private-password-r1026'
-
-  it.each([
-    'fatal: unable to access https://github.com/antasphere/clave.git/: Could not resolve host: github.com',
-    'remote: Support for password authentication was removed',
-    'npm ERR! code EACCES\nnpm ERR! syscall open\nnpm ERR! path /srv/clave/package-lock.json',
-    'npm ERR! command failed\nnpm ERR! command sh -c tsc && electron-vite build',
-    'systemd-run: Failed to start transient service unit: Access denied',
-    'Process: 123 ExecStart=/bin/bash /home/u/.local/share/clave-server/upgrade/install-server.sh --name clave-server --ref v3.0.0-beta.10 (code=exited, status=127)',
-    'fatal: Could not read from remote repository. Permission denied (publickey).',
-    'HEAD is now at 8dfeb55ea4af35b15f8bb740e89cff4c8952e1ec v3.0.0-beta.10'
-  ])('keeps an ordinary installer line exact: %j', (line) => {
-    expect(redactSecrets(line)).toBe(line)
-  })
-
-  it.each<[string, string, string]>([
-    [
-      'an escaped quote in a JSON password',
-      JSON.stringify({ password: `prefix"${marker}`, code: 'E401' }),
-      '{"password":***'
-    ],
-    [
-      'escaped quotes in a JSON Basic authorization',
-      JSON.stringify({ authorization: `Basic "${marker}"` }),
-      '{"authorization":***'
-    ],
-    ['a comma inside a bare shell password', `PASSWORD=prefix,${marker}`, 'PASSWORD=***'],
-    ['a JSON array credential value', JSON.stringify({ api_key: [marker] }), '{"api_key":***'],
-    ['an npm configuration token', `_authToken=${marker}`, '_authToken=***'],
-    [
-      'only the line that carries it',
-      `first line\n{"password":"${marker}","code":"E401"}\nnpm ERR! code E401`,
-      'first line\n{"password":***\nnpm ERR! code E401'
-    ]
-  ])('masks %s, from its value to the end of the line', (_name, input, expected) => {
-    const actual = redactSecrets(input)
-    expect(actual).not.toContain(marker)
-    expect(actual).toBe(expected)
-  })
-
-  it('redacts a known literal in its JSON-escaped spelling too', () => {
-    const known = `prefix"${marker}`
-    const serialized = `config ${JSON.stringify({ note: known })}`
-    expect(redactSecrets(serialized, [known])).not.toContain(marker)
-    expect(redactSecrets(serialized, [known])).toBe('config {"note":"***"}')
-  })
-
-  it.each<[string, Record<string, string>]>([
-    ['by its key', {}],
-    ['as a known literal in the environment, escaped', { PASSWORD: '' }]
-  ])(
-    'never answers an escaped JSON password an installer printed over authenticated HTTP, %s',
-    async (_how, extraEnv) => {
-      const { startEmbedded } = await import('@clave/server')
-      const { FakeSource } = await import('@clave/server/test-support')
-      const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-escaped-secret-'))
-      let upgrade: SelfUpgrade | undefined
-      let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
-      try {
-        const payload = JSON.stringify({ password: `prefix"${marker}`, code: 'E401' })
-        const script = join(dir, 'install-server.sh')
-        // The payload holds no single quote, so the shell literal is exact.
-        writeFileSync(script, `#!/bin/bash\nprintf '%s\\n' '${payload}'\nexit 7\n`)
-        const env: NodeJS.ProcessEnv = { HOME: dir, PATH: '/usr/bin:/bin' }
-        if ('PASSWORD' in extraEnv) env.PASSWORD = `prefix"${marker}`
-        upgrade = createSelfUpgrade({
-          version: '3.0.0-beta.6',
-          facts: { name: 'e2e', script, ref: 'v3.0.0-beta.6' },
-          runner: scriptRunner({
-            dataDir: join(dir, 'data'),
-            name: 'e2e',
-            platform: 'darwin',
-            env
-          }),
-          activity: { busy: () => false, subscribe: () => () => {} }
-        })
-        server = await startEmbedded({ ports: { sessions: new FakeSource(), serverInfo: upgrade } })
-        const failed = new Promise<void>((done) =>
-          upgrade!.subscribe((status) => {
-            if (status.state === 'failed') done()
-          })
-        )
-        const auth = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }
-        const asked = await fetch(`${server.url}/server/upgrade`, {
-          method: 'POST',
-          headers: auth,
-          body: JSON.stringify({ version: '3.0.0-beta.9', when: 'now' })
-        })
-        expect(asked.status).toBe(200)
-        await failed
-        const info = (await (
-          await fetch(`${server.url}/server/info`, { headers: auth })
-        ).json()) as {
-          upgrade: { state: string; error: string }
-        }
-        expect(info.upgrade.state).toBe('failed')
-        expect(info.upgrade.error).not.toContain(marker)
-        expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
-      } finally {
-        upgrade?.close()
-        await server?.stop()
-        rmSync(dir, { recursive: true, force: true })
-      }
-    }
-  )
-})
-
-describe("only the install script's own messages leave the server (V4, V5)", () => {
-  const marker = 'synthetic-multiline-credential-r1026'
-  const LOG = '/data/upgrade/upgrade.log'
-  const footer = (code: number): string => `Exit ${code}. Full log on the server: ${LOG}`
-  const published = (messages: string | null, code = 7, literals: string[] = []): string =>
-    publishedFailure({ messages, code, logPath: LOG, literals })
-
-  it('keeps the last three messages in order, the exit and the log path on a line of their own', () => {
-    expect(published('one\ntwo\nthree\nfour\n', 1)).toBe(`two\nthree\nfour\n${footer(1)}`)
-  })
-
-  it.each<[string, string | null]>([
-    ['no status file', null],
-    ['an empty one', ''],
-    ['blank lines only', '\n  \n']
-  ])('says only the exit and the log path with %s', (_name, messages) => {
-    expect(published(messages, 3)).toBe(
-      'The install script failed (exit 3). Full log on the server: /data/upgrade/upgrade.log'
-    )
-  })
-
-  it("keeps the useful reason useful: the script's own message, its URL credential masked", () => {
-    expect(published('Could not reach https://u:p@host/clave.git\n', 1)).toBe(
-      `Could not reach https://***@host/clave.git\n${footer(1)}`
-    )
-  })
-
-  it.each<[string, string, string]>([
-    ['a credential pair', `NPM_TOKEN=${marker}\n`, 'NPM_TOKEN=***'],
-    [
-      'an OAuth repository URL',
-      `Could not reach https://oauth2:${marker}@invalid.local/clave.git\n`,
-      'Could not reach https://***@invalid.local/clave.git'
-    ]
-  ])('masks %s and keeps the exit and the log path whole (V5-F3)', (_name, messages, masked) => {
-    expect(published(messages, 1)).toBe(`${masked}\n${footer(1)}`)
-  })
-
-  it("never redacts the exit and the log path, which are the server's own", () => {
-    const logPath = '/srv/api_key=store/upgrade/upgrade.log'
-    expect(publishedFailure({ messages: 'Building\n', code: 2, logPath })).toBe(
-      `Building\nExit 2. Full log on the server: ${logPath}`
-    )
-  })
-
-  it.each<[string, string, string[], string]>([
-    [
-      'a known multi-line value after a key, as written',
-      `PASSWORD=first\n[clave-server] ${marker}\n`,
-      [`first\n[clave-server] ${marker}`],
-      'PASSWORD=***'
-    ],
-    [
-      'a known multi-line value after a key, one line as the script writes it',
-      `PASSWORD=first [clave-server] ${marker}\n`,
-      [`first\n[clave-server] ${marker}`],
-      'PASSWORD=***'
-    ],
-    [
-      'a known multi-line value with a neutral label, one line',
-      `value=first [clave-server] ${marker}\n`,
-      [`first\n[clave-server] ${marker}`],
-      'value=***'
-    ],
-    [
-      'a known CRLF value, one line',
-      `value=first  ${marker}\n`,
-      [`first\r\n${marker}`],
-      'value=***'
-    ],
-    [
-      'an unknown quoted shell continuation, one line',
-      `PASSWORD='first ${marker}'\n`,
-      [],
-      'PASSWORD=***'
-    ],
-    ['an unknown YAML block, one line', `password: |   first   ${marker}\n`, [], 'password: ***']
-  ])('publishes no part of %s (V5-F2)', (_name, messages, literals, masked) => {
-    const out = published(messages, 7, literals)
-    expect(out).not.toContain(marker)
-    expect(out).toBe(`${masked}\n${footer(7)}`)
-  })
-})
-
-describe('the redaction passes, one line at a time (V4-F2, V4-F3)', () => {
-  const marker = 'synthetic-multiline-credential-r1026'
-  it.each<[string, string, string[]]>([
-    ['a known multi-line value', `note=first\n${marker}`, [`first\n${marker}`]],
-    [
-      'a known multi-line value, JSON-escaped',
-      JSON.stringify({ note: `first\n${marker}` }),
-      [`first\n${marker}`]
-    ],
-    ['a literal that is also the key', `password=${marker}`, ['password']],
-    [
-      'a literal that is also a quoted JSON key',
-      JSON.stringify({ password: marker }),
-      ['password']
-    ],
-    [
-      'the longest of overlapping raw literals',
-      `note=prefix"${marker}`,
-      ['prefix', `prefix"${marker}`]
-    ],
-    [
-      'the longest of overlapping escaped literals',
-      JSON.stringify({ note: `prefix"${marker}` }),
-      ['prefix', `prefix"${marker}`]
-    ],
-    ['non-breaking and thin spaces', `password${'\u00a0'}:${'\u2009'}${marker}`, []],
-    ['tabs', `PASSWORD\t=\t${marker}`, []]
-  ])('leaves no part of %s', (_name, input, literals) => {
-    expect(redactSecrets(input, literals)).not.toContain(marker)
-  })
-
-  it('leaves a literal in key position to the key pass, so it never eats the key (V4-F2)', () => {
-    expect(redactSecrets(`password=${marker}`, ['password'])).not.toContain(marker)
-    expect(redactSecrets(`password=${marker}`, ['password'])).toMatch(/=\*\*\*$/)
-    expect(redactSecrets(`"password" : ${marker}`, ['password'])).not.toContain(marker)
-  })
-
-  it('takes a known value out before the key pass can cut it (V5-F2)', () => {
-    const known = `first\n[clave-server] ${marker}`
-    expect(redactSecrets(`PASSWORD=${known}`, [known])).toBe('PASSWORD=***')
-    expect(redactSecrets(`PASSWORD = ${known}`, [known])).toBe('PASSWORD = ***')
-  })
-
-  it('takes a known value out of a preparation error whose path holds it after a key (V5-F2)', () => {
-    const known = `first\n${marker}`
-    const message = `Could not prepare the upgrade: ENOENT: no such file or directory, copyfile '/tmp/x/PASSWORD=${known}/absent.sh' -> '/tmp/x/data/upgrade/install-server.sh'`
-    expect(redactSecrets(message, [known])).not.toContain(marker)
-  })
-
-  it('never leaves a known value that only looked like a key', () => {
-    for (const known of ['synthetic-token-value-r1026', 'synthetic-plain-value-r1026']) {
-      const out = redactSecrets(`Could not use ${known}: rejected`, [known])
-      expect(out).not.toContain(known)
-    }
-  })
-
-  it('masks URL userinfo before the key pass, so the rest of the URL stays (V5-F3)', () => {
-    expect(redactSecrets(`Could not reach https://oauth2:${marker}@invalid.local/clave.git`)).toBe(
-      'Could not reach https://***@invalid.local/clave.git'
-    )
-  })
-
-  it.each<[string, string, string]>([
-    ['CR alone', `password=${marker}\rnpm ERR! code E401`, 'password=***\rnpm ERR! code E401'],
-    ['CRLF', `password=${marker}\r\nnpm ERR! code E401`, 'password=***\r\nnpm ERR! code E401'],
-    [
-      'the rest of the line',
-      `password=${marker}, code=E401\nnpm ERR! code E401`,
-      'password=***\nnpm ERR! code E401'
-    ]
-  ])('stops at the end of the line: %s', (_name, input, expected) => {
-    expect(redactSecrets(input)).toBe(expected)
-  })
-
-  it.each(['\n', '\r', '\r\n'])(
-    'an empty credential value never takes the next line (%j)',
-    (eol) => {
-      const next = '[clave-server] npm ERR! code E401: Unable to authenticate'
-      expect(redactSecrets(`NPM_TOKEN=${eol}${next}`)).toBe(`NPM_TOKEN=***${eol}${next}`)
-    }
-  )
-
-  it.each([
-    'npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! path /srv/clave/node_modules',
-    'git: fatal: Authentication failed for https://github.com/antasphere/clave.git',
-    'error: pathspec v3.0.0-beta.10 did not match any file(s) known to git',
-    'systemctl: Failed to connect to bus: No medium found',
-    'npm ERR! ERESOLVE unable to resolve dependency tree',
-    'Could not prepare the upgrade: EACCES: permission denied, mkdir /srv/clave/upgrade'
-  ])('keeps an ordinary error exact: %j', (line) => {
-    expect(redactSecrets(line)).toBe(line)
-  })
-})
-
-describe('the published failure over authenticated HTTP, through the real runner (V4, V5)', () => {
-  const marker = 'synthetic-multiline-credential-r1026'
-  const pem = [
-    '-----BEGIN PRIVATE KEY-----',
-    'synthetic-prefix-line-1',
-    'synthetic-prefix-line-2',
-    'synthetic-known-private-key-body-r1026',
-    'synthetic-body-line-4',
-    'synthetic-body-line-5',
-    'synthetic-body-line-6',
-    'synthetic-body-line-7',
-    '-----END PRIVATE KEY-----'
-  ].join('\n')
+describe('no text from the run leaves the server, over authenticated HTTP (V6-F1, V6-F2, V6-F3)', () => {
+  const marker = 'synthetic-published-private-value-r1026'
   const shellQuote = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`
-  const known = `first\n[clave-server] ${marker}`
 
   interface Fixture {
     /** A stand-in script's body, written to `<dir>/install-server.sh`. */
@@ -1206,18 +745,22 @@ describe('the published failure over authenticated HTTP, through the real runner
     env?: NodeJS.ProcessEnv
     runner?: Partial<ScriptRunnerOptions>
   }
-  interface Failure {
-    state: string
-    error: string
+  interface Outcome {
+    /** `/server/info` as the wire carried it, raw. */
+    wire: string
+    upgrade: ServerUpgradeStatus
+    /** What the status file held once the run ended. */
+    status: string | null
     logged: string
-    /** The private log's path. */
     log: string
   }
+  const KEYS = ['failure', 'mode', 'since', 'state', 'supported', 'target']
+  const FAILURE_KEYS = ['code', 'exitCode', 'logPath', 'phase']
 
-  async function failOver(make: Fixture | ((dir: string) => Fixture)): Promise<Failure> {
+  async function failOver(make: Fixture | ((dir: string) => Fixture)): Promise<Outcome> {
     const { startEmbedded } = await import('@clave/server')
     const { FakeSource } = await import('@clave/server/test-support')
-    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-published-'))
+    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-codes-'))
     let upgrade: SelfUpgrade | undefined
     let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
     try {
@@ -1254,31 +797,35 @@ describe('the published failure over authenticated HTTP, through the real runner
       })
       expect(asked.status).toBe(200)
       await failed
-      const info = (await (await fetch(`${server.url}/server/info`, { headers: auth })).json()) as {
-        upgrade: { state: string; error: string }
-      }
+      const wire = await (await fetch(`${server.url}/server/info`, { headers: auth })).text()
       expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
-      let logged = ''
-      try {
-        logged = readFileSync(log, 'utf8')
-      } catch {
-        /* a run that never started has no log */
+      const read = (file: string): string | null =>
+        existsSync(file) ? readFileSync(file, 'utf8') : null
+      const { upgrade: status } = JSON.parse(wire) as { upgrade: ServerUpgradeStatus }
+      // Whatever the run did, the wire carries these keys and no other.
+      for (const key of Object.keys(status)) expect(KEYS).toContain(key)
+      for (const key of Object.keys(status.failure ?? {})) expect(FAILURE_KEYS).toContain(key)
+      return {
+        wire,
+        upgrade: status,
+        status: read(join(dir, 'data', 'upgrade', 'install-status')),
+        logged: read(log) ?? '',
+        log
       }
-      return { ...info.upgrade, logged, log }
     } finally {
       upgrade?.close()
       await server?.stop()
       rmSync(dir, { recursive: true, force: true })
     }
   }
-  /** A stand-in that speaks through install-server.sh's own message functions. */
+  /** A stand-in that speaks through install-server.sh's own prologue. */
   const speaking = (body: string, env: NodeJS.ProcessEnv = {}): Fixture => ({
-    body: `${scriptMessages()}\n${body}`,
+    body: `${scriptPrologue()}\n${body}`,
     env
   })
   /** The real install-server.sh, with a `git` of the test's own and a saved repository. */
   const realInstaller =
-    (git: string, repo?: string) =>
+    (git: string, repo?: string, env: NodeJS.ProcessEnv = {}) =>
     (dir: string): Fixture => {
       mkdirSync(join(dir, 'bin'))
       writeFileSync(join(dir, 'bin', 'git'), `#!/bin/bash\n${git}\n`)
@@ -1290,186 +837,145 @@ describe('the published failure over authenticated HTTP, through the real runner
       )
       return {
         script: resolve('scripts/install-server.sh'),
-        env: { PATH: `${join(dir, 'bin')}:${dirname(process.execPath)}:${process.env.PATH}` }
+        env: {
+          PATH: `${join(dir, 'bin')}:${dirname(process.execPath)}:${process.env.PATH}`,
+          ...env
+        }
       }
     }
-  const fixed = (code: number): RegExp =>
-    new RegExp(
-      `^The install script failed \\(exit ${code}\\)\\. Full log on the server: .*upgrade\\.log$`
-    )
 
-  it.each<[string, string, NodeJS.ProcessEnv]>([
-    ['a multi-line shell value', `PASSWORD='first\n${marker}'\nnpm ERR! code E401`, {}],
-    ['a multi-line YAML value', `password: |\n  first\n  ${marker}\nnpm ERR! code E401`, {}],
-    [
-      'a value whose key is a known literal',
-      `password=${marker}\nnpm ERR! code E401`,
-      { PASSWORD: 'password' }
-    ]
-  ])('publishes no part of %s a command printed', async (_name, payload, env) => {
-    const out = await failOver({ body: `printf '%s\\n' ${shellQuote(payload)}\nexit 7`, env })
-    expect(out.state).toBe('failed')
-    expect(out.error).not.toContain(marker)
-    expect(out.error).toMatch(fixed(7))
-  })
-
-  it('publishes no part of a nine-line key the environment holds, and keeps the private log whole', async () => {
+  it("publishes the script's code and phase, its exit and the log's path, and none of its message", async () => {
     const out = await failOver(
       speaking(
-        'info "PRIVATE_KEY=$PRIVATE_KEY"\nprintf "PRIVATE_KEY=%s\\n" "$PRIVATE_KEY"\nexit 7',
-        {
-          PRIVATE_KEY: pem
-        }
+        `phase build\nfail build-incomplete ${shellQuote(`The build did not produce ${marker}`)}`
       )
     )
-    expect(out.error).not.toContain('synthetic-known-private-key-body-r1026')
-    expect(out.error).not.toContain('synthetic-body-line')
-    expect(out.error).toBe(`PRIVATE_KEY=***\nExit 7. Full log on the server: ${out.log}`)
-    expect(out.logged).toContain('synthetic-known-private-key-body-r1026')
+    expect(out.upgrade.failure).toEqual({
+      code: 'build-incomplete',
+      phase: 'build',
+      exitCode: 1,
+      logPath: out.log
+    })
+    expect(out.wire).not.toContain(marker)
+    expect(out.logged).toContain(marker)
   })
 
-  it('keeps the next message after an empty credential line', async () => {
-    const out = await failOver(
-      speaking("info 'NPM_TOKEN='\nwarn 'npm ERR! code E401: Unable to authenticate'\nexit 7")
-    )
-    expect(out.error).toBe(
-      `NPM_TOKEN=***\nnpm ERR! code E401: Unable to authenticate\nExit 7. Full log on the server: ${out.log}`
-    )
-  })
-
-  it("publishes the script's own error with its URL credential masked", async () => {
-    const out = await failOver(speaking("error 'Could not reach https://u:p@host/clave.git'"))
-    expect(out.error).toBe(
-      `Could not reach https://***@host/clave.git\nExit 1. Full log on the server: ${out.log}`
-    )
-  })
-
-  it("never publishes the npm lines before the script's own error, with their secret", async () => {
+  it('keeps only the known code of what a stand-in appends to its own status file', async () => {
     const out = await failOver(
       speaking(
         [
-          `echo 'npm ERR! 401 Unauthorized ${marker}' >&2`,
-          `echo 'npm ERR! //registry.example/:_authToken=${marker}' >&2`,
-          "error 'The build did not produce out/main/server-entry.js'"
+          'phase dependencies',
+          `printf '%s\\n' ${shellQuote(`npm ERR! ${marker}`)} 'code=no-such-thing' 'code=release-too-old' ${shellQuote(`code=${marker}`)} 'phase=Build' 'phase=clone' ${shellQuote(`Could not reach https://u:${marker}@invalid.local/x.git`)} >> "$STATUS_FILE"`,
+          'exit 7'
         ].join('\n')
       )
     )
-    expect(out.error).toBe(
-      `The build did not produce out/main/server-entry.js\nExit 1. Full log on the server: ${out.log}`
-    )
-  })
-
-  it('never publishes a [clave-server] line a command of the real installer wrote (V5-F1)', async () => {
-    const out = await failOver(
-      realInstaller(`printf '%s\\n' ${shellQuote(`[clave-server] rejected ${marker}`)} >&2\nexit 1`)
-    )
-    expect(out.error).not.toContain(marker)
-    expect(out.error).toBe(
-      `Could not reach https://github.com/antasphere/clave.git\nExit 1. Full log on the server: ${out.log}`
-    )
-    expect(out.logged).toContain(`[clave-server] rejected ${marker}`)
-  })
-
-  it("never publishes a command's output after a [clave-server] prefix the script split from it (V5-F1)", async () => {
-    const out = await failOver((dir) => {
-      const helper = join(dir, 'npm-output.sh')
-      writeFileSync(
-        helper,
-        `#!/bin/bash\nprintf '%s\\n' ${shellQuote(marker)}\nprintf '%s\\n' ${shellQuote(marker)} >> "\${CLAVE_INSTALL_STATUS_FILE:-/dev/null}"\nexit 7\n`
-      )
-      return speaking(
-        `info 'Building'\nprintf '[clave-server] '\n/bin/bash ${shellQuote(helper)}\nexit 7`
-      )
+    expect(out.status).toContain(marker)
+    expect(out.upgrade.failure).toEqual({
+      code: 'release-too-old',
+      phase: 'clone',
+      exitCode: 7,
+      logPath: out.log
     })
-    expect(out.error).toBe(`Building\nExit 7. Full log on the server: ${out.log}`)
+    expect(out.wire).not.toContain(marker)
   })
 
-  it('keeps the exit and the log path after a credential pair the script wrote (V5-F3)', async () => {
-    const out = await failOver(speaking(`info ${shellQuote(`NPM_TOKEN=${marker}`)}\nexit 7`))
-    expect(out.error).toBe(`NPM_TOKEN=***\nExit 7. Full log on the server: ${out.log}`)
-  })
-
-  it("keeps the exit and the log path of the real installer's OAuth repository failure (V5-F3)", async () => {
-    const out = await failOver(
-      realInstaller('exit 1', `https://oauth2:${marker}@invalid.local/clave.git`)
-    )
-    expect(out.error).toBe(
-      `Could not reach https://***@invalid.local/clave.git\nExit 1. Full log on the server: ${out.log}`
-    )
-  })
-
-  it.each<[string, string]>([
-    ['after its key', 'info "PASSWORD=$PASSWORD"'],
-    ['with a neutral label', 'info "value=$PASSWORD"']
-  ])(
-    'publishes no part of a known multi-line value the script wrote %s (V5-F2)',
-    async (_name, line) => {
-      const out = await failOver(speaking(`${line}\nexit 7`, { PASSWORD: known }))
-      expect(out.error).not.toContain(marker)
-      expect(out.error).toMatch(/^(PASSWORD|value)=\*\*\*\nExit 7\. Full log on the server: /)
-    }
-  )
-
-  it('takes a known literal out of a message that also uses it as a key (V4-F2)', async () => {
-    const out = await failOver(
-      speaking(`info ${shellQuote(`password=${marker}`)}\nexit 7`, {
-        PASSWORD: 'password'
-      })
-    )
-    expect(out.error).not.toContain(marker)
-    expect(out.error).toMatch(/=\*\*\*\nExit 7\. Full log on the server: /)
-  })
-
-  const padding = 1024 * 1024 - known.length - 1 + 4
-  it("publishes nothing of a command's padded output, the known value intact in the log (V5-F4)", async () => {
-    const out = await failOver({
-      body: `printf '[clave-server] context=%s\\n' "$PASSWORD"\nprintf '%*s' ${padding} ''\nexit 7`,
-      env: { PASSWORD: known }
-    })
-    expect(out.logged).toContain(known)
-    expect(out.error).toMatch(fixed(7))
-  })
-
-  it('reads the status file whole, however much the commands printed (V5-F4)', async () => {
-    const out = await failOver(
-      speaking(`info "context=$PASSWORD"\nprintf '%*s' ${padding} ''\nexit 7`, { PASSWORD: known })
-    )
-    expect(out.error).toBe(`context=***\nExit 7. Full log on the server: ${out.log}`)
-  })
-
-  it('publishes only the fixed sentence when the status file is larger than it reads (V5-F4)', async () => {
-    const out = await failOver(
-      speaking(
-        `for i in $(seq 1 2000); do info "padding message $i of a run that said far too much"; done\ninfo "context=$PASSWORD"\nexit 7`,
-        { PASSWORD: known }
-      )
-    )
-    expect(out.error).toMatch(fixed(7))
-  })
-
-  it.each<[string, (dir: string) => Fixture]>([
+  // The verifier's three routes from a child of the real installer to its
+  // status file. Each child writes text and a code of its own; the script's
+  // own code comes after it, and only codes ever leave.
+  const childWrites = (find: string): string =>
     [
-      'a known credential',
-      (dir) => ({ script: join(dir, marker, 'absent.sh'), env: { NPM_TOKEN: marker } })
+      'case " $* " in *" ls-remote "*) ;; *) exit 1 ;; esac',
+      `file="$(${find})"`,
+      '[[ -n "$file" ]] || exit 1',
+      `printf '%s\\n' ${shellQuote(`child-only ${marker}`)} ${shellQuote(`code=${marker}`)} >> "$file"`,
+      'exit 1'
+    ].join('\n')
+  it.each<[string, string]>([
+    [
+      // macOS has no /proc: the child is handed the path the /proc read recovers on Linux.
+      'the /proc environ route',
+      `if [[ -r /proc/$PPID/environ ]]; then tr '\\0' '\\n' < /proc/$PPID/environ | sed -n 's/^CLAVE_INSTALL_STATUS_FILE=//p'; else printf '%s' "$RECOVERED"; fi`
     ],
     [
-      'a known multi-line credential after a key',
-      (dir) => ({
-        script: join(dir, `PASSWORD=first\n${marker}`, 'absent.sh'),
-        env: { PASSWORD: `first\n${marker}` }
-      })
+      'the inherited stderr route',
+      `lsof -a -p $$ -d 2 -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 | sed 's#upgrade.log$#install-status#'`
+    ],
+    [
+      "the parent's command line route",
+      `ps -o args= -p $PPID | awk '{ print $2 }' | sed 's#install-server.sh$#install-status#'`
     ]
-  ])('publishes no part of %s in the path of a preparation error (V5-F2)', async (_name, make) => {
-    const out = await failOver(make)
-    expect(out.error).toMatch(/^Could not prepare the upgrade: /)
-    expect(out.error).not.toContain(marker)
+  ])('publishes only codes when a child reaches the status file by %s', async (_route, find) => {
+    const out = await failOver((dir) =>
+      realInstaller(childWrites(find), undefined, {
+        RECOVERED: join(dir, 'data', 'upgrade', 'install-status')
+      })(dir)
+    )
+    expect(out.status, 'the child did reach the file').toContain(`child-only ${marker}`)
+    expect(out.upgrade.failure).toEqual({
+      code: 'repository-unreachable',
+      phase: 'resolve',
+      exitCode: 1,
+      logPath: out.log
+    })
+    expect(out.wire).not.toContain(marker)
   })
 
-  it('refuses usefully on Linux without systemd-run', async () => {
+  it.each<[string, string, NodeJS.ProcessEnv]>([
+    [
+      'a URL whose delimiter a known value covers (V6-F2)',
+      `https://gituser:${marker}@invalid.local/clave.git`,
+      { OTHER_PASSWORD: '@invalid.local' }
+    ],
+    [
+      'a URL whose password holds a newline (V6-F3)',
+      `https://gituser:synthetic-publishe\nd-private-value-r1026@invalid.local/clave.git`,
+      {}
+    ]
+  ])('publishes no URL at all for %s', async (_name, repo, env) => {
+    const out = await failOver(realInstaller('exit 1', repo, env))
+    expect(out.upgrade.failure).toEqual({
+      code: 'repository-unreachable',
+      phase: 'resolve',
+      exitCode: 1,
+      logPath: out.log
+    })
+    expect(out.wire).not.toContain('://')
+    expect(out.wire).not.toContain('invalid.local')
+    expect(out.wire).not.toMatch(/synthetic-publishe/)
+  })
+
+  it('reads nothing from a status file larger than 64 KiB, whatever it ends with', async () => {
+    const out = await failOver(
+      speaking(
+        `for i in $(seq 1 3000); do printf 'padding line %s of a run that wrote far too much\\n' "$i" >> "$STATUS_FILE"; done\nphase build\nfail build-incomplete x`
+      )
+    )
+    expect(out.status?.length).toBeGreaterThan(64 * 1024)
+    expect(out.upgrade.failure).toEqual({ code: 'unknown', exitCode: 1, logPath: out.log })
+  })
+
+  it('names a missing systemd-run, and nothing else', async () => {
     const out = await failOver({
       body: 'exit 7',
       runner: { platform: 'linux', systemdRun: () => null }
     })
-    expect(out.error).toContain('systemd-run is not available')
+    expect(out.upgrade.failure).toEqual({ code: 'launcher-missing', logPath: out.log })
+    expect(out.logged).toContain('systemd-run is not available')
+  })
+
+  it('names a run it could not prepare, never the path that failed nor a log it never wrote', async () => {
+    const said = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const out = await failOver((dir) => ({
+        script: join(dir, marker, 'absent.sh'),
+        env: { NPM_TOKEN: marker }
+      }))
+      expect(out.upgrade.failure).toEqual({ code: 'launch-failed' })
+      expect(out.wire).not.toContain(marker)
+      expect(String(said.mock.calls[0]?.[0])).toContain('Could not prepare the upgrade')
+    } finally {
+      said.mockRestore()
+    }
   })
 })

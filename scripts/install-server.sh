@@ -11,23 +11,27 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# A Mac that asked for this run (an upgrade from Settings → Servers) shows only
-# the messages below when it fails, read from the file CLAVE_INSTALL_STATUS_FILE
-# names: never what git, npm or any other command prints, which can carry
-# credentials. The path leaves the environment at once, so no command this
-# script runs is ever handed it.
+# A Mac that asked for this run (an upgrade from Settings → Servers) learns how
+# it failed from the file CLAVE_INSTALL_STATUS_FILE names, and only from that
+# file: `phase=<phase>` as each phase starts and `code=<code>` from `fail`,
+# their values from the closed lists of packages/contract/src/upgrade-failure.ts.
+# The server keeps nothing else from the file, so no text (a message, or what
+# git or npm print, which can carry credentials) ever reaches a Mac. The path
+# never reaches a command this script runs: STATUS_FILE keeps no export even
+# when the environment had one, and the variable leaves the environment.
 STATUS_FILE="${CLAVE_INSTALL_STATUS_FILE:-}"
+export -n STATUS_FILE
 unset CLAVE_INSTALL_STATUS_FILE
-status_message() {
+status_line() {
   [[ -n "$STATUS_FILE" ]] || return 0
-  local message="$*"
-  message="${message//$'\r'/ }"
-  { printf '%s\n' "${message//$'\n'/ }" >> "$STATUS_FILE"; } 2>/dev/null || true
+  { printf '%s=%s\n' "$1" "$2" >> "$STATUS_FILE"; } 2>/dev/null || true
 }
+phase() { status_line phase "$1"; }
 
-info()  { status_message "$*"; echo -e "${GREEN}[clave-server]${NC} $*"; }
-warn()  { status_message "$*"; echo -e "${YELLOW}[clave-server]${NC} $*" >&2; }
-error() { status_message "$*"; echo -e "${RED}[clave-server]${NC} $*" >&2; exit 1; }
+info()  { echo -e "${GREEN}[clave-server]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[clave-server]${NC} $*" >&2; }
+# fail <code> <message>: the code for a Mac, the message for whoever reads the output.
+fail()  { status_line code "$1"; shift; echo -e "${RED}[clave-server]${NC} $*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
@@ -68,7 +72,7 @@ OPT_REF='' OPT_HOST='' OPT_PORT='' OPT_DATA_DIR='' OPT_TOKEN_FILE='' OPT_PATH=''
 FORCE=0
 SERVICE=1
 
-need_value() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || error "$1 needs a value"; }
+need_value() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail invalid-options "$1 needs a value"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,17 +87,17 @@ while [[ $# -gt 0 ]]; do
     --force)      FORCE=1; shift ;;
     --no-service) SERVICE=0; shift ;;
     --help|-h)    usage; exit 0 ;;
-    *)            usage >&2; error "Unknown option: $1" ;;
+    *)            usage >&2; fail invalid-options "Unknown option: $1" ;;
   esac
 done
 
-[[ "$NAME" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || error "--name must be lowercase letters, digits and dashes"
-[[ $EUID -ne 0 ]] || error "Run this as the user who owns the repositories and agent logins, not as root"
+[[ "$NAME" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || fail invalid-options "--name must be lowercase letters, digits and dashes"
+[[ $EUID -ne 0 ]] || fail run-as-root "Run this as the user who owns the repositories and agent logins, not as root"
 
 case "$(uname)" in
   Linux)  PLATFORM=linux ;;
   Darwin) PLATFORM=macos ;;
-  *)      error "Unsupported platform: $(uname)" ;;
+  *)      fail unsupported-platform "Unsupported platform: $(uname)" ;;
 esac
 
 APP_DIR="$HOME/.local/lib/$NAME"
@@ -124,11 +128,11 @@ fi
 [[ -n "$OPT_REPO" ]] && CLAVE_REPO="$OPT_REPO"
 
 [[ "$CLAVE_PORT" =~ ^[0-9]+$ && "$CLAVE_PORT" -ge 1 && "$CLAVE_PORT" -le 65535 ]] \
-  || error "--port must be between 1 and 65535"
-[[ "$CLAVE_DATA_DIR" = /* ]] || error "--data-dir must be an absolute path"
+  || fail invalid-options "--port must be between 1 and 65535"
+[[ "$CLAVE_DATA_DIR" = /* ]] || fail invalid-options "--data-dir must be an absolute path"
 if [[ -n "$CLAVE_TOKEN_FILE" ]]; then
-  [[ "$CLAVE_TOKEN_FILE" = /* ]] || error "--token-file must be an absolute path"
-  [[ -f "$CLAVE_TOKEN_FILE" ]] || error "No token file at $CLAVE_TOKEN_FILE"
+  [[ "$CLAVE_TOKEN_FILE" = /* ]] || fail invalid-options "--token-file must be an absolute path"
+  [[ -f "$CLAVE_TOKEN_FILE" ]] || fail token-file-missing "No token file at $CLAVE_TOKEN_FILE"
 fi
 
 # ── Prerequisites ──────────────────────────────────────────────────
@@ -136,12 +140,12 @@ missing=()
 for tool in git node npm cc make python3; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
-[[ ${#missing[@]} -eq 0 ]] || error "Missing: ${missing[*]}. Install Node 22 or newer, git and a C toolchain (build-essential and python3 on Debian or Ubuntu, the Xcode command line tools on macOS)."
+[[ ${#missing[@]} -eq 0 ]] || fail missing-tools "Missing: ${missing[*]}. Install Node 22 or newer, git and a C toolchain (build-essential and python3 on Debian or Ubuntu, the Xcode command line tools on macOS)."
 # The real binary, not a version manager's shim: fnm points PATH at a per-shell
 # link that is gone once that shell ends, and the service would lose its Node.
 NODE="$(node -p 'process.execPath')"
 node_major="$("$NODE" -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" -ge 22 ]] || error "Node 22 or newer is required, found $("$NODE" --version)"
+[[ "$node_major" -ge 22 ]] || fail node-too-old "Node 22 or newer is required, found $("$NODE" --version)"
 # Node's own directory first, so the agents installed with its npm (claude, codex)
 # resolve for the service whatever the saved PATH holds.
 SERVICE_PATH="$(dirname "$NODE"):$CLAVE_PATH"
@@ -179,12 +183,12 @@ if [[ "$CLAVE_HOST" == auto ]]; then
   if tailscale_ip >/dev/null; then CLAVE_HOST=tailscale; else CLAVE_HOST=loopback; fi
 fi
 case "$CLAVE_HOST" in
-  tailscale) LISTEN_HOST="$(tailscale_ip)" || error "Tailscale is not up on this machine (tailscale ip -4 gave nothing)" ;;
+  tailscale) LISTEN_HOST="$(tailscale_ip)" || fail tailscale-down "Tailscale is not up on this machine (tailscale ip -4 gave nothing)" ;;
   loopback)  LISTEN_HOST=127.0.0.1 ;;
   *)         LISTEN_HOST="$CLAVE_HOST" ;;
 esac
 case "$LISTEN_HOST" in
-  0.0.0.0|::|'[::]') error "Refusing a wildcard address: the server speaks plain HTTP, reach it over Tailscale or an SSH tunnel" ;;
+  0.0.0.0|::|'[::]') fail wildcard-address "Refusing a wildcard address: the server speaks plain HTTP, reach it over Tailscale or an SSH tunnel" ;;
 esac
 if [[ "$LISTEN_HOST" == *:* ]]; then URL_HOST="[$LISTEN_HOST]"; else URL_HOST="$LISTEN_HOST"; fi
 SERVER_URL="http://$URL_HOST:$CLAVE_PORT"
@@ -199,7 +203,7 @@ github_repo() {
 # first) or the newest stable one ('stable'), by its tag.
 release_tag() {
   local repo url
-  repo="$(github_repo)" || error "--ref $1 needs a GitHub repository; give a tag or branch with --ref"
+  repo="$(github_repo)" || fail invalid-options "--ref $1 needs a GitHub repository; give a tag or branch with --ref"
   if [[ "$1" == stable ]]; then
     url="https://api.github.com/repos/$repo/releases/latest"
   else
@@ -211,9 +215,10 @@ release_tag() {
       .then((r) => { if (!r.ok) throw new Error(`GitHub answered ${r.status}`); return r.json() })
       .then((j) => { const tag = Array.isArray(j) ? j[0]?.tag_name : j.tag_name; if (!tag) throw new Error("no release found"); console.log(tag) })
       .catch((e) => { console.error(e.message); process.exit(1) })
-  ' "$url" || error "Could not read the $1 release of $repo"
+  ' "$url" || fail release-lookup-failed "Could not read the $1 release of $repo"
 }
 
+phase resolve
 case "$CLAVE_REF" in
   latest|stable) REF="$(release_tag "$CLAVE_REF")" ;;
   *)             REF="$CLAVE_REF" ;;
@@ -221,13 +226,13 @@ esac
 
 # A peeled tag first (the commit an annotated tag points at), then a tag, then a branch.
 remote_refs="$(git ls-remote "$CLAVE_REPO" "refs/tags/$REF^{}" "refs/tags/$REF" "refs/heads/$REF")" \
-  || error "Could not reach $CLAVE_REPO"
+  || fail repository-unreachable "Could not reach $CLAVE_REPO"
 SHA=''
 for wanted in "refs/tags/$REF^{}" "refs/tags/$REF" "refs/heads/$REF"; do
   SHA="$(awk -v ref="$wanted" '$2 == ref { print $1; exit }' <<<"$remote_refs")"
   [[ -n "$SHA" ]] && break
 done
-[[ -n "$SHA" ]] || error "No tag or branch named $REF in $CLAVE_REPO"
+[[ -n "$SHA" ]] || fail no-such-release "No tag or branch named $REF in $CLAVE_REPO"
 
 RELEASES="$APP_DIR/releases"
 RELEASE="$RELEASES/$SHA"
@@ -244,20 +249,23 @@ build_release() {
   rm -rf "$staging"
   mkdir -p "$RELEASES"
   trap 'rm -rf "$staging"' EXIT
+  phase clone
   info "Cloning $REF"
   git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$CLAVE_REPO" "$staging"
   local head
   head="$(git -C "$staging" rev-parse HEAD)"
-  [[ "$head" == "$SHA" ]] || error "$REF moved while cloning (${head:0:12}, expected ${SHA:0:12}); run again"
+  [[ "$head" == "$SHA" ]] || fail ref-moved "$REF moved while cloning (${head:0:12}, expected ${SHA:0:12}); run again"
   grep -q -- '--daemon' "$staging/src/main/server-entry.ts" \
-    || error "$REF has no standalone server mode (it needs 3.0.0-beta.6 or newer)"
+    || fail release-too-old "$REF has no standalone server mode (it needs 3.0.0-beta.6 or newer)"
+  phase dependencies
   info "Installing dependencies"
   # The server runs under Node: the Electron binary itself is never needed here.
   (cd "$staging" && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund)
+  phase build
   info "Building"
   (cd "$staging" && npm run build)
   [[ -f "$staging/out/main/server-entry.js" && -f "$staging/out/main/terminal-process.js" ]] \
-    || error "The build did not produce out/main/server-entry.js and out/main/terminal-process.js"
+    || fail build-incomplete "The build did not produce out/main/server-entry.js and out/main/terminal-process.js"
   echo "$REF" > "$staging/.clave-ref"
   rm -rf "$RELEASE"
   mv "$staging" "$RELEASE"
@@ -436,10 +444,10 @@ write_service() {
   printf '%s\n' "$SERVICE_TEXT" > "$SERVICE_FILE"
   if [[ $PLATFORM == linux ]]; then
     systemctl --user daemon-reload
-    systemctl --user enable "$NAME.service" >/dev/null 2>&1 || error "systemctl --user enable $NAME failed"
+    systemctl --user enable "$NAME.service" >/dev/null 2>&1 || fail service-enable-failed "systemctl --user enable $NAME failed"
   else
     mkdir -p "$(dirname "$LOG_FILE")"
-    plutil -lint -s "$SERVICE_FILE" || error "Wrote an invalid $SERVICE_FILE"
+    plutil -lint -s "$SERVICE_FILE" || fail invalid-service-file "Wrote an invalid $SERVICE_FILE"
   fi
 }
 
@@ -493,16 +501,17 @@ wait_healthy() {
   ' "$SERVER_URL" "${1:-60}"
 }
 
+phase service
 if [[ $PLATFORM == linux ]]; then
   systemctl --user show-environment >/dev/null 2>&1 \
-    || error "No systemd user manager for $USER: log in over SSH as this user (not su or sudo), or run with --no-service"
+    || fail no-service-manager "No systemd user manager for $USER: log in over SSH as this user (not su or sudo), or run with --no-service"
   if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo no)" != yes ]]; then
     loginctl enable-linger "$USER" 2>/dev/null \
       || warn "Lingering is off, so the server stops when you log out. Turn it on with: sudo loginctl enable-linger $USER"
   fi
 else
   launchctl print "gui/$(id -u)" >/dev/null 2>&1 \
-    || error "No login session for $USER: a launchd agent needs the user logged in on the Mac (auto-login for a headless Mac), or run with --no-service"
+    || fail no-login-session "No login session for $USER: a launchd agent needs the user logged in on the Mac (auto-login for a headless Mac), or run with --no-service"
 fi
 
 # A run with nothing new leaves a running server alone: a restart ends its sessions.
@@ -520,20 +529,25 @@ fi
 if [[ $RUNNING -eq 1 ]]; then
   warn "Restarting the server: its running sessions end, and come back as ended tabs to Resume"
 fi
+phase restart
 stop_service
 ROLLBACK_CURRENT="$CURRENT"
 ROLLBACK_PREVIOUS=''
 [[ -L "$PREVIOUS_LINK" ]] && ROLLBACK_PREVIOUS="$(readlink "$PREVIOUS_LINK")"
 switch_to "$RELEASE"
+phase service
 write_service
+phase restart
 start_service || true
 
 # Going back restores the release and the service as they were, options included.
+phase health
 if ! wait_healthy; then
   if [[ -z "$ROLLBACK_CURRENT" || -z "$OLD_SERVICE_TEXT" ]]; then
     stop_service
-    error "The server did not answer on $SERVER_URL within a minute, and is stopped. Logs: $(logs_hint)"
+    fail server-did-not-answer "The server did not answer on $SERVER_URL within a minute, and is stopped. Logs: $(logs_hint)"
   fi
+  phase rollback
   back="$(cat "$ROLLBACK_CURRENT/.clave-ref" 2>/dev/null || basename "$ROLLBACK_CURRENT")"
   warn "$REF did not answer on $SERVER_URL within a minute; going back to $back as it ran before"
   stop_service
@@ -547,8 +561,8 @@ if ! wait_healthy; then
   write_service
   start_service || true
   [[ -n "$CLAVE_URL" ]] && SERVER_URL="$CLAVE_URL"
-  wait_healthy || error "$back does not answer either. Logs: $(logs_hint)"
-  error "$REF did not start with these options, and the server is back on $back at $SERVER_URL. Logs: $(logs_hint)"
+  wait_healthy || fail rollback-failed "$back does not answer either. Logs: $(logs_hint)"
+  fail rolled-back "$REF did not start with these options, and the server is back on $back at $SERVER_URL. Logs: $(logs_hint)"
 fi
 prune_releases
 save_options

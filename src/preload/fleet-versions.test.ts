@@ -78,7 +78,7 @@ describe("a server's upgrade, routed to main", () => {
     const before = refreshes(w.asked).length
     w.event({
       _tag: 'server.upgrade_changed',
-      status: { supported: true, state: 'failed', target: '3.0.0', error: 'x' }
+      status: { supported: true, state: 'failed', target: '3.0.0', failure: { code: 'unknown' } }
     })
     await flush()
     expect(refreshes(w.asked).slice(before)).toEqual([[FLEET_IPC.versionRefresh, 'a']])

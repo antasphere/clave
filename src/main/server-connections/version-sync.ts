@@ -83,7 +83,7 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
         kind: 'failed',
         ...known,
         target,
-        error: upgrade.error ?? 'The install script failed.',
+        ...(upgrade.failure && { failure: upgrade.failure }),
         ownAction: false
       }
     return gt(version, appVersion)
@@ -102,7 +102,7 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
       kind: 'failed',
       ...known,
       target,
-      error: upgrade.error ?? 'The install script failed.'
+      ...(upgrade.failure && { failure: upgrade.failure })
     }
   if (input.requested === appVersion)
     return {

@@ -134,8 +134,17 @@ describe('the decision for one server', () => {
         { kind: 'upgrading', target: '3.0.0-beta.10', upgradeState: 'running' }
       ],
       [
-        { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' },
-        { kind: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' }
+        {
+          supported: true,
+          state: 'failed',
+          target: '3.0.0-beta.10',
+          failure: { code: 'unknown', phase: 'build', exitCode: 1, logPath: '/srv/u.log' }
+        },
+        {
+          kind: 'failed',
+          target: '3.0.0-beta.10',
+          failure: { code: 'unknown', phase: 'build', exitCode: 1, logPath: '/srv/u.log' }
+        }
       ]
     ]
     for (const [upgrade, expected] of cases)
@@ -196,19 +205,42 @@ describe('the decision for one server', () => {
     expect(decide(earlier)).toMatchObject({ kind: 'upgrade', target: '3.0.0-beta.9' })
   })
 
-  it('reports a failed attempt for the app version with its error, and does not ask again', () => {
+  it('reports a failed attempt for the app version with its failure, and does not ask again', () => {
+    const failure = {
+      code: 'build-incomplete',
+      phase: 'build',
+      exitCode: 1,
+      logPath: '/srv/u.log'
+    } as const
     const failed = info('3.0.0-beta.8', {
-      upgrade: { supported: true, state: 'failed', target: '3.0.0-beta.9', error: 'npm ERR! build' }
+      upgrade: { supported: true, state: 'failed', target: '3.0.0-beta.9', failure }
     })
-    expect(decide(failed)).toMatchObject({
-      kind: 'failed',
-      target: '3.0.0-beta.9',
-      error: 'npm ERR! build'
-    })
+    const decided = decide(failed)
+    expect(decided).toMatchObject({ kind: 'failed', target: '3.0.0-beta.9', failure })
+    expect(decided).not.toHaveProperty('error')
     const olderFailure = info('3.0.0-beta.7', {
-      upgrade: { supported: true, state: 'failed', target: '3.0.0-beta.8', error: 'x' }
+      upgrade: {
+        supported: true,
+        state: 'failed',
+        target: '3.0.0-beta.8',
+        failure: { code: 'unknown' }
+      }
     })
     expect(decide(olderFailure).kind).toBe('upgrade')
+  })
+
+  it('never carries text a server sent beside its failure', () => {
+    const failed = info('3.0.0-beta.8', {
+      upgrade: {
+        supported: true,
+        state: 'failed',
+        target: '3.0.0-beta.9',
+        error: 'Could not reach https://user:secret-r1026@example.com/clave.git'
+      } as ServerUpgradeStatus
+    })
+    const decided = decide(failed)
+    expect(decided).toMatchObject({ kind: 'failed', target: '3.0.0-beta.9' })
+    expect(JSON.stringify(decided)).not.toContain('secret-r1026')
   })
 
   it('reads a server still older after this app asked as a failed upgrade', () => {
@@ -372,7 +404,7 @@ describe('the version sync loop', () => {
 
   it('never downgrades a newer server through upgrade now after another Mac failed (V1-F2)', async () => {
     for (const upgrade of [
-      { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'build failed' },
+      { supported: true, state: 'failed', target: '3.0.0-beta.10', failure: { code: 'unknown' } },
       { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10' }
     ] as ServerUpgradeStatus[]) {
       const { sync, requests } = fleet(
@@ -444,7 +476,12 @@ describe('the Servers row follows an upgrade live (V1-F5)', () => {
     await sync.refresh()
     reads.length = 0
     servers.b = info('3.0.0-beta.8', {
-      upgrade: { supported: true, state: 'failed', target: '3.0.0-beta.9', error: 'npm ERR!' }
+      upgrade: {
+        supported: true,
+        state: 'failed',
+        target: '3.0.0-beta.9',
+        failure: { code: 'rolled-back', phase: 'rollback', exitCode: 1 }
+      }
     })
     const results = await sync.refreshServer('b')
     expect(reads).toEqual(['b'])

@@ -1,4 +1,9 @@
-import type { ServerConnectionStatus, ServerVersionStatus } from '@clave/contract/fleet'
+import type {
+  ServerConnectionStatus,
+  ServerVersionFailure,
+  ServerVersionStatus
+} from '@clave/contract/fleet'
+import type { ServerUpgradeFailureCode, ServerUpgradePhase } from '@clave/contract/upgrade-failure'
 
 type StatusTone = 'connected' | 'connecting' | 'error' | 'idle'
 
@@ -79,6 +84,75 @@ export const UPGRADE_NOW_WARNING =
 const DEV_BUILD =
   'Older than this app. A development build does not upgrade servers: run install-server.sh on the server.'
 
+/** One fixed sentence per way a server's upgrade fails. `target` is the
+ *  version this Mac decided on, never text from the server. */
+export const UPGRADE_FAILURE_SENTENCES: Record<
+  ServerUpgradeFailureCode,
+  (target: string) => string
+> = {
+  'invalid-options': () =>
+    'The install script refused its saved options. Run it once on the server to see why.',
+  'run-as-root': () => 'The server runs as root, and the install script refuses to.',
+  'unsupported-platform': () => 'The install script supports Linux and macOS only.',
+  'missing-tools': () =>
+    'The server is missing a tool the build needs: git, Node, npm or a C toolchain.',
+  'node-too-old': () => "The server's Node is too old (22 or newer is needed).",
+  'token-file-missing': () => 'The token file the server was installed with is gone.',
+  'tailscale-down': () => 'Tailscale is not up on the server, and the server listens on it.',
+  'wildcard-address': () => 'The saved listen address is a wildcard, which the script refuses.',
+  'release-lookup-failed': () => 'The server could not read the list of releases from GitHub.',
+  'repository-unreachable': () => 'The server could not reach its Git repository.',
+  'no-such-release': (target) => `The server could not find the release ${target}.`,
+  'ref-moved': (target) => `The release ${target} changed while the server downloaded it.`,
+  'release-too-old': (target) => `The release ${target} has no standalone server mode.`,
+  'build-incomplete': (target) => `The build of ${target} did not produce the server.`,
+  'service-enable-failed': () => "The server's service could not be enabled.",
+  'invalid-service-file': () => 'The service file the install script wrote was refused.',
+  'no-service-manager': () => "The server's user has no systemd user manager running.",
+  'no-login-session': () =>
+    "The server's user is not logged in on that Mac, so launchd cannot run the service.",
+  'server-did-not-answer': (target) =>
+    `${target} did not answer within a minute, and the server is stopped.`,
+  'rolled-back': () => 'The new release did not start; the server went back to the previous one.',
+  'rollback-failed': () => 'The new release did not start, and neither did the previous one.',
+  'launcher-missing': () =>
+    'The server has no systemd-run, so it cannot upgrade itself. Run install-server.sh on the server.',
+  'launch-failed': () => 'The server could not start the install script.',
+  unknown: () => 'The install script stopped without saying why.'
+}
+
+/** Where the script was, for a failure with no code of its own. */
+export const UPGRADE_PHASE_WORDS: Record<ServerUpgradePhase, string> = {
+  resolve: 'looking up the release',
+  clone: 'downloading the release',
+  dependencies: 'installing dependencies',
+  build: 'building',
+  service: 'setting up the service',
+  restart: 'restarting the server',
+  health: 'waiting for the server to answer',
+  rollback: 'going back to the previous release'
+}
+
+/** A failed run in plain words: its sentence, then its exit and log on a line of their own. */
+export function describeUpgradeFailure(failure: ServerVersionFailure, target: string): string {
+  const code = failure.code ?? 'unknown'
+  const sentence =
+    code === 'unknown' && failure.phase
+      ? `The upgrade failed while ${UPGRADE_PHASE_WORDS[failure.phase]}.`
+      : UPGRADE_FAILURE_SENTENCES[code](target)
+  const meta = [
+    failure.exitCode !== undefined && `Exit ${failure.exitCode}.`,
+    failure.logPath && `Full log on the server: ${failure.logPath}`
+  ].filter(Boolean)
+  return meta.length ? `${sentence}\n${meta.join(' ')}` : sentence
+}
+
+/** Why the last upgrade failed: the server's run, or this Mac's refused ask. */
+function failureText(status: ServerVersionStatus): string {
+  if (status.failure) return describeUpgradeFailure(status.failure, status.target ?? '')
+  return status.error ?? UPGRADE_FAILURE_SENTENCES.unknown('')
+}
+
 export interface ServerVersionText {
   /** "Version 3.0.0-beta.7", null when the server did not say. */
   version: string | null
@@ -120,9 +194,9 @@ export function describeServerVersion(
           )
     case 'failed':
       if (status.ownAction === false)
-        return line(`Upgrade to ${status.target} failed: ${status.error}`, 'error')
+        return line(`Upgrade to ${status.target} failed: ${failureText(status)}`, 'error')
       return status.automatic
-        ? line(`Upgrade to ${status.target} failed: ${status.error}`, 'error', true)
+        ? line(`Upgrade to ${status.target} failed: ${failureText(status)}`, 'error', true)
         : line(DEV_BUILD, 'idle')
     case 'server-newer':
       return line('Newer than this app', 'idle')

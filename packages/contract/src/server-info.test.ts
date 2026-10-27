@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { Either, Schema } from 'effect'
-import { isReleaseTag, isReleaseVersion, ServerInfo } from './server-info'
+import {
+  isReleaseTag,
+  isReleaseVersion,
+  SERVER_UPGRADE_FAILURE_CODES,
+  SERVER_UPGRADE_PHASES,
+  ServerInfo,
+  ServerUpgradeStatus
+} from './server-info'
 import { ServerEvent } from './events'
 
 describe('the release version an upgrade accepts', () => {
@@ -63,8 +70,71 @@ describe('the server info and its event on the wire', () => {
   it('carries the upgrade state as a server event', () => {
     const event = {
       _tag: 'server.upgrade_changed',
-      status: { supported: true, state: 'failed', target: '3.0.0', error: 'npm ci failed' }
+      status: {
+        supported: true,
+        state: 'failed',
+        target: '3.0.0',
+        failure: {
+          code: 'no-such-release',
+          phase: 'resolve',
+          exitCode: 1,
+          logPath: '/srv/data/upgrade/upgrade.log'
+        }
+      }
     }
     expect(Schema.decodeUnknownEither(ServerEvent)(event)).toEqual(Either.right(event))
+  })
+})
+
+describe('a failed upgrade on the wire: codes and phases from closed lists', () => {
+  const decode = Schema.decodeUnknownEither(ServerUpgradeStatus)
+  const encode = Schema.encodeEither(ServerUpgradeStatus)
+  const failed = (failure: unknown): unknown => ({
+    supported: true,
+    state: 'failed',
+    target: '3.0.0',
+    failure
+  })
+
+  it.each(SERVER_UPGRADE_FAILURE_CODES.map((code) => [code]))('decodes and encodes %s', (code) => {
+    const status = failed({ code, exitCode: 3, logPath: '/srv/upgrade.log' })
+    const decoded = decode(status)
+    expect(decoded).toEqual(Either.right(status))
+    expect(encode(Either.getOrThrow(decoded))).toEqual(Either.right(status))
+  })
+
+  it.each(SERVER_UPGRADE_PHASES.map((phase) => [phase]))('decodes the phase %s', (phase) => {
+    expect(decode(failed({ code: 'unknown', phase }))).toEqual(
+      Either.right(failed({ code: 'unknown', phase }))
+    )
+  })
+
+  it.each([
+    'Could not reach https://user:secret@example.com/clave.git',
+    'no-such-thing',
+    'NO-SUCH-RELEASE',
+    'no-such-release\nsecret',
+    ''
+  ])('reads a code it does not know (%j) as absent, the rest intact', (code) => {
+    expect(
+      decode(failed({ code, phase: 'not a phase', exitCode: 1, logPath: '/srv/upgrade.log' }))
+    ).toEqual(Either.right(failed({ exitCode: 1, logPath: '/srv/upgrade.log' })))
+  })
+
+  it('never encodes a code or a phase outside the lists: a server cannot send text in them', () => {
+    for (const failure of [{ code: 'npm ERR! token=secret' }, { phase: 'npm ERR! token=secret' }])
+      expect(Either.isLeft(encode(failed(failure) as ServerUpgradeStatus))).toBe(true)
+  })
+
+  it('carries no text field: an error a server put beside the failure is dropped', () => {
+    expect(
+      decode({ ...(failed({ code: 'unknown' }) as object), error: 'npm ERR! token=secret' })
+    ).toEqual(Either.right(failed({ code: 'unknown' })))
+  })
+
+  it('decodes a failed status with no failure at all, as an older server sends it', () => {
+    expect(decode({ supported: true, state: 'failed', target: '3.0.0' })).toEqual(
+      Either.right({ supported: true, state: 'failed', target: '3.0.0' })
+    )
   })
 })

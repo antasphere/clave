@@ -13,7 +13,9 @@
 // it four seconds here. Then "Upgrade now", behind its warning, runs it again
 // at once. The script fails without restarting anything, so the server stays
 // up on beta.6 and reports the failure, which the open Servers row shows on
-// its own within a few seconds (the server's event, routed to main).
+// its own within a few seconds (the server's event, routed to main): the
+// fixed sentence of the code the stand-in wrote, then its exit and the log,
+// and never the text it wrote beside the code.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fixturePath } from './harness.mjs'
@@ -27,6 +29,7 @@ import {
 
 const IDLE_MS = 4_000
 const APP_VERSION = '3.0.0-beta.9'
+const FREE_TEXT = 'stand-in free text r1026 https://user:synthetic-secret@invalid.local/x.git'
 
 function standIn(dir) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -36,9 +39,17 @@ function standIn(dir) {
   // written into the script rather than found beside it.
   writeFileSync(
     script,
-    // Its failure goes where install-server.sh's own error() puts it: the log,
-    // and the status file the daemon names, which is all a Mac is shown.
-    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\nprintf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'stand-in build failed' >&2\nprintf '%s\\n' 'stand-in build failed' >> "$CLAVE_INSTALL_STATUS_FILE"\nexit 3\n`
+    // Its failure goes where install-server.sh's own phase and fail put it: a
+    // message to the log, and a phase and a code to the status file the
+    // daemon names, beside free text a Mac must never be shown.
+    [
+      '#!/bin/bash',
+      `printf '%s\\n' "$*" >> ${JSON.stringify(record)}`,
+      "printf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'stand-in build failed' >&2",
+      `printf '%s\\n' 'phase=build' ${JSON.stringify(FREE_TEXT)} 'code=build-incomplete' ${JSON.stringify(`code=${FREE_TEXT}`)} >> "$CLAVE_INSTALL_STATUS_FILE"`,
+      'exit 3',
+      ''
+    ].join('\n')
   )
   chmodSync(script, 0o755)
   return { script, record }
@@ -176,12 +187,15 @@ export async function run(t) {
       shown,
       `${Date.now() - failedAt} ms: ${await state.innerText()}`
     )
+    t.equal(
+      "the failure is the fixed sentence of the script's code, then its exit and where the log is",
+      await state.innerText(),
+      `Upgrade to ${APP_VERSION} failed: The build of ${APP_VERSION} did not produce the server.\nExit 3. Full log on the server: ${log}`
+    )
     t.check(
-      "the failure carries the script's own message, its exit and where the log is",
-      (await state.innerText()).includes(
-        `stand-in build failed\nExit 3. Full log on the server: ${log}`
-      ),
-      await state.innerText()
+      'nothing the script wrote beside its code reaches the server or the page',
+      !JSON.stringify(await info()).includes('r1026') && !(await row.innerText()).includes('r1026'),
+      JSON.stringify((await info()).upgrade)
     )
     const upgradeNow = version.getByRole('button', { name: 'Upgrade now', exact: true })
     await eventually(async () => (await upgradeNow.count()) === 1, 'Upgrade now is offered')

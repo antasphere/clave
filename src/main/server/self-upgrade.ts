@@ -23,11 +23,12 @@
  *
  * The normal success is this process being stopped by the script and the
  * new release starting. A run that ends while this server is still up either
- * failed before the switch (or rolled back), which is reported as `failed`
- * with the script's own last messages, or had nothing to do (exit 0), back to
- * `idle`. Those messages come from a status file only the script writes
- * (`CLAVE_INSTALL_STATUS_FILE`), never from the log, which holds what git and
- * npm print too.
+ * failed before the switch (or rolled back), which is reported as `failed`,
+ * or had nothing to do (exit 0), back to `idle`. A failure is told by values
+ * from closed lists only: the code and the phase the script wrote to its
+ * status file (`CLAVE_INSTALL_STATUS_FILE`), the exit code and the log's
+ * path. No text from the run leaves the server, so whatever a command prints,
+ * or manages to write into that file, never reaches a Mac.
  *
  * Nothing here imports Electron.
  */
@@ -52,9 +53,16 @@ import {
   InvalidUpgradeVersion,
   isReleaseVersion,
   type ServerInfo,
+  type ServerUpgradeFailure,
   type ServerUpgradeRequest,
   type ServerUpgradeStatus
 } from '@clave/contract/server-info'
+import {
+  isServerUpgradeFailureCode,
+  isServerUpgradePhase,
+  type ServerUpgradeFailureCode,
+  type ServerUpgradePhase
+} from '@clave/contract/upgrade-failure'
 import type { ServerInfoService } from '@clave/server'
 import type { SessionManager } from '../sessions/session-manager'
 
@@ -176,8 +184,19 @@ export function upgradeLaunch(
 
 export interface UpgradeRunner {
   /** Starts the script; resolves when it ends while this server is still up,
-   *  rejects when it could not start. */
+   *  rejects when it could not start (an `UpgradeLaunchFailure` says how). */
   start(run: { script: string; args: string[] }): Promise<RunResult>
+}
+
+/** A run that never started: its failure, a code and the log's path, never
+ *  the error's text, which stays in the private log. */
+export class UpgradeLaunchFailure extends Error {
+  constructor(
+    readonly failure: ServerUpgradeFailure,
+    detail: string
+  ) {
+    super(detail)
+  }
 }
 
 /** Where `systemd-run` is on PATH, or null. */
@@ -195,13 +214,12 @@ function findSystemdRun(path: string): string | null {
   return null
 }
 
-/** The most of its status file a run's failure is built from: a larger one
+/** The most of its status file a run's failure is read from: a larger one
  *  is not read at all, never in part. */
 const STATUS_BYTES = 64 * 1024
 
-/** The messages the script wrote this run, whole, or null when there is no
- *  file or it is larger than `STATUS_BYTES`. */
-function runMessages(file: string): string | null {
+/** The whole status file, or null when there is none or it is larger than `STATUS_BYTES`. */
+function readStatus(file: string): string | null {
   let fd: number | undefined
   try {
     fd = openSync(file, 'r')
@@ -215,12 +233,49 @@ function runMessages(file: string): string | null {
   }
 }
 
+const STATUS_LINE = /^(code|phase)=([a-z-]+)$/
+
+/**
+ * What a run's status file says: the last code and the last phase it names
+ * from the contract's lists. Every other line (text, a value off the lists,
+ * a carriage return) is ignored, so nothing but those values is ever read.
+ */
+export function readRunStatus(text: string | null): {
+  code?: ServerUpgradeFailureCode
+  phase?: ServerUpgradePhase
+} {
+  let code: ServerUpgradeFailureCode | undefined
+  let phase: ServerUpgradePhase | undefined
+  for (const line of (text ?? '').split('\n')) {
+    const match = STATUS_LINE.exec(line)
+    if (!match) continue
+    const [, key, value] = match
+    if (key === 'code' && isServerUpgradeFailureCode(value)) code = value
+    if (key === 'phase' && isServerUpgradePhase(value)) phase = value
+  }
+  return { ...(code && { code }), ...(phase && { phase }) }
+}
+
+/** A run's failure as it leaves the server: `unknown` when the script wrote no code. */
+export function runFailure(
+  status: string | null,
+  exitCode: number,
+  logPath: string
+): ServerUpgradeFailure {
+  const said = readRunStatus(status)
+  return {
+    code: said.code ?? 'unknown',
+    ...(said.phase && { phase: said.phase }),
+    exitCode,
+    logPath
+  }
+}
+
 export interface RunResult {
   /** The script's exit code (systemd-run --wait passes it on); 1 when killed by a signal. */
   readonly code: number
-  /** The failure as it may leave the server (`publishedFailure`), already
-   *  redacted: nothing redacts it again, which would eat its exit and log path. */
-  readonly summary: string
+  /** How it failed, for a non-zero exit (`runFailure`). */
+  readonly failure: ServerUpgradeFailure
 }
 
 export interface ScriptRunnerOptions {
@@ -231,8 +286,6 @@ export interface ScriptRunnerOptions {
   /** Where `systemd-run` is; found on PATH by default. */
   readonly systemdRun?: (path: string) => string | null
   readonly now?: () => number
-  /** Literal secrets the published failure must never carry: the server's own token. */
-  readonly secrets?: () => readonly string[]
 }
 
 /** The real runner: the script copied to `<dataDir>/upgrade/`, its output in
@@ -241,8 +294,6 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const now = options.now ?? Date.now
-  const secrets = (): string[] => [...credentialValues(env), ...(options.secrets?.() ?? [])]
-  const fail = (message: string): Error => new Error(redactSecrets(message, secrets()))
   return {
     start: ({ script, args }) =>
       new Promise<RunResult>((resolve, reject) => {
@@ -250,18 +301,24 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
         const copy = join(dir, 'install-server.sh')
         const log = join(dir, 'upgrade.log')
         const status = join(dir, 'install-status')
+        const fail = (code: 'launcher-missing' | 'launch-failed', detail: string): Error =>
+          new UpgradeLaunchFailure({ code, logPath: log }, detail)
         let fd: number
         try {
           mkdirSync(dir, { recursive: true, mode: 0o700 })
           chmodSync(dir, 0o700)
           copyFileSync(script, copy)
           chmodSync(copy, 0o700)
-          // Emptied for each run, so a failure never shows an earlier run's messages.
+          // Emptied for each run, so a failure never shows an earlier run's code.
           closeSync(openSync(status, 'w', 0o600))
           chmodSync(status, 0o600)
           fd = openSync(log, 'a', 0o600)
         } catch (error) {
-          reject(fail(`Could not prepare the upgrade: ${(error as Error).message}`))
+          // No log was written, so none is named; the reason goes to the
+          // server's own output, private like the log.
+          const detail = `Could not prepare the upgrade: ${(error as Error).message}`
+          console.error(`[clave-server] ${detail}`)
+          reject(new UpgradeLaunchFailure({ code: 'launch-failed' }, detail))
           return
         }
         const path = env.PATH ?? '/usr/bin:/bin'
@@ -280,7 +337,7 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
         if ('error' in launch) {
           writeSync(fd, `${launch.error}\n`)
           closeSync(fd)
-          reject(fail(launch.error))
+          reject(fail('launcher-missing', launch.error))
           return
         }
         try {
@@ -292,156 +349,22 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
           })
           child.once('error', (error) => {
             closeSync(fd)
-            reject(fail(`The upgrade did not start: ${error.message}`))
+            reject(fail('launch-failed', `The upgrade did not start: ${error.message}`))
           })
           child.once('exit', (code) => {
             closeSync(fd)
             const exit = code ?? 1
-            resolve({
-              code: exit,
-              summary: publishedFailure({
-                messages: runMessages(status),
-                code: exit,
-                logPath: log,
-                literals: secrets()
-              })
-            })
+            resolve({ code: exit, failure: runFailure(readStatus(status), exit, log) })
           })
           // Its own group, not waited on by this process's end; the exit
           // listener still hears it while this server lives.
           if (launch.detached) child.unref()
         } catch (error) {
           closeSync(fd)
-          reject(fail(`The upgrade did not start: ${(error as Error).message}`))
+          reject(fail('launch-failed', `The upgrade did not start: ${(error as Error).message}`))
         }
       })
   }
-}
-
-/** A variable name that says it holds a credential. */
-const CREDENTIAL_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)/i
-/** Shorter literals would redact ordinary words. */
-const MIN_LITERAL = 6
-/** Horizontal whitespace only: no pattern may cross a line end (`\s` would). */
-const H = '[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]'
-
-/** URL userinfo: a repository URL saved with its password. It runs before
- *  the key pass, which would take `oauth2:` for a key and cut the URL there. */
-const USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi
-
-const SHAPES: ReadonlyArray<[RegExp, string]> = [
-  // An unquoted Authorization header: its whole value, scheme included. A
-  // quoted one is a key and a value, below.
-  [new RegExp(`\\b(authorization)(${H}*[:=]${H}*)(?!["'])[^\\r\\n]*`, 'gi'), '$1$2***'],
-  [new RegExp(`\\b(bearer)${H}+[^\\s'"]+`, 'gi'), '$1 ***'],
-  // Well-known token shapes. A long hex run alone (a commit) is left readable.
-  [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, '***'],
-  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, '***'],
-  [/\bsk-[A-Za-z0-9_-]{16,}/g, '***'],
-  [/\bxox[abpr]-[A-Za-z0-9-]{10,}/g, '***'],
-  [/\bnpm_[A-Za-z0-9]{20,}/g, '***']
-]
-
-/** A key that says it holds a credential, bare or quoted (JSON, YAML, shell),
- *  then `=` or `:`: everything after it, to the end of the line, is masked.
- *  Parsing the value (its quotes, escapes, commas, arrays) kept leaving a
- *  remainder; losing the rest of a line that carries a credential is the cost. */
-const CREDENTIAL_PAIR = new RegExp(
-  `(["']?)\\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)[^\\r\\n]*`,
-  'gi'
-)
-
-const maskPair = (_match: string, quote: string, key: string, sep: string): string =>
-  `${quote}${key}${quote}${sep}***`
-
-/** What follows a literal standing as a key: a closing quote, then `=` or `:`. */
-const KEY_POSITION = new RegExp(`["']?${H}*[=:]`, 'y')
-
-/** Every occurrence of `literal` masked, or all but those in key position. */
-function maskLiteral(text: string, literal: string, keepKeys: boolean): string {
-  let out = ''
-  let from = 0
-  for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + literal.length)) {
-    KEY_POSITION.lastIndex = at + literal.length
-    if (keepKeys && KEY_POSITION.test(text)) continue
-    out += `${text.slice(from, at)}***`
-    from = at + literal.length
-  }
-  return out + text.slice(from)
-}
-
-/**
- * What a failed upgrade may say on the wire and in a Mac's Servers page,
- * with every credential taken out. The passes, in order:
- * 1. the known literals (the server's own token, the installer environment's
- *    credentials), longest first, raw, JSON-escaped and on one line as the
- *    install script writes a message; an occurrence standing as a key is left
- *    to the key pass, so a literal never eats the key it needs;
- * 2. URL userinfo;
- * 3. the key pass, to the end of the line;
- * 4. the Authorization, Bearer and token shapes;
- * 5. the literals once more, keys included: a literal kept for the key pass
- *    never survives it.
- * Every pattern stays inside one line. The log file itself is private to the
- * server's user and keeps what was written.
- */
-export function redactSecrets(text: string, literals: readonly string[] = []): string {
-  const spellings = [
-    ...new Set(
-      literals.flatMap((literal) => [
-        literal,
-        JSON.stringify(literal).slice(1, -1),
-        literal.replace(/[\r\n]/g, ' ')
-      ])
-    )
-  ]
-    .filter((literal) => literal.length >= MIN_LITERAL)
-    .sort((a, b) => b.length - a.length)
-  let out = text
-  for (const literal of spellings) out = maskLiteral(out, literal, true)
-  out = out.replace(USERINFO, '$1***@')
-  out = out.replace(CREDENTIAL_PAIR, maskPair)
-  for (const [pattern, replacement] of SHAPES) out = out.replace(pattern, replacement)
-  for (const literal of spellings) out = maskLiteral(out, literal, false)
-  return out
-}
-
-/** How many of the script's last messages a failure carries. */
-const SCRIPT_MESSAGES = 3
-
-/**
- * The failure of a run as it may leave the server, to the wire and to a
- * Mac's Servers page: the install script's last three messages, from the
- * status file only it writes (never git's, npm's or systemd's output, whose
- * bytes can carry anything and spell anything), then the exit code and the
- * private log's path on a line of their own. The messages are redacted whole
- * before any is picked; the exit code and the path are the server's own and
- * are never redacted, so a credential cut to the end of its line cannot take
- * them with it. With no messages (no file, an empty one, or one too large to
- * read whole), a fixed sentence.
- */
-export function publishedFailure(input: {
-  messages: string | null
-  code: number
-  logPath: string
-  literals?: readonly string[]
-}): string {
-  const literals = input.literals ?? []
-  const own = redactSecrets(input.messages ?? '', literals)
-    .split(/\r\n|\r|\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(-SCRIPT_MESSAGES)
-  const where = `Full log on the server: ${input.logPath}`
-  if (!own.length) return `The install script failed (exit ${input.code}). ${where}`
-  return `${redactSecrets(own.join('\n'), literals)}\nExit ${input.code}. ${where}`
-}
-
-/** The values of the variables of `env` whose names say they hold a credential. */
-function credentialValues(env: NodeJS.ProcessEnv): string[] {
-  return Object.entries(env)
-    .filter(([name, value]) => CREDENTIAL_NAME.test(name) && typeof value === 'string')
-    .map(([, value]) => value as string)
 }
 
 /** Whether any agent works right now, and the moments that may change it. */
@@ -496,8 +419,6 @@ export interface SelfUpgradeOptions {
   readonly activity: AgentActivity
   readonly clock?: Clock
   readonly idleMs?: number
-  /** Literal secrets a failure must never carry: the server's own token. */
-  readonly secrets?: () => readonly string[]
 }
 
 export type SelfUpgrade = ServerInfoService & { close(): void }
@@ -526,7 +447,6 @@ export function createSelfUpgrade(options: SelfUpgradeOptions): SelfUpgrade {
     offActivity?.()
     offActivity = null
   }
-  const redact = (text: string): string => redactSecrets(text, options.secrets?.() ?? [])
   const run = (target: string, mode: 'when-idle' | 'now'): ServerUpgradeStatus => {
     disarm()
     const started = set({ supported: true, state: 'running', target, mode, since: clock.now() })
@@ -541,19 +461,20 @@ export function createSelfUpgrade(options: SelfUpgradeOptions): SelfUpgrade {
                 state: 'failed',
                 target,
                 mode,
-                error: result.summary,
+                failure: result.failure,
                 since: clock.now()
               }
         )
       },
-      (error: Error) => {
+      (error: unknown) => {
         if (closed) return
         set({
           supported: true,
           state: 'failed',
           target,
           mode,
-          error: redact(error.message),
+          failure:
+            error instanceof UpgradeLaunchFailure ? error.failure : { code: 'launch-failed' },
           since: clock.now()
         })
       }

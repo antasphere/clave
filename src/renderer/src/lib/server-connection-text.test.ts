@@ -2,11 +2,18 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ServerConnectionStatus, ServerVersionStatus } from '@clave/contract/fleet'
 import {
+  SERVER_UPGRADE_FAILURE_CODES,
+  SERVER_UPGRADE_PHASES
+} from '@clave/contract/upgrade-failure'
+import {
   describeAddError,
   describeServerState,
   describeServerVersion,
+  describeUpgradeFailure,
   SAVE_ERRORS,
-  UPGRADE_NOW_WARNING
+  UPGRADE_FAILURE_SENTENCES,
+  UPGRADE_NOW_WARNING,
+  UPGRADE_PHASE_WORDS
 } from './server-connection-text'
 
 describe('describeServerState', () => {
@@ -174,8 +181,21 @@ describe('describeServerVersion (issue #266)', () => {
       false
     ],
     [
-      { kind: 'failed', target: '3.0.0-beta.8', error: 'npm ERR! build' },
-      'Upgrade to 3.0.0-beta.8 failed: npm ERR! build',
+      {
+        kind: 'failed',
+        target: '3.0.0-beta.8',
+        failure: { code: 'no-such-release', phase: 'resolve', exitCode: 1, logPath: '/srv/u.log' }
+      },
+      'Upgrade to 3.0.0-beta.8 failed: The server could not find the release 3.0.0-beta.8.\nExit 1. Full log on the server: /srv/u.log',
+      true
+    ],
+    [
+      {
+        kind: 'failed',
+        target: '3.0.0-beta.8',
+        error: 'This server cannot upgrade itself: not installed by install-server.sh.'
+      },
+      'Upgrade to 3.0.0-beta.8 failed: This server cannot upgrade itself: not installed by install-server.sh.',
       true
     ],
     [{ kind: 'server-newer', serverVersion: '3.0.0' }, 'Newer than this app', false],
@@ -244,8 +264,8 @@ describe('describeServerVersion (issue #266)', () => {
       'Upgrading to 3.0.0-beta.10…'
     ],
     [
-      { kind: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' },
-      'Upgrade to 3.0.0-beta.10 failed: npm ERR!'
+      { kind: 'failed', target: '3.0.0-beta.10', failure: { code: 'rolled-back', exitCode: 1 } },
+      'Upgrade to 3.0.0-beta.10 failed: The new release did not start; the server went back to the previous one.\nExit 1.'
     ]
   ])(
     "shows another Mac's upgrade on an equal or newer server, with no Upgrade now (V2-F2): %j",
@@ -268,6 +288,81 @@ describe('describeServerVersion (issue #266)', () => {
         state: expect.stringContaining('development build'),
         upgradeNow: false
       })
+  })
+
+  it('has a sentence of its own for every failure code, and none for a code that is not one', () => {
+    expect(Object.keys(UPGRADE_FAILURE_SENTENCES).sort()).toEqual(
+      [...SERVER_UPGRADE_FAILURE_CODES].sort()
+    )
+    const sentences = SERVER_UPGRADE_FAILURE_CODES.map((code) =>
+      UPGRADE_FAILURE_SENTENCES[code]('3.0.0-beta.10')
+    )
+    for (const sentence of sentences) expect(sentence).toMatch(/^[A-Z0-9].*\.$/)
+    expect(new Set(sentences).size).toBe(sentences.length)
+  })
+
+  it.each([
+    ['no-such-release', 'The server could not find the release 3.0.0-beta.10.'],
+    ['node-too-old', "The server's Node is too old (22 or newer is needed)."],
+    ['rolled-back', 'The new release did not start; the server went back to the previous one.']
+  ] as const)('words %s as the brief says', (code, sentence) => {
+    expect(describeUpgradeFailure({ code }, '3.0.0-beta.10')).toBe(sentence)
+  })
+
+  it('names the target this Mac decided on, never anything the server said', () => {
+    expect(describeUpgradeFailure({ code: 'build-incomplete' }, '3.0.0-beta.10')).toBe(
+      'The build of 3.0.0-beta.10 did not produce the server.'
+    )
+  })
+
+  it.each(SERVER_UPGRADE_PHASES.map((phase) => [phase]))(
+    'words the phase %s of a failure with no code',
+    (phase) => {
+      expect(describeUpgradeFailure({ code: 'unknown', phase }, '3.0.0')).toBe(
+        `The upgrade failed while ${UPGRADE_PHASE_WORDS[phase]}.`
+      )
+      expect(describeUpgradeFailure({ phase }, '3.0.0')).toBe(
+        `The upgrade failed while ${UPGRADE_PHASE_WORDS[phase]}.`
+      )
+    }
+  )
+
+  it('keeps the sentence of a known code whatever the phase', () => {
+    expect(describeUpgradeFailure({ code: 'no-such-release', phase: 'build' }, '3.0.0')).toBe(
+      'The server could not find the release 3.0.0.'
+    )
+  })
+
+  it('says the script gave no reason when there is neither a code nor a phase', () => {
+    expect(describeUpgradeFailure({}, '3.0.0')).toBe(
+      'The install script stopped without saying why.'
+    )
+  })
+
+  it('puts the exit and the log on a line of their own, each only when known', () => {
+    const log = '/home/u/.local/share/clave-server/upgrade/upgrade.log'
+    expect(
+      describeUpgradeFailure(
+        { code: 'unknown', phase: 'dependencies', exitCode: 3, logPath: log },
+        '3.0.0'
+      )
+    ).toBe(
+      `The upgrade failed while installing dependencies.\nExit 3. Full log on the server: ${log}`
+    )
+    expect(describeUpgradeFailure({ code: 'launch-failed', logPath: log }, '3.0.0')).toBe(
+      `The server could not start the install script.\nFull log on the server: ${log}`
+    )
+    expect(describeUpgradeFailure({ code: 'unknown', exitCode: 0 }, '3.0.0')).toBe(
+      'The install script stopped without saying why.\nExit 0.'
+    )
+  })
+
+  it('shows a failed status with no failure at all, as an older server sends it', () => {
+    expect(describeServerVersion(status({ kind: 'failed', target: '3.0.0-beta.8' }))).toMatchObject(
+      {
+        state: 'Upgrade to 3.0.0-beta.8 failed: The install script stopped without saying why.'
+      }
+    )
   })
 
   it('warns that an upgrade now ends the running sessions', () => {
