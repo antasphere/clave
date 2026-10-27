@@ -310,23 +310,14 @@ const REDACTIONS: ReadonlyArray<[RegExp, string]> = [
 ]
 
 /** A key that says it holds a credential, bare or quoted (JSON, YAML, shell),
- *  then `=` or `:`, then its value, bare or quoted. */
+ *  then `=` or `:`: everything after it, to the end of the line, is masked.
+ *  Parsing the value (its quotes, escapes, commas, arrays) kept leaving a
+ *  remainder; losing the rest of a line that carries a credential is the cost. */
 const CREDENTIAL_PAIR =
-  /(["']?)\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\1(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s'",}\]]+)/gi
+  /(["']?)\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\1(\s*[=:]\s*)[^\r\n]*/gi
 
-/** The value masked, the key and the punctuation kept: a quoted value keeps
- *  its quotes in a `key: "value"` pair, a shell assignment loses them. */
-const maskPair = (
-  _match: string,
-  quote: string,
-  key: string,
-  sep: string,
-  value: string
-): string => {
-  const quoted = value[0] === '"' || value[0] === "'"
-  const masked = quoted && sep.includes(':') ? `${value[0]}***${value[0]}` : '***'
-  return `${quote}${key}${quote}${sep}${masked}`
-}
+const maskPair = (_match: string, quote: string, key: string, sep: string): string =>
+  `${quote}${key}${quote}${sep}***`
 
 /**
  * What a failed upgrade may say on the wire and in a Mac's Servers page: the
@@ -337,7 +328,12 @@ const maskPair = (
  */
 export function redactSecrets(text: string, literals: readonly string[] = []): string {
   let out = text
-  for (const literal of [...literals].sort((a, b) => b.length - a.length))
+  // Each literal also in its JSON-escaped spelling, as a serialized config prints it.
+  const spellings = literals.flatMap((literal) => {
+    const escaped = JSON.stringify(literal).slice(1, -1)
+    return escaped === literal ? [literal] : [literal, escaped]
+  })
+  for (const literal of spellings.sort((a, b) => b.length - a.length))
     if (literal.length >= MIN_LITERAL) out = out.split(literal).join('***')
   for (const [pattern, replacement] of REDACTIONS) out = out.replace(pattern, replacement)
   return out.replace(CREDENTIAL_PAIR, maskPair)

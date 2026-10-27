@@ -618,11 +618,7 @@ describe('what a failed upgrade says on the wire (V1-F3)', () => {
       'git clone ssh://deploy:pw123@host/x.git',
       'git clone ssh://***@host/x.git'
     ],
-    [
-      'NAME=value',
-      'NPM_TOKEN=abc123def and GH_PASSWORD="two words"',
-      'NPM_TOKEN=*** and GH_PASSWORD=***'
-    ],
+    ['NAME=value', 'NPM_TOKEN=abc123def and GH_PASSWORD="two words"', 'NPM_TOKEN=***'],
     ['NAME: value', 'api_key: s3cr3t-value', 'api_key: ***'],
     ['a bearer', 'curl -H Bearer abcdef0123456789', 'curl -H Bearer ***'],
     ['an authorization header', 'Authorization: token abc def', 'Authorization: ***'],
@@ -746,26 +742,22 @@ describe('what a failed upgrade says on the wire (V1-F3)', () => {
 describe('credentials in quoted and structured forms (V2-F1)', () => {
   const secret = 'synthetic-json-config-credential-r1026'
   it.each<[string, string, string]>([
-    ['a JSON key', `{"api_key":"${secret}"}`, '{"api_key":"***"}'],
-    ['a JSON key with a space', `{"NPM_TOKEN": "${secret}"}`, '{"NPM_TOKEN": "***"}'],
-    ['a single-quoted key', `{'password': '${secret}'}`, "{'password': '***'}"],
-    ['a JSON authorization', `{"authorization":"Basic ${secret}"}`, '{"authorization":"***"}'],
+    ['a JSON key', `{"api_key":"${secret}"}`, '{"api_key":***'],
+    ['a JSON key with a space', `{"NPM_TOKEN": "${secret}"}`, '{"NPM_TOKEN": ***'],
+    ['a single-quoted key', `{'password': '${secret}'}`, "{'password': ***"],
+    ['a JSON authorization', `{"authorization":"Basic ${secret}"}`, '{"authorization":***'],
     [
       'a JSON bearer authorization',
       `{"Authorization": "Bearer ${secret}"}`,
-      '{"Authorization": "***"}'
+      '{"Authorization": ***'
     ],
     ['a YAML key', `api_key: ${secret}`, 'api_key: ***'],
     ['a quoted YAML key', `"api_key": ${secret}`, '"api_key": ***'],
-    ['a quoted YAML key and value', `"api_key": "${secret}"`, '"api_key": "***"'],
+    ['a quoted YAML key and value', `"api_key": "${secret}"`, '"api_key": ***'],
     ['a YAML authorization', `authorization: Basic ${secret}`, 'authorization: ***'],
-    [
-      'a JSON value among others',
-      `{"a":1,"secret":"${secret}","b":2}`,
-      '{"a":1,"secret":"***","b":2}'
-    ],
+    ['a JSON value among others', `{"a":1,"secret":"${secret}","b":2}`, '{"a":1,"secret":***'],
     ['a quoted shell assignment', `API_KEY="two ${secret}"`, 'API_KEY=***']
-  ])('masks %s, the value only', (_name, input, expected) => {
+  ])('masks %s, from its value to the end of the line', (_name, input, expected) => {
     expect(redactSecrets(input)).toBe(expected)
   })
 
@@ -811,7 +803,7 @@ describe('credentials in quoted and structured forms (V2-F1)', () => {
       await failed
       const text = await (await fetch(`${server.url}/server/info`, { headers: auth })).text()
       expect(text).toContain('failed')
-      expect(text).toContain('"api_key\\":\\"***\\"')
+      expect(text).toContain('"api_key\\":***')
       expect(text).not.toContain(secret)
       expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
     } finally {
@@ -820,4 +812,112 @@ describe('credentials in quoted and structured forms (V2-F1)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+})
+
+describe('a credential masked to the end of its line (V3-F1)', () => {
+  const marker = 'synthetic-private-password-r1026'
+
+  it.each([
+    'fatal: unable to access https://github.com/antasphere/clave.git/: Could not resolve host: github.com',
+    'remote: Support for password authentication was removed',
+    'npm ERR! code EACCES\nnpm ERR! syscall open\nnpm ERR! path /srv/clave/package-lock.json',
+    'npm ERR! command failed\nnpm ERR! command sh -c tsc && electron-vite build',
+    'systemd-run: Failed to start transient service unit: Access denied',
+    'Process: 123 ExecStart=/bin/bash /home/u/.local/share/clave-server/upgrade/install-server.sh --name clave-server --ref v3.0.0-beta.10 (code=exited, status=127)',
+    'fatal: Could not read from remote repository. Permission denied (publickey).',
+    'HEAD is now at 8dfeb55ea4af35b15f8bb740e89cff4c8952e1ec v3.0.0-beta.10'
+  ])('keeps an ordinary installer line exact: %j', (line) => {
+    expect(redactSecrets(line)).toBe(line)
+  })
+
+  it.each<[string, string, string]>([
+    [
+      'an escaped quote in a JSON password',
+      JSON.stringify({ password: `prefix"${marker}`, code: 'E401' }),
+      '{"password":***'
+    ],
+    [
+      'escaped quotes in a JSON Basic authorization',
+      JSON.stringify({ authorization: `Basic "${marker}"` }),
+      '{"authorization":***'
+    ],
+    ['a comma inside a bare shell password', `PASSWORD=prefix,${marker}`, 'PASSWORD=***'],
+    ['a JSON array credential value', JSON.stringify({ api_key: [marker] }), '{"api_key":***'],
+    ['an npm configuration token', `_authToken=${marker}`, '_authToken=***'],
+    [
+      'only the line that carries it',
+      `first line\n{"password":"${marker}","code":"E401"}\nnpm ERR! code E401`,
+      'first line\n{"password":***\nnpm ERR! code E401'
+    ]
+  ])('masks %s, from its value to the end of the line', (_name, input, expected) => {
+    const actual = redactSecrets(input)
+    expect(actual).not.toContain(marker)
+    expect(actual).toBe(expected)
+  })
+
+  it('redacts a known literal in its JSON-escaped spelling too', () => {
+    const known = `prefix"${marker}`
+    const serialized = `config ${JSON.stringify({ note: known })}`
+    expect(redactSecrets(serialized, [known])).not.toContain(marker)
+    expect(redactSecrets(serialized, [known])).toBe('config {"note":"***"}')
+  })
+
+  it.each<[string, Record<string, string>]>([
+    ['by its key', {}],
+    ['as a known literal in the environment, escaped', { PASSWORD: '' }]
+  ])(
+    'never answers an escaped JSON password an installer printed over authenticated HTTP, %s',
+    async (_how, extraEnv) => {
+      const { startEmbedded } = await import('@clave/server')
+      const { FakeSource } = await import('@clave/server/test-support')
+      const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-escaped-secret-'))
+      let upgrade: SelfUpgrade | undefined
+      let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
+      try {
+        const payload = JSON.stringify({ password: `prefix"${marker}`, code: 'E401' })
+        const script = join(dir, 'install-server.sh')
+        // The payload holds no single quote, so the shell literal is exact.
+        writeFileSync(script, `#!/bin/bash\nprintf '%s\\n' '${payload}'\nexit 7\n`)
+        const env: NodeJS.ProcessEnv = { HOME: dir, PATH: '/usr/bin:/bin' }
+        if ('PASSWORD' in extraEnv) env.PASSWORD = `prefix"${marker}`
+        upgrade = createSelfUpgrade({
+          version: '3.0.0-beta.6',
+          facts: { name: 'e2e', script, ref: 'v3.0.0-beta.6' },
+          runner: scriptRunner({
+            dataDir: join(dir, 'data'),
+            name: 'e2e',
+            platform: 'darwin',
+            env
+          }),
+          activity: { busy: () => false, subscribe: () => () => {} }
+        })
+        server = await startEmbedded({ ports: { sessions: new FakeSource(), serverInfo: upgrade } })
+        const failed = new Promise<void>((done) =>
+          upgrade!.subscribe((status) => {
+            if (status.state === 'failed') done()
+          })
+        )
+        const auth = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }
+        const asked = await fetch(`${server.url}/server/upgrade`, {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ version: '3.0.0-beta.9', when: 'now' })
+        })
+        expect(asked.status).toBe(200)
+        await failed
+        const info = (await (
+          await fetch(`${server.url}/server/info`, { headers: auth })
+        ).json()) as {
+          upgrade: { state: string; error: string }
+        }
+        expect(info.upgrade.state).toBe('failed')
+        expect(info.upgrade.error).not.toContain(marker)
+        expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
+      } finally {
+        upgrade?.close()
+        await server?.stop()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  )
 })
