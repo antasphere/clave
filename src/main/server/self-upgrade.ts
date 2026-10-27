@@ -297,20 +297,36 @@ const MIN_LITERAL = 6
 const REDACTIONS: ReadonlyArray<[RegExp, string]> = [
   // URL userinfo: a repository URL saved with its password.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@'],
-  [/\b(authorization)(\s*[:=]\s*)[^\r\n]*/gi, '$1$2***'],
+  // An unquoted Authorization header: its whole value, scheme included. A
+  // quoted one is a key and a value, below.
+  [/\b(authorization)(\s*[:=]\s*)(?!["'])[^\r\n]*/gi, '$1$2***'],
   [/\b(bearer)\s+[^\s'"]+/gi, '$1 ***'],
   // Well-known token shapes. A long hex run alone (a commit) is left readable.
   [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, '***'],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, '***'],
   [/\bsk-[A-Za-z0-9_-]{16,}/g, '***'],
   [/\bxox[abpr]-[A-Za-z0-9-]{10,}/g, '***'],
-  [/\bnpm_[A-Za-z0-9]{20,}/g, '***'],
-  // NAME=value and NAME: value, for a NAME that says it holds a credential.
-  [
-    /\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s'"]+)/gi,
-    '$1$2***'
-  ]
+  [/\bnpm_[A-Za-z0-9]{20,}/g, '***']
 ]
+
+/** A key that says it holds a credential, bare or quoted (JSON, YAML, shell),
+ *  then `=` or `:`, then its value, bare or quoted. */
+const CREDENTIAL_PAIR =
+  /(["']?)\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\1(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s'",}\]]+)/gi
+
+/** The value masked, the key and the punctuation kept: a quoted value keeps
+ *  its quotes in a `key: "value"` pair, a shell assignment loses them. */
+const maskPair = (
+  _match: string,
+  quote: string,
+  key: string,
+  sep: string,
+  value: string
+): string => {
+  const quoted = value[0] === '"' || value[0] === "'"
+  const masked = quoted && sep.includes(':') ? `${value[0]}***${value[0]}` : '***'
+  return `${quote}${key}${quote}${sep}${masked}`
+}
 
 /**
  * What a failed upgrade may say on the wire and in a Mac's Servers page: the
@@ -324,7 +340,7 @@ export function redactSecrets(text: string, literals: readonly string[] = []): s
   for (const literal of [...literals].sort((a, b) => b.length - a.length))
     if (literal.length >= MIN_LITERAL) out = out.split(literal).join('***')
   for (const [pattern, replacement] of REDACTIONS) out = out.replace(pattern, replacement)
-  return out
+  return out.replace(CREDENTIAL_PAIR, maskPair)
 }
 
 /** The values of the variables of `env` whose names say they hold a credential. */

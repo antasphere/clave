@@ -742,3 +742,82 @@ describe('what a failed upgrade says on the wire (V1-F3)', () => {
     }
   }, 15_000)
 })
+
+describe('credentials in quoted and structured forms (V2-F1)', () => {
+  const secret = 'synthetic-json-config-credential-r1026'
+  it.each<[string, string, string]>([
+    ['a JSON key', `{"api_key":"${secret}"}`, '{"api_key":"***"}'],
+    ['a JSON key with a space', `{"NPM_TOKEN": "${secret}"}`, '{"NPM_TOKEN": "***"}'],
+    ['a single-quoted key', `{'password': '${secret}'}`, "{'password': '***'}"],
+    ['a JSON authorization', `{"authorization":"Basic ${secret}"}`, '{"authorization":"***"}'],
+    [
+      'a JSON bearer authorization',
+      `{"Authorization": "Bearer ${secret}"}`,
+      '{"Authorization": "***"}'
+    ],
+    ['a YAML key', `api_key: ${secret}`, 'api_key: ***'],
+    ['a quoted YAML key', `"api_key": ${secret}`, '"api_key": ***'],
+    ['a quoted YAML key and value', `"api_key": "${secret}"`, '"api_key": "***"'],
+    ['a YAML authorization', `authorization: Basic ${secret}`, 'authorization: ***'],
+    [
+      'a JSON value among others',
+      `{"a":1,"secret":"${secret}","b":2}`,
+      '{"a":1,"secret":"***","b":2}'
+    ],
+    ['a quoted shell assignment', `API_KEY="two ${secret}"`, 'API_KEY=***']
+  ])('masks %s, the value only', (_name, input, expected) => {
+    expect(redactSecrets(input)).toBe(expected)
+  })
+
+  it('keeps versions, commits, npm codes and permission errors readable', () => {
+    const text =
+      'npm ERR! code ELIFECYCLE\nVersion 3.0.0-beta.9, commit 4f1c9a2b7e3d5f6a8b9c0d1e2f3a4b5c6d7e8f90\nCould not prepare the upgrade: permission denied'
+    expect(redactSecrets(text)).toBe(text)
+  })
+
+  it('never answers a JSON credential an installer printed over authenticated HTTP', async () => {
+    const { startEmbedded } = await import('@clave/server')
+    const { FakeSource } = await import('@clave/server/test-support')
+    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-json-secret-'))
+    let upgrade: SelfUpgrade | undefined
+    let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
+    try {
+      const script = join(dir, 'install-server.sh')
+      writeFileSync(script, `#!/bin/bash\nprintf '%s\\n' '{"api_key":"${secret}"}'\nexit 7\n`)
+      upgrade = createSelfUpgrade({
+        version: '3.0.0-beta.6',
+        facts: { name: 'e2e', script, ref: 'v3.0.0-beta.6' },
+        runner: scriptRunner({
+          dataDir: join(dir, 'data'),
+          name: 'e2e',
+          platform: 'darwin',
+          env: { HOME: dir, PATH: '/usr/bin:/bin' }
+        }),
+        activity: { busy: () => false, subscribe: () => () => {} }
+      })
+      server = await startEmbedded({ ports: { sessions: new FakeSource(), serverInfo: upgrade } })
+      const failed = new Promise<void>((done) =>
+        upgrade!.subscribe((status) => {
+          if (status.state === 'failed') done()
+        })
+      )
+      const auth = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }
+      const asked = await fetch(`${server.url}/server/upgrade`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ version: '3.0.0-beta.9', when: 'now' })
+      })
+      expect(asked.status).toBe(200)
+      await failed
+      const text = await (await fetch(`${server.url}/server/info`, { headers: auth })).text()
+      expect(text).toContain('failed')
+      expect(text).toContain('"api_key\\":\\"***\\"')
+      expect(text).not.toContain(secret)
+      expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
+    } finally {
+      upgrade?.close()
+      await server?.stop()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
