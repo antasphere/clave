@@ -6,6 +6,7 @@ import { CodexAdapter } from './codex-adapter'
 import { createAgentTokenStore } from '../agent-tokens'
 import { installTerminalPorts, resetTerminalPorts } from '../../ports/terminals'
 import type { CodexCallbacks } from './codex-app-server'
+import { CodexRpcError } from './codex-app-server'
 import type { SessionHandle } from '../adapter'
 import type { SessionEvent } from '../../../shared/session-model'
 
@@ -245,6 +246,68 @@ it('preserves images in a steer and applies a selected model only to the next tu
       expect.objectContaining({ model: 'chosen-model' })
     )
     expect(s.request.mock.calls.filter(([m]) => m === 'thread/start')).toHaveLength(1)
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+
+it('delivers once as a new turn after an explicit no-active-turn refusal', async () => {
+  const s = await setup()
+  const original = s.request.getMockImplementation()!
+  let refuse = true
+  s.request.mockImplementation((method, params) => {
+    if (method === 'turn/steer' && refuse) {
+      refuse = false
+      return Promise.reject(new CodexRpcError(-32600, 'no active turn to steer'))
+    }
+    return original(method, params)
+  })
+  try {
+    s.send('first')
+    await tick()
+    s.send('sent as the turn ends')
+    await tick()
+    expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(2)
+    expect(s.request).toHaveBeenLastCalledWith(
+      'turn/start',
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'sent as the turn ends', text_elements: [] }]
+      })
+    )
+    expect(s.events.filter((e) => e.type === 'error')).toEqual([])
+    expect(s.events.filter((e) => e.type === 'user_message')).toHaveLength(2)
+    // The old completion can arrive after the recovery has started turn 2.
+    s.complete()
+    s.send('follow up on recovered turn')
+    await tick()
+    expect(s.request).toHaveBeenLastCalledWith(
+      'turn/steer',
+      expect.objectContaining({ expectedTurnId: 'turn-2' })
+    )
+    expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(2)
+  } finally {
+    await s.adapter.kill(s.handle)
+  }
+})
+
+it.each([
+  new Error('no active turn to steer'),
+  new CodexRpcError(-32603, 'no active turn to steer'),
+  new CodexRpcError(-32600, 'different active turn'),
+  new Error('Codex request timed out: turn/steer')
+])('does not replay input for an ambiguous or different rejection: %s', async (error) => {
+  const s = await setup()
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation((method, params) =>
+    method === 'turn/steer' ? Promise.reject(error) : original(method, params)
+  )
+  try {
+    s.send('first')
+    await tick()
+    s.send('uncertain')
+    await tick()
+    expect(s.request.mock.calls.filter(([m]) => m === 'turn/start')).toHaveLength(1)
+    expect(s.events).toContainEqual({ type: 'error', message: error.message, fatal: false })
   } finally {
     await s.adapter.kill(s.handle)
   }

@@ -59,6 +59,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   if (f.method === 'turn/steer') {
     if (f.params.threadId !== 'thread' || f.params.expectedTurnId !== active) return send({id:f.id,error:{code:-32600,message:'Wrong active turn'}});
     const text = f.params.input.find(i=>i.type==='text')?.text;
+    if (text === 'race completion') {
+      active = null;
+      return send({id:f.id,error:{code:-32600,message:'no active turn to steer'}});
+    }
     if (text === 'reject this message') return send({id:f.id,error:{code:-32600,message:'Fixture rejected follow-up'}});
     send({id:f.id,result:{turnId:active}});
     send({method:'item/agentMessage/delta',params:{threadId:'thread',itemId:'answer-'+turn,delta:'Received: '+text}});
@@ -82,6 +86,19 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   writeFileSync(
     `${BIN}/sh`,
     `#!/bin/sh\nexport PATH='${BIN}':"$PATH"\n[ "$1" = '-l' ] && shift\nexec /bin/sh "$@"\n`,
+    { mode: 0o755 }
+  )
+  writeFileSync(
+    `${BIN}/claude`,
+    `#!${process.execPath}
+const send = frame => process.stdout.write(JSON.stringify(frame)+'\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const frame = JSON.parse(line);
+  if (frame.type === 'control_request' && frame.request.subtype === 'initialize')
+    send({type:'control_response',response:{subtype:'success',request_id:frame.request_id,response:{models:[{value:'haiku',displayName:'Haiku'}]}}});
+  if (frame.type === 'user') send({type:'system',subtype:'init',session_id:'claude-fixture',model:'haiku',tools:[],mcp_servers:[]});
+});
+`,
     { mode: 0o755 }
   )
 
@@ -114,6 +131,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
       return { win: launched.win, sessionId: opened.sessionId, close: () => app.close() }
     }, 'codex/active-turn-input')
     const { win, sessionId } = receipt.values.chat
+    const chooseView = async (id, title) => {
+      const trigger = win
+        .locator(`section.chat-host[data-session-id="${id}"]`)
+        .getByRole('button', { name: 'Change view', exact: true })
+      await trigger.click()
+      const menu = await trigger.getAttribute('aria-controls')
+      assert.ok(menu)
+      await win
+        .locator(`[id="${menu}"]`)
+        .getByRole('menuitem', { name: title, exact: true })
+        .click()
+    }
     console.log(
       JSON.stringify({
         scenario: 'codex/active-turn-input',
@@ -181,10 +210,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
           name: 'Terminal follow-up'
         })
         assert.ok(opened?.sessionId)
-        await win.evaluate(
-          (id) => window.electronAPI.sessionsSetView(id, 'clave.chat-view/terminal'),
-          opened.sessionId
-        )
+        await chooseView(opened.sessionId, 'Terminal')
         const terminal = win.locator(
           `section.chat-host[data-session-id="${opened.sessionId}"] [data-testid="terminal-view"]`
         )
@@ -205,6 +231,81 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
         assert.equal(requests().filter((f) => f.method === 'turn/start').length, 3)
       }
     )
+    await check(
+      'a server-side completion race delivers the follow-up once as a new turn',
+      async () => {
+        const opened = await callMcp(app, 'openSession', {
+          cwd: ROOT,
+          mode: 'codex',
+          chat: true,
+          account: 'default',
+          workspace: 'followup',
+          name: 'Completion race'
+        })
+        await chooseView(opened.sessionId, 'Chat')
+        const race = win.locator(
+          `section.chat-host[data-session-id="${opened.sessionId}"] [data-testid="chat-view"]`
+        )
+        const message = race.getByRole('textbox', { name: 'Message', exact: true })
+        await message.waitFor()
+        const before = requests().filter((f) => f.method === 'turn/start').length
+        await message.fill('first before race')
+        await message.press('Enter')
+        await race.getByRole('button', { name: 'Interrupt', exact: true }).waitFor()
+        await message.fill('race completion')
+        await race.getByRole('button', { name: 'Send message', exact: true }).click()
+        await waitFor(
+          () => requests().filter((f) => f.method === 'turn/start').length === before + 2
+        )
+        const delivered = requests().filter(
+          (f) =>
+            f.method === 'turn/start' && f.params.input.some((i) => i.text === 'race completion')
+        )
+        assert.equal(delivered.length, 1)
+        assert.equal(
+          await race
+            .locator('.chat-turn[data-role="user"]')
+            .filter({ hasText: 'race completion' })
+            .count(),
+          1
+        )
+        assert.ok(!(await race.textContent()).includes('no active turn to steer'))
+      }
+    )
+    for (const variant of ['chat', 'terminal']) {
+      await check(
+        `a working Claude ${variant} composer retains Interrupt with a draft`,
+        async () => {
+          const opened = await callMcp(app, 'openSession', {
+            cwd: ROOT,
+            mode: 'claude',
+            chat: true,
+            account: 'default',
+            workspace: 'followup',
+            name: `Claude ${variant} preservation`
+          })
+          assert.ok(opened?.sessionId)
+          await chooseView(opened.sessionId, variant === 'chat' ? 'Chat' : 'Terminal')
+          const claude = win.locator(
+            `section.chat-host[data-session-id="${opened.sessionId}"] [data-testid="${variant === 'chat' ? 'chat-view' : 'terminal-view'}"]`
+          )
+          const message = claude.getByRole('textbox', { name: 'Message', exact: true })
+          await message.waitFor()
+          await message.fill('keep working')
+          await message.press('Enter')
+          await claude.getByRole('button', { name: 'Interrupt', exact: true }).waitFor()
+          await message.fill('unsent Claude draft')
+          assert.equal(
+            await claude.getByRole('button', { name: 'Interrupt', exact: true }).count(),
+            1
+          )
+          assert.equal(
+            await claude.getByRole('button', { name: 'Send message', exact: true }).count(),
+            0
+          )
+        }
+      )
+    }
   } finally {
     if (app) await app.close()
   }

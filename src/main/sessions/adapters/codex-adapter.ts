@@ -26,6 +26,7 @@ import type {
   Unsubscribe
 } from '../adapter'
 import {
+  CodexRpcError,
   object,
   spawnCodexAppServer,
   type CodexCallbacks,
@@ -346,6 +347,9 @@ export class CodexTranslator {
       }
       case 'turn/completed': {
         const turn = object(p.turn)
+        // Recovery may start the next turn before the previous completion
+        // reaches us. That late frame must not clear the new active turn.
+        if (this.turnId && text(turn.id) && text(turn.id) !== this.turnId) return
         // What the turn left running is listed before the turn says it ended,
         // so the view never shows a moment with the work unlisted.
         if (this.running.size) {
@@ -840,7 +844,11 @@ export class CodexAdapter implements SessionAdapter {
       })
     })
   }
-  private async sendTurn(state: HandleState, prompt: PreparedPrompt): Promise<void> {
+  private async sendTurn(
+    state: HandleState,
+    prompt: PreparedPrompt,
+    recoverCompleted = true
+  ): Promise<void> {
     await this.start(state)
     if (state.ended || state.closing) return
     const effort = state.translator.turnId ? undefined : await this.turnEffort(state)
@@ -856,13 +864,27 @@ export class CodexAdapter implements SessionAdapter {
     ]
     const turnId = state.translator.turnId
     if (turnId) {
-      // A rejected or timed-out steer may already have been consumed. Report
-      // it rather than replaying the message as a second turn automatically.
-      await state.connection!.request('turn/steer', {
-        threadId: state.translator.threadId,
-        expectedTurnId: turnId,
-        input
-      })
+      try {
+        await state.connection!.request('turn/steer', {
+          threadId: state.translator.threadId,
+          expectedTurnId: turnId,
+          input
+        })
+      } catch (error) {
+        // Codex can finish before its completion notification reaches us.
+        // This explicit precondition refusal confirms input was not consumed.
+        // Unknown errors and timeouts remain visible, without replay.
+        if (
+          !recoverCompleted ||
+          !(error instanceof CodexRpcError) ||
+          error.code !== -32600 ||
+          error.message !== 'no active turn to steer' ||
+          (state.translator.turnId && state.translator.turnId !== turnId)
+        )
+          throw error
+        state.translator.turnId = ''
+        await this.sendTurn(state, prompt, false)
+      }
       return
     }
     const result = await state.connection!.request('turn/start', {
