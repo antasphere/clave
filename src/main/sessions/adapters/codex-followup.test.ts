@@ -394,6 +394,10 @@ it.each(['failed', 'interrupted'])(
       method: 'item/fileChange/requestApproval',
       params: { threadId: 'thread', turnId: 'new' }
     })
+    translator.notification({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'thread', turnId: 'new', itemId: 'answer', delta: 'Hel' }
+    })
     const before = events.length
     translator.notification({
       method: 'turn/completed',
@@ -420,6 +424,20 @@ it.each(['failed', 'interrupted'])(
     expect(tasks?.type === 'background_tasks' && tasks.tasks.map((task) => task.id)).toEqual([
       'old-command'
     ])
+    translator.notification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread',
+        turnId: 'new',
+        item: { id: 'answer', type: 'agentMessage', text: 'Hello' }
+      }
+    })
+    expect(
+      events
+        .filter((event) => event.type === 'assistant_text')
+        .map((event) => event.delta)
+        .join('')
+    ).toBe('Hello')
     translator.notification({
       method: 'turn/completed',
       params: { threadId: 'thread', turn: { id: 'new', status: 'completed' } }
