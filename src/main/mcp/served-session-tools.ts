@@ -23,6 +23,7 @@ import { usageSummaryForModel } from '../../shared/usage-summary'
 import { resolveProfileRef, resolveSpawnModes } from '../../shared/open-session-modes'
 import { substituteTokens } from '../../shared/prompt-tokens'
 import { resolveDeclaredGroupView } from '../../shared/group-view'
+import { shareAGroup } from '../../shared/group-reach'
 import type { PinnedBlueprint, PinnedBlueprintSession } from '../../shared/pinned-blueprint'
 import {
   type AccountProvider,
@@ -97,7 +98,8 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
 }
 
 /** The renderer's reach rule, over the server's facts: a tab reaches itself,
- *  the tab that opened it, a tab it opened, or a tab in the same group. */
+ *  the tab that opened it, a tab it opened, or a tab or terminal in the same
+ *  group. */
 function assertCanReach(
   ctx: Ctx,
   layouts: readonly LayoutSnapshot[],
@@ -114,9 +116,11 @@ function assertCanReach(
   const related =
     parentOfSession(ctx, target.id) === caller ||
     parentOfSession(ctx, caller) === target.id ||
-    layouts
-      .flatMap((l) => l.groups)
-      .some((g) => g.sessionIds.includes(caller) && g.sessionIds.includes(target.id))
+    shareAGroup(
+      layouts.flatMap((l) => l.groups),
+      caller,
+      target.id
+    )
   if (!related) {
     throw new Error(
       `Refusing to ${verb} tab "${nameOf(ctx, target)}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`

@@ -349,6 +349,37 @@ describe('who may reach whom', () => {
       'clave_read_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   })
+  it('reads its own group’s terminal, not another group’s; sending to it stays refused', async () => {
+    const terminal = (id: string, sessionId: string | null): SidebarGroup['terminals'][number] => ({
+      ...{ id, command: 'npm run dev', commandMode: 'auto' as const, color: 'green' },
+      sessionId
+    })
+    const h = setup({
+      ...world(),
+      layouts: [
+        layout('wA', [
+          group('g', {
+            sessionIds: ['caller'],
+            terminals: [terminal('t1', 'dev'), terminal('t2', null)]
+          }),
+          group('far', { sessionIds: ['stranger'], terminals: [terminal('t3', 'far-dev')] })
+        ])
+      ],
+      sessions: [...world().sessions!, session('dev'), session('far-dev')],
+      records: {
+        ...world().records,
+        dev: record('dev', { claudeMode: false }),
+        'far-dev': record('far-dev', { claudeMode: false })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'dev' })) as object).toMatchObject({
+      sessionId: 'dev'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'far-dev' })).rejects.toThrow('not related')
+    await expect(run(h, 'sendToSession', { sessionId: 'dev', message: 'hi' })).rejects.toThrow(
+      'Refusing to send to a plain terminal'
+    )
+  })
   it('a tab reaches itself even outside any group', async () => {
     const h = setup({ ...world(), layouts: [layout('wA', [])] })
     expect((await run(h, 'readSession', { sessionId: 'caller' })) as object).toMatchObject({
