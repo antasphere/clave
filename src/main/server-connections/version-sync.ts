@@ -20,7 +20,7 @@ import type {
   ServerVersionStatus
 } from '../../../packages/contract/src/fleet'
 import type { ServerInfo, ServerUpgradeStatus } from '../../../packages/contract/src/server-info'
-import { isReleaseTag } from '../../../packages/contract/src/release-version'
+import { NOT_SCRIPT_INSTALLED, isReleaseTag } from '../../../packages/contract/src/release-version'
 
 /** How often every enabled server is read again. */
 export const VERSION_SYNC_INTERVAL_MS = 5 * 60_000
@@ -54,10 +54,23 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
   const { version, installRef, upgrade } = server.info
   const known = { ...base, serverVersion: version, installRef }
   if (!upgrade.supported)
-    return { kind: 'unsupported', ...known, ...(upgrade.reason && { reason: upgrade.reason }) }
+    return {
+      kind: 'unsupported',
+      ...known,
+      ...(upgrade.reason && { reason: upgrade.reason }),
+      // A daemon started some other way can still be brought onto the script,
+      // once, by hand; a server the app runs updates with the app.
+      ...(upgrade.reason === NOT_SCRIPT_INSTALLED && {
+        command: manualUpgradeCommand(appVersion)
+      })
+    }
   // A branch or a custom ref is the operator's choice, whatever version it reports.
   if (!isReleaseTag(installRef) || !valid(version) || !valid(appVersion))
     return { kind: 'custom-ref', ...known }
+  // The versions first: a server as new as the app, or newer, is left as it
+  // is whatever its upgrade says (another Mac's wait, run or failure).
+  if (gt(version, appVersion)) return { kind: 'server-newer', ...known }
+  if (!gt(appVersion, version)) return { kind: 'match', ...known }
   const target = upgrade.target
   const targetValid = target !== undefined && valid(target) !== null
   // Waiting or running for this version, or a later one another Mac asked for.
@@ -74,8 +87,6 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
       target,
       error: upgrade.error ?? 'The install script failed.'
     }
-  if (gt(version, appVersion)) return { kind: 'server-newer', ...known }
-  if (version === appVersion || !gt(appVersion, version)) return { kind: 'match', ...known }
   if (input.requested === appVersion)
     return {
       kind: 'failed',
@@ -131,14 +142,10 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
   const decideOne = (serverId: string, read: ServerRead): ServerVersionStatus => {
     const appVersion = deps.appVersion()
     const failure = failures.get(serverId)
-    if (failure?.version === appVersion)
-      return {
-        serverId,
-        ...decideServerVersion({ appVersion, automatic: deps.automatic, server: read }),
-        kind: 'failed',
-        target: appVersion,
-        error: failure.error
-      }
+    const plain = decideServerVersion({ appVersion, automatic: deps.automatic, server: read })
+    // A refused ask holds only while the server is still older and idle.
+    if (failure?.version === appVersion && plain.kind === 'upgrade')
+      return { serverId, ...plain, kind: 'failed', target: appVersion, error: failure.error }
     return {
       serverId,
       ...decideServerVersion({
@@ -228,12 +235,19 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
       const connection = deps.connections().find((c) => c.id === serverId && c.enabled)
       if (!connection) throw new Error('Unknown server connection.')
       const read = await deps.read(serverId).catch((): ServerRead => ({ kind: 'unreachable' }))
+      const appVersion = deps.appVersion()
+      // On its own, whatever the rule says: only a release-tag install older
+      // than this app is ever asked for this app's version.
+      if (
+        read.kind !== 'info' ||
+        !isReleaseTag(read.info.installRef) ||
+        !valid(read.info.version) ||
+        !valid(appVersion) ||
+        !gt(appVersion, read.info.version)
+      )
+        throw new Error('This server has nothing to upgrade to.')
       failures.delete(serverId)
-      const decided = decideServerVersion({
-        appVersion: deps.appVersion(),
-        automatic: true,
-        server: read
-      })
+      const decided = decideServerVersion({ appVersion, automatic: true, server: read })
       if (
         !(
           decided.kind === 'upgrade' ||

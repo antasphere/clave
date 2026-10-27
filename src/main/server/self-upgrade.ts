@@ -44,6 +44,7 @@ import {
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { CapabilityUnavailable } from '@clave/contract/errors'
+import { NOT_SCRIPT_INSTALLED } from '@clave/contract/release-version'
 import {
   InvalidUpgradeVersion,
   isReleaseVersion,
@@ -57,7 +58,7 @@ import type { SessionManager } from '../sessions/session-manager'
 /** How long no agent must have worked before a `when: 'idle'` upgrade starts. */
 export const UPGRADE_IDLE_MS = 60_000
 /** The sentence a Mac shows for a daemon started by hand or by another installer. */
-export const NOT_SCRIPT_INSTALLED = 'not installed by install-server.sh'
+export { NOT_SCRIPT_INSTALLED }
 /** `install-server.sh`'s own rule for `--name`. */
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/
 

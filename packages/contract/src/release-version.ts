@@ -19,6 +19,10 @@ export function isReleaseVersion(value: unknown): value is string {
   )
 }
 
+/** The reason a daemon gives when `install-server.sh` did not install it:
+ *  the one unsupported server a Mac can still help, with the script's command. */
+export const NOT_SCRIPT_INSTALLED = 'not installed by install-server.sh'
+
 /** Whether `ref` is a release tag (`v<semver>`), the only ref a Mac follows. */
 export function isReleaseTag(ref: unknown): ref is string {
   return typeof ref === 'string' && ref.startsWith('v') && isReleaseVersion(ref.slice(1))

@@ -133,10 +133,17 @@ export function describeServerVersion(
         ...line('Older Clave server: run this on the server', 'connecting'),
         ...(status.command && { command: status.command })
       }
-    case 'unsupported':
-      return line(
-        `This server does not upgrade from the Mac${status.reason ? `: ${status.reason}` : ''}`,
-        'idle'
-      )
+    case 'unsupported': {
+      const why = `This server does not upgrade from the Mac${status.reason ? `: ${status.reason}` : ''}`
+      return status.command
+        ? {
+            ...line(
+              `${why}. Install it with the script, so this Mac keeps it on its version:`,
+              'idle'
+            ),
+            command: status.command
+          }
+        : line(why, 'idle')
+    }
   }
 }

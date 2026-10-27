@@ -99,8 +99,38 @@ describe('the decision for one server', () => {
     ).toMatchObject({
       kind: 'unsupported',
       reason: 'not installed by install-server.sh',
-      serverVersion: '3.0.0-beta.8'
+      serverVersion: '3.0.0-beta.8',
+      command: 'bash ~/install-server.sh --ref v3.0.0-beta.9'
     })
+  })
+
+  it('gives an app-run server no command: it updates with the app (V1-F1)', () => {
+    const decided = decide(
+      info('3.0.0-beta.9', {
+        installRef: null,
+        upgrade: {
+          supported: false,
+          reason: 'This server is run by the app; it updates with it',
+          state: 'idle'
+        }
+      })
+    )
+    expect(decided).toMatchObject({ kind: 'unsupported' })
+    expect(decided).not.toHaveProperty('command')
+  })
+
+  it('compares the versions first: a server as new as the app or newer is never upgrading or failed (V1-F2)', () => {
+    const at = (version: string, upgrade: ServerUpgradeStatus): ServerRead =>
+      info(version, { upgrade })
+    // Another Mac on beta.10 failed on, or waits with, a server already on beta.9.
+    for (const upgrade of [
+      { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'x' },
+      { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10' },
+      { supported: true, state: 'running', target: '3.0.0-beta.10' }
+    ] as ServerUpgradeStatus[]) {
+      expect(decide(at('3.0.0-beta.9', upgrade), '3.0.0-beta.8').kind).toBe('server-newer')
+      expect(decide(at('3.0.0-beta.9', upgrade), '3.0.0-beta.9').kind).toBe('match')
+    }
   })
 
   it('knows nothing of a server that does not answer', () => {
@@ -296,6 +326,28 @@ describe('the version sync loop', () => {
     await sync.refresh()
     expect(await sync.upgradeNow('a')).toMatchObject({ kind: 'upgrading', upgradeState: 'running' })
     expect(requests.at(-1)).toEqual({ id: 'a', version: '3.0.0-beta.9', when: 'now' })
+  })
+
+  it('never downgrades a newer server through upgrade now after another Mac failed (V1-F2)', async () => {
+    for (const upgrade of [
+      { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'build failed' },
+      { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10' }
+    ] as ServerUpgradeStatus[]) {
+      const { sync, requests } = fleet(
+        { a: info('3.0.0-beta.9', { upgrade }) },
+        { appVersion: '3.0.0-beta.8' }
+      )
+      expect((await sync.refresh())[0].kind).toBe('server-newer')
+      await expect(sync.upgradeNow('a')).rejects.toThrow()
+      expect(requests).toEqual([])
+    }
+  })
+
+  it('refuses upgrade now for a branch install, whatever its version', async () => {
+    const { sync, requests } = fleet({ a: info('2.4.0', { installRef: 'dev' }) })
+    await sync.refresh()
+    await expect(sync.upgradeNow('a')).rejects.toThrow()
+    expect(requests).toEqual([])
   })
 
   it('refuses upgrade now when there is nothing to upgrade', async () => {

@@ -214,6 +214,26 @@ describe('describeServerVersion (issue #266)', () => {
     })
   })
 
+  it('tells a daemon the script did not install how to install it, with the command (V1-F1)', () => {
+    expect(
+      describeServerVersion(
+        status({
+          kind: 'unsupported',
+          installRef: null,
+          reason: 'not installed by install-server.sh',
+          command: 'bash ~/install-server.sh --ref v3.0.0-beta.8'
+        })
+      )
+    ).toEqual({
+      version: 'Version 3.0.0-beta.7',
+      state:
+        'This server does not upgrade from the Mac: not installed by install-server.sh. Install it with the script, so this Mac keeps it on its version:',
+      tone: 'idle',
+      command: 'bash ~/install-server.sh --ref v3.0.0-beta.8',
+      upgradeNow: false
+    })
+  })
+
   it('offers no upgrade from a dev build, and says why', () => {
     for (const kind of ['upgrade', 'failed'] as const)
       expect(
