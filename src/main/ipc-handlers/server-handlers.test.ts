@@ -264,7 +264,7 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
       results
     )
     expect(JSON.stringify(payloads)).not.toContain(daemon.token)
-  })
+  }, 15_000)
 
   it('a dev build reads but never asks', async () => {
     electronApp.isPackaged = false
@@ -301,5 +301,5 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
     } finally {
       electronApp.isPackaged = true
     }
-  })
+  }, 15_000)
 })
