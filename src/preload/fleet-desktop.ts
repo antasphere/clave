@@ -267,15 +267,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   const insideRoot = (root: string, p: string): boolean =>
     p === root || p.startsWith(root === '/' ? root : `${root}/`)
+  // ── Issue #266: main reads a server's version again when this window hears
+  // its upgrade change or its (re)welcome, the way an upgraded server returns ──
+  const versionChanged = (serverId: string): void => {
+    void ports.invoke(FLEET_IPC.versionRefresh, serverId).catch(noop)
+  }
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
       invalidate(status.serverId)
       refresh(status.serverId)
+      versionChanged(status.serverId)
     }
   })
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
+    if (tag === 'server.upgrade_changed') versionChanged(serverId)
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
     if (value.event._tag === 'workspaces.state_changed')
       publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)

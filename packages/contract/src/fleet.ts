@@ -110,7 +110,9 @@ export const FLEET_IPC = {
   // ── Issue #266: each saved server's version against this app's ──
   versions: 'server:fleet:versions',
   versionsChanged: 'server:fleet:versions-changed',
-  upgradeNow: 'server:fleet:upgrade-now'
+  upgradeNow: 'server:fleet:upgrade-now',
+  /** A window heard a server's upgrade change, or its welcome: read that server again. */
+  versionRefresh: 'server:fleet:version-refresh'
 } as const
 
 /** Reserved prefix is escaped for local resources too, so any local ID can

@@ -2,7 +2,7 @@
 //
 // One daemon reports 3.0.0-beta.6, as install-server.sh would start it from
 // the v3.0.0-beta.6 tag, with a stand-in install script that only records
-// its arguments and exits 0 (never a real install). A Mac app launched as
+// its arguments and fails as a broken build would (never a real install). A Mac app launched as
 // 3.0.0-beta.9 (`--test-version`, which makes a test instance behave as a
 // packaged app for the version sync) connects to it. The Servers page shows
 // the server's version and that it waits for idle; the daemon holds the
@@ -11,8 +11,9 @@
 // has worked for that window. The window is a minute in a real server;
 // `--test-upgrade-idle-ms`, honoured only under `--test-no-activate`, makes
 // it four seconds here. Then "Upgrade now", behind its warning, runs it again
-// at once. The script exits 0 without restarting anything, so the server
-// stays on beta.6 and the Mac reads that as an upgrade that did not finish.
+// at once. The script fails without restarting anything, so the server stays
+// up on beta.6 and reports the failure, which the open Servers row shows on
+// its own within a few seconds (the server's event, routed to main).
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fixturePath } from './harness.mjs'
@@ -33,7 +34,10 @@ function standIn(dir) {
   const script = path.join(dir, 'install-server.sh')
   // The daemon runs a COPY under its data directory, so the record path is
   // written into the script rather than found beside it.
-  writeFileSync(script, `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\nexit 0\n`)
+  writeFileSync(
+    script,
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\necho 'stand-in build failed'\nexit 3\n`
+  )
   chmodSync(script, 0o755)
   return { script, record }
 }
@@ -145,21 +149,37 @@ export async function run(t) {
       existsSync(log) && readFileSync(log, 'utf8').includes(`--ref v${APP_VERSION}`)
     )
 
-    // Exit 0 with the server still on beta.6: the Mac says it did not finish
-    // and offers Upgrade now, which warns before it runs anything.
+    // The script failed with the server still up on beta.6: the open row
+    // follows on its own (no refresh asked), and offers Upgrade now, which
+    // warns before it runs anything.
     await eventually(
-      async () => (await info()).upgrade.state === 'idle',
-      'the server is back to idle after the script exits 0'
+      async () => (await info()).upgrade.state === 'failed',
+      'the server reports the failed run'
     )
-    await mac.win.evaluate(() => window.electronAPI.fleetServerVersions(true))
+    const failedAt = Date.now()
+    t.equal(
+      'the server keeps serving after a failed upgrade',
+      (await info()).version,
+      '3.0.0-beta.6'
+    )
+    const state = version.locator('[data-server-version-state]')
+    const failedText = `Upgrade to ${APP_VERSION} failed:`
+    let shown = false
+    for (let i = 0; i < 50 && !shown; i++) {
+      shown = (await state.innerText()).startsWith(failedText)
+      if (!shown) await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    t.check(
+      'the open Servers row shows the failure within a few seconds, with no refresh asked',
+      shown,
+      `${Date.now() - failedAt} ms: ${await state.innerText()}`
+    )
+    t.check(
+      'the failure carries the end of the install log',
+      (await state.innerText()).includes('stand-in build failed')
+    )
     const upgradeNow = version.getByRole('button', { name: 'Upgrade now', exact: true })
     await eventually(async () => (await upgradeNow.count()) === 1, 'Upgrade now is offered')
-    t.check(
-      'a server still on its old version after the ask reads as a failed upgrade',
-      (await version.locator('[data-server-version-state]').innerText()).startsWith(
-        `Upgrade to ${APP_VERSION} failed:`
-      )
-    )
     await upgradeNow.click()
     t.check(
       'Upgrade now warns that running sessions end',

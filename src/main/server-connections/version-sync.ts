@@ -24,6 +24,9 @@ import { NOT_SCRIPT_INSTALLED, isReleaseTag } from '../../../packages/contract/s
 
 /** How often every enabled server is read again. */
 export const VERSION_SYNC_INTERVAL_MS = 5 * 60_000
+/** How often a server that waits for idle or runs its upgrade is read again,
+ *  so a missed event or a closed window never strands its row. */
+export const UPGRADE_POLL_MS = 10_000
 
 /** What reading a server's info gave. `missing`: it answered without the route. */
 export type ServerRead =
@@ -113,6 +116,8 @@ export interface VersionSyncDeps {
   readonly publish: (results: ServerVersionStatus[]) => void
   readonly setInterval?: (fn: () => void, ms: number) => unknown
   readonly clearInterval?: (handle: unknown) => void
+  readonly setTimeout?: (fn: () => void, ms: number) => unknown
+  readonly clearTimeout?: (handle: unknown) => void
 }
 
 export interface VersionSync {
@@ -120,6 +125,8 @@ export interface VersionSync {
   stop(): void
   /** Read every enabled server, ask the ones to upgrade, publish, answer. */
   refresh(): Promise<ServerVersionStatus[]>
+  /** Read one server again (its upgrade changed, or it was welcomed again), publish all. */
+  refreshServer(serverId: string): Promise<ServerVersionStatus[]>
   results(): ServerVersionStatus[]
   /** Ask the server to upgrade to this app's version now, without waiting for idle. */
   upgradeNow(serverId: string): Promise<ServerVersionStatus>
@@ -138,6 +145,31 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
   let running: Promise<ServerVersionStatus[]> | null = null
   let queued: Promise<ServerVersionStatus[]> | null = null
   let timer: unknown = null
+  let poll: unknown = null
+  const oneInFlight = new Map<string, Promise<ServerVersionStatus[]>>()
+  const setShort = deps.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms).unref())
+  const clearShort =
+    deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as NodeJS.Timeout))
+  const stopPoll = (): void => {
+    if (poll !== null) clearShort(poll)
+    poll = null
+  }
+  /** While started, a server that waits or runs is read again soon. */
+  const schedulePoll = (): void => {
+    if (timer === null || !current.some((r) => r.kind === 'upgrading')) return stopPoll()
+    if (poll !== null) return
+    poll = setShort(() => {
+      poll = null
+      for (const r of current)
+        if (r.kind === 'upgrading') void refreshServer(r.serverId).catch(() => undefined)
+    }, UPGRADE_POLL_MS)
+  }
+  const settle = (results: ServerVersionStatus[]): ServerVersionStatus[] => {
+    current = results
+    deps.publish(current)
+    schedulePoll()
+    return current
+  }
 
   const decideOne = (serverId: string, read: ServerRead): ServerVersionStatus => {
     const appVersion = deps.appVersion()
@@ -190,10 +222,25 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
 
   const pass = async (): Promise<ServerVersionStatus[]> => {
     const enabled = deps.connections().filter((connection) => connection.enabled)
-    const results = await Promise.all(enabled.map(one))
-    current = results
-    deps.publish(results)
-    return results
+    return settle(await Promise.all(enabled.map(one)))
+  }
+
+  function refreshServer(serverId: string): Promise<ServerVersionStatus[]> {
+    const running = oneInFlight.get(serverId)
+    if (running) return running
+    const connection = deps.connections().find((c) => c.id === serverId && c.enabled)
+    if (!connection) return Promise.resolve(current)
+    const read = one(connection)
+      .then((result) =>
+        settle(
+          current.some((r) => r.serverId === serverId)
+            ? current.map((r) => (r.serverId === serverId ? result : r))
+            : [...current, result]
+        )
+      )
+      .finally(() => oneInFlight.delete(serverId))
+    oneInFlight.set(serverId, read)
+    return read
   }
 
   /** One pass at a time; a call during a pass gets ONE more pass after it,
@@ -224,8 +271,10 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
       if (timer === null) return
       ;(deps.clearInterval ?? ((handle) => clearInterval(handle as NodeJS.Timeout)))(timer)
       timer = null
+      stopPoll()
     },
     refresh,
+    refreshServer,
     results: () => current,
     upgradeNow: async (serverId) => {
       if (!deps.automatic)
@@ -257,8 +306,7 @@ export function createVersionSync(deps: VersionSyncDeps): VersionSync {
       )
         throw new Error('This server has nothing to upgrade to.')
       const result = await ask(serverId, read, 'now')
-      current = [...current.filter((r) => r.serverId !== serverId), result]
-      deps.publish(current)
+      settle([...current.filter((r) => r.serverId !== serverId), result])
       return result
     }
   }

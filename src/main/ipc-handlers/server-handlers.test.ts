@@ -182,6 +182,7 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
       stop: () => calls.push('stop'),
       refresh: async () => (calls.push('refresh'), []),
       results: () => (calls.push('results'), []),
+      refreshServer: async (id: string) => (calls.push(`one:${id}`), []),
       upgradeNow: async (id: string) => (calls.push(`now:${id}`), { serverId: id } as never)
     }
     registerServerHandlers(registry, { versionSync: sync })
@@ -191,7 +192,16 @@ describe('the version sync behind the fleet IPC (issue #266)', () => {
     expect(await invoke(FLEET_IPC.versions)).toEqual([])
     expect(await invoke(FLEET_IPC.versions, true)).toEqual([])
     await invoke(FLEET_IPC.upgradeNow, 'server-1')
-    expect(calls).toEqual(['start', 'refresh', 'results', 'refresh', 'now:server-1'])
+    // A window heard the server's upgrade change: that server alone is read again.
+    await invoke(FLEET_IPC.versionRefresh, 'server-1')
+    expect(calls).toEqual([
+      'start',
+      'refresh',
+      'results',
+      'refresh',
+      'now:server-1',
+      'one:server-1'
+    ])
   })
 
   it("reads each enabled server through main's own client, and asks an older one to upgrade once idle", async () => {

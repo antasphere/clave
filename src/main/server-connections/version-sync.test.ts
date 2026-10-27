@@ -12,6 +12,7 @@ import type {
 } from '../../../packages/contract/src/fleet'
 import type { ServerInfo, ServerUpgradeStatus } from '../../../packages/contract/src/server-info'
 import {
+  UPGRADE_POLL_MS,
   VERSION_SYNC_INTERVAL_MS,
   createVersionSync,
   decideServerVersion,
@@ -216,6 +217,9 @@ interface Fleet {
   published: ServerVersionStatus[][]
   intervals: Array<() => void>
   servers: Record<string, ServerRead>
+  /** The pending short polls, by delay. */
+  timeouts: Array<{ fn: () => void; ms: number }>
+  reads: string[]
 }
 function fleet(
   servers: Record<string, ServerRead>,
@@ -230,11 +234,16 @@ function fleet(
   const requests: Array<{ id: string; version: string; when: 'idle' | 'now' }> = []
   const published: ServerVersionStatus[][] = []
   const intervals: Array<() => void> = []
+  const timeouts: Array<{ fn: () => void; ms: number }> = []
+  const reads: string[] = []
   const sync = createVersionSync({
     appVersion: () => options.appVersion ?? '3.0.0-beta.9',
     automatic: options.automatic ?? true,
     connections: () => connections,
-    read: async (id) => servers[id],
+    read: async (id) => {
+      reads.push(id)
+      return servers[id]
+    },
     request: async (id, version, when) => {
       requests.push({ id, version, when })
       const status: ServerUpgradeStatus =
@@ -254,9 +263,18 @@ function fleet(
     },
     clearInterval: () => {
       intervals.length = 0
+    },
+    setTimeout: (fn, ms) => {
+      const timeout = { fn, ms }
+      timeouts.push(timeout)
+      return timeout
+    },
+    clearTimeout: (handle) => {
+      const i = timeouts.indexOf(handle as (typeof timeouts)[number])
+      if (i >= 0) timeouts.splice(i, 1)
     }
   })
-  return { sync, connections, requests, published, intervals, servers }
+  return { sync, connections, requests, published, intervals, servers, timeouts, reads }
 }
 
 describe('the version sync loop', () => {
@@ -388,5 +406,64 @@ describe('the version sync loop', () => {
       kind: 'failed',
       error: 'This server cannot upgrade itself: not installed by install-server.sh.'
     })
+  })
+})
+
+describe('the Servers row follows an upgrade live (V1-F5)', () => {
+  it('reads one server again on demand, and publishes it with the others', async () => {
+    const { sync, published, reads, servers } = fleet({
+      a: info('3.0.0-beta.9'),
+      b: info('3.0.0-beta.8', {
+        upgrade: { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.9' }
+      })
+    })
+    await sync.refresh()
+    reads.length = 0
+    servers.b = info('3.0.0-beta.8', {
+      upgrade: { supported: true, state: 'failed', target: '3.0.0-beta.9', error: 'npm ERR!' }
+    })
+    const results = await sync.refreshServer('b')
+    expect(reads).toEqual(['b'])
+    expect(results.map((r) => [r.serverId, r.kind])).toEqual([
+      ['a', 'match'],
+      ['b', 'failed']
+    ])
+    expect(published.at(-1)).toEqual(results)
+  })
+
+  it('polls a server every ten seconds while it waits or runs, and stops once it is done', async () => {
+    const { sync, timeouts, reads, servers } = fleet({
+      a: info('3.0.0-beta.9'),
+      b: info('3.0.0-beta.8')
+    })
+    sync.start()
+    await sync.refresh()
+    // b was asked and now waits for idle: one short poll, for it alone.
+    expect(timeouts.map((t) => t.ms)).toEqual([UPGRADE_POLL_MS])
+    reads.length = 0
+    servers.b = info('3.0.0-beta.8', {
+      upgrade: { supported: true, state: 'running', target: '3.0.0-beta.9' }
+    })
+    timeouts.shift()!.fn()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(reads).toEqual(['b'])
+    expect(timeouts.map((t) => t.ms)).toEqual([UPGRADE_POLL_MS])
+    servers.b = info('3.0.0-beta.9')
+    timeouts.shift()!.fn()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sync.results().map((r) => r.kind)).toEqual(['match', 'match'])
+    expect(timeouts).toEqual([])
+    sync.stop()
+  })
+
+  it('does not poll before it is started, and stops polling when stopped', async () => {
+    const { sync, timeouts } = fleet({ b: info('3.0.0-beta.8') })
+    await sync.refresh()
+    expect(timeouts).toEqual([])
+    sync.start()
+    await sync.refresh()
+    expect(timeouts).toHaveLength(1)
+    sync.stop()
+    expect(timeouts).toEqual([])
   })
 })

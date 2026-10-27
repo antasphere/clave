@@ -133,6 +133,10 @@ export function registerServerHandlers(
   ipcMain.handle(FLEET_IPC.versions, (_event, refresh?: boolean) =>
     !versions ? [] : refresh === true ? versions.refresh() : versions.results()
   )
+  // A window heard a server's upgrade change, or its welcome: read it again.
+  ipcMain.handle(FLEET_IPC.versionRefresh, (_event, id: string) =>
+    versions ? versions.refreshServer(id).then(() => undefined) : undefined
+  )
   ipcMain.handle(FLEET_IPC.upgradeNow, (_event, id: string) => {
     if (!versions) throw new Error('Server upgrades are not available.')
     return versions.upgradeNow(id)
