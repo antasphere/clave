@@ -8,6 +8,23 @@ import type { Attachment } from '../../../src/shared/attachments'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
+/** A request as it was asked, comparable across the copies a server keeps:
+ *  every field that says what it asks, keys in a fixed order (a server's copy
+ *  is rebuilt from its record, not passed through), absent and undefined one. */
+function askedAs(request: Permission): string {
+  const { id, description, toolName, detail, input, options, questions } = request
+  return stableJson({ id, description, toolName, detail, input, options, questions })
+}
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object')
+    return `{${Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`)
+      .join(',')}}`
+  return JSON.stringify(value) ?? 'null'
+}
 export type Entry =
   | {
       kind: 'user'
@@ -122,15 +139,16 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // A server replays each request it still holds to every subscriber, so a
     // pending request can be in the live entries already when the past that
     // first asked it arrives. The live copy is the one answers are written
-    // on; the past one would be the same question twice. Matched on what was
-    // asked as well as the id: a Codex process numbers its requests from zero,
-    // so an older process's request can carry a live one's id.
-    const same = (a: Permission, b: Permission): boolean =>
-      a.id === b.id && a.description === b.description && a.toolName === b.toolName
-    const live = state.entries.flatMap((e) => (e.kind === 'permission' ? [e.request] : []))
+    // on; the past one would be the same question twice. Matched on the whole
+    // request, never the id alone: a Codex process numbers its requests from
+    // zero, so an older process's request can carry a live one's id and even
+    // its generic reason, and differ only in what it asked to run.
+    const live = new Set(
+      state.entries.flatMap((e) => (e.kind === 'permission' ? [askedAs(e.request)] : []))
+    )
     const past = action.prepend
       .reduce(reduceConversation, emptyConversation)
-      .entries.filter((e) => e.kind !== 'permission' || !live.some((r) => same(r, e.request)))
+      .entries.filter((e) => e.kind !== 'permission' || !live.has(askedAs(e.request)))
     return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
   }
   if ('answer' in action) {

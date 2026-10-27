@@ -131,18 +131,51 @@ export async function run(t) {
       return outcomes.findIndex((o) => o.accepted)
     }
     // The Clave-tool requests (the MCP clarification and secret) still open
-    // the request dialog on each Mac; native agent requests never do (#261).
+    // the request dialog on each Mac; native agent requests, whose session
+    // pane docks them, do not (#261).
+    const waitingButton = (mac) => mac.win.locator('button', { hasText: /^Requests waiting/ })
     for (const mac of clients) {
       const dialog = mac.win.getByRole('dialog')
-      await dialog.waitFor()
-      const text = await dialog.innerText()
-      assert.ok(text.includes('Fleet explicit MCP clarification'), 'the oldest Clave-tool request')
+      let text = ''
+      await eventually(async () => {
+        text = (await dialog.count()) ? await dialog.innerText() : ''
+        return text.includes('Fleet explicit MCP clarification')
+      }, 'the dialog opens on the oldest Clave-tool request')
       assert.equal(text.includes(nativeApproval.description), false)
       // Set it aside, as a person reading their session does.
       await mac.win.keyboard.press('Escape')
       await dialog.waitFor({ state: 'detached' })
       await mac.win.getByRole('button', { name: 'Requests waiting (2)', exact: true }).waitFor()
     }
+    // A pane with no dock (the chat view switched off falls back to the
+    // terminal) leaves its native requests in the dialog, never stranded.
+    const pluginEnabled = (mac, enabled) =>
+      mac.win.evaluate(async (enabled) => {
+        const plugin = (await window.electronAPI.pluginsList()).find(
+          (p) => p.id === 'clave.chat-view'
+        )
+        if (enabled) await window.electronAPI.pluginsEnable(plugin.id, plugin.permissionsGranted)
+        else await window.electronAPI.pluginsDisable(plugin.id)
+      }, enabled)
+    await pluginEnabled(macA, false)
+    await eventually(
+      async () => (await waitingButton(macA).innerText()) === 'Requests waiting (4)',
+      'native requests return to the dialog when their pane has no dock'
+    )
+    const fallback = macA.win.getByRole('dialog')
+    await fallback.waitFor()
+    assert.ok((await fallback.innerText()).includes(nativeApproval.description))
+    await pluginEnabled(macA, true)
+    await eventually(
+      async () => (await waitingButton(macA).innerText()) === 'Requests waiting (2)',
+      'they leave it again once the dock is back'
+    )
+    await fallback.waitFor({ state: 'detached' })
+    assert.equal((await request(server, '/requests/pending')).pending.length, 4)
+    t.check(
+      'a native request whose pane has no dock waits in the dialog, and leaves it when the dock returns',
+      true
+    )
     // Native requests dock in their own session's pane, on each Mac, in the
     // dock a local session uses.
     const providerKey = (mac) => owned('session', mac.owners[0].id, provider.id)

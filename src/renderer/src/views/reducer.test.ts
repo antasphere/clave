@@ -286,19 +286,57 @@ describe('conversation stream', () => {
     expect(merged.entries.map((e) => e.kind)).toEqual(['user', 'permission'])
     expect(merged.first).toBe(live.first - 1)
   })
-  it('keeps an older request that only shares a live one’s id', () => {
-    // A Codex process numbers its requests from zero: a restarted session's
-    // past can hold another request under the id a live one carries.
-    const older: ChatEvent = {
+  it('keeps an older request that only shares a live one’s id and reason', () => {
+    // A Codex process numbers its requests from zero, and its approval reason
+    // is generic: a restarted session's past can hold another request under the
+    // live one's id, description and tool, differing only in what it runs.
+    const asked = (turn: string, command: string): ChatEvent => ({
       type: 'permission_request',
       id: '0',
-      description: 'Read the old file',
-      toolName: 'item/fileChange/requestApproval',
-      options: [{ id: 'accept', label: 'Accept' }]
+      description: 'Need approval to run this command',
+      toolName: 'item/commandExecution/requestApproval',
+      input: { threadId: 'thread', turnId: turn, itemId: `${turn}-item`, command },
+      options: [
+        { id: 'accept', label: 'Accept' },
+        { id: 'decline', label: 'Decline' }
+      ]
+    })
+    const live = run([asked('new-turn', 'npm run build')])
+    const merged = reduceConversation(live, {
+      prepend: [
+        { event: asked('old-turn', 'pwd'), at: 100 },
+        { event: { type: 'state_change', state: 'done' }, at: 101 }
+      ]
+    })
+    const rows = merged.entries.flatMap((e) => (e.kind === 'permission' ? [e.request] : []))
+    expect(rows.map((r) => (r.input as { command: string }).command)).toEqual([
+      'pwd',
+      'npm run build'
+    ])
+  })
+  it('treats a server’s rebuilt copy as the same request, whatever its key order', () => {
+    const original: ChatEvent = {
+      type: 'permission_request',
+      id: '"q"',
+      description: 'The agent asks',
+      toolName: 'item/tool/requestUserInput',
+      input: { questions: [{ id: 'a', question: 'Which?', isSecret: false }] },
+      questions: [{ id: 'a', header: 'Pick', question: 'Which?', options: [{ label: 'dev' }] }],
+      options: [{ id: 'answer', label: 'Answer' }]
     }
-    const live = run([{ ...older, description: 'Run the new command' }])
-    const merged = reduceConversation(live, { prepend: [{ event: older, at: 100 }] })
-    expect(merged.entries.filter((e) => e.kind === 'permission')).toHaveLength(2)
+    // What a server replays: the same request rebuilt field by field.
+    const replayed: ChatEvent = {
+      type: 'permission_request',
+      id: '"q"',
+      description: 'The agent asks',
+      options: [{ label: 'Answer', id: 'answer' }],
+      questions: [{ question: 'Which?', options: [{ label: 'dev' }], header: 'Pick', id: 'a' }],
+      toolName: 'item/tool/requestUserInput',
+      input: { questions: [{ isSecret: false, question: 'Which?', id: 'a' }] },
+      detail: undefined
+    }
+    const merged = reduceConversation(run([replayed]), { prepend: [{ event: original, at: 100 }] })
+    expect(merged.entries.filter((e) => e.kind === 'permission')).toHaveLength(1)
   })
 })
 
