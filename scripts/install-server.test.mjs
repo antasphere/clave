@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS test helpers */
 // The service's command line `install-server.sh` writes (issue #266): the
 // release's version only for a `v<semver>` tag, and always how the server was
 // installed, so a Mac can ask it to upgrade itself. The ARGS block of the
