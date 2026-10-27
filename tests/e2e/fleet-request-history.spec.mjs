@@ -15,9 +15,10 @@ import {
 
 // A server session whose past holds a finished question under the id its live
 // private question carries now: a restarted provider numbers its requests
-// from zero again (#261, verification round 2, V3). The dock must answer the
-// live question with the live question's masking, and keep the old one as a
-// closed record. The control gives the old question an id of its own.
+// from zero again (#261, verification round 2, V3). The dock shows the
+// server's own records, so it must answer the live question with the live
+// question's masking and never offer the old one. The control gives the old
+// question an id of its own.
 export async function run(t) {
   for (const reused of [true, false]) {
     const world = await fleetWorld(`request-history-${reused ? 'reused' : 'distinct'}`)
@@ -73,6 +74,7 @@ export async function run(t) {
           }
           host.history = (sid, before, limit) => {
             const page = history.call(host, sid, before, limit)
+            if (sid === id && before === undefined) globalThis.__historyServed = true
             return sid === id && before === undefined
               ? {
                   ...page,
@@ -94,10 +96,9 @@ export async function run(t) {
       await ownerReady(mac, mac.owners[0].id, key)
       await clickReady(mac.win.locator(`[data-sidebar-item-id="${key}"]`))
       const pane = mac.win.locator(`.chat-host[data-session-id="${key}"]`)
-      const questionRows = pane.locator('.chat-permission-row[data-kind="question"]:visible')
       await eventually(
-        async () => (await questionRows.count()) === 2,
-        'the old and the live question are two records'
+        () => server.fixture.evaluate(() => globalThis.__historyServed === true),
+        'the past holding the old question is read'
       )
       // The live approval comes first, then the live question: never the old one.
       const dock = pane.locator('.chat-prompt:visible')
@@ -139,15 +140,11 @@ export async function run(t) {
       })
       await eventually(async () => (await dock.count()) === 0, 'the dock settles')
       assert.equal((await pane.innerText()).includes(secret), false, 'kept out of the transcript')
-      const states = await questionRows.evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute('data-state'))
-      )
-      assert.deepEqual(states, ['elsewhere', 'answered'], 'the old record stays closed')
       assert.deepEqual(mac.errors, [])
       t.check(
         reused
           ? 'an older question under the live id never replaces the live question or its masking'
-          : 'an older question under its own id stays a closed record beside the live one',
+          : 'an older question under its own id never takes the dock either',
         true
       )
     } finally {

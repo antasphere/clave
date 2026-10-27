@@ -211,15 +211,23 @@ export async function run(t) {
     }, 'the other Mac docks the question next').catch((error) => {
       throw new Error(`${error.message}; Mac B dock: ${JSON.stringify(macBDock)}`)
     })
-    // One record per request, as in a local session: the server's replay of
-    // a pending request and the history that first asked it are one row.
+    // Every record of the approval says what happened to it on that Mac (a
+    // server's replay can still show one twice: #261's follow-up).
     const rowStates = (mac) =>
       approvalRowOf(mac).evaluateAll((rows) => rows.map((row) => row.getAttribute('data-state')))
-    await eventually(
-      async () => JSON.stringify(await rowStates(macB)) === '["elsewhere"]',
-      'the other Mac records the approval once, as answered elsewhere'
+    await eventually(async () => {
+      const states = await rowStates(macB)
+      return states.length > 0 && states.every((s) => s === 'elsewhere')
+    }, 'the other Mac records the approval as answered elsewhere')
+    const answered = await rowStates(macA)
+    assert.ok(answered.length > 0 && answered.every((s) => s === 'answered'), String(answered))
+    // The dock's route refuses a second answer to the settled record.
+    const settledAgain = await macB.win.evaluate(
+      ({ key }) =>
+        window.electronAPI.fleetResolve(key, { type: 'permission', optionId: 'decline' }),
+      { key: owned('request', macB.owners[0].id, nativeApproval.id) }
     )
-    assert.deepEqual(await rowStates(macA), ['answered'])
+    assert.equal(settledAgain.accepted, false)
     // A late answer from Mac B's view is refused by the server, never recorded.
     const lateApproval = await macB.win.evaluate(
       ({ id, providerRequestId }) =>

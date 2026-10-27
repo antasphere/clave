@@ -1,109 +1,81 @@
 import { describe, expect, it } from 'vitest'
 import { resourceKey } from '@clave/contract/fleet'
 import { emptyConversation, reduceConversation } from '../../../../plugins/chat-view/src/reducer'
-import { openRequests, withServerPending } from '../../../../plugins/chat-view/src/server-requests'
+import { serverDock, withServerPending } from '../../../../plugins/chat-view/src/server-requests'
+import type { FleetPendingRequest } from '../../../preload/fleet-types'
 import type { SessionEvent } from '../../../shared/session-model'
 
 const session = resourceKey('session', 'server-a', 'agent')
 const other = resourceKey('session', 'server-a', 'other')
-const question: SessionEvent = {
-  type: 'permission_request',
-  id: '"question-1"',
-  description: 'The agent asks',
+const record = (
+  uuid: string,
+  createdAt: number,
+  extra: Partial<FleetPendingRequest> = {}
+): FleetPendingRequest => ({
+  id: resourceKey('request', 'server-a', uuid),
+  sessionId: session,
+  kind: 'clarification',
+  description: `Question ${uuid}`,
+  createdAt,
+  providerRequestId: '0',
+  options: [{ id: 'answer', label: 'Answer' }],
+  questions: [{ id: 'value', question: 'Value?', options: [] }],
   toolName: 'item/tool/requestUserInput',
-  questions: [{ question: 'Which branch?', options: [{ label: 'dev' }, { label: 'prod' }] }],
-  options: [{ id: 'answer', label: 'Answer' }]
-}
-const approval: SessionEvent = {
-  type: 'permission_request',
-  id: '"approval-1"',
-  description: 'Run a command',
-  toolName: 'item/commandExecution/requestApproval',
-  options: [
-    { id: 'accept', label: 'Accept' },
-    { id: 'decline', label: 'Decline' }
-  ]
-}
-const entries = [question, approval].reduce(
-  (state, event) => reduceConversation(state, { event }),
-  emptyConversation
-).entries
+  input: { questions: [{ id: 'value', question: 'Value?', isSecret: true }] },
+  ...extra
+})
 
-describe('a server session reads what is open off the server', () => {
-  it('docks every request the server still holds for this session, oldest first', () => {
-    const pending = [
-      { sessionId: session, providerRequestId: '"question-1"' },
-      { sessionId: session, providerRequestId: '"approval-1"' }
-    ]
-    expect(openRequests(entries, pending, session).map((r) => r.id)).toEqual([
-      '"question-1"',
-      '"approval-1"'
-    ])
+describe('a server session docks the server’s own records', () => {
+  it('shows its native requests oldest first, each under the server’s request key', () => {
+    const later = record('b', 20)
+    const earlier = record('a', 10, { providerRequestId: '"approval"', kind: 'permission' })
+    const dock = serverDock([later, earlier], session)
+    expect(dock.map((r) => r.id)).toEqual([earlier.id, later.id])
+    expect(dock[1]).toEqual({
+      type: 'permission_request',
+      id: later.id,
+      description: 'Question b',
+      options: [{ id: 'answer', label: 'Answer' }],
+      questions: [{ id: 'value', question: 'Value?', options: [] }],
+      toolName: 'item/tool/requestUserInput',
+      input: { questions: [{ id: 'value', question: 'Value?', isSecret: true }] }
+    })
   })
-  it('drops a request another client settled, while the agent is still blocked on another', () => {
-    // Both were raised in one turn: answering the approval elsewhere leaves the
-    // kernel blocked on the question, so only the server's list can close it.
-    const pending = [{ sessionId: session, providerRequestId: '"question-1"' }]
-    expect(openRequests(entries, pending, session).map((r) => r.id)).toEqual(['"question-1"'])
-    const approvalRow = withServerPending(entries, pending, session).find(
-      (e) => e.kind === 'permission' && e.request.id === '"approval-1"'
-    )
-    expect(approvalRow).toMatchObject({ answeredElsewhere: true })
+  it('keeps two requests under one reused provider id apart', () => {
+    // A restarted Codex numbers from zero again: two records, one provider id.
+    const dock = serverDock([record('a', 10), record('b', 20)], session)
+    expect(new Set(dock.map((r) => r.id)).size).toBe(2)
   })
-  it('never matches another session’s request of the same provider id', () => {
-    const pending = [{ sessionId: other, providerRequestId: '"question-1"' }]
-    expect(openRequests(entries, pending, session)).toEqual([])
+  it('leaves out other sessions’ requests and what agents asked through Clave’s tools', () => {
+    const mcp = record('mcp', 5, { providerRequestId: undefined })
+    const elsewhere = record('x', 6, { sessionId: other })
+    expect(serverDock([mcp, elsewhere], session)).toEqual([])
+    expect(serverDock(undefined, session)).toEqual([])
   })
-  it('keeps an empty server list meaning nothing is open', () => {
-    expect(openRequests(entries, [], session)).toEqual([])
+  it('hands the dock copies, never the store’s own arrays', () => {
+    const r = record('a', 10)
+    const [docked] = serverDock([r], session)
+    expect(docked.options).not.toBe(r.options)
+    expect(docked.questions).not.toBe(r.questions)
+  })
+})
+
+describe('a server session’s rows read the server’s list', () => {
+  const asked: SessionEvent = {
+    type: 'permission_request',
+    id: '"approval-1"',
+    description: 'Run a command',
+    options: [{ id: 'accept', label: 'Accept' }]
+  }
+  const entries = reduceConversation(emptyConversation, { event: asked }).entries
+  it('marks an unanswered request the server no longer holds as answered elsewhere', () => {
+    expect(withServerPending(entries, [], session)[0]).toMatchObject({ answeredElsewhere: true })
+    const held = [record('a', 1, { providerRequestId: '"approval-1"' })]
+    expect(withServerPending(entries, held, session)[0]).toMatchObject({
+      answeredElsewhere: false
+    })
   })
   it('leaves a local session’s own reading untouched', () => {
     expect(withServerPending(entries, undefined, session)).toBe(entries)
-    expect(openRequests(entries, undefined, session).map((r) => r.id)).toEqual([
-      '"question-1"',
-      '"approval-1"'
-    ])
-  })
-  it('keeps an answered request closed whatever the server says', () => {
-    const answered = reduceConversation(
-      { ...emptyConversation, entries },
-      { answer: '"approval-1"', optionId: 'accept' }
-    ).entries
-    const pending = [
-      { sessionId: session, providerRequestId: '"question-1"' },
-      { sessionId: session, providerRequestId: '"approval-1"' }
-    ]
-    expect(openRequests(answered, pending, session).map((r) => r.id)).toEqual(['"question-1"'])
-  })
-  it('never reopens an older request that a restarted provider’s live one reuses the id of', () => {
-    // The past holds a finished public question under id 0; the restarted
-    // provider asks a private one under id 0 too, and the server holds it.
-    const older: SessionEvent = {
-      type: 'permission_request',
-      id: '0',
-      description: 'Old question',
-      toolName: 'item/tool/requestUserInput',
-      input: { turnId: 'old', questions: [{ id: 'q', question: 'Value?', isSecret: false }] },
-      questions: [{ id: 'q', question: 'Value?', options: [] }],
-      options: [{ id: 'answer', label: 'Answer' }]
-    }
-    const current: SessionEvent = {
-      ...older,
-      description: 'New question',
-      input: { turnId: 'new', questions: [{ id: 'q', question: 'Value?', isSecret: true }] }
-    }
-    const both = [older, current].reduce(
-      (state, event) => reduceConversation(state, { event }),
-      emptyConversation
-    ).entries
-    const pending = [{ sessionId: session, providerRequestId: '0' }]
-    const open = openRequests(both, pending, session)
-    expect(open).toHaveLength(1)
-    expect(open[0].description).toBe('New question')
-    expect(withServerPending(both, pending, session)[0]).toMatchObject({ answeredElsewhere: true })
-    // A local session reads it the same way: the older one is closed.
-    expect(openRequests(both, undefined, session).map((r) => r.description)).toEqual([
-      'New question'
-    ])
   })
 })

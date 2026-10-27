@@ -8,23 +8,6 @@ import type { Attachment } from '../../../src/shared/attachments'
 
 export type ChatEvent = SessionEvent
 export type Permission = Extract<SessionEvent, { type: 'permission_request' }>
-/** A request as it was asked, comparable across the copies a server keeps:
- *  every field that says what it asks, keys in a fixed order (a server's copy
- *  is rebuilt from its record, not passed through), absent and undefined one. */
-export function askedAs(request: Permission): string {
-  const { id, description, toolName, detail, input, options, questions } = request
-  return stableJson({ id, description, toolName, detail, input, options, questions })
-}
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object')
-    return `{${Object.entries(value)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`)
-      .join(',')}}`
-  return JSON.stringify(value) ?? 'null'
-}
 export type Entry =
   | {
       kind: 'user'
@@ -136,19 +119,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
   }
   if ('prepend' in action) {
     if (!action.prepend.length) return state
-    // A server replays each request it still holds to every subscriber, so a
-    // pending request can be in the live entries already when the past that
-    // first asked it arrives. The live copy is the one answers are written
-    // on; the past one would be the same question twice. Matched on the whole
-    // request, never the id alone: a Codex process numbers its requests from
-    // zero, so an older process's request can carry a live one's id and even
-    // its generic reason, and differ only in what it asked to run.
-    const live = new Set(
-      state.entries.flatMap((e) => (e.kind === 'permission' ? [askedAs(e.request)] : []))
-    )
-    const past = action.prepend
-      .reduce(reduceConversation, emptyConversation)
-      .entries.filter((e) => e.kind !== 'permission' || !live.has(askedAs(e.request)))
+    const past = action.prepend.reduce(reduceConversation, emptyConversation).entries
     return { ...state, entries: [...past, ...state.entries], first: state.first - past.length }
   }
   if ('answer' in action) {
@@ -156,14 +127,8 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // adapter leaves blocked as soon as it has the reply, and that
     // state_change can land before the write resolves here and mark the card
     // closed from outside (PermissionRow read "No longer awaiting an answer").
-    // It lands on the latest request carrying the id, the one the id means
-    // now: a provider that restarted numbers its requests from zero again, and
-    // an older request under the same id is another question, already closed.
-    const target = state.entries.findLastIndex(
-      (e) => e.kind === 'permission' && e.request.id === action.answer
-    )
-    const entries = state.entries.map((e, i) =>
-      i === target && e.kind === 'permission'
+    const entries = state.entries.map((e) =>
+      e.kind === 'permission' && e.request.id === action.answer
         ? {
             ...e,
             answer: action.optionId,
@@ -248,11 +213,7 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       break
     }
     case 'permission_request':
-      // A server replays what it still holds, so the same request can arrive
-      // twice: kept once. Another request under a known id (a restarted
-      // provider numbering from zero again) is a new entry, the one the id
-      // now means.
-      if (!entries.some((e) => e.kind === 'permission' && askedAs(e.request) === askedAs(event)))
+      if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
         entries.push({ kind: 'permission', request: event, at })
       return { ...state, entries, state: 'blocked' }
     case 'session_meta':

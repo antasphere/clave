@@ -37,7 +37,7 @@ import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
-import { openRequests, withServerPending } from './server-requests'
+import { serverDock, withServerPending } from './server-requests'
 import { continueList } from './lists'
 import { ResumePicker } from './ResumePicker'
 import { McpPanel } from './McpPanel'
@@ -612,6 +612,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       textarea.current?.focus()
     }
   }
+  // A server's session reads what is open off the server (server-requests.ts).
+  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
   const answer = async (
     id: string,
     optionId: string,
@@ -619,9 +621,28 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
   ): Promise<void> => {
     setPending((current) => [...current, id])
     try {
+      if (isRemoteKey(session.id)) {
+        // The dock's id is the server's request key: the answer settles that
+        // one record, and one already settled (on another Mac, or dropped by
+        // the provider) is refused rather than recorded.
+        const request = remotePending?.find((r) => r.id === id)
+        if (!request?.providerRequestId) throw new Error('This request is no longer waiting.')
+        const { accepted } = await window.electronAPI.fleetResolve(id, {
+          type: 'permission',
+          optionId,
+          ...(answers ? { answers } : {})
+        })
+        if (!accepted) throw new Error('This request was already answered.')
+        dispatch({
+          answer: request.providerRequestId,
+          optionId,
+          answers: publicQuestionAnswers(request.questions, request.input, answers)
+        })
+        textarea.current?.focus()
+        return
+      }
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      // The request the answer went to: the latest one under its id (reducer.ts).
-      const permission = conversation.entries.findLast(
+      const permission = conversation.entries.find(
         (entry) => entry.kind === 'permission' && entry.request.id === id
       )
       const shown =
@@ -751,10 +772,13 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
       el?.setSelectionRange(start + insert.length, start + insert.length)
     })
   }
-  // A server's session reads what is open off the server (server-requests.ts).
-  const remotePending = useFleetStore((s) => s.requests[ownerOf(session.id)])
-  // What the agent waits on, oldest first: the dock shows the head of it.
-  const waitingOn = openRequests(conversation.entries, remotePending, session.id)
+  // What the agent waits on, oldest first: the dock shows the head of it. A
+  // server's session reads it off the server's own records (server-requests.ts).
+  const waitingOn = isRemoteKey(session.id)
+    ? serverDock(remotePending, session.id)
+    : conversation.entries.flatMap((e) =>
+        e.kind === 'permission' && !e.answer && !e.answeredElsewhere ? [e.request] : []
+      )
   const query = closed ? null : slashQuery(draft)
   const slashOpen = query !== null && slashDismissed !== draft
   const pickCommand = useCallback(
@@ -945,9 +969,8 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         )}
         <PromptDock
           // Only /resume hides the dock; MCP and plugin panels keep pending
-          // prompts in sight. A server's session answers in this same dock: its
-          // write reaches the server, which settles the request once for every
-          // client attached to it.
+          // prompts in sight. A server's session answers in this same dock, by
+          // the server's own request key (server-requests.ts).
           requests={panel === 'resume' ? [] : waitingOn}
           agent={AGENT_NAMES[session.provider] ?? 'the agent'}
           busy={(id) => !ready || state === 'ended' || pending.includes(id)}
