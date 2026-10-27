@@ -465,7 +465,10 @@ export async function openSessionProgrammatically(payload: {
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
-    workspaceId
+    workspaceId,
+    // The parent on the record as well as in the store below, so the link
+    // outlives this window (#259).
+    spawnedBy: payload.callerSessionId || undefined
   })
 
   state.addSession({
@@ -1004,7 +1007,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
     const parent = caller?.spawnedBy ? sessions.find((s) => s.id === caller.spawnedBy) : undefined
     if (!parent) {
       throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
+        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
       )
     }
     return parent

@@ -62,6 +62,12 @@ const modeOfSession = (ctx: Ctx, session: Session): string =>
 
 // ── Who may reach whom ──
 
+/** The tab that opened this one: main's own memory of the open, else the
+ *  session's record, which is what still says it after a restart (#259). */
+function parentOfSession(ctx: Ctx, sessionId: string): string | null {
+  return ctx.shell.parentOf(sessionId) ?? ctx.shell.record(sessionId)?.spawnedBy ?? null
+}
+
 /** The renderer's `resolveTargetSession`: "parent", an id, then an exact
  *  name, the routed window's tabs first. */
 async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Session> {
@@ -69,11 +75,11 @@ async function resolveTarget(ctx: Ctx, key: string, ref: string): Promise<Sessio
     if (!ctx.callerSessionId) {
       throw new Error('Target "parent" requires the call to come from inside a Clave session')
     }
-    const parentId = ctx.shell.parentOf(ctx.callerSessionId)
+    const parentId = parentOfSession(ctx, ctx.callerSessionId)
     const parent = parentId ? await ctx.api.sessions.get(parentId).catch(() => null) : null
     if (!parent) {
       throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
+        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
       )
     }
     return parent
@@ -106,8 +112,8 @@ function assertCanReach(
   }
   if (caller === target.id) return
   const related =
-    ctx.shell.parentOf(target.id) === caller ||
-    ctx.shell.parentOf(caller) === target.id ||
+    parentOfSession(ctx, target.id) === caller ||
+    parentOfSession(ctx, caller) === target.id ||
     layouts
       .flatMap((l) => l.groups)
       .some((g) => g.sessionIds.includes(caller) && g.sessionIds.includes(target.id))
@@ -542,7 +548,10 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         ...(mode === 'terminal' && command ? { initialCommand: command } : {}),
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
-        ...(workspaceId !== undefined ? { workspaceId } : {})
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
+        // The parent, on the record too: what brings the link back after a
+        // restart, and what the window folds the tab under (#259).
+        ...(ctx.callerSessionId ? { spawnedBy: ctx.callerSessionId } : {})
       }
     })
   } catch (err) {

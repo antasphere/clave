@@ -173,6 +173,21 @@ describe('a server starts the carried launch profile', () => {
     expect(ptyManager.restartSpawn(session.id, {})?.options.launchProfile).toEqual(profile)
   })
 
+  it('a restart keeps the parent, from the spawn or else from the record (#259, V1-F1)', async () => {
+    const parent = '55555555-5555-4555-8555-555555555555'
+    const profile = carried('claude')
+    const start = { claudeMode: true, launchProfileId: profile.id, launchProfile: profile }
+    const named = await ptyManager.spawn('/project', { ...start, spawnedBy: parent })
+    expect(ptyManager.restartSpawn(named.id, {})?.options.spawnedBy).toBe(parent)
+    // A spawn that named none (a restore that did not forward it): the record's.
+    const bare = await ptyManager.spawn('/project', start)
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === bare.id ? { id, spawnedBy: parent } : null) as never)
+    expect(ptyManager.restartSpawn(bare.id, {})?.options.spawnedBy).toBe(parent)
+    mocks.backend.getSessionRecord.mockImplementation((() => null) as never)
+    expect(ptyManager.restartSpawn(bare.id, {})?.options.spawnedBy).toBeUndefined()
+  })
+
   it('refuses a program missing from the server PATH before adapter spawn', async () => {
     const profile = { ...carried('codex'), command: ['missing-mac-program'] }
     await expect(

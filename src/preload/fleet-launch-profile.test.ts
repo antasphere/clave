@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElectronAPI } from './index.d'
-import { LOCAL_SERVER_ID } from '../../packages/contract/src/fleet'
+import { LOCAL_SERVER_ID, resourceKey } from '../../packages/contract/src/fleet'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 
 const mocks = vi.hoisted(() => ({
@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   disabled: new Set<string>(),
   calls: [] as Array<{ owner: string; method: string; args: unknown[] }>,
+  /** What a server's records listing answers. */
+  records: [] as unknown[],
   listeners: new Map<string, Set<(...args: unknown[]) => void>>()
 }))
 vi.mock('electron', () => ({
@@ -62,7 +64,10 @@ vi.mock('@clave/client/node', () => ({
           }),
           history: call('history', { owner, items: [] }),
           list: call('list', []),
-          listAdoptable: call('records', []),
+          listAdoptable: async (...args: unknown[]) => {
+            mocks.calls.push({ owner, method: 'records', args })
+            return mocks.records
+          },
           stop: call('stop', undefined)
         },
         sidebar: {
@@ -105,6 +110,7 @@ beforeEach(async () => {
   vi.useFakeTimers()
   vi.resetModules()
   mocks.calls.length = 0
+  mocks.records = []
   mocks.disabled.clear()
   mocks.invoke.mockReset().mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'server:fleet:list')
@@ -226,4 +232,49 @@ describe('the Mac carries its launch profiles to a server', () => {
       expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'pty:spawn')).toHaveLength(0)
     }
   )
+})
+
+describe('a remote server keeps the tab that opened a tab in its own ids (#259, V1-F2)', () => {
+  const record = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    cwd: '/repo',
+    folderName: 'repo',
+    claudeMode: true,
+    antigravityMode: false,
+    codexMode: false,
+    piMode: false,
+    claudeAgentsMode: false,
+    dangerousMode: false,
+    ...extra
+  })
+
+  it('scopes a record’s parent to its server, like a link’s owner', async () => {
+    mocks.records = [record('child', { spawnedBy: 'opener' }), record('mine')]
+    // The first read connects, and the connection invalidates it: the next one stands.
+    let snapshot: Awaited<ReturnType<typeof api.fleetSnapshot>> | null = null
+    for (let i = 0; i < 5 && !snapshot; i++)
+      snapshot = await api.fleetSnapshot('a').catch(() => null)
+    if (!snapshot) throw new Error('no snapshot of server a')
+    const byId = new Map(snapshot.records.map((r) => [r.id, r]))
+    expect(byId.get(resourceKey('session', 'a', 'child'))?.spawnedBy).toBe(
+      resourceKey('session', 'a', 'opener')
+    )
+    expect(byId.get(resourceKey('session', 'a', 'mine'))?.spawnedBy).toBeUndefined()
+  })
+
+  it('sends that server its own id, and drops a parent from anywhere else', async () => {
+    await api.fleetStart('a', '/repo', {
+      claudeMode: true,
+      spawnedBy: resourceKey('session', 'a', 'opener')
+    })
+    expect(started().options?.spawnedBy).toBe('opener')
+    // A parent on another server, or on this Mac, is no parent there: the
+    // tab still opens, unfolded.
+    for (const elsewhere of [resourceKey('session', 'b', 'opener'), 'local-opener']) {
+      mocks.calls.length = 0
+      await api.fleetStart('a', '/repo', { claudeMode: true, spawnedBy: elsewhere })
+      expect(started()).toBeDefined()
+      expect(started().options?.spawnedBy).toBeUndefined()
+    }
+  })
 })
