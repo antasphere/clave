@@ -42,7 +42,8 @@ import {
   killLeakedE2eTmux
 } from './harness.mjs'
 
-const DIR = userDataDir('session-lineage-restart')
+/** The app's data folder of the child kind running now (one per kind). */
+let DIR = userDataDir('session-lineage-restart')
 const ROOT = fixturePath('session-lineage-restart-root')
 const WS = {
   id: 'abababab-0000-4000-8000-0000000000e7',
@@ -150,7 +151,22 @@ async function checkLineage(t, label, app, win, parent, child) {
   )
 }
 
+/** The child kinds an agent opens: a terminal tab and a chat tab, whose
+ *  records are written by two different writers (verifier round 1, V1-F1). */
+const KINDS = [
+  { kind: 'terminal', open: { mode: 'claude', profile: 'builtin-claude' } },
+  { kind: 'chat', open: { mode: 'claude', chat: true } }
+]
+
 export async function run(t) {
+  for (const { kind, open } of KINDS) {
+    DIR = userDataDir(`session-lineage-restart-${kind}`)
+    await runKind(t, kind, open)
+  }
+}
+
+async function runKind(t, kind, open) {
+  const say = (label) => `${kind} child, ${label}`
   rmSync(DIR, { recursive: true, force: true })
   rmSync(ROOT, { recursive: true, force: true })
   seedStandIns()
@@ -166,30 +182,25 @@ export async function run(t) {
     const first = await launchApp(DIR, { env: ENV })
     app = first.app
     const agent = await spawnAgentTabIn(app, first.win, serverDataDirOf(DIR))
-    t.check('a parent agent tab holds an MCP token', !!agent?.token, agent)
+    t.check(say('a parent agent tab holds an MCP token'), !!agent?.token, agent)
     parent = agent.sessionId
     const client = mcpHttpClient(mcpEndpoint(DIR), agent.token)
     await client.init()
     const opened = toolPayload(
-      await client.call('clave_open_session', {
-        cwd: ROOT,
-        mode: 'claude',
-        profile: 'builtin-claude',
-        name: 'Delegated'
-      })
+      await client.call('clave_open_session', { cwd: ROOT, name: 'Delegated', ...open })
     )
     child = opened?.sessionId ?? null
-    t.check('the parent opens a child', typeof child === 'string', opened)
+    t.check(say('the parent opens it'), typeof child === 'string', opened)
     const road = (await mcpRoads(app)).filter((r) => r.command === 'openSession').at(-1)?.road
-    t.equal('on the server road, as real agents do', road, 'server')
-    await checkLineage(t, 'opened', app, first.win, parent, child)
+    t.equal(say('on the server road, as real agents do'), road, 'server')
+    await checkLineage(t, say('opened'), app, first.win, parent, child)
 
     // ── 2. A quit with the tmux sessions still running: reattached ──
     await app.close()
     app = null
     const second = await launchApp(DIR, { env: ENV, settleMs: 1500 })
     app = second.app
-    await checkLineage(t, 'after a restart (reattached)', app, second.win, parent, child)
+    await checkLineage(t, say('after a restart (reattached)'), app, second.win, parent, child)
     // An account switch respawns the restored tab from its spawn, after the
     // kill took its record (verifier round 1, V1-F1).
     const restarted = await second.win.evaluate(
@@ -201,11 +212,11 @@ export async function run(t) {
       child
     )
     t.check(
-      'the restored child restarts on an account',
+      say('restored, it restarts on an account'),
       !restarted?.error && restarted?.id === child,
       restarted
     )
-    await checkLineage(t, 'restored, then switched account', app, second.win, parent, child)
+    await checkLineage(t, say('restored, then switched account'), app, second.win, parent, child)
 
     // ── 3. A quit that takes the tmux server with it: respawned from the records ──
     await app.close()
@@ -216,9 +227,9 @@ export async function run(t) {
     // Dead records are offered, not relaunched unasked (the restore prompt).
     const restore = third.win.getByRole('button', { name: 'Restore', exact: true })
     const prompted = await until(() => restore.isVisible().catch(() => false), { tries: 80 })
-    t.check('the dead records are offered for relaunch', !!prompted)
+    t.check(say('the dead records are offered for relaunch'), !!prompted)
     if (prompted) await restore.click()
-    await checkLineage(t, 'after a restart (respawned)', app, third.win, parent, child)
+    await checkLineage(t, say('after a restart (respawned)'), app, third.win, parent, child)
   } finally {
     if (app) {
       for (const id of [child, parent])
