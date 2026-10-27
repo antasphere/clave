@@ -9,7 +9,8 @@ import {
   resourceKey,
   sessionKey,
   type SavedServerConnection,
-  type ServerConnectionStatus
+  type ServerConnectionStatus,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -28,6 +29,8 @@ interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
   changed(callback: () => void): () => void
   connect(endpoint: Endpoint): Promise<Backing>
+  /** Main's version decisions as it publishes them (issue #266). */
+  versions?(callback: (statuses: ServerVersionStatus[]) => void): () => void
 }
 const noop = (): void => {}
 const remote = (id: string): boolean => parseSessionKey(id).serverId !== LOCAL_SERVER_ID
@@ -266,15 +269,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   const insideRoot = (root: string, p: string): boolean =>
     p === root || p.startsWith(root === '/' ? root : `${root}/`)
+  // ── Issue #266: main reads a server's version again when this window hears
+  // its upgrade change or its (re)welcome, the way an upgraded server returns ──
+  const versionChanged = (serverId: string): void => {
+    void ports.invoke(FLEET_IPC.versionRefresh, serverId).catch(noop)
+  }
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
       invalidate(status.serverId)
       refresh(status.serverId)
+      versionChanged(status.serverId)
     }
   })
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
+    if (tag === 'server.upgrade_changed') versionChanged(serverId)
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
     if (value.event._tag === 'workspaces.state_changed')
       publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
@@ -1046,7 +1056,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return () => {
         workspaceListeners.delete(callback)
       }
-    }
+    },
+    // ── Issue #266: main reads the servers' versions, never this window ──
+    fleetServerVersions: async (refresh) =>
+      (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
+    fleetUpgradeServer: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   const api: ElectronAPI = {

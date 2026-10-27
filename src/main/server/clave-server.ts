@@ -47,6 +47,10 @@ export interface StartOptions {
   /** The end-to-end fixture route, under `--test-no-activate` only (lane C
    *  of wave 3): the boot passes the test flag, nothing else turns it on. */
   testFixtures?: boolean
+  /** The app's version (issue #266): the server reports it and says it
+   *  updates with the app (`ServerInfoPort.appRun`), built here, after the
+   *  server package has loaded. */
+  appVersion?: string
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -65,9 +69,14 @@ export function startClaveServer(options: StartOptions): Promise<ClaveServerEndp
 async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
-  const { startEmbedded } = await import('@clave/server')
+  const { startEmbedded, ServerInfoPort } = await import('@clave/server')
   const server = await startEmbedded({
-    ports,
+    ports: {
+      ...(options.appVersion !== undefined && {
+        serverInfo: ServerInfoPort.appRun(options.appVersion)
+      }),
+      ...ports
+    },
     ...(options.port !== undefined && { port: options.port }),
     ...(options.token !== undefined && { token: options.token }),
     ...(options.testFixtures !== undefined && { testFixtures: options.testFixtures })

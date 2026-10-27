@@ -10,6 +10,15 @@
  * shared sidebar. It forbids --parent and never prints its token. See
  * docs/server-daemon.md. Without it the app-child protocol below is retained.
  *
+ * `--app-version <semver>` is the version this server reports (issue #266):
+ * the release's own, since a beta's package.json carries the stable version
+ * it was cut from; without it, the checkout's package.json. A daemon that
+ * `scripts/install-server.sh` installed is also told `--install-name`,
+ * `--install-script` and `--install-ref`, and upgrades itself to the version
+ * a Mac asks for (`server/self-upgrade.ts`); without them it says it cannot.
+ * `--test-upgrade-idle-ms <n>` shortens the minute of no working agent an
+ * upgrade waits for, under `--test-no-activate` only.
+ *
  * Bun runs the TypeScript as it is, so there is no build step between a
  * checkout and a running server; `npm run dev:server` and the e2e harness
  * both start it this way. Inside the packaged app (wave 5, PRDCT-3434) the
@@ -62,7 +71,8 @@ import {
   fileWorkspaceFilesStorage,
   FileTreeWatcher,
   createServerFiles,
-  PendingRequests
+  PendingRequests,
+  ServerInfoPort
 } from '@clave/server'
 import { standaloneSettingsSource } from './settings/standalone-source'
 import { standaloneSessionHost } from './sessions/standalone-host'
@@ -76,6 +86,16 @@ import { TEST_NO_ACTIVATE } from './test-mode'
 import { standalonePlugins } from './plugins/standalone-plugins'
 // ── Wave wcs1023, lane C: the git panel on this server's checkouts (server/git-port.ts) ──
 import { serverGitPort } from './server/git-port'
+// ── Issue #266: the server's version and its self-upgrade (server/self-upgrade.ts) ──
+import {
+  createSelfUpgrade,
+  readInstallFacts,
+  scriptRunner,
+  serverVersion,
+  sessionActivity,
+  upgradeIdleMs,
+  type SelfUpgrade
+} from './server/self-upgrade'
 import { RUN_AS_NODE_ENV, TOKEN_ENV } from './terminal-process/token-env'
 import {
   spawnTerminalProcess,
@@ -117,6 +137,8 @@ async function main(): Promise<void> {
   delete process.env[RUN_AS_NODE_ENV]
 
   const config = daemonConfig(process.argv.slice(2))
+  // ── Issue #266: the version this server reports, `--app-version` first ──
+  const version = serverVersion(process.argv.slice(2), readAppVersion)
   const dataDir = arg('data-dir')
   if (!dataDir) {
     process.stderr.write('clave-server: --data-dir <dir> is required\n')
@@ -266,9 +288,23 @@ async function main(): Promise<void> {
   const plugins = standalonePlugins({
     dataDir,
     bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
-    version: arg('app-version') ?? readAppVersion()
+    version
   })
   installE2eHooks({ plugins })
+  // ── Issue #266: the version, and for a daemon the install script's upgrade ──
+  // An app-run server (the app's child) reports the app's version and
+  // updates with the app; a daemon upgrades itself once no agent works.
+  let selfUpgrade: SelfUpgrade | undefined
+  if (config.daemon) {
+    const facts = readInstallFacts(process.argv.slice(2))
+    selfUpgrade = createSelfUpgrade({
+      version,
+      facts,
+      runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
+      activity: sessionActivity(sessionManager),
+      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE)
+    })
+  }
   const server = await startEmbedded({
     ports: {
       sessions,
@@ -295,7 +331,9 @@ async function main(): Promise<void> {
       // ── Wave wcs1023, lane C: the git panel on this server's checkouts: the
       // app's own git implementation, its repo watcher's bursts and a batch's
       // progress published to every attached client (server/git-port.ts).
-      git: serverGitPort()
+      git: serverGitPort(),
+      // ── Issue #266: the server domain ──
+      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version)
     },
     port,
     host: config.host,
@@ -409,6 +447,7 @@ async function main(): Promise<void> {
     requestHost.close()
     requests.close()
     owned?.close()
+    selfUpgrade?.close()
     stopStates()
     setServerEventPublisher(null)
     // ── Wave 5, lane C: the plugin processes go with the server ──

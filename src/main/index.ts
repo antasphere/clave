@@ -205,7 +205,9 @@ async function bootServer(): Promise<void> {
             plugins: shellPlugins()
           },
           // ── Lane C of wave 3: the end-to-end fixture route, test mode only ──
-          testFixtures: TEST_NO_ACTIVATE
+          testFixtures: TEST_NO_ACTIVATE,
+          // ── Issue #266: the version it reports, the one its child gets too ──
+          appVersion: app.getVersion()
         })
         return { url: endpoint.url, token: endpoint.token, stop: stopClaveServer }
       },

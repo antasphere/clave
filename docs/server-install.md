@@ -53,9 +53,24 @@ The agents get that PATH through a login shell, which reads `~/.profile` (or `~/
 2. In Clave on your Mac, open Settings → **Servers** (the Clave group of the settings sidebar) and add the server: a name, the address the script printed (for example `http://100.101.102.103:43127`, or `http://127.0.0.1:43127` through the SSH tunnel), and the token.
 3. When you open a session, choose that server. The folder picker then browses the server's disk, and the server's sessions show its name in the sidebar.
 
-Keep the desktop app and the server on the same version.
+The Servers page shows each server's version next to its state. When the app updates, its servers follow it: see below.
 
 ## Update
+
+### From your Mac
+
+When the app on your Mac updates (Settings → Software Update), every connected server installed by this script from a release tag upgrades itself to the same version, with no click:
+
+- the Mac sees that the server's version is older than its own and asks it to upgrade to exactly its version. The server then waits until none of its agents has worked for a minute, and runs this script again with `--ref v<version>`, so it builds beside the running release, restarts on the new one and goes back to the previous one when that does not answer, as described below;
+- Settings → Servers says where each server stands: "Upgrading to 3.0.0-beta.8 once no agent is working", "Upgrading to 3.0.0-beta.8…", or "Upgrade to 3.0.0-beta.8 failed:" when the build failed or the new release did not answer. The Mac says what failed (for example "The server could not find the release 3.0.0-beta.8.", or "The upgrade failed while installing dependencies." when the script stopped without saying why) in a sentence of its own, then the exit code and where the full log is. The server tells it only values from fixed lists: the code the script wrote where it failed and the phase it was in (resolving the release, cloning, installing dependencies, building, setting up or restarting the service, waiting for it to answer, going back), from `<data-dir>/upgrade/install-status`, a file named by `CLAVE_INSTALL_STATUS_FILE` that the script never passes to the commands it runs. No text from the run leaves the server, neither the script's messages nor what git, npm or the build print: the details are in the log on the server. The server keeps running in that case, and the Mac does not try that version again on its own;
+- **Upgrade now** starts the upgrade without waiting for idle, after warning that the running sessions end (they come back as ended tabs to Resume). It is also the way to try again after a failure;
+- the run's output goes to `<data-dir>/upgrade/upgrade.log` on the server (`~/.local/share/clave-server/upgrade/upgrade.log` by default), and the script is run from a copy beside it. On Linux the run is a transient unit of your systemd user manager (`systemd-run --user`), outside the server's own service, so stopping the service does not stop the upgrade; on macOS it runs in a process group of its own;
+- the saved `--ref` becomes the version the Mac asked for, so a later plain run stays on it;
+- a server is never downgraded: one newer than the app says "Newer than this app" and is left as it is. One installed from a branch or a custom ref (`--ref dev`) is left alone too ("Installed from dev; upgrade it on the server"). A development build of the app never asks a server to upgrade.
+
+**Servers from before this** (3.0.0-beta.6 and 3.0.0-beta.7) cannot be asked. The Servers page shows "Older Clave server: run this on the server" with the command to run there once, for example `bash ~/install-server.sh --ref v3.0.0-beta.8`. From then on the server follows the app on its own. A server started some other way than by this script shows the same command, which installs it with the script so the Mac can keep it on its version. The first run of a newer script also rewrites the service once (it now passes the release's version and how it was installed), so that run restarts the server even when the release has not changed.
+
+### By hand
 
 Run the script again:
 
