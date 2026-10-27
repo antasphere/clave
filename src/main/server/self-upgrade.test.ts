@@ -5,7 +5,7 @@
  * real install; `scriptRunner` is exercised on a stand-in script that only
  * records what it was given.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   chmodSync,
   existsSync,
@@ -492,13 +492,15 @@ describe('the self-upgrade', () => {
 })
 
 describe('the agents the gate watches', () => {
-  it('is busy while any session is working, and hears state changes and removals', () => {
+  it('is busy while any session is working, and hears state changes, additions and removals', () => {
     let states: Array<'idle' | 'working' | 'done' | 'blocked' | 'ended'> = ['idle', 'working']
     let onStream: ((id: string, stream: unknown) => void) | undefined
     let onRemoved: ((id: string) => void) | undefined
+    let onAdded: (() => void) | undefined
     const activity = sessionActivity({
       list: () => states.map((state, i) => ({ id: `s${i}`, state })) as never,
       subscribeAll: (fn) => ((onStream = fn as never), () => {}),
+      subscribeAdded: (fn) => ((onAdded = fn as never), () => {}),
       subscribeRemoved: (fn) => ((onRemoved = fn), () => {})
     })
     const heard: string[] = []
@@ -510,7 +512,10 @@ describe('the agents the gate watches', () => {
     onStream?.('s1', { kind: 'pty', data: new Uint8Array() })
     states = ['idle']
     onRemoved?.('s1')
-    expect(heard).toEqual(['change', 'change'])
+    states = ['idle', 'working']
+    onAdded?.()
+    expect(activity.busy()).toBe(true)
+    expect(heard).toEqual(['change', 'change', 'change'])
   })
 })
 
@@ -549,5 +554,52 @@ describe('the script runner', () => {
     const runner = scriptRunner({ dataDir, name: 'e2e', platform: 'linux', systemdRun: () => null })
     await expect(runner.start({ script, args: [] })).rejects.toThrow(/systemd-run/)
     expect(existsSync(join(dataDir, 'upgrade', 'ran'))).toBe(false)
+  })
+})
+
+describe('the gate over the real session manager (V1-F4)', () => {
+  it('a session added already working stops the count, which starts from zero once it stops', async () => {
+    const { SessionManager } = await import('../sessions/session-manager')
+    const { EchoAdapter } = await import('../sessions/adapters/echo-adapter')
+    vi.useFakeTimers()
+    const manager = new SessionManager()
+    manager.registerAdapter(new EchoAdapter())
+    const runs: unknown[] = []
+    const upgrade = createSelfUpgrade({
+      version: '3.0.0-beta.6',
+      facts: FACTS,
+      runner: {
+        start: (request) => {
+          runs.push(request)
+          return new Promise<RunResult>(() => {})
+        }
+      },
+      activity: sessionActivity(manager)
+    })
+    try {
+      upgrade.requestUpgrade({ version: '3.0.0-beta.9', when: 'idle' })
+      vi.advanceTimersByTime(30_000)
+      await manager.create({
+        id: 'added-working',
+        provider: 'echo',
+        adapterId: 'echo',
+        transport: 'events',
+        cwd: '/tmp',
+        windowKey: 'test',
+        state: 'working',
+        createdAt: Date.now(),
+        title: 'added working'
+      })
+      expect(manager.list()[0].state).toBe('working')
+      vi.advanceTimersByTime(10_000)
+      manager.setState('added-working', 'done')
+      vi.advanceTimersByTime(UPGRADE_IDLE_MS - 1)
+      expect(runs).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(runs).toHaveLength(1)
+    } finally {
+      upgrade.close()
+      vi.useRealTimers()
+    }
   })
 })

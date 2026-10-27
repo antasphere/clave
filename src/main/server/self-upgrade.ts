@@ -294,9 +294,11 @@ export interface AgentActivity {
   subscribe(onChange: () => void): () => void
 }
 
-/** The session manager's agents: busy while any session is `working`. */
+/** The session manager's agents: busy while any session is `working`. A
+ *  session can arrive already working (a reattached process keeps its saved
+ *  state), so an addition counts as a change like a state change does. */
 export function sessionActivity(
-  manager: Pick<SessionManager, 'list' | 'subscribeAll' | 'subscribeRemoved'>
+  manager: Pick<SessionManager, 'list' | 'subscribeAll' | 'subscribeAdded' | 'subscribeRemoved'>
 ): AgentActivity {
   return {
     busy: () => manager.list().some((session) => session.state === 'working'),
@@ -304,9 +306,11 @@ export function sessionActivity(
       const offState = manager.subscribeAll((_id, stream) => {
         if (stream.kind === 'event' && stream.event.type === 'state_change') onChange()
       })
+      const offAdded = manager.subscribeAdded(() => onChange())
       const offRemoved = manager.subscribeRemoved(() => onChange())
       return () => {
         offState()
+        offAdded()
         offRemoved()
       }
     }
