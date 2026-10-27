@@ -134,6 +134,11 @@ async function checkLineage(t, label, app, win, parent, child) {
     parentTriggers: await triggers(win, parent)
   })
 
+  // A restored chat stays dormant until it is shown, and its agent (with the
+  // MCP token it reads) starts only then (TerminalGrid): show it, as the
+  // person does, before its agent is asked to report (verifier round 2, V2-F1).
+  await callMcp(app, 'focus', { sessionId: child })
+
   // A report back, as a delegated agent sends one. Not a screen read: after a
   // relaunch the parent's pane is not mounted until shown, and has no buffer.
   const client = await clientOf(child)
