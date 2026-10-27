@@ -733,7 +733,11 @@ describe('what a run tells of its failure: codes and phases from closed lists (V
   })
 })
 
-describe('no text from the run leaves the server, over authenticated HTTP (V6-F1, V6-F2, V6-F3)', () => {
+// Each case starts a real server and runs the real install script: room on a
+// loaded machine, as main's version sync wiring tests have.
+const OVER_HTTP =
+  'no text from the run leaves the server, over authenticated HTTP (V6-F1, V6-F2, V6-F3)'
+describe(OVER_HTTP, { timeout: 15_000 }, () => {
   const marker = 'synthetic-published-private-value-r1026'
   const shellQuote = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`
 
