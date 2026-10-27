@@ -153,6 +153,13 @@ jobs:
         env:
           CLAVE_E2E_SERVER: separate
 
+      # A daemon on an older version, with a stand-in install script, and an
+      # app on a newer test version (issue #266): the server upgrades to the
+      # app's version only once no agent works, and Upgrade now runs it at once.
+      - name: Gate, connected servers follow the app's version
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tests/e2e/run.mjs fleet-server-upgrade
+
       # Current full-renderer completeness, lifecycle and responsiveness gates.
       # Retired prefix-cache integration remains explicitly named legacy diagnostics.
       - name: Gate, full Markdown client, native lifecycle and responsiveness
