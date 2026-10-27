@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -16,13 +17,14 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import { InvalidUpgradeVersion, type ServerUpgradeStatus } from '@clave/contract/server-info'
 import {
   NOT_SCRIPT_INSTALLED,
   UPGRADE_IDLE_MS,
   createSelfUpgrade,
+  redactSecrets,
   readInstallFacts,
   scriptRunner,
   serverVersion,
@@ -602,4 +604,141 @@ describe('the gate over the real session manager (V1-F4)', () => {
       vi.useRealTimers()
     }
   })
+})
+
+describe('what a failed upgrade says on the wire (V1-F3)', () => {
+  it.each<[string, string, string]>([
+    [
+      'a repository URL with a password',
+      'Could not reach https://test-user:synthetic-saved-repo-secret@invalid.local/clave.git',
+      'Could not reach https://***@invalid.local/clave.git'
+    ],
+    [
+      'an ssh URL with a user',
+      'git clone ssh://deploy:pw123@host/x.git',
+      'git clone ssh://***@host/x.git'
+    ],
+    [
+      'NAME=value',
+      'NPM_TOKEN=abc123def and GH_PASSWORD="two words"',
+      'NPM_TOKEN=*** and GH_PASSWORD=***'
+    ],
+    ['NAME: value', 'api_key: s3cr3t-value', 'api_key: ***'],
+    ['a bearer', 'curl -H Bearer abcdef0123456789', 'curl -H Bearer ***'],
+    ['an authorization header', 'Authorization: token abc def', 'Authorization: ***'],
+    ['a GitHub token', 'token ghp_0123456789abcdefABCDEF0123 refused', 'token *** refused'],
+    ['a fine-grained GitHub token', 'github_pat_11ABCDEFG0123456789_abcdefXYZ', '***'],
+    ['an OpenAI-style key', 'key sk-proj-0123456789abcdefghij', 'key ***'],
+    ['a Slack token', 'xoxb-1234567890-abcdefghij', '***'],
+    ['an npm token', 'npm_0123456789abcdefghijABCDEFGHIJ', '***']
+  ])('redacts %s', (_name, input, expected) => {
+    expect(redactSecrets(input)).toBe(expected)
+  })
+
+  it('keeps commit SHAs and ordinary log lines readable', () => {
+    const line =
+      'v3.0.0-beta.9 is 4f1c9a2b7e3d5f6a8b9c0d1e2f3a4b5c6d7e8f90 · npm ERR! code ELIFECYCLE · Restarting the server'
+    expect(redactSecrets(line)).toBe(line)
+  })
+
+  it('redacts the literal secrets it is told, the server token among them', () => {
+    expect(redactSecrets('echo 9f2c-literal-token-0001 >> log', ['9f2c-literal-token-0001'])).toBe(
+      'echo *** >> log'
+    )
+    expect(redactSecrets('nothing to see', ['', 'short'])).toBe('nothing to see')
+  })
+
+  it('never publishes the server token in a failure', async () => {
+    const clock = fakeClock()
+    const { runner, runs } = recordingRunner()
+    const upgrade = createSelfUpgrade({
+      version: '3.0.0-beta.6',
+      facts: FACTS,
+      runner,
+      activity: fakeActivity(),
+      clock,
+      secrets: () => ['the-server-bearer-token-0123456789']
+    })
+    upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
+    runs[0].end({ code: 1, tail: 'curl answered for the-server-bearer-token-0123456789' })
+    await settle()
+    expect(upgrade.info().upgrade.error).toBe('curl answered for ***')
+    upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
+    runs[1].fail(new Error('spawn failed near the-server-bearer-token-0123456789'))
+    await settle()
+    expect(upgrade.info().upgrade.error).toBe('spawn failed near ***')
+  })
+
+  it('redacts a credential the installer environment carries, and keeps the log as written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-env-secret-'))
+    try {
+      const script = join(dir, 'install-server.sh')
+      writeFileSync(
+        script,
+        '#!/bin/bash\nprintf "npm ERR! registry auth failed: %s\\n" "$NPM_TOKEN"\nexit 7\n'
+      )
+      const runner = scriptRunner({
+        dataDir: join(dir, 'data'),
+        name: 'e2e',
+        platform: 'darwin',
+        env: { HOME: dir, PATH: '/usr/bin:/bin', NPM_TOKEN: 'synthetic-secret-canary-r1026' }
+      })
+      const result = await runner.start({ script, args: [] })
+      expect(result.code).toBe(7)
+      expect(result.tail).toContain('npm ERR! registry auth failed: ***')
+      expect(result.tail).not.toContain('synthetic-secret-canary-r1026')
+      // The log itself is private (0600) under the data directory, kept whole.
+      const log = join(dir, 'data', 'upgrade', 'upgrade.log')
+      expect(readFileSync(log, 'utf8')).toContain('synthetic-secret-canary-r1026')
+      expect(statSync(log).mode & 0o777).toBe(0o600)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('redacts the saved repository credential the real installer prints when git fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-real-installer-'))
+    let upgrade: SelfUpgrade | undefined
+    try {
+      mkdirSync(join(dir, 'bin'))
+      const git = join(dir, 'bin', 'git')
+      writeFileSync(git, '#!/bin/bash\nexit 1\n')
+      chmodSync(git, 0o700)
+      mkdirSync(join(dir, '.config', 'e2e'), { recursive: true })
+      writeFileSync(
+        join(dir, '.config', 'e2e', 'install.env'),
+        "CLAVE_HOST=loopback\nCLAVE_REPO='https://test-user:synthetic-saved-repo-secret@invalid.local/clave.git'\n"
+      )
+      const runner = scriptRunner({
+        dataDir: join(dir, 'data'),
+        name: 'e2e',
+        platform: 'darwin',
+        env: {
+          HOME: dir,
+          USER: 'e2e',
+          SHELL: '/bin/sh',
+          PATH: `${join(dir, 'bin')}:${dirname(process.execPath)}:${process.env.PATH}`
+        }
+      })
+      upgrade = createSelfUpgrade({
+        version: '3.0.0-beta.6',
+        facts: { name: 'e2e', script: resolve('scripts/install-server.sh'), ref: 'v3.0.0-beta.6' },
+        runner,
+        activity: { busy: () => false, subscribe: () => () => {} }
+      })
+      const failed = new Promise<void>((done) =>
+        upgrade!.subscribe((status) => {
+          if (status.state === 'failed') done()
+        })
+      )
+      upgrade.requestUpgrade({ version: '3.0.0-beta.9', when: 'now' })
+      await failed
+      const error = upgrade.info().upgrade.error ?? ''
+      expect(error).toContain('Could not reach https://***@invalid.local/clave.git')
+      expect(error).not.toContain('synthetic-saved-repo-secret')
+    } finally {
+      upgrade?.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 15_000)
 })

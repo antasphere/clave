@@ -301,7 +301,9 @@ async function main(): Promise<void> {
       facts,
       runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
       activity: sessionActivity(sessionManager),
-      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE)
+      idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
+      // A failure's text never carries this server's token (its token file holds the same).
+      secrets: () => (identity ? [identity.token] : [])
     })
   }
   const server = await startEmbedded({
