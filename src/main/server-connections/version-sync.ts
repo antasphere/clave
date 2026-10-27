@@ -70,12 +70,26 @@ export function decideServerVersion(input: DecideInput): ServerVersionDecision {
   // A branch or a custom ref is the operator's choice, whatever version it reports.
   if (!isReleaseTag(installRef) || !valid(version) || !valid(appVersion))
     return { kind: 'custom-ref', ...known }
-  // The versions first: a server as new as the app, or newer, is left as it
-  // is whatever its upgrade says (another Mac's wait, run or failure).
-  if (gt(version, appVersion)) return { kind: 'server-newer', ...known }
-  if (!gt(appVersion, version)) return { kind: 'match', ...known }
   const target = upgrade.target
   const targetValid = target !== undefined && valid(target) !== null
+  // The versions first: a server as new as the app, or newer, is never this
+  // app's to upgrade. Its own upgrade (another Mac's wait, run or failure)
+  // still shows, marked as nobody's action here.
+  if (!gt(appVersion, version)) {
+    if ((upgrade.state === 'waiting-for-idle' || upgrade.state === 'running') && targetValid)
+      return { kind: 'upgrading', ...known, target, upgradeState: upgrade.state, ownAction: false }
+    if (upgrade.state === 'failed' && targetValid)
+      return {
+        kind: 'failed',
+        ...known,
+        target,
+        error: upgrade.error ?? 'The install script failed.',
+        ownAction: false
+      }
+    return gt(version, appVersion)
+      ? { kind: 'server-newer', ...known }
+      : { kind: 'match', ...known }
+  }
   // Waiting or running for this version, or a later one another Mac asked for.
   if (
     (upgrade.state === 'waiting-for-idle' || upgrade.state === 'running') &&

@@ -110,14 +110,17 @@ export function describeServerVersion(
         ? line(`Upgrading to ${status.target} once no agent is working`, 'connecting', true)
         : line(DEV_BUILD, 'idle')
     case 'upgrading':
+      // Another Mac's upgrade on a server as new as this app: shown, not offered.
       return status.upgradeState === 'running'
         ? line(`Upgrading to ${status.target}…`, 'connecting')
         : line(
             `Upgrading to ${status.target} once no agent is working`,
             'connecting',
-            status.automatic
+            status.automatic && status.ownAction !== false
           )
     case 'failed':
+      if (status.ownAction === false)
+        return line(`Upgrade to ${status.target} failed: ${status.error}`, 'error')
       return status.automatic
         ? line(`Upgrade to ${status.target} failed: ${status.error}`, 'error', true)
         : line(DEV_BUILD, 'idle')

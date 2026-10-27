@@ -94,6 +94,9 @@ export interface ServerVersionDecision {
   readonly error?: string
   /** For `manual`: the command to run on the server. */
   readonly command?: string
+  /** False for `upgrading` and `failed` on a server as new as this app or
+   *  newer: another Mac's upgrade, shown, never this app's to act on. */
+  readonly ownAction?: false
 }
 export interface ServerVersionStatus extends ServerVersionDecision {
   readonly serverId: ServerId

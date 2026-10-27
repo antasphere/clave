@@ -234,6 +234,30 @@ describe('describeServerVersion (issue #266)', () => {
     })
   })
 
+  it.each<[Partial<ServerVersionStatus>, string]>([
+    [
+      { kind: 'upgrading', target: '3.0.0-beta.10', upgradeState: 'waiting-for-idle' },
+      'Upgrading to 3.0.0-beta.10 once no agent is working'
+    ],
+    [
+      { kind: 'upgrading', target: '3.0.0-beta.10', upgradeState: 'running' },
+      'Upgrading to 3.0.0-beta.10…'
+    ],
+    [
+      { kind: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' },
+      'Upgrade to 3.0.0-beta.10 failed: npm ERR!'
+    ]
+  ])(
+    "shows another Mac's upgrade on an equal or newer server, with no Upgrade now (V2-F2): %j",
+    (overrides, state) => {
+      expect(
+        describeServerVersion(
+          status({ serverVersion: '3.0.0-beta.8', ownAction: false, ...overrides })
+        )
+      ).toMatchObject({ state, upgradeNow: false })
+    }
+  )
+
   it('offers no upgrade from a dev build, and says why', () => {
     for (const kind of ['upgrade', 'failed'] as const)
       expect(

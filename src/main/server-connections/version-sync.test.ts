@@ -120,18 +120,42 @@ describe('the decision for one server', () => {
     expect(decided).not.toHaveProperty('command')
   })
 
-  it('compares the versions first: a server as new as the app or newer is never upgrading or failed (V1-F2)', () => {
+  it("compares the versions first: an equal or newer server is never this app's to upgrade, but its own upgrade shows (V1-F2, V2-F2)", () => {
     const at = (version: string, upgrade: ServerUpgradeStatus): ServerRead =>
       info(version, { upgrade })
-    // Another Mac on beta.10 failed on, or waits with, a server already on beta.9.
-    for (const upgrade of [
-      { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'x' },
-      { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10' },
-      { supported: true, state: 'running', target: '3.0.0-beta.10' }
-    ] as ServerUpgradeStatus[]) {
-      expect(decide(at('3.0.0-beta.9', upgrade), '3.0.0-beta.8').kind).toBe('server-newer')
-      expect(decide(at('3.0.0-beta.9', upgrade), '3.0.0-beta.9').kind).toBe('match')
-    }
+    // Another Mac on beta.10 waits with, runs, or failed on, a server already on beta.9.
+    const cases: Array<[ServerUpgradeStatus, Partial<ServerVersionDecision>]> = [
+      [
+        { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10', mode: 'when-idle' },
+        { kind: 'upgrading', target: '3.0.0-beta.10', upgradeState: 'waiting-for-idle' }
+      ],
+      [
+        { supported: true, state: 'running', target: '3.0.0-beta.10', mode: 'now' },
+        { kind: 'upgrading', target: '3.0.0-beta.10', upgradeState: 'running' }
+      ],
+      [
+        { supported: true, state: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' },
+        { kind: 'failed', target: '3.0.0-beta.10', error: 'npm ERR!' }
+      ]
+    ]
+    for (const [upgrade, expected] of cases)
+      for (const app of ['3.0.0-beta.9', '3.0.0-beta.8']) {
+        const decided = decide(at('3.0.0-beta.9', upgrade), app)
+        expect(decided, `${upgrade.state} on an app ${app}`).toMatchObject({
+          ...expected,
+          ownAction: false
+        })
+      }
+    // With nothing in progress, the plain answer.
+    expect(decide(at('3.0.0-beta.9', IDLE), '3.0.0-beta.8').kind).toBe('server-newer')
+    expect(decide(at('3.0.0-beta.9', IDLE), '3.0.0-beta.9').kind).toBe('match')
+  })
+
+  it("an older server upgrading for this app is this app's own action", () => {
+    const waiting = info('3.0.0-beta.8', {
+      upgrade: { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.9' }
+    })
+    expect(decide(waiting)).not.toHaveProperty('ownAction')
   })
 
   it('knows nothing of a server that does not answer', () => {
@@ -355,7 +379,7 @@ describe('the version sync loop', () => {
         { a: info('3.0.0-beta.9', { upgrade }) },
         { appVersion: '3.0.0-beta.8' }
       )
-      expect((await sync.refresh())[0].kind).toBe('server-newer')
+      expect((await sync.refresh())[0]).toMatchObject({ ownAction: false })
       await expect(sync.upgradeNow('a')).rejects.toThrow()
       expect(requests).toEqual([])
     }
@@ -465,5 +489,21 @@ describe('the Servers row follows an upgrade live (V1-F5)', () => {
     expect(timeouts).toHaveLength(1)
     sync.stop()
     expect(timeouts).toEqual([])
+  })
+})
+
+describe("another Mac's upgrade on an equal server (V2-F2)", () => {
+  it('is polled while it waits or runs, and this app never asks', async () => {
+    const { sync, timeouts, requests } = fleet({
+      a: info('3.0.0-beta.9', {
+        upgrade: { supported: true, state: 'waiting-for-idle', target: '3.0.0-beta.10' }
+      })
+    })
+    sync.start()
+    await sync.refresh()
+    expect(timeouts.map((t) => t.ms)).toEqual([UPGRADE_POLL_MS])
+    await expect(sync.upgradeNow('a')).rejects.toThrow()
+    expect(requests).toEqual([])
+    sync.stop()
   })
 })
