@@ -156,8 +156,14 @@ export function reduceConversation(state: Conversation, action: Action): Convers
     // adapter leaves blocked as soon as it has the reply, and that
     // state_change can land before the write resolves here and mark the card
     // closed from outside (PermissionRow read "No longer awaiting an answer").
-    const entries = state.entries.map((e) =>
-      e.kind === 'permission' && e.request.id === action.answer
+    // It lands on the latest request carrying the id, the one the id means
+    // now: a provider that restarted numbers its requests from zero again, and
+    // an older request under the same id is another question, already closed.
+    const target = state.entries.findLastIndex(
+      (e) => e.kind === 'permission' && e.request.id === action.answer
+    )
+    const entries = state.entries.map((e, i) =>
+      i === target && e.kind === 'permission'
         ? {
             ...e,
             answer: action.optionId,
@@ -242,7 +248,11 @@ export function reduceConversation(state: Conversation, action: Action): Convers
       break
     }
     case 'permission_request':
-      if (!entries.some((e) => e.kind === 'permission' && e.request.id === event.id))
+      // A server replays what it still holds, so the same request can arrive
+      // twice: kept once. Another request under a known id (a restarted
+      // provider numbering from zero again) is a new entry, the one the id
+      // now means.
+      if (!entries.some((e) => e.kind === 'permission' && askedAs(e.request) === askedAs(event)))
         entries.push({ kind: 'permission', request: event, at })
       return { ...state, entries, state: 'blocked' }
     case 'session_meta':

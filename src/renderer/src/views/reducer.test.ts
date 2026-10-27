@@ -314,6 +314,24 @@ describe('conversation stream', () => {
       'npm run build'
     ])
   })
+  it('puts an answer on the latest request under its id, never an older one', () => {
+    const asked = (description: string): ChatEvent => ({
+      type: 'permission_request',
+      id: '0',
+      description,
+      options: [{ id: 'answer', label: 'Answer' }]
+    })
+    const state = reduceConversation(run([asked('Old question'), asked('New question')]), {
+      answer: '0',
+      optionId: 'answer',
+      answers: { q: 'shown' }
+    })
+    const rows = state.entries.flatMap((e) => (e.kind === 'permission' ? [e] : []))
+    expect(rows.map((r) => [r.request.description, r.answer, r.answers])).toEqual([
+      ['Old question', undefined, undefined],
+      ['New question', 'answer', { q: 'shown' }]
+    ])
+  })
   it('treats a server’s rebuilt copy as the same request, whatever its key order', () => {
     const original: ChatEvent = {
       type: 'permission_request',

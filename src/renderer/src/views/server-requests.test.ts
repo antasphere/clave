@@ -75,4 +75,35 @@ describe('a server session reads what is open off the server', () => {
     ]
     expect(openRequests(answered, pending, session).map((r) => r.id)).toEqual(['"question-1"'])
   })
+  it('never reopens an older request that a restarted provider’s live one reuses the id of', () => {
+    // The past holds a finished public question under id 0; the restarted
+    // provider asks a private one under id 0 too, and the server holds it.
+    const older: SessionEvent = {
+      type: 'permission_request',
+      id: '0',
+      description: 'Old question',
+      toolName: 'item/tool/requestUserInput',
+      input: { turnId: 'old', questions: [{ id: 'q', question: 'Value?', isSecret: false }] },
+      questions: [{ id: 'q', question: 'Value?', options: [] }],
+      options: [{ id: 'answer', label: 'Answer' }]
+    }
+    const current: SessionEvent = {
+      ...older,
+      description: 'New question',
+      input: { turnId: 'new', questions: [{ id: 'q', question: 'Value?', isSecret: true }] }
+    }
+    const both = [older, current].reduce(
+      (state, event) => reduceConversation(state, { event }),
+      emptyConversation
+    ).entries
+    const pending = [{ sessionId: session, providerRequestId: '0' }]
+    const open = openRequests(both, pending, session)
+    expect(open).toHaveLength(1)
+    expect(open[0].description).toBe('New question')
+    expect(withServerPending(both, pending, session)[0]).toMatchObject({ answeredElsewhere: true })
+    // A local session reads it the same way: the older one is closed.
+    expect(openRequests(both, undefined, session).map((r) => r.description)).toEqual([
+      'New question'
+    ])
+  })
 })

@@ -629,7 +629,8 @@ export function TerminalView({
     setPending((current) => [...current, id])
     try {
       await write({ type: 'permission_response', id, optionId, ...(answers ? { answers } : {}) })
-      const permission = conversation.entries.find(
+      // The request the answer went to: the latest one under its id (reducer.ts).
+      const permission = conversation.entries.findLast(
         (entry) => entry.kind === 'permission' && entry.request.id === id
       )
       const shown =
