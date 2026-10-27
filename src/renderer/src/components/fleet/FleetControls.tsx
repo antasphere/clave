@@ -6,6 +6,7 @@ import { ModalScrim, ModalPositioner } from '@clave/ui/components'
 import { useFleetStore, reportFleetError } from '../../store/fleet-store'
 import { useSessionStore } from '../../store/session-store'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
+import { useDockPaneIds } from '../../views/pane-kind'
 import type {
   FleetPendingRequest as PendingRequest,
   FleetRequestResponse as RequestResponse
@@ -47,10 +48,20 @@ function FleetDialog({
   )
 }
 
+/** A request an agent raised through its provider (a tool to allow, questions
+ *  to answer) is answered in its own session's pane, in the dock a local
+ *  session uses, whenever that pane is a view that has the dock. One whose
+ *  pane has none (the chat view disabled, a surface view) still waits here,
+ *  with what an agent asked through Clave's own tools. */
+const answeredInPane = (request: PendingRequest, docked: ReadonlySet<string>): boolean =>
+  request.providerRequestId !== undefined && docked.has(request.sessionId)
+
 export function FleetRequestHost(): React.JSX.Element | null {
   const requests = useFleetStore((s) => s.requests)
+  const docked = useDockPaneIds()
   const pending = Object.values(requests)
     .flat()
+    .filter((request) => !answeredInPane(request, docked))
     .sort((a, b) => a.createdAt - b.createdAt)
   const [hiddenId, setHiddenId] = useState<string | null>(null)
   const request = pending[0]

@@ -297,6 +297,40 @@ html[data-ui-font='synonym'] {
   top: auto;
   bottom: calc(var(--drop-seam, 2px) / -2 - 1.5px);
 }
+/* A row of a list that drags to reorder (use-list-reorder, #257: the workspace
+   switcher and Settings → Workspaces). The drop line is the sidebar's, drawn
+   just inside the edge of the row it lands beside, so a scrolling list never
+   clips it; the dragged row fades in place. */
+.reorder-row {
+  position: relative;
+}
+.reorder-row[data-dragging] {
+  opacity: 0.45;
+}
+.reorder-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  animation: overlay-in 100ms var(--ease-out-expo);
+}
+.reorder-row[data-drop='before']::after {
+  top: 0;
+}
+.reorder-row[data-drop='after']::after {
+  bottom: 0;
+}
+body.reorder-dragging,
+body.reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
 /* The group header's two controls (PRDCT-1670). The terminals button carries
    the whole terminal story in one glyph: its colour is the first RUNNING
    terminal's (set inline) and the count beside it is how many are attached;

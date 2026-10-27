@@ -123,7 +123,7 @@ export function requestAwareSessionHost(options: {
         const request = requests.native(id, input.id)
         if (!request)
           throw new RequestRejected({ code: 'not_found', message: 'No such provider request.' })
-        await requests.resolve({
+        const { accepted } = await requests.resolve({
           requestId: request.id,
           response: {
             type: 'permission',
@@ -131,6 +131,11 @@ export function requestAwareSessionHost(options: {
             ...(input.answers && { answers: input.answers })
           }
         })
+        // Another client answered first, or the provider dropped the request.
+        // Refused, as a local adapter refuses a stale answer: the view that
+        // sent it must not record an answer the agent never received.
+        if (!accepted)
+          throw new RequestRejected({ code: 'closed', message: 'The request was already settled.' })
       },
       stop: async (id) => {
         await base.stop(id)

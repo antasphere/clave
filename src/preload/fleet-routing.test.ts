@@ -500,6 +500,32 @@ describe('server workspaces', () => {
     )
   })
 
+  // #257: a reorder writes its own server's registry, in the order given.
+  it('reorders a server registry and keeps what another Mac added meanwhile', async () => {
+    const row = (id: string): Record<string, unknown> => ({
+      id,
+      name: id,
+      rootDir: `/srv/${id}`,
+      profileFile: null,
+      createdAt: 1
+    })
+    mocks.registries.set('a', [row('one'), row('two'), row('three')])
+    mocks.interleave = (owner) => {
+      mocks.interleave = null
+      mocks.registries.set(owner, [...(mocks.registries.get(owner) ?? []), row('from-b')])
+      mocks.revisions.set(owner, (mocks.revisions.get(owner) ?? 0) + 1)
+    }
+    const key = (id: string): string => resourceKey('workspace', 'a', id)
+    await api.fleetReorderWorkspaces('a', [key('three'), key('one'), key('two')])
+    expect(mocks.registries.get('a')!.map((w) => w.id)).toEqual(['three', 'one', 'two', 'from-b'])
+    const writes = mocks.calls.filter((c) => c.method === 'update-registry')
+    expect(writes.every((w) => w.owner === 'a')).toBe(true)
+    expect(mocks.registries.get('b')).toHaveLength(1)
+    await expect(
+      api.fleetReorderWorkspaces('a', [resourceKey('workspace', 'b', 'ws-a')])
+    ).rejects.toThrow('Not a workspace of this server')
+  })
+
   it('keeps an addition another Mac made between this read and this write', async () => {
     mocks.interleave = (owner) => {
       // Mac B adds its own workspace on the same server meanwhile.

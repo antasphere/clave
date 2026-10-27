@@ -46,6 +46,7 @@ const record: SessionRecord = {
   windowKey: 'mac-a',
   displayName: 'Kept title',
   startedAt: 123,
+  spawnedBy: '9e3a0b11-0000-4000-8000-0000000000aa',
   live: false
 }
 const session: Session = {
@@ -185,7 +186,9 @@ describe('server-owned stopped recovery', () => {
         resumeSessionId: 'saved-thread',
         launchProfileId: 'saved-profile',
         codexAccountId: 'saved-account',
-        model: 'saved-model'
+        model: 'saved-model',
+        // The tab that opened it, so the resumed tab folds and reports back (#259, V1-F2).
+        spawnedBy: record.spawnedBy
       }
     })
     expect(input.options?.launchProfile).toEqual(record.launchProfile)
