@@ -4,6 +4,7 @@ import {
   type Workspace,
   type WorkspaceStamp
 } from '../../../shared/workspace-types'
+import { moveInList, type DropPosition } from '../../../shared/workspace-order'
 import {
   allWorkspaces,
   findWorkspace,
@@ -577,13 +578,13 @@ const SERVER_WORKSPACE_REFUSALS = new Set([
   'The server refused the workspace list.'
 ])
 
-/** What to tell the person when adding or removing a server workspace
- *  failed: a refusal as worded, anything else (the server went away, a
- *  transport error) in plain words rather than the transport's. */
+/** What to tell the person when adding, removing or reordering a server
+ *  workspace failed: a refusal as worded, anything else (the server went
+ *  away, a transport error) in plain words rather than the transport's. */
 export function serverWorkspaceError(
   err: unknown,
   serverName: string,
-  action: 'add' | 'remove'
+  action: 'add' | 'remove' | 'reorder'
 ): string {
   if (err instanceof Error && SERVER_WORKSPACE_REFUSALS.has(err.message)) return err.message
   return `${serverName} could not ${action} the workspace. Check that it is connected, then try again.`
@@ -856,6 +857,47 @@ export async function renameWorkspace(id: string, name: string): Promise<void> {
     workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, name: trimmed } : w))
   }))
   await persistWorkspaceRegistry()
+}
+
+/** Move a workspace before or after another of the SAME list (#257): this
+ *  Mac's registry, or one server's. A drop across machines is refused, since
+ *  each list is its own registry. This Mac's list is written whole, like a
+ *  rename; a server's is shown at once and written to that server, whose
+ *  list then arrives as the change and stays the truth. */
+export async function moveWorkspace(
+  id: string,
+  targetId: string,
+  position: DropPosition
+): Promise<void> {
+  const serverId = workspaceServer(id)
+  if (serverId !== workspaceServer(targetId)) return
+  const state = useWorkspaceStore.getState()
+  if (serverId === null) {
+    const next = moveInList(state.workspaces, id, targetId, position)
+    if (next === state.workspaces) return
+    useWorkspaceStore.setState({ workspaces: [...next] })
+    await persistWorkspaceRegistry()
+    return
+  }
+  const before = state.serverWorkspaces[serverId] ?? []
+  const moved = moveInList(before, id, targetId, position)
+  if (moved === before) return
+  const next = [...moved]
+  useWorkspaceStore.setState({ serverWorkspaces: { ...state.serverWorkspaces, [serverId]: next } })
+  try {
+    const write = window.electronAPI?.fleetReorderWorkspaces
+    if (!write) throw new Error('Clave servers are not available here.')
+    const ids = next.map((w) => w.id)
+    await write(serverId, ids)
+    cacheServerWorkspaces()
+  } catch (err) {
+    // Put the server's order back, unless its list has arrived meanwhile.
+    const now = useWorkspaceStore.getState().serverWorkspaces
+    if (now[serverId] === next) {
+      useWorkspaceStore.setState({ serverWorkspaces: { ...now, [serverId]: before } })
+    }
+    throw err
+  }
 }
 
 export async function setWorkspaceProfile(id: string, profileFile: string | null): Promise<void> {

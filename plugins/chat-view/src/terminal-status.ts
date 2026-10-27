@@ -62,13 +62,14 @@ export const emptyStatus: TerminalStatus = {
 }
 
 const AGENT_TOOLS = new Set(['agent', 'task'])
-/** The Codex adapter's name for a command call. Every command it runs shows
- *  while it runs, waited on or not: Codex does not say, mid-turn, which ones
- *  were left running. One that outlives the turn comes back in the
- *  background list under the same id and keeps its row. */
+/** The Codex adapter's name for a command call. Every command it runs is
+ *  followed while it runs, waited on or not: Codex does not say, mid-turn,
+ *  which ones were left running. One that outlives the turn comes back in the
+ *  background list under the same id, keeps its row, and shows from then. */
 const CODEX_COMMAND = 'commandExecution'
-/** Claude's command tool. A main-thread call shows from its tool_use, waited
- *  on or not; the background list, naming the call, makes it background work. */
+/** Claude's command tool. A main-thread call is followed from its tool_use,
+ *  waited on or not, and shows once it is background work: asked for with
+ *  `run_in_background`, or named by the background list. */
 const CLAUDE_BASH = 'Bash'
 const isAgentTool = (name: string): boolean => AGENT_TOOLS.has(name.toLowerCase())
 function record(value: unknown): Record<string, unknown> {
@@ -256,6 +257,17 @@ export function reduceStatus(
     default:
       return status
   }
+}
+
+/** The work the status line shows: every subagent, and a command only as
+ *  background work (asked for the background, or listed by the provider once
+ *  it outlived its call). A command the turn waits on is still followed, so a
+ *  promotion keeps the text and the start its call gave it, but it shows in
+ *  the transcript alone. */
+export function shownWork(agents: SubAgent[]): SubAgent[] {
+  return agents.filter(
+    (agent) => agent.kind !== 'shell' || agent.background || agent.requestedBackground
+  )
 }
 
 /** "12k", "1M": the status line's own compact count. */

@@ -18,9 +18,11 @@ import {
   setActiveWorkspace,
   addWorkspace,
   addServerWorkspace,
+  moveWorkspace,
   serverWorkspaceError
 } from '../../lib/workspace-actions'
 import { shortenPath } from '../../lib/utils'
+import { useListReorder } from '../../hooks/use-list-reorder'
 
 /** A folder picked for registration that holds several `.clave` profiles — one
  *  has to be chosen before the workspace exists. */
@@ -34,7 +36,7 @@ interface PendingAdd {
  * The toolbar's workspace control: the active workspace's name, and — when
  * there is a registry to speak of — a popover listing every workspace on this
  * machine with the switch one click away, plus an Add that goes straight to
- * the folder picker.
+ * the folder picker. Rows drag to reorder within their machine's list (#257).
  *
  * This is the workspace switcher; the sidebar no longer carries one. In
  * no-workspace mode it stays a plain label: with zero workspaces the app runs
@@ -62,6 +64,17 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
   const [choosingMachine, setChoosingMachine] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const { rowProps } = useListReorder((id, targetId, position) => {
+    const server = workspaceServer(id)
+    moveWorkspace(id, targetId, position).catch((err: unknown) => {
+      setError(
+        server
+          ? serverWorkspaceError(err, serverName(server), 'reorder')
+          : 'The new order could not be saved.'
+      )
+    })
+  })
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
   const name = active?.name ?? 'Clave'
@@ -242,7 +255,8 @@ export function ToolbarWorkspacePopover(): React.JSX.Element {
                   return (
                     <button
                       key={ws.id}
-                      className="menu-item group"
+                      {...rowProps(ws.id, server ?? 'local')}
+                      className="menu-item reorder-row group"
                       data-selected={isActive}
                       data-workspace-id={ws.id}
                       data-server={server ?? undefined}

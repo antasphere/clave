@@ -16,13 +16,14 @@ import {
    replayed through the real Claude adapter: one Bash call run in the
    background, one waited on. The stub pauses the replay at gates so the spec
    can look between frames. What this spec holds in the real app:
-   - a Bash call shows its terminal card from its tool_use, before any
-     background notification, as running work;
-   - the waited-on call shows beside it;
+   - a Bash call asked for the background shows its terminal card from its
+     tool_use, before any background notification, as running work;
+   - the waited-on call shows in the transcript only: no card in the stack,
+     and the footer counts the background card alone;
    - the background list naming the call promotes the same card: still one
      card for it, now background work;
-   - the waited-on card leaves with its result, the background one stays past
-     the turn, with no model and no relaunch, and leaves at its completion;
+   - the background card stays past the turn, with no model and no relaunch,
+     and leaves at its completion;
    - the background card reads as its command in every frame painted, though
      the list names it by a prose description.
    The capture's model (Haiku) gave its background call no Bash
@@ -127,6 +128,16 @@ const readRows = (view) =>
       relaunch: !!el.querySelector('button.term-agent-model')
     }))
   )
+/** The footer's count of the stack, "1 agent"; null when it shows none. */
+const countLabel = (view) =>
+  view
+    .locator('.term-dim')
+    .evaluateAll(
+      (spans) =>
+        spans
+          .map((el) => el.textContent.replace(/^[·\s]+/, ''))
+          .find((text) => /^\d+ agents?$/.test(text)) ?? null
+    )
 const describe = (rows) =>
   rows.map((row) => `${row.kind}:${row.description}:${row.background ? 'bg' : 'run'}`).join('|')
 
@@ -170,7 +181,7 @@ export async function run(t) {
     /* 1. The background call's tool_use alone: its card, as running work. */
     const first = await reach('shell:sleep 10 && echo bgc:run')
     t.check(
-      'a Bash call shows its terminal card from its tool_use, before any background notification',
+      'a Bash call asked for the background shows its terminal card from its tool_use, before any background notification',
       !!first && first[0].icon && first[0].model === null && !first[0].relaunch,
       { rows: describe(await readRows(view)) }
     )
@@ -189,11 +200,21 @@ export async function run(t) {
     })
     gate('background-call')
 
-    /* 2. The waited-on call joins it. */
-    const both = await reach('shell:sleep 10 && echo bgc:run|shell:echo fgc:run')
-    t.check('the waited-on Bash call shows beside it, both as running work', !!both, {
-      rows: describe(await readRows(view))
-    })
+    /* 2. The waited-on call: in the transcript (its group now counts two
+       commands), never in the stack. */
+    const inTranscript = await until(
+      async () => (/\b2 commands\b/.test(await view.innerText()) ? true : null),
+      { tries: 60 }
+    )
+    const waitedRows = await readRows(view)
+    const waitedCount = await countLabel(view)
+    t.check(
+      'the waited-on Bash call shows in the transcript only: no card of its own, and the footer counts one',
+      !!inTranscript &&
+        describe(waitedRows) === 'shell:sleep 10 && echo bgc:run' &&
+        waitedCount === '1 agent',
+      { inTranscript, rows: describe(waitedRows), count: waitedCount }
+    )
     // Every render from here to the promotion: the background command's card
     // must never be drawn twice, not even for a frame (a row folding out
     // counts, it is on screen).
@@ -209,7 +230,7 @@ export async function run(t) {
     gate('waited-call')
 
     /* 3. The background list names the call: the same card, promoted. */
-    const promoted = await reach('shell:sleep 10 && echo bgc:bg|shell:echo fgc:run')
+    const promoted = await reach('shell:sleep 10 && echo bgc:bg')
     await new Promise((resolve) => setTimeout(resolve, 500))
     const mostCards = await view.evaluate(() => window.__bashMostCards)
     t.check(
@@ -221,8 +242,7 @@ export async function run(t) {
     )
     gate('listed')
 
-    /* 4. The turn ends: the waited-on card left with its result, the
-       background one stays. */
+    /* 4. The turn ends: the background card stays. */
     const ended = await until(
       async () => {
         const rows = await readRows(view)

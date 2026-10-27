@@ -26,7 +26,10 @@
     "./fleet": "./src/fleet.ts",
     "./requests": "./src/requests.ts",
     "./sidebar/layout": "./src/sidebar/layout.ts",
-    "./git": "./src/git.ts"
+    "./git": "./src/git.ts",
+    "./server-info": "./src/server-info.ts",
+    "./release-version": "./src/release-version.ts",
+    "./upgrade-failure": "./src/upgrade-failure.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

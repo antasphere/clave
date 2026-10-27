@@ -24,6 +24,16 @@ export interface CodexCallbacks {
   error(error: Error): void
   exit(code: number, stderr?: string): void
 }
+/** A provider refusal, distinct from a timeout or a lost connection. */
+export class CodexRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string
+  ) {
+    super(message)
+    this.name = 'CodexRpcError'
+  }
+}
 export function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -182,9 +192,15 @@ export class CodexAppServer implements CodexConnection {
         if (!pending) continue // A late response to a timed-out request.
         this.pending.delete(id)
         clearTimeout(pending.timer)
-        if ('error' in frame)
-          pending.reject(new Error(String(object(frame.error).message ?? 'Codex protocol error')))
-        else pending.resolve(frame.result)
+        if ('error' in frame) {
+          const error = object(frame.error)
+          const message = String(error.message ?? 'Codex protocol error')
+          pending.reject(
+            typeof error.code === 'number'
+              ? new CodexRpcError(error.code, message)
+              : new Error(message)
+          )
+        } else pending.resolve(frame.result)
       } else {
         this.fail(new Error('Invalid Codex JSON-RPC frame'))
         return

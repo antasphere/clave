@@ -51,6 +51,8 @@ import { AgentTokens, agentToolsHandlers } from './agent-tools'
 import { Plugins, PluginsEventsLive, pluginHandlers } from './plugins'
 // ── Wave wcs1023, lane C: the git domain ──
 import { GitEventsLive, GitPort, gitHandlers } from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -92,6 +94,8 @@ export type ServerServices =
   | Plugins
   // ── Wave wcs1023, lane C: the git domain ──
   | GitPort
+  // ── Issue #266: the server domain ──
+  | ServerInfoPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -129,6 +133,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   // ── Wave wcs1023, lane D: a watched folder's changes told to the clients ──
   const filesEvents = FilesEventsLive.pipe(Layer.provide(services))
   const requestEvents = RequestEventsLive.pipe(Layer.provide(services))
+  // ── Issue #266: the self-upgrade's state told to the clients ──
+  const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -144,7 +150,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave wcs1023, lane B ──
     workspacesWelcome,
     // ── Wave wcs1023, lane C: the git domain ──
-    gitEvents
+    gitEvents,
+    // ── Issue #266: the server domain ──
+    serverInfoEvents
   )
 }
 
@@ -182,7 +190,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Wave 5, lane C: the plugins ──
       ...pluginHandlers,
       // ── Wave wcs1023, lane C: the git domain ──
-      ...gitHandlers
+      ...gitHandlers,
+      // ── Issue #266: the server domain ──
+      ...serverInfoHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

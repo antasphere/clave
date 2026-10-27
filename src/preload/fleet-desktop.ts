@@ -9,7 +9,8 @@ import {
   resourceKey,
   sessionKey,
   type SavedServerConnection,
-  type ServerConnectionStatus
+  type ServerConnectionStatus,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -20,6 +21,7 @@ import type { SessionEvent, SessionStream, SessionInput } from '../shared/sessio
 import type { Attachment, AttachmentSource } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import type { Workspace } from '../shared/workspace-types'
+import { orderByIds } from '../shared/workspace-order'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type { FleetDesktopAPI, FleetSnapshot, FleetRequests, FleetWorkspaces } from './fleet-types'
 
@@ -27,6 +29,8 @@ interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
   changed(callback: () => void): () => void
   connect(endpoint: Endpoint): Promise<Backing>
+  /** Main's version decisions as it publishes them (issue #266). */
+  versions?(callback: (statuses: ServerVersionStatus[]) => void): () => void
 }
 const noop = (): void => {}
 const remote = (id: string): boolean => parseSessionKey(id).serverId !== LOCAL_SERVER_ID
@@ -121,7 +125,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         ? { ...record.link, groupId: resourceKey('group', serverId, record.link.groupId) }
         : record.link?.kind === 'session-view'
           ? { ...record.link, ownerId: key(serverId, record.link.ownerId) }
-          : record.link
+          : record.link,
+    spawnedBy: record.spawnedBy ? key(serverId, record.spawnedBy) : undefined
   })
   const watchRequests = (serverId: string, b: Backing): void => {
     if (watched.get(serverId)?.backing === b) return
@@ -264,15 +269,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   }
   const insideRoot = (root: string, p: string): boolean =>
     p === root || p.startsWith(root === '/' ? root : `${root}/`)
+  // ── Issue #266: main reads a server's version again when this window hears
+  // its upgrade change or its (re)welcome, the way an upgraded server returns ──
+  const versionChanged = (serverId: string): void => {
+    void ports.invoke(FLEET_IPC.versionRefresh, serverId).catch(noop)
+  }
   fleet.onStatus((status) => {
     for (const listener of statusListeners) listener(status)
     if (status.state === 'connected') {
       invalidate(status.serverId)
       refresh(status.serverId)
+      versionChanged(status.serverId)
     }
   })
   fleet.onEvent(({ serverId, value }) => {
     const tag = value.event._tag
+    if (tag === 'server.upgrade_changed') versionChanged(serverId)
     if (tag === 'sidebar.layout_changed' || tag.startsWith('session.')) refresh(serverId)
     if (value.event._tag === 'workspaces.state_changed')
       publishWorkspaces(serverId, value.event.workspaces as Workspace[], value.event)
@@ -557,6 +569,14 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (ref.serverId !== serverId) throw new Error('Launch context belongs to another server.')
       return ref.id
     }
+    const sameServerParent = (id: string): string | undefined => {
+      try {
+        const ref = parseResourceKey('session', id)
+        return ref.serverId === serverId ? ref.id : undefined
+      } catch {
+        return undefined
+      }
+    }
     const decoded = {
       ...options,
       workspaceId: options.workspaceId ? decode('workspace', options.workspaceId) : undefined,
@@ -565,7 +585,10 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
           ? { ...options.link, groupId: decode('group', options.link.groupId) }
           : options.link?.kind === 'session-view'
             ? { ...options.link, ownerId: decode('session', options.link.ownerId) }
-            : options.link
+            : options.link,
+      // A parent on another server (a local agent opening a remote tab) is
+      // no parent there: the tab opens all the same, unfolded.
+      spawnedBy: options.spawnedBy ? sameServerParent(options.spawnedBy) : undefined
     }
     if (options.launchProfileId && !options.launchProfile) {
       const prefs = await local.launchProfilesList()
@@ -960,6 +983,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         result: undefined
       }))
     },
+    fleetReorderWorkspaces: async (serverId, workspaceIds) => {
+      const ids = workspaceIds.map((key) => {
+        const ref = parseResourceKey('workspace', key)
+        if (ref.serverId !== serverId) throw new Error('Not a workspace of this server.')
+        return ref.id
+      })
+      await editRegistry(serverId, (current) => ({
+        next: orderByIds(current, ids),
+        result: undefined
+      }))
+    },
     fleetResolve: async (requestKey, response) => {
       const ref = parseResourceKey('request', requestKey)
       const b = await backing(ref.serverId)
@@ -1022,7 +1056,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return () => {
         workspaceListeners.delete(callback)
       }
-    }
+    },
+    // ── Issue #266: main reads the servers' versions, never this window ──
+    fleetServerVersions: async (refresh) =>
+      (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
+    fleetUpgradeServer: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   const api: ElectronAPI = {

@@ -2445,6 +2445,7 @@ contextBridge.exposeInMainWorld(
   createFleetDesktop(electronAPI as unknown as ElectronAPI, {
     invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     changed: (callback) => createIpcListener('server:fleet:changed', callback),
+    versions: (callback) => createIpcListener('server:fleet:versions-changed', callback),
     connect: async (endpoint) => {
       const { connectThroughNode } = await loadNodeClient()
       return connectThroughNode(endpoint, { client: 'clave-fleet-preload' })

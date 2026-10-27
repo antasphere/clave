@@ -1,5 +1,6 @@
 /** Agent MCP belongs to the standalone server. Local provider processes use
  * loopback and per-session tokens, independently of every desktop client. */
+import { stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import { isAbsolute } from 'node:path'
@@ -7,6 +8,14 @@ import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { AgentTokensService, SessionHostService } from '@clave/server'
+import { SERVER_LAYOUT_KEY } from '@clave/contract/sidebar'
+import type { SidebarLayouts } from '@clave/server/sidebar-layouts'
+import { BUILT_IN_LAUNCH_PROFILES, type LauncherFamily } from '../../shared/agent-launch'
+import {
+  CHAT_PROFILE_IDS,
+  resolveProfileRef,
+  resolveSpawnModes
+} from '../../shared/open-session-modes'
 import type { SecretAction } from '../../../packages/contract/src/requests'
 import type { PendingRequests } from '../../../packages/server/src/requests/service'
 
@@ -15,7 +24,28 @@ export interface StandaloneMcpOptions {
   readonly agentTools: AgentTokensService
   readonly requests: PendingRequests
   readonly executeSecret: (action: SecretAction, value: string) => Promise<void>
+  /** The daemon's one sidebar, where the groups live; absent, the group tools
+   *  say this server keeps none. */
+  readonly sidebar?: SidebarLayouts | undefined
+  /** The family a launch profile id belongs to, or undefined when this
+   *  server offers no such profile. Absent, only the built-in terminal and
+   *  chat profiles are known. */
+  readonly profileFamily?: ((id: string) => LauncherFamily | undefined) | undefined
 }
+/** The profiles every server offers: the terminal built-ins and the chat views. */
+export const builtInProfileFamily = (id: string): LauncherFamily | undefined =>
+  BUILT_IN_LAUNCH_PROFILES.find((p) => p.id === id)?.family ??
+  (Object.entries(CHAT_PROFILE_IDS).find(([, profile]) => profile === id)?.[0] as
+    | LauncherFamily
+    | undefined)
+/** Who opened which tab through `clave_open_session`, kept as long as this
+ *  listener lives: the desktop's parent link does not survive a restart
+ *  either. */
+type Parents = Map<string, string>
+/** The size a session with no pane starts at, as the desktop's hidden spawns. */
+const HIDDEN_COLS = 120
+const HIDDEN_ROWS = 30
+const DESKTOP_ONLY = ['account', 'window', 'workspace'] as const
 const text = (value: unknown): { content: { type: 'text'; text: string }[] } => ({
   content: [{ type: 'text', text: JSON.stringify(value) }]
 })
@@ -43,13 +73,42 @@ const actionSchema = z.discriminatedUnion('type', [
   })
 ])
 
-function buildServer(options: StandaloneMcpOptions, sessionId: string): McpServer {
-  const { sessions, requests } = options
+function buildServer(
+  options: StandaloneMcpOptions,
+  sessionId: string,
+  parents: Parents
+): McpServer {
+  const { sessions, requests, sidebar } = options
+  const profileFamily = options.profileFamily ?? builtInProfileFamily
+  const own = (id: string): string => (id === 'mine' ? sessionId : id)
+  const known = (id: string): string => {
+    const resolved = own(id)
+    if (!sessions.get(resolved)) throw new Error(`Unknown session "${id}".`)
+    return resolved
+  }
+  const groups = (): SidebarLayouts => {
+    if (!sidebar) throw new Error('This server keeps no groups.')
+    return sidebar
+  }
+  const knownGroup = (groupId: string): string => {
+    if (
+      !groups()
+        .get(SERVER_LAYOUT_KEY)
+        .groups.some((g) => g.id === groupId)
+    )
+      throw new Error(`Unknown group "${groupId}".`)
+    return groupId
+  }
+  const holds = (groupId: string, id: string): boolean =>
+    groups()
+      .get(SERVER_LAYOUT_KEY)
+      .groups.some((g) => g.id === groupId && g.sessionIds.includes(id))
+  const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
   const server = new McpServer(
     { name: 'clave-server', version: '1' },
     {
       instructions:
-        'Your Clave tools run on this server without a desktop. Ask for approval, clarification or a secret with clave_request_approval, clave_request_clarification or clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Sessions and paths are server-local.'
+        'Your Clave tools run on this server without a desktop. Ask for approval, clarification or a secret with clave_request_approval, clave_request_clarification or clave_request_secret. Calls return a requestId. Poll clave_request_result or clave_secret_result while pending; clients can answer later. Secret values and action output are never returned. Delegate work to a new tab with clave_open_session, then message it with clave_send_to_session and close it with clave_close_session; clave_create_group, clave_move_session and clave_rename organize the tabs. Sessions and paths are server-local.'
     }
   )
   server.registerTool(
@@ -134,7 +193,191 @@ function buildServer(options: StandaloneMcpOptions, sessionId: string): McpServe
       description: 'List sessions owned by this server, including stopped records.',
       inputSchema: {}
     },
-    async () => text({ sessions: sessions.list() })
+    async () =>
+      text({
+        sessions: sessions.list().map((s) => {
+          const parentId = parents.get(s.id)
+          return parentId ? { ...s, parentId } : s
+        })
+      })
+  )
+  server.registerTool(
+    'clave_open_session',
+    {
+      description:
+        'Open a new tab on this server: a Claude or Codex agent (in the chat view unless chat is false), an Antigravity or Pi agent, or a plain terminal, in an absolute directory, with an optional model, name, first prompt and group. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.',
+      inputSchema: {
+        cwd: z.string().min(1).describe('Absolute path of the working directory'),
+        mode: z.enum(['claude', 'codex', 'antigravity', 'gemini', 'pi', 'terminal']).optional(),
+        model: z.string().min(1).max(256).optional(),
+        name: z.string().min(1).max(255).optional().describe('Display name for the new tab'),
+        prompt: boundedText.optional().describe('First message an agent tab starts on'),
+        command: boundedText.optional().describe('Shell command a terminal tab runs'),
+        dangerous: z
+          .boolean()
+          .optional()
+          .describe('Start a claude or codex agent without approval prompts'),
+        chat: z
+          .boolean()
+          .optional()
+          .describe('Claude and Codex open in the chat view unless this is false'),
+        profile: z.string().min(1).max(256).optional().describe('A launch profile id'),
+        groupId: z.string().min(1).max(256).optional().describe('Group id from clave_create_group'),
+        // Named so a desktop-shaped call fails clearly instead of being stripped.
+        account: z.unknown().optional(),
+        window: z.unknown().optional(),
+        workspace: z.unknown().optional()
+      }
+    },
+    async (args) => {
+      const unsupported = DESKTOP_ONLY.filter((key) => args[key] !== undefined)
+      if (unsupported.length > 0)
+        throw new Error(
+          `${unsupported.join(', ')} ${unsupported.length > 1 ? 'are' : 'is'} not available on a standalone server.`
+        )
+      if (!isAbsolute(args.cwd)) throw new Error('cwd must be an absolute path.')
+      const directory = await stat(args.cwd).catch(() => undefined)
+      if (!directory?.isDirectory()) throw new Error(`no such directory: ${args.cwd}`)
+      const groupId = args.groupId === undefined ? null : knownGroup(args.groupId)
+      const mode = args.mode ?? 'claude'
+      const { claudeMode, antigravityMode, codexMode, piMode, dangerousMode, model, family } =
+        resolveSpawnModes({
+          mode,
+          ...(args.dangerous !== undefined ? { dangerous: args.dangerous } : {}),
+          ...(args.model !== undefined ? { model: args.model } : {})
+        })
+      const launchProfileId = resolveProfileRef({
+        mode,
+        // The chat view is the standalone default; a named profile decides for itself.
+        chat: args.chat ?? (args.profile === undefined && (mode === 'claude' || mode === 'codex')),
+        ...(args.profile !== undefined ? { profile: args.profile } : {})
+      })
+      // A profile picks the adapter, so one from another family would start
+      // another agent than the mode names: refuse it before anything starts.
+      if (launchProfileId !== undefined) {
+        if (family === null)
+          throw new Error(`The profile argument applies to agent modes only (got mode "${mode}")`)
+        const owner = profileFamily(launchProfileId)
+        if (!owner) throw new Error(`Unknown ${family} launch profile "${launchProfileId}"`)
+        if (owner !== family)
+          throw new Error(`Launch profile "${launchProfileId}" belongs to ${owner}, not ${family}`)
+      }
+      const terminal = mode === 'terminal'
+      const info = await sessions.start({
+        cwd: args.cwd,
+        options: {
+          claudeMode,
+          antigravityMode,
+          codexMode,
+          piMode,
+          dangerousMode,
+          ...(model !== undefined ? { model } : {}),
+          ...(launchProfileId !== undefined ? { launchProfileId } : {}),
+          ...(terminal && args.command ? { initialCommand: args.command } : {}),
+          autoExecute: terminal && !!args.command,
+          ...(!terminal && args.prompt ? { initialPrompt: args.prompt } : {})
+        }
+      })
+      parents.set(info.id, sessionId)
+      // The tab exists from here on: what follows is best effort, and the
+      // answer always names the tab so the caller can find or close it.
+      const warnings: string[] = []
+      if (args.name) {
+        try {
+          sessions.rename(info.id, args.name)
+        } catch (err) {
+          warnings.push(`The tab started but was not renamed: ${message(err)}`)
+        }
+      }
+      let placed: string | null = null
+      if (groupId) {
+        try {
+          groups().moveItems(SERVER_LAYOUT_KEY, [info.id], groupId, 'inside')
+        } catch {
+          // Reported below from the layout itself.
+        }
+        if (holds(groupId, info.id)) placed = groupId
+        else warnings.push(`Group "${groupId}" no longer exists; the tab is at the top level.`)
+      }
+      // A terminal starts its process at its first size; no window gives it one here.
+      if (sessions.get(info.id)?.transport === 'pty') {
+        try {
+          sessions.resize(info.id, HIDDEN_COLS, HIDDEN_ROWS)
+        } catch (err) {
+          warnings.push(`The terminal could not be sized to start: ${message(err)}`)
+        }
+      }
+      return text({
+        sessionId: info.id,
+        groupId: placed,
+        ...(warnings.length > 0 ? { warnings } : {})
+      })
+    }
+  )
+  server.registerTool(
+    'clave_close_session',
+    {
+      description: 'Close a session on this server, stopping its process.',
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to close, or "mine" for the calling tab')
+      }
+    },
+    async (args) => {
+      const id = known(args.sessionId)
+      await sessions.stop(id)
+      parents.delete(id)
+      return text({ closed: id })
+    }
+  )
+  server.registerTool(
+    'clave_rename',
+    {
+      description: 'Rename a group or a session (tab) on this server.',
+      inputSchema: {
+        target: z.enum(['group', 'session']),
+        id: z.string().describe('Group id, or session id ("mine" for the calling tab)'),
+        name: z.string().min(1).max(255).describe('New display name')
+      }
+    },
+    async (args) => {
+      if (args.target === 'session') {
+        const id = known(args.id)
+        sessions.rename(id, args.name)
+        return text({ renamed: id })
+      }
+      const renamed = groups().renameGroup(SERVER_LAYOUT_KEY, args.id, args.name)
+      if (!renamed.ok) throw new Error(`Unknown group "${args.id}".`)
+      return text({ renamed: args.id })
+    }
+  )
+  server.registerTool(
+    'clave_create_group',
+    {
+      description:
+        "Create an empty group in this server's sidebar and return its groupId. Put tabs in it with clave_open_session or clave_move_session.",
+      inputSchema: { name: z.string().min(1).max(255).describe('Display name for the group') }
+    },
+    async (args) => {
+      const { group } = groups().createGroup(SERVER_LAYOUT_KEY, { name: args.name })
+      return text({ groupId: group.id })
+    }
+  )
+  server.registerTool(
+    'clave_move_session',
+    {
+      description: "Move a session into a group of this server's sidebar.",
+      inputSchema: {
+        sessionId: z.string().describe('Id of the session to move, or "mine" for the calling tab'),
+        groupId: z.string().describe('Group id from clave_create_group')
+      }
+    },
+    async (args) => {
+      const id = known(args.sessionId)
+      const groupId = knownGroup(args.groupId)
+      groups().moveItems(SERVER_LAYOUT_KEY, [id], groupId, 'inside')
+      if (!holds(groupId, id)) throw new Error(`Unknown group "${groupId}".`)
+      return text({ sessionId: id, groupId })
+    }
   )
   server.registerTool(
     'clave_read_session',
@@ -188,6 +431,7 @@ export async function startStandaloneMcp(options: StandaloneMcpOptions): Promise
 }> {
   const sockets = new Set<Socket>()
   const active = new Set<McpServer>()
+  const parents: Parents = new Map()
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     if (request.url !== '/mcp') {
       response.writeHead(404).end()
@@ -213,7 +457,7 @@ export async function startStandaloneMcp(options: StandaloneMcpOptions): Promise
       response.writeHead(400).end()
       return
     }
-    const server = buildServer(options, owner.sessionId)
+    const server = buildServer(options, owner.sessionId, parents)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     active.add(server)
     response.once('close', () => {

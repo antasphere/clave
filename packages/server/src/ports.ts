@@ -41,6 +41,10 @@ export { Plugins, type PluginsService } from './plugins/port'
 import { GitPort, type GitService } from './git/port'
 
 export { GitPort, type GitService } from './git/port'
+// ── Issue #266: the server's version and its self-upgrade ──
+import { ServerInfoPort, type ServerInfoService } from './server-info/port'
+
+export { ServerInfoPort, type ServerInfoService } from './server-info/port'
 
 export interface ServerPorts {
   readonly requests?: RequestsService
@@ -68,6 +72,9 @@ export interface ServerPorts {
   // ── Wave wcs1023, lane C: the git domain ──
   /** The checkouts on this server's disk, through the app's own git implementation. `GitPort.none` when absent: every call refused as unavailable. */
   readonly git?: GitService
+  // ── Issue #266: the server domain ──
+  /** The version this server runs and its self-upgrade. `ServerInfoPort.none` when absent: no version reported, no upgrade. */
+  readonly serverInfo?: ServerInfoService
 }
 
 /** Every port as a layer, the domain's `none` where the entry gave nothing. */
@@ -86,6 +93,8 @@ export const PortsLive = (
   | Plugins
   // ── Wave wcs1023, lane C: the git domain ──
   | GitPort
+  // ── Issue #266: the server domain ──
+  | ServerInfoPort
 > =>
   Layer.mergeAll(
     RequestsPort.layer(ports.requests ?? RequestsPort.none),
@@ -100,5 +109,7 @@ export const PortsLive = (
     // ── Wave 5, lane C: the plugins ──
     Plugins.layer(ports.plugins ?? Plugins.none),
     // ── Wave wcs1023, lane C: the git domain ──
-    GitPort.layer(ports.git ?? GitPort.none)
+    GitPort.layer(ports.git ?? GitPort.none),
+    // ── Issue #266: the server domain ──
+    ServerInfoPort.layer(ports.serverInfo ?? ServerInfoPort.none)
   )

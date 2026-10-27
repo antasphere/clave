@@ -5,6 +5,7 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
+  shownWork,
   type TerminalStatus
 } from '../../../../plugins/chat-view/src/terminal-status'
 
@@ -659,4 +660,36 @@ it('promotes a waited-on Bash card the provider later lists by its call, keeping
   const acked = at([{ type: 'tool_result', id: 'toolu_fg', output: 'moved' }], 2000, status)
   expect(acked.agents).toHaveLength(1)
   expect(at([{ type: 'background_tasks', tasks: [] }], 3000, acked).agents).toEqual([])
+})
+
+it('shows a command only as background work, never while the turn waits on it', () => {
+  const status = at(
+    [
+      call('a1', 'Agent', { subagent_type: 'Explore', description: 'Map' }),
+      bash('b1', 'git status -sb'),
+      bash('b2', 'npm run dev', true),
+      call('c1', 'commandExecution', { command: 'echo fg', commandActions: [] })
+    ],
+    1000
+  )
+  expect(shownWork(status.agents).map((a) => a.id)).toEqual(['a1', 'b2'])
+  // A waited-on command the provider lists as background work shows from then,
+  // with the text and the start its call gave it.
+  const promoted = at(
+    [
+      {
+        type: 'background_tasks',
+        tasks: [
+          { id: 't1', kind: 'shell', description: 'Run it', toolUseId: 'c1', startedAt: 5000 }
+        ]
+      }
+    ],
+    6000,
+    status
+  )
+  expect(shownWork(promoted.agents).map((a) => [a.id, a.description, a.startedAt])).toEqual([
+    ['a1', 'Map', 1000],
+    ['b2', 'npm run dev', 1000],
+    ['c1', 'echo fg', 1000]
+  ])
 })

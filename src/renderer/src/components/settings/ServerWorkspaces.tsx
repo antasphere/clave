@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { ComputerDesktopIcon, PlusIcon, ServerIcon, TrashIcon } from '@heroicons/react/24/outline'
-import { useWorkspaceStore } from '../../store/workspace-store'
+import { useWorkspaceStore, workspaceServer } from '../../store/workspace-store'
 import { useFleetStore } from '../../store/fleet-store'
 import { pickServerFolder } from '../../store/server-folder-store'
 import {
   addServerWorkspace,
+  moveWorkspace,
   removeServerWorkspace,
   serverWorkspaceError,
   setActiveWorkspace
 } from '../../lib/workspace-actions'
+import { useListReorder } from '../../hooks/use-list-reorder'
 import { SettingsCallout } from './primitives'
 
 /**
@@ -34,7 +36,8 @@ function useServers(): {
   }
 }
 
-/** One row per server workspace, below the Mac's own, with its removal. */
+/** One row per server workspace, below the Mac's own, with its removal.
+ *  A row drags to reorder within its own server's list (#257). */
 export function ServerWorkspaceRows(): React.JSX.Element | null {
   const serverWorkspaces = useWorkspaceStore((s) => s.serverWorkspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -45,6 +48,12 @@ export function ServerWorkspaceRows(): React.JSX.Element | null {
     server: string
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { rowProps } = useListReorder((id, targetId, position) => {
+    setError(null)
+    moveWorkspace(id, targetId, position).catch((err: unknown) => {
+      setError(serverWorkspaceError(err, nameOf(workspaceServer(id) ?? ''), 'reorder'))
+    })
+  })
 
   const rows = Object.entries(serverWorkspaces).flatMap(([serverId, list]) =>
     list.map((ws) => ({ ws, serverId }))
@@ -68,7 +77,8 @@ export function ServerWorkspaceRows(): React.JSX.Element | null {
         return (
           <div
             key={ws.id}
-            className="settings-row"
+            {...rowProps(ws.id, serverId)}
+            className="settings-row reorder-row"
             data-workspace-row={ws.id}
             data-offline={offline || undefined}
           >

@@ -349,6 +349,37 @@ describe('who may reach whom', () => {
       'clave_read_session must be called from inside a Clave agent tab — this request has no tab identity.'
     )
   })
+  it('reads its own group’s terminal, not another group’s; sending to it stays refused', async () => {
+    const terminal = (id: string, sessionId: string | null): SidebarGroup['terminals'][number] => ({
+      ...{ id, command: 'npm run dev', commandMode: 'auto' as const, color: 'green' },
+      sessionId
+    })
+    const h = setup({
+      ...world(),
+      layouts: [
+        layout('wA', [
+          group('g', {
+            sessionIds: ['caller'],
+            terminals: [terminal('t1', 'dev'), terminal('t2', null)]
+          }),
+          group('far', { sessionIds: ['stranger'], terminals: [terminal('t3', 'far-dev')] })
+        ])
+      ],
+      sessions: [...world().sessions!, session('dev'), session('far-dev')],
+      records: {
+        ...world().records,
+        dev: record('dev', { claudeMode: false }),
+        'far-dev': record('far-dev', { claudeMode: false })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'dev' })) as object).toMatchObject({
+      sessionId: 'dev'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'far-dev' })).rejects.toThrow('not related')
+    await expect(run(h, 'sendToSession', { sessionId: 'dev', message: 'hi' })).rejects.toThrow(
+      'Refusing to send to a plain terminal'
+    )
+  })
   it('a tab reaches itself even outside any group', async () => {
     const h = setup({ ...world(), layouts: [layout('wA', [])] })
     expect((await run(h, 'readSession', { sessionId: 'caller' })) as object).toMatchObject({
@@ -371,6 +402,33 @@ describe('who may reach whom', () => {
       'No session with id or name "nobody"'
     )
     h.w.parents = {}
+    await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
+      'This session has no live parent'
+    )
+  })
+  it('after a restart, reads "parent" and the reach from the records (#259)', async () => {
+    // Main's lineage is memory, empty after a restart; the records still say.
+    const h = setup({
+      ...world(),
+      layouts: [layout('wA', [])],
+      parents: {},
+      records: {
+        caller: record('caller', { spawnedBy: 'parent' }),
+        mate: record('mate'),
+        child: record('child', { spawnedBy: 'caller' }),
+        parent: record('parent'),
+        stranger: record('stranger', { displayName: 'Far away' })
+      }
+    })
+    expect((await run(h, 'readSession', { sessionId: 'parent' })) as object).toMatchObject({
+      sessionId: 'parent'
+    })
+    expect((await run(h, 'readSession', { sessionId: 'child' })) as object).toMatchObject({
+      sessionId: 'child'
+    })
+    await expect(run(h, 'readSession', { sessionId: 'stranger' })).rejects.toThrow('not related')
+    // A parent that is gone stays gone: the record names it, no session answers.
+    h.w.sessions = h.w.sessions.filter((s) => s.id !== 'parent')
     await expect(run(h, 'readSession', { sessionId: 'parent' })).rejects.toThrow(
       'This session has no live parent'
     )
@@ -661,7 +719,8 @@ describe('opening a session', () => {
           claudeProfileLabel: 'Second',
           autoExecute: false,
           initialPrompt: 'do it',
-          workspaceId: 'ws1'
+          workspaceId: 'ws1',
+          spawnedBy: 'caller'
         }
       }
     ])

@@ -291,3 +291,23 @@ describe('inActiveWorkspace scopes remote tabs to their server workspace', () =>
     )
   })
 })
+
+describe('the servers’ versions (issue #266)', () => {
+  it('keeps the last decision per server, and drops a server main left out', () => {
+    const base = { appVersion: '3.0.0-beta.9', automatic: true } as const
+    fleet.applyServerVersions([
+      { serverId: 'a', kind: 'match', serverVersion: '3.0.0-beta.9', ...base },
+      {
+        serverId: 'b',
+        kind: 'manual',
+        command: 'bash ~/install-server.sh --ref v3.0.0-beta.9',
+        ...base
+      }
+    ])
+    expect(Object.keys(fleet.useFleetStore.getState().versions)).toEqual(['a', 'b'])
+    fleet.applyServerVersions([{ serverId: 'a', kind: 'upgrading', target: '3.0.1', ...base }])
+    expect(fleet.useFleetStore.getState().versions).toEqual({
+      a: { serverId: 'a', kind: 'upgrading', target: '3.0.1', ...base }
+    })
+  })
+})

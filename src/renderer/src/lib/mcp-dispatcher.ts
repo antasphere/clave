@@ -43,6 +43,7 @@ import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { getDraftShadow, type DraftStash } from './draft-shadow'
 import { sanitizeForPaste } from '../../../shared/paste-sanitize'
+import { shareAGroup } from '../../../shared/group-reach'
 import { resolveSpawnModes, resolveProfileRef } from './open-session-modes'
 import {
   buildCheckpointProvenance,
@@ -465,7 +466,10 @@ export async function openSessionProgrammatically(payload: {
     initialCommand: mode === 'terminal' ? payload.command || undefined : undefined,
     autoExecute: mode === 'terminal' && !!payload.command && payload.autoRun !== false,
     initialPrompt: mode !== 'terminal' ? payload.prompt || undefined : undefined,
-    workspaceId
+    workspaceId,
+    // The parent on the record as well as in the store below, so the link
+    // outlives this window (#259).
+    spawnedBy: payload.callerSessionId || undefined
   })
 
   state.addSession({
@@ -1004,7 +1008,7 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
     const parent = caller?.spawnedBy ? sessions.find((s) => s.id === caller.spawnedBy) : undefined
     if (!parent) {
       throw new Error(
-        'This session has no live parent — only tabs opened via clave_open_session know their opener, and the link does not survive an app restart. Use clave_list and target a session id or name instead.'
+        'This session has no live parent — only tabs opened via clave_open_session know their opener, and that tab is no longer open. Use clave_list and target a session id or name instead.'
       )
     }
     return parent
@@ -1017,7 +1021,8 @@ function resolveTargetSession(ref: string, callerSessionId: string | undefined):
 /**
  * Cross-tab reach gate: a tab may send to / read only a target it has a real
  * relationship with — one it opened, the one that opened it ("parent"), or one
- * the user placed in the same group. This keeps a single poisoned tab from
+ * the user placed in the same group (its terminals included: a tab reads its
+ * group's dev server, PRDCT-3420). This keeps a single poisoned tab from
  * driving or reading tabs in unrelated projects; grouping is the explicit
  * "these tabs may talk" gesture for anything outside the spawn lineage.
  * Identity is the token-derived callerSessionId (unforgeable), so the gate is
@@ -1052,9 +1057,7 @@ function assertCanReach(
     target.spawnedBy === callerSessionId || // I opened target (my child) — cross-window
     (!!caller &&
       (target.id === caller.spawnedBy || // target opened me (my parent) — same window
-        state.groups.some(
-          (g) => g.sessionIds.includes(caller.id) && g.sessionIds.includes(target.id)
-        )))
+        shareAGroup(state.groups, caller.id, target.id))) // same group, terminals included
   if (!related) {
     throw new Error(
       `Refusing to ${verb} tab "${target.name}": it is not related to yours. You can only reach the tab that opened yours ("parent"), tabs you opened, or tabs in the same group. Put both tabs in one group to allow this.`

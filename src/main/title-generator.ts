@@ -525,7 +525,7 @@ ${userMessage}`
           }
           return
         }
-        const title = stdout.trim()
+        const title = titleFromReply(stdout)
         if (!title) {
           const fallback = heuristicTitle(userMessage)
           if (fallback) {
@@ -537,7 +537,11 @@ ${userMessage}`
           return
         }
         const wordCount = title.split(/\s+/).length
-        if (wordCount > 6 || /^(I |I'm |I'll |The |This |You |It |We |My |Let )/.test(title)) {
+        if (
+          wordCount > 6 ||
+          title.includes(':') ||
+          /^(I |I'm |I'll |The |This |You |It |We |My |Let )/.test(title)
+        ) {
           console.warn(`[title-gen] Rejected bad title for ${sessionId}: "${title}"`)
           const fallback = heuristicTitle(userMessage)
           if (fallback) {
@@ -559,6 +563,21 @@ ${userMessage}`
 }
 
 // --- Helpers ---
+
+/** The title in the CLI's reply. Haiku sometimes heads it with a label of
+ *  its own ("lowercase title, 2-4 words:" on one line, the title on the
+ *  next): every line before the last ending in a colon is such a label and
+ *  is dropped. Any other reply on several lines is not a title (null), and
+ *  the caller falls back to the message's own words. */
+function titleFromReply(stdout: string): string | null {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (lines.length === 0) return null
+  const title = lines[lines.length - 1]
+  return lines.slice(0, -1).every((line) => line.endsWith(':')) ? title : null
+}
 
 function isValidMessage(msg: string): boolean {
   if (msg.length < 5) return false

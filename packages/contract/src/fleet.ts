@@ -1,3 +1,5 @@
+import type { ServerUpgradeFailureCode, ServerUpgradePhase } from './upgrade-failure'
+
 /** Device-local connection identity. Names and URLs never identify an owner. */
 export type ServerId = string
 export const LOCAL_SERVER_ID = 'local'
@@ -57,6 +59,64 @@ export interface Sourced<T> {
   readonly value: T
 }
 
+/**
+ * How a saved server's version stands against this app's (issue #266), as
+ * main's version sync decided it (`src/main/server-connections/version-sync.ts`):
+ * - `match`: same version; `server-newer`: never downgraded;
+ * - `upgrade`: older, installed from a release tag, able to upgrade itself;
+ *   `upgrading`: waiting for its agents to be idle, or running the upgrade;
+ *   `failed`: the last attempt for this version failed: `failure` when the
+ *   server ran it (codes from closed lists, never text from the run), `error`
+ *   when this Mac's own ask was refused or never took;
+ * - `custom-ref`: installed from a branch or a custom ref, left alone;
+ * - `manual`: a server older than self-upgrades, `command` run by hand once;
+ * - `unsupported`: not installed by the script (`reason`);
+ * - `unreachable`: no answer, nothing known.
+ */
+export type ServerVersionKind =
+  | 'match'
+  | 'upgrade'
+  | 'upgrading'
+  | 'server-newer'
+  | 'custom-ref'
+  | 'manual'
+  | 'unsupported'
+  | 'failed'
+  | 'unreachable'
+/** A failed run as the server told it (`ServerUpgradeFailure` on the wire). */
+export interface ServerVersionFailure {
+  readonly code?: ServerUpgradeFailureCode
+  readonly phase?: ServerUpgradePhase
+  readonly exitCode?: number
+  readonly logPath?: string
+}
+export interface ServerVersionDecision {
+  readonly kind: ServerVersionKind
+  readonly appVersion: string
+  /** Whether this app upgrades servers at all: a packaged app, never a dev build. */
+  readonly automatic: boolean
+  readonly serverVersion?: string
+  readonly installRef?: string | null
+  /** The version an upgrade goes, or went, to. */
+  readonly target?: string
+  /** For `upgrading`: whether the server waits for idle or runs it. */
+  readonly upgradeState?: 'waiting-for-idle' | 'running'
+  readonly reason?: string
+  /** For `failed`: how the server's run failed. The Mac words it from the code. */
+  readonly failure?: ServerVersionFailure
+  /** For `failed`: this Mac's ask refused (the server's fixed refusal) or
+   *  never taken (this Mac's own sentence). Never text from a run. */
+  readonly error?: string
+  /** For `manual`: the command to run on the server. */
+  readonly command?: string
+  /** False for `upgrading` and `failed` on a server as new as this app or
+   *  newer: another Mac's upgrade, shown, never this app's to act on. */
+  readonly ownAction?: false
+}
+export interface ServerVersionStatus extends ServerVersionDecision {
+  readonly serverId: ServerId
+}
+
 export const FLEET_IPC = {
   list: 'server:fleet:list',
   save: 'server:fleet:save',
@@ -64,7 +124,13 @@ export const FLEET_IPC = {
   disconnect: 'server:fleet:disconnect',
   remove: 'server:fleet:remove',
   endpoint: 'server:fleet:endpoint',
-  changed: 'server:fleet:changed'
+  changed: 'server:fleet:changed',
+  // ── Issue #266: each saved server's version against this app's ──
+  versions: 'server:fleet:versions',
+  versionsChanged: 'server:fleet:versions-changed',
+  upgradeNow: 'server:fleet:upgrade-now',
+  /** A window heard a server's upgrade change, or its welcome: read that server again. */
+  versionRefresh: 'server:fleet:version-refresh'
 } as const
 
 /** Reserved prefix is escaped for local resources too, so any local ID can

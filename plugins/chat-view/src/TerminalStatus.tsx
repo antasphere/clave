@@ -148,9 +148,8 @@ function AgentModel({
 /** The work running now, stacked under the status line. A subagent's row
  *  says what it is, what it was asked, the model it runs on, how many steps it
  *  has taken, how full its own context is and how long it has run; a
- *  command's row says the command and how long it has run, behind a terminal
- *  glyph, from its start whether the turn waits on it or not (one that
- *  outlives the turn keeps its row, as background work). The dot (the glyph,
+ *  command's row (background work only, `shownWork`) says the command and how
+ *  long it has run, behind a terminal glyph, from its call's start. The dot (the glyph,
  *  for a command) is the loader: it breathes while the work runs; an agent's
  *  rings once at each new step and
  *  goes still once the agent has been quiet a minute, which the row then
