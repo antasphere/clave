@@ -215,6 +215,9 @@ function sessionFromRecord(
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
+    // The tab whose agent opened this one: folded under it again, and its
+    // "parent" still answers (#259).
+    spawnedBy: s.spawnedBy,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
     ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
@@ -281,7 +284,10 @@ async function spawnFromRecord(
       workspaceId,
       // Carry the ownership forward: an adoption rewrites the record, and a
       // hidden half that came back unstamped would be a tab at the NEXT boot.
-      link: s.link
+      link: s.link,
+      // The parent too, so the restored spawn itself carries it: a later
+      // account switch respawns from these options (#259, V1-F1).
+      spawnedBy: s.spawnedBy
     })
     return { session: sessionFromRecord(s, activeWorkspaceId, info) }
   } catch (err) {
@@ -456,6 +462,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     sessionType: 'local',
     workspaceId,
     view: s.view ? { ...s.view } : undefined,
+    spawnedBy: s.spawnedBy,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

@@ -123,7 +123,12 @@ function seedClaudeStub(dir) {
   return dir
 }
 
-export async function fleetWorld(label, { gitRepo = false } = {}) {
+/**
+ * `count` daemons (two by default), each started with the fleet flags plus
+ * `serverArgs`; `world.mac(label, { args })` adds app flags to a Mac's launch
+ * (the server upgrade spec's `--test-version`, issue #266).
+ */
+export async function fleetWorld(label, { gitRepo = false, count = 2, serverArgs = [] } = {}) {
   const run = `${label}-${randomUUID()}`
   const servers = []
   const clients = new Set()
@@ -158,7 +163,14 @@ export async function fleetWorld(label, { gitRepo = false } = {}) {
       ...(claudeStub && { PATH: `${claudeStub}:${process.env.PATH ?? ''}` })
     },
     seedFrom: seed,
-    args: ['--daemon', '--host', '127.0.0.1', '--test-no-activate', '--dev-echo-adapter']
+    args: [
+      '--daemon',
+      '--host',
+      '127.0.0.1',
+      '--test-no-activate',
+      '--dev-echo-adapter',
+      ...serverArgs
+    ]
   }
   const world = {
     run,
@@ -226,7 +238,7 @@ export async function fleetWorld(label, { gitRepo = false } = {}) {
       )
       return report
     },
-    async mac(label, { reuse = null } = {}) {
+    async mac(label, { reuse = null, args = [] } = {}) {
       const dir = reuse ?? fixturePath(`${run}-mac-${label}`)
       const root = fixturePath(`${run}-local-${label}`)
       mkdirSync(root, { recursive: true })
@@ -250,7 +262,7 @@ export async function fleetWorld(label, { gitRepo = false } = {}) {
       const launched = await launchApp(dir, {
         server: 'in-process',
         env: { SHELL: '/bin/sh' },
-        args: ['--dev-echo-adapter']
+        args: ['--dev-echo-adapter', ...args]
       })
       const mac = { ...launched, label, dir, root, servers, owners: [], errors: [] }
       launched.win.on('pageerror', (error) => mac.errors.push(error.message))
@@ -280,7 +292,7 @@ export async function fleetWorld(label, { gitRepo = false } = {}) {
     }
   }
   try {
-    for (let index = 0; index < 2; index++) {
+    for (let index = 0; index < count; index++) {
       const server = await startE2eServer(`${run}-${index}`, options)
       servers.push(server)
       server.root = path.join(server.dataDir, 'repo')

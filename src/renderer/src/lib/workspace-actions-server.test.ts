@@ -31,6 +31,9 @@ let shownAtBoot: string | null = 'ws1'
 let localAtBoot: Workspace[] = [LOCAL]
 /** When set, `fleetAddWorkspace` answers only once the test resolves it. */
 let addGate: Promise<void> | null = null
+/** The orders written to a server, and the refusal the next one meets. */
+const reorders: Array<{ serverId: string; ids: string[] }> = []
+let reorderFails: Error | null = null
 
 let actions: typeof import('./workspace-actions')
 let store: typeof import('../store/workspace-store')
@@ -84,6 +87,10 @@ beforeAll(() => {
       if (addGate) await addGate
       return serverWs(serverId, 'added', input.rootDir)
     },
+    fleetReorderWorkspaces: async (serverId: string, ids: string[]) => {
+      reorders.push({ serverId, ids })
+      if (reorderFails) throw reorderFails
+    },
     discoverClaveFiles: async () => [],
     trustWorkspaceRoot: async () => undefined,
     setSessionWorkspace: async () => undefined,
@@ -102,6 +109,8 @@ beforeEach(async () => {
   shownAtBoot = 'ws1'
   localAtBoot = [LOCAL]
   addGate = null
+  reorders.length = 0
+  reorderFails = null
   actions = await import('./workspace-actions')
   store = await import('../store/workspace-store')
 })
@@ -334,6 +343,96 @@ describe('what a failed add or removal of a server workspace says', () => {
     )
     expect(actions.serverWorkspaceError('gone', 'VPS', 'remove')).toBe(
       'VPS could not remove the workspace. Check that it is connected, then try again.'
+    )
+  })
+})
+
+// #257: a workspace moves within its own machine's list, never across.
+describe('reordering workspaces', () => {
+  const TWO: Workspace = { id: 'ws2', name: 'Two', rootDir: '/w2', profileFile: null, createdAt: 2 }
+  const THREE: Workspace = {
+    id: 'ws3',
+    name: 'Three',
+    rootDir: '/w3',
+    profileFile: null,
+    createdAt: 3
+  }
+  const ids = (list: Workspace[]): string[] => list.map((w) => w.id)
+  const repo = resourceKey('workspace', 'srv', 'repo')
+  const docs = resourceKey('workspace', 'srv', 'docs')
+  const site = resourceKey('workspace', 'srv', 'site')
+
+  it('writes this Mac’s registry whole, in the new order', async () => {
+    localAtBoot = [LOCAL, TWO, THREE]
+    await actions.bootWorkspaces()
+    await actions.moveWorkspace('ws3', 'ws1', 'before')
+    expect(ids(store.useWorkspaceStore.getState().workspaces)).toEqual(['ws3', 'ws1', 'ws2'])
+    expect(registryWrites.map((w) => ids(w as Workspace[]))).toEqual([['ws3', 'ws1', 'ws2']])
+    await actions.moveWorkspace('ws3', 'ws2', 'after')
+    expect(registryWrites.map((w) => ids(w as Workspace[])).at(-1)).toEqual(['ws1', 'ws2', 'ws3'])
+    expect(reorders).toEqual([])
+  })
+
+  it('writes nothing for a move that leaves the list as it is', async () => {
+    localAtBoot = [LOCAL, TWO, THREE]
+    await actions.bootWorkspaces()
+    await actions.moveWorkspace('ws1', 'ws2', 'before')
+    await actions.moveWorkspace('ws2', 'ws1', 'after')
+    await actions.moveWorkspace('ws2', 'ws2', 'after')
+    await actions.moveWorkspace('ws2', 'gone', 'after')
+    expect(registryWrites).toEqual([])
+  })
+
+  it('moves the next/previous shortcut along the new order', async () => {
+    localAtBoot = [LOCAL, TWO, THREE]
+    await actions.bootWorkspaces()
+    await actions.moveWorkspace('ws3', 'ws1', 'after')
+    actions.cycleWorkspace(1)
+    await tick()
+    expect(switches.at(-1)).toBe('ws3')
+  })
+
+  it('writes a server’s list to that server alone, shown at once', async () => {
+    await actions.bootWorkspaces()
+    heardWorkspaces!({
+      serverId: 'srv',
+      workspaces: [serverWs('srv', 'repo'), serverWs('srv', 'docs'), serverWs('srv', 'site')]
+    })
+    const moving = actions.moveWorkspace(site, repo, 'before')
+    expect(ids(store.useWorkspaceStore.getState().serverWorkspaces.srv)).toEqual([site, repo, docs])
+    await moving
+    expect(reorders).toEqual([{ serverId: 'srv', ids: [site, repo, docs] }])
+    expect(registryWrites).toEqual([])
+  })
+
+  it('refuses a drop across machines', async () => {
+    await actions.bootWorkspaces()
+    heardWorkspaces!({ serverId: 'srv', workspaces: [serverWs('srv', 'repo')] })
+    heardWorkspaces!({ serverId: 'other', workspaces: [serverWs('other', 'x')] })
+    await actions.moveWorkspace(repo, 'ws1', 'before')
+    await actions.moveWorkspace('ws1', repo, 'after')
+    await actions.moveWorkspace(repo, resourceKey('workspace', 'other', 'x'), 'before')
+    expect(reorders).toEqual([])
+    expect(registryWrites).toEqual([])
+    expect(ids(store.allWorkspaces(store.useWorkspaceStore.getState()))).toEqual([
+      'ws1',
+      repo,
+      resourceKey('workspace', 'other', 'x')
+    ])
+  })
+
+  it('puts the server’s order back when the server refuses it', async () => {
+    await actions.bootWorkspaces()
+    heardWorkspaces!({
+      serverId: 'srv',
+      workspaces: [serverWs('srv', 'repo'), serverWs('srv', 'docs')]
+    })
+    reorderFails = new Error('The server refused the workspace list.')
+    await expect(actions.moveWorkspace(docs, repo, 'before')).rejects.toThrow('refused')
+    expect(ids(store.useWorkspaceStore.getState().serverWorkspaces.srv)).toEqual([repo, docs])
+    expect(actions.serverWorkspaceError(reorderFails, 'VPS', 'reorder')).toBe(reorderFails.message)
+    expect(actions.serverWorkspaceError(new Error('socket'), 'VPS', 'reorder')).toBe(
+      'VPS could not reorder the workspace. Check that it is connected, then try again.'
     )
   })
 })

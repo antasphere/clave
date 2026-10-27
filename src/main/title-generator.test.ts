@@ -247,6 +247,38 @@ describe('a chat tab is named by its first message', () => {
     expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
   })
 
+  it('a label Haiku puts before the title does not reach the tab', async () => {
+    // Found on a tab named "lowercase title, 2-4 words: explain centra": six
+    // words passed the word count, and the line break collapsed in the sidebar.
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'lowercase title, 2-4 words:\n\nexplain centra\n'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'tell me more about centra', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'explain centra')
+  })
+
+  it('a reply on several lines that is not a label and a title falls back to the message', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'fix auth middleware\nfor login'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
+  })
+
+  it('a label on the title line itself falls back to the message', async () => {
+    const id = `chat-${++sequence}`
+    const { win, send } = window()
+    mocks.stdout = 'title: fix auth middleware'
+    scheduleChatTitle(id)
+    notifyChatMessage(id, 'please fix the auth middleware timeout on login', win)
+    await settled()
+    expect(send).toHaveBeenCalledWith(`session:auto-title:${id}`, 'fix the auth middleware')
+  })
+
   it('a window gone before the title arrived receives nothing', async () => {
     const id = `chat-${++sequence}`
     const { send } = window()

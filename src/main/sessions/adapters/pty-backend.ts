@@ -21,6 +21,7 @@ import { resolvePosixShellLaunch, shellSingleQuote } from '../../shell-launch'
 import { CODEX_TITLE_CONFIG } from '../../../shared/codex-state'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
+import { lineageOf } from '../lineage'
 import {
   buildAgentArgv,
   type AgentKind,
@@ -551,6 +552,12 @@ export interface SessionRecord {
    *  session view's is deliberately not persisted, and the group's lives in
    *  the sidebar layout, which drops it with the group. */
   link?: SessionLink
+  /** The tab whose agent opened this one (#259): what folds the tab under
+   *  its parent in the sidebar and what `"parent"` resolves to in the agent
+   *  tools. The renderer's `spawnedBy` and main's lineage map are both
+   *  memory, gone at a quit; this is what brings the link back. Absent for a
+   *  tab the user opened. Carried forward across adoption like the name. */
+  spawnedBy?: string
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -798,6 +805,9 @@ export interface PtySpawnOptions {
    *  the record so the next launch can put it back there. Omitted = a tab.
    *  Carried forward across adoption like the display name. */
   link?: SessionLink
+  /** The session id of the tab whose agent opened this one — persisted on
+   *  the record (SessionRecord.spawnedBy). Omitted = opened by the user. */
+  spawnedBy?: string
 }
 
 /** Validate a link crossing the IPC boundary. It is only ever compared to
@@ -1185,7 +1195,10 @@ export class PtyBackend {
       // may hang the same terminal off a different group), else what the
       // record already said, so an adoption never erases the ownership that
       // keeps the session out of the sidebar.
-      link: sanitizeSessionLink(options?.link) ?? previous?.link
+      link: sanitizeSessionLink(options?.link) ?? previous?.link,
+      // Who opened it: the opening agent's tab, else what the record already
+      // said, so a reattach, a respawn or an account switch keeps the child.
+      spawnedBy: lineageOf(id, options?.spawnedBy, previous?.spawnedBy)
     }
     let recordKey: string | null = null
 

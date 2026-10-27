@@ -183,6 +183,24 @@ describe('a Claude chat tab survives a restart', () => {
     )
   })
 
+  it('writes the tab that opened it, and carries it when restored (#259, V1-F2)', async () => {
+    const parent = '66666666-6666-4666-8666-666666666666'
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', spawnedBy: parent })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ spawnedBy: parent })
+    )
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, spawnedBy: parent } : null) as never)
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: TAB, spawnedBy: parent })
+    )
+  })
+
   it('relaunches fresh under the same id when the tab never got a message', async () => {
     mocks.findTranscript.mockReturnValue(null)
 

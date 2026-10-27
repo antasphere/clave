@@ -55,6 +55,8 @@ import { filesGroup } from './files'
 import { requestsGroup } from './requests'
 // ── Wave wcs1023, lane C: the git panel on a server's checkout (`git.ts`) ──
 import { gitGroup } from './git'
+// ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
+import { serverInfoGroup } from './server-info'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -135,6 +137,9 @@ export { pluginsGroup }
 // ── Wave wcs1023, lane C: the git domain (`git.ts`) ──
 export { gitGroup }
 
+// ── Issue #266: the server domain (`server-info.ts`) ──
+export { serverInfoGroup }
+
 // ── Lane B: terminals ──
 
 export const ClaveApi = Api.make('clave')
@@ -153,6 +158,8 @@ export const ClaveApi = Api.make('clave')
   .add(requestsGroup)
   // ── Wave wcs1023, lane C: the git domain ──
   .add(gitGroup)
+  // ── Issue #266: the server domain ──
+  .add(serverInfoGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

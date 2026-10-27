@@ -33,5 +33,7 @@ export * as AgentTools from './agent-tools'
 export * as Plugins from './plugins'
 // ── Wave wcs1023, lane C: the git panel on a server's checkout ──
 export * as Git from './git'
+// ── Issue #266: the server's version and its self-upgrade ──
+export * as ServerInfo from './server-info'
 
 // ── Lane B: terminals · Lane D: settings served ──

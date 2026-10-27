@@ -27,8 +27,10 @@ import {
   setActiveWorkspace,
   renameWorkspace,
   setWorkspaceProfile,
-  describeWorkspaceRemoval
+  describeWorkspaceRemoval,
+  moveWorkspace
 } from '../../lib/workspace-actions'
+import { useListReorder } from '../../hooks/use-list-reorder'
 import { UserIconDisplay, ICON_MAP } from '../ui/UserIconDisplay'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import {
@@ -858,6 +860,14 @@ function WorkspacesSection(): React.JSX.Element {
     setTimeout(() => setError(null), 4000)
   }
 
+  // This Mac's rows drag to reorder among themselves (#257); the server rows
+  // below carry their own, per server.
+  const { rowProps } = useListReorder((id, targetId, position) => {
+    moveWorkspace(id, targetId, position).catch(() => {
+      flashError('The new order could not be saved.')
+    })
+  })
+
   const handleAddWorkspace = async (): Promise<void> => {
     setError(null)
     setPendingAdd(null)
@@ -932,7 +942,12 @@ function WorkspacesSection(): React.JSX.Element {
               { value: NO_PROFILE, label: 'No profile' }
             ]
             return (
-              <div key={ws.id} className="settings-row" data-workspace-row={ws.id}>
+              <div
+                key={ws.id}
+                {...rowProps(ws.id, 'local')}
+                className="settings-row reorder-row"
+                data-workspace-row={ws.id}
+              >
                 <div
                   className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
                   onClick={() => {

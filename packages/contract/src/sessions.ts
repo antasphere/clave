@@ -346,7 +346,11 @@ export const SpawnOptions = Schema.Struct({
   codexAccountId: Schema.optional(Schema.String),
   codexAccountLabel: Schema.optional(Schema.String),
   workspaceId: Schema.optional(Schema.String),
-  link: Schema.optional(SessionLink)
+  link: Schema.optional(SessionLink),
+  /** The tab whose agent opened this one (`clave_open_session` from inside a
+   *  tab): what folds it under its parent and what `"parent"` resolves to.
+   *  Absent for a tab the user opened. */
+  spawnedBy: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
 
@@ -560,6 +564,7 @@ export const SessionRecord = Schema.Struct({
   windowKey: Schema.optional(Schema.String),
   view: Schema.optional(SessionRecordView),
   link: Schema.optional(SessionLink),
+  spawnedBy: Schema.optional(Schema.String),
   live: Schema.optional(Schema.Boolean),
   running: Schema.optional(Schema.Boolean)
 })

@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import {
   LOCAL_SERVER_ID,
   type SavedServerConnection,
-  type ServerConnectionStatus
+  type ServerConnectionStatus,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { LayoutSnapshot } from '@clave/contract/sidebar/layout'
 import type { FleetPendingRequest as PendingRequest } from '../../../preload/fleet-types'
@@ -17,14 +18,24 @@ interface FleetState {
   connections: SavedServerConnection[]
   statuses: Record<string, ServerConnectionStatus>
   requests: Record<string, readonly PendingRequest[]>
+  /** Each enabled server's version against this app's, as main decided it (issue #266). */
+  versions: Record<string, ServerVersionStatus>
   error: string | null
 }
 export const useFleetStore = create<FleetState>(() => ({
   connections: [],
   statuses: {},
   requests: {},
+  versions: {},
   error: null
 }))
+/** Main publishes every enabled server at once: a server it left out is
+ *  disconnected or removed, and loses its line. */
+export function applyServerVersions(statuses: readonly ServerVersionStatus[]): void {
+  useFleetStore.setState({
+    versions: Object.fromEntries(statuses.map((status) => [status.serverId, status]))
+  })
+}
 export function reportFleetError(error: unknown): void {
   // Server errors can contain source details. The surface only needs a safe actionable notice.
   void error
@@ -266,4 +277,7 @@ export function startDesktopFleet(): void {
   void api
     .fleetList()
     .then((connections) => useFleetStore.setState({ connections }), reportFleetError)
+  // ── Issue #266: the servers' versions, read by main ──
+  api.onFleetServerVersions?.(applyServerVersions)
+  void api.fleetServerVersions?.().then(applyServerVersions, () => undefined)
 }

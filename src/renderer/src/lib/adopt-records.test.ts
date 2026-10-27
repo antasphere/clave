@@ -26,6 +26,8 @@ let listCalls = 0
 const killed: string[] = []
 /** Every spawn asked for, by the id it adopts, in order. */
 const spawned: string[] = []
+/** The options each of those spawns was asked with, by id. */
+const spawnOptions = new Map<string, Record<string, unknown>>()
 /** What the by-id records read answers. */
 let byIdRecords: SessionRecord[] = []
 /** What the kernel's session list answers: id and state. */
@@ -62,6 +64,7 @@ beforeAll(async () => {
       byIdRecords.filter((r) => !filter?.ids || filter.ids.includes(r.id)),
     spawnSession: (cwd: string, options: { adoptSessionId: string }) => {
       spawned.push(options.adoptSessionId)
+      spawnOptions.set(options.adoptSessionId, options)
       inFlight++
       maxInFlight = Math.max(maxInFlight, inFlight)
       return new Promise((resolve, reject) => {
@@ -102,6 +105,7 @@ beforeEach(() => {
   listCalls = 0
   killed.length = 0
   spawned.length = 0
+  spawnOptions.clear()
   byIdRecords = []
   kernel = []
   listGate = null
@@ -327,6 +331,28 @@ describe('a record the host already runs', () => {
     expect(ids()).toEqual(['claude-dormant', 'claude-started'])
     expect(byId('claude-dormant')).toMatchObject({ dormant: true, alive: true })
     expect(byId('claude-started')?.dormant).toBeUndefined()
+  })
+
+  it('keeps the tab that opened it, on both paths, so it folds under that parent (#259)', async () => {
+    const parentId = '44444444-4444-4444-8444-444444444444'
+    // A tab the server opened for an agent: taken in from its record alone.
+    byIdRecords = [chat('delegated', { live: true, spawnedBy: parentId })]
+    await adoptServerStartedSessions(['delegated'])
+    expect(byId('delegated')?.spawnedBy).toBe(parentId)
+    // A record the restore spawns: its placeholder and its settled tab alike.
+    const { attached } = placeRecords([{ ...record('restored'), spawnedBy: parentId }], null)
+    expect(byId('restored')?.spawnedBy).toBe(parentId)
+    await flush()
+    // The restore's spawn carries it as well: a later account switch
+    // respawns from those options (V1-F1).
+    expect(spawnOptions.get('restored')?.spawnedBy).toBe(parentId)
+    for (const answer of [...pending.values()]) answer(true)
+    await attached
+    expect(byId('restored')?.spawnedBy).toBe(parentId)
+    // A record without one opens as the user's own tab.
+    byIdRecords = [chat('mine', { live: true })]
+    await adoptServerStartedSessions(['mine'])
+    expect(byId('mine')?.spawnedBy).toBeUndefined()
   })
 
   it('a terminal the host runs is placed live, in its group, without a spawn', async () => {

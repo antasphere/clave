@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SavedServerConnection, ServerConnectionStatus } from '@clave/contract/fleet'
 import type { FleetDesktopAPI } from '../../../../preload/fleet-types'
-import { describeAddError, describeServerState } from '../../lib/server-connection-text'
+import {
+  describeAddError,
+  describeServerState,
+  describeServerVersion,
+  UPGRADE_NOW_WARNING
+} from '../../lib/server-connection-text'
 import { reportFleetError, useFleetStore } from '../../store/fleet-store'
 import {
   SettingsPage,
@@ -71,6 +76,82 @@ function ServerLogins({
   )
 }
 
+/** The server's version against this app's (issue #266): the state in plain
+ *  words, the command an older server needs, and "Upgrade now" behind a
+ *  confirmation of what it ends. */
+function ServerVersion({ id }: { id: string }): React.JSX.Element | null {
+  const status = useFleetStore((s) => s.versions[id])
+  const text = describeServerVersion(status)
+  const [confirming, setConfirming] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const resetCopied = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (resetCopied.current) clearTimeout(resetCopied.current)
+    },
+    []
+  )
+  if (!status || !text) return null
+  const copy = async (command: string): Promise<void> => {
+    await navigator.clipboard.writeText(command)
+    setCopied(true)
+    if (resetCopied.current) clearTimeout(resetCopied.current)
+    resetCopied.current = setTimeout(() => setCopied(false), 1500)
+  }
+  const upgrade = (): void => {
+    setConfirming(false)
+    void window.electronAPI.fleetUpgradeServer(id).catch(reportFleetError)
+  }
+  return (
+    <div data-server-version={status.kind}>
+      <div className="flex items-center justify-between gap-4">
+        <p className="settings-row-description">
+          {text.version && <span data-server-version-number>{text.version} · </span>}
+          <span data-server-version-state data-status={text.tone} className="whitespace-pre-line">
+            {text.state}
+          </span>
+        </p>
+        {text.upgradeNow && !confirming && (
+          <div className="settings-row-controls">
+            <button className="btn-secondary" onClick={() => setConfirming(true)}>
+              Upgrade now
+            </button>
+          </div>
+        )}
+      </div>
+      {text.command && (
+        <div className="flex items-center justify-between gap-4">
+          <code className="settings-row-value font-mono select-text" data-server-version-command>
+            {text.command}
+          </code>
+          <div className="settings-row-controls">
+            <button className="btn-secondary" onClick={() => void copy(text.command!)}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      )}
+      {confirming && (
+        <SettingsCallout
+          tone="danger"
+          inset
+          text={UPGRADE_NOW_WARNING}
+          actions={
+            <>
+              <button className="btn-secondary" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={upgrade}>
+                Upgrade now
+              </button>
+            </>
+          }
+        />
+      )}
+    </div>
+  )
+}
+
 function ServerRow({
   connection,
   status
@@ -115,6 +196,7 @@ function ServerRow({
           </div>
         </div>
         {error && <SettingsCallout tone="danger" inset role="alert" text={error} />}
+        {connection.enabled && <ServerVersion id={connection.id} />}
         <ServerLogins
           key={`${connection.id}:${connected}`}
           id={connection.id}
@@ -137,6 +219,8 @@ export function ServersSettings(): React.JSX.Element {
 
   useEffect(() => {
     useFleetStore.setState({ error: null })
+    // ── Issue #266: read every server's version again when the page opens ──
+    void window.electronAPI.fleetServerVersions(true).catch(() => undefined)
   }, [])
 
   const add = async (): Promise<void> => {

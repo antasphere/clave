@@ -41,7 +41,11 @@ export type ClientFrame = typeof ClientFrame.Type
 export const ServerFrame = Schema.Union(
   Schema.TaggedStruct('welcome', {
     serverId: Schema.String,
-    protocol: Schema.Literal(PUSH_PROTOCOL)
+    protocol: Schema.Literal(PUSH_PROTOCOL),
+    /** The Clave version the server runs (issue #266). Optional: a server
+     *  before it sends none, and a client before it ignores the key, so the
+     *  protocol number stays 1. */
+    version: Schema.optional(Schema.String)
   }),
   Schema.TaggedStruct('subscribed', { sessionId: Schema.String, session: Session }),
   Schema.TaggedStruct('unsubscribed', { sessionId: Schema.String }),

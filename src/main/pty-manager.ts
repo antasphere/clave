@@ -14,6 +14,7 @@ import {
   type PtySession,
   type PtySpawnOptions
 } from './sessions/adapters/pty-backend'
+import { lineageOf } from './sessions/lineage'
 import { codexRoot, findCodexThreadForSession, hasCodexRollout } from './session-history/codex'
 import { ptyAdapter } from './sessions/adapters/pty-adapter'
 import { ClaudeAdapter, findTranscript } from './sessions/adapters/claude-adapter'
@@ -365,7 +366,8 @@ class PtyManager {
       codexAccountId: codex ? options?.codexAccountId : undefined,
       codexAccountLabel: codex ? options?.codexAccountLabel : undefined,
       workspaceId: options?.workspaceId,
-      windowKey: options?.windowKey
+      windowKey: options?.windowKey,
+      spawnedBy: lineageOf(session.id, options?.spawnedBy, previous?.spawnedBy)
     })
   }
 
@@ -503,6 +505,10 @@ class PtyManager {
       // The message the limit rejected, when the move is the limit's doing:
       // the reader asked once and gets the answer on the next account.
       initialInput: resendRejected ? this.rejected.get(id) : undefined,
+      // The parent, else the record's: the kill takes the record before the
+      // spawn could read it, and a spawn made without one (an older restore)
+      // would lose the child its parent (#259, V1-F1).
+      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }
