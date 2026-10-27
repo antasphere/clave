@@ -295,6 +295,19 @@ ARGS=(
   --node "$NODE"
 )
 [[ -n "$CLAVE_TOKEN_FILE" ]] && ARGS+=(--token-file "$CLAVE_TOKEN_FILE")
+# The version the server reports, from the release tag: a beta's package.json
+# carries the stable version it was cut from. A branch has no version of its own.
+if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  ARGS+=(--app-version "${REF#v}")
+fi
+# How it was installed, so a Mac can ask it to upgrade itself to the Mac's
+# version: it runs this script again with --name and --ref v<version> only.
+# A release before that ignores flags it does not know.
+ARGS+=(
+  --install-name "$NAME"
+  --install-script "$CURRENT_LINK/scripts/install-server.sh"
+  --install-ref "$REF"
+)
 
 switch_to() {
   local target="$1"

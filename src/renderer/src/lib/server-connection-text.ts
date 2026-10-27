@@ -1,4 +1,4 @@
-import type { ServerConnectionStatus } from '@clave/contract/fleet'
+import type { ServerConnectionStatus, ServerVersionStatus } from '@clave/contract/fleet'
 
 type StatusTone = 'connected' | 'connecting' | 'error' | 'idle'
 
@@ -68,4 +68,75 @@ export function describeAddError(error: unknown): string {
   return SAVE_ERRORS.has(sentence)
     ? sentence
     : 'The server operation failed. Check its connection and try again.'
+}
+
+// ── Issue #266: a saved server's version against this app's ──
+
+/** What "Upgrade now" asks the person to accept first. */
+export const UPGRADE_NOW_WARNING =
+  'Upgrading restarts the server: its running sessions end and come back as ended tabs to Resume.'
+
+const DEV_BUILD =
+  'Older than this app. A development build does not upgrade servers: run install-server.sh on the server.'
+
+export interface ServerVersionText {
+  /** "Version 3.0.0-beta.7", null when the server did not say. */
+  version: string | null
+  /** Where it stands against this app, in plain words. */
+  state: string
+  tone: StatusTone
+  /** The command to run on the server by hand, for an older server. */
+  command?: string
+  /** Whether "Upgrade now" is offered. */
+  upgradeNow: boolean
+}
+
+/** The version line of a saved server, null when nothing is known yet. */
+export function describeServerVersion(
+  status: ServerVersionStatus | undefined
+): ServerVersionText | null {
+  if (!status || status.kind === 'unreachable') return null
+  const version = status.serverVersion ? `Version ${status.serverVersion}` : null
+  const line = (
+    state: string,
+    tone: ServerVersionText['tone'],
+    upgradeNow = false
+  ): ServerVersionText => ({ version, state, tone, upgradeNow })
+  switch (status.kind) {
+    case 'match':
+      return line('Same version as this app', 'connected')
+    case 'upgrade':
+      return status.automatic
+        ? line(`Upgrading to ${status.target} once no agent is working`, 'connecting', true)
+        : line(DEV_BUILD, 'idle')
+    case 'upgrading':
+      return status.upgradeState === 'running'
+        ? line(`Upgrading to ${status.target}…`, 'connecting')
+        : line(
+            `Upgrading to ${status.target} once no agent is working`,
+            'connecting',
+            status.automatic
+          )
+    case 'failed':
+      return status.automatic
+        ? line(`Upgrade to ${status.target} failed: ${status.error}`, 'error', true)
+        : line(DEV_BUILD, 'idle')
+    case 'server-newer':
+      return line('Newer than this app', 'idle')
+    case 'custom-ref':
+      return line(
+        `Installed from ${status.installRef ?? 'a custom ref'}; upgrade it on the server`,
+        'idle'
+      )
+    case 'manual':
+      return {
+        ...line('Older Clave server: run this on the server', 'connecting'),
+        ...(status.command && { command: status.command })
+      }
+    case 'unsupported':
+      return line(
+        `This server does not upgrade from the Mac${status.reason ? `: ${status.reason}` : ''}`,
+        'idle'
+      )
+  }
 }

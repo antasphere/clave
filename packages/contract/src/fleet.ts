@@ -57,6 +57,48 @@ export interface Sourced<T> {
   readonly value: T
 }
 
+/**
+ * How a saved server's version stands against this app's (issue #266), as
+ * main's version sync decided it (`src/main/server-connections/version-sync.ts`):
+ * - `match`: same version; `server-newer`: never downgraded;
+ * - `upgrade`: older, installed from a release tag, able to upgrade itself;
+ *   `upgrading`: waiting for its agents to be idle, or running the upgrade;
+ *   `failed`: the last attempt for this version failed (`error`);
+ * - `custom-ref`: installed from a branch or a custom ref, left alone;
+ * - `manual`: a server older than self-upgrades, `command` run by hand once;
+ * - `unsupported`: not installed by the script (`reason`);
+ * - `unreachable`: no answer, nothing known.
+ */
+export type ServerVersionKind =
+  | 'match'
+  | 'upgrade'
+  | 'upgrading'
+  | 'server-newer'
+  | 'custom-ref'
+  | 'manual'
+  | 'unsupported'
+  | 'failed'
+  | 'unreachable'
+export interface ServerVersionDecision {
+  readonly kind: ServerVersionKind
+  readonly appVersion: string
+  /** Whether this app upgrades servers at all: a packaged app, never a dev build. */
+  readonly automatic: boolean
+  readonly serverVersion?: string
+  readonly installRef?: string | null
+  /** The version an upgrade goes, or went, to. */
+  readonly target?: string
+  /** For `upgrading`: whether the server waits for idle or runs it. */
+  readonly upgradeState?: 'waiting-for-idle' | 'running'
+  readonly reason?: string
+  readonly error?: string
+  /** For `manual`: the command to run on the server. */
+  readonly command?: string
+}
+export interface ServerVersionStatus extends ServerVersionDecision {
+  readonly serverId: ServerId
+}
+
 export const FLEET_IPC = {
   list: 'server:fleet:list',
   save: 'server:fleet:save',
@@ -64,7 +106,11 @@ export const FLEET_IPC = {
   disconnect: 'server:fleet:disconnect',
   remove: 'server:fleet:remove',
   endpoint: 'server:fleet:endpoint',
-  changed: 'server:fleet:changed'
+  changed: 'server:fleet:changed',
+  // ── Issue #266: each saved server's version against this app's ──
+  versions: 'server:fleet:versions',
+  versionsChanged: 'server:fleet:versions-changed',
+  upgradeNow: 'server:fleet:upgrade-now'
 } as const
 
 /** Reserved prefix is escaped for local resources too, so any local ID can

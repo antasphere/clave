@@ -64,6 +64,8 @@ import { WorkspaceFilesLive } from './workspace-files/api'
 import { FilesLive } from './files/api'
 // ── Wave wcs1023, lane C: the git domain (`git/api.ts`) ──
 import { GitLive } from './git/api'
+// ── Issue #266: the server's version and its self-upgrade ──
+import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
@@ -196,6 +198,13 @@ export const PluginsLive = HttpApiBuilder.group(ClaveApi, 'plugins', (handlers) 
 // ── Wave wcs1023, lane C: the git domain ──
 export { GitLive }
 
+// ── Issue #266: the server domain, under the bearer token like every route ──
+export const ServerInfoLive = HttpApiBuilder.group(ClaveApi, 'server', (handlers) =>
+  handlers
+    .handle('info', HttpCqrs.query(GetServerInfo))
+    .handle('upgrade', HttpCqrs.command(RequestServerUpgrade))
+)
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -218,6 +227,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       PluginsLive,
       // ── Wave wcs1023, lane C: the git domain ──
       GitLive,
+      // ── Issue #266: the server domain ──
+      ServerInfoLive,
       HealthLive
     )
   )

@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import type { ServerConnectionStatus } from '@clave/contract/fleet'
-import { describeAddError, describeServerState, SAVE_ERRORS } from './server-connection-text'
+import type { ServerConnectionStatus, ServerVersionStatus } from '@clave/contract/fleet'
+import {
+  describeAddError,
+  describeServerState,
+  describeServerVersion,
+  SAVE_ERRORS,
+  UPGRADE_NOW_WARNING
+} from './server-connection-text'
 
 describe('describeServerState', () => {
   it('says Connecting while an enabled connection has no status', () => {
@@ -129,5 +135,100 @@ describe('describeAddError', () => {
     `${addressError} private details`
   ])('hides unexpected failures instead of exposing their details', (error) => {
     expect(describeAddError(error)).toBe(fallback)
+  })
+})
+
+const status = (overrides: Partial<ServerVersionStatus>): ServerVersionStatus => ({
+  serverId: 's',
+  kind: 'match',
+  appVersion: '3.0.0-beta.8',
+  automatic: true,
+  serverVersion: '3.0.0-beta.7',
+  installRef: 'v3.0.0-beta.7',
+  ...overrides
+})
+
+describe('describeServerVersion (issue #266)', () => {
+  it('says nothing before a read, or for a server that does not answer', () => {
+    expect(describeServerVersion(undefined)).toBeNull()
+    expect(
+      describeServerVersion(status({ kind: 'unreachable', serverVersion: undefined }))
+    ).toBeNull()
+  })
+
+  it.each<[Partial<ServerVersionStatus>, string, boolean]>([
+    [{ kind: 'match', serverVersion: '3.0.0-beta.8' }, 'Same version as this app', false],
+    [
+      { kind: 'upgrade', target: '3.0.0-beta.8' },
+      'Upgrading to 3.0.0-beta.8 once no agent is working',
+      true
+    ],
+    [
+      { kind: 'upgrading', target: '3.0.0-beta.8', upgradeState: 'waiting-for-idle' },
+      'Upgrading to 3.0.0-beta.8 once no agent is working',
+      true
+    ],
+    [
+      { kind: 'upgrading', target: '3.0.0-beta.8', upgradeState: 'running' },
+      'Upgrading to 3.0.0-beta.8…',
+      false
+    ],
+    [
+      { kind: 'failed', target: '3.0.0-beta.8', error: 'npm ERR! build' },
+      'Upgrade to 3.0.0-beta.8 failed: npm ERR! build',
+      true
+    ],
+    [{ kind: 'server-newer', serverVersion: '3.0.0' }, 'Newer than this app', false],
+    [
+      { kind: 'custom-ref', installRef: 'dev', serverVersion: '2.4.0' },
+      'Installed from dev; upgrade it on the server',
+      false
+    ],
+    [
+      { kind: 'unsupported', installRef: null, reason: 'not installed by install-server.sh' },
+      'This server does not upgrade from the Mac: not installed by install-server.sh',
+      false
+    ]
+  ])('describes %j', (overrides, state, upgradeNow) => {
+    const text = describeServerVersion(status(overrides))
+    expect(text).toMatchObject({ state, upgradeNow })
+    expect(text?.version).toBe(`Version ${overrides.serverVersion ?? '3.0.0-beta.7'}`)
+  })
+
+  it('gives an older server the exact command to run on it', () => {
+    expect(
+      describeServerVersion(
+        status({
+          kind: 'manual',
+          serverVersion: undefined,
+          installRef: undefined,
+          command: 'bash ~/install-server.sh --ref v3.0.0-beta.8'
+        })
+      )
+    ).toEqual({
+      version: null,
+      state: 'Older Clave server: run this on the server',
+      tone: 'connecting',
+      command: 'bash ~/install-server.sh --ref v3.0.0-beta.8',
+      upgradeNow: false
+    })
+  })
+
+  it('offers no upgrade from a dev build, and says why', () => {
+    for (const kind of ['upgrade', 'failed'] as const)
+      expect(
+        describeServerVersion(
+          status({ kind, target: '3.0.0-beta.8', error: 'x', automatic: false })
+        )
+      ).toMatchObject({
+        state: expect.stringContaining('development build'),
+        upgradeNow: false
+      })
+  })
+
+  it('warns that an upgrade now ends the running sessions', () => {
+    expect(UPGRADE_NOW_WARNING).toBe(
+      'Upgrading restarts the server: its running sessions end and come back as ended tabs to Resume.'
+    )
   })
 })

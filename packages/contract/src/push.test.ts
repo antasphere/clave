@@ -38,6 +38,18 @@ describe('push frames', () => {
     if (Either.isRight(back) && back.right._tag === 'stream' && back.right.stream.kind === 'pty')
       expect(Array.from(back.right.stream.data)).toEqual([104, 105])
   })
+  it('carries the server version in the welcome, and decodes a welcome without one (issue #266)', () => {
+    const welcome: ServerFrame = {
+      _tag: 'welcome',
+      serverId: 'x',
+      protocol: 1,
+      version: '3.0.0-beta.9'
+    }
+    expect(decodeServerFrame(encodeServerFrame(welcome))).toEqual(Either.right(welcome))
+    expect(decodeServerFrame('{"_tag":"welcome","serverId":"x","protocol":1}')).toEqual(
+      Either.right({ _tag: 'welcome', serverId: 'x', protocol: 1 })
+    )
+  })
   it('refuses what is not a frame', () => {
     expect(Either.isLeft(decodeClientFrame('not json'))).toBe(true)
     expect(Either.isLeft(decodeClientFrame('{"_tag":"hello"}'))).toBe(true)

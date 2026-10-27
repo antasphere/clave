@@ -17,6 +17,8 @@ import { SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
 // ── Wave wcs1023, lane C: the git domain ──
 import { GitEvent } from './git'
+// ── Issue #266: the server domain ──
+import { ServerUpgradeEvent } from './server-info'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -87,7 +89,9 @@ export const ServerEvent = Schema.Union(
     body: Schema.optional(Schema.String)
   }),
   // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
-  ...GitEvent.members
+  ...GitEvent.members,
+  // ── Issue #266: the server's self-upgrade changed state ──
+  ServerUpgradeEvent
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type

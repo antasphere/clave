@@ -9,7 +9,8 @@ import {
   resourceKey,
   sessionKey,
   type SavedServerConnection,
-  type ServerConnectionStatus
+  type ServerConnectionStatus,
+  type ServerVersionStatus
 } from '@clave/contract/fleet'
 import type { LayoutSnapshot, WindowLayout } from '@clave/contract/sidebar'
 import type { SessionWrite } from '@clave/contract/sessions'
@@ -27,6 +28,8 @@ interface FleetPorts {
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
   changed(callback: () => void): () => void
   connect(endpoint: Endpoint): Promise<Backing>
+  /** Main's version decisions as it publishes them (issue #266). */
+  versions?(callback: (statuses: ServerVersionStatus[]) => void): () => void
 }
 const noop = (): void => {}
 const remote = (id: string): boolean => parseSessionKey(id).serverId !== LOCAL_SERVER_ID
@@ -1022,7 +1025,13 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       return () => {
         workspaceListeners.delete(callback)
       }
-    }
+    },
+    // ── Issue #266: main reads the servers' versions, never this window ──
+    fleetServerVersions: async (refresh) =>
+      (await ports.invoke(FLEET_IPC.versions, refresh === true)) as ServerVersionStatus[],
+    fleetUpgradeServer: async (serverId) =>
+      (await ports.invoke(FLEET_IPC.upgradeNow, serverId)) as ServerVersionStatus,
+    onFleetServerVersions: (callback) => ports.versions?.(callback) ?? noop
   }
   type LaunchSettings = Awaited<ReturnType<FleetDesktopAPI['fleetLaunchSettings']>>
   const api: ElectronAPI = {
