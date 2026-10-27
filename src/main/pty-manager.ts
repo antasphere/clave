@@ -505,6 +505,10 @@ class PtyManager {
       // The message the limit rejected, when the move is the limit's doing:
       // the reader asked once and gets the answer on the next account.
       initialInput: resendRejected ? this.rejected.get(id) : undefined,
+      // The parent, else the record's: the kill takes the record before the
+      // spawn could read it, and a spawn made without one (an older restore)
+      // would lose the child its parent (#259, V1-F1).
+      spawnedBy: previous.spawnedBy ?? ptyBackend.getSessionRecord(id)?.spawnedBy,
       ...account
     }
     return { cwd: spawn.cwd, options, resumed: conversationId !== null }

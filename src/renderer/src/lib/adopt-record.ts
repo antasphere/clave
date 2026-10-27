@@ -284,7 +284,10 @@ async function spawnFromRecord(
       workspaceId,
       // Carry the ownership forward: an adoption rewrites the record, and a
       // hidden half that came back unstamped would be a tab at the NEXT boot.
-      link: s.link
+      link: s.link,
+      // The parent too, so the restored spawn itself carries it: a later
+      // account switch respawns from these options (#259, V1-F1).
+      spawnedBy: s.spawnedBy
     })
     return { session: sessionFromRecord(s, activeWorkspaceId, info) }
   } catch (err) {

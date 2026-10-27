@@ -190,6 +190,22 @@ export async function run(t) {
     const second = await launchApp(DIR, { env: ENV, settleMs: 1500 })
     app = second.app
     await checkLineage(t, 'after a restart (reattached)', app, second.win, parent, child)
+    // An account switch respawns the restored tab from its spawn, after the
+    // kill took its record (verifier round 1, V1-F1).
+    const restarted = await second.win.evaluate(
+      (id) =>
+        window.electronAPI.restartSession(id, {
+          claudeProfileId: 'default',
+          claudeProfileLabel: 'Default'
+        }),
+      child
+    )
+    t.check(
+      'the restored child restarts on an account',
+      !restarted?.error && restarted?.id === child,
+      restarted
+    )
+    await checkLineage(t, 'restored, then switched account', app, second.win, parent, child)
 
     // ── 3. A quit that takes the tmux server with it: respawned from the records ──
     await app.close()

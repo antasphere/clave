@@ -26,6 +26,8 @@ let listCalls = 0
 const killed: string[] = []
 /** Every spawn asked for, by the id it adopts, in order. */
 const spawned: string[] = []
+/** The options each of those spawns was asked with, by id. */
+const spawnOptions = new Map<string, Record<string, unknown>>()
 /** What the by-id records read answers. */
 let byIdRecords: SessionRecord[] = []
 /** What the kernel's session list answers: id and state. */
@@ -62,6 +64,7 @@ beforeAll(async () => {
       byIdRecords.filter((r) => !filter?.ids || filter.ids.includes(r.id)),
     spawnSession: (cwd: string, options: { adoptSessionId: string }) => {
       spawned.push(options.adoptSessionId)
+      spawnOptions.set(options.adoptSessionId, options)
       inFlight++
       maxInFlight = Math.max(maxInFlight, inFlight)
       return new Promise((resolve, reject) => {
@@ -102,6 +105,7 @@ beforeEach(() => {
   listCalls = 0
   killed.length = 0
   spawned.length = 0
+  spawnOptions.clear()
   byIdRecords = []
   kernel = []
   listGate = null
@@ -339,6 +343,9 @@ describe('a record the host already runs', () => {
     const { attached } = placeRecords([{ ...record('restored'), spawnedBy: parentId }], null)
     expect(byId('restored')?.spawnedBy).toBe(parentId)
     await flush()
+    // The restore's spawn carries it as well: a later account switch
+    // respawns from those options (V1-F1).
+    expect(spawnOptions.get('restored')?.spawnedBy).toBe(parentId)
     for (const answer of [...pending.values()]) answer(true)
     await attached
     expect(byId('restored')?.spawnedBy).toBe(parentId)
