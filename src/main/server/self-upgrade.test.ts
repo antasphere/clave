@@ -24,6 +24,7 @@ import {
   NOT_SCRIPT_INSTALLED,
   UPGRADE_IDLE_MS,
   createSelfUpgrade,
+  publishedFailure,
   redactSecrets,
   readInstallFacts,
   scriptRunner,
@@ -445,7 +446,7 @@ describe('the self-upgrade', () => {
   it('reports a failed run with the end of its log, and keeps serving', async () => {
     const { upgrade, runs } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 1, tail: 'npm ERR! build failed' })
+    runs[0].end({ code: 1, summary: 'npm ERR! build failed' })
     await settle()
     expect(upgrade.info().upgrade).toMatchObject({
       state: 'failed',
@@ -470,7 +471,7 @@ describe('the self-upgrade', () => {
   it('goes back to idle when the script exits 0 with the server still up', async () => {
     const { upgrade, runs } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 0, tail: 'Already on v3.0.0' })
+    runs[0].end({ code: 0, summary: 'Already on v3.0.0' })
     await settle()
     expect(upgrade.info().upgrade).toEqual({ supported: true, state: 'idle', since: 1_000 })
   })
@@ -479,7 +480,7 @@ describe('the self-upgrade', () => {
     const { upgrade, runs, clock, statuses } = world()
     upgrade.requestUpgrade({ version: '3.0.0', when: 'idle' })
     clock.advance(UPGRADE_IDLE_MS)
-    runs[0].end({ code: 2, tail: 'boom' })
+    runs[0].end({ code: 2, summary: 'boom' })
     await settle()
     expect(statuses.map((s) => s.state)).toEqual(['waiting-for-idle', 'running', 'failed'])
   })
@@ -541,7 +542,10 @@ describe('the script runner', () => {
     const runner = scriptRunner({ dataDir, name: 'e2e', platform: 'darwin' })
     const result = await runner.start({ script, args: ['--name', 'e2e', '--ref', 'v3.0.0'] })
     expect(result.code).toBe(3)
-    expect(result.tail).toContain('last words')
+    // Nothing the script wrote through info/warn/error: only the exit and where the log is.
+    expect(result.summary).toBe(
+      `The install script failed (exit 3). Full log on the server: ${join(dataDir, 'upgrade', 'upgrade.log')}`
+    )
     const copy = join(dataDir, 'upgrade', 'install-server.sh')
     expect(readFileSync(copy, 'utf8')).toBe(readFileSync(script, 'utf8'))
     expect(statSync(join(dataDir, 'upgrade')).mode & 0o777).toBe(0o700)
@@ -656,7 +660,7 @@ describe('what a failed upgrade says on the wire (V1-F3)', () => {
       secrets: () => ['the-server-bearer-token-0123456789']
     })
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
-    runs[0].end({ code: 1, tail: 'curl answered for the-server-bearer-token-0123456789' })
+    runs[0].end({ code: 1, summary: 'curl answered for the-server-bearer-token-0123456789' })
     await settle()
     expect(upgrade.info().upgrade.error).toBe('curl answered for ***')
     upgrade.requestUpgrade({ version: '3.0.0', when: 'now' })
@@ -681,8 +685,8 @@ describe('what a failed upgrade says on the wire (V1-F3)', () => {
       })
       const result = await runner.start({ script, args: [] })
       expect(result.code).toBe(7)
-      expect(result.tail).toContain('npm ERR! registry auth failed: ***')
-      expect(result.tail).not.toContain('synthetic-secret-canary-r1026')
+      expect(result.summary).toMatch(/^The install script failed \(exit 7\)\./)
+      expect(result.summary).not.toContain('synthetic-secret-canary-r1026')
       // The log itself is private (0600) under the data directory, kept whole.
       const log = join(dir, 'data', 'upgrade', 'upgrade.log')
       expect(readFileSync(log, 'utf8')).toContain('synthetic-secret-canary-r1026')
@@ -803,7 +807,9 @@ describe('credentials in quoted and structured forms (V2-F1)', () => {
       await failed
       const text = await (await fetch(`${server.url}/server/info`, { headers: auth })).text()
       expect(text).toContain('failed')
-      expect(text).toContain('"api_key\\":***')
+      // npm-like output never leaves the server; the reason is the exit and the log.
+      expect(text).toContain('The install script failed (exit 7)')
+      expect(text).not.toContain('api_key')
       expect(text).not.toContain(secret)
       expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
     } finally {
@@ -920,4 +926,261 @@ describe('a credential masked to the end of its line (V3-F1)', () => {
       }
     }
   )
+})
+
+describe("only the install script's own messages leave the server (V4)", () => {
+  const marker = 'synthetic-multiline-credential-r1026'
+  const LOG = '/data/upgrade/upgrade.log'
+  const published = (log: string, code = 7, literals: string[] = []): string =>
+    publishedFailure({ log, code, logPath: LOG, literals })
+
+  it('keeps the last three [clave-server] lines, colours stripped, with the exit and the log path', () => {
+    const log = [
+      '── 2026-10-27T00:00:00.000Z install-server.sh --name e2e --ref v3.0.0',
+      '\u001b[0;32m[clave-server]\u001b[0m v3.0.0 is 4f1c9a2b7e3d',
+      '\u001b[0;32m[clave-server]\u001b[0m Cloning v3.0.0',
+      'npm ERR! code E401',
+      '\u001b[0;32m[clave-server]\u001b[0m Installing dependencies',
+      '\u001b[0;31m[clave-server]\u001b[0m The build did not produce out/main/server-entry.js'
+    ].join('\n')
+    expect(published(log, 1)).toBe(
+      'Cloning v3.0.0\nInstalling dependencies\nThe build did not produce out/main/server-entry.js (exit 1). Full log on the server: /data/upgrade/upgrade.log'
+    )
+  })
+
+  it('says only the exit and the log path when the script said nothing of its own', () => {
+    expect(published('npm ERR! code E401\nnpm ERR! auth failed', 3)).toBe(
+      'The install script failed (exit 3). Full log on the server: /data/upgrade/upgrade.log'
+    )
+  })
+
+  it('never publishes a line the script did not write, whatever it holds', () => {
+    const log = [
+      `npm ERR! 401 Unauthorized - GET https://registry.example/x - ${marker}`,
+      `npm ERR! //registry.example/:_authToken=${marker}`,
+      `git: remote: invalid credentials ${marker}`,
+      '[clave-server] Could not read the release of antasphere/clave'
+    ].join('\n')
+    const out = published(log, 1)
+    expect(out).not.toContain(marker)
+    expect(out).not.toContain('npm ERR!')
+    expect(out).not.toContain('git:')
+    expect(out).toBe(
+      'Could not read the release of antasphere/clave (exit 1). Full log on the server: /data/upgrade/upgrade.log'
+    )
+  })
+
+  it("keeps the useful reason useful: the script's own line, its URL credential masked", () => {
+    expect(published('[clave-server] Could not reach https://u:p@host/clave.git', 1)).toBe(
+      'Could not reach https://***@host/clave.git (exit 1). Full log on the server: /data/upgrade/upgrade.log'
+    )
+  })
+
+  it.each<[string, string, string[]]>([
+    ['an LF quoted shell continuation', `PASSWORD='first\n${marker}'\nnpm ERR! code E401`, []],
+    ['a CRLF quoted shell continuation', `PASSWORD="first\r\n${marker}"\r\nnpm ERR! code E401`, []],
+    ['a YAML block scalar', `password: |\n  ${marker}\nnpm ERR! code E401`, []],
+    ['a multi-line YAML block scalar', `password: |\n  first\n  ${marker}\nnpm ERR! code E401`, []],
+    [
+      'a script line quoting a known multi-line value',
+      `[clave-server] value was first\n[clave-server] ${marker}`,
+      [`first\n[clave-server] ${marker}`]
+    ]
+  ])('publishes no part of %s', (_name, log, literals) => {
+    expect(published(log, 7, literals)).not.toContain(marker)
+  })
+})
+
+describe('the redaction passes, one line at a time (V4-F2, V4-F3)', () => {
+  const marker = 'synthetic-multiline-credential-r1026'
+  it.each<[string, string, string[]]>([
+    ['a known multi-line value', `note=first\n${marker}`, [`first\n${marker}`]],
+    [
+      'a known multi-line value, JSON-escaped',
+      JSON.stringify({ note: `first\n${marker}` }),
+      [`first\n${marker}`]
+    ],
+    ['a literal that is also the key', `password=${marker}`, ['password']],
+    [
+      'a literal that is also a quoted JSON key',
+      JSON.stringify({ password: marker }),
+      ['password']
+    ],
+    [
+      'the longest of overlapping raw literals',
+      `note=prefix"${marker}`,
+      ['prefix', `prefix"${marker}`]
+    ],
+    [
+      'the longest of overlapping escaped literals',
+      JSON.stringify({ note: `prefix"${marker}` }),
+      ['prefix', `prefix"${marker}`]
+    ],
+    ['non-breaking and thin spaces', `password${'\u00a0'}:${'\u2009'}${marker}`, []],
+    ['tabs', `PASSWORD\t=\t${marker}`, []]
+  ])('leaves no part of %s', (_name, input, literals) => {
+    expect(redactSecrets(input, literals)).not.toContain(marker)
+  })
+
+  it('runs the key pass before a literal can eat the key', () => {
+    expect(redactSecrets(`password=${marker}`, ['password'])).not.toContain(marker)
+    expect(redactSecrets(`password=${marker}`, ['password'])).toMatch(/=\*\*\*$/)
+  })
+
+  it.each<[string, string, string]>([
+    ['CR alone', `password=${marker}\rnpm ERR! code E401`, 'password=***\rnpm ERR! code E401'],
+    ['CRLF', `password=${marker}\r\nnpm ERR! code E401`, 'password=***\r\nnpm ERR! code E401'],
+    [
+      'the rest of the line',
+      `password=${marker}, code=E401\nnpm ERR! code E401`,
+      'password=***\nnpm ERR! code E401'
+    ]
+  ])('stops at the end of the line: %s', (_name, input, expected) => {
+    expect(redactSecrets(input)).toBe(expected)
+  })
+
+  it.each(['\n', '\r', '\r\n'])(
+    'an empty credential value never takes the next line (%j)',
+    (eol) => {
+      const next = '[clave-server] npm ERR! code E401: Unable to authenticate'
+      expect(redactSecrets(`NPM_TOKEN=${eol}${next}`)).toBe(`NPM_TOKEN=***${eol}${next}`)
+    }
+  )
+
+  it.each([
+    'npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! path /srv/clave/node_modules',
+    'git: fatal: Authentication failed for https://github.com/antasphere/clave.git',
+    'error: pathspec v3.0.0-beta.10 did not match any file(s) known to git',
+    'systemctl: Failed to connect to bus: No medium found',
+    'npm ERR! ERESOLVE unable to resolve dependency tree',
+    'Could not prepare the upgrade: EACCES: permission denied, mkdir /srv/clave/upgrade'
+  ])('keeps an ordinary error exact: %j', (line) => {
+    expect(redactSecrets(line)).toBe(line)
+  })
+})
+
+describe('the published failure over authenticated HTTP, through the real runner (V4)', () => {
+  const marker = 'synthetic-multiline-credential-r1026'
+  const pem = [
+    '-----BEGIN PRIVATE KEY-----',
+    'synthetic-prefix-line-1',
+    'synthetic-prefix-line-2',
+    'synthetic-known-private-key-body-r1026',
+    'synthetic-body-line-4',
+    'synthetic-body-line-5',
+    'synthetic-body-line-6',
+    'synthetic-body-line-7',
+    '-----END PRIVATE KEY-----'
+  ].join('\n')
+  const shellQuote = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`
+
+  async function failOver(
+    body: string,
+    env: NodeJS.ProcessEnv = {}
+  ): Promise<{ state: string; error: string; logged: string }> {
+    const { startEmbedded } = await import('@clave/server')
+    const { FakeSource } = await import('@clave/server/test-support')
+    const dir = mkdtempSync(join(tmpdir(), 'clave-upgrade-published-'))
+    let upgrade: SelfUpgrade | undefined
+    let server: Awaited<ReturnType<typeof startEmbedded>> | undefined
+    try {
+      const script = join(dir, 'install-server.sh')
+      writeFileSync(script, `#!/bin/bash\n${body}\n`)
+      upgrade = createSelfUpgrade({
+        version: '3.0.0-beta.6',
+        facts: { name: 'e2e', script, ref: 'v3.0.0-beta.6' },
+        runner: scriptRunner({
+          dataDir: join(dir, 'data'),
+          name: 'e2e',
+          platform: 'darwin',
+          env: { HOME: dir, PATH: '/usr/bin:/bin', ...env }
+        }),
+        activity: { busy: () => false, subscribe: () => () => {} }
+      })
+      server = await startEmbedded({ ports: { sessions: new FakeSource(), serverInfo: upgrade } })
+      const failed = new Promise<void>((done) =>
+        upgrade!.subscribe((status) => {
+          if (status.state === 'failed') done()
+        })
+      )
+      const auth = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }
+      const asked = await fetch(`${server.url}/server/upgrade`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ version: '3.0.0-beta.9', when: 'now' })
+      })
+      expect(asked.status).toBe(200)
+      await failed
+      const info = (await (await fetch(`${server.url}/server/info`, { headers: auth })).json()) as {
+        upgrade: { state: string; error: string }
+      }
+      expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
+      return {
+        ...info.upgrade,
+        logged: readFileSync(join(dir, 'data', 'upgrade', 'upgrade.log'), 'utf8')
+      }
+    } finally {
+      upgrade?.close()
+      await server?.stop()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it.each<[string, string, NodeJS.ProcessEnv]>([
+    ['a multi-line shell value', `PASSWORD='first\n${marker}'\nnpm ERR! code E401`, {}],
+    ['a multi-line YAML value', `password: |\n  first\n  ${marker}\nnpm ERR! code E401`, {}],
+    [
+      'a value whose key is a known literal',
+      `password=${marker}\nnpm ERR! code E401`,
+      { PASSWORD: 'password' }
+    ]
+  ])('publishes no part of %s', async (_name, payload, env) => {
+    const out = await failOver(`printf '%s\\n' ${shellQuote(payload)}\nexit 7`, env)
+    expect(out.state).toBe('failed')
+    expect(out.error).not.toContain(marker)
+    expect(out.error).toMatch(
+      /^The install script failed \(exit 7\)\. Full log on the server: .*upgrade\.log$/
+    )
+  })
+
+  it('publishes no part of a nine-line key the environment holds, and keeps the private log whole', async () => {
+    const out = await failOver('printf "PRIVATE_KEY=%s\\n" "$PRIVATE_KEY"\nexit 7', {
+      PRIVATE_KEY: pem
+    })
+    expect(out.error).not.toContain('synthetic-known-private-key-body-r1026')
+    expect(out.error).not.toContain('synthetic-body-line')
+    expect(out.logged).toContain('synthetic-known-private-key-body-r1026')
+  })
+
+  it('keeps the script line after an empty credential line', async () => {
+    const out = await failOver(
+      "printf '%s\\n' 'NPM_TOKEN='\necho '[clave-server] npm ERR! code E401: Unable to authenticate' >&2\nexit 7"
+    )
+    expect(out.error).toMatch(
+      /^npm ERR! code E401: Unable to authenticate \(exit 7\)\. Full log on the server: .*upgrade\.log$/
+    )
+  })
+
+  it("publishes the script's own error with its URL credential masked", async () => {
+    const out = await failOver(
+      "printf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'Could not reach https://u:p@host/clave.git' >&2\nexit 1"
+    )
+    expect(out.error).toMatch(
+      /^Could not reach https:\/\/\*\*\*@host\/clave\.git \(exit 1\)\. Full log on the server: .*upgrade\.log$/
+    )
+  })
+
+  it("never publishes the npm lines before the script's own error, with their secret", async () => {
+    const out = await failOver(
+      [
+        `echo 'npm ERR! 401 Unauthorized ${marker}' >&2`,
+        `echo 'npm ERR! //registry.example/:_authToken=${marker}' >&2`,
+        "echo '[clave-server] The build did not produce out/main/server-entry.js' >&2",
+        'exit 1'
+      ].join('\n')
+    )
+    expect(out.error).not.toContain(marker)
+    expect(out.error).not.toContain('npm ERR!')
+    expect(out.error).toMatch(/^The build did not produce out\/main\/server-entry\.js \(exit 1\)/)
+  })
 })

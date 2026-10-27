@@ -156,13 +156,6 @@ export function upgradeLaunch(
   }
 }
 
-export interface RunResult {
-  /** The script's exit code (systemd-run --wait passes it on); 1 when killed by a signal. */
-  readonly code: number
-  /** The last lines of the log, for the reason a Mac shows. */
-  readonly tail: string
-}
-
 export interface UpgradeRunner {
   /** Starts the script; resolves when it ends while this server is still up,
    *  rejects when it could not start. */
@@ -185,31 +178,31 @@ function findSystemdRun(path: string): string | null {
 }
 
 const ANSI = new RegExp(String.raw`\u001b\[[0-9;]*m`, 'g')
-const TAIL_BYTES = 8 * 1024
-const TAIL_LINES = 6
+/** How much of one run's output is read back for its published failure. */
+const RUN_BYTES = 1024 * 1024
 
-/** The last few non-empty lines of the log, colours stripped. */
-function logTail(log: string): string {
+/** What this run wrote to the log, from `offset` on (the last `RUN_BYTES` of it). */
+function runLog(log: string, offset: number): string {
   let fd: number | undefined
   try {
     fd = openSync(log, 'r')
     const size = fstatSync(fd).size
-    const length = Math.min(size, TAIL_BYTES)
-    const buffer = Buffer.alloc(length)
-    readSync(fd, buffer, 0, length, size - length)
-    return buffer
-      .toString('utf8')
-      .replace(ANSI, '')
-      .split('\n')
-      .map((line) => line.trimEnd())
-      .filter((line) => line.trim() !== '')
-      .slice(-TAIL_LINES)
-      .join('\n')
+    const start = Math.max(offset, size - RUN_BYTES)
+    const buffer = Buffer.alloc(Math.max(0, size - start))
+    readSync(fd, buffer, 0, buffer.length, start)
+    return buffer.toString('utf8')
   } catch {
     return ''
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
+}
+
+export interface RunResult {
+  /** The script's exit code (systemd-run --wait passes it on); 1 when killed by a signal. */
+  readonly code: number
+  /** The failure as it may leave the server (`publishedFailure`). */
+  readonly summary: string
 }
 
 export interface ScriptRunnerOptions {
@@ -220,6 +213,8 @@ export interface ScriptRunnerOptions {
   /** Where `systemd-run` is; found on PATH by default. */
   readonly systemdRun?: (path: string) => string | null
   readonly now?: () => number
+  /** Literal secrets the published failure must never carry: the server's own token. */
+  readonly secrets?: () => readonly string[]
 }
 
 /** The real runner: the script copied to `<dataDir>/upgrade/`, its output in `upgrade.log` there. */
@@ -227,8 +222,8 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const now = options.now ?? Date.now
-  const secrets = credentialValues(env)
-  const fail = (message: string): Error => new Error(redactSecrets(message, secrets))
+  const secrets = (): string[] => [...credentialValues(env), ...(options.secrets?.() ?? [])]
+  const fail = (message: string): Error => new Error(redactSecrets(message, secrets()))
   return {
     start: ({ script, args }) =>
       new Promise<RunResult>((resolve, reject) => {
@@ -247,6 +242,7 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
           return
         }
         const path = env.PATH ?? '/usr/bin:/bin'
+        const offset = fstatSync(fd).size
         writeSync(fd, `\n── ${new Date(now()).toISOString()} install-server.sh ${args.join(' ')}\n`)
         const launch = upgradeLaunch(platform, {
           name: options.name,
@@ -277,7 +273,16 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
           })
           child.once('exit', (code) => {
             closeSync(fd)
-            resolve({ code: code ?? 1, tail: redactSecrets(logTail(log), secrets) })
+            const exit = code ?? 1
+            resolve({
+              code: exit,
+              summary: publishedFailure({
+                log: runLog(log, offset),
+                code: exit,
+                logPath: log,
+                literals: secrets()
+              })
+            })
           })
           // Its own group, not waited on by this process's end; the exit
           // listener still hears it while this server lives.
@@ -294,13 +299,16 @@ export function scriptRunner(options: ScriptRunnerOptions): UpgradeRunner {
 const CREDENTIAL_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)/i
 /** Shorter literals would redact ordinary words. */
 const MIN_LITERAL = 6
+/** Horizontal whitespace only: no pattern may cross a line end (`\s` would). */
+const H = '[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]'
+
 const REDACTIONS: ReadonlyArray<[RegExp, string]> = [
   // URL userinfo: a repository URL saved with its password.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@'],
   // An unquoted Authorization header: its whole value, scheme included. A
   // quoted one is a key and a value, below.
-  [/\b(authorization)(\s*[:=]\s*)(?!["'])[^\r\n]*/gi, '$1$2***'],
-  [/\b(bearer)\s+[^\s'"]+/gi, '$1 ***'],
+  [new RegExp(`\\b(authorization)(${H}*[:=]${H}*)(?!["'])[^\\r\\n]*`, 'gi'), '$1$2***'],
+  [new RegExp(`\\b(bearer)${H}+[^\\s'"]+`, 'gi'), '$1 ***'],
   // Well-known token shapes. A long hex run alone (a commit) is left readable.
   [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, '***'],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, '***'],
@@ -313,8 +321,10 @@ const REDACTIONS: ReadonlyArray<[RegExp, string]> = [
  *  then `=` or `:`: everything after it, to the end of the line, is masked.
  *  Parsing the value (its quotes, escapes, commas, arrays) kept leaving a
  *  remainder; losing the rest of a line that carries a credential is the cost. */
-const CREDENTIAL_PAIR =
-  /(["']?)\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\1(\s*[=:]\s*)[^\r\n]*/gi
+const CREDENTIAL_PAIR = new RegExp(
+  `(["']?)\\b([A-Za-z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|AUTH|CREDENTIAL)[A-Za-z0-9_.-]*)\\1(${H}*[=:]${H}*)[^\\r\\n]*`,
+  'gi'
+)
 
 const maskPair = (_match: string, quote: string, key: string, sep: string): string =>
   `${quote}${key}${quote}${sep}***`
@@ -327,7 +337,8 @@ const maskPair = (_match: string, quote: string, key: string, sep: string): stri
  * is private to the server's user and keeps what the script wrote.
  */
 export function redactSecrets(text: string, literals: readonly string[] = []): string {
-  let out = text
+  // The key pass first, so a literal can never eat the key it needs.
+  let out = text.replace(CREDENTIAL_PAIR, maskPair)
   // Each literal also in its JSON-escaped spelling, as a serialized config prints it.
   const spellings = literals.flatMap((literal) => {
     const escaped = JSON.stringify(literal).slice(1, -1)
@@ -336,7 +347,40 @@ export function redactSecrets(text: string, literals: readonly string[] = []): s
   for (const literal of spellings.sort((a, b) => b.length - a.length))
     if (literal.length >= MIN_LITERAL) out = out.split(literal).join('***')
   for (const [pattern, replacement] of REDACTIONS) out = out.replace(pattern, replacement)
-  return out.replace(CREDENTIAL_PAIR, maskPair)
+  return out
+}
+
+/** The prefix of every line `install-server.sh` writes through info, warn and error. */
+const SCRIPT_LINE = '[clave-server] '
+const SCRIPT_LINES = 3
+
+/**
+ * The failure of a run as it may leave the server, to the wire and to a
+ * Mac's Servers page. Only the install script's own messages: the last
+ * three lines it wrote through info/warn/error, never git's, npm's or
+ * systemd's, whose output can carry anything. The whole run is redacted
+ * first, so a value spanning lines is caught whole before any line is
+ * picked, and the result once more. The exit code and the private log's
+ * path close it.
+ */
+export function publishedFailure(input: {
+  log: string
+  code: number
+  logPath: string
+  literals?: readonly string[]
+}): string {
+  const literals = input.literals ?? []
+  const own = redactSecrets(input.log.replace(ANSI, ''), literals)
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith(SCRIPT_LINE) && line.length > SCRIPT_LINE.length)
+    .slice(-SCRIPT_LINES)
+    .map((line) => line.slice(SCRIPT_LINE.length))
+  const where = `Full log on the server: ${input.logPath}`
+  const text = own.length
+    ? `${own.join('\n')} (exit ${input.code}). ${where}`
+    : `The install script failed (exit ${input.code}). ${where}`
+  return redactSecrets(text, literals)
 }
 
 /** The values of the variables of `env` whose names say they hold a credential. */
@@ -443,7 +487,7 @@ export function createSelfUpgrade(options: SelfUpgradeOptions): SelfUpgrade {
                 state: 'failed',
                 target,
                 mode,
-                error: redact(result.tail || `install-server.sh exited with ${result.code}`),
+                error: redact(result.summary),
                 since: clock.now()
               }
         )

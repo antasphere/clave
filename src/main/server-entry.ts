@@ -296,14 +296,19 @@ async function main(): Promise<void> {
   let selfUpgrade: SelfUpgrade | undefined
   if (config.daemon) {
     const facts = readInstallFacts(process.argv.slice(2))
+    // A failure's text never carries this server's token (its token file holds the same).
+    const secrets = (): string[] => (identity ? [identity.token] : [])
     selfUpgrade = createSelfUpgrade({
       version,
       facts,
-      runner: scriptRunner({ dataDir, name: 'reason' in facts ? 'clave-server' : facts.name }),
+      runner: scriptRunner({
+        dataDir,
+        name: 'reason' in facts ? 'clave-server' : facts.name,
+        secrets
+      }),
       activity: sessionActivity(sessionManager),
       idleMs: upgradeIdleMs(process.argv.slice(2), TEST_NO_ACTIVATE),
-      // A failure's text never carries this server's token (its token file holds the same).
-      secrets: () => (identity ? [identity.token] : [])
+      secrets
     })
   }
   const server = await startEmbedded({

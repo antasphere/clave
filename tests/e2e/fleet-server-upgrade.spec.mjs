@@ -36,7 +36,7 @@ function standIn(dir) {
   // written into the script rather than found beside it.
   writeFileSync(
     script,
-    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\necho 'stand-in build failed'\nexit 3\n`
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(record)}\nprintf '\\033[0;31m[clave-server]\\033[0m %s\\n' 'stand-in build failed' >&2\nexit 3\n`
   )
   chmodSync(script, 0o755)
   return { script, record }
