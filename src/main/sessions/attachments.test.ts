@@ -33,7 +33,7 @@ test('copies a pasted image durably and encodes the actual bytes for the provide
   await expect(preparePrompt('', [file], false)).rejects.toThrow('Send as file reference')
   const reference = await preparePrompt('look', [{ ...file, delivery: 'reference' }], false)
   expect(reference.images).toEqual([])
-  expect(reference.text).toContain('look\n\nAttached local files')
+  expect(reference.text).toContain('look\n\nAttachments, by the marker')
   expect(reference.text).toContain(JSON.stringify({ name: file.name, path: file.path }))
 })
 test('names a pasted image by its bytes, not by what the clipboard called it', async () => {
@@ -117,4 +117,67 @@ test('accepts exactly 20 MiB and rejects 20 MiB plus one byte and five valid 5 M
   }
   await refuses([file, file, file, nearlyFull, tiny])
   await refuses(Array(5).fill(file))
+})
+
+test('an image no provider takes as content is a file from the start: the agent gets its path', async () => {
+  const directory = await setup()
+  const heic = join(directory, 'photo.heic')
+  await writeFile(heic, Buffer.from('not really a heic'))
+  const file = await prepareAttachment(directory, { path: heic })
+  expect(file).toMatchObject({ mimeType: 'image/heic', delivery: 'reference' })
+  const prompt = await preparePrompt('see', [{ ...file, label: 'File #1' }], true)
+  expect(prompt.images).toEqual([])
+  expect(prompt.text).toContain(
+    '[File #1] ' + JSON.stringify({ name: 'photo.heic', path: file.path })
+  )
+  // The SVG and AVIF cases follow the same rule.
+  const svg = join(directory, 'mark.svg')
+  await writeFile(svg, '<svg/>')
+  expect((await prepareAttachment(directory, { path: svg })).delivery).toBe('reference')
+})
+test('markers key every line the provider reads, sessions included', async () => {
+  const directory = await setup()
+  const shot = await prepareAttachment(directory, { name: 'shot.png', bytes: png })
+  const notes = join(directory, 'notes.txt')
+  await writeFile(notes, 'n')
+  const file = await prepareAttachment(directory, { path: notes })
+  const prompt = await preparePrompt(
+    'finish when [Session #1] is done, see [Image #1] and [File #1]',
+    [
+      { ...shot, label: 'Image #1' },
+      { ...file, label: 'File #1' },
+      {
+        id: 's',
+        label: 'Session #1',
+        delivery: 'session',
+        sessionId: 'lane-a',
+        name: 'Lane A',
+        agent: 'Claude Code',
+        cwd: '/work/a'
+      }
+    ],
+    true
+  )
+  expect(prompt.images).toHaveLength(1)
+  const lines = prompt.text.split('\n')
+  expect(lines[0]).toBe('finish when [Session #1] is done, see [Image #1] and [File #1]')
+  expect(lines).toContain('- an image: sent with this message as image content.')
+  expect(lines).toContain('- a local file: read the current contents at its path.')
+  expect(
+    lines.some((l) => l.startsWith('- a Clave session') && l.includes('clave_read_session'))
+  ).toBe(true)
+  expect(lines).toContain('[Image #1] ' + JSON.stringify({ image: 'shot.png' }))
+  expect(lines).toContain('[File #1] ' + JSON.stringify({ name: 'notes.txt', path: file.path }))
+  expect(lines).toContain(
+    '[Session #1] ' +
+      JSON.stringify({ session: 'lane-a', name: 'Lane A', agent: 'Claude Code', cwd: '/work/a' })
+  )
+  // A session needs no file on disk; a session id that is not one is refused.
+  await expect(
+    preparePrompt(
+      'x',
+      [{ id: 's', delivery: 'session', sessionId: '../x', name: 'n', agent: 'a', cwd: '' }],
+      true
+    )
+  ).rejects.toThrow()
 })

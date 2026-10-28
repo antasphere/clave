@@ -58,6 +58,21 @@ const inputs: unknown[] = [
       }
     ]
   },
+  {
+    type: 'user_message',
+    text: 'finish when [Session #1] is done',
+    attachments: [
+      {
+        id: 'b',
+        label: 'Session #1',
+        delivery: 'session',
+        sessionId: 'sess-1',
+        name: 'Lane A',
+        agent: 'Claude Code',
+        cwd: '/work/a'
+      }
+    ]
+  },
   { type: 'permission_response', id: 'p1', optionId: 'allow-once' },
   { type: 'permission_response', id: 'p1', optionId: 'answer', answers: { q: 'yes' } },
   { type: 'interrupt' },

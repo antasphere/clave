@@ -3,7 +3,11 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electro
 import { open } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { AttachmentSchema, MAX_IMAGE_BYTES, type AttachmentPreview } from '../../shared/attachments'
+import {
+  FileAttachmentSchema,
+  MAX_IMAGE_BYTES,
+  type AttachmentPreview
+} from '../../shared/attachments'
 import { prepareAttachment, readBounded } from '../sessions/attachments'
 
 /* The composer's file operations, one channel: prepare a file for a session's
@@ -28,7 +32,7 @@ const requestSchema = z
       .regex(/^[a-zA-Z0-9_-]{1,128}$/)
       .optional(),
     source: sourceSchema.optional(),
-    file: AttachmentSchema.optional()
+    file: FileAttachmentSchema.optional()
   })
   .strict()
 

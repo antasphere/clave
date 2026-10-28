@@ -18,7 +18,7 @@ import type { AttachmentSource as FileAttachmentSource } from '@clave/contract/f
 import type { GitStatusResult as WireGitStatus, GitWatchSubscription } from '@clave/contract/git'
 import type { ServerEvent } from '@clave/contract/events'
 import type { SessionEvent, SessionStream, SessionInput } from '../shared/session-model'
-import type { Attachment, AttachmentSource } from '../shared/attachments'
+import { isFileAttachment, type AttachmentSource, type FileAttachment } from '../shared/attachments'
 import { BUILT_IN_LAUNCH_PROFILES } from '../shared/agent-launch'
 import type { Workspace } from '../shared/workspace-types'
 import { orderByIds } from '../shared/workspace-order'
@@ -550,7 +550,9 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
     const ref = parseSessionKey(sessionId)
     return {
       ...event,
+      // A session record names a tab, not a file: it carries no path to scope.
       attachments: event.attachments.map((file) => {
+        if (!isFileAttachment(file)) return file
         const path = resourceKey('file', ref.serverId, file.path)
         attachmentSessions.set(path, ref.sessionId)
         return { ...file, path }
@@ -1371,7 +1373,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
             }
           }
         ),
-      preview: async (file: Attachment) => {
+      preview: async (file: FileAttachment) => {
         const ref = parseResourceKey('file', file.path)
         if (ref.serverId === LOCAL_SERVER_ID) return local.sessionsFiles.preview(file)
         const { api } = await backing(ref.serverId)
@@ -1772,6 +1774,7 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       input = {
         ...input,
         attachments: input.attachments.map((file) => {
+          if (!isFileAttachment(file)) return file
           const ref = parseResourceKey('file', file.path)
           if (ref.serverId !== owner) throw new Error('Attachment belongs to a different server.')
           return remote(id) ? { ...file, path: ref.id } : file

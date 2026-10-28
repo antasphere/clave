@@ -5,9 +5,11 @@ import { randomUUID } from 'node:crypto'
 import {
   AttachmentsSchema,
   attachmentIssue,
+  IMAGE_MIME_TYPES,
+  markerOf,
   MAX_IMAGE_BYTES,
   MAX_TOTAL_IMAGE_BYTES,
-  type Attachment,
+  type FileAttachment,
   type AttachmentSource,
   type ProviderImage
 } from '../../shared/attachments'
@@ -46,7 +48,7 @@ function transient(path: string): boolean {
 export async function prepareAttachment(
   directory: string,
   source: AttachmentSource
-): Promise<Attachment> {
+): Promise<FileAttachment> {
   const id = randomUUID()
   let path = source.path
   let name = path ? basename(path) : basename(source.name || 'Pasted image.png')
@@ -78,20 +80,26 @@ export async function prepareAttachment(
   }
   const info = await stat(path)
   const mimeType = MIME[extname(name).toLowerCase()] ?? 'application/octet-stream'
+  // An image in a format no provider takes as image content (HEIC, SVG,
+  // AVIF) is a file from the start: the agent gets its path and does what it
+  // can with it, rather than the composer refusing the message until the
+  // reader finds the downgrade button.
   return {
     id,
     path,
     name,
     mimeType,
     size: info.size,
-    delivery: mimeType.startsWith('image/') ? 'image' : 'reference'
+    delivery: IMAGE_MIME_TYPES.includes(mimeType) ? 'image' : 'reference'
   }
 }
-/** Build what the provider receives. Every attachment is checked again here,
- *  at send time — the file may have moved since it was added, and a
- *  renderer's record of a file is never taken on trust. References are
- *  appended to the text as one line per file; images are read and encoded,
- *  and only go when the adapter takes image content. */
+/** Build what the provider receives. Every file is checked again here, at
+ *  send time — the file may have moved since it was added, and a renderer's
+ *  record of a file is never taken on trust. Images are read and encoded, and
+ *  only go when the adapter takes image content; files and sessions are
+ *  appended to the text as one line each, keyed by the marker the text
+ *  refers to them by (`[File #1]`, `[Session #1]`), so the agent reads
+ *  "finish when [Session #1] is done" and knows which tab that is. */
 export async function preparePrompt(
   text: string,
   input: unknown,
@@ -100,8 +108,21 @@ export async function preparePrompt(
   const attachments = AttachmentsSchema.parse(input ?? [])
   let total = 0
   const images: ProviderImage[] = []
-  const references: string[] = []
+  const lines: string[] = []
+  const key = (file: { label?: string }): string => (markerOf(file) ? markerOf(file) + ' ' : '')
   for (const file of attachments) {
+    if (file.delivery === 'session') {
+      lines.push(
+        key(file) +
+          JSON.stringify({
+            session: file.sessionId,
+            name: file.name,
+            agent: file.agent,
+            cwd: file.cwd
+          })
+      )
+      continue
+    }
     if (!isAbsolute(file.path)) throw new Error('Attachment paths must be absolute.')
     const info = await stat(file.path).catch(() => {
       throw new Error(`File is unavailable: ${file.name}. Remove it or choose it again.`)
@@ -109,7 +130,7 @@ export async function preparePrompt(
     if (!info.isFile()) throw new Error('Folders and special files cannot be attached.')
     await access(file.path, constants.R_OK)
     if (file.delivery === 'reference') {
-      references.push(JSON.stringify({ name: file.name, path: file.path }))
+      lines.push(key(file) + JSON.stringify({ name: file.name, path: file.path }))
       continue
     }
     const issue = attachmentIssue({ ...file, size: info.size }, imagesSupported)
@@ -122,9 +143,17 @@ export async function preparePrompt(
     if (!mimeType || mimeType !== file.mimeType)
       throw new Error(`${file.name}: image contents do not match the file format.`)
     images.push({ name: file.name, mimeType, data: bytes.toString('base64') })
+    if (file.label) lines.push(key(file) + JSON.stringify({ image: file.name }))
   }
-  const suffix = references.length
-    ? `Attached local files (read the current contents at these paths):\n${references.join('\n')}`
-    : ''
+  const has = (delivery: string): boolean => attachments.some((f) => f.delivery === delivery)
+  const legend = [
+    'Attachments, by the marker the message refers to them by:',
+    has('image') ? '- an image: sent with this message as image content.' : '',
+    has('reference') ? '- a local file: read the current contents at its path.' : '',
+    has('session')
+      ? '- a Clave session (another tab of this app): read it with clave_read_session, message it with clave_send_to_session, by its session id.'
+      : ''
+  ].filter(Boolean)
+  const suffix = lines.length ? [...legend, ...lines].join('\n') : ''
   return { text: [text, suffix].filter(Boolean).join('\n\n'), images }
 }

@@ -74,12 +74,11 @@ import { useEarlier, type EarlierPage } from './earlier'
 import { EarlierLoading } from './EarlierLoading'
 import {
   attachmentIssue,
-  MAX_ATTACHMENTS,
-  MAX_IMAGE_BYTES,
   MAX_TOTAL_IMAGE_BYTES,
-  type Attachment,
-  type AttachmentSource
+  type Attachment
 } from '../../../src/shared/attachments'
+import { useComposerAttachments } from './composer-attachments'
+import { DropDrawing } from './DropDrawing'
 import {
   failureText,
   filesAndFolders,
@@ -91,13 +90,6 @@ import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/compone
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
 import type { ChatViewProps } from './ChatView'
 
-/** A file on its way into the composer: named at once, a chip once main has
- *  prepared it, an error in its place when main refused it. */
-interface Preparation {
-  id: string
-  name: string
-  error?: string
-}
 /** What a drag carries: files from a file manager or another app, or the
  *  paths Clave's own file and git panels write as text. */
 const filesDrag = (dt: DataTransfer): boolean =>
@@ -456,15 +448,11 @@ export function TerminalView({
   // The draft is the host's, per session, so it survives this view being
   // unmounted and mounted again (PRDCT-2620); the attachments stay here.
   const { draft, setDraft, recall } = useMessageHistory(session.id, conversation.entries)
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [preparations, setPreparations] = useState<Preparation[]>([])
   const [imagesSupported, setImagesSupported] = useState(false)
   const [sending, setSending] = useState(false)
   // A files drag over the pane, for the overlay; a paths drag over the composer.
   const [dragging, setDragging] = useState<'files' | 'paths' | null>(null)
   const dragDepth = useRef(0)
-  // Preparations the reader removed before main answered; their file is dropped on arrival.
-  const withdrawn = useRef(new Set<string>())
   const [pending, setPending] = useState<string[]>([])
   // The host's own panel, open in the dock above the composer: the /resume
   // picker, or the /mcp and /plugin panels headless Claude has no menu for.
@@ -592,6 +580,20 @@ export function TerminalView({
     setDraft('')
     setPanel(which)
   }
+  // The pane's root, where a sidebar tab is dropped (`lib/session-drag.ts`).
+  const pane = useRef<HTMLDivElement>(null)
+  const {
+    attachments,
+    preparations,
+    sessionsOver,
+    addFiles,
+    insertAtCaret,
+    withdraw,
+    changeAttachments,
+    onDraftChange,
+    clearSent,
+    restore
+  } = useComposerAttachments({ sessionId: session.id, closed, setDraft, textarea, pane, report })
   // A message can go while files are still being prepared or one still
   // needs the reader's call on how to send it: neither, until they are settled.
   const filesBlocked =
@@ -602,9 +604,10 @@ export function TerminalView({
     if (!ready || sending || state === 'ended' || !hasDraft || filesBlocked) return
     const typedPanel = hostPanels ? hostPanelFor(draft) : null
     if (typedPanel) return openPanel(typedPanel)
-    const imageBytes = attachments
-      .filter((file) => file.delivery === 'image')
-      .reduce((sum, file) => sum + file.size, 0)
+    const imageBytes = attachments.reduce(
+      (sum, file) => sum + (file.delivery === 'image' ? file.size : 0),
+      0
+    )
     if (imageBytes > MAX_TOTAL_IMAGE_BYTES)
       return report('Images in one message must total 20 MiB or less.')
     const text = draft
@@ -619,7 +622,7 @@ export function TerminalView({
       })
       lastSent.current = { text, attachments: files }
       setDraft((current) => (current === text ? '' : current))
-      setAttachments((current) => (current === files ? [] : current))
+      clearSent(files)
     } catch (error) {
       report(error)
     } finally {
@@ -687,73 +690,10 @@ export function TerminalView({
       dispatch({ withdraw: true })
       if (last && !draft.trim() && !attachments.length) {
         setDraft(last.text)
-        setAttachments(last.attachments)
+        restore(last.attachments)
       }
     }
     textarea.current?.focus()
-  }
-  /* Files into the composer, from a drop, a paste or the picker. Each is
-     named at once as a chip in preparation, then handed to main to validate,
-     copy out of a temp folder if it lives in one, and type; the record main
-     returns becomes the attachment. A file the renderer holds only as bytes
-     (a pasted screenshot has no path) is sent as bytes and written by main. */
-  const addFiles = async (sources: (File | string)[]): Promise<void> => {
-    if (closed) return
-    const queued: { source: File | string; key: string; name: string; path: string }[] = []
-    let room = MAX_ATTACHMENTS - attachments.length - preparations.length
-    for (const source of sources) {
-      if (room-- <= 0) {
-        report(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
-        break
-      }
-      const path = typeof source === 'string' ? source : window.electronAPI.getPathForFile(source)
-      const name =
-        (typeof source === 'string' ? source.split(/[\\/]/).pop() : source.name) || 'Pasted image'
-      queued.push({ source, key: crypto.randomUUID(), name, path })
-      setPreparations((current) => [...current, { id: queued.at(-1)!.key, name }])
-    }
-    for (const { source, key, name, path } of queued) {
-      if (withdrawn.current.has(key)) continue
-      try {
-        let value: AttachmentSource
-        if (typeof source === 'string') value = { path: source }
-        else if (path) value = { path }
-        else {
-          if (source.size > MAX_IMAGE_BYTES)
-            throw new Error('Pasted images must be 5 MiB or smaller.')
-          value = {
-            name: source.name || 'Pasted image.png',
-            bytes: new Uint8Array(await source.arrayBuffer())
-          }
-        }
-        const file = await window.electronAPI.sessionsFiles.prepare(session.id, value)
-        if (withdrawn.current.has(key)) continue
-        setAttachments((current) =>
-          current.some((f) => f.path === file.path) ? current : [...current, file]
-        )
-        setPreparations((current) => current.filter((p) => p.id !== key))
-      } catch (failure) {
-        if (withdrawn.current.has(key)) continue
-        // What main refuses that arrived as a path — a folder from an app that
-        // names no entry, a socket, a file it cannot read — lands in the text
-        // as that path, the reason reported beside it: a drop never fails, it
-        // has a worst case. Bytes with no path keep the error on their chip.
-        if (path) {
-          setPreparations((current) => current.filter((p) => p.id !== key))
-          insertAtCaret(pathForMessage(path) + ' ')
-          report(`${failureText(failure)} ${name} is in the message as a path.`)
-        } else
-          setPreparations((current) =>
-            current.map((p) => (p.id === key ? { ...p, error: failureText(failure) } : p))
-          )
-      }
-    }
-    for (const { key } of queued) withdrawn.current.delete(key)
-    textarea.current?.focus({ preventScroll: true })
-  }
-  const withdraw = (key: string): void => {
-    withdrawn.current.add(key)
-    setPreparations((current) => current.filter((p) => p.id !== key))
   }
   /* A drop on the pane. Files and file URLs become attachments; folders, and
      the paths Clave's own file and git panels drag as text, land at the caret
@@ -799,17 +739,6 @@ export function TerminalView({
     }
     const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
     return parseResourceKey('file', file.path).id
-  }
-  /** Text into the draft at the caret, the caret moved past it. */
-  const insertAtCaret = (insert: string): void => {
-    const el = textarea.current
-    const start = el?.selectionStart ?? draft.length
-    const end = el?.selectionEnd ?? draft.length
-    setDraft((current) => current.slice(0, start) + insert + current.slice(end))
-    requestAnimationFrame(() => {
-      el?.focus()
-      el?.setSelectionRange(start + insert.length, start + insert.length)
-    })
   }
   // What the agent waits on, oldest first: the dock shows the head of it. A
   // server's session reads it off the server's own records (server-requests.ts).
@@ -904,6 +833,7 @@ export function TerminalView({
       : undefined
   return (
     <div
+      ref={pane}
       className="chat-view terminal-view"
       data-testid="terminal-view"
       onClickCapture={(event) => {
@@ -952,11 +882,20 @@ export function TerminalView({
         if (!closed) drop(event.dataTransfer)
       }}
     >
-      {dragging === 'files' && (
+      {(dragging === 'files' || sessionsOver) && (
         <div className="chat-drop-overlay" role="status">
-          <PaperClipIcon />
-          <strong>Add files to the message</strong>
-          <span>They stay in the composer to review before you send.</span>
+          <div className="chat-drop-card">
+            <DropDrawing kind={sessionsOver ? 'sessions' : 'files'} />
+            <p className="chat-drop-eyebrow">{sessionsOver ? 'Session' : 'Files'}</p>
+            <strong>
+              {sessionsOver ? 'Add the session to the message' : 'Add files to the message'}
+            </strong>
+            <span>
+              {sessionsOver
+                ? 'The agent gets its id, to read it or message it.'
+                : 'Reviewed in the composer before they go; a folder lands as its path.'}
+            </span>
+          </div>
         </div>
       )}
       <div className="chat-transcript">
@@ -1061,7 +1000,7 @@ export function TerminalView({
             <Attachments
               files={attachments}
               imagesSupported={imagesSupported}
-              onChange={setAttachments}
+              onChange={changeAttachments}
             />
             {preparations.length > 0 && (
               <ul className="chat-attachments" aria-label="Preparing files">
@@ -1110,7 +1049,7 @@ export function TerminalView({
             }
             value={draft}
             disabled={closed}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => onDraftChange(event.target.value)}
             onPaste={(event) => {
               // A pasted screenshot is a file on the clipboard; text pastes as text.
               const files = Array.from(event.clipboardData.files)
