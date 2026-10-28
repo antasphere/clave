@@ -77,7 +77,10 @@ export async function run(t) {
     }
     await theme('dark')
     await drag('drop')
-    await win.locator('.chat-composer .chat-attachment').filter({ hasText: 'Image ·' }).waitFor()
+    await win
+      .locator('.chat-composer .chat-attachment')
+      .filter({ hasText: /Image #1/i })
+      .waitFor()
     await win.evaluate(
       ({ selector, url }) => {
         const dt = new DataTransfer()
@@ -107,7 +110,10 @@ export async function run(t) {
       await win.locator('.chat-composer .chat-attachment').filter({ hasText: name }).waitFor()
     }
     await fire('clave:sessions-drop', { sessionIds: [record.id] })
-    await win.locator('.chat-composer .chat-attachment').filter({ hasText: 'Session ·' }).waitFor()
+    await win
+      .locator('.chat-composer .chat-attachment')
+      .filter({ hasText: /Session #1/i })
+      .waitFor()
     await until(async () =>
       (await win.locator('.chat-composer textarea').inputValue()).includes('Session')
     )

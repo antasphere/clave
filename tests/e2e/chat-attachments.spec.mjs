@@ -69,9 +69,9 @@ export async function run(t) {
     )
     // The placeholder ("Preparing…") wears the same class as the chip that
     // replaces it; the chip is the one that names its delivery.
-    const shotChip = composerChips.filter({ hasText: 'shot.png' }).filter({ hasText: 'Image ·' })
+    const shotChip = composerChips.filter({ hasText: 'shot.png' }).filter({ hasText: /Image #1/i })
     await shotChip.waitFor()
-    assert.match(await shotChip.innerText(), /Image · \d+ B/)
+    assert.match(await shotChip.innerText(), /\d+ B/)
     // The thumbnail is main's render of the bytes it stored, not the File the
     // renderer dropped: it arriving proves the pasted-image path wrote a real PNG.
     await shotChip.locator('img.chat-attachment-thumb').waitFor()
@@ -172,7 +172,7 @@ export async function run(t) {
         new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt })
       )
     }, PNG)
-    const pasted = composerChips.filter({ hasText: 'image.png' }).filter({ hasText: 'Image ·' })
+    const pasted = composerChips.filter({ hasText: 'image.png' }).filter({ hasText: /Image #1/i })
     await pasted.waitFor()
     assert.equal(await input.inputValue(), '[Image #1] ', 'a paste types only its marker')
     assert.ok(
@@ -198,7 +198,10 @@ export async function run(t) {
         new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt })
       )
     }, PNG)
-    await composerChips.filter({ hasText: 'again.png' }).filter({ hasText: 'Image ·' }).waitFor()
+    await composerChips
+      .filter({ hasText: 'again.png' })
+      .filter({ hasText: /Image #1/i })
+      .waitFor()
     assert.equal(await input.inputValue(), '[Image #1] ', 'a cleared composer numbers from one')
     await input.press('End')
     await input.press('Backspace')
@@ -239,10 +242,10 @@ export async function run(t) {
     await cdp.detach()
     const folderChip = composerChips
       .filter({ hasText: 'drop folder' })
-      .filter({ hasText: 'Folder ·' })
+      .filter({ hasText: /Folder #1/i })
     await folderChip.waitFor()
-    assert.match(await folderChip.innerText(), /Folder · 1 item/, 'the chip counts its items')
-    assert.match(await folderChip.innerText(), /Folder #1/i, 'the chip wears its label')
+    // The tag says Folder; the hint adds only the count.
+    assert.match(await folderChip.innerText(), /Folder #1\s*1 item\b/i, 'the chip counts its items')
     assert.equal(await input.inputValue(), '[Folder #1] ', 'the folder marker lands in the text')
     assert.deepEqual(await prepared(), [folder], 'main made the folder record')
     assert.equal(await win.getByRole('alert').count(), 0, 'a folder is no error')
@@ -392,7 +395,7 @@ export async function run(t) {
     )
     await input.pressSequentially('finish when ')
     await fire('clave:sessions-drop', { sessionIds: [record.id] })
-    const sessionChip = composerChips.filter({ hasText: 'Session ·' })
+    const sessionChip = composerChips.filter({ hasText: /Session #\d+/i })
     await sessionChip.waitFor()
     assert.match(await sessionChip.innerText(), /Session #1/i)
     assert.equal(await input.inputValue(), 'finish when [Session #1] ')
@@ -424,7 +427,7 @@ export async function run(t) {
     )
     await win
       .locator('.chat-turn-wrap[data-side="end"] .chat-attachment')
-      .filter({ hasText: 'Session ·' })
+      .filter({ hasText: /Session #1/i })
       .waitFor()
     t.check('a sidebar tab dropped on the pane is a session the agent can address', true)
 

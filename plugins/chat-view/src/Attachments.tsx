@@ -4,6 +4,7 @@ import { attachmentFamily, FAMILY_NAMES, type AttachmentFamily } from '@clave/co
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import {
   attachmentIssue,
+  attachmentKind,
   isFileAttachment,
   type Attachment,
   type AttachmentPreview,
@@ -193,17 +194,18 @@ function RemoveButton({
   )
 }
 
-/** What a chip says under the name: the family, then the one figure. An
- *  image that goes as a path says so, since its label is a File's. */
+/** What a chip says under the name, after its tag: the family, then the
+ *  one figure. When the tag already says the family (Image, Folder), only
+ *  the figure follows. An image that goes as a path says so, since its tag
+ *  is a File's. */
 function describe(file: FileAttachment): string {
   const family = attachmentFamily(file.mimeType)
-  if (file.delivery === 'folder') {
-    const count = file.entries ?? 0
-    return `Folder · ${count} ${count === 1 ? 'item' : 'items'}`
-  }
+  const count = file.entries ?? 0
+  const figure =
+    file.delivery === 'folder' ? `${count} ${count === 1 ? 'item' : 'items'}` : sizeLabel(file.size)
   const word =
     family === 'image' && file.delivery !== 'image' ? 'Image, as a path' : FAMILY_NAMES[family]
-  return `${word} · ${sizeLabel(file.size)}`
+  return file.label && word === attachmentKind(file) ? figure : `${word} · ${figure}`
 }
 
 function FileChip({
@@ -356,7 +358,7 @@ function SessionChip({
           <span className="chat-attachment-name">{name}</span>
           <span className="chat-attachment-hint">
             <Tag label={label} />
-            Session · {agent}
+            {label ? agent : `Session · ${agent}`}
           </span>
         </span>
       </span>
