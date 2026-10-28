@@ -13,7 +13,9 @@ import { until } from './harness.mjs'
    - picking another model on a row asks first, then stops that one task and
      asks the conversation to launch it again on the model picked;
    - a background shell joins the same stack behind the terminal glyph, with
-     no model and no relaunch, and leaves with the list. */
+     no model and no relaunch, and leaves with the list;
+   - the status line counts the agents and the commands apart ("1 agent",
+     then "1 agent · 1 command"), and shows no count once the stack is empty. */
 
 export async function run(t) {
   const chat = await openChat(
@@ -100,6 +102,19 @@ export async function run(t) {
     ])
     const row = view.locator('.term-agent').first()
     await until(async () => (await row.innerText()).includes('2 steps'))
+    /** The status line's count of the stack; null when it shows none. */
+    const countLabel = () =>
+      view
+        .locator('.term-status .term-running')
+        .evaluateAll((spans) => spans.map((el) => el.textContent.replace(/^[·\s]+/, ''))[0] ?? null)
+    const oneAgent = await countLabel()
+    t.check(
+      'one subagent on the stack reads "1 agent" on the status line',
+      oneAgent === '1 agent',
+      {
+        count: oneAgent
+      }
+    )
     const seen = await row.evaluate((el) => ({
       text: el.innerText,
       title: el.querySelector('.term-agent-row').getAttribute('title'),
@@ -184,6 +199,12 @@ export async function run(t) {
         relaunch: !!el.querySelector('button.term-agent-model')
       }))
     )
+    const mixed = await countLabel()
+    t.check(
+      'an agent and a background command read "1 agent · 1 command", never "2 agents"',
+      mixed === '1 agent · 1 command',
+      { count: mixed }
+    )
     t.check(
       'a background shell stacks after the agent with the terminal glyph and no model; the agent keeps its relaunch',
       stack.length === 2 &&
@@ -200,6 +221,8 @@ export async function run(t) {
     await inject(fixture, record.id, [{ type: 'background_tasks', tasks: [] }])
     const cleared = await until(async () => (await view.locator('.term-agent').count()) === 0)
     t.check('an empty list folds both rows away', !!cleared)
+    const none = await countLabel()
+    t.check('and takes the count with it', none === null, { count: none })
   } finally {
     await chat.close()
   }

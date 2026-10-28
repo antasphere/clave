@@ -270,6 +270,21 @@ export function shownWork(agents: SubAgent[]): SubAgent[] {
   )
 }
 
+/** The status line's count of the work it shows: the subagents and the
+ *  commands counted apart, each by its own word ("3 agents · 4 commands"),
+ *  since a command left running is no agent; empty when nothing runs. The
+ *  rows say the rest. */
+export function runningLabel(work: SubAgent[]): string {
+  const agents = work.filter((item) => item.kind === 'agent').length
+  const commands = work.filter((item) => item.kind === 'shell').length
+  return [
+    agents > 0 ? `${agents} agent${agents === 1 ? '' : 's'}` : '',
+    commands > 0 ? `${commands} command${commands === 1 ? '' : 's'}` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 /** "12k", "1M": the status line's own compact count. */
 export function compactTokens(value: number): string {
   if (value >= 1_000_000) return `${+(value / 1_000_000).toFixed(1)}M`

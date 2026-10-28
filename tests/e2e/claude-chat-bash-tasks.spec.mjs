@@ -19,7 +19,7 @@ import {
    - a Bash call asked for the background shows its terminal card from its
      tool_use, before any background notification, as running work;
    - the waited-on call shows in the transcript only: no card in the stack,
-     and the footer counts the background card alone;
+     and the footer counts the background card alone, as a command;
    - the background list naming the call promotes the same card: still one
      card for it, now background work;
    - the background card stays past the turn, with no model and no relaunch,
@@ -128,16 +128,11 @@ const readRows = (view) =>
       relaunch: !!el.querySelector('button.term-agent-model')
     }))
   )
-/** The footer's count of the stack, "1 agent"; null when it shows none. */
+/** The footer's count of the stack, "1 command"; null when it shows none. */
 const countLabel = (view) =>
   view
-    .locator('.term-dim')
-    .evaluateAll(
-      (spans) =>
-        spans
-          .map((el) => el.textContent.replace(/^[·\s]+/, ''))
-          .find((text) => /^\d+ agents?$/.test(text)) ?? null
-    )
+    .locator('.term-status .term-running')
+    .evaluateAll((spans) => spans.map((el) => el.textContent.replace(/^[·\s]+/, ''))[0] ?? null)
 const describe = (rows) =>
   rows.map((row) => `${row.kind}:${row.description}:${row.background ? 'bg' : 'run'}`).join('|')
 
@@ -209,10 +204,10 @@ export async function run(t) {
     const waitedRows = await readRows(view)
     const waitedCount = await countLabel(view)
     t.check(
-      'the waited-on Bash call shows in the transcript only: no card of its own, and the footer counts one',
+      'the waited-on Bash call shows in the transcript only: no card of its own, and the footer counts one command, no agent',
       !!inTranscript &&
         describe(waitedRows) === 'shell:sleep 10 && echo bgc:run' &&
-        waitedCount === '1 agent',
+        waitedCount === '1 command',
       { inTranscript, rows: describe(waitedRows), count: waitedCount }
     )
     // Every render from here to the promotion: the background command's card

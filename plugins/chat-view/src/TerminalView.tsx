@@ -40,6 +40,7 @@ import {
   emptyStatus,
   reduceStatus,
   relaunchRequest,
+  runningLabel,
   shownWork,
   type TerminalStatus
 } from './terminal-status'
@@ -441,6 +442,9 @@ export function TerminalView({
   )
   // Held by identity: the stack folds a row away when its list changes.
   const work = useMemo(() => shownWork(status.agents), [status.agents])
+  // The count under the composer: the subagents and the commands apart, so
+  // four background commands beside three agents never read as seven agents.
+  const running = runningLabel(work)
   const [ready, setReady] = useState(false)
   // A resumed conversation's past lives in main and arrives a page at a time,
   // the newest first: `before` is what to ask for next, null once nothing is
@@ -1195,9 +1199,12 @@ export function TerminalView({
             }
           />
           <AccountChip sessionId={session.id} />
-          {work.length > 0 && (
-            <span className="term-dim">
-              · {work.length} agent{work.length === 1 ? '' : 's'}
+          {running && (
+            <span
+              className="term-dim term-running"
+              title="Running now: the subagents, and the commands left in the background"
+            >
+              · {running}
             </span>
           )}
           <span className="term-status-end">
