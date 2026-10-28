@@ -286,10 +286,23 @@ function FileChip({
           </button>
         </div>
       )}
+      {/* The preview: the record's tile and words at the head (the thumbnail
+          when there is one, the family's glyph otherwise), its path in the
+          hand of a path, the preview itself in a framed inset (the picture,
+          the first bytes, a folder's listing), the actions at the foot. */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="chat-attachment-dialog">
           <div className="chat-attachment-dialog-head">
-            <DialogTitle>{name}</DialogTitle>
+            <span className="chat-attachment-dialog-tile" data-family={family}>
+              {preview?.image ? <img src={preview.image} alt="" /> : <Glyph family={family} />}
+            </span>
+            <span className="chat-attachment-dialog-titles">
+              <DialogTitle>{name}</DialogTitle>
+              <span className="chat-attachment-dialog-meta">
+                <Tag label={label} />
+                {describe(file)}
+              </span>
+            </span>
             <DialogClose className="chat-turn-copy" aria-label="Close preview">
               <XMarkIcon />
             </DialogClose>
@@ -297,7 +310,10 @@ function FileChip({
           <DialogDescription className="chat-attachment-dialog-path">
             {displayPath}
           </DialogDescription>
-          <div className="chat-attachment-dialog-body">
+          <div
+            className="chat-attachment-dialog-body"
+            data-kind={preview?.image ? 'image' : preview?.text !== undefined ? 'text' : 'word'}
+          >
             {error ? (
               <p role="alert">{error}</p>
             ) : preview ? (
@@ -310,7 +326,7 @@ function FileChip({
               <p role="status">Loading preview…</p>
             )}
           </div>
-          <div className="chat-prompt-actions">
+          <div className="chat-prompt-actions chat-attachment-dialog-foot">
             <span className="chat-prompt-spacer" />
             {onReference && delivery === 'image' && (
               <button

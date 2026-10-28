@@ -126,6 +126,26 @@ export async function run(t) {
       await win.waitForTimeout(400)
       await shot(`${t}-chips`)
     }
+    // The preview dialog, for the folder (its listing) and the image (its picture).
+    for (const [name, label] of [
+      ['assets', 'folder'],
+      ['screenshot.png', 'image']
+    ]) {
+      await win
+        .locator('.chat-composer .chat-attachment')
+        .filter({ hasText: name })
+        .getByRole('button', { name: `Preview ${name}` })
+        .click()
+      await win.locator('.chat-attachment-dialog').waitFor()
+      await win.waitForTimeout(500)
+      for (const t of ['dark', 'light']) {
+        await theme(t)
+        await win.waitForTimeout(300)
+        await shot(`${t}-dialog-${label}`)
+      }
+      await win.getByRole('button', { name: 'Close preview' }).click()
+      await until(async () => (await win.locator('.chat-attachment-dialog').count()) === 0)
+    }
     await theme('dark')
     await win.locator('.chat-composer textarea').press('Enter')
     await win.locator('.chat-turn-wrap[data-side="end"] .chat-attachment').first().waitFor()
