@@ -54,7 +54,9 @@ export const FileAttachment = Schema.Struct({
   name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(255)),
   mimeType: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(128)),
   size: Schema.NonNegativeInt,
-  delivery: Schema.Literal('reference', 'image')
+  delivery: Schema.Literal('reference', 'image', 'folder'),
+  /** A folder's top-level item count; folders only. */
+  entries: Schema.optional(Schema.NonNegativeInt)
 })
 export type FileAttachment = typeof FileAttachment.Type
 /** Another Clave tab dragged onto the composer: delivered to the agent as a

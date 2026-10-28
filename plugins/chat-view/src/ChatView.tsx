@@ -72,7 +72,6 @@ import { useComposerAttachments } from './composer-attachments'
 import { DropDrawing } from './DropDrawing'
 import {
   failureText,
-  filesAndFolders,
   pathForMessage,
   pathsFromDataTransfer
 } from '../../../src/renderer/src/lib/dropped-paths'
@@ -684,17 +683,15 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     }
     textarea.current?.focus()
   }
-  /* A drop on the pane. Files and file URLs become attachments; folders, and
-     the paths Clave's own file and git panels drag as text, land at the caret
-     the way the TUI pastes them (quoted only when needed, a space after),
-     because a folder is a path to talk about, not a file to attach. Finder
-     names a folder through its item's entry, read while the event is live. */
+  /* A drop on the pane. Files and folders become attachments (main tells
+     them apart, and what is neither lands as its path, the reason beside
+     it); the paths Clave's own file and git panels drag as text land at the
+     caret, the way the TUI pastes them (quoted only when needed, a space
+     after). */
   const drop = (dt: DataTransfer): void => {
     if (filesDrag(dt)) {
-      const { files, folders } = filesAndFolders(dt)
-      if (folders.length) insertAtCaret(folders.map(pathForMessage).join(' ') + ' ')
-      if (files.length) void addFiles(files)
-      else if (!folders.length) void addFiles(pathsFromDataTransfer(dt))
+      const files = Array.from(dt.files)
+      void addFiles(files.length ? files : pathsFromDataTransfer(dt))
     } else if (pathsDrag(dt)) void dropPaths(pathsFromDataTransfer(dt))
   }
   /* Paths dragged as text. Each is made stable first — a transient source
@@ -848,7 +845,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
             <span>
               {sessionsOver
                 ? 'The agent gets its id, to read it or message it.'
-                : 'Reviewed in the composer before they go; a folder lands as its path.'}
+                : 'Files and folders, reviewed in the composer before they go.'}
             </span>
           </div>
         </div>

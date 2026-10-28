@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { until, fixturePath } from './harness.mjs'
@@ -138,9 +139,7 @@ export async function run(t) {
       },
       { selector: pane, url: `file://${notes}` }
     )
-    const notesChip = composerChips
-      .filter({ hasText: 'notes.txt' })
-      .filter({ hasText: 'File reference' })
+    const notesChip = composerChips.filter({ hasText: 'notes.txt' }).filter({ hasText: 'Text ·' })
     await notesChip.waitFor()
     assert.equal(await input.inputValue(), '[File #1] ', 'a file is labelled by its delivery')
     await input.press('End')
@@ -212,13 +211,16 @@ export async function run(t) {
     await input.fill('')
     t.check('a marker edited out of the text removes its attachment', true)
 
-    // 5. A folder is a path to talk about, never a file to attach, and a drop
-    //    never fails. Dropped from Finder, the item's entry names the folder:
-    //    its path lands at the caret, no chip, nothing sent to main. From an
-    //    app that hands only a URL, main refuses the folder as a file and the
-    //    path lands anyway, with the reason reported beside it.
+    // 5. A folder is a record of its own. Dropped from the desktop (the
+    //    desktop's own drop, through the devtools protocol: real File objects
+    //    with their paths) it becomes a chip naming its item count, a marker
+    //    in the text, and a line the provider gets under that marker. What
+    //    main refuses, a named pipe here, still lands as its path with the
+    //    reason beside it: a drop never fails. And a file's chip names its
+    //    family, from the media type its name says.
     const folder = path.join(root, 'drop folder')
     mkdirSync(folder, { recursive: true })
+    writeFileSync(path.join(folder, 'inside.txt'), 'in')
     await app.evaluate(({ ipcMain }) => {
       const original = ipcMain._invokeHandlers.get('sessions:files')
       globalThis.__prepared = []
@@ -228,8 +230,6 @@ export async function run(t) {
       })
     })
     const prepared = () => app.evaluate(() => globalThis.__prepared)
-    // The desktop's own drop, through the devtools protocol: real File
-    // objects with paths and entries, the way Finder hands them.
     const cdp = await app.context().newCDPSession(win)
     const box = await win.locator(pane).boundingBox()
     const at = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }
@@ -237,46 +237,87 @@ export async function run(t) {
     for (const type of ['dragEnter', 'dragOver', 'drop'])
       await cdp.send('Input.dispatchDragEvent', { type, ...at, data })
     await cdp.detach()
+    const folderChip = composerChips
+      .filter({ hasText: 'drop folder' })
+      .filter({ hasText: 'Folder ·' })
+    await folderChip.waitFor()
+    assert.match(await folderChip.innerText(), /Folder · 1 item/, 'the chip counts its items')
+    assert.match(await folderChip.innerText(), /Folder #1/i, 'the chip wears its label')
+    assert.equal(await input.inputValue(), '[Folder #1] ', 'the folder marker lands in the text')
+    assert.deepEqual(await prepared(), [folder], 'main made the folder record')
+    assert.equal(await win.getByRole('alert').count(), 0, 'a folder is no error')
+    await input.press('End')
+    await input.pressSequentially('list it')
+    await input.press('Enter')
     assert.ok(
-      await until(async () => (await input.inputValue()) !== ''),
-      "the folder's path must reach the composer"
+      await until(async () => (await userMessages()).length === 3),
+      'the folder message must cross the write IPC'
     )
-    assert.equal(await input.inputValue(), `'${folder}' `)
-    assert.equal(await composerChips.count(), 0, 'a folder attaches nothing')
-    assert.equal(await win.getByRole('alert').count(), 0, 'a folder Finder names is no error')
-    assert.deepEqual(await prepared(), [], 'a folder Finder names is never sent to main as a file')
+    const folderWrite = (await userMessages())[2]
+    assert.equal(folderWrite.text, '[Folder #1] list it')
+    assert.deepEqual(
+      folderWrite.attachments.map((a) => [a.delivery, a.name, a.entries, a.label]),
+      [['folder', 'drop folder', 1, 'Folder #1']]
+    )
+    const folderReply = win
+      .locator('.chat-turn[data-role="assistant"]')
+      .filter({ hasText: 'list it' })
+    await folderReply.waitFor()
+    const folderReplyText = await folderReply.innerText()
+    // The reply is Markdown: the legend's bullets render as a list, their dashes gone.
+    assert.match(folderReplyText, /a local folder: list and read its contents at its path\./)
+    assert.match(folderReplyText, /\[Folder #1\] \{"folder":"drop folder"/)
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 0),
+      'the composer must clear its chips with the send'
+    )
     t.check(
-      'a folder dropped from the desktop lands as its path at the caret, no chip, no error',
+      'a folder dropped from the desktop is a chip with its item count and a marker the provider lists',
       true
     )
 
-    await input.fill('')
-    await win.evaluate(
-      ({ selector, url }) => {
-        const dt = new DataTransfer()
-        dt.setData('text/uri-list', url)
-        document
-          .querySelector(selector)
-          .dispatchEvent(
-            new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
-          )
-      },
-      { selector: pane, url: `file://${folder}` }
-    )
+    const pipe = path.join(root, 'pipe')
+    execFileSync('mkfifo', [pipe])
+    const dropUrl = (url) =>
+      win.evaluate(
+        ({ selector, url }) => {
+          const dt = new DataTransfer()
+          dt.setData('text/uri-list', url)
+          document
+            .querySelector(selector)
+            .dispatchEvent(
+              new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+            )
+        },
+        { selector: pane, url }
+      )
+    await dropUrl(`file://${pipe}`)
     assert.ok(
       await until(async () => (await input.inputValue()) !== ''),
-      'the refused folder must still reach the composer as a path'
+      'the refused pipe must still reach the composer as a path'
     )
-    assert.equal(await input.inputValue(), `'${folder}' `)
-    assert.deepEqual(await prepared(), [folder], 'a folder named only by URL is tried as a file')
+    assert.ok((await input.inputValue()).endsWith('/pipe '), 'as the path it was dropped with')
     assert.equal(await composerChips.count(), 0, 'and leaves no chip behind, errored or not')
     await win
       .getByRole('alert')
-      .filter({ hasText: 'Folders and special files cannot be attached.' })
-      .filter({ hasText: 'drop folder is in the message as a path.' })
+      .filter({ hasText: 'Special files cannot be attached.' })
+      .filter({ hasText: 'pipe is in the message as a path.' })
       .waitFor()
     await input.fill('')
-    t.check('a folder main refuses lands as its path anyway, the reason reported beside it', true)
+    t.check('what main refuses lands as its path anyway, the reason reported beside it', true)
+
+    const clip = path.join(root, 'clip.mp4')
+    writeFileSync(clip, '')
+    await dropUrl(`file://${clip}`)
+    const clipChip = composerChips.filter({ hasText: 'clip.mp4' }).filter({ hasText: 'Video ·' })
+    await clipChip.waitFor()
+    assert.match(await clipChip.innerText(), /File #\d+/i, 'a video goes as a path: a File')
+    await input.fill('')
+    assert.ok(
+      await until(async () => (await composerChips.count()) === 0),
+      'emptying the text must empty the chips'
+    )
+    t.check("a file's chip names its family from its media type", true)
 
     // 6. The paperclip opens the native picker; a picker answering with more
     //    than the cap fills the cap and says so, adding nothing past it.
@@ -361,10 +402,10 @@ export async function run(t) {
     await input.pressSequentially('is done')
     await input.press('Enter')
     assert.ok(
-      await until(async () => (await userMessages()).length === 3),
+      await until(async () => (await userMessages()).length === 4),
       'the session message must cross the write IPC'
     )
-    const sessionWrite = (await userMessages())[2]
+    const sessionWrite = (await userMessages())[3]
     assert.equal(sessionWrite.text, 'finish when [Session #1] is done')
     assert.deepEqual(
       sessionWrite.attachments.map((a) => [a.delivery, a.sessionId, a.label]),

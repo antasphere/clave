@@ -42,9 +42,27 @@ test('names a pasted image by its bytes, not by what the clipboard called it', a
   expect(file.name).toBe('photo.png')
   expect(file.mimeType).toBe('image/png')
 })
-test('rejects missing files, directories and image bytes disguised by their name', async () => {
+test('a folder is a record of its own, special files are refused, and image bytes disguised by their name', async () => {
   const directory = await setup()
-  await expect(prepareAttachment(directory, { path: directory })).rejects.toThrow('Folders')
+  await writeFile(join(directory, 'one.txt'), '1')
+  await mkdir(join(directory, 'two'))
+  const folder = await prepareAttachment(join(directory, 'saved'), { path: directory })
+  expect(folder).toMatchObject({
+    path: directory,
+    mimeType: 'inode/directory',
+    size: 0,
+    entries: 2,
+    delivery: 'folder'
+  })
+  const listed = await preparePrompt('list [Folder #1]', [{ ...folder, label: 'Folder #1' }], true)
+  expect(listed.images).toEqual([])
+  expect(listed.text.split('\n')).toContain(
+    '[Folder #1] ' + JSON.stringify({ folder: folder.name, path: directory })
+  )
+  expect(listed.text).toContain('- a local folder: list and read its contents at its path.')
+  await rm(join(directory, 'two'), { recursive: true })
+  await rm(join(directory, 'one.txt'))
+  await expect(prepareAttachment(directory, { path: '/dev/null' })).rejects.toThrow('Special files')
   await expect(
     prepareAttachment(directory, { name: 'bad.png', bytes: Buffer.from('not an image') })
   ).rejects.toThrow('Only PNG')
@@ -82,7 +100,7 @@ test('ordinary references keep the original path and never embed contents', asyn
   await writeFile(path, 'original')
   await mkdir(join(directory, 'saved'))
   const file = await prepareAttachment(join(directory, 'saved'), { path })
-  expect(file).toMatchObject({ path, mimeType: 'application/octet-stream', delivery: 'reference' })
+  expect(file).toMatchObject({ path, mimeType: 'text/typescript', delivery: 'reference' })
   await writeFile(path, 'updated')
   const prompt = await preparePrompt('read this', [file], false)
   expect(prompt.text).toContain(JSON.stringify(path))

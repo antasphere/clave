@@ -4462,10 +4462,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-attachment-open {
   display: flex;
   align-items: center;
-  gap: calc(var(--spacing) * 2);
+  gap: calc(var(--spacing) * 1.5);
   min-width: 0;
   text-align: left;
-  padding: var(--spacing);
+  padding: calc(var(--spacing) * 0.75);
   border-radius: var(--radius-control);
   transition: background-color var(--default-transition-duration);
 }
@@ -4474,18 +4474,19 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 }
 .chat-attachment-thumb {
   flex-shrink: 0;
-  width: var(--control-h-lg);
-  height: var(--control-h-lg);
+  width: var(--control-h);
+  height: var(--control-h);
   object-fit: cover;
   border-radius: var(--radius-control);
 }
-/* A chip's glyph: a small drawing in the same hand as the drop card (a
-   page, a row out of its column), on a tile the size of a thumbnail. */
+/* A chip's glyph: a small drawing in the same hand as the drop card, one
+   per family (a page, a frame, a few bars of sound, a folder, a row out of
+   its column), on a tile the size of a thumbnail. */
 .chat-attachment-glyph {
   flex-shrink: 0;
-  width: var(--control-h-lg);
-  height: var(--control-h-lg);
-  padding: calc(var(--spacing) * 1.5);
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: calc(var(--spacing) * 1.25);
   border-radius: var(--radius-control);
   background-color: color-mix(in oklab, var(--surface-200) 70%, transparent);
   color: var(--text-tertiary);
@@ -4512,10 +4513,10 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: var(--spacing);
+  padding: calc(var(--spacing) * 0.5) var(--spacing);
 }
 .chat-attachment-name {
-  max-width: 28ch;
+  max-width: 20ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

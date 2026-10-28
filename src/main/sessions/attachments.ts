@@ -1,7 +1,8 @@
 import { constants } from 'node:fs'
-import { access, copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { access, copyFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises'
+import { basename, isAbsolute, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { FOLDER_MIME_TYPE, mimeTypeOf } from '@clave/contract/attachments'
 import {
   AttachmentsSchema,
   attachmentIssue,
@@ -22,18 +23,6 @@ export { imageMime, readBounded } from '../../../packages/server/src/files/binar
    type), and `preparePrompt` when the message is sent (read the images, append
    the references). Everything here treats a path as data — nothing is ever
    passed to a shell. */
-
-const MIME: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.heic': 'image/heic',
-  '.avif': 'image/avif',
-  '.pdf': 'application/pdf'
-}
 
 /** macOS keeps an unsaved screenshot preview in a temp folder and deletes it
  *  the moment the preview commits; anything under the OS temp roots is copied. */
@@ -65,8 +54,20 @@ export async function prepareAttachment(
   } else {
     if (!path || !isAbsolute(path) || path.includes('\0')) throw new Error('Choose a local file.')
     const info = await stat(path)
-    if (!info.isFile()) throw new Error('Folders and special files cannot be attached.')
     await access(path, constants.R_OK)
+    // A folder is a record of its own: its path, for the agent to list, and
+    // its top-level item count, for the reader. Never copied, never read.
+    if (info.isDirectory())
+      return {
+        id,
+        path,
+        name,
+        mimeType: FOLDER_MIME_TYPE,
+        size: 0,
+        entries: (await readdir(path)).length,
+        delivery: 'folder'
+      }
+    if (!info.isFile()) throw new Error('Special files cannot be attached.')
     if (transient(path)) {
       if (info.size > 100 * 1024 * 1024)
         throw new Error(
@@ -79,7 +80,7 @@ export async function prepareAttachment(
     }
   }
   const info = await stat(path)
-  const mimeType = MIME[extname(name).toLowerCase()] ?? 'application/octet-stream'
+  const mimeType = mimeTypeOf(name)
   // An image in a format no provider takes as image content (HEIC, SVG,
   // AVIF) is a file from the start: the agent gets its path and does what it
   // can with it, rather than the composer refusing the message until the
@@ -127,8 +128,14 @@ export async function preparePrompt(
     const info = await stat(file.path).catch(() => {
       throw new Error(`File is unavailable: ${file.name}. Remove it or choose it again.`)
     })
-    if (!info.isFile()) throw new Error('Folders and special files cannot be attached.')
     await access(file.path, constants.R_OK)
+    if (file.delivery === 'folder') {
+      if (!info.isDirectory())
+        throw new Error(`Folder is unavailable: ${file.name}. Remove it or choose it again.`)
+      lines.push(key(file) + JSON.stringify({ folder: file.name, path: file.path }))
+      continue
+    }
+    if (!info.isFile()) throw new Error('Special files cannot be attached.')
     if (file.delivery === 'reference') {
       lines.push(key(file) + JSON.stringify({ name: file.name, path: file.path }))
       continue
@@ -150,6 +157,7 @@ export async function preparePrompt(
     'Attachments, by the marker the message refers to them by:',
     has('image') ? '- an image: sent with this message as image content.' : '',
     has('reference') ? '- a local file: read the current contents at its path.' : '',
+    has('folder') ? '- a local folder: list and read its contents at its path.' : '',
     has('session')
       ? '- a Clave session (another tab of this app): read it with clave_read_session, message it with clave_send_to_session, by its session id.'
       : ''

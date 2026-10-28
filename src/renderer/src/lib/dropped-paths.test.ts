@@ -1,10 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  failureText,
-  filesAndFolders,
-  pathForMessage,
-  pathsFromDataTransfer
-} from './dropped-paths'
+import { describe, expect, it } from 'vitest'
+import { failureText, pathForMessage, pathsFromDataTransfer } from './dropped-paths'
 
 // The three ways a drop carries paths, in the order the reader prefers them.
 const transfer = (data: Record<string, string>, files: File[] = []): DataTransfer =>
@@ -28,45 +23,6 @@ describe('pathsFromDataTransfer', () => {
   })
   it('yields nothing for a drop without paths', () => {
     expect(pathsFromDataTransfer(transfer({ 'text/plain': 'hello' }))).toEqual([])
-  })
-})
-
-describe('filesAndFolders', () => {
-  // Finder's items carry a File each and an entry that says which is a
-  // folder; a DataTransfer a page builds has the files and no entries.
-  const file = (name: string): File => ({ name }) as File
-  const item = (
-    name: string,
-    entry: 'file' | 'folder' | 'none'
-  ): { kind: string; getAsFile: () => File; webkitGetAsEntry: () => unknown } => ({
-    kind: 'file',
-    getAsFile: () => file(name),
-    webkitGetAsEntry: () => (entry === 'none' ? null : { isDirectory: entry === 'folder' })
-  })
-  const transfer = (items: unknown[], files: File[] = []): DataTransfer =>
-    ({ items, files }) as unknown as DataTransfer
-  afterEach(() => vi.unstubAllGlobals())
-
-  it('tells a folder from the files beside it by its entry, and leaves text items alone', () => {
-    vi.stubGlobal('window', {
-      electronAPI: { getPathForFile: (f: File) => `/drop/${f.name}` }
-    })
-    const text = { kind: 'string', getAsFile: () => null }
-    expect(filesAndFolders(transfer([item('a.png', 'file'), item('src', 'folder'), text]))).toEqual(
-      { files: [file('a.png')], folders: ['/drop/src'] }
-    )
-  })
-  it('takes everything in a transfer without entries as a file', () => {
-    expect(filesAndFolders(transfer([item('a.png', 'none'), item('b.txt', 'none')]))).toEqual({
-      files: [file('a.png'), file('b.txt')],
-      folders: []
-    })
-  })
-  it('falls back to the files list when the items are empty', () => {
-    expect(filesAndFolders(transfer([], [file('c.md')]))).toEqual({
-      files: [file('c.md')],
-      folders: []
-    })
   })
 })
 

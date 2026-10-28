@@ -28,6 +28,16 @@ const heic: Attachment = {
   size: 1,
   delivery: 'reference'
 }
+const folder: Attachment = {
+  id: 'd',
+  label: 'Folder #1',
+  path: '/work/src',
+  name: 'src',
+  mimeType: 'inode/directory',
+  size: 0,
+  entries: 12,
+  delivery: 'folder'
+}
 const tab: Attachment = {
   id: 'c',
   label: 'Session #1',
@@ -41,6 +51,7 @@ const tab: Attachment = {
 test('a session record is an attachment, a file record stays one, and labels are optional', () => {
   expect(AttachmentSchema.parse(tab)).toEqual(tab)
   expect(AttachmentSchema.parse(image)).toEqual(image)
+  expect(AttachmentSchema.parse(folder)).toEqual(folder)
   const unlabelled = { ...image, label: undefined }
   expect(AttachmentSchema.parse(unlabelled)).toEqual(unlabelled)
   expect(() => AttachmentSchema.parse({ ...tab, sessionId: 'not a/session' })).toThrow()
@@ -51,6 +62,7 @@ test('a record is labelled by what it is to the agent: an image sent as a path i
   expect(attachmentKind(image)).toBe('Image')
   expect(attachmentKind(heic)).toBe('File')
   expect(attachmentKind(tab)).toBe('Session')
+  expect(attachmentKind(folder)).toBe('Folder')
 })
 
 test('labels number per kind, one past the highest in the message', () => {
@@ -58,6 +70,7 @@ test('labels number per kind, one past the highest in the message', () => {
   expect(nextLabel('Image', [image, heic, tab])).toBe('Image #2')
   expect(nextLabel('File', [image, heic, tab])).toBe('File #2')
   expect(nextLabel('Session', [image, { ...tab, label: 'Session #4' }])).toBe('Session #5')
+  expect(nextLabel('Folder', [folder, image])).toBe('Folder #2')
   // A removed number is not reissued while a higher one stands: the text may
   // still hold the old marker's remains.
   expect(nextLabel('Image', [{ ...image, label: 'Image #3' }])).toBe('Image #4')

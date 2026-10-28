@@ -133,18 +133,21 @@ start: the agent gets its path. Chips are attachment records from
 (`src/main/sessions/README.md`, "Attachments"). A sent turn shows the same
 chips as its record.
 
-A folder is a path to talk about, not a file to attach. Dropped from Finder it
-lands at the caret the way the TUI pastes it (quoted only when a shell would
-need it, a space after), told from the files beside it by its item's entry
-(`filesAndFolders` in `lib/dropped-paths.ts`, read while the drop event is
-live, since the entries are gone once it ends) and never sent to main; the
-drop card's drawing shows it beside the page, landing in the text rather than
-on the composer's dot. The paths Clave's own file and git panels drag as text
-land at the caret the same way. A drop never fails: whatever main refuses that
-arrived as a path — a folder an app named only by URL, a socket, a file it
-cannot read — lands in the text as that path with the reason reported beside
-it, and only bytes with no path (a pasted image too large) keep the error on
-their chip.
+A folder is a record of its own: main tells it from a file, and the chip
+names it with its top-level item count (`Folder · 12 items`), its path on
+hover, its listing in the preview, and the marker `[Folder #1]` in the text;
+the provider gets its path under that marker, to list. Every chip says what
+its record is, from the media type its name says (`@clave/contract/attachments`,
+the one table for the Mac, a server and the chips): Image, Video, Audio, PDF,
+Document, Sheet, Slides, Text, Code, Archive, Folder or File, each with a
+glyph in the drop card's hand, and the one figure that matters, its size or
+its item count. The label stays what the record IS to the agent (`Image`,
+`File`, `Folder`, `Session`): a video is a File, a path to read. The paths
+Clave's own file and git panels drag as text land at the caret, the way the
+TUI pastes them. A drop never fails: whatever main refuses that arrived as a
+path — a named pipe, a socket, a file it cannot read — lands in the text as
+that path with the reason reported beside it, and only bytes with no path (a
+pasted image too large) keep the error on their chip.
 
 A sidebar tab dragged onto the pane is a SESSION attachment: the tab's id, name,
 agent and folder, delivered to the agent as a line it can act on with

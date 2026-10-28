@@ -69,7 +69,9 @@ export const FileAttachment = Schema.Struct({
   name: Name,
   mimeType: Schema.String,
   size: Schema.Number,
-  delivery: Schema.Literal('image', 'reference')
+  delivery: Schema.Literal('image', 'reference', 'folder'),
+  /** A folder's top-level item count; folders only. */
+  entries: Schema.optional(Schema.NonNegativeInt)
 })
 export type FileAttachment = typeof FileAttachment.Type
 export const FilePreview = Schema.Struct({

@@ -36,7 +36,11 @@ export const FileAttachmentSchema = z
     name: z.string().min(1).max(255),
     mimeType: z.string().min(1).max(128),
     size: z.number().int().nonnegative(),
-    delivery: z.enum(['reference', 'image'])
+    /** How it reaches the agent: image content, a path to read, or a path
+     *  to list (a folder). */
+    delivery: z.enum(['reference', 'image', 'folder']),
+    /** A folder's top-level item count; folders only. */
+    entries: z.number().int().nonnegative().optional()
   })
   .strict()
 export type FileAttachment = z.infer<typeof FileAttachmentSchema>
@@ -101,16 +105,18 @@ export function attachmentIssue(file: Attachment, imagesSupported: boolean): str
 
 // ── Labels and markers ──
 
-export type AttachmentKind = 'Image' | 'File' | 'Session'
+export type AttachmentKind = 'Image' | 'File' | 'Folder' | 'Session'
 
 /** The kind a record is labelled by: what it IS to the agent, which is its
- *  delivery — a HEIC that goes as a path is a File, however it is named. */
+ *  delivery — a HEIC that goes as a path is a File, however it is named,
+ *  and a folder is a Folder, a path to list. */
 export function attachmentKind(file: Attachment): AttachmentKind {
   if (file.delivery === 'session') return 'Session'
+  if (file.delivery === 'folder') return 'Folder'
   return file.delivery === 'image' ? 'Image' : 'File'
 }
 
-const LABEL = /^(Image|File|Session) #(\d+)$/
+const LABEL = /^(Image|File|Folder|Session) #(\d+)$/
 
 /** The next label of a kind among `current`: one past the highest number
  *  that kind already holds, so a label is never issued twice in one message. */

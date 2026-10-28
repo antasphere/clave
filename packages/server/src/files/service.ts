@@ -17,6 +17,7 @@ import {
   UploadFileInput,
   WriteFileInput
 } from '@clave/contract/files'
+import { FOLDER_MIME_TYPE, mimeTypeOf } from '@clave/contract/attachments'
 import type { FilesService } from './port'
 import { imageMime } from './binary'
 import { secureFiles } from './platform'
@@ -38,18 +39,7 @@ const within = (root: string, path: string): boolean =>
 const missing = (error: unknown): boolean =>
   (error as NodeJS.ErrnoException)?.code === 'ENOENT' ||
   (error instanceof FileOperationFailed && error.code === 'not_found')
-const mimeOf = (name: string): string =>
-  ({
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.svg': 'image/svg+xml',
-    '.heic': 'image/heic',
-    '.avif': 'image/avif',
-    '.pdf': 'application/pdf'
-  })[extname(name).toLowerCase()] ?? 'application/octet-stream'
+const mimeOf = (name: string): string => mimeTypeOf(name)
 
 /** Canonical base64 only. Buffer.from alone silently accepts malformed or
  * truncated input; neither a size declaration nor the filename is evidence. */
@@ -286,8 +276,22 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
       } else {
         path = await locate(input.source)
         const info = await secureFiles.stat(path)
-        if (info.type !== 'file') fail('not_file', 'Folders and special files cannot be attached.')
         name = basename(path)
+        // A folder is a record of its own: its path for the agent to list and
+        // its top-level item count for the reader; never copied, never read.
+        if (info.type === 'directory') {
+          const listing = await secureFiles.list(path)
+          return Schema.decodeUnknownSync(FileAttachment)({
+            id,
+            path,
+            name,
+            size: 0,
+            mimeType: FOLDER_MIME_TYPE,
+            entries: listing.entries.length,
+            delivery: 'folder'
+          })
+        }
+        if (info.type !== 'file') fail('not_file', 'Special files cannot be attached.')
         // A temporary server file must survive the source's removal, just as
         // a temporary Mac attachment does. Durable remote references stay put.
         if (
@@ -315,6 +319,17 @@ export function createServerFiles(options: ServerFilesOptions): FilesService {
         : await realpath(input.path)
       if (!input.root && !within(directory, path))
         fail('invalid_path', 'Attachment belongs to another session or server.')
+      if ((await secureFiles.stat(path)).type === 'directory') {
+        const listing = await secureFiles.list(path)
+        const names = listing.entries
+          .map((entry) => (entry.type === 'directory' ? `${entry.name}/` : entry.name))
+          .sort((a, b) => a.localeCompare(b))
+        return {
+          text: names.join('\n'),
+          ...(names.length ? {} : { notice: 'An empty folder.' }),
+          ...(listing.truncated ? { notice: 'Showing the first items.' } : {})
+        }
+      }
       const mime = mimeOf(path)
       if (['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mime)) {
         const bytes = await bounded(path, MAX_TRANSFER_BYTES)

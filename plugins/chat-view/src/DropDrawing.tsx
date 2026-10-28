@@ -6,9 +6,8 @@
    in the message. Each drawing is literal:
 
    - files: a page and a folder above the composer. The page leaves along the
-     accent line and lands where the ringed dot waits, an attachment; the
-     folder's own line, dashed, goes to the composer's text, since a folder
-     lands as its path and never as a chip.
+     accent line and lands where the ringed dot waits; the folder is owed a
+     line of its own to the same place, dashed until it has one.
    - sessions: the sidebar's rows beside the composer; the one being dragged
      has come out of its column and travels the accent line into the message,
      the others stay seated.
@@ -106,9 +105,9 @@ export function DropDrawing({ kind }: { kind: DropDrawingKind }): React.JSX.Elem
           {/* the ground line the composer sits on */}
           <line className="ln ln--thin" x1="18" y1="138" x2="222" y2="138" />
           <Composer x={46} y={100} w={148} />
-          {/* the folder: its line goes to the composer's text, where its path lands */}
+          {/* the folder: present, owed a line of its own to the landing */}
           <Folder x={136} y={24} className="fan fan--back" />
-          <path className="ln ln--soft" d="M158,64 C158,80 156,96 150,112" />
+          <path className="ln ln--soft" d="M158,64 C158,82 150,98 134,108" />
           {/* the front page, and the one line that carries it into the message */}
           <Page x={78} y={22} front className="fan fan--front" />
           <path

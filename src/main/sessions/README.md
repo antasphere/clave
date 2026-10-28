@@ -82,7 +82,9 @@ scrolling up keeps the reader's place, and every turn arrives once, in order.
 ## Attachments
 
 A `user_message` may carry `attachments`: records (id, label, path, name, MIME
-type, size, delivery) of files the reader attached, never their bytes, or
+type, size, delivery, and a folder's `entries` count) of files and folders the
+reader attached, never their bytes (a folder is `delivery: folder`, a path the
+agent lists; the media types come from `@clave/contract/attachments`), or
 session records (delivery `session`: the Clave session id, the tab's name,
 agent and cwd) for sidebar tabs dropped on the composer. The composer
 obtains a record through `sessions:files` (`prepare`), which validates the
@@ -98,8 +100,8 @@ again at send time, against the adapter's `images` capability
 (`sessions:capabilities`) — and hands the adapter the message with a `prepared`
 field: the text with a legend appended — one JSON line per file reference,
 image and session, each keyed by the marker the text refers to it by
-(`[File #1] {"name":…,"path":…}`, `[Session #1] {"session":…}`), under a line
-per kind saying what to do with it — and the images as base64. Whatever a
+(`[File #1] {"name":…,"path":…}`, `[Folder #1] {"folder":…,"path":…}`,
+`[Session #1] {"session":…}`), under a line per kind saying what to do with it — and the images as base64. Whatever a
 renderer put in `prepared` is
 discarded. Adapters call `providerPrompt(input)` for what to send (Claude:
 image content blocks in stream-json; Codex: `image` input items as data URLs;

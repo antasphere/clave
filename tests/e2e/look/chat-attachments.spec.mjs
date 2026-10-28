@@ -56,6 +56,12 @@ export async function run(t) {
     mkdirSync(root, { recursive: true })
     const notes = path.join(root, 'notes.md')
     writeFileSync(notes, '# notes\n')
+    // Nine records plus the session: the cap is ten.
+    const kinds = ['clip.mp4', 'voice.m4a', 'brief.pdf', 'sheet.xlsx', 'main.ts', 'bundle.zip']
+    for (const name of kinds) writeFileSync(path.join(root, name), 'x')
+    const folder = path.join(root, 'assets')
+    mkdirSync(folder, { recursive: true })
+    writeFileSync(path.join(folder, 'one.txt'), '1')
     for (const t of ['dark', 'light']) {
       await theme(t)
       await win.waitForTimeout(300)
@@ -85,6 +91,21 @@ export async function run(t) {
       { selector: pane, url: `file://${notes}` }
     )
     await win.locator('.chat-composer .chat-attachment').filter({ hasText: 'notes.md' }).waitFor()
+    for (const name of [...kinds, 'assets']) {
+      await win.evaluate(
+        ({ selector, url }) => {
+          const dt = new DataTransfer()
+          dt.setData('text/uri-list', url)
+          document
+            .querySelector(selector)
+            .dispatchEvent(
+              new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+            )
+        },
+        { selector: pane, url: `file://${path.join(root, name)}` }
+      )
+      await win.locator('.chat-composer .chat-attachment').filter({ hasText: name }).waitFor()
+    }
     await fire('clave:sessions-drop', { sessionIds: [record.id] })
     await win.locator('.chat-composer .chat-attachment').filter({ hasText: 'Session ·' }).waitFor()
     await until(async () =>

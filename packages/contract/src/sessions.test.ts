@@ -60,6 +60,22 @@ const inputs: unknown[] = [
   },
   {
     type: 'user_message',
+    text: 'list [Folder #1]',
+    attachments: [
+      {
+        id: 'f',
+        label: 'Folder #1',
+        path: '/work/src',
+        name: 'src',
+        mimeType: 'inode/directory',
+        size: 0,
+        entries: 12,
+        delivery: 'folder'
+      }
+    ]
+  },
+  {
+    type: 'user_message',
     text: 'finish when [Session #1] is done',
     attachments: [
       {
