@@ -61,28 +61,6 @@ export function pathForMessage(p: string): string {
   return /^[\w@%+=:,./~-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`
 }
 
-/** A Files drag sorted while the drop event is live (its entries are gone
- *  once it ends): the files to attach, and the folders, which are paths to
- *  talk about rather than files to attach. Finder names a folder through its
- *  item's entry; a DataTransfer a page builds has no entries, so everything
- *  in it is a file. */
-export function filesAndFolders(dt: DataTransfer): { files: File[]; folders: string[] } {
-  const files: File[] = []
-  const folders: string[] = []
-  for (const item of Array.from(dt.items ?? [])) {
-    if (item.kind !== 'file') continue
-    const file = item.getAsFile()
-    if (!file) continue
-    const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null
-    const folder = entry?.isDirectory ? window.electronAPI.getPathForFile(file) : ''
-    if (folder) folders.push(folder)
-    else files.push(file)
-  }
-  // A transfer without items still has its files.
-  if (!files.length && !folders.length) files.push(...Array.from(dt.files ?? []))
-  return { files, folders }
-}
-
 /** What a failure says, in the words of whoever refused: an IPC error's
  *  routing prefix is not part of the sentence. */
 export function failureText(error: unknown): string {

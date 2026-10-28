@@ -11,7 +11,7 @@ import type {
   SessionControl,
   HistoryPage
 } from '../shared/session-model'
-import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
@@ -1005,12 +1005,12 @@ const electronAPI = {
   // The composer's files: prepared into a session's attachment records here,
   // read again in main when the message is sent.
   sessionsFiles: {
-    prepare: (sessionId: string, source: AttachmentSource): Promise<Attachment> =>
+    prepare: (sessionId: string, source: AttachmentSource): Promise<FileAttachment> =>
       ipcRenderer.invoke('sessions:files', { type: 'prepare', sessionId, source }),
     pick: (): Promise<string[]> => ipcRenderer.invoke('sessions:files', { type: 'pick' }),
-    preview: (file: Attachment): Promise<AttachmentPreview> =>
+    preview: (file: FileAttachment): Promise<AttachmentPreview> =>
       ipcRenderer.invoke('sessions:files', { type: 'preview', file }),
-    open: (file: Attachment): Promise<void> =>
+    open: (file: FileAttachment): Promise<void> =>
       ipcRenderer.invoke('sessions:files', { type: 'open', file })
   },
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) =>

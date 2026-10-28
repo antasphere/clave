@@ -9,7 +9,7 @@ import type {
   HistoryPage
 } from '../shared/session-model'
 import type { DayActivity } from '../shared/activity-fold'
-import type { Attachment, AttachmentPreview, AttachmentSource } from '../shared/attachments'
+import type { AttachmentPreview, AttachmentSource, FileAttachment } from '../shared/attachments'
 import type { AntasphereAccountStatus } from '../shared/antasphere-account-types'
 import type {
   GithubResult,
@@ -653,10 +653,10 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  absent), oldest first, with what to ask for the page older than it. */
   sessionsHistory: (id: string, before?: number, limit?: number) => Promise<HistoryPage>
   sessionsFiles: {
-    prepare(sessionId: string, source: AttachmentSource): Promise<Attachment>
+    prepare(sessionId: string, source: AttachmentSource): Promise<FileAttachment>
     pick(): Promise<string[]>
-    preview(file: Attachment): Promise<AttachmentPreview>
-    open(file: Attachment): Promise<void>
+    preview(file: FileAttachment): Promise<AttachmentPreview>
+    open(file: FileAttachment): Promise<void>
   }
   onSessionStream: (id: string, callback: (stream: SessionStream) => void) => () => void
   onSessionStreamExit: (id: string, callback: (code: number) => void) => () => void
