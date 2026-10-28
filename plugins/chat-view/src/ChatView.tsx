@@ -71,7 +71,12 @@ import {
   type Attachment,
   type AttachmentSource
 } from '../../../src/shared/attachments'
-import { pathsFromDataTransfer, pathForMessage } from '../../../src/renderer/src/lib/dropped-paths'
+import {
+  failureText,
+  filesAndFolders,
+  pathForMessage,
+  pathsFromDataTransfer
+} from '../../../src/renderer/src/lib/dropped-paths'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 import { ClaudeLogo, CodexLogo, PiLogo } from '../../../src/renderer/src/components/icons/cli-logos'
 import { useMarkPack } from '../../../src/renderer/src/components/plugins/native-marks'
@@ -683,33 +688,31 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
      (a pasted screenshot has no path) is sent as bytes and written by main. */
   const addFiles = async (sources: (File | string)[]): Promise<void> => {
     if (closed) return
-    const queued: { source: File | string; key: string }[] = []
+    const queued: { source: File | string; key: string; name: string; path: string }[] = []
     let room = MAX_ATTACHMENTS - attachments.length - preparations.length
     for (const source of sources) {
       if (room-- <= 0) {
         report(`Attach up to ${MAX_ATTACHMENTS} files per message.`)
         break
       }
+      const path = typeof source === 'string' ? source : window.electronAPI.getPathForFile(source)
       const name =
         (typeof source === 'string' ? source.split(/[\\/]/).pop() : source.name) || 'Pasted image'
-      queued.push({ source, key: crypto.randomUUID() })
+      queued.push({ source, key: crypto.randomUUID(), name, path })
       setPreparations((current) => [...current, { id: queued.at(-1)!.key, name }])
     }
-    for (const { source, key } of queued) {
+    for (const { source, key, name, path } of queued) {
       if (withdrawn.current.has(key)) continue
       try {
         let value: AttachmentSource
         if (typeof source === 'string') value = { path: source }
+        else if (path) value = { path }
         else {
-          const path = window.electronAPI.getPathForFile(source)
-          if (path) value = { path }
-          else {
-            if (source.size > MAX_IMAGE_BYTES)
-              throw new Error('Pasted images must be 5 MiB or smaller.')
-            value = {
-              name: source.name || 'Pasted image.png',
-              bytes: new Uint8Array(await source.arrayBuffer())
-            }
+          if (source.size > MAX_IMAGE_BYTES)
+            throw new Error('Pasted images must be 5 MiB or smaller.')
+          value = {
+            name: source.name || 'Pasted image.png',
+            bytes: new Uint8Array(await source.arrayBuffer())
           }
         }
         const file = await window.electronAPI.sessionsFiles.prepare(session.id, value)
@@ -720,9 +723,18 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         setPreparations((current) => current.filter((p) => p.id !== key))
       } catch (failure) {
         if (withdrawn.current.has(key)) continue
-        setPreparations((current) =>
-          current.map((p) => (p.id === key ? { ...p, error: String(failure) } : p))
-        )
+        // What main refuses that arrived as a path — a folder from an app that
+        // names no entry, a socket, a file it cannot read — lands in the text
+        // as that path, the reason reported beside it: a drop never fails, it
+        // has a worst case. Bytes with no path keep the error on their chip.
+        if (path) {
+          setPreparations((current) => current.filter((p) => p.id !== key))
+          insertAtCaret(pathForMessage(path) + ' ')
+          report(`${failureText(failure)} ${name} is in the message as a path.`)
+        } else
+          setPreparations((current) =>
+            current.map((p) => (p.id === key ? { ...p, error: failureText(failure) } : p))
+          )
       }
     }
     for (const { key } of queued) withdrawn.current.delete(key)
@@ -732,38 +744,53 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     withdrawn.current.add(key)
     setPreparations((current) => current.filter((p) => p.id !== key))
   }
-  /* A drop on the pane. Files and file URLs become attachments; the paths
-     Clave's own file and git panels drag as text land at the caret, the way
-     the TUI pastes them (quoted only when needed, a space after), because a
-     dragged folder is a path to talk about, not a file to attach. */
+  /* A drop on the pane. Files and file URLs become attachments; folders, and
+     the paths Clave's own file and git panels drag as text, land at the caret
+     the way the TUI pastes them (quoted only when needed, a space after),
+     because a folder is a path to talk about, not a file to attach. Finder
+     names a folder through its item's entry, read while the event is live. */
   const drop = (dt: DataTransfer): void => {
     if (filesDrag(dt)) {
-      const files = Array.from(dt.files)
-      void addFiles(files.length ? files : pathsFromDataTransfer(dt))
+      const { files, folders } = filesAndFolders(dt)
+      if (folders.length) insertAtCaret(folders.map(pathForMessage).join(' ') + ' ')
+      if (files.length) void addFiles(files)
+      else if (!folders.length) void addFiles(pathsFromDataTransfer(dt))
     } else if (pathsDrag(dt)) void dropPaths(pathsFromDataTransfer(dt))
   }
+  /* Paths dragged as text. Each is made stable first — a transient source
+     copied, a local file carried to a server's session — and one that cannot
+     be (a folder under a temp root, a file the server refuses) lands as the
+     path it was dropped with, the reason reported beside it. */
   const dropPaths = async (paths: string[]): Promise<void> => {
     if (!paths.length) return
-    const stable = (
-      await Promise.all(
-        paths.map(async (p) => {
-          if (!isRemoteKey(session.id)) {
-            if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
-            return window.electronAPI.persistDroppedFile(p)
-          }
-          if (isRemoteKey(p)) {
-            const file = parseResourceKey('file', p)
-            if (file.serverId !== ownerOf(session.id))
-              throw new Error('This file belongs to another server.')
-            return file.id
-          }
-          const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
-          return parseResourceKey('file', file.path).id
+    const stable = await Promise.all(
+      paths.map((p) =>
+        stablePath(p).catch((failure: unknown) => {
+          const path = isRemoteKey(p) ? parseResourceKey('file', p).id : p
+          const name = path.split(/[\\/]/).pop() || path
+          report(`${failureText(failure)} ${name} is in the message as a path.`)
+          return path
         })
       )
-    ).filter((p): p is string => Boolean(p))
-    if (!stable.length) return
-    const insert = stable.map(pathForMessage).join(' ') + ' '
+    )
+    insertAtCaret(stable.map(pathForMessage).join(' ') + ' ')
+  }
+  const stablePath = async (p: string): Promise<string> => {
+    if (!isRemoteKey(session.id)) {
+      if (isRemoteKey(p)) throw new Error('This file belongs to another server.')
+      return (await window.electronAPI.persistDroppedFile(p)) ?? p
+    }
+    if (isRemoteKey(p)) {
+      const file = parseResourceKey('file', p)
+      if (file.serverId !== ownerOf(session.id))
+        throw new Error('This file belongs to another server.')
+      return file.id
+    }
+    const file = await window.electronAPI.sessionsFiles.prepare(session.id, { path: p })
+    return parseResourceKey('file', file.path).id
+  }
+  /** Text into the draft at the caret, the caret moved past it. */
+  const insertAtCaret = (insert: string): void => {
     const el = textarea.current
     const start = el?.selectionStart ?? draft.length
     const end = el?.selectionEnd ?? draft.length

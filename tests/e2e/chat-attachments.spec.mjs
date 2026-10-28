@@ -176,7 +176,73 @@ export async function run(t) {
     assert.equal(await send.isDisabled(), true)
     t.check('a pasted image is a chip that can be removed, and send follows', true)
 
-    // 5. The paperclip opens the native picker; a picker answering with more
+    // 5. A folder is a path to talk about, never a file to attach, and a drop
+    //    never fails. Dropped from Finder, the item's entry names the folder:
+    //    its path lands at the caret, no chip, nothing sent to main. From an
+    //    app that hands only a URL, main refuses the folder as a file and the
+    //    path lands anyway, with the reason reported beside it.
+    const folder = path.join(root, 'drop folder')
+    mkdirSync(folder, { recursive: true })
+    await app.evaluate(({ ipcMain }) => {
+      const original = ipcMain._invokeHandlers.get('sessions:files')
+      globalThis.__prepared = []
+      ipcMain._invokeHandlers.set('sessions:files', (event, request) => {
+        if (request.type === 'prepare') globalThis.__prepared.push(request.source?.path ?? '')
+        return original(event, request)
+      })
+    })
+    const prepared = () => app.evaluate(() => globalThis.__prepared)
+    // The desktop's own drop, through the devtools protocol: real File
+    // objects with paths and entries, the way Finder hands them.
+    const cdp = await app.context().newCDPSession(win)
+    const box = await win.locator(pane).boundingBox()
+    const at = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }
+    const data = { items: [], files: [folder], dragOperationsMask: 1 }
+    for (const type of ['dragEnter', 'dragOver', 'drop'])
+      await cdp.send('Input.dispatchDragEvent', { type, ...at, data })
+    await cdp.detach()
+    assert.ok(
+      await until(async () => (await input.inputValue()) !== ''),
+      "the folder's path must reach the composer"
+    )
+    assert.equal(await input.inputValue(), `'${folder}' `)
+    assert.equal(await composerChips.count(), 0, 'a folder attaches nothing')
+    assert.equal(await win.getByRole('alert').count(), 0, 'a folder Finder names is no error')
+    assert.deepEqual(await prepared(), [], 'a folder Finder names is never sent to main as a file')
+    t.check(
+      'a folder dropped from the desktop lands as its path at the caret, no chip, no error',
+      true
+    )
+
+    await input.fill('')
+    await win.evaluate(
+      ({ selector, url }) => {
+        const dt = new DataTransfer()
+        dt.setData('text/uri-list', url)
+        document
+          .querySelector(selector)
+          .dispatchEvent(
+            new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+          )
+      },
+      { selector: pane, url: `file://${folder}` }
+    )
+    assert.ok(
+      await until(async () => (await input.inputValue()) !== ''),
+      'the refused folder must still reach the composer as a path'
+    )
+    assert.equal(await input.inputValue(), `'${folder}' `)
+    assert.deepEqual(await prepared(), [folder], 'a folder named only by URL is tried as a file')
+    assert.equal(await composerChips.count(), 0, 'and leaves no chip behind, errored or not')
+    await win
+      .getByRole('alert')
+      .filter({ hasText: 'Folders and special files cannot be attached.' })
+      .filter({ hasText: 'drop folder is in the message as a path.' })
+      .waitFor()
+    await input.fill('')
+    t.check('a folder main refuses lands as its path anyway, the reason reported beside it', true)
+
+    // 6. The paperclip opens the native picker; a picker answering with more
     //    than the cap fills the cap and says so, adding nothing past it.
     const many = Array.from({ length: 11 }, (_, i) => {
       const file = path.join(root, `pick-${i}.txt`)
@@ -198,7 +264,7 @@ export async function run(t) {
     assert.equal(await composerChips.filter({ hasText: 'pick-10.txt' }).count(), 0)
     t.check('the paperclip picks files, and the cap holds at ten with a visible reason', true)
 
-    // 6. The paths Clave's own panels drag as text still land at the caret,
+    // 7. The paths Clave's own panels drag as text still land at the caret,
     //    quoted when a shell would need it: a folder is something to talk
     //    about, not a file to attach.
     await win.evaluate((selector) => {
