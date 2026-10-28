@@ -15,7 +15,8 @@ import { until } from './harness.mjs'
    - a background shell joins the same stack behind the terminal glyph, with
      no model and no relaunch, and leaves with the list;
    - the status line counts the agents and the commands apart ("1 agent",
-     then "1 agent · 1 command"), and shows no count once the stack is empty. */
+     then "1 agent · 1 command"), a command the turn waits on counts no more
+     than it shows, and the count goes once the stack is empty. */
 
 export async function run(t) {
   const chat = await openChat(
@@ -217,6 +218,33 @@ export async function run(t) {
         stack[1].model === null &&
         !stack[1].relaunch,
       stack
+    )
+    /* 6. A command the turn waits on is off the stack (PR #256), so it is off
+       the count: the line still reads one agent and one command while the call
+       is in flight. A context reading is the sync point, since nothing on the
+       line is expected to change. */
+    await inject(fixture, record.id, [
+      { type: 'tool_call', id: 'bash-2', name: 'Bash', input: { command: 'git status -sb' } },
+      { type: 'context_usage', used: 13_000, window: null }
+    ])
+    await until(async () => (await meter.innerText()).includes('13k/1M'))
+    const waited = {
+      count: await countLabel(),
+      rows: await view.locator('.term-agent:not([data-leaving])').count()
+    }
+    await inject(fixture, record.id, [
+      { type: 'tool_result', id: 'bash-2', output: '## main' },
+      { type: 'context_usage', used: 14_000, window: null }
+    ])
+    await until(async () => (await meter.innerText()).includes('14k/1M'))
+    const answered = { count: await countLabel(), rows: await view.locator('.term-agent').count() }
+    t.check(
+      'a command the turn waits on is neither on the stack nor in the count, in flight or answered',
+      waited.count === '1 agent · 1 command' &&
+        waited.rows === 2 &&
+        answered.count === '1 agent · 1 command' &&
+        answered.rows === 2,
+      { waited, answered }
     )
     await inject(fixture, record.id, [{ type: 'background_tasks', tasks: [] }])
     const cleared = await until(async () => (await view.locator('.term-agent').count()) === 0)

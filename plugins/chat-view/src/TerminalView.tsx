@@ -1202,7 +1202,7 @@ export function TerminalView({
           {running && (
             <span
               className="term-dim term-running"
-              title="Running now: the subagents, and the commands left in the background"
+              title="Running now: the subagents, and the commands sent to the background"
             >
               · {running}
             </span>
