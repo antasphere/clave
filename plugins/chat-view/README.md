@@ -120,8 +120,19 @@ be previewed, removed, or — when it is an image the adapter cannot take as ima
 content — sent as a file reference instead, on the reader's say-so. Chips are
 attachment records from `sessions:files`; the bytes are read by main when the
 message is sent (`src/main/sessions/README.md`, "Attachments"). A sent turn
-shows the same chips as its record. The paths Clave's own file and git panels
-drag as text still land at the caret, since a dragged folder is a path to talk
-about, not a file to attach. `tests/e2e/chat-attachments.spec.mjs` drives all
-of it through the real write IPC and reads the provider's side off the echo
-adapter's reply.
+shows the same chips as its record.
+
+A folder is a path to talk about, not a file to attach. Dropped from Finder it
+lands at the caret the way the TUI pastes it (quoted only when a shell would
+need it, a space after), told from the files beside it by its item's entry
+(`filesAndFolders` in `lib/dropped-paths.ts`, read while the drop event is
+live, since the entries are gone once it ends) and never sent to main. The
+paths Clave's own file and git panels drag as text land at the caret the same
+way. A drop never fails: whatever main refuses that arrived as a path — a
+folder an app named only by URL, a socket, a file it cannot read — lands in
+the text as that path with the reason reported beside it, and only bytes with
+no path (a pasted image too large) keep the error on their chip.
+`tests/e2e/chat-attachments.spec.mjs` drives all of it through the real write
+IPC, the desktop's own drop through the devtools protocol
+(`Input.dispatchDragEvent`, real File objects with their entries) included, and
+reads the provider's side off the echo adapter's reply.
