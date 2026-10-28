@@ -718,6 +718,12 @@ function buildServer(callerSessionId: string | undefined): McpServer {
       description:
         'Open a new tab in Clave: a Claude Code, Antigravity, Codex, or Pi session, or a plain terminal, in the given directory. Claude and Codex can open in the terminal (default) or in Clave\'s CHAT VIEW — the conversation interface with message bubbles and a composer — with chat: true ("open a chat", "in chat mode", "chat session"). Optionally place it in a group — pass a groupId, an exact group name, or "mine" for the calling tab\'s own group. Returns { sessionId, groupId }.',
       inputSchema: {
+        attachToParent: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Nest the new tab under the calling session in the sidebar (default false). Use true for execution helpers and verifiers; false for lane leads and successors. The caller remains the messaging parent either way while the server is running. Without a caller, the tab stays separate.'
+          ),
         cwd: z.string().describe('Absolute path of the working directory for the new session'),
         mode: z
           // 'gemini' is kept as a deprecated alias (the Gemini CLI was retired

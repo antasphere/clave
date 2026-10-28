@@ -553,9 +553,11 @@ async function openSession(ctx: Ctx, key: string, p: Payload): Promise<unknown> 
         autoExecute: mode === 'terminal' && !!command && p.autoRun !== false,
         ...(mode !== 'terminal' && prompt ? { initialPrompt: prompt } : {}),
         ...(workspaceId !== undefined ? { workspaceId } : {}),
-        // The parent, on the record too: what brings the link back after a
-        // restart, and what the window folds the tab under (#259).
-        ...(ctx.callerSessionId ? { spawnedBy: ctx.callerSessionId } : {})
+        // Persisted lineage folds the tab under its caller. Separate tabs
+        // keep the in-memory messaging link below without sidebar nesting.
+        ...(p.attachToParent === true && ctx.callerSessionId
+          ? { spawnedBy: ctx.callerSessionId }
+          : {})
       }
     })
   } catch (err) {

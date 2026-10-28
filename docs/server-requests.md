@@ -49,7 +49,13 @@ session read and session messaging tools, and lets an agent delegate:
 `clave_open_session` starts a Claude or Codex tab (the chat view by default),
 an Antigravity or Pi agent or a terminal in an absolute directory, returns its
 id and links it to the caller, which `clave_list` reports as `parentId` while the
-daemon runs. `clave_close_session`, `clave_rename`, `clave_create_group` and
+daemon runs. `attachToParent: true` also persists `spawnedBy` so a desktop
+sidebar can nest the tab under its caller. The parameter defaults to `false`:
+lane leads and successors remain separate tabs, while execution helpers and
+verifiers opt in. The live messaging link to the caller exists either way;
+for separate tabs, keep explicit reporting IDs and a shared group for routing
+after a server restart. Desktop `clave_open_session` uses the same parameter.
+`clave_close_session`, `clave_rename`, `clave_create_group` and
 `clave_move_session` act on the daemon's own tabs and sidebar groups. Desktop
 window, workspace, account and editor tools remain desktop operations; a call
 naming `window`, `workspace` or `account` is refused rather than ignored. A `profile` must
@@ -61,7 +67,8 @@ as a group deleted while the tab was starting, comes back in `warnings` with
 `agent-sessions/delegation-group` fixture creates a run-scoped group and tab
 through `CreateGroup` and `StartSession`; `npx vitest run
 src/main/mcp/standalone-mcp.test.ts` loads it, has an agent move, rename and
-delegate into it, writes a receipt beside its run data and closes its tabs.
+delegate both an attached verifier and a separate lane lead into it, verifies
+the spawn options and messaging links, writes a receipt beside its run data and closes its tabs.
 
 Pending records are in memory for the daemon's lifetime, capped at 1000 records
 including recent outcomes and at 128 KiB of metadata per request. Pending work has
