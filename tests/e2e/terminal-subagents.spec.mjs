@@ -13,7 +13,10 @@ import { until } from './harness.mjs'
    - picking another model on a row asks first, then stops that one task and
      asks the conversation to launch it again on the model picked;
    - a background shell joins the same stack behind the terminal glyph, with
-     no model and no relaunch, and leaves with the list. */
+     no model and no relaunch, and leaves with the list;
+   - the status line counts the agents and the commands apart ("1 agent",
+     then "1 agent · 1 command"), a command the turn waits on counts no more
+     than it shows, and the count goes once the stack is empty. */
 
 export async function run(t) {
   const chat = await openChat(
@@ -100,6 +103,19 @@ export async function run(t) {
     ])
     const row = view.locator('.term-agent').first()
     await until(async () => (await row.innerText()).includes('2 steps'))
+    /** The status line's count of the stack; null when it shows none. */
+    const countLabel = () =>
+      view
+        .locator('.term-status .term-running')
+        .evaluateAll((spans) => spans.map((el) => el.textContent.replace(/^[·\s]+/, ''))[0] ?? null)
+    const oneAgent = await countLabel()
+    t.check(
+      'one subagent on the stack reads "1 agent" on the status line',
+      oneAgent === '1 agent',
+      {
+        count: oneAgent
+      }
+    )
     const seen = await row.evaluate((el) => ({
       text: el.innerText,
       title: el.querySelector('.term-agent-row').getAttribute('title'),
@@ -184,6 +200,12 @@ export async function run(t) {
         relaunch: !!el.querySelector('button.term-agent-model')
       }))
     )
+    const mixed = await countLabel()
+    t.check(
+      'an agent and a background command read "1 agent · 1 command", never "2 agents"',
+      mixed === '1 agent · 1 command',
+      { count: mixed }
+    )
     t.check(
       'a background shell stacks after the agent with the terminal glyph and no model; the agent keeps its relaunch',
       stack.length === 2 &&
@@ -197,9 +219,38 @@ export async function run(t) {
         !stack[1].relaunch,
       stack
     )
+    /* 6. A command the turn waits on is off the stack (PR #256), so it is off
+       the count: the line still reads one agent and one command while the call
+       is in flight. A context reading is the sync point, since nothing on the
+       line is expected to change. */
+    await inject(fixture, record.id, [
+      { type: 'tool_call', id: 'bash-2', name: 'Bash', input: { command: 'git status -sb' } },
+      { type: 'context_usage', used: 13_000, window: null }
+    ])
+    await until(async () => (await meter.innerText()).includes('13k/1M'))
+    const waited = {
+      count: await countLabel(),
+      rows: await view.locator('.term-agent:not([data-leaving])').count()
+    }
+    await inject(fixture, record.id, [
+      { type: 'tool_result', id: 'bash-2', output: '## main' },
+      { type: 'context_usage', used: 14_000, window: null }
+    ])
+    await until(async () => (await meter.innerText()).includes('14k/1M'))
+    const answered = { count: await countLabel(), rows: await view.locator('.term-agent').count() }
+    t.check(
+      'a command the turn waits on is neither on the stack nor in the count, in flight or answered',
+      waited.count === '1 agent · 1 command' &&
+        waited.rows === 2 &&
+        answered.count === '1 agent · 1 command' &&
+        answered.rows === 2,
+      { waited, answered }
+    )
     await inject(fixture, record.id, [{ type: 'background_tasks', tasks: [] }])
     const cleared = await until(async () => (await view.locator('.term-agent').count()) === 0)
     t.check('an empty list folds both rows away', !!cleared)
+    const none = await countLabel()
+    t.check('and takes the count with it', none === null, { count: none })
   } finally {
     await chat.close()
   }
