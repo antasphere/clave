@@ -53,14 +53,20 @@ exec /bin/sh "$@"
     env: { SHELL: `${ROOT}/bin/sh`, PATH: `${ROOT}/bin:${process.env.PATH}` }
   })
   try {
-    const open = async (name, callerSessionId, mode = 'codex') => {
-      const result = await callMcp(app, 'openSession', { cwd: ROOT, name, mode, callerSessionId })
+    const open = async (name, callerSessionId, mode = 'codex', attachToParent) => {
+      const result = await callMcp(app, 'openSession', {
+        cwd: ROOT,
+        name,
+        mode,
+        callerSessionId,
+        attachToParent
+      })
       assert.ok(result?.sessionId, JSON.stringify(result))
       return result.sessionId
     }
     const parent = await open('Coordinator')
-    const child = await open('Explorer', parent)
-    const nested = await open('Verifier', child)
+    const child = await open('Explorer', parent, 'codex', true)
+    const nested = await open('Verifier', child, 'codex', true)
     const terminal = await open('Dev terminal', parent, 'terminal')
     const row = (id) => win.locator(`[data-sidebar-item-id="${id}"]`)
     await row(parent).waitFor()
@@ -567,6 +573,22 @@ exec /bin/sh "$@"
       t.check(`${theme}: compact trigger stays within its row`, geometry.fits, geometry)
       await win.keyboard.press('Escape')
       await win.getByRole('menu').waitFor({ state: 'hidden' })
+    }
+
+    // Lane leads and successors opt out without disappearing under the coordinator.
+    for (const [name, attachToParent] of [
+      ['Lane lead', false],
+      ['Successor', undefined]
+    ]) {
+      const id = await open(name, parent, 'codex', attachToParent)
+      await row(id).waitFor()
+      t.equal(`${name}: separate sidebar row`, await row(id).count(), 1)
+      const records = await win.evaluate(() => window.electronAPI.sessionsList())
+      assert.equal(records.find((s) => s.id === id)?.spawnedBy, undefined)
+      // The caller remains reachable even without a persisted sidebar parent.
+      const read = await callMcp(app, 'readSession', { sessionId: 'parent', callerSessionId: id })
+      assert.equal(read.sessionId, parent)
+      await callMcp(app, 'closeSession', { sessionId: id })
     }
 
     // Closing a root re-roots survivors; closing the intermediate exposes its child.

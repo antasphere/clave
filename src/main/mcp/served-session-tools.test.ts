@@ -697,6 +697,7 @@ describe('opening a session', () => {
     const out = await run(h, 'openSession', {
       cwd: '/proj',
       name: 'Worker',
+      attachToParent: true,
       prompt: 'do it',
       dangerous: true,
       model: 'opus',
@@ -739,6 +740,33 @@ describe('opening a session', () => {
     ])
     // A window is live: the pane starts the process at its real size.
     expect(h.argsOf('sessions.resize')).toEqual([])
+  })
+  it.each([undefined, false, true])(
+    'persists sidebar attachment only when attachToParent is true: %s',
+    async (attachToParent) => {
+      const h = setup(world())
+      await run(h, 'openSession', { cwd: '/proj', attachToParent })
+      const options = (h.argsOf('sessions.start')[0] as { options: Record<string, unknown> })
+        .options
+      if (attachToParent === true) expect(options.spawnedBy).toBe('caller')
+      else expect(options).not.toHaveProperty('spawnedBy')
+      // The opener remains reachable for messaging even for a separate sidebar tab.
+      expect(h.argsOf('setParent')).toEqual([['new-1', 'caller']])
+      expect(h.argsOf('captureTabSpawn')).toHaveLength(1)
+    }
+  )
+  it('does not attach a session opened without an authenticated caller', async () => {
+    const h = setup(world())
+    await run(
+      h,
+      'openSession',
+      { cwd: '/proj', attachToParent: true },
+      { callerSessionId: undefined }
+    )
+    expect((h.argsOf('sessions.start')[0] as { options: unknown }).options).not.toHaveProperty(
+      'spawnedBy'
+    )
+    expect(h.argsOf('setParent')).toEqual([])
   })
   it('a group in another window: the tab opens there, in that group’s workspace', async () => {
     const h = setup(world())

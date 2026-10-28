@@ -347,9 +347,9 @@ export const SpawnOptions = Schema.Struct({
   codexAccountLabel: Schema.optional(Schema.String),
   workspaceId: Schema.optional(Schema.String),
   link: Schema.optional(SessionLink),
-  /** The tab whose agent opened this one (`clave_open_session` from inside a
-   *  tab): what folds it under its parent and what `"parent"` resolves to.
-   *  Absent for a tab the user opened. */
+  /** The caller when `clave_open_session` uses `attachToParent: true`:
+   *  folds the tab under its parent and restores the messaging link at boot.
+   *  Absent for separate tabs, including agent opens without attachment. */
   spawnedBy: Schema.optional(Schema.String)
 })
 export type SpawnOptions = typeof SpawnOptions.Type
