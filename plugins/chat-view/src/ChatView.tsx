@@ -980,7 +980,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
                       </span>
                       <button
                         type="button"
-                        className="chat-turn-copy"
+                        className="chat-turn-copy chat-attachment-remove"
                         aria-label={`Remove ${item.name}`}
                         title="Remove"
                         onClick={() => withdraw(item.id)}

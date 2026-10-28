@@ -4443,6 +4443,7 @@ details[open] > .chat-tool-row .chat-tool-chevron,
   margin-bottom: calc(var(--spacing) * 1.5);
 }
 .chat-attachment {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4459,18 +4460,27 @@ details[open] > .chat-tool-row .chat-tool-chevron,
 .chat-attachment[data-issue='true'] {
   border-color: var(--color-accent);
 }
+/* The card is the thing to click: the preview button inside it paints
+   nothing of its own, the card takes the hover, and the remove button sits
+   in the card's top-right corner, the card keeping room for it. */
 .chat-attachment-open {
   display: flex;
   align-items: center;
   gap: calc(var(--spacing) * 1.5);
   min-width: 0;
   text-align: left;
-  padding: calc(var(--spacing) * 0.75);
-  border-radius: var(--radius-control);
-  transition: background-color var(--default-transition-duration);
+  padding: 0;
 }
-.chat-attachment-open:hover {
+.chat-attachment:has(> button.chat-attachment-open:hover) {
   background-color: var(--surface-200);
+}
+.chat-attachment:has(> .chat-attachment-remove) {
+  padding-right: calc(var(--spacing) * 6);
+}
+.chat-attachment-remove {
+  position: absolute;
+  top: calc(var(--spacing) * 0.75);
+  right: calc(var(--spacing) * 0.75);
 }
 .chat-attachment-thumb {
   flex-shrink: 0;

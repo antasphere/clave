@@ -183,7 +183,7 @@ function RemoveButton({
   return (
     <button
       type="button"
-      className="chat-turn-copy"
+      className="chat-turn-copy chat-attachment-remove"
       aria-label={`Remove ${name}`}
       title="Remove"
       onClick={onRemove}
