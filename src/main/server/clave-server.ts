@@ -70,11 +70,20 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
   const { startEmbedded, ServerInfoPort } = await import('@clave/server')
+  // ── Mobile wave, lane A: the devices port, the shell's own Antasphere login as the owner ──
+  // Loaded beside the server package (a dynamic import, so this seam stays as
+  // light as it was at main's boot) and under Electron alone (the unit tests
+  // of this file run without it); a boot that named its own port keeps it.
+  const devices =
+    ports.devices ??
+    (process.versions.electron ? (await import('./devices-shell')).shellDevicesPort() : undefined)
   const server = await startEmbedded({
     ports: {
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(options.appVersion)
       }),
+      // ── Mobile wave, lane A: the devices ──
+      ...(devices && { devices }),
       ...ports
     },
     ...(options.port !== undefined && { port: options.port }),
