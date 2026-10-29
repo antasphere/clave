@@ -44,7 +44,7 @@ const sh = (cmd, args, options = {}) =>
 function bootSimulator(name) {
   const list = JSON.parse(sh('xcrun', ['simctl', 'list', 'devices', 'available', '--json']))
   const devices = Object.values(list.devices).flat()
-  const device = devices.find((d) => d.name === name)
+  const device = devices.find((d) => d.udid === name || d.name === name)
   if (!device)
     throw new Error(
       `no simulator named "${name}" (available: ${devices.map((d) => d.name).join(', ')})`
@@ -124,7 +124,7 @@ async function waitFor(check, { timeoutMs, everyMs = 500, what }) {
 }
 
 async function main() {
-  const device = arg('device', 'iPhone 17 Pro')
+  const device = arg('device', '26A905C4-1DFF-453C-8846-C9904410448E')
   const metroPort = Number(arg('metro-port', '8081'))
   const serverPort = Number(arg('server-port', '0'))
   const maestro = findMaestro()
@@ -162,9 +162,12 @@ async function main() {
     if (app) {
       log(`installing ${app}`)
       sh('xcrun', ['simctl', 'install', udid, app])
-    } else if (installedApp(udid)) log('no build on disk; using the copy installed on the simulator')
+    } else if (installedApp(udid))
+      log('no build on disk; using the copy installed on the simulator')
     else {
-      log('no development build: run `npx expo run:ios --device "iPhone 17 Pro"` first (docs/mobile.md)')
+      log(
+        'no development build: run `npx expo run:ios --device "iPhone 17 Pro"` first (docs/mobile.md)'
+      )
       process.exit(2)
     }
     try {
@@ -207,6 +210,8 @@ async function main() {
         `HISTORY_TEXT=${historyText}`,
         '--env',
         `REPLY_TEXT=${replyText}`,
+        '--env',
+        `METRO_PORT=${metroPort}`,
         '--debug-output',
         path.join(PKG, 'e2e', '.output')
       ],

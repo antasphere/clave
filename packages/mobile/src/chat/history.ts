@@ -7,7 +7,7 @@
  * The desktop's `earlier.ts` drives this from the scroll position; the
  * phone's list asks when the reader reaches the top.
  */
-import type { HistoryPage } from '../contract/types'
+import type { HistoryPage, HistoryItem } from '../contract/types'
 import { type Action, type Conversation, reduceConversation } from './reducer'
 
 export interface HistoryCursor {
@@ -51,3 +51,26 @@ export function applyOlderPage(
  *  first page is here, the past is not all here, and no page is on its way. */
 export const shouldLoadOlder = (cursor: HistoryCursor): boolean =>
   hasMore(cursor) && !cursor.loading
+
+/** Join the snapshot to events buffered during its request. The wire has no
+ * event sequence, so only an exact ordered suffix/prefix overlap is removed.
+ * Do not deduplicate arbitrary matching messages elsewhere in the history. */
+export function mergeBufferedHistory(
+  page: HistoryPage,
+  buffered: readonly HistoryItem[]
+): HistoryPage {
+  let overlap = Math.min(page.items.length, buffered.length)
+  for (; overlap > 0; overlap--) {
+    if (
+      buffered
+        .slice(0, overlap)
+        .every(
+          (item, i) =>
+            JSON.stringify(item.event) ===
+            JSON.stringify(page.items[page.items.length - overlap + i]?.event)
+        )
+    )
+      break
+  }
+  return { ...page, items: [...page.items, ...buffered.slice(overlap)] }
+}

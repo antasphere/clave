@@ -62,6 +62,7 @@ export type Attachment = FileAttachment | SessionAttachment
 
 export interface UserMessage {
   readonly type: 'user_message'
+  readonly clientMessageId?: string
   readonly text: string
   readonly attachments?: readonly Attachment[]
 }
@@ -403,3 +404,9 @@ export type ServerFrame =
   | { readonly _tag: 'pong' }
   /** The desktop view requests and any frame a later server adds: ignored. */
   | { readonly _tag: 'request' }
+
+/** POST /sessions/write acknowledgement. A pending duplicate has not landed yet. */
+export interface WriteAnswer {
+  readonly status: 'accepted' | 'pending'
+  readonly at?: number
+}

@@ -23,7 +23,8 @@ import {
   decodeSessionRecords,
   decodeSessions,
   decodeWorkspaceState,
-  decodeWriteStatus
+  decodeWriteStatus,
+  decodeWriteAnswer
 } from '../contract/decode'
 import type {
   FileText,
@@ -39,7 +40,8 @@ import type {
   SessionWriteInput,
   StartSessionInput,
   WorkspaceStateView,
-  WriteStatus
+  WriteStatus,
+  WriteAnswer
 } from '../contract/types'
 import { ServerError } from './errors'
 import { credentialMayTravelTo, type BuildKind } from '../machines/transport-policy'
@@ -120,8 +122,8 @@ export class ClaveServerClient {
     start: (input: StartSessionInput): Promise<SessionInfo> =>
       this.command('/sessions/start', input, decodeSessionInfo),
     stop: (id: string): Promise<void> => this.command('/sessions/stop', { id }, () => undefined),
-    write: (id: string, input: SessionWriteInput): Promise<void> =>
-      this.command('/sessions/write', { id, input }, () => undefined),
+    write: (id: string, input: SessionWriteInput): Promise<WriteAnswer> =>
+      this.command('/sessions/write', { id, input }, decodeWriteAnswer),
     restart: (id: string): Promise<SessionInfo> =>
       this.command('/sessions/restart', { id, account: {} }, decodeSessionInfo),
     capabilities: (id: string): Promise<SessionCapabilities> =>

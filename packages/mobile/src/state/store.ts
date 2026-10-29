@@ -21,6 +21,7 @@ import {
 import type { Drafts, KeyValueStore } from '../chat/drafts'
 import {
   applyFirstPage,
+  mergeBufferedHistory,
   applyOlderPage,
   freshCursor,
   shouldLoadOlder,
@@ -36,6 +37,7 @@ import type {
   ResolveOutcome,
   ServerEventEnvelope,
   Session,
+  HistoryItem,
   SessionInfo,
   SpawnOptions,
   WorkspaceView
@@ -233,6 +235,7 @@ export function orderProfiles(profiles: readonly LaunchProfileView[]): LaunchPro
 
 export function createStore(services: Services): UseBoundStore<StoreApi<StoreState>> {
   const connections = new Map<string, Connection>()
+  const requestLoads = new Map<string, number>()
   const now = services.now ?? (() => Date.now())
   const mint = services.mintMessageId ?? (() => mintMessageId())
 
@@ -362,6 +365,8 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         const machine = get().machines.find((m) => m.id === machineId)
         if (!machine) throw new Error('That machine is not in the list.')
         const credential = await services.credentials.get(machineId)
+        const connected = connections.get(machineId)
+        if (connected) return connected
         if (!credential) throw new Error(`No credential is kept for ${machine.name}.`)
         const client = new ClaveServerClient(
           { serverUrl: machine.baseUrl, bearer: credential.bearer },
@@ -441,10 +446,14 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
       async openChat(machineId, sessionId) {
         const key = conversationKey(machineId, sessionId)
         const { client, push } = await get().connect(machineId)
+        let buffering = true
+        const buffered: HistoryItem[] = []
+        let exitCode: number | undefined
         const off = push.subscribe(
           sessionId,
           (stream) => {
             if (stream.kind !== 'event') return
+            if (buffering) buffered.push({ event: stream.event, at: now() })
             const current = conversationOf(key)
             const conversation = reduceConversation(current.conversation, {
               event: stream.event,
@@ -455,6 +464,7 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
               set((state) => ({ fatal: { ...state.fatal, [key]: conversation.fatal! } }))
           },
           (code) => {
+            exitCode = code
             const current = conversationOf(key)
             setConversation(key, {
               conversation: reduceConversation(current.conversation, { exit: code })
@@ -464,18 +474,19 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         setConversation(key, { subscribed: true, error: null })
         try {
           const page = await client.sessions.history(sessionId)
-          const current = conversationOf(key)
-          const applied = applyFirstPage(
-            current.cursor.loaded ? current.conversation : emptyConversation,
-            page
-          )
+          const applied = applyFirstPage(emptyConversation, mergeBufferedHistory(page, buffered))
+          buffering = false
           setConversation(key, {
-            conversation: current.cursor.loaded ? current.conversation : applied.conversation,
+            conversation:
+              exitCode === undefined
+                ? applied.conversation
+                : reduceConversation(applied.conversation, { exit: exitCode }),
             cursor: applied.cursor
           })
           if (applied.conversation.fatal && !get().fatal[key])
             set((state) => ({ fatal: { ...state.fatal, [key]: applied.conversation.fatal! } }))
         } catch (error) {
+          buffering = false
           setConversation(key, { error: fail(error) })
         }
         return () => {
@@ -525,7 +536,8 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           now
         })
-        if (outcome.kind === 'sent') await services.drafts.clear(machineId, sessionId)
+        if (outcome.kind === 'sent' && (await services.drafts.get(machineId, sessionId)) === text)
+          await services.drafts.clear(machineId, sessionId)
         return outcome
       },
 
@@ -564,6 +576,8 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
       },
 
       async loadRequests(machineId) {
+        const generation = (requestLoads.get(machineId) ?? 0) + 1
+        requestLoads.set(machineId, generation)
         const current = get().requests[machineId]
         patch('requests', machineId, {
           snapshot: current?.snapshot ?? null,
@@ -574,6 +588,7 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
         try {
           const { client } = await get().connect(machineId)
           const snapshot = await client.requests.list()
+          if (requestLoads.get(machineId) !== generation) return
           patch('requests', machineId, {
             snapshot,
             unavailable: false,
@@ -581,6 +596,7 @@ export function createStore(services: Services): UseBoundStore<StoreApi<StoreSta
             loading: false
           })
         } catch (error) {
+          if (requestLoads.get(machineId) !== generation) return
           const unavailable = error instanceof ServerError && error.capabilityUnavailable
           patch('requests', machineId, {
             snapshot: unavailable ? { revision: 0, pending: [] } : (current?.snapshot ?? null),

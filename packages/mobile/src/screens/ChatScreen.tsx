@@ -58,7 +58,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   /** A send whose outcome nobody can tell: kept until the person decides. */
   const [delivery, setDelivery] = useState<{ clientMessageId: string; reason: string } | null>(null)
   const [sending, setSending] = useState(false)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestDraft = useRef('')
 
   useEffect(() => {
     let release: (() => void) | null = null
@@ -79,15 +79,16 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
 
   useEffect(() => {
     void services.drafts.get(machineId, sessionId).then((text) => {
+      latestDraft.current = text
       setDraft(text)
       setDraftLoaded(true)
     })
   }, [services, machineId, sessionId])
 
   const changeDraft = (text: string): void => {
+    latestDraft.current = text
     setDraft(text)
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => void services.drafts.set(machineId, sessionId, text), 300)
+    void services.drafts.set(machineId, sessionId, text)
   }
 
   useEffect(() => {
@@ -118,8 +119,10 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
     setSending(false)
     switch (outcome.kind) {
       case 'sent':
-        if (saveTimer.current) clearTimeout(saveTimer.current)
-        setDraft('')
+        if (latestDraft.current === draft) {
+          latestDraft.current = ''
+          setDraft('')
+        }
         setDelivery(null)
         return
       case 'rejected':
@@ -136,7 +139,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
   }
 
   const discard = async (): Promise<void> => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
+    latestDraft.current = ''
     await services.drafts.clear(machineId, sessionId)
     setDraft('')
     setDelivery(null)
@@ -249,7 +252,7 @@ export function ChatScreen({ navigation, route }: Props): ReactNode {
             multiline
             value={draft}
             onChangeText={changeDraft}
-            editable={draftLoaded}
+            editable={draftLoaded && !sending}
             placeholder="Message the agent"
             placeholderTextColor={colors.textTertiary}
             testID="composer-input"

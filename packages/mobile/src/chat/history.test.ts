@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { applyFirstPage, applyOlderPage, freshCursor, hasMore, shouldLoadOlder } from './history'
+import {
+  applyFirstPage,
+  mergeBufferedHistory,
+  applyOlderPage,
+  freshCursor,
+  hasMore,
+  shouldLoadOlder
+} from './history'
 import { emptyConversation } from './reducer'
 
 describe('the page cursor', () => {
@@ -34,4 +41,17 @@ describe('the page cursor', () => {
     expect(hasMore(freshCursor)).toBe(false)
     expect(shouldLoadOlder(freshCursor)).toBe(false)
   })
+})
+
+it('merges only ordered overlap between history and buffered stream, keeping distinct live events', () => {
+  const item = (text: string): import('../contract/types').HistoryItem => ({
+    event: { type: 'user_message' as const, text }
+  })
+  expect(
+    mergeBufferedHistory({ items: [item('old'), item('a')], before: 2 }, [item('a'), item('b')])
+  ).toEqual({ items: [item('old'), item('a'), item('b')], before: 2 })
+  expect(mergeBufferedHistory({ items: [item('old')], before: null }, [item('a')]).items).toEqual([
+    item('old'),
+    item('a')
+  ])
 })

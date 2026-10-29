@@ -14,11 +14,12 @@ import {
 } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Linking } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { RootNavigator, type RootStackParamList } from './navigation/RootNavigator'
 import {
   LAST_MACHINE_KEY,
-  coldLaunchState,
+  initialLaunchState,
   machineIdOf,
   stateForPath
 } from './navigation/persistence'
@@ -57,14 +58,20 @@ export function App(): ReactNode {
   // A cold launch: the current machine, read once, decides the first screen.
   useEffect(() => {
     let cancelled = false
-    void services.kv.getItem(LAST_MACHINE_KEY).then((lastMachine) => {
+    void Promise.all([
+      services.kv.getItem(LAST_MACHINE_KEY),
+      Linking.getInitialURL(),
+      store.getState().loadMachines()
+    ]).then(([lastMachine, url]) => {
       if (!cancelled)
-        setInitial({ state: coldLaunchState(lastMachine) as unknown as NavigationState })
+        setInitial({
+          state: initialLaunchState(lastMachine, url ?? null) as unknown as NavigationState
+        })
     })
     return () => {
       cancelled = true
     }
-  }, [services])
+  }, [services, store])
 
   useEffect(() => () => store.getState().disconnectAll(), [store])
 
