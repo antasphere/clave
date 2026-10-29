@@ -342,3 +342,33 @@ describe('the restore at boot', () => {
     expect(status.lastFailure).toBe('configuration')
   })
 })
+
+it('signing out while SecureStore writes are pending cannot restore the old login', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const blocked = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const slowStore = new RecordingSecureStore()
+  const set = slowStore.setItemAsync.bind(slowStore)
+  slowStore.setItemAsync = async (key, value) => {
+    if (key === STORE_KEYS.accessToken) {
+      entered()
+      await gate
+    }
+    await set(key, value)
+  }
+  const auth = make({ secureStore: slowStore })
+  const signingIn = auth.signIn()
+  await blocked
+  const signingOut = auth.signOut()
+  release()
+  await Promise.all([signingIn, signingOut])
+  expect(auth.status().phase).toBe('signed-out')
+  expect(slowStore.map.has(STORE_KEYS.session)).toBe(false)
+  expect(slowStore.map.has(STORE_KEYS.refreshToken)).toBe(false)
+  expect((await make({ secureStore: slowStore }).restore()).phase).toBe('signed-out')
+})

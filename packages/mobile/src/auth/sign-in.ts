@@ -148,6 +148,13 @@ export class HubSignIn {
   private restored: Promise<AuthStatus> | null = null
   /** Bumped by every sign-out and new sign-in: an answer from before writes nothing. */
   private epoch = 0
+  private storageWrites: Promise<void> = Promise.resolve()
+
+  private serializeStorage(change: () => Promise<void>): Promise<void> {
+    const next = this.storageWrites.then(change)
+    this.storageWrites = next.catch(() => {})
+    return next
+  }
 
   constructor(deps: SignInDeps) {
     const resolved = resolveIssuer(deps.issuer)
@@ -201,6 +208,7 @@ export class HubSignIn {
   }
 
   private async doRestore(): Promise<AuthStatus> {
+    const epoch = this.epoch
     if (!this.issuer) return this.status()
     try {
       const client = await this.store.readClient()
@@ -211,10 +219,10 @@ export class HubSignIn {
       if (!stored) return this.status()
       if (stored.issuer !== this.issuer.origin || stored.clientId !== this.clientId) {
         this.log('hub.session.discarded', { reason: 'binding' })
-        await this.store.clearSession()
+        await this.serializeStorage(() => this.store.clearSession())
         return this.status()
       }
-      this.session = {
+      const restored: Session = {
         clientId: stored.clientId,
         account: stored.account,
         signedInAt: stored.signedInAt,
@@ -222,7 +230,9 @@ export class HubSignIn {
         id: await this.store.readIdToken(),
         refreshToken: await this.store.readRefreshToken()
       }
-      this.log('hub.session.restored', { renewable: this.session.refreshToken !== null })
+      if (epoch !== this.epoch) return this.status()
+      this.session = restored
+      this.log('hub.session.restored', { renewable: restored.refreshToken !== null })
     } catch {
       this.lastFailure = 'storage'
       this.log('hub.restore.failed')
@@ -297,7 +307,10 @@ export class HubSignIn {
         id: { token: tokens.idToken, expiresAt: claims.exp * 1000 },
         refreshToken: tokens.refreshToken
       }
-      await this.persist(session)
+      await this.serializeStorage(async () => {
+        if (this.epoch === epoch) await this.persist(session)
+      })
+      if (this.epoch !== epoch) return
       this.session = session
       this.lastFailure = null
       this.log('hub.sign-in.ok', { renewable: session.refreshToken !== null })
@@ -371,7 +384,7 @@ export class HubSignIn {
     this.session = null
     this.lastFailure = null
     try {
-      await this.store.clearSession()
+      await this.serializeStorage(() => this.store.clearSession())
     } catch {
       this.lastFailure = 'storage'
     }
@@ -452,21 +465,25 @@ export class HubSignIn {
         if (claims.sub !== session.account.subject)
           throw new AuthError('invalid-response', 'The renewed token names another person.')
       }
-      // The rotated token is kept before anything else is touched: the hub
-      // has already retired the one this refresh presented.
-      if (tokens.refreshToken) {
-        await this.store.writeRefreshToken(tokens.refreshToken)
-        session.refreshToken = tokens.refreshToken
-      }
-      session.access = {
-        token: tokens.accessToken,
-        expiresAt: this.accessExpiry(tokens.expiresIn, claims)
-      }
-      await this.store.writeAccessToken(session.access)
-      if (tokens.idToken && claims) {
-        session.id = { token: tokens.idToken, expiresAt: claims.exp * 1000 }
-        await this.store.writeIdToken(session.id)
-      }
+      await this.serializeStorage(async () => {
+        if (this.epoch !== epoch || this.session !== session) return
+        // The rotated token is kept before anything else is touched: the hub
+        // has already retired the one this refresh presented.
+        if (tokens.refreshToken) {
+          await this.store.writeRefreshToken(tokens.refreshToken)
+          session.refreshToken = tokens.refreshToken
+        }
+        session.access = {
+          token: tokens.accessToken,
+          expiresAt: this.accessExpiry(tokens.expiresIn, claims)
+        }
+        await this.store.writeAccessToken(session.access)
+        if (tokens.idToken && claims) {
+          session.id = { token: tokens.idToken, expiresAt: claims.exp * 1000 }
+          await this.store.writeIdToken(session.id)
+        }
+      })
+      if (this.epoch !== epoch || this.session !== session) return
       this.lastFailure = null
       this.log('hub.refresh.ok', { idToken: tokens.idToken !== null })
       this.emit()
@@ -509,7 +526,7 @@ export class HubSignIn {
     this.session = null
     this.lastFailure = failure
     try {
-      await this.store.clearSession()
+      await this.serializeStorage(() => this.store.clearSession())
     } catch {
       this.lastFailure = 'storage'
     }

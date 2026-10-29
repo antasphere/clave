@@ -369,12 +369,24 @@ describe('pair', () => {
   })
 
   it('a read the network loses keeps the wait, and the approval still lands', async () => {
+    let dropped = false
+    const unreliable = new EnrollmentClient(url, {
+      build: 'development',
+      fetch: async (input, init) => {
+        if (init?.method === 'GET' && !dropped) {
+          dropped = true
+          throw new Error('fixture connection lost')
+        }
+        return fetch(input, init)
+      }
+    })
     const end = await pair(
       { machine, idToken: 'id-1', clientId: 'c-1', device: { ...device, name: 'drop-once' } },
-      ports()
+      ports({ client: unreliable })
     )
     expect(end.kind).toBe('approved')
-    expect(sleeps.length).toBeGreaterThanOrEqual(1)
+    expect(dropped).toBe(true)
+    expect(sleeps.length).toBeGreaterThanOrEqual(2)
     expect(await credentials.get('m-1')).not.toBeNull()
   })
 
