@@ -625,3 +625,54 @@ describe('reconnecting and stopping', () => {
     expect(relay.online()).toEqual([])
   })
 })
+
+describe('the address rule', () => {
+  it('names why a plain-http address off this machine, or another scheme, is refused', async () => {
+    const { insecureRelayAddress } = await import('./client')
+    expect(insecureRelayAddress('https://relay.example')).toBeNull()
+    expect(insecureRelayAddress('http://127.0.0.1:8787')).toBeNull()
+    expect(insecureRelayAddress('http://[::1]:8787')).toBeNull()
+    expect(insecureRelayAddress('http://localhost:8787')).toBeNull()
+    expect(insecureRelayAddress('http://relay.example:8787')).toMatch(
+      /plain http to relay\.example/
+    )
+    expect(insecureRelayAddress('http://192.168.1.20:8787')).toMatch(
+      /plain http to 192\.168\.1\.20/
+    )
+    expect(insecureRelayAddress('http://127.0.0.1.example')).toMatch(/plain http/)
+    expect(insecureRelayAddress('ws://relay.example')).toMatch(/scheme ws:/)
+    expect(insecureRelayAddress('not a url')).toMatch(/not a URL/)
+  })
+
+  it('sends no claim and no hello to a plain-http relay off this machine', async () => {
+    const local = await startLocal()
+    const fetched: string[] = []
+    const opened: string[] = []
+    class RecordingWebSocket extends WebSocket {
+      constructor(address: string, options?: ClientOptions) {
+        opened.push(address)
+        super(address, options)
+      }
+    }
+    const harness = startClient({
+      address: () => 'http://relay.example:8787',
+      local: { url: local.url },
+      fetch: (input, init) => {
+        fetched.push(String(input))
+        return globalThis.fetch(input, init)
+      },
+      WebSocket: RecordingWebSocket as unknown as typeof WebSocket
+    })
+    await sleep(300)
+    expect(fetched).toEqual([])
+    expect(opened).toEqual([])
+    expect(harness.tokens).toEqual([])
+    expect(harness.store.saved).toEqual([])
+    expect(harness.client.status().state).toBe('unconfigured')
+    expect(harness.client.status().lastFailure).toMatch(/plain http to relay\.example/)
+    const said = harness.logs.filter((line) => line.includes('plain http to relay.example'))
+    expect(said).toHaveLength(1)
+    for (const line of harness.logs)
+      for (const token of harness.tokens) expect(line).not.toContain(token)
+  })
+})

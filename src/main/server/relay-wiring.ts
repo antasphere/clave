@@ -28,6 +28,7 @@
  */
 import * as os from 'node:os'
 import {
+  insecureRelayAddress,
   startRelayClient,
   type RelayClient,
   type RelayCredential,
@@ -53,9 +54,11 @@ interface RelayFile {
   claimedAt: number
 }
 
-/** A relay address as this side accepts it: an http(s) URL with no
- *  credentials, no query and no fragment, its trailing slash dropped; null
- *  for anything else. */
+/** A relay address as this side accepts it: an https URL, or plain http to
+ *  a literal loopback address (the development relay, the test provider's
+ *  machine), with no credentials, no query and no fragment, its trailing
+ *  slash dropped; null for anything else. The client applies the same rule
+ *  again where a claim or a hello would leave (`insecureRelayAddress`). */
 export function relayAddressOf(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const text = value.trim()
@@ -66,7 +69,7 @@ export function relayAddressOf(value: unknown): string | null {
   } catch {
     return null
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  if (insecureRelayAddress(text) !== null) return null
   if (url.username || url.password || url.search || url.hash) return null
   return url.toString().replace(/\/+$/, '')
 }
