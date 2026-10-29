@@ -130,15 +130,41 @@ export async function run(t) {
         true
       )
 
+      const surfaces = new Set()
       for (const theme of ['dark', 'light', 'coffee', 'charcoal']) {
-        await win.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme)
+        const surface = await win.evaluate(async (theme) => {
+          const state = await window.electronAPI.skinsActivate(theme)
+          return state.skins.find((skin) => skin.id === theme).tokens['--surface-0'].trim()
+        }, theme)
+        assert.ok(
+          await until(() =>
+            win.evaluate(
+              (expected) =>
+                document.documentElement.style.getPropertyValue('--surface-0').trim() === expected,
+              surface
+            )
+          )
+        )
+        surfaces.add(surface)
         await win.setViewportSize({ width: 850, height: 700 })
         assert.ok(await grown.locator('> summary').isVisible())
         assert.ok(
           await grown.locator('> summary').evaluate((el) => el.scrollWidth <= el.clientWidth)
         )
       }
+      assert.equal(surfaces.size, 4, 'four different active palettes were exercised')
       t.check(`${mode}: stack fits a narrow pane in all four themes`, true)
+
+      await win.emulateMedia({ reducedMotion: 'reduce' })
+      assert.deepEqual(
+        await grown.evaluate((el) => [
+          getComputedStyle(el).transitionDuration,
+          getComputedStyle(el, '::details-content').transitionDuration,
+          getComputedStyle(el.querySelector('.chat-delivery-peek')).transitionDuration
+        ]),
+        ['0s', '0s', '0s']
+      )
+      await win.emulateMedia({ reducedMotion: 'no-preference' })
 
       await grown.locator('> summary').click()
 

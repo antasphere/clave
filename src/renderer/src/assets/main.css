@@ -22,6 +22,12 @@
   outline: none;
   -webkit-tap-highlight-color: transparent;
 }
+/* Keep the deck's spacing transition beside the transcript's arrival fade. */
+.chat-view .chat-row .chat-delivery-stack {
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
 .chat-delivery-summary::-webkit-details-marker { display: none; }
 .chat-delivery-summary:focus-visible .chat-delivery-cover {
   outline: thin solid var(--color-accent);
@@ -127,6 +133,7 @@
 .chat-exchange-response-label { font-size: var(--text-xs); color: var(--text-tertiary); }
 .chat-exchange-responses .chat-turn[data-role='assistant'] { padding: 0; }
 @media (prefers-reduced-motion: reduce) {
+  .chat-view .chat-row .chat-delivery-stack,
   .chat-delivery-stack, .chat-delivery-stack::details-content,
   .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
 }
