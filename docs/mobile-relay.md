@@ -78,7 +78,8 @@ through the secrets port (Electron's `safeStorage` in the app, the Keychain or t
 encrypted files for a standalone server). Another address or another owner claims anew;
 a relay that refuses the hello (its store reset, the machine forgotten) clears the
 credential and claims anew. The reconnect doubles its wait from a second to a minute, with
-jitter. The record names the host (without macOS's `.local`), the platform, the app's
+jitter. The record name combines the host (without macOS's `.local`) with the signed-in
+owner's display name. It also carries the platform, the app's
 version, and the direct addresses: none for the in-process and the separate server, whose
 listener is loopback; its own address for a daemon started with `--host`, which is the
 Tailscale address when the daemon runs on one (the relay never installs or configures
