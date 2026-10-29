@@ -1,12 +1,20 @@
-import { Effect, Schema } from 'effect'
-import { defineFixture, defineScenario, makeCatalog } from '@structure-ai/fixtures'
+import { Effect, Schema, type Cause } from 'effect'
+import {
+  defineFixture,
+  defineScenario,
+  makeCatalog,
+  type Catalog,
+  type Fixture
+} from '@structure-ai/fixtures'
 import type { MachineCredential } from '@clave/contract/relay'
 
 /** Claims go through the relay's authenticated HTTP API, not its registry file. */
 export function relayFixtureCatalog(
   claim: (subject: string, name: string) => Promise<MachineCredential>
-) {
-  const machine = (key: string) =>
+): Catalog<never> {
+  const machine = (
+    key: string
+  ): Fixture<{ subject: string; machineId: string }, Cause.UnknownException> =>
     defineFixture({
       key,
       create: ({ id }) =>
