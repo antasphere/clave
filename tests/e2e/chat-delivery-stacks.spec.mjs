@@ -109,6 +109,9 @@ export async function run(t) {
       ])
       const lone = view.locator('.chat-delivery-stack[data-messages="1"]')
       await lone.waitFor()
+      // The fixture emits a sequence of frames; seeing the delivery does not
+      // mean the renderer has received the human turn that follows it yet.
+      await view.getByText('My follow-up.', { exact: true }).waitFor()
       assert.equal(await lone.evaluate((el) => el.open), false)
       assert.equal(await stacks.count(), 2)
       assert.ok(
