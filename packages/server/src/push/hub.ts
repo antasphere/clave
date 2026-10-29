@@ -227,7 +227,7 @@ export class PushHub {
    */
   publishFrame(frame: ServerFrame): void {
     for (const peer of [...this.peers])
-      if (peer.welcomed && this.hears(peer, frame)) this.send(peer, frame)
+      if (peer.welcomed) this.send(peer, frame)
   }
 
   /**
@@ -244,7 +244,9 @@ export class PushHub {
   }
 
   private send(peer: Peer, frame: ServerFrame): void {
-    if (peer.closed) return
+    // Apply the scope to every path, including a welcome listener replaying
+    // requests that were already pending before this socket connected.
+    if (peer.closed || !this.hears(peer, frame)) return
     try {
       peer.socket.send(encodeServerFrame(frame))
     } catch (error) {

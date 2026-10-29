@@ -134,8 +134,7 @@ server alone (no IPC arm: the devices are the server's).
 
 ## Pairing in development
 
-1. Start the app on a profile of your own (`npm run dev`, or the built app
-   with `--user-data-dir=<dir>`), sign in with your Antasphere account under
+1. Start the built app with `--user-data-dir=<isolated-dir>`, sign in with your Antasphere account under
    Settings → Accounts. Against a local test issuer, start the fixture
    provider (`tests/e2e/fixtures/oidc-provider.mjs`) and name it to the app
    and to the server through `CLAVE_ANTASPHERE_ISSUER=http://127.0.0.1:<port>`.
@@ -154,6 +153,23 @@ server alone (no IPC arm: the devices are the server's).
 
 ## Verification
 
+- `CLAVE_FIXTURES=1 node_modules/.bin/bun scripts/mobile-pairing-fixtures.ts fixtures load mobile/paired-phone`:
+  the reusable `@structure-ai/fixtures` scenario starts its own local signed
+  issuer and server, signs the owner in through the account commands, requests
+  pairing, checks that it waits, approves it through the devices command, and
+  checks the one-time session, its own record and its refusal on accounts.
+  Readiness queries the paired device and checks the private hashed document.
+  No real provider runs. Each invocation keeps a run-specific directory under
+  the system temp directory, `clave-antasphere-fixture-<run-id>`, after stopping
+  its listeners. The receipt contains identifiers, never credentials.
+  `fixtures cleanup <run-id>` on the same script removes only that run.
+  The CLI refuses mutation without `CLAVE_FIXTURES=1` and accepts no remote target.
+  `npx vitest run src/main/mobile-pairing.fixtures.test.ts` loads and cleans the
+  same scenario in an automated check.
+- `npx vitest run packages/server/src/push/device-replay.test.ts` checks that
+  reconnecting phones never receive pending desktop view requests or private
+  events, while desktop clients still receive them. It also checks last-seen
+  recording during the phone's hello.
 - `npx vitest run packages/server/src/devices`: the identity token against
   the local provider (valid; another subject; another issuer; another
   audience; expired; tampered signature and body; no owner login; ES256; an

@@ -187,8 +187,9 @@ export const antasphereFixtureHandlers = [
         )
       }
       const provider = run.provider
+      const ports = electronTestPorts(run.dataDir)
       const manager = new AntasphereAccountManager({
-        ports: electronTestPorts(run.dataDir),
+        ports,
         env: { CLAVE_ANTASPHERE_ISSUER: provider.issuer },
         log: () => {}
       })
@@ -198,6 +199,15 @@ export const antasphereFixtureHandlers = [
       const server = yield* Effect.promise(() =>
         startEmbedded({
           ports: {
+            devices: {
+              storage: {
+                read: () => ports.storage.readChecked!('devices.json'),
+                write: (text) => ports.storage.write('devices.json', text, { mode: 0o600 })
+              },
+              owner: () => manager.status().account?.subject ?? null,
+              issuer: provider.issuer,
+              serverName: () => 'Fixture Mac'
+            },
             settings: {
               ...SettingsSource.none,
               antasphere: {
