@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Clave",
+    "slug": "clave",
+    "version": "0.1.0",
+    "scheme": "clave",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#0e0d0c",
+    "ios": {
+      "bundleIdentifier": "com.clave.app.mobile",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.clave.app.mobile",
+      "usesCleartextTraffic": true
+    },
+    "plugins": ["expo-secure-store", "./plugins/with-jsi-xcode26"]
+  }
+}

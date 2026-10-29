@@ -1,0 +1,66 @@
+# The simulator check's flow (Maestro): a development build of the app on
+# the iOS simulator, connected to the band's standalone server through the
+# developer connection, reaches the Echo chat the check seeded, reads the
+# seeded text in the history, sends a reply and sees the Echo repeat it.
+# Driven by scripts/simulator-check.mjs, which passes the four variables.
+# The Echo adapter is a fixture (a deterministic chat that repeats what it
+# is told), not a real provider.
+# The four variables come from the command line only (scripts/simulator-check.mjs):
+# a default here would win over them.
+appId: com.clave.app.mobile
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: 'developer-connection'
+    timeout: 60000
+- tapOn:
+    id: 'developer-connection'
+- tapOn:
+    id: 'developer-url'
+- inputText: ${SERVER_URL}
+- tapOn:
+    id: 'developer-token'
+- inputText: ${SERVER_TOKEN}
+- tapOn:
+    id: 'developer-connect'
+# Back on Machines: the developer machine is listed; open it.
+- extendedWaitUntil:
+    visible:
+      id: 'machine-row-dev:.*'
+    timeout: 15000
+- tapOn:
+    id: 'machine-row-dev:.*'
+# Workspaces of the machine: the reachability pill and the scratch workspace.
+- extendedWaitUntil:
+    visible:
+      id: 'workspace-row-.*'
+    timeout: 15000
+- assertVisible:
+    id: 'machine-reachability'
+- tapOn:
+    id: 'workspace-row-.*'
+# Sessions: the Echo chat the check seeded is the first row; open it.
+- extendedWaitUntil:
+    visible:
+      id: 'session-row-0'
+    timeout: 15000
+- tapOn:
+    id: 'session-row-0'
+# The chat: the seeded message is in the history (the user's message and the Echo's reply).
+- extendedWaitUntil:
+    visible:
+      text: ${HISTORY_TEXT}
+    timeout: 20000
+# A reply from the phone, repeated by the Echo: the text appears twice.
+- tapOn:
+    id: 'composer-input'
+- inputText: ${REPLY_TEXT}
+- tapOn:
+    id: 'composer-send'
+- extendedWaitUntil:
+    visible:
+      text: ${REPLY_TEXT}
+      index: 1
+    timeout: 20000
