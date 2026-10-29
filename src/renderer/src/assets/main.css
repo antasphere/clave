@@ -3,6 +3,40 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
+/* Cross-session traffic folds like command runs. */
+.chat-delivery-stack {
+  align-self: stretch;
+  min-width: 0;
+  font-size: var(--chat-code-size);
+}
+.chat-delivery-summary { width: 100%; }
+.chat-delivery-count { flex-shrink: 0; }
+.chat-delivery-senders {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-delivery-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-stack[open] > summary .chat-delivery-chevron { rotate: 90deg; }
+.chat-delivery-items {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  margin: var(--spacing) 0 var(--spacing) calc(var(--chat-glyph) / 2);
+  padding-left: calc(var(--chat-glyph) / 2 + var(--spacing) * 2);
+  border-left: thin solid var(--border-subtle-color);
+}
+.chat-delivery-items .term-question { position: static; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-delivery-chevron { transition: none; }
+}
+
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
    the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
    and the terminal keep their own face. */

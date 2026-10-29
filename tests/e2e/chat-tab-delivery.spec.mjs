@@ -37,6 +37,13 @@ export async function run(t) {
     // Back to the target, where the message should be.
     await callMcp(app, 'focus', { sessionId: target.id })
     const pane = win.locator(`[data-session-id="${target.id}"] [data-testid="terminal-view"]`)
+    const stack = pane.locator('.chat-delivery-stack')
+    await stack.waitFor()
+    t.check(
+      'incoming cross-session traffic starts collapsed',
+      !(await stack.evaluate((el) => el.open))
+    )
+    await stack.locator('summary').click()
     const delivered = pane.locator('.chat-turn[data-from="tab"]')
     const arrived = await until(async () => (await delivered.count()) === 1, 8000)
     t.check('a message sent to a chat tab arrives there', arrived === true && result.delivered, {

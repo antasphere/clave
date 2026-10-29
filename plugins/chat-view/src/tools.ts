@@ -1,4 +1,5 @@
 import type { Entry } from './reducer'
+import { parseDelivery } from '../../../src/shared/exchange-provenance'
 
 /* What a run of tool calls says between two messages, decided without a DOM so
    both views of this plugin read it the same way and a test can pin it.
@@ -15,7 +16,11 @@ export interface ToolGroup {
   id: string
   tools: ToolEntry[]
 }
-export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup
+export interface DeliveryGroup {
+  kind: 'delivery-group'
+  entries: Extract<Entry, { kind: 'user' }>[]
+}
+export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | DeliveryGroup
 
 /** A MESSAGE ends a run of tools; a permission card does not. The reader asked
  *  a question, the agent worked, the agent answered: the work between those two
@@ -36,7 +41,18 @@ export function visibleEntries(entries: Entry[]): Entry[] {
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
+  let deliveries: DeliveryGroup | undefined
   for (const entry of entries) {
+    if (entry.kind === 'user' && parseDelivery(entry.text)) {
+      if (!deliveries) {
+        deliveries = { kind: 'delivery-group', entries: [] }
+        blocks.push(deliveries)
+      }
+      deliveries.entries.push(entry)
+      open = undefined
+      continue
+    }
+    deliveries = undefined
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
