@@ -202,7 +202,7 @@ export function loadPushPorts(input: LoadPushPortsInput): LoadedPushPorts {
  *  parse error names a position, a key error its own words, never a value. */
 function reasonOf(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
-  if (/JSON/i.test(message)) return 'not valid JSON'
+  if (error instanceof SyntaxError) return 'not valid JSON'
   if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'the key file named is missing'
   return message.split('\n')[0].slice(0, 120)
 }
