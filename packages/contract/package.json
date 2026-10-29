@@ -32,7 +32,8 @@
     "./release-version": "./src/release-version.ts",
     "./upgrade-failure": "./src/upgrade-failure.ts",
     "./devices": "./src/devices.ts",
-    "./notify": "./src/notify.ts"
+    "./notify": "./src/notify.ts",
+    "./relay": "./src/relay.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

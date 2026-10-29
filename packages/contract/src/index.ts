@@ -41,3 +41,5 @@ export * as Devices from './devices'
 export * as Notify from './notify'
 
 // ── Lane B: terminals · Lane D: settings served ──
+// ── Lane E (mobile wave, 2026-10-29): the relay, the directory of a person's machines and the road to them ──
+export * as Relay from './relay'

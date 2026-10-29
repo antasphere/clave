@@ -143,6 +143,10 @@ interface SessionSecret {
   signedInAt: number
   expiresAt: number
   refreshToken: string | null
+  /** The access token of the login, for a caller of this process that must
+   *  present the owner to a service of the team's (`currentAccessToken`);
+   *  null on a record sealed before it was kept. */
+  accessToken: string | null
 }
 
 interface SessionFile {
@@ -308,6 +312,8 @@ function readSessionSecret(value: unknown): SessionSecret | null {
   if (typeof value.signedInAt !== 'number' || typeof value.expiresAt !== 'number') return null
   const refreshToken =
     typeof value.refreshToken === 'string' && value.refreshToken ? value.refreshToken : null
+  const accessToken =
+    typeof value.accessToken === 'string' && value.accessToken ? value.accessToken : null
   return {
     v: 1,
     issuer: value.issuer,
@@ -315,7 +321,8 @@ function readSessionSecret(value: unknown): SessionSecret | null {
     account,
     signedInAt: value.signedInAt,
     expiresAt: value.expiresAt,
-    refreshToken
+    refreshToken,
+    accessToken
   }
 }
 
@@ -546,6 +553,28 @@ export class AntasphereAccountManager {
     // must not re-enter the listeners, and the timer's own emit is a no-op
     // once this has run.
     queueMicrotask(() => this.emit())
+  }
+
+  /**
+   * The access token of the login, for a caller in this process that must
+   * present the owner's identity to a service of the team's (the mobile
+   * relay's claim, lane E of the mobile wave). The live session's token
+   * while the identity is valid; a session that lapsed with a refresh token
+   * is renewed first, through the one renewal this manager runs (the hub
+   * rotates refresh tokens with no grace for a public client, so a second
+   * refresh beside it would end the login), and so is a record sealed
+   * before the token was kept. Null when nobody is signed in or the renewal
+   * fails. The token reaches no status, no event and no log.
+   */
+  async currentAccessToken(): Promise<string | null> {
+    if (this.restored) await this.restored
+    if (this.closed) return null
+    const live = this.liveSession()
+    if (live?.accessToken) return live.accessToken
+    const session = this.session
+    if (!session?.refreshToken) return null
+    await (this.renewing ?? this.renew(session, this.epoch))
+    return this.liveSession()?.accessToken ?? null
   }
 
   private secureStorageAvailable(): boolean {
@@ -865,7 +894,8 @@ export class AntasphereAccountManager {
         ...session,
         account,
         expiresAt,
-        refreshToken: tokens.refresh_token ?? session.refreshToken
+        refreshToken: tokens.refresh_token ?? session.refreshToken,
+        accessToken: tokens.access_token
       }
       this.writeSession(renewed)
       this.session = renewed
@@ -1286,7 +1316,8 @@ export class AntasphereAccountManager {
         account: accountFromClaims(claims, info),
         signedInAt: this.now(),
         expiresAt,
-        refreshToken: tokens.refresh_token ?? null
+        refreshToken: tokens.refresh_token ?? null,
+        accessToken: tokens.access_token
       }
       // The library tolerates a token a little past its `exp` (clock
       // tolerance); a login must still have time left when it is kept.
