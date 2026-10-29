@@ -119,7 +119,12 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
   // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
-  stopNotify = observeSessionsForNotify(manager, server.notify, server.writes.evidence)
+  stopNotify = observeSessionsForNotify(
+    manager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
   return endpoint
 }
 

@@ -416,3 +416,52 @@ describe('the targets and the transports', () => {
     expect(w.ios.sent).toEqual([])
   })
 })
+
+it.each([true, false])(
+  'drops a request settled during workspace lookup, requests service %s',
+  async (requests) => {
+    const targets = new FakePushTargets()
+    targets.add({ deviceId: 'phone', platform: 'ios', token: 'fake' })
+    const transport = new FakePushTransport()
+    let release!: (value: string) => void
+    let building!: () => void
+    const started = new Promise<void>((resolve) => {
+      building = resolve
+    })
+    let pending = [question('during-build')]
+    const notifier = new Notifier({
+      serverId: 'server',
+      serverName: 'server',
+      targets,
+      transports: { ios: transport },
+      fake: true,
+      session: () => ({ title: 'test', cwd: '/tmp' }),
+      workspaceName: () => {
+        building()
+        return new Promise((resolve) => {
+          release = resolve
+        })
+      },
+      accountLabel: async () => undefined,
+      pendingRequests: requests ? () => ({ revision: 0, pending }) : null,
+      requestGraceMs: 0,
+      log: () => {}
+    })
+    notifiers.push(notifier)
+    if (requests) notifier.requestsChanged()
+    else
+      notifier.streamEvent('sess-1', {
+        type: 'permission_request',
+        id: 'during-build',
+        description: 'Allow?',
+        options: []
+      })
+    await started
+    pending = []
+    if (requests) notifier.requestsChanged()
+    else notifier.requestAnswered('sess-1', 'during-build')
+    release('workspace')
+    await notifier.flush()
+    expect(transport.sent).toHaveLength(0)
+  }
+)

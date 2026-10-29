@@ -389,7 +389,12 @@ async function main(): Promise<void> {
   setServerEventPublisher((event) => server.publish(event))
   const stopStates = publishSessionStates(sessionManager, (event) => server.publish(event))
   // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
-  const stopNotify = observeSessionsForNotify(sessionManager, server.notify, server.writes.evidence)
+  const stopNotify = observeSessionsForNotify(
+    sessionManager,
+    server.notify,
+    server.writes.evidence,
+    server.writes.initialize
+  )
 
   fs.mkdirSync(dataDir, { recursive: true })
   const file = path.join(dataDir, 'clave-server.json')

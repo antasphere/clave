@@ -85,6 +85,13 @@ export function sessionCleared(
 
 // ── The mobile wave, lane B: what the notifier learns from where the sessions live ──
 
+let initializeWrites: ((id: string) => void) | null = null
+
+/** Establish an empty complete ledger only for a newly generated session id. */
+export function initializeSessionWrites(id: string): void {
+  initializeWrites?.(id)
+}
+
 let notifySignals: NotifySignals | null = null
 /** The observation in force, so a quit can end it before the sessions go. */
 let stopObservation: (() => void) | null = null
@@ -126,10 +133,12 @@ export function observeSessionsForNotify(
   /** The server's own history of writes: a `user_message` carrying a client
    *  message id is recorded as it passes, the durable evidence that the
    *  provider took it (`packages/server/src/sessions/writes.ts`). */
-  evidence?: (sessionId: string, clientMessageId: string, at: number) => void
+  evidence?: (sessionId: string, clientMessageId: string, at: number) => void,
+  initialize?: (sessionId: string) => void
 ): () => void {
   stopObservation?.()
   notifySignals = signals
+  initializeWrites = initialize ?? null
   let stopped = false
   const offAll = manager.subscribeAll((id, stream) => {
     if (stopped || stream.kind !== 'event') return
@@ -162,7 +171,10 @@ export function observeSessionsForNotify(
   })
   const stop = (): void => {
     stopped = true
-    if (notifySignals === signals) notifySignals = null
+    if (notifySignals === signals) {
+      notifySignals = null
+      initializeWrites = null
+    }
     if (stopObservation === stop) stopObservation = null
     offAll()
     offAdded()

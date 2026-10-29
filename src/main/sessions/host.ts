@@ -170,7 +170,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
       if (!attachments)
         return manager.write(id, { type: 'user_message', text: value.text, ...minted })
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
-      manager.write(id, {
+      return manager.write(id, {
         type: 'user_message',
         text: value.text,
         attachments,

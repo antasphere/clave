@@ -88,6 +88,7 @@ export interface EmbeddedServer {
    *  passed on a session's stream; the server's own history of writes
    *  records it (`sessions/writes.ts`). */
   readonly writes: {
+    readonly initialize: (sessionId: string) => void
     readonly evidence: (sessionId: string, clientMessageId: string, at: number) => void
   }
 }
@@ -135,6 +136,7 @@ export async function startEmbedded(options: EmbeddedOptions): Promise<EmbeddedS
       // ── The mobile wave, lane B ──
       notify,
       writes: {
+        initialize: (sessionId) => ledger.initialize(sessionId),
         evidence: (sessionId, clientMessageId, at) =>
           ledger.evidence(sessionId, clientMessageId, at)
       },
