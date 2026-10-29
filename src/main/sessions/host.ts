@@ -41,6 +41,8 @@ import {
   writeTerminal
 } from './lifecycle'
 import { type SessionRecordsSource, sessionRecords } from './records'
+// ── The mobile wave, lane B: a permission answered settles its push ──
+import { notifyRequestAnswered } from '../server/session-events'
 
 /** Built-in adapters whose `provider_event` is the CLI's own frame, verbatim. */
 const RAW_WIRE_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
@@ -150,19 +152,31 @@ export function createSessionHost(deps: SessionHostDeps): SessionHostService {
         if (adapterId) rememberChatEffort(adapterId, value.effort)
         return
       }
+      if (value.type === 'permission_response') notifyRequestAnswered(id, value.id)
       if (value.type !== 'user_message') return manager.write(id, value)
       // A chat tab is named by its first message, and this is where that
       // message is first seen in main; the title comes back as a server event
       // (or on `session:auto-title:<id>` to the tab's window without a server).
       titleGenerator.notifyChatMessage(id, value.text, windowOf(id))
+      // The id the sending client minted rides with the message into the
+      // event it becomes (the mobile wave, lane B): the history carries it.
+      const minted =
+        value.clientMessageId !== undefined ? { clientMessageId: value.clientMessageId } : {}
       // A user message's prepared prompt is main's to build, from the attachment
       // records and the files they name, never the caller's to supply: the
       // files are read here, at send time, against the adapter's capabilities,
       // and a failure rejects the write so the composer keeps its draft.
       const attachments = value.attachments?.length ? value.attachments : undefined
-      if (!attachments) return manager.write(id, { type: 'user_message', text: value.text })
+      if (!attachments)
+        return manager.write(id, { type: 'user_message', text: value.text, ...minted })
       const prepared = await preparePrompt(value.text, attachments, manager.capabilities(id).images)
-      manager.write(id, { type: 'user_message', text: value.text, attachments, prepared })
+      manager.write(id, {
+        type: 'user_message',
+        text: value.text,
+        attachments,
+        prepared,
+        ...minted
+      })
     },
     resize: (id, cols, rows) => {
       if (!manager.get(id)) throw new Error(`Unknown session: ${id}`)

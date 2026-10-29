@@ -89,6 +89,8 @@ const inputs: unknown[] = [
       }
     ]
   },
+  // ── The mobile wave, lane B: a message with the id its client minted ──
+  { type: 'user_message', text: 'once', clientMessageId: 'phone-7f3a9c2e' },
   { type: 'permission_response', id: 'p1', optionId: 'allow-once' },
   { type: 'permission_response', id: 'p1', optionId: 'answer', answers: { q: 'yes' } },
   { type: 'interrupt' },
@@ -99,12 +101,18 @@ const inputs: unknown[] = [
   { type: 'stop_task', taskId: 't1' }
 ]
 const rejectedInputs: unknown[] = [
+  // ── The mobile wave, lane B: an id too short, too long, or with a space ──
+  { type: 'user_message', text: 'x', clientMessageId: 'short' },
+  { type: 'user_message', text: 'x', clientMessageId: 'x'.repeat(65) },
+  { type: 'user_message', text: 'x', clientMessageId: 'has a space' },
   { type: 'set_effort', effort: '--dangerously' },
   { type: 'stop_task', taskId: '' },
   { type: 'user_message' },
   { type: 'nope' }
 ]
 const events: unknown[] = [
+  // ── The mobile wave, lane B: the id rides into the history on the event ──
+  { type: 'user_message', text: 'once', clientMessageId: 'phone-7f3a9c2e' },
   { type: 'assistant_text', delta: 'hi', final: false },
   { type: 'tool_call', id: 't', name: 'Read', input: { path: 'x' }, parent: 'p' },
   { type: 'tool_result', id: 't', output: 'ok', error: false },
@@ -408,5 +416,35 @@ describe('restart correlation contract', () => {
       }
       expect(Schema.decodeUnknownSync(ServerEvent)(event)).toEqual(event)
     }
+  })
+})
+
+// ── The mobile wave, lane B: the write-status query and the event the id rides on ──
+import { GetSessionWriteStatus, ClientMessageId } from './sessions'
+import { userMessageEvent } from '../../../src/shared/session-model'
+
+describe('a message the client minted an id for (decision 10 of the mobile spec)', () => {
+  it('takes an id of 8 to 64 of the allowed characters, and refuses the rest', () => {
+    for (const id of ['phone-7f3a9c2e', 'a'.repeat(8), 'b'.repeat(64), 'ios:1.2_3-4'])
+      expect(Either.isRight(decode(ClientMessageId, id))).toBe(true)
+    for (const id of ['', 'seven77', 'c'.repeat(65), 'with space', 'slash/ed', 'ünïcödé-1'])
+      expect(Either.isLeft(decode(ClientMessageId, id))).toBe(true)
+  })
+  it('decodes the status query from a GET and refuses a bad id before any host sees it', () => {
+    const payload = Schema.decodeUnknownEither(GetSessionWriteStatus.payload)
+    expect(payload({ id: 's1', clientMessageId: 'phone-7f3a9c2e' })).toEqual(
+      Either.right({ id: 's1', clientMessageId: 'phone-7f3a9c2e' })
+    )
+    expect(Either.isLeft(payload({ id: 's1', clientMessageId: 'short' }))).toBe(true)
+    expect(Either.isLeft(payload({ id: 's1' }))).toBe(true)
+  })
+  it('keeps the id on the event the zod side builds, and drops nothing else', () => {
+    expect(
+      userMessageEvent({ type: 'user_message', text: 'once', clientMessageId: 'phone-7f3a9c2e' })
+    ).toEqual({ type: 'user_message', text: 'once', clientMessageId: 'phone-7f3a9c2e' })
+    expect(userMessageEvent({ type: 'user_message', text: 'plain' })).toEqual({
+      type: 'user_message',
+      text: 'plain'
+    })
   })
 })
