@@ -149,6 +149,10 @@ export const sessionHandlers = [
       const accepted = yield* Effect.tryPromise({
         try: () => host.write(id, input).then(() => ledger.accept(id, clientMessageId)),
         catch: (error) => {
+          if (error instanceof SessionWriteUnknown) {
+            ledger.unknown(id, clientMessageId, error.message)
+            return error
+          }
           const reason = sanitizeReason(error, input.text)
           ledger.reject(id, clientMessageId, reason)
           return new SessionWriteRefused({ id, message: reason })

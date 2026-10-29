@@ -2093,3 +2093,36 @@ describe('a waited-on Bash task the CLI lists later', () => {
     ).toEqual(['-', '-'])
   })
 })
+
+it('an identified Claude message is evidence only after stdin acknowledges it', async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn()
+  })
+  let acknowledge!: (error?: Error | null) => void
+  vi.spyOn(child.stdin, 'write').mockImplementation(((_chunk: unknown, callback?: unknown) => {
+    if (typeof callback === 'function') acknowledge = callback as typeof acknowledge
+    return true
+  }) as typeof child.stdin.write)
+  mock.spawn.mockReturnValue(child)
+  const adapter = new ClaudeAdapter()
+  const handle = await adapter.spawn(spec)
+  adapter.on(handle, 'stream', (stream) => {
+    if (stream.kind === 'event') events.push(stream.event)
+  })
+  const accepted = adapter.write(handle, {
+    type: 'user_message',
+    text: 'hello',
+    clientMessageId: 'phone-00000001'
+  })
+  expect(events.filter((e) => e.type === 'user_message')).toEqual([])
+  expect(accepted).toBeInstanceOf(Promise)
+  acknowledge()
+  await accepted
+  expect(events.filter((e) => e.type === 'user_message')).toEqual([
+    { type: 'user_message', text: 'hello', clientMessageId: 'phone-00000001' }
+  ])
+  child.emit('exit', 0)
+})

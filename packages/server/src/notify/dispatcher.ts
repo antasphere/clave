@@ -362,7 +362,11 @@ export class Notifier {
     const timer = setTimeout(() => {
       this.timers.delete(timer)
       if (this.closed) return
-      void this.track(build().then((payload) => (payload ? this.send(payload) : undefined)))
+      void this.track(
+        build().then((payload) =>
+          payload ? this.send(payload, () => this.requestStillOpen(key)) : undefined
+        )
+      )
     }, grace)
     this.timers.add(timer)
   }
@@ -375,10 +379,25 @@ export class Notifier {
     return tracked
   }
 
-  private async send(payload: NotificationPayload): Promise<void> {
+  private requestStillOpen(key: string): boolean {
+    if (this.closed || this.settled.has(key)) return false
+    if (!key.startsWith('request:')) return true
+    try {
+      return this.deps.pendingRequests?.().pending.some((r) => `request:${r.id}` === key) ?? false
+    } catch {
+      return false
+    }
+  }
+
+  private async send(
+    payload: NotificationPayload,
+    stillOpen = (): boolean => !this.closed
+  ): Promise<void> {
     const closed = closedPayload(payload)
     const targets = await Effect.runPromise(this.deps.targets.list())
-    await Promise.all(targets.map((target) => this.sendTo(target, closed)))
+    await Promise.all(
+      targets.map((target) => (stillOpen() ? this.sendTo(target, closed) : undefined))
+    )
   }
 
   private async sendTo(target: PushTarget, payload: NotificationPayload): Promise<SendResult> {

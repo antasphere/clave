@@ -28,7 +28,7 @@ import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
 import type { SessionScreen } from '@clave/contract/sessions'
 // ── The mobile wave, lane B: an exit a stop or a restart asked for is never a failure ──
-import { markDeliberateExit } from '../server/session-events'
+import { initializeSessionWrites, markDeliberateExit } from '../server/session-events'
 
 export type SessionInfoResult = {
   id: string
@@ -120,6 +120,7 @@ export async function spawnSession(
     workspaceId,
     windowKey: windowKey ?? undefined
   })
+  if (!options?.adoptSessionId) initializeSessionWrites(session.id)
   // The sender hosts the session from now on: its renderer holds the xterm
   // and receives pty:data. Adoption and re-homing rebind through this same
   // path (the adopting window is the sender).
