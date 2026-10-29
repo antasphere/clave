@@ -84,6 +84,18 @@ export const NOTIFICATION_PAYLOAD_KEYS = [
   'actions'
 ] as const
 
+/** The action category a phone registers its buttons under, per category:
+ *  `clave.permission` carries allow and deny, `clave.question` the reply
+ *  field. iOS reads it as `aps.category`; Android (expo-notifications)
+ *  reads it as `categoryId` in the data map, so a data-only transport
+ *  carries it beside the payload's keys (`NOTIFICATION_DATA_KEYS`). */
+export const notificationCategoryId = (category: NotificationCategory): string =>
+  `clave.${category}`
+
+/** The closed keys of a data-only transport's map (FCM's `data`): the
+ *  payload's keys, each as a string, plus the action category. */
+export const NOTIFICATION_DATA_KEYS = [...NOTIFICATION_PAYLOAD_KEYS, 'categoryId'] as const
+
 export const PushPlatform = Schema.Literal('ios', 'android')
 export type PushPlatform = typeof PushPlatform.Type
 

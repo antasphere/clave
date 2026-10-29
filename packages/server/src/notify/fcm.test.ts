@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { generateKeyPairSync } from 'node:crypto'
 import { Effect } from 'effect'
 import type { NotificationPayload } from '@clave/contract/notify'
+import { apnsBody } from './apns'
 import { FCM_SCOPE, fcmMessage, fcmTransport, type FcmOptions, type FcmTransport } from './fcm'
 import { verifyJwt } from './jwt'
 import type { PushTarget, SendResult } from './port'
@@ -460,6 +461,36 @@ describe('the FCM transport', () => {
     for (const text of [...reasons, ...lines]) {
       expect(text).not.toContain(TOKEN)
       expect(text).not.toMatch(/access-\d/)
+    }
+  })
+})
+
+// ── Lane D's finding of 29 October: Android reads the action buttons from `categoryId` ──
+describe('the action category on Android', () => {
+  it('carries categoryId in the data map, the same value as the iOS category, on every category', () => {
+    const categories = [
+      'question',
+      'permission',
+      'secret',
+      'finished',
+      'failed',
+      'account_limit',
+      'test'
+    ] as const
+    for (const category of categories) {
+      const payload: NotificationPayload = {
+        category,
+        serverId: 'srv',
+        serverName: 'Mac',
+        sessionId: category === 'account_limit' || category === 'test' ? '' : 's1',
+        sessionTitle: category === 'account_limit' || category === 'test' ? '' : 'Title',
+        text: 'text',
+        actions: ['open']
+      }
+      const message = fcmMessage({ deviceId: 'd', platform: 'android', token: 't' }, payload)
+      const data = (message.message as { data: Record<string, string> }).data
+      expect(data.categoryId).toBe(`clave.${category}`)
+      expect(data.categoryId).toBe((apnsBody(payload).aps as { category: string }).category)
     }
   })
 })
