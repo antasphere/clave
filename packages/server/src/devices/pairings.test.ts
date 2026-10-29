@@ -39,6 +39,9 @@ describe('the pairing desk', () => {
     expect(desk.refuse(refused)).toBe(true)
     expect(desk.read(refused)).toEqual({ status: 'refused' })
     const lapsed = desk.request('user', PHONE)!.pairingId
+    clock.now = PAIRING_TTL_MS - 1
+    expect(desk.read(lapsed)).toEqual({ status: 'pending' })
+    expect(desk.pending()).toMatchObject([{ id: lapsed }])
     clock.now = PAIRING_TTL_MS
     expect(desk.read(lapsed)).toEqual({ status: 'expired' })
     expect(desk.pending()).toEqual([])
