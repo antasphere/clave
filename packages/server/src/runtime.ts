@@ -55,6 +55,10 @@ import { GitEventsLive, GitPort, gitHandlers } from './git'
 import { ServerInfoEventsLive, ServerInfoPort, serverInfoHandlers } from './server-info'
 // ── Mobile wave, lane A: the devices, a phone paired with this server ──
 import { DeviceSessions, DevicesEventsLive, deviceHandlers } from './devices'
+// ── The mobile wave, lane B: the notify domain, and the write ledger ──
+import { Notify, NotifyLive, notifyHandlers } from './notify'
+import { NotifyOptionsPort, PushTargetsPort, PushTransportsPort } from './notify/port'
+import { SessionWrites, memoryWriteLedgerStorage } from './sessions/writes'
 
 export interface ServerOptions {
   /** The bearer token every request and every push hello must present. */
@@ -100,6 +104,12 @@ export type ServerServices =
   | ServerInfoPort
   // ── Mobile wave, lane A: the devices ──
   | DeviceSessions
+  // ── The mobile wave, lane B: the notify domain, and the write ledger ──
+  | Notify
+  | SessionWrites
+  | PushTargetsPort
+  | PushTransportsPort
+  | NotifyOptionsPort
 
 /** Everything but the listener. */
 export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices> => {
@@ -113,7 +123,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Wave 3, lane A: the reviews a `.clave` read waits on ──
     ReviewDesk.layer({
       ...(options.reviewTimeoutMs !== undefined && { timeoutMs: options.reviewTimeoutMs })
-    })
+    }),
+    // ── The mobile wave, lane B: the ids of the messages written once ──
+    SessionWrites.layer(options.ports.writeLedger ?? memoryWriteLedgerStorage())
   )
   const events = ServerEvents.layer(options.serverId).pipe(Layer.provide(foundations))
   // ── Mobile wave, lane A: the devices domain over its port, beside the events ──
@@ -145,6 +157,8 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
   const serverInfoEvents = ServerInfoEventsLive.pipe(Layer.provide(services))
   // ── Mobile wave, lane A: every change of the devices told to the clients ──
   const devicesEvents = DevicesEventsLive.pipe(Layer.provide(services))
+  // ── The mobile wave, lane B: the notifier over the events, the requests and the ports ──
+  const notify = NotifyLive({ serverId: options.serverId }).pipe(Layer.provide(services))
   return Layer.mergeAll(
     services,
     requestEvents,
@@ -164,7 +178,9 @@ export const ServicesLive = (options: ServerOptions): Layer.Layer<ServerServices
     // ── Issue #266: the server domain ──
     serverInfoEvents,
     // ── Mobile wave, lane A: the devices ──
-    devicesEvents
+    devicesEvents,
+    // ── The mobile wave, lane B: the notify domain ──
+    notify
   )
 }
 
@@ -206,7 +222,9 @@ export const BusesLive = busesLayer.pipe(
       // ── Issue #266: the server domain ──
       ...serverInfoHandlers,
       // ── Mobile wave, lane A: the devices ──
-      ...deviceHandlers
+      ...deviceHandlers,
+      // ── The mobile wave, lane B: the notify domain ──
+      ...notifyHandlers
       // ── Lane B: ...terminalHandlers ──
     )
   )

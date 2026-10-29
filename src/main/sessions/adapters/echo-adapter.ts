@@ -4,6 +4,7 @@ import {
   userMessageEvent,
   providerPrompt,
   type CommandOption,
+  type HistoryItem,
   type ModelOption,
   type SessionInput
 } from '../../../shared/session-model'
@@ -44,11 +45,19 @@ export class EchoAdapter implements SessionAdapter {
   readonly images = true
   private handles = new Map<string, EventEmitter>()
   private sequence = 0
+  /** What each session said so far, answered as its history: the mobile
+   *  wave's suite reads a message landing once off it (lane B). */
+  private readonly past = new Map<string, HistoryItem[]>()
 
   prepare(spec: SpawnSpec): SessionHandle {
     if (this.handles.has(spec.id)) throw new Error(`Echo session already exists: ${spec.id}`)
     this.handles.set(spec.id, new EventEmitter())
+    this.past.set(spec.id, [])
     return { id: spec.id }
+  }
+
+  history(handle: SessionHandle): HistoryItem[] {
+    return [...(this.past.get(handle.id) ?? [])]
   }
 
   async spawn(spec: SpawnSpec): Promise<SessionHandle> {
@@ -99,6 +108,7 @@ export class EchoAdapter implements SessionAdapter {
     const emit = (
       event: Extract<SessionAdapterEvents['stream'], { kind: 'event' }>['event']
     ): void => {
+      this.past.get(handle.id)?.push({ event, at: Date.now() })
       emitter.emit('stream', { kind: 'event', event })
     }
     if (value.type === 'set_model') {
@@ -130,6 +140,7 @@ export class EchoAdapter implements SessionAdapter {
     const emitter = this.handles.get(handle.id)
     if (!emitter) return
     this.handles.delete(handle.id)
+    this.past.delete(handle.id)
     emitter.emit('exit', 0)
     emitter.removeAllListeners()
   }

@@ -29,13 +29,22 @@ import {
   getClaveServerEndpoint,
   setClaveServerEndpoint
 } from './endpoint'
-import { publishSessionStates, setServerEventPublisher } from './session-events'
+import {
+  observeSessionsForNotify,
+  publishSessionStates,
+  setServerEventPublisher
+} from './session-events'
+// ── The mobile wave, lane B: the fake push's hooks for the suite ──
+import { installE2eHooks } from '../sessions/e2e-hooks'
 
 export { type ClaveServerEndpoint, getClaveServerEndpoint } from './endpoint'
 
 let running: EmbeddedServer | null = null
 let starting: Promise<ClaveServerEndpoint> | null = null
 let stopStates: (() => void) | null = null
+// ── The mobile wave, lane B ──
+let stopNotify: (() => void) | null = null
+let closePush: (() => void) | null = null
 
 export interface StartOptions {
   port?: number
@@ -51,6 +60,11 @@ export interface StartOptions {
    *  updates with the app (`ServerInfoPort.appRun`), built here, after the
    *  server package has loaded. */
   appVersion?: string
+  /** The mobile wave, lane B: the directory the push credentials are read
+   *  under (`push/apns.json`, `push/fcm-service-account.json`), the app's
+   *  user data. Absent, no credential is read; `--push-fake` still puts the
+   *  recording fake in place. */
+  dataDir?: string
 }
 
 /** Start the server once; a second call, concurrent or later, answers the
@@ -69,7 +83,20 @@ export function startClaveServer(options: StartOptions): Promise<ClaveServerEndp
 async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   const manager = options.manager ?? sessionManager
   const { ports } = options
-  const { startEmbedded, ServerInfoPort } = await import('@clave/server')
+  const { startEmbedded, ServerInfoPort, loadPushPorts, fileWriteLedgerStorage } =
+    await import('@clave/server')
+  // ── The mobile wave, lane B: the push credentials under the user data, the fake under --push-fake ──
+  const pushFake = process.argv.includes('--push-fake')
+  const push =
+    options.dataDir !== undefined || pushFake
+      ? loadPushPorts({
+          dataDir: options.dataDir ?? '',
+          fake: pushFake,
+          log: (line) => console.log(`[server] ${line}`)
+        })
+      : null
+  if (push?.hooks) installE2eHooks({ notify: push.hooks })
+  closePush = push?.close ?? null
   // ── Mobile wave, lane A: the devices port, the shell's own Antasphere login as the owner ──
   // Loaded beside the server package (a dynamic import, so this seam stays as
   // light as it was at main's boot) and under Electron alone (the unit tests
@@ -84,6 +111,11 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
       }),
       // ── Mobile wave, lane A: the devices ──
       ...(devices && { devices }),
+      ...push?.ports,
+      // ── The mobile wave, lane B: the write ledger, per session, under the user data ──
+      ...(options.dataDir !== undefined && {
+        writeLedger: fileWriteLedgerStorage(`${options.dataDir}/write-ledger`)
+      }),
       ...ports
     },
     ...(options.port !== undefined && { port: options.port }),
@@ -95,6 +127,8 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   setClaveServerEndpoint(endpoint)
   setServerEventPublisher((event) => server.publish(event))
   stopStates = publishSessionStates(manager, (event) => server.publish(event))
+  // ── The mobile wave, lane B: the sessions' frames and exits reach the notifier ──
+  stopNotify = observeSessionsForNotify(manager, server.notify, server.writes.evidence)
   return endpoint
 }
 
@@ -106,6 +140,11 @@ export async function stopClaveServer(): Promise<void> {
   setServerEventPublisher(null)
   stopStates?.()
   stopStates = null
+  // ── The mobile wave, lane B: nothing is pushed for what a quit ends ──
+  stopNotify?.()
+  stopNotify = null
+  closePush?.()
+  closePush = null
   if (!server) return
   // The stop's own figures, in the log (PRDCT-3375): what it answered, who it
   // told, what it had to destroy. A quit measured at ten seconds in wave 3

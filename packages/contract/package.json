@@ -31,7 +31,8 @@
     "./server-info": "./src/server-info.ts",
     "./release-version": "./src/release-version.ts",
     "./upgrade-failure": "./src/upgrade-failure.ts",
-    "./devices": "./src/devices.ts"
+    "./devices": "./src/devices.ts",
+    "./notify": "./src/notify.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

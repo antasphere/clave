@@ -39,7 +39,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── The mobile wave, lane B: whether a client's message landed ──
+  GetSessionWriteStatus
 } from '@clave/contract/sessions'
 import { AnswerViewRequest, RequestView } from '@clave/contract/views'
 import { AnnounceAgentTools, ResolveAgentToken } from '@clave/contract/agent-tools'
@@ -68,6 +70,8 @@ import { GitLive } from './git/api'
 import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
 // ── Mobile wave, lane A: the devices (`devices/api.ts`) ──
 import { DevicesLive } from './devices/api'
+// ── The mobile wave, lane B: the push notifications ──
+import { GetNotifyStatus, SendTestNotification } from '@clave/contract/notify'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
@@ -123,6 +127,8 @@ export const SessionsLive = HttpApiBuilder.group(ClaveApi, 'sessions', (handlers
     .handle('screen', HttpCqrs.query(ReadSessionScreen))
     .handle('type', HttpCqrs.command(TypeIntoSession))
     .handle('restart', HttpCqrs.command(RestartSession))
+    // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
+    .handle('writeStatus', HttpCqrs.query(GetSessionWriteStatus))
 )
 
 // ── Lane A: the clients the shell registers as ──
@@ -209,6 +215,12 @@ export const ServerInfoLive = HttpApiBuilder.group(ClaveApi, 'server', (handlers
 
 // ── Mobile wave, lane A: the devices, a phone paired with this server ──
 export { DevicesLive }
+// ── The mobile wave, lane B: the notify domain, the owner's two routes ──
+export const NotifyLive = HttpApiBuilder.group(ClaveApi, 'notify', (handlers) =>
+  handlers
+    .handle('status', HttpCqrs.query(GetNotifyStatus))
+    .handle('test', HttpCqrs.command(SendTestNotification))
+)
 
 // ── Lane B: terminals ──
 
@@ -236,6 +248,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       ServerInfoLive,
       // ── Mobile wave, lane A: the devices ──
       DevicesLive,
+      // ── The mobile wave, lane B: the notify domain ──
+      NotifyLive,
       HealthLive
     )
   )

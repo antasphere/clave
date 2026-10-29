@@ -37,5 +37,7 @@ export * as Git from './git'
 export * as ServerInfo from './server-info'
 // ── Mobile wave, lane A: the devices, a phone paired with this server ──
 export * as Devices from './devices'
+// ── The mobile wave, lane B: the push notifications ──
+export * as Notify from './notify'
 
 // ── Lane B: terminals · Lane D: settings served ──
