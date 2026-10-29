@@ -114,6 +114,8 @@ function RequestCard({
 }): ReactNode {
   const [replies, setReplies] = useState<Record<string, QuestionReply>>({})
   const [secret, setSecret] = useState('')
+  /** The secret is masked as typed; a person may reveal it to check it. */
+  const [secretShown, setSecretShown] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const kind =
     request.kind === 'secret' ? 'Secret' : request.kind === 'permission' ? 'Permission' : 'Question'
@@ -153,10 +155,20 @@ function RequestCard({
             label="The secret"
             value={secret}
             onChangeText={setSecret}
-            secureTextEntry
+            secureTextEntry={!secretShown}
+            autoComplete="off"
+            textContentType="none"
             testID="secret-input"
             placeholder="Stays on the phone until you send it"
           />
+          <View style={styles.options}>
+            <Button
+              title={secretShown ? 'Hide' : 'Show'}
+              kind="secondary"
+              onPress={() => setSecretShown(!secretShown)}
+              testID="secret-toggle"
+            />
+          </View>
           <View style={styles.options}>
             <Button
               title="Send the secret"
