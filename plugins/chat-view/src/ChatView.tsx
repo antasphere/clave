@@ -31,9 +31,10 @@ import { PermissionModeMenu } from './PermissionModeMenu'
 import { ModelMenu } from './ModelMenu'
 import { EffortMenu } from './EffortMenu'
 import { SenderChip } from './Delivery'
+import { DeliveryStack } from './DeliveryStack'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
 import { nextPermissionMode } from './permission-mode'
-import { groupEntries, visibleEntries, type ToolGroup as ToolRun } from './tools'
+import { groupEntries, visibleEntries, type Block, type ToolGroup as ToolRun } from './tools'
 import { ToolGroup } from './ToolGroup'
 import { ToolDisclosure } from './disclosure'
 import { PermissionRow, PromptDock } from './PromptDock'
@@ -370,9 +371,11 @@ function TranscriptRow({
   block,
   first,
   arriving,
-  onError
+  onError,
+  rowKey
 }: {
-  block: Entry | ToolRun
+  rowKey: string
+  block: Block
   first: boolean
   arriving: boolean
   onError: (error: unknown) => void
@@ -384,7 +387,19 @@ function TranscriptRow({
       data-first={first ? 'true' : undefined}
       data-arrive={arrive ? 'true' : undefined}
     >
-      {block.kind === 'tool-group' ? (
+      {block.kind === 'delivery-group' ? (
+        <DeliveryStack
+          group={block}
+          id={rowKey}
+          renderEntry={(entry) =>
+            entry.kind === 'tool-group' ? (
+              <ToolRow group={entry} />
+            ) : (
+              <EntryRow entry={entry} onError={onError} />
+            )
+          }
+        />
+      ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />
       ) : (
         <EntryRow entry={block} onError={onError} />
@@ -786,7 +801,12 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
     entries.forEach((entry, i) => ordinal.set(entry, presentation.first + i))
     return groupEntries(visibleEntries(entries)).map((block) => ({
       block,
-      key: block.kind === 'tool-group' ? `tools-${block.id}` : `entry-${ordinal.get(block)}`
+      key:
+        block.kind === 'tool-group'
+          ? `tools-${block.id}`
+          : block.kind === 'delivery-group'
+            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
+            : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])
   // The reader's open tool rows, kept across the rows' unmounts (`ToolDisclosure`).
@@ -880,6 +900,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
               <TranscriptRows rows={blocks} settled={pastRead} scroll={transcript.scroll}>
                 {({ block, key }, index, arriving) => (
                   <TranscriptRow
+                    rowKey={key}
                     key={key}
                     block={block}
                     first={index === 0}

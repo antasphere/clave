@@ -3,6 +3,141 @@
 @import "@clave/ui/styles.css";
 @source "../../../../packages/ui/src";
 
+/* A peer conversation is a deck: inset faces remain visible beneath its
+   cover, then unfold into complete message-and-answer cards. */
+.chat-delivery-stack {
+  --delivery-step: calc(var(--spacing) * 5);
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  margin-bottom: calc(var(--delivery-layers) * var(--delivery-step));
+  interpolate-size: allow-keywords;
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary {
+  position: relative;
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Keep the deck's spacing transition beside the transcript's arrival fade. */
+.chat-view .chat-row .chat-delivery-stack {
+  transition: margin-bottom var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration) var(--ease-out-expo),
+    translate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-summary::-webkit-details-marker { display: none; }
+.chat-delivery-summary:focus-visible .chat-delivery-cover {
+  outline: thin solid var(--color-accent);
+  outline-offset: var(--spacing);
+}
+.chat-delivery-cover, .chat-delivery-peek, .chat-exchange-card {
+  border: thin solid var(--border-subtle-color);
+  border-radius: var(--radius-2xl);
+}
+.chat-delivery-cover {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  background: var(--surface-100);
+  box-shadow: var(--raised-shadow);
+  transition: background var(--default-transition-duration), box-shadow var(--default-transition-duration);
+}
+.chat-delivery-summary:hover .chat-delivery-cover {
+  background: color-mix(in oklch, var(--surface-100) 75%, var(--surface-0));
+}
+.chat-delivery-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.chat-delivery-eyebrow { display: inline-flex; align-items: center; gap: var(--spacing); min-width: 0; }
+.chat-delivery-eyebrow svg { width: var(--chat-glyph); height: var(--chat-glyph); flex-shrink: 0; }
+.chat-delivery-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-delivery-chevron {
+  width: var(--chat-glyph);
+  height: var(--chat-glyph);
+  flex-shrink: 0;
+  transition: rotate var(--default-transition-duration) var(--ease-out-expo);
+}
+.chat-delivery-senders {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.chat-delivery-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.chat-delivery-peek {
+  position: absolute;
+  z-index: calc(3 - var(--delivery-layer));
+  inset: 0 calc(var(--delivery-layer) * var(--spacing) * 3);
+  display: flex;
+  align-items: flex-end;
+  padding: 0 calc(var(--spacing) * 5) calc(var(--spacing) * 0.5);
+  background: color-mix(in oklch, var(--surface-200) calc(40% + var(--delivery-layer) * 20%), var(--surface-100));
+  transform: translateY(calc(var(--delivery-layer) * var(--delivery-step)));
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  transition: transform var(--default-transition-duration) var(--ease-out-expo), opacity var(--default-transition-duration);
+}
+.chat-delivery-peek > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-delivery-stack[open] { margin-bottom: 0; }
+.chat-delivery-stack[open] .chat-delivery-peek { transform: translateY(0); opacity: 0; }
+.chat-delivery-stack[open] .chat-delivery-chevron { rotate: 180deg; }
+.chat-delivery-stack[open] .chat-delivery-preview { display: none; }
+.chat-delivery-stack::details-content {
+  block-size: 0;
+  overflow: clip;
+  opacity: 0;
+  transition: block-size var(--default-transition-duration) var(--ease-out-expo),
+    opacity var(--default-transition-duration),
+    content-visibility var(--default-transition-duration) allow-discrete;
+}
+.chat-delivery-stack[open]::details-content { block-size: auto; opacity: 1; }
+.chat-delivery-items { display: flex; flex-direction: column; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 3); }
+.chat-exchange-card { min-width: 0; background: var(--surface-0); overflow: hidden; }
+.chat-exchange-message { padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); background: color-mix(in oklch, var(--color-term-model) 5%, var(--surface-0)); }
+.chat-exchange-card .chat-turn-wrap[data-side='end'] { align-items: stretch; }
+.chat-exchange-card .chat-turn[data-role='user'][data-from='tab'] {
+  padding: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.chat-exchange-card .chat-turn[data-role='user']::before { display: none; }
+.terminal-view .chat-exchange-card .chat-turn-wrap[data-side='end'] .chat-turn[data-role='user'][data-from='tab'] { background: transparent; }
+.chat-exchange-card .term-question { position: static; }
+.chat-exchange-card .chat-turn-meta { position: static; height: auto; justify-content: flex-end; padding-top: var(--spacing); }
+.chat-exchange-responses { display: flex; flex-direction: column; gap: calc(var(--spacing) * 4); padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5); border-top: thin solid var(--border-subtle-color); }
+.chat-exchange-response-label { font-size: var(--text-xs); color: var(--text-tertiary); }
+.chat-exchange-responses .chat-turn[data-role='assistant'] { padding: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-view .chat-row .chat-delivery-stack,
+  .chat-delivery-stack, .chat-delivery-stack::details-content,
+  .chat-delivery-chevron, .chat-delivery-peek, .chat-delivery-cover { transition: none; }
+}
+
 /* Appearance → Font: Synonym, with the website's corrections (size-adjust is on
    the face, see lib/ui-font.ts). Only the sans stack changes; monospace text
    and the terminal keep their own face. */
