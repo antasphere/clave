@@ -176,14 +176,20 @@ function answeredHeaders(headers: RelayHeaders): Record<string, string | string[
   return out
 }
 
-/** A close code `ws` accepts on the wire; anything else becomes 1011. */
+/** A close code `ws` accepts on the wire: a close with no code (1005, what
+ *  a socket closed plainly reports) is a normal close, a dropped connection
+ *  (1006) is a going-away, anything else outside the sendable ranges is 1011. */
 export function sendableCloseCode(code: number | undefined): number {
-  if (code === undefined) return 1000
-  if (code === 1000 || (code >= 1001 && code <= 1013 && ![1004, 1005, 1006].includes(code)))
-    return code
+  if (code === undefined || code === 1005) return 1000
+  if (code === 1006) return 1001
+  if (code === 1000 || (code >= 1001 && code <= 1013 && code !== 1004)) return code
   if (code >= 3000 && code <= 4999) return code
   return 1011
 }
+
+/** A streamed answer a slow caller does not take as it comes is held up to
+ *  this, then ended: the relay keeps no body beyond the frames in flight. */
+const MAX_STREAM_BUFFER_BYTES = 16 * 1024 * 1024
 
 const rawToBuffer = (data: RawData): Buffer =>
   Buffer.isBuffer(data)
@@ -344,6 +350,12 @@ export async function startRelay(options: RelayOptions): Promise<Relay> {
         if (!pending.headSent)
           return send(conn, { _tag: 'error', message: `Chunk before head: ${frame.id}` })
         pending.res.write(Buffer.from(frame.data, 'base64'))
+        if (pending.res.writableLength > MAX_STREAM_BUFFER_BYTES) {
+          finish(conn, frame.id)
+          pending.res.destroy()
+          send(conn, { _tag: 'request-abort', id: frame.id })
+          log(`relay: a streamed answer to a slow caller was ended at the buffer bound`)
+        }
         return
       }
       case 'response-end': {
@@ -634,6 +646,10 @@ export async function startRelay(options: RelayOptions): Promise<Relay> {
     }
     refuseUpgrade(socket, 404, 'not found')
   })
+  // Node never hands a CONNECT to the request handler: it is refused here,
+  // on the raw socket, as the road's 405 (Bun hands it over, and the
+  // handler refuses it the same way).
+  server.on('connect', (_req, socket: Duplex) => refuseUpgrade(socket, 405, 'method not allowed'))
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
