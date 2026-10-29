@@ -74,7 +74,9 @@ there is none), the subtitle the machine's name, the body the text, the sound th
 the category `clave.<category>` (the app registers its actions under it), the thread the
 session's id, and the payload above under the key `clave`. On FCM the message carries the
 title and the text as its notification, `android.priority: high`, the channel `clave`, and
-every payload field as a string in `data` (the actions joined by a comma).
+every payload field as a string in `data` (the actions joined by a comma) plus `categoryId`,
+the same `clave.<category>` as the iOS category, which the Android client
+(expo-notifications) reads its action buttons from.
 
 ## The credentials and the configuration
 

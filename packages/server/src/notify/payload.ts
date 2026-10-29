@@ -14,6 +14,7 @@
  */
 import {
   NOTIFICATION_PAYLOAD_KEYS,
+  notificationCategoryId,
   type NotificationAction,
   type NotificationPayload
 } from '@clave/contract/notify'
@@ -185,8 +186,16 @@ export function closedPayload(payload: NotificationPayload): NotificationPayload
   return out as unknown as NotificationPayload
 }
 
+/** The action category both platforms register the buttons under, one
+ *  value: `aps.category` on iOS, `categoryId` in the data map on Android. */
+export const categoryIdOf = (payload: NotificationPayload): string =>
+  notificationCategoryId(payload.category)
+
 /** The payload's fields as strings, for FCM's `data` (strings only): the
- *  actions joined by a comma, an absent field left out. */
+ *  actions joined by a comma, an absent field left out, and `categoryId`,
+ *  which the Android client reads the action buttons from (lane D's finding
+ *  of 29 October: expo-notifications shows them from that key alone). The
+ *  keys are the contract's `NOTIFICATION_DATA_KEYS`. */
 export function payloadAsStrings(payload: NotificationPayload): Record<string, string> {
   const out: Record<string, string> = {}
   for (const key of NOTIFICATION_PAYLOAD_KEYS) {
@@ -194,6 +203,7 @@ export function payloadAsStrings(payload: NotificationPayload): Record<string, s
     if (value === undefined) continue
     out[key] = Array.isArray(value) ? value.join(',') : String(value)
   }
+  out.categoryId = categoryIdOf(payload)
   return out
 }
 

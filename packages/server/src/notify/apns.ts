@@ -17,7 +17,7 @@ import type { KeyObject } from 'node:crypto'
 import { Effect } from 'effect'
 import type { NotificationPayload } from '@clave/contract/notify'
 import { signJwt } from './jwt'
-import { bounded, closedPayload, payloadTitle } from './payload'
+import { bounded, categoryIdOf, closedPayload, payloadTitle } from './payload'
 import type { PushTarget, PushTransport, SendResult } from './port'
 
 export const APNS_HOST = 'api.push.apple.com'
@@ -67,7 +67,7 @@ export function apnsBody(payload: NotificationPayload): Record<string, unknown> 
         body: payload.text
       },
       sound: 'default',
-      category: `clave.${payload.category}`,
+      category: categoryIdOf(payload),
       'thread-id': payload.sessionId || payload.serverId
     },
     clave: closedPayload(payload)

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Schema } from 'effect'
-import { NOTIFICATION_PAYLOAD_KEYS, NotificationPayload } from '@clave/contract/notify'
+import {
+  NOTIFICATION_DATA_KEYS,
+  NOTIFICATION_PAYLOAD_KEYS,
+  NotificationPayload
+} from '@clave/contract/notify'
 import {
   TEXT_MAX,
   accountLimitPayload,
@@ -202,8 +206,18 @@ describe('the strings a data-only transport carries', () => {
       workspaceName: 'clave-app',
       requestId: 'req-1',
       text: 'Which key?',
-      actions: 'open'
+      actions: 'open',
+      categoryId: 'clave.question'
     })
     expect('requestId' in payloadAsStrings(finishedPayload(subject))).toBe(false)
+  })
+  it('carries the action category as categoryId on every category, and no key outside the closed list', () => {
+    for (const payload of every()) {
+      const strings = payloadAsStrings(payload)
+      expect(strings.categoryId).toBe(`clave.${payload.category}`)
+      expect(
+        Object.keys(strings).every((k) => (NOTIFICATION_DATA_KEYS as readonly string[]).includes(k))
+      ).toBe(true)
+    }
   })
 })
