@@ -27,6 +27,8 @@ import { forgetScreen, hasScreen, renderScreen, retainOutput } from './terminal-
 import { typeIntoTerminal, type TypingOutcome } from './typing'
 import { forgetLineage, parentOf, setParent } from './lineage'
 import type { SessionScreen } from '@clave/contract/sessions'
+// ── The mobile wave, lane B: an exit a stop or a restart asked for is never a failure ──
+import { markDeliberateExit } from '../server/session-events'
 
 export type SessionInfoResult = {
   id: string
@@ -218,6 +220,7 @@ export async function stopSession(id: string): Promise<void> {
     .catch((error) =>
       console.error('[sessions] linked document not flushed before the stop', error)
     )
+  markDeliberateExit(id)
   await ptyManager.kill(id)
   windows.unbind(id)
 }
@@ -267,6 +270,7 @@ export async function restartSession(
   // leaves behind (the parent link among them); the same tab comes back
   // under the same id, so its link is kept across (verifier round 1, F1).
   const parent = parentOf(id)
+  markDeliberateExit(id)
   await ptyManager.killAndWait(id)
   windows.unbind(id)
   const info = await spawnSession(key, plan.cwd, plan.options)

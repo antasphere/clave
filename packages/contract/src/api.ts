@@ -43,7 +43,9 @@ import {
   KeepOnSessionRecord,
   RestartSession,
   SetSessionPage,
-  TypeIntoSession
+  TypeIntoSession,
+  // ── The mobile wave, lane B: whether a client's message landed ──
+  GetSessionWriteStatus
 } from './sessions'
 import { agentToolsGroup } from './agent-tools'
 import { settingsGroup } from './settings/api'
@@ -57,6 +59,8 @@ import { requestsGroup } from './requests'
 import { gitGroup } from './git'
 // ── Issue #266: the server's version and its self-upgrade (`server-info.ts`) ──
 import { serverInfoGroup } from './server-info'
+// ── The mobile wave, lane B: the push notifications (`notify.ts`) ──
+import { notifyGroup } from './notify'
 
 // ── Sessions (lane A) ──
 export const sessionsGroup = ApiGroup.make('sessions')
@@ -91,6 +95,8 @@ export const sessionsGroup = ApiGroup.make('sessions')
   .add(HttpCqrs.queryEndpoint('screen', '/sessions/screen', ReadSessionScreen))
   .add(HttpCqrs.commandEndpoint('type', '/sessions/type', TypeIntoSession))
   .add(HttpCqrs.commandEndpoint('restart', '/sessions/restart', RestartSession))
+  // ── The mobile wave, lane B: whether a message a client minted an id for landed ──
+  .add(HttpCqrs.queryEndpoint('writeStatus', '/sessions/writes', GetSessionWriteStatus))
 
 // ── Clients (lane A, for the shell) ──
 export const clientsGroup = ApiGroup.make('clients')
@@ -140,6 +146,9 @@ export { gitGroup }
 // ── Issue #266: the server domain (`server-info.ts`) ──
 export { serverInfoGroup }
 
+// ── The mobile wave, lane B: the notify domain (`notify.ts`) ──
+export { notifyGroup }
+
 // ── Lane B: terminals ──
 
 export const ClaveApi = Api.make('clave')
@@ -160,6 +169,8 @@ export const ClaveApi = Api.make('clave')
   .add(gitGroup)
   // ── Issue #266: the server domain ──
   .add(serverInfoGroup)
+  // ── The mobile wave, lane B: the notify domain ──
+  .add(notifyGroup)
   .add(Health.group)
   .pipe(annotate({ title: 'Clave', version: '1', description: "Clave's server API" }))
 export type ClaveApi = typeof ClaveApi

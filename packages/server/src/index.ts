@@ -93,3 +93,43 @@ export { PendingRequests, type RequestInput, type RequestResult } from './reques
 export { RequestsPort, type RequestsService } from './requests/port'
 
 export { FileTreeWatcher } from './files/watch'
+
+// ── The mobile wave, lane B: the push notifications, and the write ledger ──
+export {
+  Notify,
+  NotifyLive,
+  NotifyOptionsPort,
+  PushTargetsPort,
+  PushTransportsPort,
+  Notifier,
+  machineName,
+  signalsOf,
+  notifyHandlers,
+  fakePush,
+  FakePushTargets,
+  FakePushTransport,
+  loadPushPorts,
+  apnsTransport,
+  fcmTransport,
+  signJwt,
+  verifyJwt,
+  type NotifierDeps,
+  type NotifyOptions,
+  type NotifySignals,
+  type NotifyE2eHooks,
+  type LoadedPushPorts,
+  type PushTarget,
+  type PushTargets,
+  type PushTransport,
+  type PushTransports,
+  type SendResult
+} from './notify'
+export {
+  SessionWrites,
+  WriteLedger,
+  fileWriteLedgerStorage,
+  memoryWriteLedgerStorage,
+  sanitizeReason,
+  type LedgerEntry,
+  type WriteLedgerStorage
+} from './sessions/writes'

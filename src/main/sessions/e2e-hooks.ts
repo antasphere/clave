@@ -9,7 +9,12 @@
  * when absent and extended in place, never replaced, so whichever domain
  * installs first, the others' hooks stay.
  */
-import type { PluginsService, SessionHostService, SettingsSourceService } from '@clave/server'
+import type {
+  NotifyE2eHooks,
+  PluginsService,
+  SessionHostService,
+  SettingsSourceService
+} from '@clave/server'
 import type { SessionStream } from '../../shared/session-model'
 import type { AccountUsageManager } from '../usage-manager'
 import { TEST_NO_ACTIVATE } from '../test-mode'
@@ -39,6 +44,10 @@ export interface E2eHooks {
     codex: AccountUsageManager
     start: (intervalMs?: number) => void
   }
+  // ── The mobile wave, lane B: the recording push transport and the fake
+  // phones under `--push-fake` (`packages/server/src/notify/credentials.ts`),
+  // installed by whichever entry runs the server ──
+  notify: NotifyE2eHooks
   // ── later lanes add theirs here ──
 }
 
