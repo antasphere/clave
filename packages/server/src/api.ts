@@ -66,6 +66,8 @@ import { FilesLive } from './files/api'
 import { GitLive } from './git/api'
 // ── Issue #266: the server's version and its self-upgrade ──
 import { GetServerInfo, RequestServerUpgrade } from '@clave/contract/server-info'
+// ── Mobile wave, lane A: the devices (`devices/api.ts`) ──
+import { DevicesLive } from './devices/api'
 import { ListPendingRequests, ResolvePendingRequest } from '../../contract/src/requests'
 
 export const RequestsLive = HttpApiBuilder.group(ClaveApi, 'requests', (handlers) =>
@@ -205,6 +207,9 @@ export const ServerInfoLive = HttpApiBuilder.group(ClaveApi, 'server', (handlers
     .handle('upgrade', HttpCqrs.command(RequestServerUpgrade))
 )
 
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export { DevicesLive }
+
 // ── Lane B: terminals ──
 
 export const HealthLive = Health.layer(ClaveApi)
@@ -229,6 +234,8 @@ export const ApiLive = HttpApiBuilder.api(ClaveApi).pipe(
       GitLive,
       // ── Issue #266: the server domain ──
       ServerInfoLive,
+      // ── Mobile wave, lane A: the devices ──
+      DevicesLive,
       HealthLive
     )
   )

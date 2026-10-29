@@ -97,6 +97,8 @@ import {
   type SelfUpgrade
 } from './server/self-upgrade'
 import { RUN_AS_NODE_ENV, TOKEN_ENV } from './terminal-process/token-env'
+// ── Mobile wave, lane A: the devices, a phone paired with this server (server/devices-port.ts) ──
+import { devicesPortFor } from './server/devices-port'
 import {
   spawnTerminalProcess,
   supervisedTerminals,
@@ -333,7 +335,17 @@ async function main(): Promise<void> {
       // progress published to every attached client (server/git-port.ts).
       git: serverGitPort(),
       // ── Issue #266: the server domain ──
-      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version)
+      serverInfo: selfUpgrade ?? ServerInfoPort.appRun(version),
+      // ── Mobile wave, lane A: the devices, this server's own Antasphere login as
+      // the owner (read through the settings source, which serves its status), the
+      // records under `--data-dir`, a line on stderr when a phone asks.
+      devices: devicesPortFor({
+        status: () => standalone.settings.antasphere.status(),
+        onPairingRequested: ({ name, platform }) =>
+          log(
+            `a phone asks to pair: ${name} (${platform}); approve or refuse it in Settings → Mobile of a Mac attached to this server`
+          )
+      })
     },
     port,
     host: config.host,

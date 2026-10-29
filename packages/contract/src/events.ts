@@ -19,6 +19,8 @@ import { WorkspaceFilesEvent } from './workspace-files/model'
 import { GitEvent } from './git'
 // ── Issue #266: the server domain ──
 import { ServerUpgradeEvent } from './server-info'
+// ── Mobile wave, lane A: the devices (a phone paired, asking, or revoked) ──
+import { DevicePairingRequested, DevicesChanged } from './devices'
 
 export const ServerEvent = Schema.Union(
   FilesDirsChanged,
@@ -91,7 +93,10 @@ export const ServerEvent = Schema.Union(
   // ── Wave wcs1023, lane C: the git domain (a watched repository changed on the server's disk, a batch moved) ──
   ...GitEvent.members,
   // ── Issue #266: the server's self-upgrade changed state ──
-  ServerUpgradeEvent
+  ServerUpgradeEvent,
+  // ── Mobile wave, lane A: the paired phones or the pending pairings changed; a phone asked ──
+  DevicesChanged,
+  DevicePairingRequested
   // ── Lane B: terminals ──
 )
 export type ServerEvent = typeof ServerEvent.Type
