@@ -16,10 +16,13 @@ import {
   decodeClientFrame,
   encodeServerFrame
 } from '@clave/contract/push'
+import { CLOSE_DEVICE_REVOKED } from '@clave/contract/devices'
 import { Either } from 'effect'
 import { safeEqual } from '../auth'
 import type { ServerEventsService } from '../events'
 import type { SessionStreamSource, Unsubscribe } from '../sessions/port'
+// ── Mobile wave, lane A: a phone's socket ──
+import { deviceHearsEvent } from '../devices/scope'
 
 export interface PushSocket {
   send(text: string): void
@@ -39,6 +42,14 @@ export interface PushHubOptions {
   readonly helloTimeoutMs?: number
   /** The Clave version the welcome names (issue #266); none when unknown. */
   readonly version?: () => string | undefined
+  // ── Mobile wave, lane A: a phone's device session in the hello frame ──
+  /** The devices domain: a hello token that is not the server's may be a
+   *  phone's session; a revoked phone's sockets are closed from here. */
+  readonly devices?: {
+    readonly authenticate: (presented: string) => { readonly deviceId: string } | null
+    readonly touch: (deviceId: string) => void
+    readonly onRevoked: (listener: (deviceId: string) => void) => Unsubscribe
+  }
 }
 
 interface Peer {
@@ -47,6 +58,8 @@ interface Peer {
   helloTimer: ReturnType<typeof setTimeout> | null
   readonly subscriptions: Map<string, Unsubscribe>
   closed: boolean
+  /** The phone this socket belongs to, when it said hello with a device session. */
+  deviceId: string | null
 }
 
 export class PushHub {
@@ -55,10 +68,22 @@ export class PushHub {
   // ── Lane D (wave 3): the view requests ──
   private readonly welcomeListeners = new Set<(send: (frame: ServerFrame) => void) => void>()
 
+  // ── Mobile wave, lane A ──
+  private readonly offRevoked: Unsubscribe
+
   constructor(private readonly options: PushHubOptions) {
     this.offEvents = options.events.subscribe((envelope) =>
       this.broadcast({ _tag: 'event', ...envelope })
     )
+    // A revoked phone's sockets end at once, with the code that says why.
+    this.offRevoked =
+      options.devices?.onRevoked((deviceId) => this.closeDevice(deviceId)) ?? (() => {})
+  }
+
+  /** The sockets of one phone, closed (its session was revoked). */
+  closeDevice(deviceId: string): void {
+    for (const peer of [...this.peers])
+      if (peer.deviceId === deviceId) this.close(peer, CLOSE_DEVICE_REVOKED, 'device revoked')
   }
 
   /** Peers that said hello with the right token. */
@@ -72,7 +97,8 @@ export class PushHub {
       welcomed: false,
       helloTimer: null,
       subscriptions: new Map(),
-      closed: false
+      closed: false,
+      deviceId: null
     }
     this.peers.add(peer)
     peer.helloTimer = setTimeout(() => {
@@ -91,6 +117,7 @@ export class PushHub {
 
   dispose(): void {
     this.offEvents()
+    this.offRevoked()
     this.closeAll(1001, 'hub disposed')
   }
 
@@ -116,8 +143,13 @@ export class PushHub {
     const frame = decoded.right
     if (!peer.welcomed) {
       if (frame._tag !== 'hello') return this.close(peer, CLOSE_MALFORMED, 'hello first')
-      if (!safeEqual(frame.token, this.options.token))
-        return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
+      if (!safeEqual(frame.token, this.options.token)) {
+        // ── Mobile wave, lane A: a phone's device session, told apart by hash ──
+        const device = this.options.devices?.authenticate(frame.token) ?? null
+        if (!device) return this.close(peer, CLOSE_UNAUTHORIZED, 'unauthorized')
+        peer.deviceId = device.deviceId
+        this.options.devices!.touch(device.deviceId)
+      }
       peer.welcomed = true
       if (peer.helloTimer) clearTimeout(peer.helloTimer)
       peer.helloTimer = null
@@ -177,6 +209,14 @@ export class PushHub {
     this.publishFrame(frame)
   }
 
+  // ── Mobile wave, lane A ──
+  /** Whether a frame is for this peer: everything for a desktop client; for
+   *  a phone, the events of its own domains and no view request frame. */
+  private hears(peer: Peer, frame: ServerFrame): boolean {
+    if (peer.deviceId === null) return true
+    return frame._tag === 'event' ? deviceHearsEvent(frame.event._tag) : frame._tag !== 'request'
+  }
+
   // ── Lane D (wave 3): the view requests ──
   /**
    * Send one frame to every welcomed peer. The view requests go out through
@@ -186,7 +226,8 @@ export class PushHub {
    * answers.
    */
   publishFrame(frame: ServerFrame): void {
-    for (const peer of [...this.peers]) if (peer.welcomed) this.send(peer, frame)
+    for (const peer of [...this.peers])
+      if (peer.welcomed && this.hears(peer, frame)) this.send(peer, frame)
   }
 
   /**

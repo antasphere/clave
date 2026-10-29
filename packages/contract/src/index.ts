@@ -35,5 +35,7 @@ export * as Plugins from './plugins'
 export * as Git from './git'
 // ── Issue #266: the server's version and its self-upgrade ──
 export * as ServerInfo from './server-info'
+// ── Mobile wave, lane A: the devices, a phone paired with this server ──
+export * as Devices from './devices'
 
 // ── Lane B: terminals · Lane D: settings served ──
