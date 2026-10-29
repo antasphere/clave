@@ -470,11 +470,18 @@ export async function startRelay(options: RelayOptions): Promise<Relay> {
     conn.tunnels.set(tunnelId, tunnel)
     send(conn, { _tag: 'tunnel-open', tunnelId, headers: forwardedHeaders(headers) })
     socket.on('message', (data, isBinary) => {
-      if (conn.closed) return
+      if (conn.closed || socket.readyState !== WebSocket.OPEN) return
+      const bytes = rawToBuffer(data)
+      // Base64 expands the payload. Isolate this tunnel before its frame
+      // could exceed the shared control socket's 16 MiB bound.
+      if (bytes.length > RELAY_MAX_BODY_BYTES) {
+        socket.close(1009, 'push message too large')
+        return
+      }
       send(conn, {
         _tag: 'tunnel-data',
         tunnelId,
-        data: rawToBuffer(data).toString('base64'),
+        data: bytes.toString('base64'),
         ...(isBinary && { binary: true })
       })
     })
@@ -500,25 +507,40 @@ export async function startRelay(options: RelayOptions): Promise<Relay> {
     const declared = Number(req.headers['content-length'])
     if (Number.isFinite(declared) && declared > maxBodyBytes)
       return json(res, 413, { error: 'body too large' })
-    const body = await readBody(req, maxBodyBytes)
-    if (body === null) {
-      json(res, 413, { error: 'body too large' })
-      req.destroy()
-      return
-    }
-    if (conn.closed) return json(res, 503, { error: 'machine offline' })
+    // Reserve capacity before awaiting a chunked upload. Otherwise every
+    // unfinished body passes the cap while the requests map stays empty.
     const id = randomBytes(8).toString('hex')
     const pending: PendingRequest = { res, headSent: false, done: false, timer: null }
     conn.requests.set(id, pending)
-    pending.timer = setTimeout(
-      () => fail(conn, id, 504, 'the machine did not answer in time'),
-      requestTimeoutMs
-    )
+    pending.timer = setTimeout(() => {
+      send(conn, { _tag: 'request-abort', id })
+      fail(conn, id, 504, 'the machine did not answer in time')
+      if (!req.complete) req.destroy()
+    }, requestTimeoutMs)
     res.on('close', () => {
       if (pending.done) return
       finish(conn, id)
       send(conn, { _tag: 'request-abort', id })
+      if (!req.complete) req.destroy()
     })
+    let body: Buffer | null
+    try {
+      body = await readBody(req, maxBodyBytes)
+    } catch (error) {
+      finish(conn, id)
+      throw error
+    }
+    if (pending.done) return
+    if (body === null) {
+      finish(conn, id)
+      json(res, 413, { error: 'body too large' })
+      req.destroy()
+      return
+    }
+    if (conn.closed) {
+      fail(conn, id, 503, 'machine offline')
+      return
+    }
     send(conn, {
       _tag: 'request',
       id,

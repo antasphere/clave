@@ -25,6 +25,7 @@ import {
   RELAY_CLOSE_REPLACED,
   RELAY_CLOSE_UNAUTHORIZED,
   RELAY_CONNECT_PATH,
+  RELAY_MAX_BODY_BYTES,
   RELAY_MAX_FRAME_BYTES,
   RELAY_OFFLINE_MS,
   RELAY_PUSH_PATH,
@@ -209,7 +210,7 @@ class LocalTunnel {
     tunnelId: string,
     log: (line: string) => void
   ) {
-    this.socket = new WebSocketImpl(url)
+    this.socket = new WebSocketImpl(url, { maxPayload: RELAY_MAX_BODY_BYTES })
     this.socket.on('open', () => {
       this.open = true
       for (const item of this.queue.splice(0)) this.socket.send(item)
@@ -275,6 +276,8 @@ class Client implements RelayClient {
   private relay: string | null = null
   private machineId: string | null = null
   private stopped = false
+  private generation = 0
+  private claimAbort: AbortController | null = null
   private socket: WsWebSocket | null = null
   private wake: (() => void) | null = null
   private readonly done: Promise<void>
@@ -329,6 +332,8 @@ class Client implements RelayClient {
 
   kick(): void {
     if (this.stopped) return
+    this.generation++
+    this.claimAbort?.abort()
     this.attempt = 0
     const socket = this.socket
     if (socket) {
@@ -344,6 +349,8 @@ class Client implements RelayClient {
   async stop(): Promise<void> {
     if (this.stopped) return this.done
     this.stopped = true
+    this.generation++
+    this.claimAbort?.abort()
     this.set('stopped', null)
     this.wake?.()
     const socket = this.socket
@@ -403,6 +410,7 @@ class Client implements RelayClient {
 
   private async run(): Promise<void> {
     while (!this.stopped) {
+      const generation = this.generation
       const address = this.ask('the relay address', () => this.options.address(), null)
       if (!address) {
         this.relay = null
@@ -425,6 +433,11 @@ class Client implements RelayClient {
         await this.sleep(this.idleRetryMs)
         continue
       }
+      const current = (): boolean =>
+        !this.stopped &&
+        this.generation === generation &&
+        this.ask('the owner', () => this.options.owner(), null) === owner &&
+        this.ask('the relay address', () => this.options.address(), null) === address
       let credential = this.ask(
         'the machine credential',
         () => this.options.credentials.load(),
@@ -440,7 +453,7 @@ class Client implements RelayClient {
           this.options.log(`relay: the access token could not be read: ${(error as Error).message}`)
           return null
         })
-        if (this.stopped) break
+        if (!current()) continue
         if (!token) {
           this.set('signed-out', 'the login has no usable token')
           await this.sleep(this.idleRetryMs)
@@ -448,19 +461,23 @@ class Client implements RelayClient {
         }
         try {
           credential = await this.claim(address, token, owner)
+          if (!current()) continue
           this.options.credentials.save(credential)
           this.options.log(`relay: machine credential claimed (${credential.machineId})`)
         } catch (error) {
+          if (!current()) continue
           this.attempt++
           this.set('waiting', `the claim failed: ${(error as Error).message}`)
           await this.sleep(this.backoffMs())
           continue
         }
       }
+      if (!current()) continue
       this.machineId = credential.machineId
       this.set('connecting', null)
-      const outcome = await this.session(address, credential)
+      const outcome = await this.session(address, credential, current)
       if (this.stopped) break
+      if (!current()) continue
       if (outcome === 'unauthorized') {
         // The relay no longer knows this credential (its store reset, the
         // owner forgot the machine): claim anew, with the backoff so a
@@ -484,6 +501,7 @@ class Client implements RelayClient {
 
   private async claim(address: string, token: string, owner: string): Promise<RelayCredential> {
     const abort = new AbortController()
+    this.claimAbort = abort
     const timer = setTimeout(() => abort.abort(), 15_000)
     let response: Response
     try {
@@ -493,29 +511,34 @@ class Client implements RelayClient {
         body: JSON.stringify(this.options.record()),
         signal: abort.signal
       })
+      if (response.status === 401) {
+        await response.body?.cancel()
+        throw new Error('the relay refused the login')
+      }
+      if (response.status !== 201 && response.status !== 200) {
+        await response.body?.cancel()
+        throw new Error(`the relay answered ${response.status}`)
+      }
+      const decoded = decodeMachineCredential(await response.json())
+      if (Either.isLeft(decoded)) throw new Error('the relay answered no credential')
+      return {
+        relay: address,
+        owner,
+        machineId: decoded.right.machineId,
+        machineSecret: decoded.right.machineSecret
+      }
     } finally {
       clearTimeout(timer)
-    }
-    if (response.status === 401) {
-      await response.body?.cancel()
-      throw new Error('the relay refused the login')
-    }
-    if (response.status !== 201 && response.status !== 200) {
-      await response.body?.cancel()
-      throw new Error(`the relay answered ${response.status}`)
-    }
-    const decoded = decodeMachineCredential(await response.json())
-    if (Either.isLeft(decoded)) throw new Error('the relay answered no credential')
-    return {
-      relay: address,
-      owner,
-      machineId: decoded.right.machineId,
-      machineSecret: decoded.right.machineSecret
+      if (this.claimAbort === abort) this.claimAbort = null
     }
   }
 
   /** One connection, from open to close; the outcome says why it ended. */
-  private session(address: string, credential: RelayCredential): Promise<SessionOutcome> {
+  private session(
+    address: string,
+    credential: RelayCredential,
+    current: () => boolean
+  ): Promise<SessionOutcome> {
     return new Promise((resolve) => {
       const socket = new this.WebSocketImpl(wsUrlOf(address, RELAY_CONNECT_PATH), {
         maxPayload: RELAY_MAX_FRAME_BYTES
@@ -555,6 +578,11 @@ class Client implements RelayClient {
         resolve(this.stopped ? 'stopped' : outcome)
       }
       socket.on('open', () => {
+        if (!current()) {
+          socket.close(1000, 'owner or address changed')
+          finish('closed')
+          return
+        }
         heard()
         out({
           _tag: 'hello',
@@ -564,6 +592,11 @@ class Client implements RelayClient {
         })
       })
       socket.on('message', (data) => {
+        if (!current()) {
+          socket.close(1000, 'owner or address changed')
+          finish('closed')
+          return
+        }
         heard()
         const decoded = decodeRelayFrame(rawToBuffer(data).toString('utf8'))
         if (Either.isLeft(decoded)) {

@@ -17,7 +17,10 @@ import {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { WebSocket, type RawData } from 'ws'
-import { Either } from 'effect'
+import { Effect, Either, Layer } from 'effect'
+import { run } from '@structure-ai/fixtures'
+import { HandlerRegistry, layer as buses } from '@structure-ai/cqrs'
+import { relayFixtureCatalog } from './relay.fixtures'
 import {
   decodeRelayFrame,
   encodeMachineFrame,
@@ -740,6 +743,53 @@ describe('the road to a machine', () => {
     expect(connect).toBe(405)
   })
 
+  it('counts chunked uploads before their bodies finish', async () => {
+    const relay = await relayFor({ maxRequests: 2, requestTimeoutMs: 3_000 })
+    const credential = await claimed(relay, provider.mintAccessToken())
+    const machine = await connectMachine(relay, credential)
+    const uploads = Array.from({ length: 3 }, () => {
+      const req = httpRequest(`${relay.url}/m/${credential.machineId}/upload`, { method: 'POST' })
+      const answer = new Promise<number>((resolve, reject) => {
+        req.on('response', (res) => {
+          res.resume()
+          resolve(res.statusCode ?? 0)
+        })
+        req.on('error', reject)
+      })
+      req.write('first part')
+      return { req, answer }
+    })
+    try {
+      await sleep(150)
+      const overloaded = await Promise.race([uploads[2].answer, sleep(1000).then(() => 0)])
+      for (const { req } of uploads) req.end('last part')
+      const one = await machine.next('request')
+      const two = await machine.next('request')
+      for (const request of [one, two])
+        machine.send({ _tag: 'response', id: request.id, status: 200, headers: {}, body: '' })
+      const statuses = await Promise.all(uploads.map(({ answer }) => answer))
+      expect(overloaded).toBe(503)
+      expect(statuses).toEqual([200, 200, 503])
+      expect(machine.frames.filter((f) => f._tag === 'request')).toHaveLength(2)
+    } finally {
+      for (const { req, answer } of uploads) {
+        req.destroy()
+        void answer.catch(() => {})
+      }
+    }
+  })
+
+  it('cancels the local request when the response deadline expires', async () => {
+    const relay = await relayFor({ requestTimeoutMs: 150 })
+    const credential = await claimed(relay, provider.mintAccessToken())
+    const machine = await connectMachine(relay, credential)
+    const answered = fetch(`${relay.url}/m/${credential.machineId}/never-ending`)
+    const request = await machine.next('request')
+    expect((await answered).status).toBe(504)
+    const abort = await machine.next('request-abort', 1000)
+    expect(abort.id).toBe(request.id)
+  })
+
   it('answers 503 past the cap of requests in flight, and lets one through again once answered', async () => {
     // A request let through past the cap would end in a 504, not hang the test.
     const relay = await relayFor({ maxRequests: 2, requestTimeoutMs: 3_000 })
@@ -812,6 +862,20 @@ describe('the push tunnel', () => {
     expect(closed.tunnelId).toBe(secondOpened.tunnelId)
   })
 
+  it('closes an oversized phone tunnel without forwarding a frame that disconnects the machine', async () => {
+    const relay = await relayFor()
+    const credential = await claimed(relay, provider.mintAccessToken())
+    const machine = await connectMachine(relay, credential)
+    const phone = openPhone(wsUrl(relay, `/m/${credential.machineId}/push`))
+    await machine.next('tunnel-open')
+    await phone.opened
+    phone.socket.send(Buffer.alloc(13 * 1024 * 1024), { binary: true })
+    expect((await phone.closed()).code).toBe(1009)
+    expect(machine.frames.filter((frame) => frame._tag === 'tunnel-data')).toHaveLength(0)
+    expect(machine.socket.readyState).toBe(WebSocket.OPEN)
+    expect(relay.online()).toEqual([credential.machineId])
+  })
+
   it('refuses a tunnel to an unknown machine, to an offline one, and past the cap', async () => {
     const relay = await relayFor({ maxTunnels: 1 })
     const token = provider.mintAccessToken({ sub: 'subject-p' })
@@ -871,4 +935,45 @@ describe('forget, health and stop', () => {
     await expect(relay.close()).resolves.toBeUndefined()
     await expect(fetch(`${relay.url}/health`)).rejects.toThrow()
   })
+})
+
+it('loads mobile-relay/isolated-owners through authenticated claims and verifies ownership over HTTP', async () => {
+  const relay = await relayFor()
+  const catalog = relayFixtureCatalog((subject, name) =>
+    claimed(relay, provider.mintAccessToken({ sub: subject }), { ...RECORD, name })
+  )
+  const fixtures = await Effect.runPromise(catalog.prepare('mobile-relay/isolated-owners', {}))
+  const report = await Effect.runPromise(
+    run({
+      fixtures,
+      enabled: true,
+      // Claims update the directory synchronously before the HTTP response.
+      ready: () => Effect.void
+    }).pipe(Effect.provide(buses.pipe(Layer.provide(HandlerRegistry.layer()))))
+  )
+  const rows = Object.values(report.values) as Array<{ subject: string; machineId: string }>
+  try {
+    expect(report.completed).toEqual(['relay/first-owner', 'relay/second-owner'])
+    for (const row of rows) {
+      const token = provider.mintAccessToken({ sub: row.subject })
+      const machines = await machinesOf(relay, token)
+      expect(machines.map((m) => m.id)).toEqual([row.machineId])
+      const other = rows.find((candidate) => candidate !== row)!
+      expect((await forget(relay, token, other.machineId)).status).toBe(404)
+    }
+    console.log(
+      JSON.stringify({
+        scenario: 'mobile-relay/isolated-owners',
+        runId: report.runId,
+        completed: report.completed,
+        machineIds: rows.map((row) => row.machineId)
+      })
+    )
+  } finally {
+    for (const row of rows) {
+      const token = provider.mintAccessToken({ sub: row.subject })
+      expect((await forget(relay, token, row.machineId)).status).toBe(200)
+      expect(await machinesOf(relay, token)).toEqual([])
+    }
+  }
 })

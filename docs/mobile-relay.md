@@ -27,11 +27,13 @@ Clave server in `src/main/server/relay-wiring.ts` (the in-process server through
   answers: the relay checks nothing on this path but that the machine exists (404
   otherwise) and is connected (503 otherwise). A body is bounded at 8 MiB (413), a
   machine that does not answer within 120 s is a 504, one that could not perform the
-  request a 502; at most 256 requests in flight per machine (503 beyond).
+  request a 502; at most 256 requests in flight per machine, including unfinished
+  uploads (503 beyond). The deadline includes the upload and aborts the local request.
   `WS <relay>/m/<machineId>/push` is the machine's push channel, tunnelled frame by frame:
   the machine opens a socket of its own to its listener for each, and the handshake runs
   there (the hello with the device session's token, the welcome). At most 64 open tunnels
-  per machine.
+  per machine. Each push message is bounded at 8 MiB; an oversized message closes
+  only its tunnel with code 1009, preserving the machine connection.
 - **Who a bearer is.** The relay holds no key of the hub: it asks the hub's userinfo
   endpoint (the one its discovery document names, `/api/v1/auth/oauth2/userinfo` on
   account.antasphere.com) with the bearer and remembers the subject under the SHA-256 of
@@ -66,7 +68,9 @@ A Clave server reaches the relay when it has an address and a login:
   (`currentAccessToken()` on the account manager, which renews through the manager's
   one renewal and never beside it, since the hub rotates refresh tokens with no grace).
   A server with no login stays off the relay and says so in its log once; a sign-out takes
-  the machine off the relay at once, a sign-in puts it back.
+  the machine off the relay at once, a sign-in puts it back. Renewing a token for the
+  same owner keeps the connection open. A claim or handshake invalidated by sign-out,
+  shutdown, or an owner/address change cannot save a stale credential or send a hello.
 
 The credential lives in `relay.json` under the server's data directory, owner-only: the
 relay's address, the machine id and the owner's subject in clear, the secret sealed
@@ -187,3 +191,10 @@ stopped.
   through `/m/<id>/...` with the server's token where a phone will hold its device
   session, another account seeing no machine, the Mac offline after a sign-out and after a
   quit, back online under the same id after a sign-in and after a relaunch.
+
+The named fixture scenario `mobile-relay/isolated-owners` uses `@structure-ai/fixtures`
+to claim two run-scoped machines through the authenticated relay API. Run it locally with
+`npx vitest run packages/server/src/relay/relay.test.ts -t mobile-relay/isolated-owners --maxWorkers=2`.
+It prints its run ID and machine IDs, verifies directory isolation and refusal of a foreign
+forget request, then removes only its own claims through the owner-authorized forget route.
+Its issuer and relay use isolated loopback ports and temporary data; it never uses production.
