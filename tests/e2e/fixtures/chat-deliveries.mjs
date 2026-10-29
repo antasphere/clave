@@ -13,7 +13,8 @@ export const deliveredMessage = (name, body) => ({
 export async function loadChatDeliveries(inject, ready) {
   const scenario = defineScenario({
     name: 'chat/cross-session-stacks',
-    description: 'Consecutive named and anonymous deliveries among human turns and command runs.',
+    description:
+      'Agent exchanges include replies and tools, bounded by human turns and visible controls.',
     input: Schema.Struct({}),
     fixtures: () => ({
       transcript: defineFixture({
@@ -27,7 +28,16 @@ export async function loadChatDeliveries(inject, ready) {
                 'Wave coordinator',
                 `First payload ${runId}\n` + 'Recovery details. '.repeat(80)
               ),
+              { type: 'assistant_text', delta: 'Reply to the coordinator.', final: true },
+              {
+                type: 'tool_call',
+                id: 'fixture-agent-tool',
+                name: 'Bash',
+                input: { command: 'echo checked' }
+              },
+              { type: 'tool_result', id: 'fixture-agent-tool', output: 'checked' },
               deliveredMessage('Lane verifier', 'Second payload, no omitted words.'),
+              { type: 'assistant_text', delta: 'Reply to the verifier.', final: true },
               deliveredMessage(null, 'Third anonymous payload.')
             ])
             return { runId }

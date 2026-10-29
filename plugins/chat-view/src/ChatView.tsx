@@ -388,11 +388,17 @@ function TranscriptRow({
       data-arrive={arrive ? 'true' : undefined}
     >
       {block.kind === 'delivery-group' ? (
-        <DeliveryStack group={block} id={rowKey}>
-          {block.entries.map((entry, i) => (
-            <EntryRow key={i} entry={entry} onError={onError} />
-          ))}
-        </DeliveryStack>
+        <DeliveryStack
+          group={block}
+          id={rowKey}
+          renderEntry={(entry) =>
+            entry.kind === 'tool-group' ? (
+              <ToolRow group={entry} />
+            ) : (
+              <EntryRow entry={entry} onError={onError} />
+            )
+          }
+        />
       ) : block.kind === 'tool-group' ? (
         <ToolRow group={block} />
       ) : (
@@ -799,7 +805,7 @@ export function ChatView({ session, onState, visible = true }: ChatViewProps): R
         block.kind === 'tool-group'
           ? `tools-${block.id}`
           : block.kind === 'delivery-group'
-            ? `deliveries-${ordinal.get(block.entries[0])}`
+            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
             : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])

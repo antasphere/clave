@@ -14,19 +14,27 @@ const answer: Entry = { kind: 'assistant', text: 'My answer', at: 2, final: true
 const tool: Entry = { kind: 'tool', id: 't', at: 3, complete: true }
 
 describe('cross-session message stacks', () => {
-  it('folds consecutive deliveries, including a lone delivery, without losing entry identity', () => {
+  it('keeps agent messages, replies and commands in the same deck until a human message', () => {
     const first = delivery('Coordinator', 4)
     const second = delivery('Verifier', 5)
-    const last = delivery('Coordinator', 6)
-    expect(groupEntries([human, first, second, answer, last])).toEqual([
+    expect(
+      groupEntries([human, answer, first, tool, answer, second, answer, human, answer])
+    ).toEqual([
       human,
-      { kind: 'delivery-group', entries: [first, second] },
       answer,
-      { kind: 'delivery-group', entries: [last] }
+      {
+        kind: 'delivery-group',
+        exchanges: [
+          { message: first, responses: [{ kind: 'tool-group', id: 't', tools: [tool] }, answer] },
+          { message: second, responses: [answer] }
+        ]
+      },
+      human,
+      answer
     ])
   })
 
-  it('keeps tools, errors, permissions and visible prose in timeline order', () => {
+  it('keeps permission requests and errors visible outside decks', () => {
     const first = delivery('Coordinator', 4)
     const error: Entry = { kind: 'error', message: 'Disconnected', at: 5 }
     const permission: Entry = {
@@ -34,19 +42,15 @@ describe('cross-session message stacks', () => {
       at: 6,
       request: { type: 'permission_request', id: 'p', description: 'Allow Read?', options: [] }
     }
-    const entries = [first, tool, first, error, first, permission, first, human, first, answer]
-    const grouped = groupEntries(entries)
+    const grouped = groupEntries([first, answer, error, answer, first, permission, answer, human])
     expect(grouped.map((b) => b.kind)).toEqual([
       'delivery-group',
-      'tool-group',
-      'delivery-group',
       'error',
+      'assistant',
       'delivery-group',
       'permission',
-      'delivery-group',
-      'user',
-      'delivery-group',
-      'assistant'
+      'assistant',
+      'user'
     ])
   })
 
@@ -65,6 +69,16 @@ describe('cross-session message stacks', () => {
       groupEntries(
         visibleEntries([first, hidden, { ...human, withdrawn: true }, anonymous, quoted, malformed])
       )
-    ).toEqual([{ kind: 'delivery-group', entries: [first, anonymous] }, quoted, malformed])
+    ).toEqual([
+      {
+        kind: 'delivery-group',
+        exchanges: [
+          { message: first, responses: [] },
+          { message: anonymous, responses: [] }
+        ]
+      },
+      quoted,
+      malformed
+    ])
   })
 })

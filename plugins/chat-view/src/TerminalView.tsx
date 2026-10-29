@@ -413,11 +413,27 @@ function TerminalTurn({
       <section className="term-turn">
         {rows.map(({ block, key }) =>
           block.kind === 'delivery-group' ? (
-            <DeliveryStack key={key} group={block} id={key}>
-              {block.entries.map((entry, i) => (
-                <EntryRow key={i} entry={entry} onError={onError} />
-              ))}
-            </DeliveryStack>
+            <DeliveryStack
+              key={key}
+              group={block}
+              id={key}
+              renderEntry={(entry) =>
+                entry.kind === 'tool-group' ? (
+                  <ToolRow
+                    group={entry}
+                    live={
+                      key === liveRun &&
+                      entry ===
+                        block.exchanges
+                          .at(-1)
+                          ?.responses.findLast((response) => response.kind === 'tool-group')
+                    }
+                  />
+                ) : (
+                  <EntryRow entry={entry} onError={onError} />
+                )
+              }
+            />
           ) : block.kind === 'tool-group' ? (
             <ToolRow key={key} group={block} live={key === liveRun} />
           ) : (
@@ -812,7 +828,7 @@ export function TerminalView({
         block.kind === 'tool-group'
           ? `tools-${block.id}`
           : block.kind === 'delivery-group'
-            ? `deliveries-${ordinal.get(block.entries[0])}`
+            ? `deliveries-${ordinal.get(block.exchanges[0].message)}`
             : `entry-${ordinal.get(block)}`
     }))
   }, [presentation.entries, presentation.first, remotePending, session.id])

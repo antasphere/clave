@@ -16,9 +16,14 @@ export interface ToolGroup {
   id: string
   tools: ToolEntry[]
 }
+export type ExchangeResponse = Extract<Entry, { kind: 'assistant' }> | ToolGroup
+export interface DeliveryExchange {
+  message: Extract<Entry, { kind: 'user' }>
+  responses: ExchangeResponse[]
+}
 export interface DeliveryGroup {
   kind: 'delivery-group'
-  entries: Extract<Entry, { kind: 'user' }>[]
+  exchanges: DeliveryExchange[]
 }
 export type Block = Exclude<Entry, { kind: 'tool' }> | ToolGroup | DeliveryGroup
 
@@ -38,30 +43,41 @@ export function visibleEntries(entries: Entry[]): Entry[] {
   )
 }
 
+/** A peer's delivery owns the replies and tools that follow it. A human
+ *  message ends that context; permissions and errors stay outside the deck so
+ *  actionable notices can never be concealed. */
 export function groupEntries(entries: Entry[]): Block[] {
   const blocks: Block[] = []
   let open: ToolGroup | undefined
   let deliveries: DeliveryGroup | undefined
+  let exchange: DeliveryExchange | undefined
   for (const entry of entries) {
     if (entry.kind === 'user' && parseDelivery(entry.text)) {
       if (!deliveries) {
-        deliveries = { kind: 'delivery-group', entries: [] }
+        deliveries = { kind: 'delivery-group', exchanges: [] }
         blocks.push(deliveries)
       }
-      deliveries.entries.push(entry)
+      exchange = { message: entry, responses: [] }
+      deliveries.exchanges.push(exchange)
       open = undefined
       continue
     }
-    deliveries = undefined
+    if (entry.kind === 'user' || entry.kind === 'permission' || entry.kind === 'error') {
+      if (exchange) open = undefined
+      deliveries = undefined
+      exchange = undefined
+    }
     if (entry.kind === 'tool') {
       if (!open) {
         open = { kind: 'tool-group', id: entry.id, tools: [] }
-        blocks.push(open)
+        if (exchange) exchange.responses.push(open)
+        else blocks.push(open)
       }
       open.tools.push(entry)
       continue
     }
-    blocks.push(entry)
+    if (exchange && entry.kind === 'assistant') exchange.responses.push(entry)
+    else blocks.push(entry)
     if (entry.kind === 'user' || entry.kind === 'assistant') open = undefined
   }
   return blocks
