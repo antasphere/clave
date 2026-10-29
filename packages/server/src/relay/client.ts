@@ -223,16 +223,26 @@ class LocalTunnel {
   }
 }
 
+/** A close code `ws` accepts on the wire: a close with no code (1005) is a
+ *  normal close, a dropped connection (1006) a going-away, the rest 1011. */
 function sendableCloseCode(code: number | undefined): number {
-  if (code === undefined) return 1000
-  if (code === 1000 || (code >= 1001 && code <= 1013 && ![1004, 1005, 1006].includes(code)))
-    return code
+  if (code === undefined || code === 1005) return 1000
+  if (code === 1006) return 1001
+  if (code === 1000 || (code >= 1001 && code <= 1013 && code !== 1004)) return code
   if (code >= 3000 && code <= 4999) return code
   return 1011
 }
 
+/** A streamed local answer is paused while the relay's socket holds more
+ *  than this, and resumed once it has drained to the low mark: the machine
+ *  holds no more of a stream than a slow phone takes. */
+const STREAM_HIGH_WATER_BYTES = 8 * 1024 * 1024
+const STREAM_LOW_WATER_BYTES = 1024 * 1024
+
 class Client implements RelayClient {
   private state: RelayClientState = 'unconfigured'
+  /** The first state is said whatever it is; after that, only a change is. */
+  private announced = false
   private since: number
   private attempt = 0
   private lastFailure: string | null = null
@@ -323,7 +333,8 @@ class Client implements RelayClient {
 
   /** Enter a state, said in the log once per change (the detail included). */
   private set(state: RelayClientState, failure: string | null): void {
-    const changed = state !== this.state || failure !== this.lastFailure
+    const changed = !this.announced || state !== this.state || failure !== this.lastFailure
+    this.announced = true
     this.state = state
     this.lastFailure = failure
     this.since = this.now()
@@ -526,7 +537,13 @@ class Client implements RelayClient {
           return
         }
         try {
-          this.onFrame(decoded.right, { out, pending, tunnels, onWelcome: () => (welcomed = true) })
+          this.onFrame(decoded.right, {
+            out,
+            pending,
+            tunnels,
+            buffered: () => socket.bufferedAmount,
+            onWelcome: () => (welcomed = true)
+          })
         } catch (error) {
           this.options.log(`relay: a frame failed: ${(error as Error).message}`)
         }
@@ -554,6 +571,7 @@ class Client implements RelayClient {
       out: (frame: MachineFrame) => void
       pending: Map<string, ClientRequest>
       tunnels: Map<string, LocalTunnel>
+      buffered: () => number
       onWelcome: () => void
     }
   ): void {
@@ -609,7 +627,11 @@ class Client implements RelayClient {
    *  a body of known length under the threshold in one frame, the rest streamed. */
   private perform(
     frame: Extract<RelayFrame, { _tag: 'request' }>,
-    io: { out: (frame: MachineFrame) => void; pending: Map<string, ClientRequest> }
+    io: {
+      out: (frame: MachineFrame) => void
+      pending: Map<string, ClientRequest>
+      buffered: () => number
+    }
   ): void {
     const local = new URL(this.options.local.url)
     const body = Buffer.from(frame.body, 'base64')
@@ -655,9 +677,17 @@ class Client implements RelayClient {
           status: res.statusCode ?? 502,
           headers: answeredHeaders(res)
         })
-        res.on('data', (chunk: Buffer) =>
+        res.on('data', (chunk: Buffer) => {
           io.out({ _tag: 'response-chunk', id: frame.id, data: chunk.toString('base64') })
-        )
+          if (io.buffered() <= STREAM_HIGH_WATER_BYTES) return
+          res.pause()
+          const drain = setInterval(() => {
+            if (io.buffered() > STREAM_LOW_WATER_BYTES) return
+            clearInterval(drain)
+            res.resume()
+          }, 50)
+          drain.unref?.()
+        })
         res.on('end', () => {
           io.pending.delete(frame.id)
           io.out({ _tag: 'response-end', id: frame.id })
