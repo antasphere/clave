@@ -225,7 +225,13 @@ export function startMobileRelay(wiring: MobileRelayWiring): RelayClient | null 
   running = client
   // The login changing is what the client waits on most: a sign-out takes
   // the machine off the relay now, a sign-in puts it back now.
-  const offChange = manager?.onChange(() => client.kick())
+  let owner = manager?.status().account?.subject ?? null
+  const offChange = manager?.onChange(() => {
+    const next = manager.status().account?.subject ?? null
+    if (next === owner) return
+    owner = next
+    client.kick()
+  })
   if (offChange) {
     const stop = client.stop.bind(client)
     client.stop = async () => {

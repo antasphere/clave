@@ -338,6 +338,52 @@ const pushUrlOf = (relay: Relay, machineId: string): string =>
   `${relay.url.replace(/^http/, 'ws')}/m/${machineId}/push`
 
 describe('the claim', () => {
+  it.each(['sign-out', 'stop', 'owner change', 'address change'] as const)(
+    'discards a delayed claim after %s',
+    async (change) => {
+      const relay = await relayFor()
+      const local = await startLocal()
+      let owner: string | null = OWNER
+      let address: string | null = relay.url
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let reached = false
+      const harness = startClient({
+        address: () => address,
+        owner: () => owner,
+        accessToken: async () => provider.mintAccessToken({ sub: owner ?? OWNER }),
+        local: { url: local.url },
+        fetch: async (input, init) => {
+          const response = await fetch(input, init)
+          reached = true
+          await gate
+          return response
+        }
+      })
+      try {
+        await until(() => reached, 3000, 'claim response held')
+        if (change === 'sign-out') owner = null
+        if (change === 'owner change') owner = 'owner-B'
+        if (change === 'address change') address = null
+        const stopped = change === 'stop' ? harness.client.stop() : null
+        harness.client.kick()
+        release()
+        if (stopped) await stopped
+        else
+          await until(() => harness.client.status().state !== 'claiming', 3000, 'claim discarded')
+        // A changed owner may claim anew. The old claim must never be stored.
+        expect(harness.store.saved.filter((item) => item.owner === OWNER)).toHaveLength(0)
+        expect((await machinesOf(relay, provider.mintAccessToken())).every((m) => !m.online)).toBe(
+          true
+        )
+      } finally {
+        release()
+      }
+    }
+  )
+
   it('claims a credential once, keeps it in the store and connects under it', async () => {
     const relay = await relayFor()
     const local = await startLocal()
