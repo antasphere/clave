@@ -81,3 +81,7 @@ export function machineIdOf(state: unknown): string | null {
   }
   return null
 }
+
+/** The initial URL must win over the fallback state passed to NavigationContainer. */
+export const initialLaunchState = (machineId: string | null, url: string | null): RouteState =>
+  (url?.startsWith('clave://') ? stateForPath(url) : undefined) ?? coldLaunchState(machineId)

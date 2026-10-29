@@ -77,9 +77,18 @@ function handle(req: IncomingMessage, res: ServerResponse, body: string): void {
         piSessionId: null
       })
     }
-    case 'POST /sessions/write':
-      res.writeHead(204).end()
-      return
+    case 'POST /sessions/write': {
+      const input = JSON.parse(body) as { id: string }
+      if (input.id === 'empty') {
+        res.writeHead(204).end()
+        return
+      }
+      return json(
+        res,
+        200,
+        input.id === 'malformed' ? {} : { status: input.id === 'pending' ? 'pending' : 'accepted' }
+      )
+    }
     case 'GET /requests/pending':
       return json(res, 422, {
         _tag: 'CapabilityUnavailable',
@@ -174,6 +183,13 @@ describe('ClaveServerClient', () => {
       id: 's1',
       input: { type: 'user_message', text: 'hi', clientMessageId: 'm-12345678' }
     })
+  })
+  it('decodes accepted and pending write outcomes, and refuses empty or malformed 2xx', async () => {
+    const input = { type: 'user_message' as const, text: 'hi', clientMessageId: 'message-123' }
+    await expect(client().sessions.write('s1', input)).resolves.toEqual({ status: 'accepted' })
+    await expect(client().sessions.write('pending', input)).resolves.toEqual({ status: 'pending' })
+    for (const id of ['empty', 'malformed'])
+      await expect(client().sessions.write(id, input)).rejects.toMatchObject({ kind: 'protocol' })
   })
   it('a 401 is unauthenticated', async () => {
     const bad = new ClaveServerClient(

@@ -18,11 +18,11 @@
  * Pure over its ports, so every branch runs under Node.
  */
 import { ServerError } from '../api/errors'
-import type { WriteStatus } from '../contract/types'
+import type { WriteStatus, WriteAnswer } from '../contract/types'
 
 export interface SendPorts {
   /** Performs the write under this id; throws a `ServerError` on failure. */
-  readonly write: (clientMessageId: string) => Promise<void>
+  readonly write: (clientMessageId: string) => Promise<WriteAnswer>
   /** Asks the server what it knows of the id; throws on failure. */
   readonly status: (clientMessageId: string) => Promise<WriteStatus>
   readonly sleep: (ms: number) => Promise<void>
@@ -48,7 +48,8 @@ export interface SendOptions {
 }
 
 const outcomeLost = (error: unknown): boolean =>
-  error instanceof ServerError && (error.kind === 'network' || error.kind === 'timeout')
+  error instanceof ServerError &&
+  (error.kind === 'network' || error.kind === 'timeout' || error.kind === 'protocol')
 
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -60,8 +61,8 @@ export async function sendMessage(
   options: SendOptions = {}
 ): Promise<SendOutcome> {
   try {
-    await ports.write(clientMessageId)
-    return { kind: 'sent', clientMessageId, reconciled: false }
+    const answer = await ports.write(clientMessageId)
+    if (answer.status === 'accepted') return { kind: 'sent', clientMessageId, reconciled: false }
   } catch (error) {
     if (!outcomeLost(error)) return refusal(clientMessageId, error)
   }
@@ -70,6 +71,8 @@ export async function sendMessage(
 
 /** The server answered the write with a refusal: the message did not land. */
 function refusal(clientMessageId: string, error: unknown): SendOutcome {
+  if (error instanceof ServerError && error.failure?._tag === 'SessionWriteUnknown')
+    return { kind: 'unknown', clientMessageId, reason: error.message }
   if (error instanceof ServerError && error.kind === 'refused')
     return { kind: 'rejected', clientMessageId, reason: error.message }
   return { kind: 'failed', clientMessageId, reason: reasonOf(error) }
@@ -129,8 +132,10 @@ export async function reconcile(
             reason: 'The message was sent again once and its outcome is still not known.'
           }
         try {
-          await ports.write(clientMessageId)
-          return { kind: 'sent', clientMessageId, reconciled: true }
+          const answer = await ports.write(clientMessageId)
+          if (answer.status === 'accepted')
+            return { kind: 'sent', clientMessageId, reconciled: true }
+          return reconcile(clientMessageId, ports, options, false)
         } catch (error) {
           if (!outcomeLost(error)) return refusal(clientMessageId, error)
           return reconcile(clientMessageId, ports, options, false)

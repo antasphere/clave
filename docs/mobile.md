@@ -14,7 +14,7 @@ repository's one lockfile. No build service: the native projects are generated a
 | Xcode                    | 26.0.1 (17A400), Swift 6.2.0, the iOS 26.0 simulator runtime (iPhone 17 Pro, iPhone 17 Pro Max) and iOS 17.5 (the iPhone 15 family)                                                                                                                                      |
 | CocoaPods                | 1.16.2 (`pod` wants a UTF-8 locale: `LANG=en_US.UTF-8`)                                                                                                                                                                                                                   |
 | Android SDK              | `~/Library/Android/sdk`: platform android-36, build-tools 36.1.0, platform-tools (`adb` 1.0.41 on the PATH), the emulator at `~/Library/Android/sdk/emulator/emulator` (not on the PATH), one AVD `Medium_Phone_API_36.1`; no `cmdline-tools`                                 |
-| JDK                      | `/usr/bin/java` is Apple's stub and runs nothing. Homebrew's `openjdk` is 27.0.1 (`/opt/homebrew/opt/openjdk`; 26.0.1 stays in the Cellar unlinked since the Maestro install upgraded the formula). Gradle 9.4.1, the Android project's wrapper, runs its launcher on it |
+| JDK                      | `/usr/bin/java` is Apple's stub and runs nothing. Homebrew's `openjdk` is 27.0.1 (`/opt/homebrew/opt/openjdk`; 26.0.1 stays in the Cellar unlinked since the Maestro install upgraded the formula). Gradle 9.4.1 refuses JDK 27 class files; the successful Android build uses `/opt/homebrew/opt/openjdk@21` |
 | Node, npm, Bun           | Node 24.18.0, npm 11.16.0, the repository's own Bun 1.4.1 (`node_modules/.bin/bun`, which runs the standalone server from its sources)                                                                                                                                     |
 | Maestro                  | 2.12.0 from `brew install mobile-dev-inc/tap/maestro` (the `maestro` cask in homebrew-core is another product). It needs `JAVA_HOME`                                                                                                                                       |
 | Watchman, Expo CLI, Gradle | none installed globally; the Expo CLI runs through `npx` from the package, Gradle through the project's wrapper                                                                                                                                                         |
@@ -23,7 +23,8 @@ Export what a command needs in your own shell; nothing here edits a shell profil
 
 ```sh
 export ANDROID_HOME="$HOME/Library/Android/sdk"
-export JAVA_HOME=/opt/homebrew/opt/openjdk
+brew install openjdk@21
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 export LANG=en_US.UTF-8
 ```
@@ -44,7 +45,7 @@ The native projects are generated, never edited (`ios/` and `android/` are git-i
 ```sh
 npx expo prebuild --platform ios --clean      # the iOS project; applies plugins/with-jsi-xcode26.js
 (cd ios && LANG=en_US.UTF-8 pod install)
-npx expo run:ios --device "iPhone 17 Pro"     # builds, installs and opens the app on the simulator, with Metro
+npx expo run:ios --device 26A905C4-1DFF-453C-8846-C9904410448E     # builds, installs and opens the app on the simulator, with Metro
 npx expo prebuild --platform android --clean
 npx expo run:android --device emulator-5558   # with the emulator booted (below)
 npx expo start --port 8081                    # Metro alone, for an app already installed
@@ -65,7 +66,7 @@ iPhone 17 simulator `223E6321-2F84-4E05-96CC-56672716B8EA` and `-port 5560 -read
 ### What the first build cost
 
 Measured on 29 October 2026 on this Mac under a load average above 100 (five lanes building at
-once), so these are upper bounds:
+once), so these are observations under load, not timing guarantees:
 
 | Step                                                  | Minutes |
 | ----------------------------------------------------- | ------- |
@@ -74,7 +75,7 @@ once), so these are upper bounds:
 | `pod install`                                         | 1.5     |
 | `expo run:ios` (xcodebuild, Debug, simulator)         | 2.7     |
 | `expo prebuild --platform android --clean`            | 0.1     |
-| `expo run:android` (Gradle, debug)                    | see the narrative of the lane for the measured figure |
+| `expo run:android` (Gradle, debug)                    | 3.8 under JDK 21 |
 
 The first `expo run:ios` attempt failed: expo-modules-jsi 58.0.21 does not compile under Xcode
 26.0.1 (Swift 6.2.0), `JavaScriptObject.swift:946: sending 'slot' risks causing data races`

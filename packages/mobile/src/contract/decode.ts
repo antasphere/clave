@@ -34,7 +34,8 @@ import type {
   SessionStream,
   WorkspaceStateView,
   WorkspaceView,
-  WriteStatus
+  WriteStatus,
+  WriteAnswer
 } from './types'
 
 export class DecodeError extends Error {
@@ -171,6 +172,7 @@ export function decodeSessionEvent(value: unknown, path = 'event'): SessionEvent
     case 'user_message':
       return present({
         type,
+        clientMessageId: opt(str)(o.clientMessageId, `${path}.clientMessageId`),
         text: str(o.text, `${path}.text`),
         attachments: opt(arr(decodeAttachment))(o.attachments, `${path}.attachments`)
       })
@@ -319,6 +321,14 @@ export function decodeSessionRecord(value: unknown, path = 'record'): SessionRec
 }
 export const decodeSessionRecords = (value: unknown, path = 'records'): SessionRecord[] =>
   arr(decodeSessionRecord)(value, path)
+
+export function decodeWriteAnswer(value: unknown, path = 'writeAnswer'): WriteAnswer {
+  const o = record(value, path)
+  return present({
+    status: lit('accepted', 'pending')(o.status, `${path}.status`),
+    at: opt(num)(o.at, `${path}.at`)
+  })
+}
 
 export function decodeWriteStatus(value: unknown, path = 'writeStatus'): WriteStatus {
   const o = record(value, path)

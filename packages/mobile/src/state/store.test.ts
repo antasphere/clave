@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../api/client'
 import type { PushSocketConstructor } from '../api/push'
 import { Drafts, MemoryKeyValueStore } from '../chat/drafts'
@@ -72,7 +72,10 @@ const machine: Machine = {
   pushUrl: 'http://127.0.0.1:1/push'
 }
 
-async function storeWith(server: ReturnType<typeof stubServer>) {
+async function storeWith(
+  server: ReturnType<typeof stubServer>,
+  drafts = new Drafts(new MemoryKeyValueStore())
+): Promise<ReturnType<typeof createStore>> {
   const credentials = new SecureCredentialStore(new MemorySecureStore())
   await credentials.set(machine.id, { serverUrl: machine.baseUrl, bearer: 't' })
   const source: MachineSource = { list: async () => [machine] }
@@ -82,7 +85,7 @@ async function storeWith(server: ReturnType<typeof stubServer>) {
     credentials,
     sources: { relay: source, developer: null },
     kv,
-    drafts: new Drafts(kv),
+    drafts,
     clientOptions: { fetch: server.fetch, build: 'development' },
     pushOptions: { WebSocket: NoSocket, build: 'development' },
     clientName: 'test'
@@ -207,4 +210,163 @@ describe('the start payload and the profile order', () => {
     expect(id).toMatch(/^m-[0-9a-f]{24}$/)
     expect(mintMessageId()).not.toBe(id)
   })
+})
+
+describe('HTTP write outcomes preserve drafts', () => {
+  it('a pending write retains the draft until the status is accepted, without another write', async () => {
+    vi.useFakeTimers()
+    try {
+      let accepted = false
+      let writes = 0
+      const server = stubServer()
+      server.fetch = async (url) => {
+        const path = new URL(url).pathname
+        if (path === '/sessions/write') writes++
+        return {
+          status: 200,
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              status: path === '/sessions/write' || !accepted ? 'pending' : 'accepted'
+            })
+        }
+      }
+      const drafts = new Drafts(new MemoryKeyValueStore())
+      const store = await storeWith(server, drafts)
+      await drafts.set(machine.id, 's1', 'keep me')
+      const clear = vi.spyOn(Drafts.prototype, 'clear')
+      let settled = false
+      const send = store
+        .getState()
+        .send(machine.id, 's1', 'keep me', 'message-pending')
+        .then((outcome) => {
+          settled = true
+          return outcome
+        })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(settled).toBe(false)
+      expect(await drafts.get(machine.id, 's1')).toBe('keep me')
+      expect(clear).not.toHaveBeenCalled()
+      accepted = true
+      await vi.advanceTimersByTimeAsync(1000)
+      expect((await send).kind).toBe('sent')
+      expect(writes).toBe(1)
+      expect(clear).toHaveBeenCalledWith(machine.id, 's1')
+      expect(await drafts.get(machine.id, 's1')).toBe('')
+    } finally {
+      vi.restoreAllMocks()
+      vi.useRealTimers()
+    }
+  })
+  it('pending for a minute ends unknown and malformed 2xx never clears the draft', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const body of [{ status: 'pending' }, {}]) {
+        const server = stubServer()
+        let writes = 0
+        server.fetch = async (url) => {
+          const path = new URL(url).pathname
+          if (path === '/sessions/write') writes++
+          return {
+            status: 200,
+            ok: true,
+            text: async () =>
+              JSON.stringify(path === '/sessions/write' ? body : { status: 'pending' })
+          }
+        }
+        const drafts = new Drafts(new MemoryKeyValueStore())
+        await drafts.set(machine.id, 's1', 'keep me')
+        const store = await storeWith(server, drafts)
+        const clear = vi.spyOn(Drafts.prototype, 'clear')
+        const send = store.getState().send(machine.id, 's1', 'keep me', 'message-pending')
+        await vi.advanceTimersByTimeAsync(60_001)
+        expect((await send).kind).toBe('unknown')
+        expect(await drafts.get(machine.id, 's1')).toBe('keep me')
+        expect(clear).not.toHaveBeenCalled()
+        expect(writes).toBe(1)
+        clear.mockRestore()
+      }
+    } finally {
+      vi.restoreAllMocks()
+      vi.useRealTimers()
+    }
+  })
+})
+
+it('an accepted send keeps a draft edited after dispatch', async () => {
+  let accept!: (response: Awaited<ReturnType<FetchLike>>) => void
+  const server = stubServer()
+  server.fetch = () =>
+    new Promise((resolve) => {
+      accept = resolve
+    })
+  const drafts = new Drafts(new MemoryKeyValueStore())
+  await drafts.set(machine.id, 's1', 'first')
+  const store = await storeWith(server, drafts)
+  const send = store.getState().send(machine.id, 's1', 'first', 'message-first')
+  await vi.waitFor(() => expect(accept).toBeTypeOf('function'))
+  await drafts.set(machine.id, 's1', 'second')
+  accept({ status: 200, ok: true, text: async () => JSON.stringify({ status: 'accepted' }) })
+  expect((await send).kind).toBe('sent')
+  expect(await drafts.get(machine.id, 's1')).toBe('second')
+})
+
+it('rejected and unknown writes keep the stored draft', async () => {
+  for (const status of ['rejected', 'unknown'] as const) {
+    const server = stubServer()
+    server.fetch = async () => ({
+      status: 422,
+      ok: false,
+      text: async () =>
+        JSON.stringify({
+          _tag: status === 'unknown' ? 'SessionWriteUnknown' : 'SessionWriteRefused',
+          message: 'Not accepted.'
+        })
+    })
+    const drafts = new Drafts(new MemoryKeyValueStore())
+    await drafts.set(machine.id, 's1', 'keep me')
+    const store = await storeWith(server, drafts)
+    expect((await store.getState().send(machine.id, 's1', 'keep me', 'message-test')).kind).toBe(
+      status
+    )
+    expect(await drafts.get(machine.id, 's1')).toBe('keep me')
+  }
+})
+
+it('ignores a stale requests query that arrives after a newer settled snapshot', async () => {
+  const server = stubServer()
+  const answers: Array<(r: Awaited<ReturnType<FetchLike>>) => void> = []
+  server.fetch = () => new Promise((resolve) => answers.push(resolve))
+  const store = await storeWith(server)
+  const old = store.getState().loadRequests(machine.id)
+  await vi.waitFor(() => expect(answers).toHaveLength(1))
+  const recent = store.getState().loadRequests(machine.id)
+  await vi.waitFor(() => expect(answers).toHaveLength(2))
+  const response = (revision: number, pending: unknown[]): Awaited<ReturnType<FetchLike>> => ({
+    status: 200,
+    ok: true,
+    text: async () => JSON.stringify({ revision, pending })
+  })
+  answers[1]!(response(2, []))
+  await recent
+  answers[0]!(
+    response(1, [
+      { id: 'old', sessionId: 's1', kind: 'permission', description: 'Settled', createdAt: 1 }
+    ])
+  )
+  await old
+  expect(store.getState().requests[machine.id]?.snapshot).toEqual({ revision: 2, pending: [] })
+})
+
+it('parallel machine reads share one socket and disconnect closes it', async () => {
+  const server = stubServer()
+  const store = await storeWith(server)
+  const [a, b] = await Promise.all([
+    store.getState().connect(machine.id),
+    store.getState().connect(machine.id)
+  ])
+  expect(a).toBe(b)
+  const close = vi.spyOn(a.push, 'close')
+  store.getState().disconnectAll()
+  expect(close).toHaveBeenCalledTimes(1)
 })

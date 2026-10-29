@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ServerError } from '../api/errors'
-import type { WriteStatus } from '../contract/types'
+import type { WriteStatus, WriteAnswer } from '../contract/types'
 import { reconcile, sendMessage, type SendPorts } from './send'
 
 /** Ports over scripts: what each write attempt does, what each status ask answers. */
@@ -13,10 +13,10 @@ function ports(script: {
     writes: [] as string[],
     asks: 0,
     slept: [] as number[],
-    write: async (id: string): Promise<void> => {
+    write: async (id: string): Promise<WriteAnswer> => {
       made.writes.push(id)
       const step = script.writes.shift() ?? 'ok'
-      if (step === 'ok') return
+      if (step === 'ok') return { status: 'accepted' }
       if (step === 'network') throw new ServerError('network', 'The server could not be reached.')
       if (step === 'timeout')
         throw new ServerError('timeout', 'The server did not answer within 10 s.')

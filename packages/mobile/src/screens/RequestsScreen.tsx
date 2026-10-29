@@ -81,13 +81,20 @@ export function RequestsScreen({ route }: Props): ReactNode {
           />
         )}
         ListHeaderComponent={
-          requests?.error ? (
-            <ErrorText>{requests.error}</ErrorText>
-          ) : requests?.unavailable ? (
-            <Muted testID="requests-unavailable">
-              This server keeps no request list. Answer the agent&apos;s questions in its chat.
-            </Muted>
-          ) : undefined
+          <View>
+            {Object.entries(notices).map(([id, text]) => (
+              <Text key={id} style={styles.notice} testID="request-notice">
+                {text}
+              </Text>
+            ))}
+            {requests?.error ? (
+              <ErrorText>{requests.error}</ErrorText>
+            ) : requests?.unavailable ? (
+              <Muted testID="requests-unavailable">
+                This server keeps no request list. Answer the agent&apos;s questions in its chat.
+              </Muted>
+            ) : null}
+          </View>
         }
         ListEmptyComponent={
           !requests || (requests.loading && !requests.snapshot) ? (

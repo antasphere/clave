@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { chatPath, coldLaunchState, deepLinkState, machineIdOf, stateForPath } from './persistence'
+import {
+  chatPath,
+  initialLaunchState,
+  coldLaunchState,
+  deepLinkState,
+  machineIdOf,
+  stateForPath
+} from './persistence'
 
 describe('where the app opens', () => {
   it('a cold launch opens Machines then the Workspaces of the current machine', () => {
@@ -41,5 +48,17 @@ describe('where the app opens', () => {
     expect(machineIdOf(deepLinkState('m1', 's1'))).toBe('m1')
     expect(machineIdOf(coldLaunchState(null))).toBeNull()
     expect(machineIdOf(null)).toBeNull()
+  })
+})
+
+describe('initial URL priority', () => {
+  it('opens a notification conversation instead of the selected machine on a new process', () => {
+    expect(initialLaunchState('old-machine', 'clave://chat/new-machine/s1')).toEqual(
+      deepLinkState('new-machine', 's1')
+    )
+    expect(initialLaunchState('old-machine', null)).toEqual(coldLaunchState('old-machine'))
+    expect(initialLaunchState('old-machine', 'clave://unknown')).toEqual(
+      coldLaunchState('old-machine')
+    )
   })
 })
