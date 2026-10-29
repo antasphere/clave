@@ -226,8 +226,7 @@ export class PushHub {
    * answers.
    */
   publishFrame(frame: ServerFrame): void {
-    for (const peer of [...this.peers])
-      if (peer.welcomed) this.send(peer, frame)
+    for (const peer of [...this.peers]) if (peer.welcomed) this.send(peer, frame)
   }
 
   /**
