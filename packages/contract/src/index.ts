@@ -37,3 +37,5 @@ export * as Git from './git'
 export * as ServerInfo from './server-info'
 
 // ── Lane B: terminals · Lane D: settings served ──
+// ── Lane E (mobile wave, 2026-10-29): the relay, the directory of a person's machines and the road to them ──
+export * as Relay from './relay'

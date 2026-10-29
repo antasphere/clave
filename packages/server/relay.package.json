@@ -1,0 +1,10 @@
+{
+  "name": "clave-relay",
+  "private": true,
+  "type": "module",
+  "description": "What the relay's container image installs: the contract's Effect for its schemas and ws for its sockets. The relay's sources and the contract package are copied in by relay.Dockerfile.",
+  "dependencies": {
+    "effect": "3.22.1",
+    "ws": "8.19.0"
+  }
+}

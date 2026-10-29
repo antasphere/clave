@@ -1704,3 +1704,69 @@ describe('a Unicode identity on the Keychain adapter', () => {
     expect(h.manager.status().account).toEqual(status.account)
   })
 })
+
+describe('the access token for a service of the team’s (the mobile relay, lane E)', () => {
+  it('answers the token of the login, keeps it out of every status and log, and null once signed out', async () => {
+    const ports = electronTestPorts()
+    const h = harness(ports)
+    expect(await h.manager.currentAccessToken()).toBeNull()
+    await signIn(h)
+    const token = await h.manager.currentAccessToken()
+    expect(token).toMatch(/^at-/)
+    // The provider issued exactly this token to this person.
+    expect(provider.state.accessTokens.get(token!)?.sub).toBe(provider.state.user.sub)
+    expect(JSON.stringify(h.statuses)).not.toContain(token!)
+    expect(JSON.stringify(h.logs)).not.toContain(token!)
+    // Asked again, the same token: no refresh for a live session.
+    const refreshes = provider.state.counts.refresh
+    expect(await h.manager.currentAccessToken()).toBe(token)
+    expect(provider.state.counts.refresh).toBe(refreshes)
+    h.manager.signOut()
+    expect(await h.manager.currentAccessToken()).toBeNull()
+  })
+
+  it('joins the renewal in flight when the session lapsed, and never starts a second refresh', async () => {
+    // Tokens of three seconds, a refresh grant that takes four: the clock
+    // renews at one second, the identity lapses at three while the renewal
+    // runs, and the renewal lands at five.
+    brief.state.refreshDelayMs = 4000
+    const ports = electronTestPorts()
+    const h = harness(ports, {}, brief)
+    await signIn(h)
+    const first = await h.manager.currentAccessToken()
+    expect(first).toMatch(/^at-/)
+    await sleep(LAPSE_MS)
+    expect(h.manager.status().phase).toBe('signed-out')
+    const refreshes = brief.state.counts.refresh
+    expect(refreshes).toBeGreaterThanOrEqual(1)
+    const token = await h.manager.currentAccessToken()
+    expect(token).toMatch(/^at-/)
+    expect(token).not.toBe(first)
+    expect(brief.state.counts.refresh).toBe(refreshes)
+    expect(h.manager.status().phase).toBe('signed-in')
+  })
+
+  it('renews a record sealed before the token was kept, once, to obtain one', async () => {
+    const ports = electronTestPorts()
+    const h = harness(ports)
+    await signIn(h)
+    h.manager.shutdown()
+    // A record written by the version before this one: the same session
+    // sealed without its access token.
+    const file = JSON.parse(readFile(ports.dir, SESSION)) as { sealed: string }
+    const secret = JSON.parse(ports.secrets.open(file.sealed)!) as Record<string, unknown>
+    delete secret.accessToken
+    file.sealed = ports.secrets.seal(JSON.stringify(secret))
+    fs.writeFileSync(path.join(ports.dir, SESSION), JSON.stringify(file))
+    const refreshes = provider.state.counts.refresh
+    const again = harness(ports)
+    await again.manager.restore()
+    expect(again.manager.status().phase).toBe('signed-in')
+    const token = await again.manager.currentAccessToken()
+    expect(token).toMatch(/^at-/)
+    expect(provider.state.counts.refresh).toBe(refreshes + 1)
+    // Kept from here on: the next ask is answered without the issuer.
+    expect(await again.manager.currentAccessToken()).toBe(token)
+    expect(provider.state.counts.refresh).toBe(refreshes + 1)
+  })
+})
