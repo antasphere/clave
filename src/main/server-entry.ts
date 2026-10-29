@@ -492,6 +492,34 @@ async function main(): Promise<void> {
     }, PARENT_POLL_MS)
     watch.unref()
   }
+
+  // ── Lane E (mobile wave, 2026-10-29): the relay client, on `--relay <url>` or the mobileRelayUrl preference ──
+  // The flag names the relay for a daemon; the separate server the app
+  // starts carries no flag and follows the preference the app's Settings
+  // write into its own copy. A daemon that binds an address of its own
+  // reports it as a direct address; the loopback listeners report none.
+  {
+    const relayFlag = arg('relay')
+    const { relayAddressOf, startMobileRelay, stopMobileRelay } =
+      await import('./server/relay-wiring')
+    if (relayFlag !== undefined && relayAddressOf(relayFlag) === null) {
+      process.stderr.write('clave-server: --relay must be an http(s) address\n')
+      process.exit(2)
+    }
+    const relay = startMobileRelay({
+      local: { url: server.url },
+      version,
+      flag: relayFlag ?? null,
+      antasphere: standalone.antasphere,
+      direct: config.daemon && config.host !== '127.0.0.1' ? [server.url] : [],
+      log: (line) => process.stderr.write(`clave-server: ${line}\n`)
+    })
+    if (relay) {
+      const end = (): void => void stopMobileRelay()
+      process.once('SIGTERM', end)
+      process.once('SIGINT', end)
+    }
+  }
 }
 
 main().catch((err) => {

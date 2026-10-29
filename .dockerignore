@@ -1,0 +1,9 @@
+# The relay image (packages/server/relay.Dockerfile) is the one image built
+# from this repository: its context is the contract package and the relay's
+# sources, nothing else, so a build never uploads node_modules or a build.
+*
+!packages/contract/package.json
+!packages/contract/tsconfig.json
+!packages/contract/src/**
+!packages/server/relay.package.json
+!packages/server/src/relay/**
