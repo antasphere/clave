@@ -24,6 +24,16 @@ describe('the relay address the server accepts', () => {
 })
 
 describe('the machine record', () => {
+  it('combines the host and owner display name when signed in', () => {
+    expect(
+      machineRecord({
+        version: '2.4.0',
+        hostname: 'Build-Mac.local',
+        platform: 'darwin',
+        accountName: 'Ada'
+      }).name
+    ).toBe('Build-Mac · Ada')
+  })
   it('names the host without .local, the platform and the version, and the direct addresses', () => {
     expect(
       machineRecord({
