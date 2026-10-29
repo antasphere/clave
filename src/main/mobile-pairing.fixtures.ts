@@ -3,13 +3,20 @@ import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Effect, Layer, Schema } from 'effect'
-import { Command, CommandHandler, HandlerRegistry, layer as busesLayer } from '@structure-ai/cqrs'
+import {
+  Command,
+  CommandHandler,
+  HandlerRegistry,
+  layer as busesLayer,
+  type CommandBus
+} from '@structure-ai/cqrs'
 import {
   defineFixture,
   defineScenario,
   makeCatalog,
   run,
-  type RunReport
+  type RunReport,
+  type FixtureError
 } from '@structure-ai/fixtures'
 import type { DevicesView, DeviceSessionView } from '@clave/contract/devices'
 import {
@@ -34,7 +41,11 @@ const pairHandler = CommandHandler.make(PairPhone, ({ runId, name }) =>
     if (!install?.server) return yield* Effect.die('The fixture needs its signed-in server.')
     const { server, provider } = install
     return yield* Effect.promise(async () => {
-      const json = async (route: string, body?: unknown, token: string | null = server.token) => {
+      const json = async (
+        route: string,
+        body?: unknown,
+        token: string | null = server.token
+      ): Promise<unknown> => {
         const response = await fetch(`${server.url}${route}`, {
           method: body === undefined ? 'GET' : 'POST',
           headers: {
@@ -161,7 +172,9 @@ export const mobileFixtureCatalog = makeCatalog({
   ]
 })
 
-export const verifyMobileFixtures = (report: RunReport<Readonly<Record<string, unknown>>>) =>
+export const verifyMobileFixtures = (
+  report: RunReport<Readonly<Record<string, unknown>>>
+): Effect.Effect<void, Error, AntasphereFixtureWorld> =>
   Effect.gen(function* () {
     yield* verifyAntasphereFixtures(report)
     const world = yield* AntasphereFixtureWorld
@@ -182,7 +195,9 @@ export const verifyMobileFixtures = (report: RunReport<Readonly<Record<string, u
     })
   })
 
-export const cleanupMobileFixtures = (runId: string) =>
+export const cleanupMobileFixtures = (
+  runId: string
+): Effect.Effect<void, never, AntasphereFixtureWorld> =>
   Effect.gen(function* () {
     const world = yield* AntasphereFixtureWorld
     const install = world.runs.get(runId)
@@ -207,7 +222,11 @@ export const cleanupMobileFixtures = (runId: string) =>
     yield* cleanupAntasphereFixtures(runId)
   })
 
-export const loadMobileScenario = () =>
+export const loadMobileScenario = (): Effect.Effect<
+  RunReport<Readonly<Record<string, unknown>>>,
+  FixtureError,
+  AntasphereFixtureWorld | CommandBus
+> =>
   Effect.gen(function* () {
     const fixtures = yield* mobileFixtureCatalog.prepare('mobile/paired-phone', {})
     return yield* run({ fixtures, enabled: true, ready: verifyMobileFixtures, timeoutMs: 60_000 })
