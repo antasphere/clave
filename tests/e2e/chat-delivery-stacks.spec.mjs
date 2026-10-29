@@ -115,11 +115,17 @@ export async function run(t) {
         await view.getByText('A human-facing progress update.', { exact: true }).isVisible()
       )
       assert.ok(await view.getByText('My follow-up.', { exact: true }).isVisible())
-      assert.equal(
-        await view.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools').count(),
-        2
+      // Closing can let the virtualiser remount this deck. Its lazy bodies
+      // need not survive while closed; inspect them after explicitly opening.
+      await grown.locator('> summary').click()
+      assert.ok(
+        await until(
+          async () =>
+            (await grown.locator(mode === 'chat' ? '.chat-tool-run' : '.term-tools').count()) === 2
+        )
       )
       assert.match(await grown.textContent(), /An answer to the fourth agent message/)
+      await grown.locator('> summary').click()
       assert.equal(
         await lone.locator('.chat-exchange-card').count(),
         0,
